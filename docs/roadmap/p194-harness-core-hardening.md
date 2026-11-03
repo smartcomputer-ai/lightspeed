@@ -1248,8 +1248,7 @@ Deviations:
 - H-18's brief says to count failures. The package instructions say no counter, and those were followed.
 - `new_unchecked_for_tests` was already gone.
 - The judge's sender-side suggestion, tightening `sourceResolutionEnvelope` and `parseEmissionEnvelope`
-  to `promise_<number>`, was not done. It is outside this package's crates. A TypeScript plugin can still
-  send a bad promise id, and the receiver now drops it.
+  to `promise_<number>`, was left out as outside this package's crates. The review below added it.
 - The dead re-validation also went from `CodeExecutionDescriptor::validate` (with its error variant), the
   code execution context and the reply gate, which the earlier package's note anticipated.
 - The gateway still answers `internal` when a typed input ref has no blob, for example a `snapshotRef`
@@ -1280,3 +1279,24 @@ Open:
   panic, error 5" rather than reporting the failure, so a parallel run names no test. Running tests
   one at a time with `--exact` finds them. I did not check whether it predates this package; nothing here
   touches panic handling.
+
+Independent review of this package:
+
+- `session_instructions_from_api` sat after the test module, which the CI Clippy command rejects. It moved,
+  and a live test's doc comment that the new helper had split off went back on its test (`4e6a2958`).
+- The walk left 128-bit integers to serde's default, which is an error, so such a field would have refused
+  every append of that event. Nothing has one today (`923d9b87`).
+- That `RawValue` survives garbage now has a test as well as a reading: the default converter, called as the
+  workflow macro calls it, takes no payloads, bad bytes and too many payloads. The live step is still unrun.
+  `prepare_payload_context` also has a direct test that a bad `content_ref` drops that one attachment
+  (`dffcb67c`).
+- Dropping a malformed emission made the helper's gap matter, because a plugin passing `reply` as its promise
+  id now hears nothing. Both TypeScript helpers refuse an id that is not `promise_<number>` (`b4a46ce9`).
+  This goes past the package instructions, and a non-TypeScript sender still gets only the drop.
+- Checked with no change: all six handlers and every sender; the worker uses the default converter; no
+  production writer appends a foreign event kind, so the append's decode cannot refuse one; no `ToolEffect.data`
+  writer still holds a ref; the harness has no plain-string `_ref` field or custom serializer hiding a ref;
+  joins hold only ids, so the walk losing them loses nothing; the joined deferral's id and scope joins are
+  outside what the reducer reads, and the drive test replays them.
+- The string refs in bot and channel workflow types (`document_ref`, `tools_ref` and others) are not in session
+  events, so this package does not touch them. Bot event roots are their own path.
