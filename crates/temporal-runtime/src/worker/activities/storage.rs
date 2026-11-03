@@ -502,9 +502,6 @@ pub(super) async fn validate_workflow_tool_reply(
             None => Ok(ValidationResult::Valid),
         };
     };
-    if BlobRef::parse(reply_ref.as_str()).is_err() {
-        return invalid(format!("reply {what} {reply_ref} is not a blob reference")).await;
-    }
     // Renews the blob's grace period, so a collection sweep cannot take it before the
     // append that follows roots it.
     match deps.blobs.retain_blob(&reply_ref).await {
@@ -1598,26 +1595,6 @@ mod tests {
         .expect("the activity does not fail for it")
         .expect("invalid");
         assert_eq!(problem, format!("reply error {missing} does not exist"));
-    }
-
-    /// A ref the store's root guard cannot see as a ref would commit and then fail
-    /// every read of it, so the check has to stop it.
-    #[tokio::test(flavor = "current_thread")]
-    async fn a_reply_naming_something_that_is_not_a_ref_is_that_replys_failure() {
-        let malformed: BlobRef = serde_json::from_value(serde_json::json!("not-a-blob-ref"))
-            .expect("a ref decodes from any string");
-        for resolution in [
-            resolved(malformed.clone()),
-            harness::PromiseResolution::Failed {
-                error_ref: Some(malformed.clone()),
-            },
-        ] {
-            let problem = check_reply(Arc::new(InMemoryBlobStore::new()), resolution, None, false)
-                .await
-                .expect("the activity does not fail for it")
-                .expect("invalid");
-            assert!(problem.contains("is not a blob reference"), "{problem}");
-        }
     }
 
     #[tokio::test(flavor = "current_thread")]

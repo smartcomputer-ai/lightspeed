@@ -252,7 +252,7 @@ pub(super) async fn flush_pending_promise_cancellations(
                     .external_workflow(producer_workflow_id, None)
                     .signal(
                         AgentSessionWorkflow::deliver_emission,
-                        envelope,
+                        crate::workflows::emission_signal_input(&envelope),
                         crate::workflows::signal_options(),
                     )
                     .await;

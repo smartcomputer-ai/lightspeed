@@ -50,6 +50,7 @@ use harness::{
 };
 use serde::{Deserialize, Serialize};
 use temporalio_common::ActivityDefinition;
+use temporalio_common::data_converters::RawValue;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityExecutionError, ActivityOptions, CancellableFuture, ContinueAsNewOptions,
@@ -161,12 +162,10 @@ impl ChannelConversationWorkflow {
     /// Pushed `message_*` invocations and their cancellations from the
     /// bot's routed sessions.
     #[signal(name = "deliver_emission")]
-    pub fn deliver_emission(
-        &mut self,
-        _ctx: &mut SyncWorkflowContext<Self>,
-        envelope: EmissionEnvelope,
-    ) {
-        self.emission_inbox.push_back(envelope);
+    pub fn deliver_emission(&mut self, ctx: &mut SyncWorkflowContext<Self>, emission: RawValue) {
+        if let Ok(envelope) = crate::workflows::receive_emission(ctx, &emission) {
+            self.emission_inbox.push_back(envelope);
+        }
     }
 
     /// The bot controller's `started` / `finished` word on a delivery this
@@ -493,7 +492,7 @@ async fn resolve_promise(
         .external_workflow(holder_workflow_id.to_owned(), None)
         .signal(
             AgentSessionWorkflow::deliver_emission,
-            envelope,
+            crate::workflows::emission_signal_input(&envelope),
             crate::workflows::signal_options(),
         )
         .await

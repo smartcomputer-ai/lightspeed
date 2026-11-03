@@ -661,7 +661,7 @@ pub(super) async fn handle_invocation(ctx: Ctx, pending: PendingInvocation) {
         .external_workflow(holder_workflow_id.clone(), None)
         .signal(
             AgentSessionWorkflow::deliver_emission,
-            envelope,
+            crate::workflows::emission_signal_input(&envelope),
             crate::workflows::signal_options(),
         )
         .await;

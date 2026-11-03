@@ -344,7 +344,7 @@ pub(super) async fn flush_pending_emissions(
             .external_workflow(pending.receiver_workflow_id.clone(), None)
             .signal(
                 AgentSessionWorkflow::deliver_emission,
-                pending.envelope.clone(),
+                crate::workflows::emission_signal_input(&pending.envelope),
                 crate::workflows::signal_options(),
             )
             .await

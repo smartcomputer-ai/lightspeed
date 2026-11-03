@@ -99,5 +99,6 @@ pub use workflows::{
     AgentSessionWorkflow, BotControllerWorkflow, BotTriggerFireWorkflow,
     ChannelConversationWorkflow, CodeExecutionWorkflow, EnvironmentJobWorkflow,
     SubagentExecutionWorkflow, TranscriptionActivityResult, TranscriptionSnapshot,
-    TranscriptionWorkflow, TranscriptionWorkflowArgs, transcription_id, transcription_workflow_id,
+    TranscriptionWorkflow, TranscriptionWorkflowArgs, emission_signal_input, transcription_id,
+    transcription_workflow_id,
 };

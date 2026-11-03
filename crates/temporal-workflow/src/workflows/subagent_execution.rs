@@ -10,6 +10,7 @@ use crate::workflows::WorkflowContextExt as _;
 use std::time::Duration;
 
 use futures::{FutureExt, pin_mut, select_biased};
+use temporalio_common::data_converters::RawValue;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult};
 
@@ -175,11 +176,10 @@ impl SubagentExecutionWorkflow {
     /// The child's `run_terminal` (its notify intent names this execution
     /// as holder) and the holder's `invocation_cancellation`.
     #[signal(name = "deliver_emission")]
-    pub fn deliver_emission(
-        &mut self,
-        _ctx: &mut SyncWorkflowContext<Self>,
-        envelope: harness::EmissionEnvelope,
-    ) {
+    pub fn deliver_emission(&mut self, ctx: &mut SyncWorkflowContext<Self>, emission: RawValue) {
+        let Ok(envelope) = crate::workflows::receive_emission(ctx, &emission) else {
+            return;
+        };
         let identity = SignalIdentity {
             reply_promise_id: self.reply_promise_id.as_ref(),
             holder_workflow_id: self.holder_workflow_id.as_deref(),
@@ -323,7 +323,7 @@ async fn emit_resolution(
         .external_workflow(holder, None)
         .signal(
             AgentSessionWorkflow::deliver_emission,
-            envelope,
+            crate::workflows::emission_signal_input(&envelope),
             crate::workflows::signal_options(),
         )
         .await;

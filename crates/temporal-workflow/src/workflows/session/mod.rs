@@ -35,6 +35,7 @@ use harness::{
     LlmGenerationRequest, RunEvent, RunStatus, SessionId, SessionPosition, SubmissionId,
     ToolInvocationBatchRequest,
 };
+use temporalio_common::data_converters::RawValue;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ContinueAsNewOptions, SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult,
@@ -314,11 +315,16 @@ impl AgentSessionWorkflow {
     /// emissions become ordinary `ResolvePromise` admissions, preserving the
     /// harness's idempotent first-writer-wins semantics.
     #[signal(name = "deliver_emission")]
-    pub fn deliver_emission(
-        &mut self,
-        ctx: &mut SyncWorkflowContext<Self>,
-        envelope: EmissionEnvelope,
-    ) {
+    pub fn deliver_emission(&mut self, ctx: &mut SyncWorkflowContext<Self>, emission: RawValue) {
+        let envelope = match crate::workflows::receive_emission(ctx, &emission) {
+            Ok(envelope) => envelope,
+            Err(error) => {
+                // Advisory only: gateway waiters read `last_error` as a failure,
+                // and a sender's bad signal says nothing about the session.
+                self.last_warning = Some(error);
+                return;
+            }
+        };
         let queued = match split_workflow_id(ctx.workflow_id()) {
             Some((universe_id, _)) => self.queue_emission(universe_id, envelope),
             None => Err(format!(

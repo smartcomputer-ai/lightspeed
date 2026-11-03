@@ -44,6 +44,7 @@ use temporal_workflow::{
     WorkflowToolStartArgs, compose_workflow_id, connect_temporal, workflow_tool_recipe_fingerprint,
 };
 use temporalio_client::{Client, WorkflowStartOptions, WorkflowTerminateOptions};
+use temporalio_common::{data_converters::RawValue, protos::temporal::api::common::v1::Payload};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ContinueAsNewOptions, SyncWorkflowContext, WorkerOptions, WorkflowContext, WorkflowContextView,
@@ -137,7 +138,7 @@ impl TestBoundPluginWorkflow {
                                     .external_workflow(holder.clone(), None)
                                     .signal(
                                         AgentSessionWorkflow::deliver_emission,
-                                        reply.clone(),
+                                        temporal_workflow::emission_signal_input(&reply),
                                         Default::default(),
                                     )
                                     .await;
@@ -263,7 +264,7 @@ impl TestSelfReceiverControllerWorkflow {
                                     .external_workflow(holder.clone(), None)
                                     .signal(
                                         AgentSessionWorkflow::deliver_emission,
-                                        reply.clone(),
+                                        temporal_workflow::emission_signal_input(&reply),
                                         Default::default(),
                                     )
                                     .await;
@@ -354,7 +355,7 @@ impl TestStartPluginWorkflow {
                 .external_workflow(args.holder_workflow_id.clone(), None)
                 .signal(
                     AgentSessionWorkflow::deliver_emission,
-                    envelope,
+                    temporal_workflow::emission_signal_input(&envelope),
                     Default::default(),
                 )
                 .await;
@@ -477,7 +478,7 @@ impl TestSlowStartPluginWorkflow {
                 .external_workflow(args.holder_workflow_id.clone(), None)
                 .signal(
                     AgentSessionWorkflow::deliver_emission,
-                    envelope,
+                    temporal_workflow::emission_signal_input(&envelope),
                     Default::default(),
                 )
                 .await;
@@ -1556,6 +1557,60 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
 
 /// Producer authorization: a forged resolution from the wrong workflow id is
 /// dropped; the exact stored producer resolves the promise.
+/// Signals that fail to decode as an envelope, each with the words of the warning
+/// the session reports for it.
+fn malformed_emissions(
+    promise_id: &str,
+    universe_id: uuid::Uuid,
+    session_id: &harness::SessionId,
+) -> Vec<(&'static str, &'static str, RawValue)> {
+    let valid = serde_json::to_value(EmissionEnvelope::source_resolution(
+        universe_id,
+        "plugin/any".to_owned(),
+        &temporal_workflow::compose_workflow_id(universe_id, session_id),
+        harness::PromiseId::new(promise_id),
+        PromiseResolution::Resolved { payload_ref: None },
+    ))
+    .expect("encode envelope");
+    let with = |pointer: &str, value: serde_json::Value| {
+        let mut envelope = valid.clone();
+        *envelope.pointer_mut(pointer).expect("envelope field") = value;
+        RawValue::new(vec![Payload {
+            data: serde_json::to_vec(&envelope).expect("encode"),
+            ..Default::default()
+        }])
+    };
+    vec![
+        ("no payload", "no payload", RawValue::new(Vec::new())),
+        (
+            "not json",
+            "does not decode",
+            RawValue::new(vec![Payload {
+                data: vec![0xff, 0x00, 0x7b],
+                ..Default::default()
+            }]),
+        ),
+        (
+            "invalid promise id",
+            "does not decode",
+            with("/body/promise_id", serde_json::json!("reply")),
+        ),
+        (
+            "unknown body kind",
+            "does not decode",
+            with("/body/kind", serde_json::json!("source_resolved")),
+        ),
+        (
+            "malformed payload ref",
+            "does not decode",
+            with(
+                "/body/resolution/payload_ref",
+                serde_json::json!("sha256:ABC"),
+            ),
+        ),
+    ]
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<()> {
@@ -1703,6 +1758,67 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
         )
         .await?;
 
+        // Nothing a sender puts on the wire can fail the receiver's workflow task.
+        // Each of these is logged and dropped, and the run stays parked on its reply.
+        for (what, warning_words, garbage) in
+            malformed_emissions(&promise_id, universe_id, &session_id)
+        {
+            session_handle
+                .signal(
+                    AgentSessionWorkflow::deliver_emission,
+                    garbage,
+                    temporalio_client::WorkflowSignalOptions::default(),
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!("signal {what}: {error}"))?;
+            support::live::wait_until(what, Duration::from_secs(20), async || {
+                let status = session_handle
+                    .query(
+                        AgentSessionWorkflow::status,
+                        (),
+                        temporalio_client::WorkflowQueryOptions::default(),
+                    )
+                    .await?;
+                assert_eq!(status.fatal_error, None, "{what}");
+                Ok(status
+                    .last_warning
+                    .is_some_and(|warning| warning.contains(warning_words)))
+            })
+            .await?;
+            // The next signal's warning has to be a new one to be seen.
+            session_handle
+                .signal(
+                    AgentSessionWorkflow::deliver_emission,
+                    temporal_workflow::emission_signal_input(&EmissionEnvelope::source_resolution(
+                        universe_id,
+                        "plugin/imposter".to_owned(),
+                        &temporal_workflow::compose_workflow_id(universe_id, &session_id),
+                        harness::PromiseId::new(promise_id.clone()),
+                        PromiseResolution::Resolved { payload_ref: None },
+                    )),
+                    temporalio_client::WorkflowSignalOptions::default(),
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!("signal after {what}: {error}"))?;
+            support::live::wait_until(
+                "a later signal is processed",
+                Duration::from_secs(20),
+                async || {
+                    let status = session_handle
+                        .query(
+                            AgentSessionWorkflow::status,
+                            (),
+                            temporalio_client::WorkflowQueryOptions::default(),
+                        )
+                        .await?;
+                    Ok(status
+                        .last_warning
+                        .is_some_and(|warning| warning.contains("unauthorized producer")))
+                },
+            )
+            .await?;
+        }
+
         // Forged producer: wrong workflow id. Must be dropped.
         let forged = EmissionEnvelope::source_resolution(
             universe_id,
@@ -1714,7 +1830,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
         session_handle
             .signal(
                 AgentSessionWorkflow::deliver_emission,
-                forged,
+                temporal_workflow::emission_signal_input(&forged),
                 temporalio_client::WorkflowSignalOptions::default(),
             )
             .await
@@ -1763,7 +1879,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
         session_handle
             .signal(
                 AgentSessionWorkflow::deliver_emission,
-                authorized.clone(),
+                temporal_workflow::emission_signal_input(&authorized),
                 temporalio_client::WorkflowSignalOptions::default(),
             )
             .await
@@ -1778,7 +1894,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
         session_handle
             .signal(
                 AgentSessionWorkflow::deliver_emission,
-                authorized,
+                temporal_workflow::emission_signal_input(&authorized),
                 temporalio_client::WorkflowSignalOptions::default(),
             )
             .await
@@ -2333,7 +2449,7 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
                 session_handle
                     .signal(
                         AgentSessionWorkflow::deliver_emission,
-                        reply,
+                        temporal_workflow::emission_signal_input(&reply),
                         temporalio_client::WorkflowSignalOptions::default(),
                     )
                     .await

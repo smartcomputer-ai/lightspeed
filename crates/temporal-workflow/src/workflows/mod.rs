@@ -2,12 +2,15 @@ pub mod bots;
 mod cancellation;
 pub mod channels;
 mod code_execution;
+mod emission_signal;
 mod environment_job;
 mod session;
 mod subagent_execution;
 mod transcriptions;
 
 pub(crate) use cancellation::{WorkflowContextExt, signal_options};
+pub use emission_signal::emission_signal_input;
+pub(crate) use emission_signal::receive_emission;
 
 pub use bots::{BotControllerWorkflow, BotTriggerFireWorkflow};
 pub use channels::ChannelConversationWorkflow;

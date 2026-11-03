@@ -315,12 +315,14 @@ impl Fixture {
             .get_workflow_handle::<AgentSessionWorkflow>(workflow_id.clone())
             .signal(
                 AgentSessionWorkflow::deliver_emission,
-                harness::EmissionEnvelope::source_resolution(
-                    live_universe_id()?,
-                    self.receiver_id.clone(),
-                    &workflow_id,
-                    promise.clone(),
-                    resolution,
+                temporal_workflow::emission_signal_input(
+                    &harness::EmissionEnvelope::source_resolution(
+                        live_universe_id()?,
+                        self.receiver_id.clone(),
+                        &workflow_id,
+                        promise.clone(),
+                        resolution,
+                    ),
                 ),
                 WorkflowSignalOptions::default(),
             )

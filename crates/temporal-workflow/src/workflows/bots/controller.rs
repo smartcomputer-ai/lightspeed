@@ -30,8 +30,9 @@ use bots::{
 };
 use futures::future::poll_fn;
 use futures::{FutureExt, pin_mut, select_biased};
-use harness::{EmissionEnvelope, WorkflowEndpointRef};
+use harness::WorkflowEndpointRef;
 use serde::{Deserialize, Serialize};
+use temporalio_common::data_converters::RawValue;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ContinueAsNewOptions, SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult,
@@ -191,13 +192,11 @@ impl BotControllerWorkflow {
 
     /// Pushed `bot_*` invocations and run terminals of the bot's sessions.
     #[signal(name = "deliver_emission")]
-    pub fn deliver_emission(
-        &mut self,
-        ctx: &mut SyncWorkflowContext<Self>,
-        envelope: EmissionEnvelope,
-    ) {
+    pub fn deliver_emission(&mut self, ctx: &mut SyncWorkflowContext<Self>, emission: RawValue) {
         self.state.clock_ms = self.state.clock_ms.max(sync_now_ms(ctx));
-        self.state.queue_emission(envelope);
+        if let Ok(envelope) = crate::workflows::receive_emission(ctx, &emission) {
+            self.state.queue_emission(envelope);
+        }
     }
 
     /// Pure: derives everything from state at the last observed workflow

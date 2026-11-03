@@ -2,6 +2,7 @@ use crate::workflows::WorkflowContextExt as _;
 use std::time::Duration;
 
 use futures::{FutureExt, pin_mut, select_biased};
+use temporalio_common::data_converters::RawValue;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ContinueAsNewOptions, LocalActivityOptions, SyncWorkflowContext, WorkflowContext,
@@ -240,12 +241,10 @@ impl EnvironmentJobWorkflow {
 
     /// Per-key cancellation for internally supervised job starts.
     #[signal(name = "deliver_emission")]
-    pub fn deliver_emission(
-        &mut self,
-        _ctx: &mut SyncWorkflowContext<Self>,
-        envelope: harness::EmissionEnvelope,
-    ) {
-        queue_workflow_tool_cancellation(self, envelope);
+    pub fn deliver_emission(&mut self, ctx: &mut SyncWorkflowContext<Self>, emission: RawValue) {
+        if let Ok(envelope) = crate::workflows::receive_emission(ctx, &emission) {
+            queue_workflow_tool_cancellation(self, envelope);
+        }
     }
 
     #[signal(name = "nudge")]
@@ -451,7 +450,7 @@ async fn flush_terminal_emissions(
             .external_workflow(receiver_workflow_id, None)
             .signal(
                 AgentSessionWorkflow::deliver_emission,
-                envelope,
+                crate::workflows::emission_signal_input(&envelope),
                 crate::workflows::signal_options(),
             )
             .await;

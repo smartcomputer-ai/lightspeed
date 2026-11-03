@@ -82,9 +82,6 @@ impl CodeExecutionContextV1 {
                 message: "invalid code execution context version or parent identity".to_owned(),
             });
         }
-        BlobRef::parse(self.source_ref.as_str()).map_err(|error| ToolError::InvalidRequest {
-            message: format!("invalid code execution source reference: {error}"),
-        })?;
         self.limits
             .validate()
             .map_err(|error| ToolError::InvalidRequest {

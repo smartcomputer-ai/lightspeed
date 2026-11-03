@@ -84,3 +84,30 @@ impl Attachment {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_malformed_content_ref_fails_decode_instead_of_panicking_validation() {
+        for content_ref in [
+            "short",
+            "sha256:\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}",
+        ] {
+            let attachment = serde_json::json!({
+                "kind": "file",
+                "data": { "handle": "file:x", "content_ref": content_ref, "name": "n" },
+            });
+            assert!(serde_json::from_value::<Attachment>(attachment).is_err());
+        }
+    }
+
+    #[test]
+    fn a_decoded_file_attachment_validates_its_handle() {
+        let file = FileAttachment::new(BlobRef::from_bytes(b"file"), "n".into(), None);
+        let decoded: FileAttachment =
+            serde_json::from_value(serde_json::to_value(&file).unwrap()).unwrap();
+        assert!(decoded.is_valid());
+    }
+}
