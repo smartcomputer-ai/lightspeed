@@ -5247,7 +5247,10 @@ mod tests {
                             tool_name: "hello".into(),
                             arguments_ref: arguments_ref.clone(),
                         },
-                        continuation: harness::ApprovalContinuation::NativeMcp { call_id },
+                        continuation: harness::ApprovalContinuation::NativeMcp {
+                            batch_id,
+                            call_id,
+                        },
                     },
                 }),
             ),
