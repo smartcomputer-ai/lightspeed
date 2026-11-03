@@ -1344,6 +1344,8 @@ pub fn apply_lifecycle_projection(record: &mut SessionRecord, entry: &StoredSess
     match entry.event.kind.as_str() {
         event_kind::LIFECYCLE_OPENED => {
             record.lifecycle_status = SessionLifecycleStatus::Open;
+            record.closed_at_seq = None;
+            record.closed_at_ms = None;
             refresh_delete_at(record);
         }
         event_kind::LIFECYCLE_CLOSED => {

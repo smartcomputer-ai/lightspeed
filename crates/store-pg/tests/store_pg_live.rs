@@ -1412,7 +1412,7 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
         let mut events = refs
             .into_iter()
             .enumerate()
-            .map(|(index, blob_ref)| ref_event(10 + index as u64, &[&blob_ref]))
+            .map(|(index, blob_ref)| ref_event(10 + index as u64, &[blob_ref]))
             .collect::<Vec<_>>();
         events.push(closed_event(20));
         store

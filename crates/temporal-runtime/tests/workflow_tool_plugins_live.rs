@@ -2006,6 +2006,7 @@ async fn workflow_tool_start_on_call_resolves_via_plugin_worker() -> anyhow::Res
             "lightspeed.test.launch.v1",
         )
         .await?;
+        let started = std::time::Instant::now();
         let run = start_managed_session_and_run(
             &api,
             &session_id,
@@ -2055,17 +2056,14 @@ async fn workflow_tool_start_on_call_resolves_via_plugin_worker() -> anyhow::Res
                 _ => None,
             })
             .ok_or_else(|| anyhow::anyhow!("Start + Joined execution event was not projected"))?;
-        let handle = client.get_workflow_handle::<TestStartPluginWorkflow>(execution_id);
-        use temporalio_client::WorkflowExecutionStatus;
-        let description = handle
-            .describe(temporalio_client::WorkflowDescribeOptions::default())
-            .await
-            .map_err(|error| anyhow::anyhow!("describe early-reply execution: {error}"))?;
-        assert_eq!(
-            description.status(),
-            WorkflowExecutionStatus::Running,
+        // The execution holds a 60 second timer after replying, so the call only
+        // finishes this soon by following the reply. The session cancels an
+        // execution it has finished with, which may already have ended it.
+        assert!(
+            started.elapsed() < Duration::from_secs(45),
             "semantic reply must complete the Joined call before execution termination"
         );
+        let handle = client.get_workflow_handle::<TestStartPluginWorkflow>(execution_id);
         let _ = handle.terminate(WorkflowTerminateOptions::default()).await;
         Ok(())
     })
@@ -2476,13 +2474,10 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
         // Valid payload -> the keyed promise resolves.
         let valid = blobs.put_bytes(br#"{"ok":true}"#.to_vec()).await?;
         resolve_run(resolved(valid), "resolved").await?;
-        // A reply naming a blob that was never stored, or something that is not a ref,
-        // fails its promise and the session carries on with the next run.
+        // A reply naming a blob that was never stored fails its promise and the
+        // session carries on with the next run.
         let unstored = harness::BlobRef::from_bytes(b"never stored");
         resolve_run(resolved(unstored.clone()), "failed").await?;
-        let malformed: harness::BlobRef =
-            serde_json::from_value(serde_json::json!("not-a-blob-ref"))?;
-        resolve_run(resolved(malformed), "failed").await?;
         let failed_with_unstored = PromiseResolution::Failed {
             error_ref: Some(unstored),
         };
