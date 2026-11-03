@@ -307,6 +307,11 @@ Later packages add their own entries.
   run fails once it is decided, so an approved hosted call only proceeds in a later
   run's request. An operator who sets a low `maxTurns` on a session with recovery
   compaction can lose a run to a limit they thought was about model steps.
+- **Dropped failure kinds and `maxToolRounds` have no compat decoding.** A stored event
+  holding `tool_failure` or `cancelled` as a failure kind no longer decodes. A stored
+  profile or client sending `limits.maxToolRounds` is refused, because the API's
+  `LimitsConfig` denies unknown fields, while the run-level `RunLimitsConfig` ignores it.
+  This fits a breaking release with purged dev state.
 
 ## Progress
 
@@ -1404,3 +1409,11 @@ Open:
   and transcript tests hold the snake_case values.
 - `docs-and-review-notes`: a grep of `docs/documentation` found no `maxToolRounds` or failure kind lists to fix. The
   guides do not yet say that `maxTurns` is enforced or how.
+
+Independent review of this package: the planner paths, generated artifacts and adapter finishes hold up. Tried and
+found no wedge: a queued manual compaction at the limit, succeeded and failed, and steering while parked on an approval
+at the limit. Added coverage for the claims that had none: an overflow at the limit now also checks the next run's
+request, a decided hosted approval reaches the next run's request, and an approved native call runs before the limit
+ends the run. The wire breaks from this package's report were missing from Risky calls and are there now. Steering that
+lands during a tool turn at the limit still sits between the call and its result in context, as it does without a
+limit; that is H-58, for `context-render`.
