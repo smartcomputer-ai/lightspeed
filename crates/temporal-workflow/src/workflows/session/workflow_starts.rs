@@ -237,50 +237,12 @@ async fn terminal_start_failure(
     }
 }
 
-/// When the last still-pending keyed promise of a session-owned started
-/// execution reaches a terminal state — by resolution, failure, or
-/// cancellation — request cancellation of the exact execution. A normally
-/// completed execution treats the cancel as a no-op; the plugin workflow
-/// owns cleanup of its activities and external resources.
-pub(super) async fn process_execution_cancels(
-    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
-) -> anyhow::Result<()> {
-    let due = ctx.state(|state| {
-        state
-            .core_state
-            .workflow_tools
-            .start_requests
-            .values()
-            .filter_map(|invocation| {
-                let promises = invocation.completion_promises.as_ref()?;
-                let all_terminal = promises.values().all(|promise_id| {
-                    state
-                        .core_state
-                        .promises
-                        .promises
-                        .get(promise_id)
-                        .is_some_and(|promise| promise.status.is_terminal())
-                });
-                if !all_terminal {
-                    return None;
-                }
-                let binding = state
-                    .core_state
-                    .workflow_tools
-                    .bindings
-                    .get(&invocation.tool_id)?;
-                let harness::WorkflowToolTarget::Start { start } = &binding.target else {
-                    return None;
-                };
-                let execution_id = harness::workflow_tool_execution_id(
-                    &invocation.invocation_id,
-                    &start.recipe_fingerprint,
-                );
-                (!state.cancelled_workflow_executions.contains(&execution_id))
-                    .then_some(execution_id)
-            })
-            .collect::<Vec<_>>()
-    });
+/// Ask each execution whose keyed promises all went terminal, by resolution,
+/// failure or cancellation, to stop. A normally completed execution treats the cancel
+/// as a no-op; the plugin workflow owns cleanup of its activities and external
+/// resources. Attempts are bounded, because this pass holds up the whole session loop.
+pub(super) async fn process_execution_cancels(ctx: &mut WorkflowContext<AgentSessionWorkflow>) {
+    let due = ctx.state_mut(|state| std::mem::take(&mut state.pending_execution_cancels));
     for execution_id in due {
         if let Err(error) = ctx
             .execute_activity(
@@ -288,7 +250,7 @@ pub(super) async fn process_execution_cancels(
                 crate::WorkflowToolExecutionCancelRequest {
                     execution_id: execution_id.clone(),
                 },
-                activity_options(),
+                preparation::activity_options(),
             )
             .await
         {
@@ -300,9 +262,5 @@ pub(super) async fn process_execution_cancels(
                 format!("cancel workflow tool execution {execution_id}: {error}"),
             );
         }
-        ctx.state_mut(|state| {
-            state.cancelled_workflow_executions.insert(execution_id);
-        });
     }
-    Ok(())
 }

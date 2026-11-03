@@ -519,6 +519,7 @@ pub(super) async fn append_events(
         for entry in &entries {
             harness::apply_event(&mut state.core_state, entry)
                 .map_err(|error| anyhow::anyhow!("apply session entry: {error}"))?;
+            state.queue_execution_cancel_for_entry(entry);
         }
         state.queue_emissions_for_entries(&entries)?;
         state.queue_promise_cancellations_for_entries(&entries);

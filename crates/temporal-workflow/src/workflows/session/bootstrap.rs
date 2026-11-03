@@ -56,6 +56,7 @@ pub(super) async fn initialize(
             state.admission_failures = continuation.admission_failures.clone();
             state.ready = continuation.ready;
             state.operation_outcomes = continuation.operation_outcomes.clone();
+            state.pending_execution_cancels = continuation.pending_execution_cancels.clone();
         }
         state.initialized = true;
     });

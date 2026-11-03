@@ -470,6 +470,154 @@ fn transport_work_is_due_until_a_service_pass_so_a_yield_cannot_repeat() {
     assert!(!wait_loop::transport_work_due(&workflow, NOW));
 }
 
+fn promise_entry(event: harness::PromiseEvent) -> CoreAgentEntry {
+    CoreAgentEntry {
+        position: SessionPosition {
+            seq: harness::EventSeq::new(1),
+        },
+        observed_at_ms: 1,
+        joins: Default::default(),
+        event: CoreAgentEvent::Promise(event),
+    }
+}
+
+#[test]
+fn any_terminal_outcome_of_the_last_keyed_promise_queues_one_cancel() {
+    let terminal = |promise_id: &harness::PromiseId| {
+        [
+            harness::PromiseEvent::Resolved {
+                promise_id: promise_id.clone(),
+                payload_ref: None,
+            },
+            harness::PromiseEvent::Failed {
+                promise_id: promise_id.clone(),
+                error_ref: None,
+            },
+            harness::PromiseEvent::Cancelled {
+                promise_id: promise_id.clone(),
+            },
+        ]
+    };
+    let StartIntent {
+        workflow: fixture,
+        promise_id,
+        execution_id,
+        ..
+    } = workflow_with_start_intent();
+
+    for event in terminal(&promise_id) {
+        let mut workflow = AgentSessionWorkflow {
+            universe_id: fixture.universe_id,
+            session_id: fixture.session_id.clone(),
+            core_state: fixture.core_state.clone(),
+            ..Default::default()
+        };
+        // Still pending in state: this entry did not end the set.
+        workflow.queue_execution_cancel_for_entry(&promise_entry(event.clone()));
+        assert!(workflow.pending_execution_cancels.is_empty());
+
+        workflow
+            .core_state
+            .promises
+            .promises
+            .get_mut(&promise_id)
+            .expect("promise")
+            .status = PromiseStatus::Cancelled;
+        workflow.queue_execution_cancel_for_entry(&promise_entry(event.clone()));
+        workflow.queue_execution_cancel_for_entry(&promise_entry(event));
+        assert_eq!(
+            workflow.pending_execution_cancels,
+            BTreeSet::from([execution_id.clone()]),
+            "deduplicated by execution"
+        );
+        assert!(wait_loop::workflow_state_has_immediate_work(&workflow));
+        assert!(wait_loop::transport_work_due(&workflow, 0));
+    }
+}
+
+#[test]
+fn a_promise_with_no_started_invocation_queues_no_cancel() {
+    let mut workflow = AgentSessionWorkflow::default();
+    add_promises(
+        &mut workflow,
+        vec![
+            promise_with_source(
+                "promise_1",
+                PromiseStatus::Resolved,
+                bound_workflow_source("peer"),
+                PromiseScope::Session,
+            ),
+            promise("promise_2", PromiseStatus::Resolved),
+        ],
+    );
+    for id in ["promise_1", "promise_2", "promise_99"] {
+        workflow.queue_execution_cancel_for_entry(&promise_entry(
+            harness::PromiseEvent::Resolved {
+                promise_id: harness::PromiseId::new(id),
+                payload_ref: None,
+            },
+        ));
+    }
+    assert!(workflow.pending_execution_cancels.is_empty());
+}
+
+#[test]
+fn past_invocations_cost_a_continued_execution_nothing_and_queued_cancels_travel() {
+    let StartIntent {
+        mut workflow,
+        promise_id,
+        execution_id,
+        ..
+    } = workflow_with_start_intent();
+    workflow.ready = true;
+    workflow
+        .core_state
+        .promises
+        .promises
+        .get_mut(&promise_id)
+        .expect("promise")
+        .status = PromiseStatus::Resolved;
+
+    // Finished long ago, so a fresh execution has nothing queued and nothing to do.
+    assert!(!wait_loop::workflow_state_has_immediate_work(&workflow));
+    assert!(!wait_loop::transport_work_due(&workflow, 1_000));
+
+    // A queued cancel does not hold a rollover back: it goes along.
+    workflow
+        .pending_execution_cancels
+        .insert(execution_id.clone());
+    assert!(wait_loop::workflow_state_allows_continue_as_new(&workflow));
+    let continuation = AgentSessionContinuationState {
+        version: AgentSessionContinuationState::VERSION,
+        ready: true,
+        operation_outcomes: Default::default(),
+        admission_failures: Vec::new(),
+        pending_execution_cancels: workflow.pending_execution_cancels.clone(),
+    };
+    let restored: AgentSessionContinuationState =
+        serde_json::from_slice(&serde_json::to_vec(&continuation).unwrap()).unwrap();
+    assert_eq!(
+        restored.pending_execution_cancels,
+        BTreeSet::from([execution_id])
+    );
+}
+
+#[test]
+fn a_closing_session_sends_its_queued_cancels_before_it_completes() {
+    let mut workflow = AgentSessionWorkflow {
+        initialized: true,
+        ..Default::default()
+    };
+    workflow.core_state.lifecycle.status = CoreAgentStatus::Closed;
+    assert!(wait_loop::workflow_state_is_closed_and_quiescent(&workflow));
+    workflow
+        .pending_execution_cancels
+        .insert("execution".to_owned());
+    assert!(!wait_loop::workflow_state_is_closed_and_quiescent(
+        &workflow
+    ));
+}
+
 #[test]
 fn a_start_backoff_whose_candidate_is_gone_does_not_block_rollover_for_good() {
     let StartIntent {
@@ -615,6 +763,7 @@ fn continuation_state(
         ready: false,
         operation_outcomes: crate::SessionOperationReceipts::default(),
         admission_failures,
+        pending_execution_cancels: BTreeSet::from(["execution".to_owned()]),
     }
 }
 

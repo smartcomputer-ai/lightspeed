@@ -86,7 +86,7 @@ pub struct AgentSessionWorkflow {
     pending_source_resolutions: Vec<PendingSourceResolution>,
     confirmed_workflow_starts: BTreeSet<String>,
     workflow_start_backoffs: BTreeMap<String, (u32, u64)>,
-    cancelled_workflow_executions: BTreeSet<String>,
+    pending_execution_cancels: BTreeSet<String>,
     pending_promise_cancellations: Vec<PendingPromiseCancellation>,
     promise_source_polls: BTreeMap<String, PromiseSourcePoll>,
     cancelling_watchdog: Option<CancellingWatchdog>,
@@ -118,7 +118,7 @@ impl Default for AgentSessionWorkflow {
             pending_source_resolutions: Vec::new(),
             confirmed_workflow_starts: BTreeSet::new(),
             workflow_start_backoffs: BTreeMap::new(),
-            cancelled_workflow_executions: BTreeSet::new(),
+            pending_execution_cancels: BTreeSet::new(),
             pending_promise_cancellations: Vec::new(),
             promise_source_polls: BTreeMap::new(),
             cancelling_watchdog: None,
@@ -189,9 +189,7 @@ impl AgentSessionWorkflow {
                 promise_sources::flush_pending_promise_cancellations(ctx)
                     .await
                     .map_err(|error| fatal(ctx, error, "promise_cancellation"))?;
-                workflow_starts::process_execution_cancels(ctx)
-                    .await
-                    .map_err(|error| fatal(ctx, error, "workflow_execution_cancel"))?;
+                workflow_starts::process_execution_cancels(ctx).await;
                 awaits::process_satisfied_await(ctx)
                     .await
                     .map_err(|error| fatal(ctx, error, "await_resolution"))?;
@@ -382,6 +380,7 @@ fn continuation_args(
         ready: state.ready,
         operation_outcomes: state.operation_outcomes.clone(),
         admission_failures: state.admission_failures.clone(),
+        pending_execution_cancels: state.pending_execution_cancels.clone(),
     }));
     next
 }

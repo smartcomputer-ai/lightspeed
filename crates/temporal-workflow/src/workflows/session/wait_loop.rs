@@ -46,6 +46,7 @@ pub(super) fn workflow_state_has_immediate_work(state: &AgentSessionWorkflow) ->
         || session_state::has_due_emissions(state, 0)
         || !state.pending_source_resolutions.is_empty()
         || !state.pending_promise_cancellations.is_empty()
+        || !state.pending_execution_cancels.is_empty()
         || awaits::has_satisfied_await(state)
         || promise_sources::has_immediate_work(state)
         || workflow_starts::has_immediate_work(state)
@@ -75,6 +76,7 @@ pub(super) fn transport_work_due(state: &AgentSessionWorkflow, now_ms: u64) -> b
         || !state.pending_promise_cancellations.is_empty()
         || workflow_starts::has_due_start(state, now_ms)
         || promise_sources::has_due_promise_deadline(state, now_ms)
+        || !state.pending_execution_cancels.is_empty()
 }
 
 /// Passes of the outer loop allowed in one activation with nothing awaited.
@@ -176,8 +178,8 @@ pub(super) fn history_rollover_due(
 /// Continue-as-new needs quiescence of in-flight transport plus the two local
 /// clocks whose original deadlines are not log-derived. Parked awaits and
 /// promise-source polls are reconstructed from durable promise/run state.
-/// Confirmed starts and issued execution cancellations may be retried safely
-/// because their workflow execution identities are stable.
+/// Confirmed starts may be retried safely because their workflow execution
+/// identities are stable, and queued execution cancels travel with the continuation.
 pub(super) fn workflow_state_allows_continue_as_new(state: &AgentSessionWorkflow) -> bool {
     state.ready
         && code_tools::is_quiescent(state)
@@ -207,6 +209,7 @@ pub(super) fn workflow_state_is_closed_and_quiescent(state: &AgentSessionWorkflo
         && state.pending_emissions.is_empty()
         && state.pending_source_resolutions.is_empty()
         && state.pending_promise_cancellations.is_empty()
+        && state.pending_execution_cancels.is_empty()
         && state.core_state.runs.active.is_none()
         && state.core_state.runs.queued.is_empty()
 }

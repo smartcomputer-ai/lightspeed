@@ -435,6 +435,7 @@ mod tests {
             ready: false,
             operation_outcomes: receipts,
             admission_failures: Vec::new(),
+            pending_execution_cancels: Default::default(),
         };
         let restored: crate::AgentSessionContinuationState =
             serde_json::from_slice(&serde_json::to_vec(&continuation).unwrap()).unwrap();

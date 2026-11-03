@@ -189,6 +189,47 @@ impl AgentSessionWorkflow {
         }
     }
 
+    /// When this entry ends the last pending keyed promise of a start-on-call
+    /// invocation, queue the cancel of its exact execution. Runs once per entry, right
+    /// after that entry is applied, because a later entry of the same append may prune
+    /// the records read here.
+    pub(super) fn queue_execution_cancel_for_entry(&mut self, entry: &CoreAgentEntry) {
+        let CoreAgentEvent::Promise(
+            harness::PromiseEvent::Resolved { promise_id, .. }
+            | harness::PromiseEvent::Failed { promise_id, .. }
+            | harness::PromiseEvent::Cancelled { promise_id },
+        ) = &entry.event
+        else {
+            return;
+        };
+        let promises = &self.core_state.promises.promises;
+        let Some(harness::PromiseSource::Workflow { invocation_id, .. }) =
+            promises.get(promise_id).map(|promise| &promise.source)
+        else {
+            return;
+        };
+        let Ok(invocation_id) = harness::WorkflowToolInvocationId::try_new(invocation_id.clone())
+        else {
+            return;
+        };
+        let tools = &self.core_state.workflow_tools;
+        let Some(invocation) = tools.start_requests.get(&invocation_id) else {
+            return;
+        };
+        let all_terminal = invocation
+            .completion_promises
+            .iter()
+            .flat_map(|keyed| keyed.values())
+            .all(|id| promises.get(id).is_some_and(|p| p.status.is_terminal()));
+        let start = match tools.bindings.get(&invocation.tool_id).map(|b| &b.target) {
+            Some(harness::WorkflowToolTarget::Start { start }) if all_terminal => start,
+            _ => return,
+        };
+        let execution_id =
+            harness::workflow_tool_execution_id(&invocation_id, &start.recipe_fingerprint);
+        self.pending_execution_cancels.insert(execution_id);
+    }
+
     pub fn status_snapshot(&self) -> AgentSessionStatus {
         AgentSessionStatus {
             session_id: self

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use harness::{
     BlobRef, CommandRejection, ContextEntryInput, CoreAgentCommand, CoreAgentState,
@@ -56,6 +56,10 @@ pub struct AgentSessionContinuationState {
     pub operation_outcomes: crate::SessionOperationReceipts,
     #[serde(default)]
     pub admission_failures: Vec<AgentAdmissionFailure>,
+    /// Started executions whose promises all went terminal and whose cancel has not
+    /// gone out. The log says when a promise ended, not whether this was sent.
+    #[serde(default)]
+    pub pending_execution_cancels: BTreeSet<String>,
 }
 
 impl AgentSessionContinuationState {
