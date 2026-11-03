@@ -674,8 +674,8 @@ down; the attempt reached no database. See Risky calls.
 
 Open:
 
-- For the docs package: `sessions-and-runs.md`, `models-and-credentials.md` and
-  `private-and-shared-work.md` still mention forks. Root `README.md` line 131 lists them as
+- For the docs package: `sessions-and-runs.md`, `models-and-credentials.md`,
+  `private-and-shared-work.md` and `deployment/operations.md` still mention forks. Root `README.md` line 131 lists them as
   shipped and needs the owner's permission to change.
 - `session_events.event_kind` and its index have no reader in the Rust code. Left alone,
   because this package does not change the schema.

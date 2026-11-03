@@ -562,6 +562,10 @@ async fn pg_live_fork_point_is_judged_under_the_source_lock() {
         if waiting {
             break;
         }
+        assert!(
+            !fork.is_finished(),
+            "the fork must wait on the source lock before it judges the fork point"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
