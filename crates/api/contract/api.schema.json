@@ -13788,7 +13788,7 @@
           "$ref": "#/definitions/RunStartSource"
         },
         "submissionId": {
-          "description": "Client-supplied idempotency key, unique per session. Retrying\n`session/runs/start` with the same submission id and the same\nsource/config/terminal notification returns the original run instead\nof starting a second one; reusing a submission id with any of those\ninputs changed is rejected.",
+          "description": "Client-supplied idempotency key, unique per session. Retrying\n`session/runs/start` with the same submission id and the same\nsource/config/terminal notification returns the original run instead\nof starting a second one; reusing a submission id with any of those\ninputs changed is rejected. The session recognizes it against queued and\nactive runs and its most recent 256 terminal runs, so a retry older than\nthat starts a new run.",
           "type": [
             "string",
             "null"

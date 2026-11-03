@@ -9,7 +9,9 @@ pub struct RunStartParams {
     /// `session/runs/start` with the same submission id and the same
     /// source/config/terminal notification returns the original run instead
     /// of starting a second one; reusing a submission id with any of those
-    /// inputs changed is rejected.
+    /// inputs changed is rejected. The session recognizes it against queued and
+    /// active runs and its most recent 256 terminal runs, so a retry older than
+    /// that starts a new run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submission_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
