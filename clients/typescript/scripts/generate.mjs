@@ -2,6 +2,7 @@ import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileFromFile } from "json-schema-to-typescript";
+import { HELPERS } from "./helpers.mjs";
 
 const packageDir = path.dirname(fileURLToPath(import.meta.url));
 const clientDir = path.resolve(packageDir, "..");
@@ -38,6 +39,16 @@ const bannerComment = [
   "",
 ].join("\n");
 
+// The compiler stamps every definition with where it came from in the schema,
+// which says nothing to a reader of the type and fills editor hovers.
+function withoutSchemaProvenance(source) {
+  const provenance =
+    /( \*\n)? \* This interface was referenced by `[^`]+`'s JSON-Schema\n \* via the `definition` "[^"]+"\.\n/g;
+  return source
+    .replace(provenance, "")
+    .replace(/\/\*\*\n \*\/\n/g, "");
+}
+
 const types = await compileFromFile(schemaPath, {
   bannerComment,
   unreachableDefinitions: true,
@@ -51,7 +62,7 @@ const types = await compileFromFile(schemaPath, {
   },
 });
 
-await writeFile(path.join(generatedDir, "types.ts"), types);
+await writeFile(path.join(generatedDir, "types.ts"), withoutSchemaProvenance(types));
 
 const workflowTypes = await compileFromFile(workflowSchemaPath, {
   bannerComment,
@@ -66,7 +77,10 @@ const workflowTypes = await compileFromFile(workflowSchemaPath, {
   },
 });
 
-await writeFile(path.join(generatedDir, "workflow-types.ts"), workflowTypes);
+await writeFile(
+  path.join(generatedDir, "workflow-types.ts"),
+  withoutSchemaProvenance(workflowTypes),
+);
 
 const workflowManifest = JSON.parse(
   await readFile(workflowManifestPath, "utf8"),
@@ -103,8 +117,6 @@ for (const entry of methods) {
   }
 }
 
-const seenAliases = new Map();
-
 function typeNameFromRef(entry, method, side) {
   const ref = entry?.schema?.$ref;
   const prefix = "#/definitions/";
@@ -112,27 +124,6 @@ function typeNameFromRef(entry, method, side) {
     throw new Error(`method ${method} ${side} schema is not a definitions ref`);
   }
   return ref.slice(prefix.length);
-}
-
-function methodAlias(method) {
-  const parts = method.split(/[\/_-]+/).filter(Boolean);
-  if (parts.length === 0) {
-    throw new Error("empty method name");
-  }
-  const alias =
-    parts[0] +
-    parts
-      .slice(1)
-      .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
-      .join("");
-  const prior = seenAliases.get(alias);
-  if (prior && prior !== method) {
-    throw new Error(
-      `method alias collision: ${alias} for ${prior} and ${method}`,
-    );
-  }
-  seenAliases.set(alias, method);
-  return alias;
 }
 
 function q(value) {
@@ -194,22 +185,117 @@ const methodLines = [
   'export type MethodParams<M extends Method> = MethodMap[M]["params"];',
   'export type MethodResult<M extends Method> = MethodMap[M]["result"];',
   "",
-  "export interface RpcCaller {",
-  "  call<M extends Method>(method: M, params: MethodParams<M>): Promise<MethodResult<M>>;",
-  "}",
-  "",
-  "export const rpc = {",
-  ...methods.map((entry) => {
-    const alias = methodAlias(entry.method);
-    const params = typeNameFromRef(entry.params, entry.method, "params");
-    const result = typeNameFromRef(entry.result, entry.method, "result");
-    return `${jsDoc(entry, "  ").join("\n")}\n  ${alias}(client: RpcCaller, params: Api.${params}): Promise<Api.${result}> {\n    return client.call(${q(entry.method)}, params);\n  },`;
-  }),
-  "} as const;",
-  "",
 ];
 
 await writeFile(path.join(generatedDir, "methods.ts"), methodLines.join("\n"));
+
+const definitions = JSON.parse(await readFile(schemaPath, "utf8")).definitions;
+
+function definitionOf(entry, method, side) {
+  const name = typeNameFromRef(entry, method, side);
+  const definition = definitions[name];
+  if (!definition) {
+    throw new Error(`method ${method} ${side} type ${name} is not in the schema`);
+  }
+  return { name, definition };
+}
+
+/** The type of a method's data, inside its `AgentApiOutcome` envelope. */
+function dataType(entry) {
+  const { definition } = definitionOf(entry.result, entry.method, "result");
+  const ref = definition.properties?.result?.$ref;
+  if (typeof ref !== "string") {
+    throw new Error(`method ${entry.method} result has no named data type`);
+  }
+  return `Api.${ref.split("/").pop()}`;
+}
+
+function helperLines(method, helper, targets) {
+  const entry = methods.find((candidate) => candidate.method === method);
+  if (!entry) {
+    throw new Error(`helper ${helper} names ${method}, which the API no longer has`);
+  }
+  const { name: paramsType, definition } = definitionOf(entry.params, method, "params");
+  const properties = Object.keys(definition.properties ?? {});
+  const required = definition.required ?? [];
+  for (const target of targets) {
+    if (!required.includes(target)) {
+      throw new Error(`helper ${helper} takes ${target}, which is not a required ${method} param`);
+    }
+  }
+  for (const reserved of ["signal", "headers"]) {
+    if (properties.includes(reserved)) {
+      throw new Error(`helper ${helper}: ${method} has a param named ${reserved}, which means call options here`);
+    }
+  }
+  const omitted = targets.map(q).join(" | ");
+  const optionsType = targets.length
+    ? `Omit<Api.${paramsType}, ${omitted}> & CallOptions`
+    : `Api.${paramsType} & CallOptions`;
+  const optionsRequired = required.some((name) => !targets.includes(name));
+  const args = [
+    ...targets.map((target) => `${target}: string`),
+    `options: ${optionsType}${optionsRequired ? "" : " = {}"}`,
+  ];
+  return [
+    ...jsDoc(entry, "  "),
+    `  ${helper}(${args.join(", ")}): Promise<${dataType(entry)}> {`,
+    `    return this.invoke(${q(method)}, { ${targets.join(", ")} }, options);`,
+    "  }",
+    "",
+  ];
+}
+
+const helperNames = new Set();
+for (const [method, helper] of HELPERS) {
+  if (helperNames.has(helper)) {
+    throw new Error(`helper ${helper} is listed twice, the second time for ${method}`);
+  }
+  helperNames.add(helper);
+}
+
+await writeFile(
+  path.join(generatedDir, "helpers.ts"),
+  [
+    bannerComment.trimEnd(),
+    'import type { CallOptions } from "../client.js";',
+    'import type { Method, MethodParams, MethodResult } from "./methods.js";',
+    'import type * as Api from "./types.js";',
+    "",
+    "/** Helper name to the API method it calls. See scripts/helpers.mjs for which methods have one. */",
+    "export const CLIENT_HELPERS = {",
+    ...HELPERS.map(([method, helper]) => `  ${helper}: ${q(method)},`),
+    "} as const;",
+    "",
+    "export abstract class LightspeedHelpers {",
+    "  abstract call<M extends Method>(",
+    "    method: M,",
+    "    params: MethodParams<M>,",
+    "    options?: CallOptions,",
+    "  ): Promise<MethodResult<M>>;",
+    "",
+    "  private async invoke<M extends Method>(",
+    "    method: M,",
+    "    target: object,",
+    "    options: CallOptions,",
+    '  ): Promise<MethodResult<M>["result"]> {',
+    "    const { signal, headers, ...params } = options;",
+    "    const call: CallOptions = {};",
+    "    if (signal) {",
+    "      call.signal = signal;",
+    "    }",
+    "    if (headers) {",
+    "      call.headers = headers;",
+    "    }",
+    "    const outcome = await this.call(method, { ...target, ...params } as MethodParams<M>, call);",
+    "    return outcome.result;",
+    "  }",
+    "",
+    ...HELPERS.flatMap(([method, helper, ...targets]) => helperLines(method, helper, targets)).slice(0, -1),
+    "}",
+    "",
+  ].join("\n"),
+);
 
 // Ship the canonical contract schema inside the package (exported as
 // "@lightspeed-ai/sdk/schema/api.schema.json") so downstream tooling

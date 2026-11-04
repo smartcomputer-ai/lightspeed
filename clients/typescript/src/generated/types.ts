@@ -6,17 +6,11 @@
 /**
  * Who sees a root's tree. Sessions start unshared (`restricted`) and are
  * shared with the universe once, one way; everything else is shared.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "Visibility".
  */
 export type Visibility = "universe" | "restricted";
 /**
  * What a key reaches or a request addresses: one universe, or the
  * deployment.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessScope".
  */
 export type AccessScope =
   | {
@@ -26,10 +20,6 @@ export type AccessScope =
       kind: "universe";
       universeId: string;
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolKindView".
- */
 export type ToolKindView =
   | {
       settings: unknown;
@@ -58,25 +48,9 @@ export type ToolKindView =
       serverLabel: string;
       type: "remoteMcp";
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProviderNativeToolExecutionView".
- */
 export type ProviderNativeToolExecutionView = "providerHosted" | "clientEffect";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RemoteMcpApprovalPolicy".
- */
 export type RemoteMcpApprovalPolicy = "never" | "always";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolParallelismView".
- */
 export type ToolParallelismView = "exclusive" | "parallelSafe";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiErrorKind".
- */
 export type AgentApiErrorKind =
   | ("invalidRequest" | "notFound" | "conflict" | "audioBlobTooLarge" | "internal")
   | "rejected"
@@ -91,15 +65,8 @@ export type AgentApiErrorKind =
 /**
  * A universe's model selection for a particular use. Protocol and purpose
  * are separate: several purposes may use the same provider API.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelDefaultSlot".
  */
 export type ModelDefaultSlot = "agentRun" | "speechToText";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentNotification".
- */
 export type AgentNotification =
   | {
       method: "session/started";
@@ -137,9 +104,6 @@ export type AgentNotification =
 /**
  * Who created a resource or authored bytes. An actor is whatever a key
  * allowed to assert one said; core compares it and never resolves it.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "Attribution".
  */
 export type Attribution =
   | {
@@ -158,45 +122,23 @@ export type Attribution =
       component: string;
       kind: "internal";
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextCompactionMode".
- */
 export type ContextCompactionMode = "disabled" | "providerTriggered" | "providerStandalone";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextCompactionStrategy".
- */
 export type ContextCompactionStrategy =
   "disabled" | "providerTriggered" | "modelSummary" | "nativePreferred";
 /**
  * Where `compactThresholdTokens` came from.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextCompactionThresholdSource".
  */
 export type ContextCompactionThresholdSource =
   "disabled" | "override" | "providerDefault" | "inputCapacity" | "contextLengthError";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolItemStatus".
- */
 export type ToolItemStatus =
   "requested" | "running" | "succeeded" | "failed" | "cancelled" | "unavailable";
 /**
  * Coarse activity family of a tool call, chosen by the projection from the
  * tool name. Clients key icons and colours on it; the verb and target carry
  * the specifics. Unknown tools land in `Other`.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolCallDisplayGroup".
  */
 export type ToolCallDisplayGroup =
   "other" | "explore" | "edit" | "execute" | "code" | "mcp" | "agent" | "bot" | "message";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextEntryKindView".
- */
 export type ContextEntryKindView =
   | {
       role: ContextMessageRoleView;
@@ -229,15 +171,7 @@ export type ContextEntryKindView =
       approve: boolean;
       type: "mcpApprovalResponse";
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextMessageRoleView".
- */
 export type ContextMessageRoleView = "user" | "assistant";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextEntrySourceView".
- */
 export type ContextEntrySourceView =
   | {
       type: "contextEdit";
@@ -278,16 +212,9 @@ export type ContextEntrySourceView =
       label: string;
       type: "runtime";
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TokenEstimateQualityView".
- */
 export type TokenEstimateQualityView = "exact" | "providerCounted" | "estimated";
 /**
  * Why a run failed, as the harness classified it.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunFailureKindView".
  */
 export type RunFailureKindView =
   | "contextFailure"
@@ -297,10 +224,6 @@ export type RunFailureKindView =
   | "contentFiltered"
   | "limitExceeded"
   | "internal";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ApprovalSubjectView".
- */
 export type ApprovalSubjectView = {
   argumentsPreview: string;
   argumentsRef: string;
@@ -309,34 +232,19 @@ export type ApprovalSubjectView = {
   serverLabel: string;
   toolName: string;
 };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunSummarySourceView".
- */
 export type RunSummarySourceView = {
   blobRef?: string | null;
   preview?: string | null;
   previewTruncated?: boolean;
   type: "input";
 };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunStatus".
- */
 export type RunStatus =
   "queued" | "running" | "parked" | "cancelling" | "completed" | "failed" | "cancelled";
 /**
  * What a session is doing now. A queued run counts as idle until it starts;
  * a closed session is idle.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionActivity".
  */
 export type SessionActivity = "idle" | "working" | "waiting";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CompactionPolicy".
- */
 export type CompactionPolicy =
   | {
       mode: "disabled";
@@ -355,34 +263,17 @@ export type CompactionPolicy =
  * editing to `read`, `exec` adds processes, `jobs` adds durable jobs.
  * Processes can write files regardless of the file-tool level, so
  * read-only files with commands is deliberately not expressible.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentAccess".
  */
 export type EnvironmentAccess = "read" | "edit" | "exec" | "jobs";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileId".
- */
 export type ProfileId = string;
 /**
  * Per-attachment VFS access; `edit` implies `read`.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WorkspaceAccess".
  */
 export type WorkspaceAccess = "read" | "edit";
 /**
  * Provider processing class used by session defaults and per-run overrides.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelProcessingTier".
  */
 export type ModelProcessingTier = "standard" | "fast" | "flex";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolChoice".
- */
 export type ToolChoice =
   | {
       type: "auto";
@@ -400,18 +291,12 @@ export type ToolChoice =
 /**
  * How an open session's workflow execution stopped. A session that closed
  * normally never reports one.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionExecutionFailureView".
  */
 export type SessionExecutionFailureView = "failed" | "terminated" | "timedOut" | "missing";
 /**
  * Completion contract for one workflow-tool invocation. Joined tools park
  * the original call on one runtime-owned reply; Promises exposes handles for
  * model-controlled concurrency.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WorkflowToolCompletionInput".
  */
 export type WorkflowToolCompletionInput =
   | {
@@ -437,9 +322,6 @@ export type WorkflowToolCompletionInput =
     };
 /**
  * Declarative promise-key derivation over schema-validated tool arguments.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WorkflowToolCompletionKeySourceInput".
  */
 export type WorkflowToolCompletionKeySourceInput =
   | {
@@ -459,10 +341,6 @@ export type WorkflowToolCompletionKeySourceInput =
       prefix: string;
       type: "arrayIndices";
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WorkflowToolKindInput".
- */
 export type WorkflowToolKindInput = {
   descriptionRef?: string | null;
   inputSchemaRef: string;
@@ -475,9 +353,6 @@ export type WorkflowToolKindInput = {
  * Lifecycle target of a workflow-backed tool. Bound tools deliver to an
  * existing execution; start tools create an execution from an immutable,
  * CAS-backed recipe for every invocation.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WorkflowToolTargetInput".
  */
 export type WorkflowToolTargetInput =
   | {
@@ -491,25 +366,10 @@ export type WorkflowToolTargetInput =
     };
 /**
  * How an invocation of a bound workflow tool reaches its receiver.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BoundWorkflowToolDispatchInput".
  */
 export type BoundWorkflowToolDispatchInput = "pull" | "push";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionLifecycleStatus".
- */
 export type SessionLifecycleStatus = "new" | "open" | "closed";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionOriginKind".
- */
 export type SessionOriginKind = "subagent";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionEventKindView".
- */
 export type SessionEventKindView =
   | {
       model?: ModelConfig | null;
@@ -851,72 +711,37 @@ export type SessionEventKindView =
       status?: ToolItemStatus | null;
       type: "codeToolProgress";
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunAcceptedSourceView".
- */
 export type RunAcceptedSourceView = {
   entries: ContextEntryInputView[];
   type: "input";
 };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ApprovalDecisionKind".
- */
 export type ApprovalDecisionKind = "approve" | "reject";
 /**
  * Where a promise's answer comes from.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "PromiseSourceKind".
  */
 export type PromiseSourceKind = "timer" | "workflow";
 /**
  * How a generation ended.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TurnGenerationStatus".
  */
 export type TurnGenerationStatus = ("succeeded" | "failed" | "cancelled") | "rejected";
 /**
  * Why entries left the active context.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextRemovalReason".
  */
 export type ContextRemovalReason = "providerCompacted";
 /**
  * What asked for a compaction.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextCompactionTrigger".
  */
 export type ContextCompactionTrigger = "manual" | "highWatermark" | "contextLimit";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextCompactionStatus".
- */
 export type ContextCompactionStatus = "succeeded" | "failed";
 /**
  * Bounded lifecycle telemetry for a session-owned code tool execution.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CodeToolProgressPhase".
  */
 export type CodeToolProgressPhase =
   "scopeOpened" | "callAdmitted" | "callDeferred" | "callCompleted" | "scopeClosed";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunViewSource".
- */
 export type RunViewSource = {
   items: InputItem[];
   type: "input";
 };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "InputItem".
- */
 export type InputItem =
   | {
       /**
@@ -979,15 +804,7 @@ export type InputItem =
       title: string;
       type: "catalog";
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "MediaKind".
- */
 export type MediaKind = "image" | "audio" | "document";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthProviderKind".
- */
 export type AuthProviderKind =
   | "staticBearer"
   | "mcpOAuth"
@@ -996,32 +813,13 @@ export type AuthProviderKind =
   | "modelApiKey"
   | "modelOAuth"
   | "modelEndpoint";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TokenEndpointAuthMethod".
- */
 export type TokenEndpointAuthMethod = "clientSecretBasic" | "clientSecretPost" | "none";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthFlowStatus".
- */
 export type AuthFlowStatus = "pending" | "completed" | "failed" | "expired";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGrantExposure".
- */
 export type AuthGrantExposure = "brokered" | "retrievable";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGrantStatus".
- */
 export type AuthGrantStatus = "active" | "needsReauth" | "revoked" | "failed";
 /**
  * Non-secret, provider-specific configuration. New providers add a
  * variant, not a table.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthProviderConfigView".
  */
 export type AuthProviderConfigView =
   | {
@@ -1043,22 +841,11 @@ export type AuthProviderConfigView =
       endpoint: ModelEndpointConfig;
       type: "modelEndpoint";
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthProviderStatus".
- */
 export type AuthProviderStatus = "active" | "needsConfiguration" | "disabled";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotId".
- */
 export type BotId = string;
 /**
  * The whole configuration of one trigger, replaced with an expected
  * revision.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotTriggerView".
  */
 export type BotTriggerView = {
   botId: BotId;
@@ -1106,23 +893,12 @@ export type BotTriggerView = {
   triggerId: BotTriggerId;
   updatedAtMs: number;
 } & BotTriggerView1;
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotWhenBusy".
- */
 export type BotWhenBusy = "queue" | "steer" | "append";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotTriggerDisabledReason".
- */
 export type BotTriggerDisabledReason =
   "breaker" | "pollFailed" | "oneShot" | "operator" | "botClosed";
 /**
  * Which session a trigger's events are delivered to; absent means the
  * bot's main session.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotTriggerRoute".
  */
 export type BotTriggerRoute =
   | {
@@ -1135,10 +911,6 @@ export type BotTriggerRoute =
   | {
       policy: "perEvent";
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotTriggerId".
- */
 export type BotTriggerId = string;
 export type BotTriggerView1 =
   | {
@@ -1195,18 +967,11 @@ export type BotTriggerView1 =
        */
       priority?: number;
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WebhookPreset".
- */
 export type WebhookPreset = "github";
 /**
  * How an inbound webhook proves it comes from the sender: possession of
  * the URL token, or additionally an HMAC-SHA256 over the raw body with a
  * secret leased from a retrievable grant.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WebhookVerification".
  */
 export type WebhookVerification =
   | {
@@ -1222,9 +987,6 @@ export type WebhookVerification =
 /**
  * Dedupe discipline of a poll: an id set for unordered feeds, a watermark
  * for ordered ones.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "PollCursorSpec".
  */
 export type PollCursorSpec =
   | {
@@ -1237,9 +999,6 @@ export type PollCursorSpec =
     };
 /**
  * Where a poll trigger reads from.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "PollSource".
  */
 export type PollSource =
   | {
@@ -1270,45 +1029,19 @@ export type PollSource =
        */
       timeoutMs?: number | null;
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "PollHttpMethod".
- */
 export type PollHttpMethod = "GET" | "POST";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChatTurnAccess".
- */
 export type ChatTurnAccess = "anyone" | "listed";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChatGroupActivation".
- */
 export type ChatGroupActivation = "mention" | "always";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChatScope".
- */
 export type ChatScope = "direct" | "group";
 /**
  * Whether a conversation must present a pairing code before it connects.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChatPairing".
  */
 export type ChatPairing = "code" | "open";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventMediaKind".
- */
 export type BotEventMediaKind = "image" | "audio" | "document";
 /**
  * What came of an event: the model's decision (`handled`, `deferred`,
  * `ignored`, `blocked`) or the system's when no decision was possible.
  * `archived` rows were stored for the record and never delivered.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventOutcome".
  */
 export type BotEventOutcome =
   | "handled"
@@ -1320,10 +1053,6 @@ export type BotEventOutcome =
   | "steered"
   | "appended"
   | "archived";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotControllerStatus".
- */
 export type BotControllerStatus =
   | "initializing"
   | "degraded"
@@ -1332,70 +1061,29 @@ export type BotControllerStatus =
   | "budgetExhausted"
   | "closing"
   | "closed";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotSessionKind".
- */
 export type BotSessionKind = "main" | "perKey" | "perEvent";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotSetupStatus".
- */
 export type BotSetupStatus = "initializing" | "degraded" | "ready";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountId".
- */
 export type ChannelAccountId = string;
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelProvider".
- */
 export type ChannelProvider = string;
 /**
  * What the connector should do after admission. Pairing replies are the
  * connector's to send, in the provider's own voice.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelInboundDecision".
  */
 export type ChannelInboundDecision =
   "bound" | "paired" | "pairingRequired" | "pairingPending" | "unbound";
 /**
  * How a chat got its route: claimed by an open trigger's first contact,
  * or paired by code.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelPairedVia".
  */
 export type ChannelPairedVia = "open" | "code";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "InputAdmissionFailureKind".
- */
 export type InputAdmissionFailureKind = "unsupportedMedia" | "blobMissing" | "admissionRejected";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextAppendStatus".
- */
 export type ContextAppendStatus = "applied" | "unchanged" | "failed";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextRemoveStatus".
- */
 export type ContextRemoveStatus = "removed" | "absent" | "failed";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextReplaceStatus".
- */
 export type ContextReplaceStatus = ("replaced" | "failed") | "unchanged" | "absent";
 /**
  * The methods a key may call, by group. Every public method but
  * `initialize` belongs to exactly one group, derived from its name, so a
  * new method never changes what an existing key reaches beyond its group.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "MethodGroup".
  */
 export type MethodGroup =
   | (
@@ -1421,16 +1109,9 @@ export type MethodGroup =
   | "deployment/channels";
 /**
  * Why an environment is closing or closed.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCloseReasonView".
  */
 export type EnvironmentCloseReasonView =
   "requested" | "keyRevoked" | "ephemeralGrace" | "departed" | "offlineTimeout" | "providerEnded";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentSourceView".
- */
 export type EnvironmentSourceView =
   | {
       /**
@@ -1486,42 +1167,27 @@ export type EnvironmentSourceView =
     };
 /**
  * Lifecycle phase of a provider target, as the provider reports it.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentTargetPhaseView".
  */
 export type EnvironmentTargetPhaseView =
   "provisioning" | "active" | "closing" | "closed" | "failed" | "unknown";
 /**
  * Power state of a provisioned environment's target.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentPowerStateView".
  */
 export type EnvironmentPowerStateView = "running" | "paused" | "suspended" | "stopped";
 /**
  * What happens to a registered environment while its daemon is
  * disconnected. Policy of the registration key that admitted it.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentIdentityModeView".
  */
 export type EnvironmentIdentityModeView = "persistent" | "ephemeral";
 /**
  * The lifecycle Lightspeed owns. External and registered environments are
  * only ever `open` or `closed`.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentStateView".
  */
 export type EnvironmentStateView = ("open" | "closed") | "provisioning" | "closing" | "failed";
 /**
  * Display status derived from `state` and the latest observation; never
  * stored. Tools that use a paused, suspended or stopped environment wake
  * it.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentStatusView".
  */
 export type EnvironmentStatusView =
   | ("provisioning" | "ready" | "closing" | "closed" | "failed")
@@ -1530,10 +1196,6 @@ export type EnvironmentStatusView =
   | "stopped"
   | "unknown"
   | "away";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCredentialSourceView".
- */
 export type EnvironmentCredentialSourceView =
   | {
       grantId: string;
@@ -1549,9 +1211,6 @@ export type EnvironmentCredentialSourceView =
     };
 /**
  * How a job's root process ended.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobExitView".
  */
 export type SessionJobExitView =
   | {
@@ -1565,9 +1224,6 @@ export type SessionJobExitView =
     };
 /**
  * Job lifecycle. `queued` and `running` are live; the rest are terminal.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobStatusView".
  */
 export type SessionJobStatusView =
   | "running"
@@ -1580,38 +1236,16 @@ export type SessionJobStatusView =
   | "interrupted";
 /**
  * Why Lightspeed stopped a running job.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobStoppedByView".
  */
 export type SessionJobStoppedByView = "timeout" | "terminate" | "kill";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobOutputStreamView".
- */
 export type SessionJobOutputStreamView = "stdout" | "stderr";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobOutputGapReasonView".
- */
 export type SessionJobOutputGapReasonView = "overflow" | "expired";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyStatusView".
- */
 export type EnvironmentRegistrationKeyStatusView = "active" | "revoked" | "expired";
 /**
  * A freshly minted registration secret. `Debug` output is redacted so the
  * plaintext cannot leak through derived logging; it is shown once.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationSecretView".
  */
 export type EnvironmentRegistrationSecretView = string;
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerAuthPolicy".
- */
 export type McpServerAuthPolicy =
   | {
       type: "none";
@@ -1639,9 +1273,6 @@ export type McpServerAuthPolicy =
 /**
  * Non-secret universe credential selected by this configured MCP server.
  * Token material remains in the auth subsystem and is never returned.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerCredential".
  */
 export type McpServerCredential = {
   grantId: string;
@@ -1653,28 +1284,14 @@ export type McpServerCredential = {
  * With `provider` the model provider does, so the endpoint must be publicly reachable
  * and tools run at least once: a retried generation re-sends the request, so a tool
  * can run again with its side effects, and the transcript shows at most one run.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RemoteMcpExecution".
  */
 export type RemoteMcpExecution = "provider" | "runtime";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RemoteMcpExposure".
- */
 export type RemoteMcpExposure = "inject" | "search";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerStatus".
- */
 export type McpServerStatus = "active" | "needsAuthConfig" | "unverified" | "disabled";
 /**
  * The result of one live MCP `tools/list` exchange. Operational connection
  * failures are data so management clients can render stable remediation;
  * ordinary API admission/not-found/internal failures remain API errors.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerToolsDiscoverResponse".
  */
 export type McpServerToolsDiscoverResponse =
   | {
@@ -1687,10 +1304,6 @@ export type McpServerToolsDiscoverResponse =
       required_scopes?: string[];
       status: "failure";
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpToolDiscoveryFailureCode".
- */
 export type McpToolDiscoveryFailureCode =
   | "credentialAbsent"
   | "grantNeedsReauth"
@@ -1705,25 +1318,9 @@ export type McpToolDiscoveryFailureCode =
   | "unsupportedProtocol"
   | "paginationLimit"
   | "responseTooLarge";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelSource".
- */
 export type ModelSource = "provider";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelProviderCredentialStatus".
- */
 export type ModelProviderCredentialStatus = "configured" | "missing" | "invalid" | "notRequired";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelProviderCredentialSource".
- */
 export type ModelProviderCredentialSource = "none" | "universe" | "deployment";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileInstructions".
- */
 export type ProfileInstructions =
   | {
       text: string;
@@ -1733,10 +1330,6 @@ export type ProfileInstructions =
       blobRef: string;
       type: "textRef";
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ApprovalDecisionFailureKind".
- */
 export type ApprovalDecisionFailureKind =
   | (
       | "invalidId"
@@ -1749,20 +1342,8 @@ export type ApprovalDecisionFailureKind =
       | "rejected"
     )
   | "internal";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ApprovalDecisionStatus".
- */
 export type ApprovalDecisionStatus = ("decided" | "failed") | "pending";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SkillCatalogAvailability".
- */
 export type SkillCatalogAvailability = "available" | "stale" | "unavailable";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SkillCatalogSource".
- */
 export type SkillCatalogSource =
   | {
       type: "vfs";
@@ -1771,22 +1352,10 @@ export type SkillCatalogSource =
       environmentId: string;
       type: "environment";
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TranscriptionFailureKind".
- */
 export type TranscriptionFailureKind =
   "invalidAudio" | "configuration" | "provider" | "timeout" | "internal";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TranscriptionStatus".
- */
 export type TranscriptionStatus =
   "pending" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthProviderConfigInput".
- */
 export type AuthProviderConfigInput =
   | {
       apiBaseUrl?: string | null;
@@ -1810,9 +1379,6 @@ export type AuthProviderConfigInput =
 /**
  * The whole configuration of one trigger, replaced with an expected
  * revision.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotTriggerInput".
  */
 export type BotTriggerInput = {
   coalesce?: BotCoalescePolicy | null;
@@ -1893,25 +1459,9 @@ export type BotTriggerInput1 =
        */
       priority?: number;
     };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelMediaKind".
- */
 export type ChannelMediaKind = "image" | "audio" | "document";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobCancelScopeView".
- */
 export type SessionJobCancelScopeView = "job" | "dependents";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobDependencyPolicyView".
- */
 export type SessionJobDependencyPolicyView = "allSucceeded" | "allTerminal";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "MethodAccess".
- */
 export type MethodAccess =
   | {
       kind: "connection";
@@ -1930,9 +1480,6 @@ export type MethodAccess =
  * What a public method does, independent of its RPC spelling. Requests are
  * gated by their key's groups; this classifies what the runtime's own work
  * may do and which role a gate built on the contract should require.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "UniverseAction".
  */
 export type UniverseAction =
   | (
@@ -1958,15 +1505,8 @@ export type UniverseAction =
  * Where a method names the session it acts on, so a gate can decide per
  * session without a hand-written table. A creation method may name one that
  * does not exist yet.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "MethodTarget".
  */
 export type MethodTarget = "sessionId";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileSource".
- */
 export type ProfileSource =
   | {
       kind: "named";
@@ -1979,23 +1519,12 @@ export type ProfileSource =
 /**
  * Universe roles as gates built on this contract name them. Core holds no
  * roles; this is metadata only.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RecommendedRole".
  */
 export type RecommendedRole = "viewer" | "contributor" | "operator" | "admin";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunStartSource".
- */
 export type RunStartSource = {
   items: InputItem[];
   type: "input";
 };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionEventDirection".
- */
 export type SessionEventDirection = "forward" | "backward";
 
 /**
@@ -2009,34 +1538,19 @@ export interface LightspeedAgentAPI {
  * unshared: visible to its creator until it is shared with the universe. A
  * session created under another root (a bot's session, a delegated child)
  * follows that root and refuses this.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AccessInput".
  */
 export interface AccessInput {
   visibility?: Visibility | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ActiveToolsView".
- */
 export interface ActiveToolsView {
   revision: number;
   tools?: ToolView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolView".
- */
 export interface ToolView {
   kind: ToolKindView;
   parallelism?: ToolParallelismView & string;
   toolId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiError".
- */
 export interface AgentApiError {
   kind: AgentApiErrorKind;
   message: string;
@@ -2050,18 +1564,10 @@ export interface AgentApiError {
    */
   submissionId?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthClientCreateResponse".
- */
 export interface AgentApiOutcomeOfAuthClientCreateResponse {
   notifications?: AgentNotification[];
   result: AuthClientCreateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionView".
- */
 export interface SessionView {
   /**
    * The audience of the session's root: whether it is shared with the
@@ -2135,9 +1641,6 @@ export interface SessionView {
  * The audience of a session's or bot's root as views show it: whether it is
  * shared with the universe, and who created it. A bot's session and a
  * delegated child show their root's.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ResourceAccessSummary".
  */
 export interface ResourceAccessSummary {
   /**
@@ -2146,10 +1649,6 @@ export interface ResourceAccessSummary {
   createdBy?: Attribution | null;
   visibility: Visibility;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextView".
- */
 export interface ContextView {
   compaction?: ContextCompactionView | null;
   entries?: ContextEntryView[];
@@ -2157,9 +1656,6 @@ export interface ContextView {
 }
 /**
  * Resolved automatic policy and the currently pending standalone operation.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextCompactionView".
  */
 export interface ContextCompactionView {
   compactThresholdTokens?: number | null;
@@ -2192,9 +1688,6 @@ export interface ContextCompactionView {
  * `instructions.100.prompts` key prefix) by filtering on `key` and fetching
  * original bytes through `blobs/read`. `text` contains complete message and
  * visible reasoning text; tool and catalog bodies use bounded text previews.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextEntryView".
  */
 export interface ContextEntryView {
   /**
@@ -2251,9 +1744,6 @@ export interface ContextEntryView {
 /**
  * A source the assistant cited, in the same shape for every provider. The
  * exact provider output stays in a separate opaque context entry for replay.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CitationView".
  */
 export interface CitationView {
   citedText?: string | null;
@@ -2263,9 +1753,6 @@ export interface CitationView {
 /**
  * Immutable content and its encoding. A reference can name plain text,
  * provider-native JSON, or media; it does not imply a UTF-8 text payload.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContentRefView".
  */
 export interface ContentRefView {
   blobRef: string;
@@ -2280,10 +1767,6 @@ export interface ContentRefView {
   mime?: string | null;
   providerKind?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProviderContextDisplayView".
- */
 export interface ProviderContextDisplayView {
   arguments?: string | null;
   error?: string | null;
@@ -2293,20 +1776,12 @@ export interface ProviderContextDisplayView {
   summary: ToolCallDisplayView;
   toolName: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolCallDisplayView".
- */
 export interface ToolCallDisplayView {
   detail?: string | null;
   group: ToolCallDisplayGroup;
   target?: string | null;
   verb: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TokenEstimateView".
- */
 export interface TokenEstimateView {
   quality: TokenEstimateQualityView;
   tokens: number;
@@ -2315,9 +1790,6 @@ export interface TokenEstimateView {
  * Bounded run metadata projected from reducer state. Transcript entries and
  * tool payloads are available only from `session/runs/read` or the event
  * stream.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunSummaryView".
  */
 export interface RunSummaryView {
   acceptedAtMs: number;
@@ -2341,19 +1813,12 @@ export interface RunSummaryView {
 /**
  * Why a run failed. `kind` is the harness's classification; `message` is free text
  * for display, and the provider's own message for `requestRejected`.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunFailureView".
  */
 export interface RunFailureView {
   kind: RunFailureKindView;
   message: string;
   messageTruncated?: boolean;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "PendingApprovalView".
- */
 export interface PendingApprovalView {
   approvalId: string;
   requestedAtMs: number;
@@ -2365,9 +1830,6 @@ export interface PendingApprovalView {
  * that a provider reports separately (Anthropic's cache read/write) are
  * folded into `input_tokens` so the field always means "prompt tokens
  * billed on this request, cached or not".
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "LlmUsageView".
  */
 export interface LlmUsageView {
   /**
@@ -2390,9 +1852,6 @@ export interface LlmUsageView {
  * absent feature is not granted (no tools, no access). The document is
  * replaced whole via `session/config/put`; reads return exactly the stored
  * document, so read-modify-write round-trips.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionConfig".
  */
 export interface SessionConfig {
   context?: ContextConfig | null;
@@ -2411,10 +1870,6 @@ export interface SessionConfig {
    */
   model?: ModelConfig | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextConfig".
- */
 export interface ContextConfig {
   /**
    * Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
@@ -2428,9 +1883,6 @@ export interface ContextConfig {
 /**
  * Capability grants. An absent feature is not granted; `{}` grants it with
  * defaults. Every block carries a behavior `version` that pins semantics.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "FeaturesConfig".
  */
 export interface FeaturesConfig {
   codeMode?: CodeModeFeature | null;
@@ -2446,9 +1898,6 @@ export interface FeaturesConfig {
  * are the session's ordinary callable tools, optionally narrowed by allowedTools.
  * TypeScript, ambient filesystem/network access, and recursive code execution
  * are unavailable. An empty allowedTools list grants pure computation only.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CodeModeFeature".
  */
 export interface CodeModeFeature {
   /**
@@ -2507,9 +1956,6 @@ export interface CodeModeFeature {
  * machine's grant does not cover fails at execution, so switching machines
  * never changes the toolset. `{}` grants the feature with no reachable
  * machine.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentsFeature".
  */
 export interface EnvironmentsFeature {
   /**
@@ -2541,9 +1987,6 @@ export interface EnvironmentsFeature {
  * active environment at spawn and is stored on the child as a concrete id.
  * If the parent's environment is also listed explicitly, the explicit
  * attachment wins; if the parent has none, the inherit attachment is dropped.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentAttachment".
  */
 export interface EnvironmentAttachment {
   access: EnvironmentAccess;
@@ -2565,9 +2008,6 @@ export interface EnvironmentAttachment {
 }
 /**
  * Prompt loading scope resolved on the selected machine, never on the worker.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentPromptsConfig".
  */
 export interface EnvironmentPromptsConfig {
   /**
@@ -2582,9 +2022,6 @@ export interface EnvironmentPromptsConfig {
 }
 /**
  * Skill discovery scope resolved on the selected machine, never on the worker.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentSkillsConfig".
  */
 export interface EnvironmentSkillsConfig {
   /**
@@ -2600,9 +2037,6 @@ export interface EnvironmentSkillsConfig {
 /**
  * Grants remote MCP tools by declaring attached servers from the universe MCP
  * catalog. Server ids must be unique; an empty list grants no MCP tools.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpFeature".
  */
 export interface McpFeature {
   servers?: McpServerAttachment[];
@@ -2616,9 +2050,6 @@ export interface McpFeature {
  * profile, a server that is disabled, deleted, or otherwise unusable is left out
  * of later runs and the model is told, so a catalog action never stops the
  * session.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerAttachment".
  */
 export interface McpServerAttachment {
   serverId: string;
@@ -2635,9 +2066,6 @@ export interface McpServerAttachment {
  * profiles. Limits are root-scoped and attenuating: every descendant of a
  * root session counts against the root, and a nested grant can narrow but
  * never widen the limits pinned on its origin.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SubagentsFeature".
  */
 export interface SubagentsFeature {
   /**
@@ -2659,19 +2087,12 @@ export interface SubagentsFeature {
   runTimeoutMs?: number | null;
   version?: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SubagentAgentRef".
- */
 export interface SubagentAgentRef {
   profileId: ProfileId;
 }
 /**
  * Grants timer promises through the sleep tool plus the base concurrency
  * tools (await/cancel/detach).
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TimersFeature".
  */
 export interface TimersFeature {
   version?: number;
@@ -2683,9 +2104,6 @@ export interface TimersFeature {
  * tools, any `edit` attachment adds the write tools, and with the
  * environments feature granted the matching transfer tools appear. `{}`
  * grants a VFS with no attachments, no tools, and no sourcing.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsFeature".
  */
 export interface VfsFeature {
   /**
@@ -2709,10 +2127,6 @@ export interface VfsFeature {
    */
   workspaces?: WorkspaceAttachment[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsPromptsConfig".
- */
 export interface VfsPromptsConfig {
   /**
    * Absent searches .agents/prompts and .lightspeed/prompts beneath each
@@ -2721,10 +2135,6 @@ export interface VfsPromptsConfig {
    */
   roots?: string[] | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsSkillsConfig".
- */
 export interface VfsSkillsConfig {
   /**
    * Absent searches .agents/skills and .lightspeed/skills beneath each
@@ -2739,9 +2149,6 @@ export interface VfsSkillsConfig {
  * One catalog resource mounted into the session namespace. Exactly one of
  * `workspaceId` and `snapshotRef` names the resource; snapshots are
  * immutable and must be attached with `read` access.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WorkspaceAttachment".
  */
 export interface WorkspaceAttachment {
   access: WorkspaceAccess;
@@ -2752,24 +2159,13 @@ export interface WorkspaceAttachment {
 /**
  * Grants network access through the web toolset; `fetch` and `search` are
  * independently granted, and a web block granting neither is rejected.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WebFeature".
  */
 export interface WebFeature {
   fetch?: WebFetchFeature | null;
   search?: WebSearchFeature | null;
   version?: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WebFetchFeature".
- */
 export interface WebFetchFeature {}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WebSearchFeature".
- */
 export interface WebSearchFeature {
   /**
    * Absent means all domains; an explicit list must be non-empty.
@@ -2780,9 +2176,6 @@ export interface WebSearchFeature {
 /**
  * Turn-shaping defaults applied to every LLM generation. Per-run overrides
  * ride `session/runs/start`.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "GenerationConfig".
  */
 export interface GenerationConfig {
   maxOutputTokens?: number | null;
@@ -2806,9 +2199,6 @@ export interface GenerationConfig {
 }
 /**
  * Limits applied to every run of the session unless the run sets its own.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "LimitsConfig".
  */
 export interface LimitsConfig {
   /**
@@ -2816,45 +2206,25 @@ export interface LimitsConfig {
    */
   maxTurns?: number | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelConfig".
- */
 export interface ModelConfig {
   apiKind: string;
   model: string;
   providerId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionIntegrationInput".
- */
 export interface SessionIntegrationInput {
   lifecycleController?: WorkflowEndpointInput | null;
   tools: WorkflowToolDeclarationInput[];
   version: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WorkflowEndpointInput".
- */
 export interface WorkflowEndpointInput {
   workflowId: string;
   workflowKind: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WorkflowToolDeclarationInput".
- */
 export interface WorkflowToolDeclarationInput {
   completion: WorkflowToolCompletionInput;
   definition: WorkflowToolDefinitionInput;
   target: WorkflowToolTargetInput;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WorkflowToolDefinitionInput".
- */
 export interface WorkflowToolDefinitionInput {
   schemaRevision: number;
   semanticType: string;
@@ -2865,10 +2235,6 @@ export interface WorkflowToolDefinitionInput {
    */
   workflowToolId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WorkflowToolSpecInput".
- */
 export interface WorkflowToolSpecInput {
   kind: WorkflowToolKindInput;
   /**
@@ -2881,9 +2247,6 @@ export interface WorkflowToolSpecInput {
  * Opaque reference to a workflow-substrate recipe already stored through
  * the blob API. The fingerprint authenticates the exact recipe bytes used
  * by the workflow-start adapter.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "WorkflowStartRefInput".
  */
 export interface WorkflowStartRefInput {
   recipeFingerprint: string;
@@ -2895,9 +2258,6 @@ export interface WorkflowStartRefInput {
  * Typed provenance of a delegated (sub-agent) session: who created it,
  * under which root, at what depth, and the effective limits it was spawned
  * with. Provenance, never ownership — the child is an ordinary session.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionOriginView".
  */
 export interface SessionOriginView {
   agent: SubagentAgentPin;
@@ -2921,18 +2281,11 @@ export interface SessionOriginView {
 }
 /**
  * The profile a sub-agent was spawned from, pinned at its revision.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SubagentAgentPin".
  */
 export interface SubagentAgentPin {
   profileId: ProfileId;
   revision: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SubagentLimitsView".
- */
 export interface SubagentLimitsView {
   maxConcurrent: number;
   maxDepth: number;
@@ -2944,19 +2297,12 @@ export interface SubagentLimitsView {
 /**
  * Effective tree-owned retention for a session. Delegated children name their
  * owning root and project that root's policy and deadline.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionRetentionView".
  */
 export interface SessionRetentionView {
   deleteAfterCloseMs?: number | null;
   deleteAtMs?: number | null;
   rootSessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionEventView".
- */
 export interface SessionEventView {
   cursor: EventCursor;
   joins: EventJoinsView;
@@ -2964,17 +2310,9 @@ export interface SessionEventView {
   observedAtMs: number;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EventCursor".
- */
 export interface EventCursor {
   seq: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EventJoinsView".
- */
 export interface EventJoinsView {
   runId?: string | null;
   submissionId?: string | null;
@@ -2982,10 +2320,6 @@ export interface EventJoinsView {
   toolCallId?: string | null;
   turnId?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextEntryInputView".
- */
 export interface ContextEntryInputView {
   content: ContentRefView;
   kind: ContextEntryKindView;
@@ -3002,10 +2336,6 @@ export interface ContextEntryInputView {
   provenanceRef?: string | null;
   tokenEstimate?: TokenEstimateView | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolCallEventView".
- */
 export interface ToolCallEventView {
   arguments?: string | null;
   argumentsRef: string;
@@ -3020,9 +2350,6 @@ export interface ToolCallEventView {
 /**
  * A file a completed tool call supplied, linked by name rather than shown to the
  * model. Media a call supplied is in `media` on the call and in context entries.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolAttachmentView".
  */
 export interface ToolAttachmentView {
   /**
@@ -3039,29 +2366,18 @@ export interface ToolAttachmentView {
 }
 /**
  * Descriptive source, independent of the attachment's immutable content identity.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AttachmentSourceView".
  */
 export interface AttachmentSourceView {
   id: string;
   kind: string;
   path: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolEffectView".
- */
 export interface ToolEffectView {
   data?: {
     [k: string]: string;
   };
   kind: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunView".
- */
 export interface RunView {
   /**
    * This run is past the server's detail limit: `entries` and `toolBatches` hold
@@ -3105,20 +2421,12 @@ export interface RunView {
    */
   usage?: LlmUsageView | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolBatchView".
- */
 export interface ToolBatchView {
   calls?: ToolCallView[];
   id: string;
   status: ToolItemStatus;
   turnId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolCallView".
- */
 export interface ToolCallView {
   /**
    * Bounded preview; `argumentsRef` has the full body.
@@ -3182,9 +2490,6 @@ export interface ToolCallView {
 }
 /**
  * One media item a tool call handed the model.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolCallMediaView".
  */
 export interface ToolCallMediaView {
   blobRef: string;
@@ -3197,17 +2502,9 @@ export interface ToolCallMediaView {
   mime: string;
   name?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthClientCreateResponse".
- */
 export interface AuthClientCreateResponse {
   client: OAuthClientView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "OAuthClientView".
- */
 export interface OAuthClientView {
   audience?: string | null;
   authorizationEndpoint: string;
@@ -3226,63 +2523,31 @@ export interface OAuthClientView {
   tokenEndpointAuthMethod: TokenEndpointAuthMethod;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthClientDeleteResponse".
- */
 export interface AgentApiOutcomeOfAuthClientDeleteResponse {
   notifications?: AgentNotification[];
   result: AuthClientDeleteResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthClientDeleteResponse".
- */
 export interface AuthClientDeleteResponse {
   client: OAuthClientView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthClientListResponse".
- */
 export interface AgentApiOutcomeOfAuthClientListResponse {
   notifications?: AgentNotification[];
   result: AuthClientListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthClientListResponse".
- */
 export interface AuthClientListResponse {
   clients?: OAuthClientView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthClientReadResponse".
- */
 export interface AgentApiOutcomeOfAuthClientReadResponse {
   notifications?: AgentNotification[];
   result: AuthClientReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthClientReadResponse".
- */
 export interface AuthClientReadResponse {
   client: OAuthClientView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthFlowStartResponse".
- */
 export interface AgentApiOutcomeOfAuthFlowStartResponse {
   notifications?: AgentNotification[];
   result: AuthFlowStartResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthFlowStartResponse".
- */
 export interface AuthFlowStartResponse {
   /**
    * Authorization URL the user must open. It embeds the one-time `state`;
@@ -3292,25 +2557,13 @@ export interface AuthFlowStartResponse {
   expiresAtMs: number;
   flowId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthFlowStatusResponse".
- */
 export interface AgentApiOutcomeOfAuthFlowStatusResponse {
   notifications?: AgentNotification[];
   result: AuthFlowStatusResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthFlowStatusResponse".
- */
 export interface AuthFlowStatusResponse {
   flow: AuthFlowView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthFlowView".
- */
 export interface AuthFlowView {
   clientId: string;
   createdAtMs: number;
@@ -3322,25 +2575,13 @@ export interface AuthFlowView {
   status: AuthFlowStatus;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthGitHubInstallationGrantResponse".
- */
 export interface AgentApiOutcomeOfAuthGitHubInstallationGrantResponse {
   notifications?: AgentNotification[];
   result: AuthGitHubInstallationGrantResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGitHubInstallationGrantResponse".
- */
 export interface AuthGitHubInstallationGrantResponse {
   grant: AuthGrantView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGrantView".
- */
 export interface AuthGrantView {
   audience?: string | null;
   createdAtMs: number;
@@ -3370,25 +2611,13 @@ export interface AuthGrantView {
   subjectHint?: string | null;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthGitHubInstallationListResponse".
- */
 export interface AgentApiOutcomeOfAuthGitHubInstallationListResponse {
   notifications?: AgentNotification[];
   result: AuthGitHubInstallationListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGitHubInstallationListResponse".
- */
 export interface AuthGitHubInstallationListResponse {
   installations?: GitHubInstallationView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "GitHubInstallationView".
- */
 export interface GitHubInstallationView {
   accountLogin?: string | null;
   installationId: number;
@@ -3400,103 +2629,51 @@ export interface GitHubInstallationView {
   };
   repositorySelection?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthGrantImportResponse".
- */
 export interface AgentApiOutcomeOfAuthGrantImportResponse {
   notifications?: AgentNotification[];
   result: AuthGrantImportResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGrantImportResponse".
- */
 export interface AuthGrantImportResponse {
   grant: AuthGrantView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthGrantLeaseResponse".
- */
 export interface AgentApiOutcomeOfAuthGrantLeaseResponse {
   notifications?: AgentNotification[];
   result: AuthGrantLeaseResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGrantLeaseResponse".
- */
 export interface AuthGrantLeaseResponse {
   expiresAtMs?: number | null;
   grantId: string;
   providerKind: AuthProviderKind;
   token: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthGrantListResponse".
- */
 export interface AgentApiOutcomeOfAuthGrantListResponse {
   notifications?: AgentNotification[];
   result: AuthGrantListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGrantListResponse".
- */
 export interface AuthGrantListResponse {
   grants?: AuthGrantView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthGrantReadResponse".
- */
 export interface AgentApiOutcomeOfAuthGrantReadResponse {
   notifications?: AgentNotification[];
   result: AuthGrantReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGrantReadResponse".
- */
 export interface AuthGrantReadResponse {
   grant: AuthGrantView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthGrantRevokeResponse".
- */
 export interface AgentApiOutcomeOfAuthGrantRevokeResponse {
   notifications?: AgentNotification[];
   result: AuthGrantRevokeResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGrantRevokeResponse".
- */
 export interface AuthGrantRevokeResponse {
   grant: AuthGrantView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthProviderCreateResponse".
- */
 export interface AgentApiOutcomeOfAuthProviderCreateResponse {
   notifications?: AgentNotification[];
   result: AuthProviderCreateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthProviderCreateResponse".
- */
 export interface AuthProviderCreateResponse {
   provider: AuthProviderView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthProviderView".
- */
 export interface AuthProviderView {
   config: AuthProviderConfigView;
   createdAtMs: number;
@@ -3507,10 +2684,6 @@ export interface AuthProviderView {
   status: AuthProviderStatus;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelEndpointConfig".
- */
 export interface ModelEndpointConfig {
   apiKinds: string[];
   baseUrl: string;
@@ -3518,126 +2691,62 @@ export interface ModelEndpointConfig {
     [k: string]: string;
   };
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthProviderDeleteResponse".
- */
 export interface AgentApiOutcomeOfAuthProviderDeleteResponse {
   notifications?: AgentNotification[];
   result: AuthProviderDeleteResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthProviderDeleteResponse".
- */
 export interface AuthProviderDeleteResponse {
   provider: AuthProviderView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthProviderListResponse".
- */
 export interface AgentApiOutcomeOfAuthProviderListResponse {
   notifications?: AgentNotification[];
   result: AuthProviderListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthProviderListResponse".
- */
 export interface AuthProviderListResponse {
   providers?: AuthProviderView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfAuthProviderReadResponse".
- */
 export interface AgentApiOutcomeOfAuthProviderReadResponse {
   notifications?: AgentNotification[];
   result: AuthProviderReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthProviderReadResponse".
- */
 export interface AuthProviderReadResponse {
   provider: AuthProviderView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBlobHasResponse".
- */
 export interface AgentApiOutcomeOfBlobHasResponse {
   notifications?: AgentNotification[];
   result: BlobHasResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobHasResponse".
- */
 export interface BlobHasResponse {
   blobs?: BlobHasItem[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobHasItem".
- */
 export interface BlobHasItem {
   blobRef: string;
   exists: boolean;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBlobPutResponse".
- */
 export interface AgentApiOutcomeOfBlobPutResponse {
   notifications?: AgentNotification[];
   result: BlobPutResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobPutResponse".
- */
 export interface BlobPutResponse {
   blobs?: BlobPutResult[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobPutResult".
- */
 export interface BlobPutResult {
   blobRef: string;
   bytes: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBlobReadResponse".
- */
 export interface AgentApiOutcomeOfBlobReadResponse {
   notifications?: AgentNotification[];
   result: BlobReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobReadResponse".
- */
 export interface BlobReadResponse {
   blobRef: string;
   bytes: number;
   bytesBase64: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotCloseResponse".
- */
 export interface AgentApiOutcomeOfBotCloseResponse {
   notifications?: AgentNotification[];
   result: BotCloseResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotCloseResponse".
- */
 export interface BotCloseResponse {
   bot: BotView;
 }
@@ -3645,9 +2754,6 @@ export interface BotCloseResponse {
  * The mutable configuration of a bot, replaced whole with an expected
  * revision. The bot id, event counter, and lifecycle columns live on the
  * record, not here.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotView".
  */
 export interface BotView {
   botId: BotId;
@@ -3712,35 +2818,21 @@ export interface BotView {
 /**
  * Per-trigger flood breaker: a trigger that admits more than `fires`
  * events inside `window_ms` is disabled until a human re-enables it.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotBreaker".
  */
 export interface BotBreaker {
   fires: number;
   windowMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotCreateResponse".
- */
 export interface AgentApiOutcomeOfBotCreateResponse {
   notifications?: AgentNotification[];
   result: BotCreateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotCreateResponse".
- */
 export interface BotCreateResponse {
   bot: BotView;
   triggers?: BotTriggerView[];
 }
 /**
  * Coalescing window: events sharing a route flush as one delivery.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotCoalescePolicy".
  */
 export interface BotCoalescePolicy {
   debounceMs: number;
@@ -3750,9 +2842,6 @@ export interface BotCoalescePolicy {
 /**
  * Poll cursor state: Lightspeed-owned, operator-visible, reset by a spec
  * edit. Absent until the baseline poll.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "PollCursorState".
  */
 export interface PollCursorState {
   baselinedAtMs?: number | null;
@@ -3761,19 +2850,12 @@ export interface PollCursorState {
   lastPolledAtMs?: number | null;
   watermark?: unknown;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotDeliverPolicy".
- */
 export interface BotDeliverPolicy {
   whenBusy?: BotWhenBusy & string;
 }
 /**
  * Leased credential for an HTTP poll source; the value never appears in
  * the trigger document.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "PollHttpAuth".
  */
 export interface PollHttpAuth {
   audience?: string | null;
@@ -3791,9 +2873,6 @@ export interface PollHttpAuth {
  * Who may take a turn and who may issue control commands, by provider
  * handle (Telegram user id, WhatsApp JID). Handle allowlists on the
  * trigger replace any platform membership lookup.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChatAccess".
  */
 export interface ChatAccess {
   /**
@@ -3809,27 +2888,16 @@ export interface ChatAccess {
 }
 /**
  * When the bot acts in a conversation.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChatActivation".
  */
 export interface ChatActivation {
   group?: ChatGroupActivation | null;
   mentionNames?: string[];
   triggerPrefixes?: string[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotDeleteResponse".
- */
 export interface AgentApiOutcomeOfBotDeleteResponse {
   notifications?: AgentNotification[];
   result: BotDeleteResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotDeleteResponse".
- */
 export interface BotDeleteResponse {
   bot: BotView;
   /**
@@ -3837,18 +2905,10 @@ export interface BotDeleteResponse {
    */
   deletedSessions?: string[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotEventAdmitResponse".
- */
 export interface AgentApiOutcomeOfBotEventAdmitResponse {
   notifications?: AgentNotification[];
   result: BotEventAdmitResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventAdmitResponse".
- */
 export interface BotEventAdmitResponse {
   /**
    * The event id was already stored; the existing row is returned and
@@ -3861,9 +2921,6 @@ export interface BotEventAdmitResponse {
  * One row of the bot's event log. Grouped like the `bot_events` table:
  * identity, what arrived, the delivery plan, federation, and the
  * write-once outcome. The receiver route is private and never shown.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventView".
  */
 export interface BotEventView {
   /**
@@ -3930,9 +2987,6 @@ export interface BotEventView {
 /**
  * Public correlation of a receipt: the asked event's `#N` at the answering
  * bot.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventReplyRef".
  */
 export interface BotEventReplyRef {
   bot: BotId;
@@ -3941,9 +2995,6 @@ export interface BotEventReplyRef {
 /**
  * A prepared attachment appended to the run input after the rendering;
  * bytes live in the CAS.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventMedia".
  */
 export interface BotEventMedia {
   blobRef: string;
@@ -3957,26 +3008,15 @@ export interface BotEventMedia {
 }
 /**
  * The routed session an event was admitted to.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotRoutedSessionView".
  */
 export interface BotRoutedSessionView {
   label: string;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotEventListResponse".
- */
 export interface AgentApiOutcomeOfBotEventListResponse {
   notifications?: AgentNotification[];
   result: BotEventListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventListResponse".
- */
 export interface BotEventListResponse {
   /**
    * Newest first.
@@ -3984,18 +3024,10 @@ export interface BotEventListResponse {
   events?: BotEventView[];
   nextCursor?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotEventReadResponse".
- */
 export interface AgentApiOutcomeOfBotEventReadResponse {
   notifications?: AgentNotification[];
   result: BotEventReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventReadResponse".
- */
 export interface BotEventReadResponse {
   document: BotEventDocument;
   event: BotEventView;
@@ -4003,9 +3035,6 @@ export interface BotEventReadResponse {
 /**
  * The envelope document stored in the CAS and shown to the session as
  * untrusted input.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventDocument".
  */
 export interface BotEventDocument {
   correlationId?: string | null;
@@ -4025,78 +3054,44 @@ export interface BotEventDocument {
 }
 /**
  * Sender of a bot-originated event, as the receiver sees it.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventSender".
  */
 export interface BotEventSender {
   bot: BotId;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotEventReplayResponse".
- */
 export interface AgentApiOutcomeOfBotEventReplayResponse {
   notifications?: AgentNotification[];
   result: BotEventReplayResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventReplayResponse".
- */
 export interface BotEventReplayResponse {
   /**
    * The fresh replay event, routed like the original.
    */
   event: BotEventView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotFilterTestResponse".
- */
 export interface AgentApiOutcomeOfBotFilterTestResponse {
   notifications?: AgentNotification[];
   result: BotFilterTestResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotFilterTestResponse".
- */
 export interface BotFilterTestResponse {
   errors: number;
   matched: number;
   results?: BotFilterTestResult[];
   sampled: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotFilterTestResult".
- */
 export interface BotFilterTestResult {
   error?: string | null;
   matched: boolean;
   seq?: number | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotListResponse".
- */
 export interface AgentApiOutcomeOfBotListResponse {
   notifications?: AgentNotification[];
   result: BotListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotListResponse".
- */
 export interface BotListResponse {
   bots?: BotListItem[];
 }
 /**
  * Roster row: the bot plus what the console needs at a glance.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotListItem".
  */
 export interface BotListItem {
   access: ResourceAccessSummary;
@@ -4170,33 +3165,17 @@ export interface BotListItem {
   triggerCount: number;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotPutResponse".
- */
 export interface AgentApiOutcomeOfBotPutResponse {
   notifications?: AgentNotification[];
   result: BotPutResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotPutResponse".
- */
 export interface BotPutResponse {
   bot: BotView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotReadResponse".
- */
 export interface AgentApiOutcomeOfBotReadResponse {
   notifications?: AgentNotification[];
   result: BotReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotReadResponse".
- */
 export interface BotReadResponse {
   /**
    * The bot's audience, always the universe, and who created it.
@@ -4204,40 +3183,20 @@ export interface BotReadResponse {
   access: ResourceAccessSummary;
   bot: BotView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotSessionRotateResponse".
- */
 export interface AgentApiOutcomeOfBotSessionRotateResponse {
   notifications?: AgentNotification[];
   result: BotSessionRotateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotSessionRotateResponse".
- */
 export interface BotSessionRotateResponse {
   accepted: boolean;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotStateReadResponse".
- */
 export interface AgentApiOutcomeOfBotStateReadResponse {
   notifications?: AgentNotification[];
   result: BotStateReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotStateReadResponse".
- */
 export interface BotStateReadResponse {
   state: BotStateView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotStateView".
- */
 export interface BotStateView {
   /**
    * Absent when the controller workflow is not running (a bot that never
@@ -4253,9 +3212,6 @@ export interface BotStateView {
 }
 /**
  * The controller's live snapshot (its `bot_state` query).
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotControllerSnapshot".
  */
 export interface BotControllerSnapshot {
   activeDeliveries?: BotActiveDeliverySnapshot[];
@@ -4279,10 +3235,6 @@ export interface BotControllerSnapshot {
   sessions?: BotSessionSnapshot[];
   setupStatus: BotSetupStatus;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotActiveDeliverySnapshot".
- */
 export interface BotActiveDeliverySnapshot {
   deliveryId: string;
   runId?: string | null;
@@ -4290,10 +3242,6 @@ export interface BotActiveDeliverySnapshot {
   sessionId: string;
   startedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotBufferSnapshot".
- */
 export interface BotBufferSnapshot {
   firstAtMs: number;
   flushAtMs: number;
@@ -4301,10 +3249,6 @@ export interface BotBufferSnapshot {
   lastAtMs: number;
   seqs: number[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotRecentDeliverySnapshot".
- */
 export interface BotRecentDeliverySnapshot {
   deliveryId: string;
   finishedAtMs: number;
@@ -4315,10 +3259,6 @@ export interface BotRecentDeliverySnapshot {
   summary?: string | null;
   usage?: LlmUsageView | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotSessionSnapshot".
- */
 export interface BotSessionSnapshot {
   /**
    * A delivery lane or sidecar is running on it.
@@ -4330,10 +3270,6 @@ export interface BotSessionSnapshot {
   lastActiveAtMs?: number | null;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionSummaryView".
- */
 export interface SessionSummaryView {
   /**
    * The audience of the session's root: whether it is shared with the
@@ -4367,78 +3303,38 @@ export interface SessionSummaryView {
   retention: SessionRetentionView;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotTriggerDeleteResponse".
- */
 export interface AgentApiOutcomeOfBotTriggerDeleteResponse {
   notifications?: AgentNotification[];
   result: BotTriggerDeleteResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotTriggerDeleteResponse".
- */
 export interface BotTriggerDeleteResponse {
   trigger: BotTriggerView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotTriggerListResponse".
- */
 export interface AgentApiOutcomeOfBotTriggerListResponse {
   notifications?: AgentNotification[];
   result: BotTriggerListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotTriggerListResponse".
- */
 export interface BotTriggerListResponse {
   triggers?: BotTriggerView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotTriggerPutResponse".
- */
 export interface AgentApiOutcomeOfBotTriggerPutResponse {
   notifications?: AgentNotification[];
   result: BotTriggerPutResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotTriggerPutResponse".
- */
 export interface BotTriggerPutResponse {
   trigger: BotTriggerView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfBotTriggerReadResponse".
- */
 export interface AgentApiOutcomeOfBotTriggerReadResponse {
   notifications?: AgentNotification[];
   result: BotTriggerReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotTriggerReadResponse".
- */
 export interface BotTriggerReadResponse {
   trigger: BotTriggerView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfChannelAccountCreateResponse".
- */
 export interface AgentApiOutcomeOfChannelAccountCreateResponse {
   notifications?: AgentNotification[];
   result: ChannelAccountCreateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountCreateResponse".
- */
 export interface ChannelAccountCreateResponse {
   account: ChannelAccountView;
 }
@@ -4446,9 +3342,6 @@ export interface ChannelAccountCreateResponse {
  * A provider account served by the connector host. Secret material stays
  * in the referenced grant; this document is routing identity and
  * operational configuration.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountView".
  */
 export interface ChannelAccountView {
   accountId: ChannelAccountId;
@@ -4472,10 +3365,6 @@ export interface ChannelAccountView {
   settings?: ChannelAccountSettings;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountSettings".
- */
 export interface ChannelAccountSettings {
   /**
    * WhatsApp: print the pairing QR code on the connector's terminal.
@@ -4483,78 +3372,38 @@ export interface ChannelAccountSettings {
   printQr?: boolean | null;
   [k: string]: unknown;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfChannelAccountDeleteResponse".
- */
 export interface AgentApiOutcomeOfChannelAccountDeleteResponse {
   notifications?: AgentNotification[];
   result: ChannelAccountDeleteResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountDeleteResponse".
- */
 export interface ChannelAccountDeleteResponse {
   account: ChannelAccountView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfChannelAccountListResponse".
- */
 export interface AgentApiOutcomeOfChannelAccountListResponse {
   notifications?: AgentNotification[];
   result: ChannelAccountListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountListResponse".
- */
 export interface ChannelAccountListResponse {
   accounts?: ChannelAccountView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfChannelAccountPutResponse".
- */
 export interface AgentApiOutcomeOfChannelAccountPutResponse {
   notifications?: AgentNotification[];
   result: ChannelAccountPutResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountPutResponse".
- */
 export interface ChannelAccountPutResponse {
   account: ChannelAccountView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfChannelAccountReadResponse".
- */
 export interface AgentApiOutcomeOfChannelAccountReadResponse {
   notifications?: AgentNotification[];
   result: ChannelAccountReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountReadResponse".
- */
 export interface ChannelAccountReadResponse {
   account: ChannelAccountView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfChannelConversationReadResponse".
- */
 export interface AgentApiOutcomeOfChannelConversationReadResponse {
   notifications?: AgentNotification[];
   result: ChannelConversationReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelConversationReadResponse".
- */
 export interface ChannelConversationReadResponse {
   /**
    * Absent when no conversation workflow exists for the chat yet.
@@ -4563,9 +3412,6 @@ export interface ChannelConversationReadResponse {
 }
 /**
  * The conversation workflow's live snapshot, for debugging.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelConversationSnapshot".
  */
 export interface ChannelConversationSnapshot {
   activeDeliveries: number;
@@ -4582,18 +3428,10 @@ export interface ChannelConversationSnapshot {
   triggerId: string;
   typing: boolean;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfChannelInboundAdmitResponse".
- */
 export interface AgentApiOutcomeOfChannelInboundAdmitResponse {
   notifications?: AgentNotification[];
   result: ChannelInboundAdmitResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelInboundAdmitResponse".
- */
 export interface ChannelInboundAdmitResponse {
   /**
    * The bot serving the conversation, when decided.
@@ -4602,27 +3440,16 @@ export interface ChannelInboundAdmitResponse {
   decision: ChannelInboundDecision;
   triggerId?: BotTriggerId | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfChannelPairingDeleteResponse".
- */
 export interface AgentApiOutcomeOfChannelPairingDeleteResponse {
   notifications?: AgentNotification[];
   result: ChannelPairingDeleteResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelPairingDeleteResponse".
- */
 export interface ChannelPairingDeleteResponse {
   pairing: ChannelPairingView;
 }
 /**
  * A conversation's route: the chat is identified by `(accountId, chatId)`
  * and owned by the paired trigger.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelPairingView".
  */
 export interface ChannelPairingView {
   accountId: ChannelAccountId;
@@ -4632,76 +3459,41 @@ export interface ChannelPairingView {
   pairedVia: ChannelPairedVia;
   triggerId: BotTriggerId;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfChannelPairingListResponse".
- */
 export interface AgentApiOutcomeOfChannelPairingListResponse {
   notifications?: AgentNotification[];
   result: ChannelPairingListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelPairingListResponse".
- */
 export interface ChannelPairingListResponse {
   pairings?: ChannelPairingView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfContextAppendResponse".
- */
 export interface AgentApiOutcomeOfContextAppendResponse {
   notifications?: AgentNotification[];
   result: ContextAppendResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextAppendResponse".
- */
 export interface ContextAppendResponse {
   contextRevision: number;
   results: ContextAppendResult[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextAppendResult".
- */
 export interface ContextAppendResult {
   entry?: ContextEntryInputView | null;
   failure?: InputAdmissionFailureView | null;
   key: string;
   status: ContextAppendStatus;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "InputAdmissionFailureView".
- */
 export interface InputAdmissionFailureView {
   kind: InputAdmissionFailureKind;
   message: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfContextCompactResponse".
- */
 export interface AgentApiOutcomeOfContextCompactResponse {
   notifications?: AgentNotification[];
   result: ContextCompactResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextCompactResponse".
- */
 export interface ContextCompactResponse {
   session: SessionMutationView;
 }
 /**
  * Compact acknowledgement returned by session mutations. Call
  * `session/read` when the complete current-state summary is needed.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionMutationView".
  */
 export interface SessionMutationView {
   activity: SessionActivity;
@@ -4711,60 +3503,32 @@ export interface SessionMutationView {
   id: string;
   lifecycleStatus: SessionLifecycleStatus;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfContextRemoveResponse".
- */
 export interface AgentApiOutcomeOfContextRemoveResponse {
   notifications?: AgentNotification[];
   result: ContextRemoveResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextRemoveResponse".
- */
 export interface ContextRemoveResponse {
   contextRevision: number;
   results: ContextRemoveResult[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextRemoveResult".
- */
 export interface ContextRemoveResult {
   failure?: InputAdmissionFailureView | null;
   key: string;
   status: ContextRemoveStatus;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfContextReplaceResponse".
- */
 export interface AgentApiOutcomeOfContextReplaceResponse {
   notifications?: AgentNotification[];
   result: ContextReplaceResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextReplaceResponse".
- */
 export interface ContextReplaceResponse {
   contextRevision: number;
   results: ContextReplaceResult[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextReplaceResult".
- */
 export interface ContextReplaceResult {
   entryId: string;
   failure?: InputAdmissionFailureView | null;
   status: ContextReplaceStatus;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentApiKeyCreateResponse".
- */
 export interface AgentApiOutcomeOfDeploymentApiKeyCreateResponse {
   notifications?: AgentNotification[];
   result: DeploymentApiKeyCreateResponse;
@@ -4774,9 +3538,6 @@ export interface AgentApiOutcomeOfDeploymentApiKeyCreateResponse {
  * recovered later. Its custom `Debug` implementation redacts the DTO before
  * JSON-RPC serialization; the serialized response payload remains sensitive
  * and must not be logged.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentApiKeyCreateResponse".
  */
 export interface DeploymentApiKeyCreateResponse {
   apiKey: DeploymentApiKeyView;
@@ -4785,9 +3546,6 @@ export interface DeploymentApiKeyCreateResponse {
 /**
  * Non-secret key metadata: what the key reaches and may call, and who
  * minted it.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentApiKeyView".
  */
 export interface DeploymentApiKeyView {
   assertActor: boolean;
@@ -4800,57 +3558,30 @@ export interface DeploymentApiKeyView {
   revokedAtMs?: number | null;
   scope: AccessScope;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentApiKeyListResponse".
- */
 export interface AgentApiOutcomeOfDeploymentApiKeyListResponse {
   notifications?: AgentNotification[];
   result: DeploymentApiKeyListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentApiKeyListResponse".
- */
 export interface DeploymentApiKeyListResponse {
   apiKeys?: DeploymentApiKeyView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentApiKeyRevokeResponse".
- */
 export interface AgentApiOutcomeOfDeploymentApiKeyRevokeResponse {
   notifications?: AgentNotification[];
   result: DeploymentApiKeyRevokeResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentApiKeyRevokeResponse".
- */
 export interface DeploymentApiKeyRevokeResponse {
   apiKey: DeploymentApiKeyView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentChannelAccountListResponse".
- */
 export interface AgentApiOutcomeOfDeploymentChannelAccountListResponse {
   notifications?: AgentNotification[];
   result: DeploymentChannelAccountListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentChannelAccountListResponse".
- */
 export interface DeploymentChannelAccountListResponse {
   accounts?: DeploymentChannelAccountView[];
 }
 /**
  * One channel account of any universe, for the connector host's discovery
  * pass.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentChannelAccountView".
  */
 export interface DeploymentChannelAccountView {
   accountId: ChannelAccountId;
@@ -4875,50 +3606,26 @@ export interface DeploymentChannelAccountView {
   universeId: string;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentDeletedSessionsListResponse".
- */
 export interface AgentApiOutcomeOfDeploymentDeletedSessionsListResponse {
   notifications?: AgentNotification[];
   result: DeploymentDeletedSessionsListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentDeletedSessionsListResponse".
- */
 export interface DeploymentDeletedSessionsListResponse {
   nextAfter?: string | null;
   sessions: DeletedSessionView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeletedSessionView".
- */
 export interface DeletedSessionView {
   deletedAtMs: number;
   displayName?: string | null;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse".
- */
 export interface AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse {
   notifications?: AgentNotification[];
   result: DeploymentEnvironmentProviderDeleteResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentEnvironmentProviderDeleteResponse".
- */
 export interface DeploymentEnvironmentProviderDeleteResponse {
   provider: DeploymentEnvironmentProviderView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentEnvironmentProviderView".
- */
 export interface DeploymentEnvironmentProviderView {
   /**
    * `ws://`, `wss://` or `unix://` URL of the provider controller.
@@ -4945,72 +3652,37 @@ export interface DeploymentEnvironmentProviderView {
   providerId: string;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse".
- */
 export interface AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse {
   notifications?: AgentNotification[];
   result: DeploymentEnvironmentProviderListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentEnvironmentProviderListResponse".
- */
 export interface DeploymentEnvironmentProviderListResponse {
   providers: DeploymentEnvironmentProviderView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse".
- */
 export interface AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse {
   notifications?: AgentNotification[];
   result: DeploymentEnvironmentProviderPutResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentEnvironmentProviderPutResponse".
- */
 export interface DeploymentEnvironmentProviderPutResponse {
   provider: DeploymentEnvironmentProviderView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse".
- */
 export interface AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse {
   notifications?: AgentNotification[];
   result: DeploymentEnvironmentProviderReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentEnvironmentProviderReadResponse".
- */
 export interface DeploymentEnvironmentProviderReadResponse {
   provider: DeploymentEnvironmentProviderView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse".
- */
 export interface AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse {
   notifications?: AgentNotification[];
   result: DeploymentProviderBindingDeleteResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentProviderBindingDeleteResponse".
- */
 export interface DeploymentProviderBindingDeleteResponse {
   binding: EnvironmentProviderBindingView;
 }
 /**
  * A universe's binding to a deployment provider. Creates, templates and
  * data routes of the provider need it enabled.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentProviderBindingView".
  */
 export interface EnvironmentProviderBindingView {
   createdAtMs: number;
@@ -5018,33 +3690,17 @@ export interface EnvironmentProviderBindingView {
   providerId: string;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentProviderBindingPutResponse".
- */
 export interface AgentApiOutcomeOfDeploymentProviderBindingPutResponse {
   notifications?: AgentNotification[];
   result: DeploymentProviderBindingPutResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentProviderBindingPutResponse".
- */
 export interface DeploymentProviderBindingPutResponse {
   binding: EnvironmentProviderBindingView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentSessionPurgeResponse".
- */
 export interface AgentApiOutcomeOfDeploymentSessionPurgeResponse {
   notifications?: AgentNotification[];
   result: DeploymentSessionPurgeResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentSessionPurgeResponse".
- */
 export interface DeploymentSessionPurgeResponse {
   /**
    * Includes soft-deleted delegated descendants.
@@ -5052,18 +3708,10 @@ export interface DeploymentSessionPurgeResponse {
    */
   deletedSessionIds: string[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentUniverseCreateResponse".
- */
 export interface AgentApiOutcomeOfDeploymentUniverseCreateResponse {
   notifications?: AgentNotification[];
   result: DeploymentUniverseCreateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentUniverseCreateResponse".
- */
 export interface DeploymentUniverseCreateResponse {
   /**
    * False when the universe already existed (create is idempotent).
@@ -5074,9 +3722,6 @@ export interface DeploymentUniverseCreateResponse {
 /**
  * Per-universe stats view. Counts are cheap aggregates computed at read
  * time, not maintained counters — approximate under concurrent writes.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentUniverseView".
  */
 export interface DeploymentUniverseView {
   blobBytes: number;
@@ -5092,10 +3737,6 @@ export interface DeploymentUniverseView {
   universeId: string;
   workspaces: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentUniverseDeleteResponse".
- */
 export interface AgentApiOutcomeOfDeploymentUniverseDeleteResponse {
   notifications?: AgentNotification[];
   result: DeploymentUniverseDeleteResponse;
@@ -5104,9 +3745,6 @@ export interface AgentApiOutcomeOfDeploymentUniverseDeleteResponse {
  * Purge report. The purge is idempotent: rerunning after a partial failure
  * resumes where it stopped, and the universe row is deleted last so a
  * half-purged universe is still visible to `deployment/universes/read`.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentUniverseDeleteResponse".
  */
 export interface DeploymentUniverseDeleteResponse {
   /**
@@ -5119,55 +3757,27 @@ export interface DeploymentUniverseDeleteResponse {
    */
   workflowsTerminated: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentUniverseListResponse".
- */
 export interface AgentApiOutcomeOfDeploymentUniverseListResponse {
   notifications?: AgentNotification[];
   result: DeploymentUniverseListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentUniverseListResponse".
- */
 export interface DeploymentUniverseListResponse {
   universes?: DeploymentUniverseView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfDeploymentUniverseReadResponse".
- */
 export interface AgentApiOutcomeOfDeploymentUniverseReadResponse {
   notifications?: AgentNotification[];
   result: DeploymentUniverseReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentUniverseReadResponse".
- */
 export interface DeploymentUniverseReadResponse {
   universe: DeploymentUniverseView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentCloseResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentCloseResponse {
   notifications?: AgentNotification[];
   result: EnvironmentCloseResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCloseResponse".
- */
 export interface EnvironmentCloseResponse {
   environment: EnvironmentView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentView".
- */
 export interface EnvironmentView {
   /**
    * Present exactly while `state` is `closing` or `closed`.
@@ -5208,9 +3818,6 @@ export interface EnvironmentView {
 /**
  * The envd build serving an environment, from its registration or
  * Lightspeed's open handshake.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentDaemonView".
  */
 export interface EnvironmentDaemonView {
   gitSha?: string | null;
@@ -5223,9 +3830,6 @@ export interface EnvironmentDaemonView {
  * groups hold it at zero) and must be non-decreasing in the order pause,
  * suspend, stop, close. Stages whose power state the template does not
  * support are skipped.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentIdlePolicyView".
  */
 export interface EnvironmentIdlePolicyView {
   closeAfterMs?: number | null;
@@ -5237,9 +3841,6 @@ export interface EnvironmentIdlePolicyView {
  * What the provider last reported about a provisioned environment's
  * target. Display only: Lightspeed never converges it, and it may be up to
  * a few minutes old.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentObservedTargetView".
  */
 export interface EnvironmentObservedTargetView {
   message?: string | null;
@@ -5250,40 +3851,20 @@ export interface EnvironmentObservedTargetView {
    */
   power?: EnvironmentPowerStateView | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentCreateResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentCreateResponse {
   notifications?: AgentNotification[];
   result: EnvironmentCreateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCreateResponse".
- */
 export interface EnvironmentCreateResponse {
   environment: EnvironmentView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentCredentialBindResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentCredentialBindResponse {
   notifications?: AgentNotification[];
   result: EnvironmentCredentialBindResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCredentialBindResponse".
- */
 export interface EnvironmentCredentialBindResponse {
   credential: EnvironmentCredentialView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCredentialView".
- */
 export interface EnvironmentCredentialView {
   createdAtMs: number;
   envName: string;
@@ -5291,94 +3872,46 @@ export interface EnvironmentCredentialView {
   source: EnvironmentCredentialSourceView;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentCredentialListResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentCredentialListResponse {
   notifications?: AgentNotification[];
   result: EnvironmentCredentialListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCredentialListResponse".
- */
 export interface EnvironmentCredentialListResponse {
   credentials?: EnvironmentCredentialView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentCredentialUnbindResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentCredentialUnbindResponse {
   notifications?: AgentNotification[];
   result: EnvironmentCredentialUnbindResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCredentialUnbindResponse".
- */
 export interface EnvironmentCredentialUnbindResponse {
   credential: EnvironmentCredentialView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentExternalCreateResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentExternalCreateResponse {
   notifications?: AgentNotification[];
   result: EnvironmentExternalCreateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentExternalCreateResponse".
- */
 export interface EnvironmentExternalCreateResponse {
   environment: EnvironmentView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentIngressPutResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentIngressPutResponse {
   notifications?: AgentNotification[];
   result: EnvironmentIngressPutResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentIngressPutResponse".
- */
 export interface EnvironmentIngressPutResponse {
   environment: EnvironmentView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentJobCancelResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentJobCancelResponse {
   notifications?: AgentNotification[];
   result: EnvironmentJobCancelResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentJobCancelResponse".
- */
 export interface EnvironmentJobCancelResponse {
   jobs?: SessionJobCancelEntryView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobCancelEntryView".
- */
 export interface SessionJobCancelEntryView {
   error?: string | null;
   handle?: SessionJobHandleView | null;
   summary?: SessionJobSummaryView | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobHandleView".
- */
 export interface SessionJobHandleView {
   environmentId: string;
   jobId: string;
@@ -5386,9 +3919,6 @@ export interface SessionJobHandleView {
 /**
  * What a job is and how it ended. Instants are the environment's wall
  * clock.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobSummaryView".
  */
 export interface SessionJobSummaryView {
   /**
@@ -5428,27 +3958,15 @@ export interface SessionJobSummaryView {
    */
   stoppedBy?: SessionJobStoppedByView | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentJobCreateResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentJobCreateResponse {
   notifications?: AgentNotification[];
   result: EnvironmentJobCreateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentJobCreateResponse".
- */
 export interface EnvironmentJobCreateResponse {
   environmentId: string;
   jobGroupId: string;
   jobs?: SessionJobStartedView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobStartedView".
- */
 export interface SessionJobStartedView {
   dependencies?: string[];
   handle: SessionJobHandleView;
@@ -5458,18 +3976,10 @@ export interface SessionJobStartedView {
   queueKey?: string | null;
   status: SessionJobStatusView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentJobReadResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentJobReadResponse {
   notifications?: AgentNotification[];
   result: EnvironmentJobReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentJobReadResponse".
- */
 export interface EnvironmentJobReadResponse {
   jobs?: SessionJobReadEntryView[];
 }
@@ -5477,9 +3987,6 @@ export interface EnvironmentJobReadResponse {
  * One job's summary and output page, or why it could not be read: an
  * entry with `error` and no summary names a job the environment does not
  * know (never created, or garbage-collected).
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobReadEntryView".
  */
 export interface SessionJobReadEntryView {
   error?: string | null;
@@ -5503,10 +4010,6 @@ export interface SessionJobReadEntryView {
   outputNext: number;
   summary?: SessionJobSummaryView | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobOutputChunkView".
- */
 export interface SessionJobOutputChunkView {
   dataBase64: string;
   /**
@@ -5518,27 +4021,16 @@ export interface SessionJobOutputChunkView {
 /**
  * Output bytes in `[offset, offset + omittedBytes)` that cannot be
  * returned.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobOutputGapView".
  */
 export interface SessionJobOutputGapView {
   offset: number;
   omittedBytes: number;
   reason: SessionJobOutputGapReasonView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentListResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentListResponse {
   notifications?: AgentNotification[];
   result: EnvironmentListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentListResponse".
- */
 export interface EnvironmentListResponse {
   /**
    * Environments in environment id order.
@@ -5549,78 +4041,38 @@ export interface EnvironmentListResponse {
    */
   nextAfter?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentPowerPutResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentPowerPutResponse {
   notifications?: AgentNotification[];
   result: EnvironmentPowerPutResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentPowerPutResponse".
- */
 export interface EnvironmentPowerPutResponse {
   environment: EnvironmentView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentProviderBindingListResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentProviderBindingListResponse {
   notifications?: AgentNotification[];
   result: EnvironmentProviderBindingListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentProviderBindingListResponse".
- */
 export interface EnvironmentProviderBindingListResponse {
   bindings: EnvironmentProviderBindingView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentProviderBindingReadResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentProviderBindingReadResponse {
   notifications?: AgentNotification[];
   result: EnvironmentProviderBindingReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentProviderBindingReadResponse".
- */
 export interface EnvironmentProviderBindingReadResponse {
   binding: EnvironmentProviderBindingView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentReadResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentReadResponse {
   notifications?: AgentNotification[];
   result: EnvironmentReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentReadResponse".
- */
 export interface EnvironmentReadResponse {
   environment: EnvironmentView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse {
   notifications?: AgentNotification[];
   result: EnvironmentRegistrationKeyCreateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyCreateResponse".
- */
 export interface EnvironmentRegistrationKeyCreateResponse {
   registrationKey: EnvironmentRegistrationKeyView;
   /**
@@ -5628,10 +4080,6 @@ export interface EnvironmentRegistrationKeyCreateResponse {
    */
   secret: EnvironmentRegistrationSecretView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyView".
- */
 export interface EnvironmentRegistrationKeyView {
   /**
    * Non-closed environments admitted by this key.
@@ -5668,48 +4116,24 @@ export interface EnvironmentRegistrationKeyView {
   status: EnvironmentRegistrationKeyStatusView;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentRegistrationKeyListResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentRegistrationKeyListResponse {
   notifications?: AgentNotification[];
   result: EnvironmentRegistrationKeyListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyListResponse".
- */
 export interface EnvironmentRegistrationKeyListResponse {
   registrationKeys?: EnvironmentRegistrationKeyView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentRegistrationKeyReadResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentRegistrationKeyReadResponse {
   notifications?: AgentNotification[];
   result: EnvironmentRegistrationKeyReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyReadResponse".
- */
 export interface EnvironmentRegistrationKeyReadResponse {
   registrationKey: EnvironmentRegistrationKeyView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentRegistrationKeyRevokeResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentRegistrationKeyRevokeResponse {
   notifications?: AgentNotification[];
   result: EnvironmentRegistrationKeyRevokeResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyRevokeResponse".
- */
 export interface EnvironmentRegistrationKeyRevokeResponse {
   /**
    * Environments closed by this call.
@@ -5717,18 +4141,10 @@ export interface EnvironmentRegistrationKeyRevokeResponse {
   closedEnvironmentIds?: string[];
   registrationKey: EnvironmentRegistrationKeyView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentRegistrationKeyRotateResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentRegistrationKeyRotateResponse {
   notifications?: AgentNotification[];
   result: EnvironmentRegistrationKeyRotateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyRotateResponse".
- */
 export interface EnvironmentRegistrationKeyRotateResponse {
   registrationKey: EnvironmentRegistrationKeyView;
   /**
@@ -5736,40 +4152,20 @@ export interface EnvironmentRegistrationKeyRotateResponse {
    */
   secret: EnvironmentRegistrationSecretView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentRegistrationKeyUpdateResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentRegistrationKeyUpdateResponse {
   notifications?: AgentNotification[];
   result: EnvironmentRegistrationKeyUpdateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyUpdateResponse".
- */
 export interface EnvironmentRegistrationKeyUpdateResponse {
   registrationKey: EnvironmentRegistrationKeyView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentTemplateListResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentTemplateListResponse {
   notifications?: AgentNotification[];
   result: EnvironmentTemplateListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentTemplateListResponse".
- */
 export interface EnvironmentTemplateListResponse {
   templates: EnvironmentTemplateView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentTemplateView".
- */
 export interface EnvironmentTemplateView {
   deprecated: boolean;
   description?: string | null;
@@ -5802,57 +4198,30 @@ export interface EnvironmentTemplateView {
 /**
  * A template's compute, in provider-neutral units. Each field is absent
  * when the provider does not fix it.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentTemplateResourcesView".
  */
 export interface EnvironmentTemplateResourcesView {
   diskBytes?: number | null;
   memoryBytes?: number | null;
   vcpus?: number | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentTemplateReadResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentTemplateReadResponse {
   notifications?: AgentNotification[];
   result: EnvironmentTemplateReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentTemplateReadResponse".
- */
 export interface EnvironmentTemplateReadResponse {
   template: EnvironmentTemplateView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfEnvironmentUpdateResponse".
- */
 export interface AgentApiOutcomeOfEnvironmentUpdateResponse {
   notifications?: AgentNotification[];
   result: EnvironmentUpdateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentUpdateResponse".
- */
 export interface EnvironmentUpdateResponse {
   environment: EnvironmentView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfInitializeResponse".
- */
 export interface AgentApiOutcomeOfInitializeResponse {
   notifications?: AgentNotification[];
   result: InitializeResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "InitializeResponse".
- */
 export interface InitializeResponse {
   caller: CallerAccess;
   capabilities: ServerCapabilities;
@@ -5862,9 +4231,6 @@ export interface InitializeResponse {
 /**
  * What the calling credential may do, so a client can offer only the
  * methods it may call. Descriptive: core still checks every call.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "CallerAccess".
  */
 export interface CallerAccess {
   /**
@@ -5886,20 +4252,12 @@ export interface CallerAccess {
    */
   single: boolean;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ServerCapabilities".
- */
 export interface ServerCapabilities {
   eventLog?: boolean;
   historyRead: boolean;
   localExecution: boolean;
   notifications: boolean;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ServerInfo".
- */
 export interface ServerInfo {
   /**
    * The environment daemon build this release ships. Descriptive: the
@@ -5922,9 +4280,6 @@ export interface ServerInfo {
  * The environment daemon (`lightspeed-envd`) that belongs to a server
  * release. Download locations and checksums are not here: the deployment
  * publishes them in its discovery document, outside the authenticated API.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentDaemonInfo".
  */
 export interface EnvironmentDaemonInfo {
   gitSha: string;
@@ -5940,25 +4295,13 @@ export interface EnvironmentDaemonInfo {
   targets: string[];
   version: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfMcpServerAuthDiscoverResponse".
- */
 export interface AgentApiOutcomeOfMcpServerAuthDiscoverResponse {
   notifications?: AgentNotification[];
   result: McpServerAuthDiscoverResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerAuthDiscoverResponse".
- */
 export interface McpServerAuthDiscoverResponse {
   oauth?: McpOAuthDiscoveryView | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpOAuthDiscoveryView".
- */
 export interface McpOAuthDiscoveryView {
   authorizationServers?: string[];
   resource: string;
@@ -5968,25 +4311,13 @@ export interface McpOAuthDiscoveryView {
    */
   scopesSupported?: string[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfMcpServerDeleteResponse".
- */
 export interface AgentApiOutcomeOfMcpServerDeleteResponse {
   notifications?: AgentNotification[];
   result: McpServerDeleteResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerDeleteResponse".
- */
 export interface McpServerDeleteResponse {
   server: McpServerView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerView".
- */
 export interface McpServerView {
   allowPrivateNetwork: boolean;
   allowedTools?: string[] | null;
@@ -6006,63 +4337,31 @@ export interface McpServerView {
   status: McpServerStatus;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfMcpServerListResponse".
- */
 export interface AgentApiOutcomeOfMcpServerListResponse {
   notifications?: AgentNotification[];
   result: McpServerListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerListResponse".
- */
 export interface McpServerListResponse {
   servers?: McpServerView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfMcpServerPutResponse".
- */
 export interface AgentApiOutcomeOfMcpServerPutResponse {
   notifications?: AgentNotification[];
   result: McpServerPutResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerPutResponse".
- */
 export interface McpServerPutResponse {
   server: McpServerView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfMcpServerReadResponse".
- */
 export interface AgentApiOutcomeOfMcpServerReadResponse {
   notifications?: AgentNotification[];
   result: McpServerReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerReadResponse".
- */
 export interface McpServerReadResponse {
   server: McpServerView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfMcpServerToolsDiscoverResponse".
- */
 export interface AgentApiOutcomeOfMcpServerToolsDiscoverResponse {
   notifications?: AgentNotification[];
   result: McpServerToolsDiscoverResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpAdvertisedToolView".
- */
 export interface McpAdvertisedToolView {
   annotations?: McpToolAnnotationsView | null;
   description?: string | null;
@@ -6072,9 +4371,6 @@ export interface McpAdvertisedToolView {
 /**
  * Narrow projection of standard MCP `ToolAnnotations`. All values are
  * untrusted hints and never authorization facts.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpToolAnnotationsView".
  */
 export interface McpToolAnnotationsView {
   destructiveHint?: boolean | null;
@@ -6082,54 +4378,32 @@ export interface McpToolAnnotationsView {
   openWorldHint?: boolean | null;
   readOnlyHint?: boolean | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfModelDefaultsResponse".
- */
 export interface AgentApiOutcomeOfModelDefaultsResponse {
   notifications?: AgentNotification[];
   result: ModelDefaultsResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelDefaultsResponse".
- */
 export interface ModelDefaultsResponse {
   defaults: ModelDefaults;
 }
 /**
  * Persisted universe defaults. Revision zero means no update has been made.
  * Clearing a slot still advances the revision, so setup cannot undo a clear.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelDefaults".
  */
 export interface ModelDefaults {
   agentRun?: ModelConfig | null;
   revision: number;
   speechToText?: ModelConfig | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfModelListResponse".
- */
 export interface AgentApiOutcomeOfModelListResponse {
   notifications?: AgentNotification[];
   result: ModelListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelListResponse".
- */
 export interface ModelListResponse {
   models?: ModelView[];
   providers?: ModelProviderDiscoveryView[];
 }
 /**
  * A model route returned directly by a provider API.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelView".
  */
 export interface ModelView {
   /**
@@ -6151,10 +4425,6 @@ export interface ModelView {
    */
   source: ModelSource;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelCapabilitiesView".
- */
 export interface ModelCapabilitiesView {
   maxInputTokens?: number | null;
   maxOutputTokens?: number | null;
@@ -6172,9 +4442,6 @@ export interface ModelCapabilitiesView {
 /**
  * Best-effort status for one provider. A provider failure does not discard
  * models discovered from other providers.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelProviderDiscoveryView".
  */
 export interface ModelProviderDiscoveryView {
   apiKinds: string[];
@@ -6195,50 +4462,26 @@ export interface ModelProviderDiscoveryView {
   fetchedAtMs?: number | null;
   providerId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfProfileApplyResponse".
- */
 export interface AgentApiOutcomeOfProfileApplyResponse {
   notifications?: AgentNotification[];
   result: ProfileApplyResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileApplyResponse".
- */
 export interface ProfileApplyResponse {
   applied?: ProfileApplySummary;
   session: SessionView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileApplySummary".
- */
 export interface ProfileApplySummary {
   activeEnvironmentChanged: boolean;
   configChanged: boolean;
   instructionsChanged: boolean;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfProfileCreateResponse".
- */
 export interface AgentApiOutcomeOfProfileCreateResponse {
   notifications?: AgentNotification[];
   result: ProfileCreateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileCreateResponse".
- */
 export interface ProfileCreateResponse {
   profile: AgentProfile;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentProfile".
- */
 export interface AgentProfile {
   config?: SessionConfig | null;
   createdAtMs: number;
@@ -6265,9 +4508,6 @@ export interface AgentProfile {
 }
 /**
  * Root-session retention policy supplied by a profile at session creation.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileSessionRetention".
  */
 export interface ProfileSessionRetention {
   /**
@@ -6275,40 +4515,20 @@ export interface ProfileSessionRetention {
    */
   deleteAfterCloseMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfProfileDeleteResponse".
- */
 export interface AgentApiOutcomeOfProfileDeleteResponse {
   notifications?: AgentNotification[];
   result: ProfileDeleteResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileDeleteResponse".
- */
 export interface ProfileDeleteResponse {
   profile: AgentProfile;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfProfileListResponse".
- */
 export interface AgentApiOutcomeOfProfileListResponse {
   notifications?: AgentNotification[];
   result: ProfileListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileListResponse".
- */
 export interface ProfileListResponse {
   profiles?: AgentProfileSummary[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentProfileSummary".
- */
 export interface AgentProfileSummary {
   description?: string | null;
   displayName?: string | null;
@@ -6316,105 +4536,53 @@ export interface AgentProfileSummary {
   revision: number;
   updatedAtMs: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfProfilePutResponse".
- */
 export interface AgentApiOutcomeOfProfilePutResponse {
   notifications?: AgentNotification[];
   result: ProfilePutResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfilePutResponse".
- */
 export interface ProfilePutResponse {
   profile: AgentProfile;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfProfileReadResponse".
- */
 export interface AgentApiOutcomeOfProfileReadResponse {
   notifications?: AgentNotification[];
   result: ProfileReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileReadResponse".
- */
 export interface ProfileReadResponse {
   profile: AgentProfile;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfRunApprovalsDecideResponse".
- */
 export interface AgentApiOutcomeOfRunApprovalsDecideResponse {
   notifications?: AgentNotification[];
   result: RunApprovalsDecideResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunApprovalsDecideResponse".
- */
 export interface RunApprovalsDecideResponse {
   results: ApprovalDecisionResult[];
   run: RunSummaryView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ApprovalDecisionResult".
- */
 export interface ApprovalDecisionResult {
   approvalId: string;
   failure?: ApprovalDecisionFailure | null;
   status: ApprovalDecisionStatus;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ApprovalDecisionFailure".
- */
 export interface ApprovalDecisionFailure {
   kind: ApprovalDecisionFailureKind;
   message: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfRunCancelResponse".
- */
 export interface AgentApiOutcomeOfRunCancelResponse {
   notifications?: AgentNotification[];
   result: RunCancelResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunCancelResponse".
- */
 export interface RunCancelResponse {
   run: RunSummaryView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfRunListResponse".
- */
 export interface AgentApiOutcomeOfRunListResponse {
   notifications?: AgentNotification[];
   result: RunListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunListResponse".
- */
 export interface RunListResponse {
   hasOlderRuns: boolean;
   nextCursor?: string | null;
   runs?: RunSummaryView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfRunReadResponse".
- */
 export interface AgentApiOutcomeOfRunReadResponse {
   notifications?: AgentNotification[];
   result: RunReadResponse;
@@ -6425,40 +4593,21 @@ export interface AgentApiOutcomeOfRunReadResponse {
  * in `earlierEventsOmitted`; `session/events/read` has the rest. Inline message and
  * reasoning text is complete. Tool and catalog previews are bounded; their full bodies
  * remain available through `blobs/read`.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunReadResponse".
  */
 export interface RunReadResponse {
   run: RunView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfRunStartResponse".
- */
 export interface AgentApiOutcomeOfRunStartResponse {
   notifications?: AgentNotification[];
   result: RunStartResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunStartResponse".
- */
 export interface RunStartResponse {
   run: RunSummaryView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfRunSteerResponse".
- */
 export interface AgentApiOutcomeOfRunSteerResponse {
   notifications?: AgentNotification[];
   result: RunSteerResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunSteerResponse".
- */
 export interface RunSteerResponse {
   run: RunSummaryView;
   /**
@@ -6466,94 +4615,46 @@ export interface RunSteerResponse {
    */
   steeringId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionCloseResponse".
- */
 export interface AgentApiOutcomeOfSessionCloseResponse {
   notifications?: AgentNotification[];
   result: SessionCloseResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionCloseResponse".
- */
 export interface SessionCloseResponse {
   session: SessionMutationView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionConfigPutResponse".
- */
 export interface AgentApiOutcomeOfSessionConfigPutResponse {
   notifications?: AgentNotification[];
   result: SessionConfigPutResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionConfigPutResponse".
- */
 export interface SessionConfigPutResponse {
   session: SessionMutationView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionDeleteResponse".
- */
 export interface AgentApiOutcomeOfSessionDeleteResponse {
   notifications?: AgentNotification[];
   result: SessionDeleteResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionDeleteResponse".
- */
 export interface SessionDeleteResponse {
   deletedSessionCount: number;
   session: SessionSummaryView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionEnvironmentActivateResponse".
- */
 export interface AgentApiOutcomeOfSessionEnvironmentActivateResponse {
   notifications?: AgentNotification[];
   result: SessionEnvironmentActivateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionEnvironmentActivateResponse".
- */
 export interface SessionEnvironmentActivateResponse {
   session: SessionView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionEnvironmentDeactivateResponse".
- */
 export interface AgentApiOutcomeOfSessionEnvironmentDeactivateResponse {
   notifications?: AgentNotification[];
   result: SessionEnvironmentDeactivateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionEnvironmentDeactivateResponse".
- */
 export interface SessionEnvironmentDeactivateResponse {
   session: SessionView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionEventsReadResponse".
- */
 export interface AgentApiOutcomeOfSessionEventsReadResponse {
   notifications?: AgentNotification[];
   result: SessionEventsReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionEventsReadResponse".
- */
 export interface SessionEventsReadResponse {
   /**
    * No more events in the requested direction at the time of this read.
@@ -6578,18 +4679,10 @@ export interface SessionEventsReadResponse {
    */
   nextCursor?: EventCursor | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionListResponse".
- */
 export interface AgentApiOutcomeOfSessionListResponse {
   notifications?: AgentNotification[];
   result: SessionListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionListResponse".
- */
 export interface SessionListResponse {
   /**
    * Present when more sessions exist past this page. Ordering is most
@@ -6598,33 +4691,17 @@ export interface SessionListResponse {
   nextCursor?: string | null;
   sessions?: SessionSummaryView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionMetadataPutResponse".
- */
 export interface AgentApiOutcomeOfSessionMetadataPutResponse {
   notifications?: AgentNotification[];
   result: SessionMetadataPutResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionMetadataPutResponse".
- */
 export interface SessionMetadataPutResponse {
   session: SessionSummaryView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionReadResponse".
- */
 export interface AgentApiOutcomeOfSessionReadResponse {
   notifications?: AgentNotification[];
   result: SessionReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionReadResponse".
- */
 export interface SessionReadResponse {
   hasOlderRuns: boolean;
   /**
@@ -6633,33 +4710,17 @@ export interface SessionReadResponse {
   nextRunCursor?: string | null;
   session: SessionView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionRenameResponse".
- */
 export interface AgentApiOutcomeOfSessionRenameResponse {
   notifications?: AgentNotification[];
   result: SessionRenameResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionRenameResponse".
- */
 export interface SessionRenameResponse {
   session: SessionSummaryView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionRestartResponse".
- */
 export interface AgentApiOutcomeOfSessionRestartResponse {
   notifications?: AgentNotification[];
   result: SessionRestartResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionRestartResponse".
- */
 export interface SessionRestartResponse {
   /**
    * A new execution started. False when one was already running.
@@ -6667,71 +4728,36 @@ export interface SessionRestartResponse {
   restarted: boolean;
   session: SessionMutationView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionRetentionPutResponse".
- */
 export interface AgentApiOutcomeOfSessionRetentionPutResponse {
   notifications?: AgentNotification[];
   result: SessionRetentionPutResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionRetentionPutResponse".
- */
 export interface SessionRetentionPutResponse {
   session: SessionSummaryView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionShareResponse".
- */
 export interface AgentApiOutcomeOfSessionShareResponse {
   notifications?: AgentNotification[];
   result: SessionShareResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionShareResponse".
- */
 export interface SessionShareResponse {
   access: ResourceAccessSummary;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSessionStartResponse".
- */
 export interface AgentApiOutcomeOfSessionStartResponse {
   notifications?: AgentNotification[];
   result: SessionStartResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionStartResponse".
- */
 export interface SessionStartResponse {
   session: SessionMutationView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfSkillListResponse".
- */
 export interface AgentApiOutcomeOfSkillListResponse {
   notifications?: AgentNotification[];
   result: SkillListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SkillListResponse".
- */
 export interface SkillListResponse {
   catalogs: SkillCatalogView[];
 }
 /**
  * An independent catalog instance; sources are never merged or used as fallbacks.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SkillCatalogView".
  */
 export interface SkillCatalogView {
   availability: SkillCatalogAvailability;
@@ -6740,10 +4766,6 @@ export interface SkillCatalogView {
   source: SkillCatalogSource;
   warnings: string[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SkillListItem".
- */
 export interface SkillListItem {
   description: string;
   enabled: boolean;
@@ -6757,33 +4779,18 @@ export interface SkillListItem {
 }
 /**
  * Readable paths within the owning catalog's filesystem domain.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SkillLocationView".
  */
 export interface SkillLocationView {
   skillDirPath: string;
   skillDocPath: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfTranscriptionResponse".
- */
 export interface AgentApiOutcomeOfTranscriptionResponse {
   notifications?: AgentNotification[];
   result: TranscriptionResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TranscriptionResponse".
- */
 export interface TranscriptionResponse {
   transcription: TranscriptionView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TranscriptionView".
- */
 export interface TranscriptionView {
   audio: TranscriptionAudio;
   createdAtMs: number;
@@ -6801,77 +4808,42 @@ export interface TranscriptionView {
 }
 /**
  * Immutable audio input in this universe's content store.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TranscriptionAudio".
  */
 export interface TranscriptionAudio {
   blobRef: string;
   mime: string;
   name: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TranscriptionFailure".
- */
 export interface TranscriptionFailure {
   kind: TranscriptionFailureKind;
   message: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfVfsSnapshotCommitResponse".
- */
 export interface AgentApiOutcomeOfVfsSnapshotCommitResponse {
   notifications?: AgentNotification[];
   result: VfsSnapshotCommitResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsSnapshotCommitResponse".
- */
 export interface VfsSnapshotCommitResponse {
   bytes: number;
   files: number;
   snapshotRef: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfVfsSnapshotReadResponse".
- */
 export interface AgentApiOutcomeOfVfsSnapshotReadResponse {
   notifications?: AgentNotification[];
   result: VfsSnapshotReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsSnapshotReadResponse".
- */
 export interface VfsSnapshotReadResponse {
   bytes: number;
   files: number;
   manifest: unknown;
   snapshotRef: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfVfsWorkspaceCreateResponse".
- */
 export interface AgentApiOutcomeOfVfsWorkspaceCreateResponse {
   notifications?: AgentNotification[];
   result: VfsWorkspaceCreateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsWorkspaceCreateResponse".
- */
 export interface VfsWorkspaceCreateResponse {
   workspace: VfsWorkspaceView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsWorkspaceView".
- */
 export interface VfsWorkspaceView {
   baseSnapshotRef?: string | null;
   /**
@@ -6889,70 +4861,34 @@ export interface VfsWorkspaceView {
   updatedAtMs: number;
   workspaceId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfVfsWorkspaceDeleteResponse".
- */
 export interface AgentApiOutcomeOfVfsWorkspaceDeleteResponse {
   notifications?: AgentNotification[];
   result: VfsWorkspaceDeleteResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsWorkspaceDeleteResponse".
- */
 export interface VfsWorkspaceDeleteResponse {
   workspace: VfsWorkspaceView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfVfsWorkspaceListResponse".
- */
 export interface AgentApiOutcomeOfVfsWorkspaceListResponse {
   notifications?: AgentNotification[];
   result: VfsWorkspaceListResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsWorkspaceListResponse".
- */
 export interface VfsWorkspaceListResponse {
   workspaces?: VfsWorkspaceView[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfVfsWorkspaceReadResponse".
- */
 export interface AgentApiOutcomeOfVfsWorkspaceReadResponse {
   notifications?: AgentNotification[];
   result: VfsWorkspaceReadResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsWorkspaceReadResponse".
- */
 export interface VfsWorkspaceReadResponse {
   workspace: VfsWorkspaceView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentApiOutcomeOfVfsWorkspaceUpdateResponse".
- */
 export interface AgentApiOutcomeOfVfsWorkspaceUpdateResponse {
   notifications?: AgentNotification[];
   result: VfsWorkspaceUpdateResponse;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsWorkspaceUpdateResponse".
- */
 export interface VfsWorkspaceUpdateResponse {
   workspace: VfsWorkspaceView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AgentProfileInput".
- */
 export interface AgentProfileInput {
   config?: SessionConfig | null;
   description?: string | null;
@@ -6974,10 +4910,6 @@ export interface AgentProfileInput {
    */
   retention?: ProfileSessionRetention | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ApprovalDecisionInput".
- */
 export interface ApprovalDecisionInput {
   approvalId: string;
   decision: ApprovalDecisionKind;
@@ -6988,9 +4920,6 @@ export interface ApprovalDecisionInput {
  * deliberate inbound-plaintext path after `auth/grants/import`: it is
  * encrypted on receipt and never returned by any method. `Debug` output
  * redacts it; request logging must never echo these params.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthClientCreateParams".
  */
 export interface AuthClientCreateParams {
   audience?: string | null;
@@ -7008,46 +4937,22 @@ export interface AuthClientCreateParams {
   tokenEndpoint: string;
   tokenEndpointAuthMethod?: TokenEndpointAuthMethod | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthClientDeleteParams".
- */
 export interface AuthClientDeleteParams {
   clientId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthClientListParams".
- */
 export interface AuthClientListParams {}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthClientReadParams".
- */
 export interface AuthClientReadParams {
   clientId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthFlowStartParams".
- */
 export interface AuthFlowStartParams {
   audience?: string | null;
   clientId: string;
   exposure?: AuthGrantExposure & string;
   scopes?: string[] | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthFlowStatusParams".
- */
 export interface AuthFlowStatusParams {
   flowId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGitHubInstallationGrantParams".
- */
 export interface AuthGitHubInstallationGrantParams {
   displayName?: string | null;
   exposure?: AuthGrantExposure & string;
@@ -7055,10 +4960,6 @@ export interface AuthGitHubInstallationGrantParams {
   installationId: number;
   providerId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGitHubInstallationListParams".
- */
 export interface AuthGitHubInstallationListParams {
   providerId: string;
 }
@@ -7067,9 +4968,6 @@ export interface AuthGitHubInstallationListParams {
  * deliberate inbound-plaintext path: `token` is encrypted on receipt and is
  * never returned by any method. `Debug` output redacts the token; request
  * logging must never echo these params.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGrantImportParams".
  */
 export interface AuthGrantImportParams {
   audience?: string | null;
@@ -7095,32 +4993,17 @@ export interface AuthGrantImportParams {
  * cache only in memory until shortly before `expiresAtMs` (or for at most
  * five minutes when it is absent), re-lease after target 401/403 responses,
  * and never persist the token or place it in a workflow payload.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGrantLeaseParams".
  */
 export interface AuthGrantLeaseParams {
   audience?: string | null;
   grantId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGrantListParams".
- */
 export interface AuthGrantListParams {
   status?: AuthGrantStatus | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGrantReadParams".
- */
 export interface AuthGrantReadParams {
   grantId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthGrantRevokeParams".
- */
 export interface AuthGrantRevokeParams {
   grantId: string;
 }
@@ -7129,9 +5012,6 @@ export interface AuthGrantRevokeParams {
  * key PEM) is the third deliberate inbound-plaintext path: it is encrypted
  * on receipt and never returned by any method. `Debug` output redacts it;
  * request logging must never echo these params.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthProviderCreateParams".
  */
 export interface AuthProviderCreateParams {
   config: AuthProviderConfigInput;
@@ -7139,36 +5019,16 @@ export interface AuthProviderCreateParams {
   displayName?: string | null;
   providerId?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthProviderDeleteParams".
- */
 export interface AuthProviderDeleteParams {
   providerId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthProviderListParams".
- */
 export interface AuthProviderListParams {}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "AuthProviderReadParams".
- */
 export interface AuthProviderReadParams {
   providerId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobHasParams".
- */
 export interface BlobHasParams {
   blobRefs?: string[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobPutItem".
- */
 export interface BlobPutItem {
   bytesBase64: string;
 }
@@ -7177,31 +5037,16 @@ export interface BlobPutItem {
  * come back in request order. Uploads are eligible for collection after the
  * deployment's grace period unless retained by a durable resource. Reads do
  * not extend retention; admitting an existing ref refreshes its grace.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobPutParams".
  */
 export interface BlobPutParams {
   blobs?: BlobPutItem[];
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BlobReadParams".
- */
 export interface BlobReadParams {
   blobRef: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotCloseParams".
- */
 export interface BotCloseParams {
   botId: BotId;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotCreateParams".
- */
 export interface BotCreateParams {
   bot: BotInput;
   /**
@@ -7214,9 +5059,6 @@ export interface BotCreateParams {
  * The mutable configuration of a bot, replaced whole with an expected
  * revision. The bot id, event counter, and lifecycle columns live on the
  * record, not here.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotInput".
  */
 export interface BotInput {
   botId: BotId;
@@ -7261,17 +5103,9 @@ export interface BotInput {
    */
   selfConfig?: boolean;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotDeleteParams".
- */
 export interface BotDeleteParams {
   botId: BotId;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventAdmitParams".
- */
 export interface BotEventAdmitParams {
   botId: BotId;
   event: BotEventInput;
@@ -7279,9 +5113,6 @@ export interface BotEventAdmitParams {
 /**
  * A manually admitted event: what an operator posts through
  * `bots/events/admit`.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventInput".
  */
 export interface BotEventInput {
   correlationId?: string | null;
@@ -7298,10 +5129,6 @@ export interface BotEventInput {
   occurredAtMs?: number | null;
   summary: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventListParams".
- */
 export interface BotEventListParams {
   botId: BotId;
   /**
@@ -7313,26 +5140,14 @@ export interface BotEventListParams {
    */
   limit?: number | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventReadParams".
- */
 export interface BotEventReadParams {
   botId: BotId;
   seq: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotEventReplayParams".
- */
 export interface BotEventReplayParams {
   botId: BotId;
   seq: number;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotFilterTestParams".
- */
 export interface BotFilterTestParams {
   botId: BotId;
   /**
@@ -7351,20 +5166,12 @@ export interface BotFilterTestParams {
     [k: string]: unknown;
   };
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotListParams".
- */
 export interface BotListParams {
   /**
    * Only bots this actor created.
    */
   createdBy?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotPutParams".
- */
 export interface BotPutParams {
   bot: BotInput;
   /**
@@ -7373,17 +5180,9 @@ export interface BotPutParams {
    */
   expectedRevision?: number | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotReadParams".
- */
 export interface BotReadParams {
   botId: BotId;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotSessionRotateParams".
- */
 export interface BotSessionRotateParams {
   botId: BotId;
   /**
@@ -7392,32 +5191,16 @@ export interface BotSessionRotateParams {
    */
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotStateReadParams".
- */
 export interface BotStateReadParams {
   botId: BotId;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotTriggerDeleteParams".
- */
 export interface BotTriggerDeleteParams {
   botId: BotId;
   triggerId: BotTriggerId;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotTriggerListParams".
- */
 export interface BotTriggerListParams {
   botId: BotId;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotTriggerPutParams".
- */
 export interface BotTriggerPutParams {
   botId: BotId;
   /**
@@ -7427,18 +5210,10 @@ export interface BotTriggerPutParams {
   expectedRevision?: number | null;
   trigger: BotTriggerInput;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "BotTriggerReadParams".
- */
 export interface BotTriggerReadParams {
   botId: BotId;
   triggerId: BotTriggerId;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountCreateParams".
- */
 export interface ChannelAccountCreateParams {
   account: ChannelAccountInput;
 }
@@ -7446,9 +5221,6 @@ export interface ChannelAccountCreateParams {
  * A provider account served by the connector host. Secret material stays
  * in the referenced grant; this document is routing identity and
  * operational configuration.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountInput".
  */
 export interface ChannelAccountInput {
   accountId: ChannelAccountId;
@@ -7469,39 +5241,19 @@ export interface ChannelAccountInput {
   providerAccountId: string;
   settings?: ChannelAccountSettings;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountDeleteParams".
- */
 export interface ChannelAccountDeleteParams {
   accountId: ChannelAccountId;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountListParams".
- */
 export interface ChannelAccountListParams {
   provider?: ChannelProvider | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountPutParams".
- */
 export interface ChannelAccountPutParams {
   account: ChannelAccountInput;
   expectedRevision?: number | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelAccountReadParams".
- */
 export interface ChannelAccountReadParams {
   accountId: ChannelAccountId;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelConversationReadParams".
- */
 export interface ChannelConversationReadParams {
   accountId: ChannelAccountId;
   chatId: string;
@@ -7510,9 +5262,6 @@ export interface ChannelConversationReadParams {
 /**
  * One normalized provider message, as the connector host hands it to the
  * core. Provider and account come from the admitting account.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelInbound".
  */
 export interface ChannelInbound {
   chatId: string;
@@ -7533,9 +5282,6 @@ export interface ChannelInbound {
 /**
  * A provider-owned attachment reference; never bytes. The connector
  * downloads it when the conversation workflow asks (`prepare_channel_media`).
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelInboundMedia".
  */
 export interface ChannelInboundMedia {
   byteSize?: number | null;
@@ -7547,49 +5293,25 @@ export interface ChannelInboundMedia {
   mime: string;
   name?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelInboundAdmitParams".
- */
 export interface ChannelInboundAdmitParams {
   accountId: ChannelAccountId;
   inbound: ChannelInbound;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelPairingDeleteParams".
- */
 export interface ChannelPairingDeleteParams {
   accountId: ChannelAccountId;
   chatId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ChannelPairingListParams".
- */
 export interface ChannelPairingListParams {
   accountId?: ChannelAccountId | null;
   botId?: BotId | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ClientCapabilities".
- */
 export interface ClientCapabilities {
   experimentalApi?: boolean;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ClientInfo".
- */
 export interface ClientInfo {
   name: string;
   version?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextAppendEntry".
- */
 export interface ContextAppendEntry {
   item: InputItem;
   /**
@@ -7602,25 +5324,13 @@ export interface ContextAppendEntry {
    */
   key: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextAppendParams".
- */
 export interface ContextAppendParams {
   entries: ContextAppendEntry[];
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextCompactParams".
- */
 export interface ContextCompactParams {
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextRemoveParams".
- */
 export interface ContextRemoveParams {
   /**
    * Active context keys to remove. Removing a key that is already absent
@@ -7631,10 +5341,6 @@ export interface ContextRemoveParams {
   keys: string[];
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextReplaceEntry".
- */
 export interface ContextReplaceEntry {
   /**
    * The active entry to replace, by the `id` that `session/read` lists in
@@ -7644,18 +5350,10 @@ export interface ContextReplaceEntry {
   entryId: string;
   item: InputItem;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ContextReplaceParams".
- */
 export interface ContextReplaceParams {
   entries: ContextReplaceEntry[];
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentApiKeyCreateParams".
- */
 export interface DeploymentApiKeyCreateParams {
   /**
    * Whether the key may name the actor a request acts for with the
@@ -7679,34 +5377,18 @@ export interface DeploymentApiKeyCreateParams {
    */
   scope: AccessScope;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentApiKeyListParams".
- */
 export interface DeploymentApiKeyListParams {
   /**
    * Only keys of this scope; absent lists every key.
    */
   scope?: AccessScope | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentApiKeyRevokeParams".
- */
 export interface DeploymentApiKeyRevokeParams {
   keyPrefix: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentApiKeyRotateParams".
- */
 export interface DeploymentApiKeyRotateParams {
   keyPrefix: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentChannelAccountListParams".
- */
 export interface DeploymentChannelAccountListParams {
   /**
    * Include disabled accounts; by default only enabled ones are listed.
@@ -7714,10 +5396,6 @@ export interface DeploymentChannelAccountListParams {
   includeDisabled?: boolean;
   provider?: ChannelProvider | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentDeletedSessionsListParams".
- */
 export interface DeploymentDeletedSessionsListParams {
   /**
    * Exclusive session ID cursor; each page contains at most 100 entries.
@@ -7725,26 +5403,15 @@ export interface DeploymentDeletedSessionsListParams {
   after?: string | null;
   universeId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentEnvironmentProviderDeleteParams".
- */
 export interface DeploymentEnvironmentProviderDeleteParams {
   providerId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentEnvironmentProviderListParams".
- */
 export interface DeploymentEnvironmentProviderListParams {}
 /**
  * Register or replace a provider. `credential` is the optional bearer
  * token Lightspeed presents to the provider's controller and data routes:
  * it is sealed on receipt and never returned by any method. `Debug` output
  * redacts it; request logging must never echo these params.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentEnvironmentProviderPutParams".
  */
 export interface DeploymentEnvironmentProviderPutParams {
   /**
@@ -7769,26 +5436,15 @@ export interface DeploymentEnvironmentProviderPutParams {
   displayName?: string | null;
   providerId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentEnvironmentProviderReadParams".
- */
 export interface DeploymentEnvironmentProviderReadParams {
   providerId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentProviderBindingDeleteParams".
- */
 export interface DeploymentProviderBindingDeleteParams {
   providerId: string;
   universeId: string;
 }
 /**
  * Create or replace a universe's binding to a deployment provider.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentProviderBindingPutParams".
  */
 export interface DeploymentProviderBindingPutParams {
   /**
@@ -7798,18 +5454,10 @@ export interface DeploymentProviderBindingPutParams {
   providerId: string;
   universeId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentSessionPurgeParams".
- */
 export interface DeploymentSessionPurgeParams {
   sessionId: string;
   universeId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentUniverseCreateParams".
- */
 export interface DeploymentUniverseCreateParams {
   /**
    * Optional core universe slug, set only when the universe is first created.
@@ -7817,31 +5465,16 @@ export interface DeploymentUniverseCreateParams {
   slug?: string | null;
   universeId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentUniverseDeleteParams".
- */
 export interface DeploymentUniverseDeleteParams {
   universeId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentUniverseListParams".
- */
 export interface DeploymentUniverseListParams {}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentUniverseReadParams".
- */
 export interface DeploymentUniverseReadParams {
   universeId: string;
 }
 /**
  * Set or change an existing universe's deployment-unique slug. The UUID and
  * resources remain unchanged; URLs using the previous slug may stop working.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeploymentUniverseSlugPutParams".
  */
 export interface DeploymentUniverseSlugPutParams {
   /**
@@ -7856,17 +5489,9 @@ export interface DeploymentUniverseSlugPutParams {
   slug: string;
   universeId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCloseParams".
- */
 export interface EnvironmentCloseParams {
   environmentId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCreateParams".
- */
 export interface EnvironmentCreateParams {
   displayName?: string | null;
   /**
@@ -7892,34 +5517,18 @@ export interface EnvironmentCreateParams {
    */
   templateId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCredentialBindParams".
- */
 export interface EnvironmentCredentialBindParams {
   envName: string;
   environmentId: string;
   source: EnvironmentCredentialSourceView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCredentialListParams".
- */
 export interface EnvironmentCredentialListParams {
   environmentId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentCredentialUnbindParams".
- */
 export interface EnvironmentCredentialUnbindParams {
   envName: string;
   environmentId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentExternalCreateParams".
- */
 export interface EnvironmentExternalCreateParams {
   displayName?: string | null;
   /**
@@ -7935,10 +5544,6 @@ export interface EnvironmentExternalCreateParams {
    */
   requestId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentIngressPutParams".
- */
 export interface EnvironmentIngressPutParams {
   /**
    * Ensure (`true`) or remove (`false`) the provider's public ingress.
@@ -7946,36 +5551,20 @@ export interface EnvironmentIngressPutParams {
   enabled: boolean;
   environmentId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentJobCancelParams".
- */
 export interface EnvironmentJobCancelParams {
   force?: boolean;
   jobs: SessionJobHandleInput[];
   scope?: SessionJobCancelScopeView & string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobHandleInput".
- */
 export interface SessionJobHandleInput {
   environmentId: string;
   jobId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentJobCreateParams".
- */
 export interface EnvironmentJobCreateParams {
   environmentId: string;
   jobs: SessionJobStartSpecInput[];
   requestId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobStartSpecInput".
- */
 export interface SessionJobStartSpecInput {
   argv: string[];
   cwd?: string | null;
@@ -7990,18 +5579,10 @@ export interface SessionJobStartSpecInput {
   stdin?: string | null;
   timeoutMs?: number | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobDependencyInput".
- */
 export interface SessionJobDependencyInput {
   jobId?: string | null;
   name?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentJobReadParams".
- */
 export interface EnvironmentJobReadParams {
   /**
    * Byte offset to read each job's output from: a previous entry's
@@ -8018,10 +5599,6 @@ export interface EnvironmentJobReadParams {
    */
   tailBytes?: number | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentListParams".
- */
 export interface EnvironmentListParams {
   /**
    * Exclusive environment id cursor: a previous page's `nextAfter`.
@@ -8056,10 +5633,6 @@ export interface EnvironmentListParams {
    */
   state?: EnvironmentStateView | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentPowerPutParams".
- */
 export interface EnvironmentPowerPutParams {
   environmentId: string;
   /**
@@ -8068,29 +5641,13 @@ export interface EnvironmentPowerPutParams {
    */
   power: EnvironmentPowerStateView;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentProviderBindingListParams".
- */
 export interface EnvironmentProviderBindingListParams {}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentProviderBindingReadParams".
- */
 export interface EnvironmentProviderBindingReadParams {
   providerId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentReadParams".
- */
 export interface EnvironmentReadParams {
   environmentId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyCreateParams".
- */
 export interface EnvironmentRegistrationKeyCreateParams {
   /**
    * Group name for the environments this key admits.
@@ -8115,22 +5672,10 @@ export interface EnvironmentRegistrationKeyCreateParams {
    */
   offlineCloseAfterMs?: number | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyListParams".
- */
 export interface EnvironmentRegistrationKeyListParams {}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyReadParams".
- */
 export interface EnvironmentRegistrationKeyReadParams {
   registrationKeyId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyRevokeParams".
- */
 export interface EnvironmentRegistrationKeyRevokeParams {
   /**
    * Also close every non-closed environment the key admitted.
@@ -8138,19 +5683,12 @@ export interface EnvironmentRegistrationKeyRevokeParams {
   closeEnvironments?: boolean;
   registrationKeyId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyRotateParams".
- */
 export interface EnvironmentRegistrationKeyRotateParams {
   registrationKeyId: string;
 }
 /**
  * The complete editable policy of a registration key; an absent field is
  * unset. The identity mode is immutable.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentRegistrationKeyUpdateParams".
  */
 export interface EnvironmentRegistrationKeyUpdateParams {
   /**
@@ -8173,29 +5711,18 @@ export interface EnvironmentRegistrationKeyUpdateParams {
   offlineCloseAfterMs?: number | null;
   registrationKeyId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentTemplateListParams".
- */
 export interface EnvironmentTemplateListParams {
   /**
    * Only this provider's templates; omit for every enabled binding.
    */
   providerId?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentTemplateReadParams".
- */
 export interface EnvironmentTemplateReadParams {
   providerId: string;
   templateId: string;
 }
 /**
  * Replace an environment's display name and caller metadata.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EnvironmentUpdateParams".
  */
 export interface EnvironmentUpdateParams {
   /**
@@ -8210,18 +5737,10 @@ export interface EnvironmentUpdateParams {
     [k: string]: string;
   };
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "InitializeParams".
- */
 export interface InitializeParams {
   capabilities?: ClientCapabilities | null;
   clientInfo?: ClientInfo | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "InlineAgentProfile".
- */
 export interface InlineAgentProfile {
   config?: SessionConfig | null;
   description?: string | null;
@@ -8242,10 +5761,6 @@ export interface InlineAgentProfile {
    */
   retention?: ProfileSessionRetention | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "JsonRpcError".
- */
 export interface JsonRpcError {
   code: number;
   data?: AgentApiError | null;
@@ -8256,25 +5771,15 @@ export interface JsonRpcError {
  * missing OAuth result is deliberately inconclusive: the server may be
  * public, use bearer auth, or expose OAuth metadata only through an explicit
  * URL. No catalog or auth records are created by this probe.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerAuthDiscoverParams".
  */
 export interface McpServerAuthDiscoverParams {
   serverUrl: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerDeleteParams".
- */
 export interface McpServerDeleteParams {
   serverId: string;
 }
 /**
  * Full MCP server document as submitted by clients.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerInput".
  */
 export interface McpServerInput {
   allowPrivateNetwork?: boolean;
@@ -8298,17 +5803,9 @@ export interface McpServerInput {
   serverUrl: string;
   status?: McpServerStatus & string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerListParams".
- */
 export interface McpServerListParams {
   status?: McpServerStatus | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerPutParams".
- */
 export interface McpServerPutParams {
   /**
    * Checked only when the server already exists; absent replaces (or
@@ -8317,26 +5814,15 @@ export interface McpServerPutParams {
   expectedRevision?: number | null;
   server: McpServerInput;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerReadParams".
- */
 export interface McpServerReadParams {
   serverId: string;
 }
 /**
  * Live, non-persisting tool discovery for a configured MCP server.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "McpServerToolsDiscoverParams".
  */
 export interface McpServerToolsDiscoverParams {
   serverId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelDefaultsPutParams".
- */
 export interface ModelDefaultsPutParams {
   /**
    * Revision returned by read/put; zero for a universe with no updates.
@@ -8348,17 +5834,10 @@ export interface ModelDefaultsPutParams {
   model: ModelConfig | null;
   slot: ModelDefaultSlot;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelDefaultsReadParams".
- */
 export interface ModelDefaultsReadParams {}
 /**
  * Direct provider model discovery. Results may be served from a brief
  * process-local cache; clients refresh by calling this method.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ModelListParams".
  */
 export interface ModelListParams {
   /**
@@ -8371,39 +5850,19 @@ export interface ModelListParams {
    */
   selectableOnly?: boolean;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileApplyParams".
- */
 export interface ProfileApplyParams {
   expectedConfigRevision?: number | null;
   expectedToolsRevision?: number | null;
   profile: ProfileSource;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileCreateParams".
- */
 export interface ProfileCreateParams {
   profile: AgentProfileInput;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileDeleteParams".
- */
 export interface ProfileDeleteParams {
   profileId: ProfileId;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileListParams".
- */
 export interface ProfileListParams {}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfilePutParams".
- */
 export interface ProfilePutParams {
   /**
    * Checked only when the profile already exists; absent replaces (or
@@ -8412,44 +5871,24 @@ export interface ProfilePutParams {
   expectedRevision?: number | null;
   profile: AgentProfileInput;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileReadParams".
- */
 export interface ProfileReadParams {
   profileId: ProfileId;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunApprovalsDecideParams".
- */
 export interface RunApprovalsDecideParams {
   decisions: ApprovalDecisionInput[];
   runId: string;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunCancelParams".
- */
 export interface RunCancelParams {
   runId: string;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunLimitsConfig".
- */
 export interface RunLimitsConfig {
   /**
    * Model turns this run may start, at least 1, in place of the session's `maxTurns`.
    */
   maxTurns?: number | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunListParams".
- */
 export interface RunListParams {
   /**
    * Exclusive upper run-id bound from a previous page.
@@ -8458,18 +5897,10 @@ export interface RunListParams {
   limit?: number | null;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunReadParams".
- */
 export interface RunReadParams {
   runId: string;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunStartConfig".
- */
 export interface RunStartConfig {
   generation?: GenerationConfig | null;
   limits?: RunLimitsConfig | null;
@@ -8480,10 +5911,6 @@ export interface RunStartConfig {
    */
   model?: ModelConfig | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunStartParams".
- */
 export interface RunStartParams {
   config?: RunStartConfig | null;
   /**
@@ -8507,17 +5934,9 @@ export interface RunStartParams {
    */
   submissionId?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunTerminalNotificationInput".
- */
 export interface RunTerminalNotificationInput {
   token: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunSteerParams".
- */
 export interface RunSteerParams {
   /**
    * Steering input, same vocabulary as run input. Delivered to the model
@@ -8541,10 +5960,6 @@ export interface RunSteerParams {
    */
   submissionId?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionCloseParams".
- */
 export interface SessionCloseParams {
   /**
    * Cancel the active run and drop queued runs instead of rejecting on
@@ -8561,9 +5976,6 @@ export interface SessionCloseParams {
  * from the document reverts to defaults; an absent feature is revoked.
  * Requires an idle session; putting an identical document is a no-op that
  * leaves the revision untouched.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionConfigPutParams".
  */
 export interface SessionConfigPutParams {
   config: SessionConfig;
@@ -8574,10 +5986,6 @@ export interface SessionConfigPutParams {
   expectedConfigRevision?: number | null;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionDeleteParams".
- */
 export interface SessionDeleteParams {
   /**
    * Delete delegated descendants too. False requires the target to be a
@@ -8596,25 +6004,13 @@ export interface SessionDeleteParams {
    */
   softDelete?: boolean;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionEnvironmentActivateParams".
- */
 export interface SessionEnvironmentActivateParams {
   environmentId: string;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionEnvironmentDeactivateParams".
- */
 export interface SessionEnvironmentDeactivateParams {
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionEventsReadParams".
- */
 export interface SessionEventsReadParams {
   after?: EventCursor | null;
   /**
@@ -8640,9 +6036,6 @@ export interface SessionEventsReadParams {
 /**
  * Filters for `session/list`. An unknown field is refused, so a misspelled
  * filter fails rather than returning a wider list.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionListParams".
  */
 export interface SessionListParams {
   /**
@@ -8692,9 +6085,6 @@ export interface SessionListParams {
  * Replace a session's metadata with a complete map (the same bounds as
  * `session/start`). Record-only: it does not touch the event log or
  * `updatedAtMs`. There is no merge form; read, edit, and put.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionMetadataPutParams".
  */
 export interface SessionMetadataPutParams {
   /**
@@ -8705,10 +6095,6 @@ export interface SessionMetadataPutParams {
   };
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionReadParams".
- */
 export interface SessionReadParams {
   /**
    * Newest run summaries to include. Values above the server maximum are
@@ -8717,10 +6103,6 @@ export interface SessionReadParams {
   runLimit?: number | null;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionRenameParams".
- */
 export interface SessionRenameParams {
   /**
    * New display name; absent clears it. Cannot contain NUL.
@@ -8728,17 +6110,9 @@ export interface SessionRenameParams {
   displayName?: string | null;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionRestartParams".
- */
 export interface SessionRestartParams {
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionRetentionPutParams".
- */
 export interface SessionRetentionPutParams {
   /**
    * Positive duration enables automatic tree soft deletion; null disables it.
@@ -8746,17 +6120,9 @@ export interface SessionRetentionPutParams {
   deleteAfterCloseMs: number | null;
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionShareParams".
- */
 export interface SessionShareParams {
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionStartParams".
- */
 export interface SessionStartParams {
   /**
    * Audience of the new session, set atomically with its creation. Absent
@@ -8798,31 +6164,15 @@ export interface SessionStartParams {
   profile?: ProfileSource | null;
   sessionId?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SkillListParams".
- */
 export interface SkillListParams {
   sessionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TranscriptionCancelParams".
- */
 export interface TranscriptionCancelParams {
   transcriptionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TranscriptionReadParams".
- */
 export interface TranscriptionReadParams {
   transcriptionId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "TranscriptionStartParams".
- */
 export interface TranscriptionStartParams {
   audio: TranscriptionAudio;
   /**
@@ -8835,24 +6185,12 @@ export interface TranscriptionStartParams {
   model?: ModelConfig | null;
   prompt?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsSnapshotCommitParams".
- */
 export interface VfsSnapshotCommitParams {
   manifest: unknown;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsSnapshotReadParams".
- */
 export interface VfsSnapshotReadParams {
   snapshotRef: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsWorkspaceCreateParams".
- */
 export interface VfsWorkspaceCreateParams {
   displayName?: string | null;
   /**
@@ -8862,39 +6200,20 @@ export interface VfsWorkspaceCreateParams {
   snapshotRef?: string | null;
   workspaceId?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsWorkspaceDeleteParams".
- */
 export interface VfsWorkspaceDeleteParams {
   workspaceId: string;
 }
 /**
  * Read a file from a workspace's current head, by path.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsWorkspaceFileReadParams".
  */
 export interface VfsWorkspaceFileReadParams {
   path: string;
   workspaceId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsWorkspaceListParams".
- */
 export interface VfsWorkspaceListParams {}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsWorkspaceReadParams".
- */
 export interface VfsWorkspaceReadParams {
   workspaceId: string;
 }
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "VfsWorkspaceUpdateParams".
- */
 export interface VfsWorkspaceUpdateParams {
   displayName?: string | null;
   expectedRevision?: number | null;

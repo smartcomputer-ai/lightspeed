@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@lightspeed-ai/sdk": [
+        "../../src/index.ts"
+      ],
+      "@lightspeed-ai/sdk/server": [
+        "../../src/server.ts"
+      ]
+    }
+  },
+  "include": [
+    "*.ts"
+  ]
+}

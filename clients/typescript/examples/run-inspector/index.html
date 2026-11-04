@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Run inspector</title>
+    <script type="importmap">
+      { "imports": { "@lightspeed-ai/sdk": "/sdk/index.js" } }
+    </script>
+    <style>
+      :root { color-scheme: light dark; font: 14px/1.45 system-ui, sans-serif; }
+      body { margin: 0; display: grid; grid-template-columns: minmax(200px, 300px) minmax(160px, 240px) 1fr; height: 100vh; }
+      nav, main { overflow: auto; padding: 12px; border-right: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
+      h2 { font-size: 12px; margin: 0 0 8px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.04em; }
+      button.row { display: block; width: 100%; text-align: left; padding: 6px 8px; margin-bottom: 2px; background: none; border: 0; border-radius: 4px; color: inherit; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+      button.row:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+      button.row[aria-current="true"] { background: color-mix(in srgb, currentColor 15%, transparent); }
+      small { display: block; opacity: 0.7; }
+      .item { margin: 0 0 12px; padding: 8px 10px; border-radius: 6px; background: color-mix(in srgb, currentColor 5%, transparent); }
+      .item > strong { display: block; font-size: 12px; margin-bottom: 4px; }
+      .failed { color: #c0392b; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; font: 12px/1.45 ui-monospace, monospace; }
+      .actions { display: flex; gap: 6px; margin-bottom: 12px; }
+      #error:empty { display: none; }
+      #error { position: fixed; bottom: 12px; right: 12px; max-width: 480px; padding: 8px 12px; border-radius: 6px; background: #c0392b; color: #fff; }
+      @media (max-width: 720px) { body { grid-template-columns: 1fr; height: auto; } }
+    </style>
+  </head>
+  <body>
+    <nav><h2>Sessions</h2><div id="sessions"></div></nav>
+    <nav><h2>Runs</h2><div id="runs"></div></nav>
+    <main><div id="run"></div></main>
+    <div id="error" role="alert"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

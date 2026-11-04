@@ -130,6 +130,12 @@ and schema copies under `clients/typescript/schema/`. Configurator generates
 uses to describe configuration fields. Generate the client before that
 reference so its installed schema is current.
 
+Named client helpers are generated from the table in
+`clients/typescript/scripts/helpers.mjs`, and the generator fails if a listed method or
+target ID no longer exists. A new method is reachable through `client.call` without a
+helper. Add one only for what most applications need, and list it in the client README,
+which a test checks.
+
 The method-role generator updates `platform/backend/src/routes/method-roles.ts`:
 minimum member roles, session-target checks, and methods unavailable to member
 calls. Keep this generated policy map with the API change.

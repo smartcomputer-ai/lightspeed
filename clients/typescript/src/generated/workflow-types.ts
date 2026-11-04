@@ -3,10 +3,6 @@
  * Do not edit by hand.
  */
 
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "Attachment".
- */
 export type Attachment =
   | {
       data: MediaDescriptor;
@@ -18,17 +14,11 @@ export type Attachment =
     };
 /**
  * What a media entry is to the providers: an image block or a document block.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "MediaKind".
  */
 export type MediaKind = "image" | "document";
 /**
  * Who created a resource or authored bytes. An actor is whatever a key
  * allowed to assert one said; core compares it and never resolves it.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "Attribution".
  */
 export type Attribution =
   | {
@@ -47,26 +37,11 @@ export type Attribution =
       component: string;
       kind: "internal";
     };
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "BotId".
- */
 export type BotId = string;
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "BotTriggerId".
- */
 export type BotTriggerId = string;
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ChannelAccountId".
- */
 export type ChannelAccountId = string;
 /**
  * What a connector executes: provider message ids and their direction.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ChannelDeliveryOperation".
  */
 export type ChannelDeliveryOperation =
   | {
@@ -89,54 +64,23 @@ export type ChannelDeliveryOperation =
       messageId: string;
       type: "react";
     };
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ChannelProvider".
- */
 export type ChannelProvider = string;
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ChannelMediaKind".
- */
 export type ChannelMediaKind = "image" | "audio" | "document";
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ChatTurnAccess".
- */
 export type ChatTurnAccess = "anyone" | "listed";
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ChatGroupActivation".
- */
 export type ChatGroupActivation = "mention" | "always";
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ChatScope".
- */
 export type ChatScope = "direct" | "group";
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeExecutionInterruption".
- */
 export type CodeExecutionInterruption =
   | "holder_cancelled"
   | "workflow_cancelled"
   | "preparation_failed"
   | "activity_failed"
   | "activity_timed_out";
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeExecutionPhase".
- */
 export type CodeExecutionPhase =
   "starting" | "preparing" | "running" | "finalizing" | "resolved" | "cancelled";
 /**
  * How a promise reached a terminal state. Used by `ResolvePromise`
  * admission; all transports (push notifications, poll results, timers,
  * cancellation) converge on this one funnel.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "PromiseResolution".
  */
 export type PromiseResolution =
   | {
@@ -150,10 +94,6 @@ export type PromiseResolution =
   | {
       kind: "cancelled";
     };
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeExecutionTerminal".
- */
 export type CodeExecutionTerminal =
   | {
       kind: "completed";
@@ -168,21 +108,9 @@ export type CodeExecutionTerminal =
       reason: CodeExecutionInterruption;
       result?: CodeRunActivityResult | null;
     };
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ToolCallId".
- */
 export type ToolCallId = string;
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeToolCallOutcomeStatus".
- */
 export type CodeToolCallOutcomeStatus =
   "pending" | "waiting" | "succeeded" | "failed" | "cancelled" | "unavailable";
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeToolRejectionKind".
- */
 export type CodeToolRejectionKind =
   | "invalid_request"
   | "unknown_scope"
@@ -193,16 +121,9 @@ export type CodeToolRejectionKind =
   | "limit_exceeded"
   | "session_not_ready"
   | "internal";
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ToolName".
- */
 export type ToolName = string;
 /**
  * Closed internal vocabulary carried by the shared delivery signal.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "EmissionBody".
  */
 export type EmissionBody =
   | {
@@ -234,10 +155,6 @@ export type EmissionBody =
       kind: "invocation_cancellation";
       promise_id: PromiseId;
     };
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "RunStatus".
- */
 export type RunStatus = "running" | "parked" | "cancelling" | "completed" | "failed" | "cancelled";
 /**
  * Stable identifier for a promise: a session-scoped counter rendered as
@@ -248,25 +165,10 @@ export type RunStatus = "running" | "parked" | "cancelling" | "completed" | "fai
  * base. Proposal building accepts a creation only at or above the batch's
  * base, and neither it nor the reducer accepts one twice. Producer correlation
  * lives on `PromiseSource`, not in the id.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "PromiseId".
  */
 export type PromiseId = string;
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "WorkflowToolInvocationId".
- */
 export type WorkflowToolInvocationId = string;
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "SessionId".
- */
 export type SessionId = string;
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "WorkflowToolId".
- */
 export type WorkflowToolId = string;
 /**
  * Stable identity for one cross-workflow emission.
@@ -274,16 +176,10 @@ export type WorkflowToolId = string;
  * Ids are deterministic digests over a domain-separated, length-prefixed
  * producer/source identity. They are safe to recompute after activity retry,
  * worker restart, or workflow continue-as-new.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "EmissionId".
  */
 export type EmissionId = string;
 /**
  * Durable producer identity carried with every emission.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "EmissionProducer".
  */
 export type EmissionProducer =
   | {
@@ -297,15 +193,7 @@ export type EmissionProducer =
       universe_id: string;
       workflow_id: string;
     };
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ToolId".
- */
 export type ToolId = string;
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "TranscriptionActivityResult".
- */
 export type TranscriptionActivityResult =
   | {
       kind: "succeeded";
@@ -315,16 +203,8 @@ export type TranscriptionActivityResult =
       failure: TranscriptionFailure;
       kind: "failed";
     };
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "TranscriptionFailureKind".
- */
 export type TranscriptionFailureKind =
   "invalidAudio" | "configuration" | "provider" | "timeout" | "internal";
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "TranscriptionStatus".
- */
 export type TranscriptionStatus =
   "pending" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
 
@@ -338,9 +218,6 @@ export interface LightspeedWorkflowContract {
  * A media asset named for a consumer that did not see it enter context: the
  * parent of a sub-agent, an awaited promise's holder. Carries everything
  * needed to append a media entry without reading the bytes.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "MediaDescriptor".
  */
 export interface MediaDescriptor {
   content_ref: string;
@@ -352,10 +229,6 @@ export interface MediaDescriptor {
   media_type: string;
   name?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "FileAttachment".
- */
 export interface FileAttachment {
   content_ref: string;
   handle: string;
@@ -365,9 +238,6 @@ export interface FileAttachment {
 }
 /**
  * Descriptive origin only; never an authority for resolving attachment bytes.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "AttachmentSource".
  */
 export interface AttachmentSource {
   id: string;
@@ -377,9 +247,6 @@ export interface AttachmentSource {
 /**
  * One connector activity call. `idempotency_key` is the invocation id, or
  * `{invocation}:chunk:{i}/{n}` for a chunk of a split send.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ChannelDeliveryCommand".
  */
 export interface ChannelDeliveryCommand {
   idempotencyKey: string;
@@ -390,9 +257,6 @@ export interface ChannelDeliveryCommand {
 }
 /**
  * The message a send replies to, for providers that quote it themselves.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ReplyContext".
  */
 export interface ReplyContext {
   senderId: string;
@@ -400,9 +264,6 @@ export interface ReplyContext {
 }
 /**
  * Where a delivery goes: one account's chat, optionally a thread.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ChannelRoute".
  */
 export interface ChannelRoute {
   accountId: ChannelAccountId;
@@ -410,10 +271,6 @@ export interface ChannelRoute {
   provider: ChannelProvider;
   threadId?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ChannelDeliveryResult".
- */
 export interface ChannelDeliveryResult {
   /**
    * Every provider id the delivery produced (a chunked send has several;
@@ -426,9 +283,6 @@ export interface ChannelDeliveryResult {
 /**
  * A provider-owned attachment reference; never bytes. The connector
  * downloads it when the conversation workflow asks (`prepare_channel_media`).
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ChannelInboundMedia".
  */
 export interface ChannelInboundMedia {
   byteSize?: number | null;
@@ -444,9 +298,6 @@ export interface ChannelInboundMedia {
  * Who may take a turn and who may issue control commands, by provider
  * handle (Telegram user id, WhatsApp JID). Handle allowlists on the
  * trigger replace any platform membership lookup.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ChatAccess".
  */
 export interface ChatAccess {
   /**
@@ -462,9 +313,6 @@ export interface ChatAccess {
 }
 /**
  * When the bot acts in a conversation.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ChatActivation".
  */
 export interface ChatActivation {
   group?: ChatGroupActivation | null;
@@ -474,9 +322,6 @@ export interface ChatActivation {
 /**
  * Close admission immediately and cancel admitted work. Closing a scope does
  * not roll back any completed effects.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CloseCodeToolScopeRequest".
  */
 export interface CloseCodeToolScopeRequest {
   execution_id: string;
@@ -487,9 +332,6 @@ export interface CloseCodeToolScopeRequest {
  * The parent session owns the execution scope and its bindings. Possessing this
  * descriptor does not authorize tool calls. Validate it before loading artifacts
  * or admitting an execution; deserialization alone is not validation.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeExecutionDescriptor".
  */
 export interface CodeExecutionDescriptor {
   /**
@@ -519,9 +361,6 @@ export interface CodeExecutionDescriptor {
  * these budgets. Engine limits must be enforced by the runner; call and payload
  * limits must also be enforced at the trusted session/bridge boundary. These
  * bounds are not containment of native interpreter memory faults.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeExecutionLimits".
  */
 export interface CodeExecutionLimits {
   max_catalog_bytes: number;
@@ -561,9 +400,6 @@ export interface CodeExecutionLimits {
 }
 /**
  * Queryable durable orchestration state; no JavaScript heap or raw outputs.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeExecutionSnapshot".
  */
 export interface CodeExecutionSnapshot {
   descriptor?: CodeExecutionDescriptor | null;
@@ -574,9 +410,6 @@ export interface CodeExecutionSnapshot {
 /**
  * Only the reference crosses the activity boundary. Script output and the
  * complete code tool call report remain in the parent universe's CAS.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeRunActivityResult".
  */
 export interface CodeRunActivityResult {
   report_ref: string;
@@ -585,9 +418,6 @@ export interface CodeRunActivityResult {
 /**
  * Script-facing completion metadata. Session effects, model context, and
  * activity configuration remain private to the owning session.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeToolCallOutcome".
  */
 export interface CodeToolCallOutcome {
   attachments?: Attachment[];
@@ -600,18 +430,11 @@ export interface CodeToolCallOutcome {
 /**
  * Admission failures are successful protocol replies, distinct from transport
  * failures and the tool's own failed result. They never imply tool execution.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeToolRejection".
  */
 export interface CodeToolRejection {
   kind: CodeToolRejectionKind;
   message: string;
 }
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeToolScopeReport".
- */
 export interface CodeToolScopeReport {
   /**
    * Exposed names keyed by the opaque handles accepted by invoke requests.
@@ -630,9 +453,6 @@ export interface CodeToolScopeReport {
 }
 /**
  * Read an authoritative snapshot, including after a runner loses its waiters.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeToolScopeReportRequest".
  */
 export interface CodeToolScopeReportRequest {
   execution_id: string;
@@ -640,9 +460,6 @@ export interface CodeToolScopeReportRequest {
 /**
  * Durable content identity and encoding. The payload stays in CAS; consumers
  * project it outside the harness rather than assuming every output is text.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ContentRef".
  */
 export interface ContentRef {
   content_ref: string;
@@ -652,9 +469,6 @@ export interface ContentRef {
 /**
  * The conversation a message belongs to: one account's chat, optionally
  * a thread inside it.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ConversationRef".
  */
 export interface ConversationRef {
   accountId: ChannelAccountId;
@@ -667,9 +481,6 @@ export interface ConversationRef {
  * the core side: the bot controller creates and controls the session; the
  * workflow is the source of the conversation's events and the receiver of
  * its `message_*` tools.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ConversationStart".
  */
 export interface ConversationStart {
   access: ChatAccess;
@@ -696,9 +507,6 @@ export interface ConversationStart {
  *
  * The model arguments remain in CAS and are referenced by `arguments_ref`.
  * Receiver-specific interpretation belongs to the receiving workflow.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "WorkflowToolInvocation".
  */
 export interface WorkflowToolInvocation {
   arguments_ref: string;
@@ -731,9 +539,6 @@ export interface WorkflowToolInvocation {
 /**
  * Bounded cross-workflow fact delivered through the fixed
  * `deliver_emission` signal.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "EmissionEnvelope".
  */
 export interface EmissionEnvelope {
   body: EmissionBody;
@@ -744,9 +549,6 @@ export interface EmissionEnvelope {
  * Small request forwarded by a trusted host after serializing guest arguments.
  * Identity is execution-local. Reusing it with different arguments or a
  * different binding is rejected by the session, including across RPC retries.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "InvokeCodeToolRequest".
  */
 export interface InvokeCodeToolRequest {
   arguments_ref: string;
@@ -757,17 +559,10 @@ export interface InvokeCodeToolRequest {
 /**
  * `maintain_channel_typing`: keep the provider's typing indicator up for
  * the conversation until the activity is cancelled.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "MaintainChannelTypingInput".
  */
 export interface MaintainChannelTypingInput {
   route: ChannelRoute;
 }
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ModelConfig".
- */
 export interface ModelConfig {
   apiKind: string;
   model: string;
@@ -776,9 +571,6 @@ export interface ModelConfig {
 /**
  * Trusted host request to open a scope beneath an admitted joined invocation.
  * The session resolves bindings itself; this allowlist can only narrow grants.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "OpenCodeToolScopeRequest".
  */
 export interface OpenCodeToolScopeRequest {
   /**
@@ -795,27 +587,17 @@ export interface OpenCodeToolScopeRequest {
 /**
  * `prepare_channel_media`: the connector downloads the provider file and
  * stores it in the universe's CAS.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "PrepareChannelMediaInput".
  */
 export interface PrepareChannelMediaInput {
   media: ChannelInboundMedia;
   route: ChannelRoute;
   universeId: string;
 }
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "PrepareChannelMediaResult".
- */
 export interface PrepareChannelMediaResult {
   item: PreparedMediaItem;
 }
 /**
  * A prepared attachment: a CAS reference, never bytes.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "PreparedMediaItem".
  */
 export interface PreparedMediaItem {
   blobRef: string;
@@ -823,37 +605,22 @@ export interface PreparedMediaItem {
   mime: string;
   name?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "TranscriptionFailure".
- */
 export interface TranscriptionFailure {
   kind: TranscriptionFailureKind;
   message: string;
 }
 /**
  * Immutable audio input in this universe's content store.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "TranscriptionAudio".
  */
 export interface TranscriptionAudio {
   blobRef: string;
   mime: string;
   name: string;
 }
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "TranscriptionSnapshot".
- */
 export interface TranscriptionSnapshot {
   request: TranscriptionStartParams;
   view: TranscriptionView;
 }
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "TranscriptionStartParams".
- */
 export interface TranscriptionStartParams {
   audio: TranscriptionAudio;
   /**
@@ -866,10 +633,6 @@ export interface TranscriptionStartParams {
   model?: ModelConfig | null;
   prompt?: string | null;
 }
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "TranscriptionView".
- */
 export interface TranscriptionView {
   audio: TranscriptionAudio;
   createdAtMs: number;
@@ -885,10 +648,6 @@ export interface TranscriptionView {
   transcriptRef?: string | null;
   transcriptionId: string;
 }
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "TranscriptionWorkflowArgs".
- */
 export interface TranscriptionWorkflowArgs {
   createdAtMs: number;
   createdBy: Attribution;
@@ -897,19 +656,12 @@ export interface TranscriptionWorkflowArgs {
   transcriptionId: string;
   universeId: string;
 }
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "WorkflowToolRecipeV1".
- */
 export interface WorkflowToolRecipeV1 {
   taskQueue: string;
   workflowType: string;
 }
 /**
  * Result shape of [`WORKFLOW_TOOL_RECOVERY_QUERY`].
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "WorkflowToolRecoveryResult".
  */
 export interface WorkflowToolRecoveryResult {
   resolutions?: {
@@ -921,9 +673,6 @@ export interface WorkflowToolRecoveryResult {
  * resolves each keyed completion promise by emitting `SourceResolution`
  * bodies to the holder workflow through the fixed `deliver_emission`
  * signal, using its own execution id as the producer workflow id.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "WorkflowToolStartArgs".
  */
 export interface WorkflowToolStartArgs {
   execution_id: string;

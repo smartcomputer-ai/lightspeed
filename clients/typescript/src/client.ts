@@ -1,22 +1,24 @@
 import type {
-  AgentApiOutcomeOfRunStartResponse,
-  AgentApiOutcomeOfSessionEventsReadResponse,
   EventCursor,
   InputItem,
+  RunStartResponse,
+  RunSteerParams,
+  RunSteerResponse,
   RunStartConfig,
   RunStartParams,
-  RunStartSource,
   RunStatus,
   RunView,
+  SessionEventKindView,
   SessionEventView,
   SessionEventsReadParams,
+  SessionEventsReadResponse,
 } from "./generated/types.js";
 import type {
   Method,
   MethodParams,
   MethodResult,
-  RpcCaller,
 } from "./generated/methods.js";
+import { LightspeedHelpers } from "./generated/helpers.js";
 import { METHOD_INFO } from "./generated/methods.js";
 import { LightspeedRpcError, LightspeedTransportError, type JsonRpcErrorPayload } from "./errors.js";
 
@@ -28,11 +30,32 @@ export interface CallOptions {
 }
 
 export interface LightspeedClientOptions {
+  /** The gateway's `/rpc` URL. */
   endpoint: string | URL;
+  /** Sent as the bearer credential. Omit it only for a gateway in single mode. */
+  apiKey?: string;
+  /** The universe a deployment key addresses. A universe key must leave this out. */
+  universe?: string;
+  /**
+   * Attributes requests to this opaque ID, which the key must be allowed to
+   * assert. It does not limit what the key can do. See `withActor`.
+   */
+  actor?: string;
   fetch?: typeof fetch;
   headers?: HeadersInit | (() => HeadersInit | Promise<HeadersInit>);
   requestId?: () => RequestId;
 }
+
+/** A method's data, without the `AgentApiOutcome` envelope around it. */
+export type MethodData<M extends Method> = MethodResult<M>["result"];
+
+export type SessionEventType = SessionEventKindView["type"];
+
+/** One kind of session event, such as `SessionEventKindOf<"runFailed">`. */
+export type SessionEventKindOf<T extends SessionEventType> = Extract<
+  SessionEventKindView,
+  { type: T }
+>;
 
 interface JsonRpcResponse {
   id?: RequestId;
@@ -42,6 +65,10 @@ interface JsonRpcResponse {
 
 export interface StartRunOptions extends CallOptions {
   config?: RunStartConfig | null;
+  submissionId?: string | null;
+}
+
+export interface SteerRunOptions extends CallOptions {
   submissionId?: string | null;
 }
 
@@ -61,11 +88,11 @@ export interface AwaitRunOptions extends CallOptions {
   waitMs?: number | null;
   heartbeat?: (
     cursor: EventCursor | null,
-    page: AgentApiOutcomeOfSessionEventsReadResponse,
+    page: SessionEventsReadResponse,
   ) => void | Promise<void>;
   /** Called for this run's own events. `onPage` sees every event in the session. */
   onEvent?: (event: SessionEventView) => void | Promise<void>;
-  onPage?: (page: AgentApiOutcomeOfSessionEventsReadResponse) => void | Promise<void>;
+  onPage?: (page: SessionEventsReadResponse) => void | Promise<void>;
 }
 
 export interface AwaitRunResult {
@@ -83,7 +110,13 @@ const AWAIT_RUN_REQUEST_GRACE_MS = 30_000;
 const AWAIT_RUN_READ_ATTEMPTS = 6;
 const AWAIT_RUN_RETRY_BASE_MS = 1_000;
 
-export class LightspeedClient implements RpcCaller {
+/**
+ * A client for the Lightspeed API. `call` reaches every method and returns its
+ * full envelope. Named helpers cover what most applications need, return just the
+ * method's data, and take the IDs of their target as positional arguments.
+ */
+export class LightspeedClient extends LightspeedHelpers {
+  private readonly options: LightspeedClientOptions;
   private readonly endpoint: string;
   private readonly fetchImpl: typeof fetch;
   private readonly headers: LightspeedClientOptions["headers"];
@@ -93,16 +126,23 @@ export class LightspeedClient implements RpcCaller {
   constructor(endpoint: string | URL);
   constructor(options: LightspeedClientOptions);
   constructor(options: string | URL | LightspeedClientOptions) {
+    super();
     const resolved =
       typeof options === "string" || options instanceof URL ? { endpoint: options } : options;
     const fetchImpl = resolved.fetch ?? globalThis.fetch;
     if (!fetchImpl) {
       throw new LightspeedTransportError("LightspeedClient requires a fetch implementation");
     }
+    this.options = resolved;
     this.endpoint = resolved.endpoint.toString();
     this.fetchImpl = fetchImpl;
     this.headers = resolved.headers;
     this.requestId = resolved.requestId;
+  }
+
+  /** A client like this one whose requests are attributed to `actor`. */
+  withActor(actor: string): LightspeedClient {
+    return new LightspeedClient({ ...this.options, actor });
   }
 
   async call<M extends Method>(
@@ -126,7 +166,9 @@ export class LightspeedClient implements RpcCaller {
 
     let response: Response;
     try {
-      response = await this.fetchImpl(this.endpoint, init);
+      // Called detached: browsers reject a fetch invoked as a method of another object.
+      const { fetchImpl } = this;
+      response = await fetchImpl(this.endpoint, init);
     } catch (error) {
       options.signal?.throwIfAborted();
       throw new LightspeedTransportError(`Lightspeed API request failed: ${errorMessage(error)}`, {
@@ -154,35 +196,50 @@ export class LightspeedClient implements RpcCaller {
     return rpcResponse.result as MethodResult<M>;
   }
 
-  startRun(
+  /**
+   * Starts a run. A submission ID is generated if you give none, but only one you
+   * keep lets a retry find the same run after a lost response.
+   */
+  async startRun(
     sessionId: string,
-    input: InputItem[],
+    input: string | InputItem[],
     options: StartRunOptions = {},
-  ): Promise<AgentApiOutcomeOfRunStartResponse> {
-    return this.startRunWithSource(sessionId, { type: "input", items: input }, options);
-  }
-
-  startRunWithSource(
-    sessionId: string,
-    source: RunStartSource,
-    options: StartRunOptions = {},
-  ): Promise<AgentApiOutcomeOfRunStartResponse> {
+  ): Promise<RunStartResponse> {
     const params: RunStartParams = {
       sessionId,
-      source,
+      source: { type: "input", items: inputItems(input) },
       submissionId:
         options.submissionId === undefined ? generateSubmissionId() : options.submissionId,
     };
     if ("config" in options) {
       params.config = options.config ?? null;
     }
-    return this.call("session/runs/start", params, options);
+    const { result } = await this.call("session/runs/start", params, callOptions(options));
+    return result;
   }
 
-  readEvents(
+  /** Sends input to a run in progress, which its next model turn receives. */
+  async steerRun(
+    sessionId: string,
+    runId: string,
+    input: string | InputItem[],
+    options: SteerRunOptions = {},
+  ): Promise<RunSteerResponse> {
+    const params: RunSteerParams = {
+      sessionId,
+      runId,
+      items: inputItems(input),
+      submissionId:
+        options.submissionId === undefined ? generateSubmissionId() : options.submissionId,
+    };
+    const { result } = await this.call("session/runs/steer", params, callOptions(options));
+    return result;
+  }
+
+  async readEvents(
     sessionId: string,
     options: ReadEventsOptions = {},
-  ): Promise<AgentApiOutcomeOfSessionEventsReadResponse> {
+  ): Promise<SessionEventsReadResponse> {
     const params: SessionEventsReadParams = { sessionId };
     if (options.after !== undefined) {
       params.after = options.after;
@@ -193,7 +250,8 @@ export class LightspeedClient implements RpcCaller {
     if (options.waitMs !== undefined) {
       params.waitMs = options.waitMs;
     }
-    return this.call("session/events/read", params, options);
+    const { result } = await this.call("session/events/read", params, callOptions(options));
+    return result;
   }
 
   /**
@@ -231,7 +289,7 @@ export class LightspeedClient implements RpcCaller {
       );
       await options.onPage?.(page);
 
-      const events = page.result.events ?? [];
+      const events = page.events ?? [];
       let finished = false;
       for (const event of events) {
         cursor = event.cursor;
@@ -246,7 +304,7 @@ export class LightspeedClient implements RpcCaller {
       if (!finished) {
         // Never advance to `headCursor`: it is read after the page, so an event
         // landing between the two would be skipped.
-        cursor = page.result.nextCursor ?? cursor;
+        cursor = page.nextCursor ?? cursor;
       }
       await options.heartbeat?.(cursor, page);
       if (finished) {
@@ -277,6 +335,39 @@ export class LightspeedClient implements RpcCaller {
       }
       currentWaitMs = waitMs;
     }
+  }
+
+  /** A blob's bytes. Refs come from run output, tool calls, and message entries. */
+  async readBlobBytes(blobRef: string, options: CallOptions = {}): Promise<Uint8Array> {
+    const { result } = await this.call("blobs/read", { blobRef }, options);
+    return Uint8Array.from(atob(result.bytesBase64), (char) => char.charCodeAt(0));
+  }
+
+  /**
+   * A blob as text, rejecting with a `TypeError` if it is not valid UTF-8. Text
+   * is not always what a blob holds: model output can be provider JSON or media.
+   */
+  async readBlobText(blobRef: string, options: CallOptions = {}): Promise<string> {
+    return new TextDecoder("utf-8", { fatal: true }).decode(await this.readBlobBytes(blobRef, options));
+  }
+
+  /** Stores bytes, or text as UTF-8, and returns the reference to use them by. */
+  async putBlob(data: string | Uint8Array, options: CallOptions = {}): Promise<string> {
+    const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+    let binary = "";
+    for (const byte of bytes) {
+      binary += String.fromCharCode(byte);
+    }
+    const { result } = await this.call(
+      "blobs/put",
+      { blobs: [{ bytesBase64: btoa(binary) }] },
+      options,
+    );
+    const stored = result.blobs?.[0];
+    if (!stored) {
+      throw new LightspeedTransportError("Lightspeed API stored no blob");
+    }
+    return stored.blobRef;
   }
 
   private nextRequestId(): RequestId {
@@ -328,6 +419,15 @@ export class LightspeedClient implements RpcCaller {
     const headers = new Headers();
     headers.set("content-type", "application/json");
     headers.set("accept", "application/json");
+    if (this.options.apiKey !== undefined) {
+      headers.set("authorization", `Bearer ${this.options.apiKey}`);
+    }
+    if (this.options.universe !== undefined) {
+      headers.set("x-lightspeed-universe", this.options.universe);
+    }
+    if (this.options.actor !== undefined) {
+      headers.set("x-lightspeed-actor", this.options.actor);
+    }
     const defaultHeaders =
       typeof this.headers === "function" ? await this.headers() : this.headers;
     appendHeaders(headers, defaultHeaders);
@@ -346,6 +446,22 @@ export function generateSubmissionId(): string {
     return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   }
   return `sub_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+}
+
+function inputItems(input: string | InputItem[]): InputItem[] {
+  return typeof input === "string" ? [{ type: "text", text: input }] : input;
+}
+
+/** Just the transport options, from an options object that also holds params. */
+function callOptions(options: CallOptions): CallOptions {
+  const call: CallOptions = {};
+  if (options.signal) {
+    call.signal = options.signal;
+  }
+  if (options.headers) {
+    call.headers = options.headers;
+  }
+  return call;
 }
 
 function isTerminalEventFor(event: SessionEventView, runId: string): boolean {

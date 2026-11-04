@@ -7,7 +7,7 @@ it, and what to do with the result. Stable identifiers let the application
 recover from a lost HTTP response without creating duplicate work.
 
 The TypeScript client supplies typed JSON-RPC calls and helpers for starting
-runs and following events. Its public types come from the Rust API contract.
+runs and waiting for them to finish. Its public types come from the Rust API contract.
 Build against this client and the public contract so runtime implementation
 changes do not become dependencies of your application.
 
@@ -22,27 +22,32 @@ to configure the client path.
 Run this integration on your application server or another trusted client.
 A runtime key can call its allowed method groups throughout its universe,
 including private sessions when it has the `session` group. Do not embed it
-in a publicly distributed frontend. Applications serving people should
+in a publicly distributed frontend; [serve a browser UI](#serve-a-browser-ui) through
+a proxy instead. Applications serving people should
 authenticate those people and enforce their own access policy before
-submitting work with the application's credentials.
+submitting work with the application's credentials. A key created with
+`assertActor` can attribute that work to them: `client.withActor(userId)` returns a
+client that records the ID on each request. Attribution does not limit what the key
+can do.
 
 Create the `release-editor` profile and `release-notes` workspace from
 [Build your first agent](../getting-started/first-agent.md), including
 `changes.md` and a working model connection. The example reuses that setup
 to prepare the Acorn 1.2 notes from an application.
 
-Use Node.js 24 or newer and a client version corresponding to your deployed
-Lightspeed release. Tagged releases publish `@lightspeed-ai/sdk`;
-pin the release's package version in your application. Inside this repository,
-the package is also available as a workspace dependency.
+Use Node.js 24 or newer. Tagged releases publish `@lightspeed-ai/sdk`, and inside this
+repository the package is also available as a workspace dependency. We recommend pinning
+the version that matches your deployed Lightspeed release, because the client's types
+follow that release's API:
 
 ```bash
 npm install --save-exact "@lightspeed-ai/sdk@<release-version>"
 ```
 
-Replace `<release-version>` with the actual package version before running the
-command. Supply `LIGHTSPEED_API_URL` and `LIGHTSPEED_API_KEY` through the
-application's protected configuration. The example also reads
+Replace `<release-version>` with the actual package version, or run
+`npm install @lightspeed-ai/sdk` for the latest release. Supply `LIGHTSPEED_API_URL` and `LIGHTSPEED_API_KEY` through the
+application's protected configuration. A deployment key also needs the `universe`
+client option; a universe key must leave it out. The example also reads
 `ACORN_RELEASE_JOB_ID`, an application-defined operation ID such as
 `acorn-1.2-draft-001`. Keep it unchanged when retrying that operation.
 
@@ -63,40 +68,38 @@ function required(name: string): string {
 const jobId = required("ACORN_RELEASE_JOB_ID");
 const client = new LightspeedClient({
   endpoint: required("LIGHTSPEED_API_URL"),
-  headers: { authorization: `Bearer ${required("LIGHTSPEED_API_KEY")}` },
+  apiKey: required("LIGHTSPEED_API_KEY"),
 });
 
-const started = await client.call("session/start", {
+const { session } = await client.startSession({
   sessionId: `release-${jobId}`,
   displayName: "Acorn 1.2 release notes",
   access: { visibility: "universe" },
   profile: { kind: "named", profileId: "release-editor" },
   metadata: { application: "release-pipeline", jobId },
 });
-const sessionId = started.result.session.id;
+const sessionId = session.id;
 
-const accepted = await client.startRun(sessionId, [
-  {
-    type: "text",
-    text: "Read changes.md in the release-notes workspace, write the Acorn 1.2 " +
-      "release-notes.md draft, and return a short summary of what you wrote.",
-  },
-], { submissionId: `draft-${jobId}` });
-const runId = accepted.result.run.id;
-console.log({ sessionId, runId, status: accepted.result.run.status });
+const started = await client.startRun(
+  sessionId,
+  "Read changes.md in the release-notes workspace, write the Acorn 1.2 " +
+    "release-notes.md draft, and return a short summary of what you wrote.",
+  { submissionId: `draft-${jobId}` },
+);
+const runId = started.run.id;
+console.log({ sessionId, runId, status: started.run.status });
 
-await client.awaitRun(sessionId, runId, {
+const { run } = await client.awaitRun(sessionId, runId, {
   signal: AbortSignal.timeout(5 * 60_000),
   onEvent(event) {
     console.log(event.cursor.seq, event.kind.type);
   },
 });
 
-const { result } = await client.call("session/runs/read", { sessionId, runId });
-if (result.run.status !== "completed") {
-  throw new Error(`Run ${runId} ended with status ${result.run.status}`);
+if (run.status !== "completed") {
+  throw new Error(`Run ${runId} ended with status ${run.status}: ${run.failure?.message}`);
 }
-console.log(result.run.outputText ?? "Completed without a text output");
+console.log(run.outputText ?? "Completed without a text output");
 ```
 
 Run it with the configured environment:
@@ -107,10 +110,10 @@ node release-notes.mts
 
 The start response means the run was admitted. It can be queued behind
 existing work or already running; it does not mean generation finished.
-`awaitRun` follows session events until it sees a completed, failed, or canceled
-event for the requested run. The final read returns that run's projection,
-including its complete visible terminal text in `outputText` when present, and a
-`failure` with `kind` and `message` when it failed.
+`awaitRun` follows session events until the requested run completes, fails, or is
+canceled, then returns that run's projection, including its complete visible
+terminal text in `outputText` when present, and a `failure` with `kind` and
+`message` when it failed.
 
 The example creates a session shared with the universe so teammates can inspect
 it in the Platform. Omitting `access` creates private work; because this key
@@ -119,6 +122,22 @@ Open the session and inspect `release-notes.md` to verify the workspace change.
 The run's final message and a file it wrote are different outputs. Reuse the
 session for a follow-up conversation, or create another session ID for
 independent work.
+
+## Use helpers or `call`
+
+The client has two layers. Named helpers such as `startSession`, `readRun`, and
+`closeSession` cover what most applications need to use sessions, runs, and the resources
+they attach. `client.call(method, params)` reaches every method in the API by its name,
+including administration such as auth, deployment, and channels, which have no helpers.
+
+A helper and its `call` do the same thing, so prefer the helper when there is one. They
+differ in shape: a helper takes the IDs of its target first and everything else in one
+options object, and returns the method's data. `call` takes one params object and one
+options object, and returns the `AgentApiOutcome` envelope, including any notifications
+sent with the call. A few helpers also add behavior: `startRun` and `steerRun` accept
+plain text and generate a submission ID, `awaitRun` combines several calls and has no
+single method behind it, and the blob helpers handle base64. The
+[client README](../../../clients/typescript/README.md#helpers-and-call) lists them all.
 
 ## Transcribe audio before submitting session input
 
@@ -184,8 +203,8 @@ this, so a retry much later than that starts a new run. `session/runs/steer` tak
 The `startRun` helper generates an ID if you omit one, but calling the helper
 again generates another ID. That default does not provide retry safety across
 application restarts. JSON-RPC request IDs only correlate transport responses;
-they do not replace submission IDs. The client does not automatically retry
-failed HTTP calls.
+they do not replace submission IDs. Apart from the reads inside `awaitRun`, the
+client does not retry failed HTTP calls.
 
 A timeout or aborted HTTP wait also does not cancel the durable run. The
 five-minute timeout above bounds this client's waiting time. On recovery,
@@ -205,10 +224,14 @@ those effects idempotent, so a restart can safely repeat a partially processed
 page. Preserve event joins such as `runId` when several runs share a session.
 
 `awaitRun` provides `onEvent`, `onPage`, and `heartbeat` callbacks and accepts
-an `after` cursor. The example omits it to observe the retained stream from
-the beginning. If a saved cursor might already be past the target's terminal
-event, read the run before waiting again; the helper looks for terminal events
-after its cursor and does not independently check current run state.
+an `after` cursor. `onEvent` receives the run's own events, while `onPage` receives
+every event in the session. The example omits `after`, so it reads the retained
+stream from the beginning; pass the `cursor` from an earlier wait when a session has
+a long history. When a read finds no new events, the helper checks the run's state,
+so a run that finished behind its cursor returns at once, and a session whose
+workflow has stopped rejects with `sessionExecutionStopped`. Reads are repeated
+through network failures and stalled connections for about 30 seconds before the
+wait rejects.
 
 `complete` means the requested direction has no more events at the instant
 of the read; it does not mean the session is closed.
@@ -237,10 +260,9 @@ authoritative content reference, media type, and provider kind. To retrieve
 the bytes of a known reference:
 
 ```ts
-const output = result.run.output;
+const output = run.output;
 if (output) {
-  const blob = await client.call("blobs/read", { blobRef: output.blobRef });
-  const bytes = Buffer.from(blob.result.bytesBase64, "base64");
+  const bytes = await client.readBlobBytes(output.blobRef);
   console.log({ bytes: bytes.length, mime: output.mime,
     providerKind: output.providerKind });
 }
@@ -251,21 +273,102 @@ plain text: model output can be provider-native JSON or media. Tool and catalog
 previews are bounded, while their full bodies remain available by reference.
 Use the declared representation when decoding or storing an artifact.
 
+## Inspect a run
+
+An application that shows what a session did can use these reads directly, without
+processing events:
+
+| To show | Call |
+| --- | --- |
+| The sessions for an application | `listSessions`, filtered by `metadata` |
+| One session's state | `readSession` |
+| Its runs | `listRuns` |
+| One run in full | `readRun`, then `runTimeline` |
+| A tool's complete output | `readBlobText(call.outputRef)` when `outputPreviewTruncated` is set |
+
+`readRun` returns messages and tool calls as separate lists. `runTimeline`
+merges them into one list in the order they happened, joining each tool call to its
+result, its status and its timing:
+
+```ts
+import { runTimeline } from "@lightspeed-ai/sdk";
+
+for (const item of runTimeline(run)) {
+  if (item.type === "tool") {
+    console.log(item.name, item.call?.status, item.call?.durationMs);
+  } else if (item.type === "message") {
+    console.log(item.role, item.entry.text);
+  }
+}
+```
+
+To keep a view current, follow the run with `awaitRun` and read it again when `onEvent`
+fires. Events tell you something changed; the run's projection is what to show.
+
+## Serve a browser UI
+
+A browser cannot hold an API key, and the runtime gateway does not accept cross-origin
+requests. Mount `createRpcProxy` from `@lightspeed-ai/sdk/server` on your own server,
+and point the browser's `LightspeedClient` at it. The proxy forwards only the API methods
+you list by name, including those behind any helper the browser calls, calls your `authorize` function for each one, and ignores any identity the
+browser sends:
+
+```ts
+import { LightspeedClient } from "@lightspeed-ai/sdk";
+import { createRpcProxy } from "@lightspeed-ai/sdk/server";
+
+declare function getUser(request: Request): Promise<{ id: string } | null>;
+
+export const handler = createRpcProxy({
+  client: new LightspeedClient({
+    endpoint: process.env.LIGHTSPEED_API_URL!,
+    apiKey: process.env.LIGHTSPEED_API_KEY!,
+  }),
+  methods: ["session/list", "session/read", "session/runs/list", "session/runs/read"],
+  authorize: async ({ request }) => {
+    const user = await getUser(request);
+    if (!user) return { deny: "unauthenticated" };
+    return { actor: user.id };
+  },
+});
+```
+
+`authorize` can also return `params` to replace what the browser sent, for example to
+force a `metadata` filter onto `session/list`. Treat the params it receives as untrusted,
+because nothing has validated them yet. Returning an `actor` needs a key created with
+`assertActor`, and records who asked without limiting the key. A denial reaches the
+browser as a `LightspeedRpcError` with kind `unauthenticated` or `forbidden`.
+
+A universe is one readable namespace for a key allowed to read it. `blobs/read` takes
+only a blob reference and is not tied to a session, so anyone you allow that method can
+read any blob in the universe whose reference they hold. If an application must not see
+some work, give it a separate universe and key.
+
+Serve the proxy from the same origin as your page, because it sends no CORS headers. It
+accepts only POST with a JSON body, which also stops a cross-site form from using a
+signed-in user's cookies. A long `awaitRun` holds a request open for up to 30 seconds at
+a time, so check your host's limit on request duration. The
+[run inspector example](../../../clients/typescript/examples/run-inspector/README.md)
+is a small working page that uses all of this.
+
 <a id="handle-errors-and-lifecycle-explicitly"></a>
 
 ## Handle errors and lifecycle
 
 Successful `call` results retain the `AgentApiOutcome` envelope:
 `outcome.result` contains method data and `outcome.notifications` contains
-notifications returned with that call. Those notifications do not replace the
+notifications returned with that call. Helpers return the method data alone. Those notifications do not replace the
 durable session event stream.
 
 `LightspeedRpcError` preserves `code`, `message`, `kind`, and structured `data`.
 Inspect those fields for conflicts, rejected operations, missing records, or
 an environment that is not ready. Every `kind` is camelCase, such as `invalidRequest`
 or `notFound`. `LightspeedTransportError` reports failures such as HTTP errors, invalid
-responses, or network interruption. A transport failure after submission can leave
-acceptance unknown; reconcile with stable IDs before retrying mutations.
+responses, or network interruption. Its `transient` flag says the same request may
+succeed later, and `cause` keeps the underlying failure. A transport failure after
+submission can leave acceptance unknown; reconcile with stable IDs before retrying
+mutations. Your own abort or timeout is not a transport failure: the call rejects with
+the signal's reason, such as an `AbortError` or `TimeoutError`.
 
 Two kinds need particular handling:
 
@@ -287,8 +390,7 @@ rather than failing the call.
 | Bring back a stopped session | `session/restart`; a run that was executing fails, and a parked run keeps waiting. |
 
 The [API reference](../../../crates/api/contract/api-reference.md) describes
-each operation. The client's generated `rpc` helpers and `METHOD_INFO` expose
-the same method metadata. Use [Workflow tools](workflow-tools.md) when another
+each operation. The client's `METHOD_INFO` exposes the same method metadata. Use [Workflow tools](workflow-tools.md) when another
 durable workflow needs to own or participate in the session.
 
 ## Verify the integration

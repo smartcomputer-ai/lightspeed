@@ -2,31 +2,36 @@ import { Context } from "@temporalio/activity";
 import { LightspeedClient, type EventCursor } from "@lightspeed-ai/sdk";
 
 export interface RunLightspeedStepInput {
-  endpoint: string;
   sessionId: string;
   prompt: string;
   submissionId: string;
   after?: EventCursor | null;
 }
 
+function required(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing ${name}`);
+  return value;
+}
+
 export async function runLightspeedStep(input: RunLightspeedStepInput) {
   const activity = Context.current();
-  const lightspeed = new LightspeedClient(input.endpoint);
-
-  const session = await lightspeed.call("session/start", {
-    sessionId: input.sessionId,
-    config: null,
+  // Read the key from the worker's environment: activity input is stored in
+  // the workflow's history.
+  const lightspeed = new LightspeedClient({
+    endpoint: required("LIGHTSPEED_API_URL"),
+    apiKey: required("LIGHTSPEED_API_KEY"),
   });
 
-  const run = await lightspeed.startRun(
-    session.result.session.id,
-    [{ type: "text", text: input.prompt }],
-    { submissionId: input.submissionId },
-  );
+  const { session } = await lightspeed.startSession({ sessionId: input.sessionId });
 
-  return lightspeed.awaitRun(session.result.session.id, run.result.run.id, {
+  const { run } = await lightspeed.startRun(session.id, input.prompt, {
+    submissionId: input.submissionId,
+  });
+
+  return lightspeed.awaitRun(session.id, run.id, {
     after: input.after ?? null,
-    waitMs: 30_000,
+    signal: activity.cancellationSignal,
     heartbeat: (cursor) => activity.heartbeat({ cursor }),
   });
 }

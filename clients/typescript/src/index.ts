@@ -9,17 +9,23 @@ export type {
   AwaitRunResult,
   CallOptions,
   LightspeedClientOptions,
+  MethodData,
   ReadEventsOptions,
   RequestId,
+  SessionEventKindOf,
+  SessionEventType,
   StartRunOptions,
+  SteerRunOptions,
   TerminalRunStatus,
   TerminalRunView,
 } from "./client.js";
+export { CLIENT_HELPERS } from "./generated/helpers.js";
+export { runTimeline } from "./run-timeline.js";
+export type { RunTimelineItem, RunTimelineTool } from "./run-timeline.js";
 export {
   METHODS,
   METHOD_INFO,
   NOTIFICATIONS,
-  rpc,
 } from "./generated/methods.js";
 export type {
   Method,
@@ -27,6 +33,5 @@ export type {
   MethodParams,
   MethodResult,
   NotificationMethod,
-  RpcCaller,
 } from "./generated/methods.js";
 export type * from "./generated/types.js";

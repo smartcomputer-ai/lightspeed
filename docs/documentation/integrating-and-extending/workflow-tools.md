@@ -68,15 +68,6 @@ import { LightspeedClient } from "@lightspeed-ai/sdk";
 import { recipeFingerprint } from "@lightspeed-ai/sdk/workflow";
 
 export async function createReviewSession(client: LightspeedClient) {
-  async function putJsonBytes(json: string): Promise<string> {
-    const stored = await client.call("blobs/put", {
-      blobs: [{ bytesBase64: Buffer.from(json).toString("base64") }],
-    });
-    const blob = stored.result.blobs?.[0];
-    if (!blob) throw new Error("Blob upload returned no reference");
-    return blob.blobRef;
-  }
-
   const schema = JSON.stringify({
     type: "object",
     properties: { release: { type: "string" } },
@@ -87,10 +78,10 @@ export async function createReviewSession(client: LightspeedClient) {
     workflowType: "ReleaseReviewWorkflow",
     taskQueue: "release-integrations",
   });
-  const inputSchemaRef = await putJsonBytes(schema);
-  const recipeRef = await putJsonBytes(recipe);
+  const inputSchemaRef = await client.putBlob(schema);
+  const recipeRef = await client.putBlob(recipe);
 
-  return client.call("session/start", {
+  return client.startSession({
     sessionId: "acorn-review",
     profile: { kind: "named", profileId: "release-editor" },
     integration: {
@@ -299,7 +290,7 @@ or through configuration replacement.
 
 A tools-only integration may omit the lifecycle controller. That supplies
 workflow tools without the UI's controller-owned lifecycle designation. The
-declared-start API uses the `session` key group. Lifecycle ownership tells the
+`session/start` with an `integration` uses the `session` key group. Lifecycle ownership tells the
 runtime where to send lifecycle notifications; it does not change which API
 callers can control or close the session. See
 [Agent and tool access](../access-and-security/agent-and-tool-access.md).
