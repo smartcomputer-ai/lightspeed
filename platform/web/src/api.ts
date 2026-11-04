@@ -427,7 +427,7 @@ export interface SessionOrigin {
   depth: number;
   invocationId: string;
   agent: { profileId: string; revision: number };
-  limits: { maxDepth: number; maxDescendants: number; maxConcurrent: number; runTimeoutMs?: number };
+  limits: { maxDepth: number; maxConcurrent: number; runTimeoutMs?: number };
 }
 
 export interface SessionSummary {

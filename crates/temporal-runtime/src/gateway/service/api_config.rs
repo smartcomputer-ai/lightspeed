@@ -317,7 +317,6 @@ fn features_from_api(
                     .collect(),
                 limits: harness::SubagentLimits {
                     max_depth: subagents.max_depth,
-                    max_descendants: subagents.max_descendants,
                     max_concurrent: subagents.max_concurrent,
                     run_timeout_ms: subagents.run_timeout_ms,
                 },

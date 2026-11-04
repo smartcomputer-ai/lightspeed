@@ -587,7 +587,7 @@ async fn jobs_and_subagents_case(fixture: Fixture) -> anyhow::Result<()> {
         .profile;
     let features = serde_json::from_value(json!({
         "environments":{"environments":[{"environmentId":environment,"default":true,"access":"jobs","workingDirectory":fixture.root}]},
-        "subagents":{"agents":[{"profileId":child.profile_id}],"maxDepth":2,"maxDescendants":4,"maxConcurrent":2,"runTimeoutMs":60000}
+        "subagents":{"agents":[{"profileId":child.profile_id}],"maxDepth":2,"maxConcurrent":2,"runTimeoutMs":60000}
     }))?;
     let (model, scope) = fixture.run(features, r#"
             const [job, agent] = await Promise.all([

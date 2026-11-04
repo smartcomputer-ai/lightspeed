@@ -97,7 +97,6 @@ pub enum SessionOriginKind {
 #[serde(rename_all = "snake_case")]
 pub enum SessionOriginLimit {
     MaxDepth,
-    MaxDescendants,
     MaxConcurrent,
 }
 
@@ -105,27 +104,19 @@ impl std::fmt::Display for SessionOriginLimit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::MaxDepth => "maxDepth",
-            Self::MaxDescendants => "maxDescendants",
             Self::MaxConcurrent => "maxConcurrent",
         })
     }
 }
 
-/// Root-scoped counts a store checks before reserving a delegated session.
-/// `descendants` is lifetime (closed sessions included); `open_descendants`
-/// excludes closed ones. Both exclude the root itself.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SessionOriginCounts {
-    pub descendants: u64,
-    pub open_descendants: u64,
-}
-
 /// Shared reservation rule for every session store: the child row is the
 /// reservation, so this runs inside the store's creation transaction with
-/// the root row locked.
+/// the root row locked. `open_descendants` counts the root's descendants that
+/// have not closed, excluding the root itself. There is deliberately no lifetime
+/// count, so a long-running tree can keep delegating as children finish.
 pub fn check_origin_limits(
     origin: &SessionOrigin,
-    counts: SessionOriginCounts,
+    open_descendants: u64,
 ) -> Result<(), SessionStoreError> {
     let exceeded = |limit, max: u64, actual: u64| SessionStoreError::OriginLimitExceeded {
         root_session_id: origin.root_session_id.clone(),
@@ -140,18 +131,11 @@ pub fn check_origin_limits(
             u64::from(origin.depth),
         ));
     }
-    if counts.descendants >= u64::from(origin.limits.max_descendants) {
-        return Err(exceeded(
-            SessionOriginLimit::MaxDescendants,
-            u64::from(origin.limits.max_descendants),
-            counts.descendants,
-        ));
-    }
-    if counts.open_descendants >= u64::from(origin.limits.max_concurrent) {
+    if open_descendants >= u64::from(origin.limits.max_concurrent) {
         return Err(exceeded(
             SessionOriginLimit::MaxConcurrent,
             u64::from(origin.limits.max_concurrent),
-            counts.open_descendants,
+            open_descendants,
         ));
     }
     Ok(())
@@ -685,7 +669,7 @@ impl SessionStore for InMemorySessionStore {
             }
             check_origin_limits(
                 origin,
-                in_memory_origin_counts(&inner, &origin.root_session_id),
+                in_memory_open_descendants(&inner, &origin.root_session_id),
             )?;
         }
         let retention_root_session_id = request
@@ -1275,24 +1259,21 @@ impl SessionStore for InMemorySessionStore {
     }
 }
 
-fn in_memory_origin_counts(
+fn in_memory_open_descendants(
     inner: &InMemorySessionStoreInner,
     root_session_id: &SessionId,
-) -> SessionOriginCounts {
-    let mut counts = SessionOriginCounts::default();
-    for record in inner.records.values() {
-        if record
-            .origin
-            .as_ref()
-            .is_some_and(|origin| &origin.root_session_id == root_session_id)
-        {
-            counts.descendants += 1;
-            if record.lifecycle_status != SessionLifecycleStatus::Closed {
-                counts.open_descendants += 1;
-            }
-        }
-    }
-    counts
+) -> u64 {
+    inner
+        .records
+        .values()
+        .filter(|record| {
+            record
+                .origin
+                .as_ref()
+                .is_some_and(|origin| &origin.root_session_id == root_session_id)
+                && record.lifecycle_status != SessionLifecycleStatus::Closed
+        })
+        .count() as u64
 }
 
 pub fn largest_safe_fork_seq(entries: &[StoredSessionEntry], head: u64) -> EventSeq {
@@ -2113,7 +2094,6 @@ mod tests {
             .expect("create root");
         let limits = SubagentLimits {
             max_depth: 2,
-            max_descendants: 3,
             max_concurrent: 2,
             run_timeout_ms: Some(1_000),
         };
@@ -2151,7 +2131,7 @@ mod tests {
             }
         );
 
-        // Closing one frees its concurrency slot but not its lifetime slot.
+        // Closing one frees its slot.
         close_session(&store, "child-a").await;
         create_delegated(
             &store,
@@ -2160,20 +2140,20 @@ mod tests {
         )
         .await
         .expect("grandchild after a close");
-        let descendants = create_delegated(
+        let full_again = create_delegated(
             &store,
             "child-d",
             subagent_origin("root", "root", 1, limits),
         )
         .await
-        .expect_err("fourth lifetime child");
+        .expect_err("two open again");
         assert_eq!(
-            descendants,
+            full_again,
             SessionStoreError::OriginLimitExceeded {
                 root_session_id: SessionId::new("root"),
-                limit: SessionOriginLimit::MaxDescendants,
-                max: 3,
-                actual: 3,
+                limit: SessionOriginLimit::MaxConcurrent,
+                max: 2,
+                actual: 2,
             }
         );
         assert!(
@@ -2184,6 +2164,16 @@ mod tests {
                 .is_none(),
             "a refused reservation leaves no row"
         );
+
+        // Finished children never count, however many a tree has had.
+        close_session(&store, "child-c").await;
+        create_delegated(
+            &store,
+            "child-d",
+            subagent_origin("root", "root", 1, limits),
+        )
+        .await
+        .expect("a slot is free, whatever the lifetime total");
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2241,7 +2231,6 @@ mod tests {
             .expect("root");
         let limits = SubagentLimits {
             max_concurrent: 1,
-            max_descendants: 1,
             ..SubagentLimits::default()
         };
         create_delegated(&store, "child", subagent_origin("root", "root", 1, limits))

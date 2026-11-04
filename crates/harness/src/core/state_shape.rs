@@ -136,7 +136,6 @@ fn session_config() -> SessionConfig {
                 }],
                 limits: SubagentLimits {
                     max_depth: 2,
-                    max_descendants: 8,
                     max_concurrent: 3,
                     run_timeout_ms: Some(60_000),
                 },

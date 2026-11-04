@@ -256,7 +256,7 @@ inherit the parent's transcript or every capability. Workspace sharing and
 environment inheritance require the relevant attachments; an `inherit`
 environment attachment is resolved against the parent's active machine
 captured at admission and stored on the child as a concrete id. Root-scoped limits
-constrain depth, total descendants, concurrent open descendants, and deadlines.
+constrain depth, concurrent open descendants, and deadlines.
 These policies live around normal session execution; the harness does not
 need a delegation-specific transport.
 

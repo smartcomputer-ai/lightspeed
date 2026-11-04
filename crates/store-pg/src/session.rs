@@ -14,10 +14,9 @@ use harness::{
         CreateClonedSession, CreateForkedSession, CreateSession, DeleteClosedSessions,
         DeleteClosedSessionsResult, ListSessions, ReadRunRecordEntries, ReadSessionEventRange,
         ReadSessionEvents, RetentionRootCursor, SessionCheckpoint, SessionLifecycleStatus,
-        SessionListCursor, SessionListPage, SessionOrigin, SessionOriginCounts, SessionPage,
-        SessionRecord, SessionStore, SessionStoreError, apply_lifecycle_projection,
-        check_origin_limits, event_blob_roots, largest_safe_fork_seq, lifecycle_at_fork,
-        validate_fork_point,
+        SessionListCursor, SessionListPage, SessionOrigin, SessionPage, SessionRecord,
+        SessionStore, SessionStoreError, apply_lifecycle_projection, check_origin_limits,
+        event_blob_roots, largest_safe_fork_seq, lifecycle_at_fork, validate_fork_point,
     },
 };
 use sqlx::{Postgres, Row, Transaction};
@@ -603,10 +602,10 @@ impl SessionStore for PgStore {
                     session_id: request.session_id,
                 });
             }
-            let counts =
-                origin_counts_in_tx(&mut tx, self.config.universe_id, &origin.root_session_id)
+            let open_descendants =
+                open_descendants_in_tx(&mut tx, self.config.universe_id, &origin.root_session_id)
                     .await?;
-            check_origin_limits(origin, counts)?;
+            check_origin_limits(origin, open_descendants)?;
         }
         let origin_columns = OriginColumns::from_origin(request.origin.as_ref())?;
         let query = format!(
@@ -1573,35 +1572,27 @@ impl OriginColumns {
     }
 }
 
-async fn origin_counts_in_tx(
+async fn open_descendants_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     universe_id: Uuid,
     root_session_id: &SessionId,
-) -> Result<SessionOriginCounts, SessionStoreError> {
-    let row = sqlx::query(
+) -> Result<u64, SessionStoreError> {
+    let open_descendants: i64 = sqlx::query_scalar(
         r#"
-        SELECT
-            count(*) AS descendants,
-            count(*) FILTER (WHERE lifecycle_status <> 'closed') AS open_descendants
+        SELECT count(*)
         FROM sessions
-        WHERE universe_id = $1 AND origin_root_session_id = $2 AND deleted_at_ms IS NULL
+        WHERE universe_id = $1
+          AND origin_root_session_id = $2
+          AND deleted_at_ms IS NULL
+          AND lifecycle_status <> 'closed'
         "#,
     )
     .bind(universe_id)
     .bind(root_session_id.as_str())
     .fetch_one(&mut **tx)
     .await
-    .map_err(|error| session_sql_error("count session origin descendants", error))?;
-    let descendants = row
-        .try_get::<i64, _>("descendants")
-        .map_err(|error| session_sql_error("decode descendant count", error))?;
-    let open_descendants = row
-        .try_get::<i64, _>("open_descendants")
-        .map_err(|error| session_sql_error("decode open descendant count", error))?;
-    Ok(SessionOriginCounts {
-        descendants: u64::try_from(descendants).unwrap_or(u64::MAX),
-        open_descendants: u64::try_from(open_descendants).unwrap_or(u64::MAX),
-    })
+    .map_err(|error| session_sql_error("count open session origin descendants", error))?;
+    Ok(u64::try_from(open_descendants).unwrap_or(u64::MAX))
 }
 
 fn session_lifecycle_status_str(status: SessionLifecycleStatus) -> &'static str {

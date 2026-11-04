@@ -749,13 +749,13 @@ fn io_error(error: impl std::fmt::Display) -> CoreAgentIoError {
 }
 
 /// `features.subagents` granting exactly one agent profile.
-fn subagents_features(profile_id: &ProfileId, max_descendants: u32) -> api::FeaturesConfig {
-    subagents_features_with_deadline(profile_id, max_descendants, None)
+fn subagents_features(profile_id: &ProfileId, max_concurrent: u32) -> api::FeaturesConfig {
+    subagents_features_with_deadline(profile_id, max_concurrent, None)
 }
 
 fn subagents_features_with_deadline(
     profile_id: &ProfileId,
-    max_descendants: u32,
+    max_concurrent: u32,
     run_timeout_ms: Option<u64>,
 ) -> api::FeaturesConfig {
     api::FeaturesConfig {
@@ -765,8 +765,7 @@ fn subagents_features_with_deadline(
                 profile_id: profile_id.clone(),
             }],
             max_depth: 2,
-            max_descendants,
-            max_concurrent: 4,
+            max_concurrent,
             run_timeout_ms,
         }),
         ..api::FeaturesConfig::default()
@@ -810,14 +809,14 @@ async fn start_subagent_parent(
     session_id: &SessionId,
     model: &ModelSelection,
     profile_id: &ProfileId,
-    max_descendants: u32,
+    max_concurrent: u32,
     script: &str,
 ) -> anyhow::Result<String> {
     start_subagent_parent_with_features(
         api,
         session_id,
         model,
-        subagents_features(profile_id, max_descendants),
+        subagents_features(profile_id, max_concurrent),
         script,
     )
     .await
@@ -1339,7 +1338,7 @@ async fn run_agent_run_limit_live_client(
     model: ModelSelection,
 ) -> anyhow::Result<()> {
     let profile_id = create_child_profile(api.as_ref()).await?;
-    // maxDescendants = 1: the second of two calls must be refused at the
+    // maxConcurrent = 1: the second of two parallel calls must be refused at the
     // reservation and surface as a failed call, not as a worker error.
     let run_id = start_subagent_parent(
         api.as_ref(),
@@ -1375,7 +1374,7 @@ async fn run_agent_run_limit_live_client(
     assert_eq!((succeeded, failed), (1, 1), "one child, one refusal");
     let parent_output = final_assistant_text(&parent_run).expect("parent assistant output");
     assert!(
-        parent_output.contains("maxDescendants"),
+        parent_output.contains("maxConcurrent"),
         "expected the refusal to name the limit, got: {parent_output}"
     );
     let children = wait_for_children_closed(&sessions, &session_id, 1).await?;

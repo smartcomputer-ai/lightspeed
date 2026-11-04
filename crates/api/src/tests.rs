@@ -3376,7 +3376,6 @@ fn test_profile(profile_id: ProfileId) -> AgentProfile {
                             profile_id: ProfileId::new("reviewer"),
                         }],
                         max_depth: 2,
-                        max_descendants: 16,
                         max_concurrent: 4,
                         run_timeout_ms: Some(3_600_000),
                     }),

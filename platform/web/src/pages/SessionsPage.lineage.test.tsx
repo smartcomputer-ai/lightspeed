@@ -17,7 +17,7 @@ const origin: SessionOrigin = {
   kind: "subagent", parentSessionId: "parent", parentRunId: "parent-run",
   rootSessionId: "parent", depth: 1, invocationId: "invocation",
   agent: { profileId: "reviewer", revision: 1 },
-  limits: { maxDepth: 4, maxDescendants: 20, maxConcurrent: 5, runTimeoutMs: 60_000 },
+  limits: { maxDepth: 4, maxConcurrent: 5, runTimeoutMs: 60_000 },
 };
 function child(id = "child", lifecycleStatus: SessionSummary["lifecycleStatus"] = "open"): SessionSummary {
   return {

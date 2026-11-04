@@ -2654,10 +2654,6 @@ export interface SubagentsFeature {
    */
   maxDepth?: number;
   /**
-   * Lifetime total of sessions ever created under the root.
-   */
-  maxDescendants?: number;
-  /**
    * Per-child run deadline in milliseconds. Omit it for no time limit.
    */
   runTimeoutMs?: number | null;
@@ -2940,7 +2936,6 @@ export interface SubagentAgentPin {
 export interface SubagentLimitsView {
   maxConcurrent: number;
   maxDepth: number;
-  maxDescendants: number;
   /**
    * Absent when a child's run has no time limit.
    */

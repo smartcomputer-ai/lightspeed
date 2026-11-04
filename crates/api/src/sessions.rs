@@ -573,9 +573,6 @@ pub struct SubagentsFeature {
     /// A child at depth `d` may spawn only while `d + 1 <= maxDepth`.
     #[serde(default = "default_subagent_max_depth")]
     pub max_depth: u32,
-    /// Lifetime total of sessions ever created under the root.
-    #[serde(default = "default_subagent_max_descendants")]
-    pub max_descendants: u32,
     /// Open sessions under the root at any time, excluding the root.
     #[serde(default = "default_subagent_max_concurrent")]
     pub max_concurrent: u32,
@@ -594,12 +591,8 @@ fn default_subagent_max_depth() -> u32 {
     2
 }
 
-fn default_subagent_max_descendants() -> u32 {
-    16
-}
-
 fn default_subagent_max_concurrent() -> u32 {
-    4
+    8
 }
 
 /// Grants timer promises through the sleep tool plus the base concurrency
@@ -1155,7 +1148,6 @@ pub struct SubagentAgentPin {
 #[serde(rename_all = "camelCase")]
 pub struct SubagentLimitsView {
     pub max_depth: u32,
-    pub max_descendants: u32,
     pub max_concurrent: u32,
     /// Absent when a child's run has no time limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]

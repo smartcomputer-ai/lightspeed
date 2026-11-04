@@ -32,7 +32,7 @@ It should have a clear description and its own read-only attachment to the
 Open the parent `release-editor` profile and enable **Sub-agents**. In
 **Agents**, select `release-reviewer`. Optional limits are hidden by default;
 choose **Customize limits** to edit them. Set small limits for this task, for
-example **Max depth** `1`, **Max descendants** `8`, **Max concurrent** `2`, and
+example **Max depth** `1`, **Max concurrent** `2`, and
 **Deadline (ms)** `300000`. Save and start a new session from the parent
 profile, or apply it to an existing idle session.
 
@@ -147,8 +147,7 @@ for creating references and capturing outputs from a machine.
 
 ## Bound the delegation tree
 
-The default limits are depth `2`, `16` total descendants, and `4` concurrent
-open descendants. A child has no time limit unless you set **Run timeout**, which
+The default limits are depth `2` and `8` sub-agents running at once. A child has no time limit unless you set **Run timeout**, which
 takes any positive number of milliseconds. Configure smaller values when a task
 should be quick and shallow. An outage of the store or Temporal lasting over 15
 minutes while a delegation is being prepared or resolved fails it rather than
@@ -159,9 +158,10 @@ session workflow has stopped. If it has, the parent's call fails with a message
 saying so and the child is closed. A check that cannot get an answer changes
 nothing and is tried again at the next interval.
 
-These limits apply across the root's delegation tree. **Max descendants**
-counts every child created during the tree's lifetime; finishing a child does
-not return that capacity. **Max concurrent** limits children still open.
+These limits apply across the root's delegation tree. **Max concurrent** counts
+children still open, and a finished child frees its slot, so a long-running tree
+can keep delegating. At the limit, the call is refused and tells the model to
+await a running child and try again; nothing queues.
 Further delegation can narrow the inherited limits but cannot widen them, so a
 run timeout set anywhere above a child applies to it, and the shorter of two
 timeouts wins.

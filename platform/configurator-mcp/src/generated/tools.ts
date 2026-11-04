@@ -915,7 +915,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "array"
             },
             "maxConcurrent": {
-              "default": 4,
+              "default": 8,
               "description": "Open sessions under the root at any time, excluding the root.",
               "format": "uint32",
               "minimum": 0,
@@ -924,13 +924,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "maxDepth": {
               "default": 2,
               "description": "A child at depth `d` may spawn only while `d + 1 <= maxDepth`.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "maxDescendants": {
-              "default": 16,
-              "description": "Lifetime total of sessions ever created under the root.",
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
@@ -2014,7 +2007,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "array"
             },
             "maxConcurrent": {
-              "default": 4,
+              "default": 8,
               "description": "Open sessions under the root at any time, excluding the root.",
               "format": "uint32",
               "minimum": 0,
@@ -2023,13 +2016,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "maxDepth": {
               "default": 2,
               "description": "A child at depth `d` may spawn only while `d + 1 <= maxDepth`.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "maxDescendants": {
-              "default": 16,
-              "description": "Lifetime total of sessions ever created under the root.",
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
@@ -4593,7 +4579,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "array"
             },
             "maxConcurrent": {
-              "default": 4,
+              "default": 8,
               "description": "Open sessions under the root at any time, excluding the root.",
               "format": "uint32",
               "minimum": 0,
@@ -4602,13 +4588,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "maxDepth": {
               "default": 2,
               "description": "A child at depth `d` may spawn only while `d + 1 <= maxDepth`.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "maxDescendants": {
-              "default": 16,
-              "description": "Lifetime total of sessions ever created under the root.",
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
@@ -6577,7 +6556,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "array"
             },
             "maxConcurrent": {
-              "default": 4,
+              "default": 8,
               "description": "Open sessions under the root at any time, excluding the root.",
               "format": "uint32",
               "minimum": 0,
@@ -6586,13 +6565,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "maxDepth": {
               "default": 2,
               "description": "A child at depth `d` may spawn only while `d + 1 <= maxDepth`.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "maxDescendants": {
-              "default": 16,
-              "description": "Lifetime total of sessions ever created under the root.",
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
@@ -7706,7 +7678,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "array"
             },
             "maxConcurrent": {
-              "default": 4,
+              "default": 8,
               "description": "Open sessions under the root at any time, excluding the root.",
               "format": "uint32",
               "minimum": 0,
@@ -7715,13 +7687,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "maxDepth": {
               "default": 2,
               "description": "A child at depth `d` may spawn only while `d + 1 <= maxDepth`.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "maxDescendants": {
-              "default": 16,
-              "description": "Lifetime total of sessions ever created under the root.",
               "format": "uint32",
               "minimum": 0,
               "type": "integer"

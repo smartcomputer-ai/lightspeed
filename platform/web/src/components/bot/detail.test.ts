@@ -64,7 +64,7 @@ const subagent = (
     depth: 1,
     invocationId: "inv-1",
     agent: { profileId: "reviewer", revision: 1 },
-    limits: { maxDepth: 1, maxDescendants: 4, maxConcurrent: 1, runTimeoutMs: 60_000 },
+    limits: { maxDepth: 1, maxConcurrent: 1, runTimeoutMs: 60_000 },
   },
 });
 

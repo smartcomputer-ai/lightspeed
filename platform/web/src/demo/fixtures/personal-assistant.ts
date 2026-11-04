@@ -691,8 +691,8 @@ const SKILLS_RO = link(WORKSPACE.skills, "/skills", "read");
 const BRIEFS_RW = link(WORKSPACE.briefs, "/briefs", "edit");
 const BRIEFS_RO = link(WORKSPACE.briefs, "/briefs", "read");
 
-const ASSISTANT_LIMITS = { maxDepth: 1, maxDescendants: 4, maxConcurrent: 2, runTimeoutMs: 15 * MINUTE_MS };
-const RESEARCH_LIMITS = { maxDepth: 1, maxDescendants: 6, maxConcurrent: 3, runTimeoutMs: 10 * MINUTE_MS };
+const ASSISTANT_LIMITS = { maxDepth: 1, maxConcurrent: 2, runTimeoutMs: 15 * MINUTE_MS };
+const RESEARCH_LIMITS = { maxDepth: 1, maxConcurrent: 3, runTimeoutMs: 10 * MINUTE_MS };
 
 const GOOGLE_TOOLS = [
   "gmail.search",

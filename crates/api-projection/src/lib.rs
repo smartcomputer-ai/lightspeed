@@ -2459,7 +2459,6 @@ fn subagents_feature_to_api(
             })
             .collect::<Result<Vec<_>, AgentApiError>>()?,
         max_depth: subagents.limits.max_depth,
-        max_descendants: subagents.limits.max_descendants,
         max_concurrent: subagents.limits.max_concurrent,
         run_timeout_ms: subagents.limits.run_timeout_ms,
     })
@@ -2494,7 +2493,6 @@ pub fn session_origin_to_api(
 pub fn subagent_limits_to_api(limits: harness::SubagentLimits) -> api::SubagentLimitsView {
     api::SubagentLimitsView {
         max_depth: limits.max_depth,
-        max_descendants: limits.max_descendants,
         max_concurrent: limits.max_concurrent,
         run_timeout_ms: limits.run_timeout_ms,
     }
@@ -5362,7 +5360,6 @@ mod tests {
                     }],
                     limits: harness::SubagentLimits {
                         max_depth: 3,
-                        max_descendants: 10,
                         max_concurrent: 2,
                         run_timeout_ms: Some(120_000),
                     },
@@ -5449,7 +5446,6 @@ mod tests {
                                 .expect("valid profile id"),
                         }],
                         max_depth: 3,
-                        max_descendants: 10,
                         max_concurrent: 2,
                         run_timeout_ms: Some(120_000),
                     }),

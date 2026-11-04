@@ -92,8 +92,6 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
       "maxConcurrent": 0,
       // A child at depth \`d\` may spawn only while \`d + 1 <= maxDepth\`.
       "maxDepth": 0,
-      // Lifetime total of sessions ever created under the root.
-      "maxDescendants": 0,
       // Per-child run deadline in milliseconds. Omit it for no time limit.
       "runTimeoutMs": 0,
       "version": 0,

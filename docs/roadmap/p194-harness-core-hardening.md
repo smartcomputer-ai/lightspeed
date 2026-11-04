@@ -3290,6 +3290,10 @@ These are the calls most worth your attention. Full detail is under 'Risky calls
 11. **Validated `BlobRef` decode (H-18)** stays strict despite H-74's leniency, because typed blob roots depend on it.
 12. **Documentation is unsigned.** All guide and upgrade changes went in without your sign-off, in code-free commits, for you to review. `AGENTS.md` and the root `README.md` were not edited, and the wording they need is listed in this document.
 
+### Sub-agent limits, after the final gate
+
+The owner dropped the lifetime `maxDescendants`: it stopped long-running agents and protected nothing `maxConcurrent` does not, since a child closes when it finishes. `maxConcurrent` is the safety limit, now defaulting to 8 across the tree. At the limit the call is refused and tells the model to await a running child; it does not queue. A run that spawns one child at a time can go on indefinitely, which matches the rule that limits apply only when set. `job_run` and the LLM call limits stay as they are, by the owner's call.
+
 ### Parallel work
 
 The last two groups ran in one checkout with agents working at once, as you asked. Commits interleave, and some carry a neighbour's edit to a shared file, so cherry-picking a whole package from those groups is harder than from the first ten. For example, the session status removal in H-25 spans commits from two rename packages.

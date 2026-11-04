@@ -456,7 +456,6 @@
             ],
             "max_concurrent": 3,
             "max_depth": 2,
-            "max_descendants": 8,
             "run_timeout_ms": 60000,
             "version": 1
           },

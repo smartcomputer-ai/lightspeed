@@ -17,8 +17,8 @@ use harness::{
     BlobRef, PromiseResolution, RunStatus, RunTerminalNotifyIntent, SessionId, SubmissionId,
     media::MediaDescriptor,
     storage::{
-        BlobGraphStore, BlobStore, CreateSession, SessionOrigin, SessionOriginKind, SessionStore,
-        SessionStoreError,
+        BlobGraphStore, BlobStore, CreateSession, SessionOrigin, SessionOriginKind,
+        SessionOriginLimit, SessionStore, SessionStoreError,
     },
 };
 use temporal_workflow::{
@@ -395,6 +395,20 @@ impl SubagentService {
                         ))
                         .await;
                 }
+            }
+            // A full tree refuses and tells the model what to do. Queueing could
+            // deadlock a child waiting for a slot its own parent holds.
+            Err(SessionStoreError::OriginLimitExceeded {
+                limit: SessionOriginLimit::MaxConcurrent,
+                max,
+                ..
+            }) => {
+                return self
+                    .rejected(format!(
+                        "{max} sub-agents are already running in this session's tree \
+                         (maxConcurrent {max}). Await one of them, then try again."
+                    ))
+                    .await;
             }
             Err(error @ SessionStoreError::OriginLimitExceeded { .. }) => {
                 return self.rejected(error.to_string()).await;
@@ -1464,7 +1478,7 @@ mod tests {
         let runtime = FakeChildRuntime::with_profile("reviewer", 1);
         let h = harness(runtime).await;
         let limits = SubagentLimits {
-            max_descendants: 1,
+            max_concurrent: 1,
             ..SubagentLimits::default()
         };
         let first = start_args(&h.blobs, "wte:a", "parent", "reviewer", "reviewer", limits).await;
@@ -1480,7 +1494,8 @@ mod tests {
             .await
             .expect("second prepare");
         let message = rejection_message(&h.blobs, result).await;
-        assert!(message.contains("maxDescendants"), "{message}");
+        assert!(message.contains("maxConcurrent 1"), "{message}");
+        assert!(message.contains("Await one"), "{message}");
         assert_eq!(h.runtime.started_sessions.lock().unwrap().len(), 1);
     }
 
@@ -1492,7 +1507,6 @@ mod tests {
         // counts as one open descendant of `root` itself.
         let parent_limits = SubagentLimits {
             max_depth: 3,
-            max_descendants: 2,
             max_concurrent: 2,
             run_timeout_ms: Some(5_000),
         };
@@ -1560,7 +1574,6 @@ mod tests {
             origin.limits,
             SubagentLimits {
                 max_depth: 2,
-                max_descendants: 2,
                 max_concurrent: 2,
                 run_timeout_ms: Some(5_000),
             }

@@ -40,9 +40,8 @@ pub(crate) fn subagent_catalog_text(catalog: &SubagentCatalogSnapshot) -> String
         None => "no time limit per child".to_owned(),
     };
     text.push_str(&format!(
-        "\nLimits for this session\'s tree: depth {}, {} descendants in total, {} running at once, {child_time_limit}.",
+        "\nLimits for this session\'s tree: depth {}, {} running at once, {child_time_limit}. A finished child frees its slot.",
         catalog.limits.max_depth,
-        catalog.limits.max_descendants,
         catalog.limits.max_concurrent,
     ));
     text
@@ -76,7 +75,7 @@ mod tests {
         assert!(text.contains("- reviewer (Reviewer)"));
         assert!(text.contains("Reviews a PR for correctness."));
         assert!(text.contains("currently missing"));
-        assert!(text.contains("depth 2, 16 descendants"));
+        assert!(text.contains("depth 2, 8 running at once"));
         assert!(text.contains("no time limit per child"));
         assert!(!text.contains(" s per child"));
         assert!(text.contains(AGENT_RUN_TOOL_NAME));

@@ -17628,11 +17628,6 @@
             "minimum": 0,
             "type": "integer"
           },
-          "maxDescendants": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          },
           "runTimeoutMs": {
             "description": "Absent when a child's run has no time limit.",
             "format": "uint64",
@@ -17645,7 +17640,6 @@
         },
         "required": [
           "maxDepth",
-          "maxDescendants",
           "maxConcurrent"
         ],
         "type": "object"
@@ -17662,7 +17656,7 @@
             "type": "array"
           },
           "maxConcurrent": {
-            "default": 4,
+            "default": 8,
             "description": "Open sessions under the root at any time, excluding the root.",
             "format": "uint32",
             "minimum": 0,
@@ -17671,13 +17665,6 @@
           "maxDepth": {
             "default": 2,
             "description": "A child at depth `d` may spawn only while `d + 1 <= maxDepth`.",
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "maxDescendants": {
-            "default": 16,
-            "description": "Lifetime total of sessions ever created under the root.",
             "format": "uint32",
             "minimum": 0,
             "type": "integer"

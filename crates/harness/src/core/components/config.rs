@@ -449,9 +449,6 @@ pub struct SubagentLimits {
     /// A child at depth `d` may spawn only while `d + 1 <= max_depth`.
     #[serde(default = "default_subagent_max_depth")]
     pub max_depth: u32,
-    /// Lifetime total of sessions ever created under the root.
-    #[serde(default = "default_subagent_max_descendants")]
-    pub max_descendants: u32,
     /// Open sessions under the root, excluding the root itself.
     #[serde(default = "default_subagent_max_concurrent")]
     pub max_concurrent: u32,
@@ -461,14 +458,12 @@ pub struct SubagentLimits {
 }
 
 pub const SUBAGENT_DEFAULT_MAX_DEPTH: u32 = 2;
-pub const SUBAGENT_DEFAULT_MAX_DESCENDANTS: u32 = 16;
-pub const SUBAGENT_DEFAULT_MAX_CONCURRENT: u32 = 4;
+pub const SUBAGENT_DEFAULT_MAX_CONCURRENT: u32 = 8;
 
 impl Default for SubagentLimits {
     fn default() -> Self {
         Self {
             max_depth: SUBAGENT_DEFAULT_MAX_DEPTH,
-            max_descendants: SUBAGENT_DEFAULT_MAX_DESCENDANTS,
             max_concurrent: SUBAGENT_DEFAULT_MAX_CONCURRENT,
             run_timeout_ms: None,
         }
@@ -481,7 +476,6 @@ impl SubagentLimits {
     pub fn attenuated_by(self, outer: SubagentLimits) -> Self {
         Self {
             max_depth: self.max_depth.min(outer.max_depth),
-            max_descendants: self.max_descendants.min(outer.max_descendants),
             max_concurrent: self.max_concurrent.min(outer.max_concurrent),
             run_timeout_ms: match (self.run_timeout_ms, outer.run_timeout_ms) {
                 (Some(inner), Some(outer)) => Some(inner.min(outer)),
@@ -493,10 +487,6 @@ impl SubagentLimits {
 
 fn default_subagent_max_depth() -> u32 {
     SUBAGENT_DEFAULT_MAX_DEPTH
-}
-
-fn default_subagent_max_descendants() -> u32 {
-    SUBAGENT_DEFAULT_MAX_DESCENDANTS
 }
 
 fn default_subagent_max_concurrent() -> u32 {
@@ -931,10 +921,9 @@ fn validate_subagents_feature(subagents: &SubagentsFeature) -> Result<(), Domain
         }
     }
     let limits = &subagents.limits;
-    if limits.max_depth == 0 || limits.max_descendants == 0 || limits.max_concurrent == 0 {
+    if limits.max_depth == 0 || limits.max_concurrent == 0 {
         return Err(DomainError::InvariantViolation(
-            "subagents limits maxDepth, maxDescendants, and maxConcurrent must be at least 1"
-                .to_owned(),
+            "subagents limits maxDepth and maxConcurrent must be at least 1".to_owned(),
         ));
     }
     if limits.run_timeout_ms == Some(0) {
