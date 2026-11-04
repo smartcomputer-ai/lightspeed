@@ -222,6 +222,7 @@ async fn killed_code_worker_recovers_on_another_process_without_replaying_javasc
                     timers: Some(api::TimersFeature { version: api::CURRENT_FEATURE_VERSION }),
                     ..Default::default()
                 }), ..Default::default() }),
+                integration: None,
             }).await?;
             let result = async {
                 let run = start_text_run(&api, &session_id, "run one effect then compute").await?;
@@ -236,9 +237,9 @@ async fn killed_code_worker_recovers_on_another_process_without_replaying_javasc
                 }).await?;
                 let state = session_state(&store, &session_id).await?;
                 let invocation = state.workflow_tools.start_requests.values().find(|request| {
-                    request.tool_id.as_str() == tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID
+                    request.workflow_tool_id.as_str() == tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID
                 }).ok_or_else(|| anyhow::anyhow!("code invocation missing"))?;
-                let WorkflowToolTarget::Start { start } = &state.workflow_tools.bindings[&invocation.tool_id].target else {
+                let WorkflowToolTarget::Start { start } = &state.workflow_tools.bindings[&invocation.workflow_tool_id].target else {
                     anyhow::bail!("code invocation must have a workflow start recipe")
                 };
                 let execution_id = harness::workflow_tool_execution_id(&invocation.invocation_id, &start.recipe_fingerprint);

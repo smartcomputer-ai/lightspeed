@@ -22,7 +22,9 @@ use llm_runtime::{
 use store_pg::PgStore;
 use vfs::VfsWorkspaceStore;
 
-use crate::worker::mcp::{McpPrivateNetworkPolicy, NativeMcpInventoryResolver, NativeMcpRuntime};
+use crate::worker::mcp::{
+    McpPrivateNetworkPolicy, RuntimeMcpExecutor, RuntimeMcpInventoryResolver,
+};
 use crate::{
     config::pg_store_from_env,
     credential_injection::EnvironmentCredentialResolver,
@@ -35,6 +37,7 @@ use super::audio::{
     AudioTranscoder, AudioTranscriber, OpenAiAudioTranscriber, UnavailableAudioTranscriber,
     default_audio_transcoder_from_env, default_openai_audio_transcriber,
 };
+use crate::gateway::service::ModelDiscoveryService;
 use crate::universe::DeploymentClients;
 
 #[derive(Clone)]
@@ -54,14 +57,14 @@ pub struct LlmActivityDeps {
 pub struct ToolActivityDeps {
     pub(super) tools: Arc<dyn CoreAgentTools>,
     pub(super) blobs: Arc<dyn BlobStore>,
-    /// Records output-to-asset edges for native MCP results.
+    /// Records output-to-asset edges for runtime MCP results.
     pub(super) blob_graph: Option<Arc<dyn BlobGraphStore>>,
     /// The hosted runtime behind `tools` when it is the real `SessionTools`:
     /// grants the per-call not-ready outcome and the environment readiness
     /// wait. Absent for injected fake runtimes, which never report a
     /// not-ready environment.
     pub(super) hosted: Option<Arc<SessionTools>>,
-    pub(super) native_mcp: Option<Arc<NativeMcpRuntime>>,
+    pub(super) runtime_mcp: Option<Arc<RuntimeMcpExecutor>>,
 }
 
 #[derive(Clone)]
@@ -120,6 +123,9 @@ pub struct ActivityState {
     tools: ToolActivityDeps,
     runtime_projection: Option<RuntimeProjectionActivityDeps>,
     pub(super) preparation_store: Option<Arc<PgStore>>,
+    /// Reported model capacity for run preparation. Without it a run has no reported
+    /// limit and relies on the provider's overflow error.
+    pub(super) model_discovery: Option<Arc<ModelDiscoveryService>>,
     pub(super) code_task_queue: String,
     audio: AudioActivityDeps,
     environment_jobs: Option<EnvironmentJobActivityDeps>,
@@ -149,10 +155,11 @@ impl ActivityState {
                 blobs: blobs.clone(),
                 blob_graph: None,
                 hosted: None,
-                native_mcp: None,
+                runtime_mcp: None,
             },
             runtime_projection: None,
             preparation_store: None,
+            model_discovery: None,
             code_task_queue: crate::config::DEFAULT_CODE_TASK_QUEUE.to_owned(),
             audio: AudioActivityDeps {
                 blobs: blobs.clone(),
@@ -167,6 +174,11 @@ impl ActivityState {
 
     pub fn with_code_task_queue(mut self, task_queue: String) -> Self {
         self.code_task_queue = task_queue;
+        self
+    }
+
+    pub(crate) fn with_model_discovery(mut self, discovery: Arc<ModelDiscoveryService>) -> Self {
+        self.model_discovery = Some(discovery);
         self
     }
 
@@ -211,6 +223,21 @@ impl ActivityState {
             )
             .with_blob_graph(self.storage.blob_graph.clone()),
         });
+        self
+    }
+
+    /// Replace how sub-agent executions supervise their wait. Set after
+    /// [`Self::with_subagent_runtime`]. Live tests use this to reach a check or a
+    /// rollover in seconds; nothing in a deployment's configuration reaches it.
+    pub fn with_subagent_wait_policy(
+        mut self,
+        wait: temporal_workflow::SubagentWaitPolicy,
+    ) -> Self {
+        if let Some(subagents) = self.subagents.take() {
+            self.subagents = Some(SubagentActivityDeps {
+                service: subagents.service.with_wait_policy(wait),
+            });
+        }
         self
     }
 
@@ -275,15 +302,15 @@ impl ActivityState {
         self
     }
 
-    pub fn with_native_mcp(mut self, native_mcp: Arc<NativeMcpRuntime>) -> Self {
-        self.tools.native_mcp = Some(native_mcp);
+    pub fn with_runtime_mcp(mut self, runtime_mcp: Arc<RuntimeMcpExecutor>) -> Self {
+        self.tools.runtime_mcp = Some(runtime_mcp);
         self
     }
 
-    /// Attach the production native MCP executor while retaining explicitly
+    /// Attach the production runtime MCP executor while retaining explicitly
     /// supplied LLM/tool doubles. Used by end-to-end workflow tests and
     /// specialized deployments that wrap the standard runtime boundaries.
-    pub fn with_native_mcp_from_pg_store(mut self, store: Arc<PgStore>) -> anyhow::Result<Self> {
+    pub fn with_runtime_mcp_from_pg_store(mut self, store: Arc<PgStore>) -> anyhow::Result<Self> {
         let broker = registry_token_broker(store.clone())?;
         let mcp_servers: Arc<dyn mcp::McpRegistryStore> = store.clone();
         let secrets: Arc<dyn SecretResolver> =
@@ -293,13 +320,14 @@ impl ActivityState {
             crate::gateway::service::mcp_discovery::ConfiguratorTrustedHeaderPolicy::from_env()
                 .map_err(anyhow::Error::msg)?;
         let universe_id = store.config().universe_id;
-        let inventory = Arc::new(NativeMcpInventoryResolver::new(
+        let inventory = Arc::new(RuntimeMcpInventoryResolver::new(
+            mcp_servers.clone(),
             secrets.clone(),
             private_networks.clone(),
             trusted_header.clone(),
             universe_id,
         ));
-        self.tools.native_mcp = Some(Arc::new(NativeMcpRuntime::new(
+        self.tools.runtime_mcp = Some(Arc::new(RuntimeMcpExecutor::new(
             mcp_servers,
             secrets,
             inventory,
@@ -323,17 +351,18 @@ impl ActivityState {
             crate::gateway::service::mcp_discovery::ConfiguratorTrustedHeaderPolicy::from_env()
                 .map_err(anyhow::Error::msg)?;
         let universe_id = store.config().universe_id;
-        let native_inventory = Arc::new(NativeMcpInventoryResolver::new(
+        let runtime_inventory = Arc::new(RuntimeMcpInventoryResolver::new(
+            mcp_servers.clone(),
             secrets.clone(),
             private_networks.clone(),
             trusted_header.clone(),
             universe_id,
         ));
-        let inventory: Arc<dyn McpInventoryResolver> = native_inventory.clone();
-        let native_mcp = Arc::new(NativeMcpRuntime::new(
+        let inventory: Arc<dyn McpInventoryResolver> = runtime_inventory.clone();
+        let runtime_mcp = Arc::new(RuntimeMcpExecutor::new(
             mcp_servers,
             secrets.clone(),
-            native_inventory,
+            runtime_inventory,
             private_networks,
             trusted_header,
             universe_id,
@@ -346,7 +375,7 @@ impl ActivityState {
         let tools: Arc<dyn CoreAgentTools> = hosted.clone();
         let mut state = Self::from_pg_store(store, llm, tools)
             .with_hosted_tools(hosted)
-            .with_native_mcp(native_mcp)
+            .with_runtime_mcp(runtime_mcp)
             .with_audio_transcriber(transcriber);
         if let Some(transcoder) = transcoder {
             state = state.with_audio_transcoder(transcoder);
@@ -380,17 +409,18 @@ impl ActivityState {
             crate::gateway::service::mcp_discovery::ConfiguratorTrustedHeaderPolicy::from_env()
                 .map_err(anyhow::Error::msg)?;
         let universe_id = store.config().universe_id;
-        let native_inventory = Arc::new(NativeMcpInventoryResolver::new(
+        let runtime_inventory = Arc::new(RuntimeMcpInventoryResolver::new(
+            mcp_servers.clone(),
             secrets.clone(),
             private_networks.clone(),
             trusted_header.clone(),
             universe_id,
         ));
-        let inventory: Arc<dyn McpInventoryResolver> = native_inventory.clone();
-        let native_mcp = Arc::new(NativeMcpRuntime::new(
+        let inventory: Arc<dyn McpInventoryResolver> = runtime_inventory.clone();
+        let runtime_mcp = Arc::new(RuntimeMcpExecutor::new(
             mcp_servers,
             secrets.clone(),
-            native_inventory,
+            runtime_inventory,
             private_networks,
             trusted_header,
             universe_id,
@@ -418,7 +448,7 @@ impl ActivityState {
         let tools: Arc<dyn CoreAgentTools> = hosted.clone();
         let mut state = Self::from_pg_store(store, llm, tools)
             .with_hosted_tools(hosted)
-            .with_native_mcp(native_mcp)
+            .with_runtime_mcp(runtime_mcp)
             .with_audio_transcriber(transcriber)
             .with_workflow_tool_executions(temporal_client_for_workflow_tools);
         if let Some(subagent_runtime) = subagent_runtime {

@@ -31,6 +31,7 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "cas_blobs",
     "cas_bot_event_roots",
     "cas_session_roots",
+    "cas_sweep_cursors",
     "channel_accounts",
     "channel_pairings",
     "environment_credentials",
@@ -113,9 +114,24 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "session_deletion",
         sql: include_str!("../migrations/011_session_deletion.sql"),
     },
+    EmbeddedMigration {
+        version: 12,
+        name: "cas_sweep_cursors",
+        sql: include_str!("../migrations/012_cas_sweep_cursors.sql"),
+    },
+    EmbeddedMigration {
+        version: 13,
+        name: "camel_case_bot_values",
+        sql: include_str!("../migrations/013_camel_case_bot_values.sql"),
+    },
+    EmbeddedMigration {
+        version: 14,
+        name: "runtime_and_lifecycle_vocabulary",
+        sql: include_str!("../migrations/014_runtime_and_lifecycle_vocabulary.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 11;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 14;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

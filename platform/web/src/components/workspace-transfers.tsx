@@ -117,9 +117,9 @@ export function WorkspaceTransfers({
     enabled: !!workspaceId,
   });
   const canUpload =
-    !!workspaceId && !!tree.data && permissions.can("use_resource");
+    !!workspaceId && !!tree.data && permissions.can("useResource");
   const canConfigureWorkspace =
-    !!workspaceId && !!tree.data && permissions.can("configure_resource");
+    !!workspaceId && !!tree.data && permissions.can("configureResource");
   const filesInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const replacementInput = useRef<HTMLInputElement>(null);

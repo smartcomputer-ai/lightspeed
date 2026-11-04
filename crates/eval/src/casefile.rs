@@ -81,8 +81,6 @@ pub struct RunSpec {
     #[serde(default)]
     pub max_turns: Option<u32>,
     #[serde(default)]
-    pub max_tool_rounds: Option<u32>,
-    #[serde(default)]
     pub allowed_tools: Option<Vec<String>>,
 }
 

@@ -1,4 +1,5 @@
 use api::BlobPutItem;
+use harness::ToolName;
 
 use super::*;
 use tools::prompts::active_prompt_instruction_entries as active_prompt_context_entries;
@@ -88,86 +89,46 @@ fn replacements_keep_the_entry_kind_and_origin() {
 #[test]
 fn admission_failure_mapping_uses_gateway_error_kinds() {
     assert_eq!(
-        map_admission_failure_to_api_error(&failure(AgentAdmissionFailureKind::RejectedCommand))
+        failure(AgentAdmissionFailureKind::RejectedCommand)
+            .api_error()
             .kind,
         AgentApiErrorKind::Rejected
     );
-    let mut revision_conflict = failure(AgentAdmissionFailureKind::RejectedCommand);
-    revision_conflict.rejection = Some(harness::CommandRejection::context_revision_conflict(1, 2));
+    let with_rejection = |rejection| AgentAdmissionFailure {
+        rejection: Some(rejection),
+        ..failure(AgentAdmissionFailureKind::RejectedCommand)
+    };
+    use harness::CommandRejectionKind as Kind;
     assert_eq!(
-        map_admission_failure_to_api_error(&revision_conflict).kind,
+        with_rejection(harness::CommandRejection::context_revision_conflict(1, 2))
+            .api_error()
+            .kind,
         AgentApiErrorKind::Conflict
     );
+    for (kind, expected) in [
+        (Kind::Invalid, AgentApiErrorKind::InvalidRequest),
+        (
+            Kind::ProviderCompatibility,
+            AgentApiErrorKind::InvalidRequest,
+        ),
+        (Kind::RevisionConflict, AgentApiErrorKind::Conflict),
+        (Kind::Conflict, AgentApiErrorKind::Conflict),
+        (Kind::Internal, AgentApiErrorKind::Internal),
+        (Kind::ActiveWork, AgentApiErrorKind::Rejected),
+        (Kind::SessionLifecycle, AgentApiErrorKind::Rejected),
+        (Kind::Refused, AgentApiErrorKind::Rejected),
+    ] {
+        let error = with_rejection(harness::CommandRejection::new(kind, "the reason")).api_error();
+        assert_eq!(error.kind, expected);
+        assert_eq!(error.message, "the reason");
+    }
 }
 
 #[test]
-fn legacy_subagent_bindings_retain_their_immutable_deadline_ceiling() {
-    const LEGACY_CEILING_MS: u64 = 4 * 60 * 60 * 1_000;
-    let tool = tools::definitions::register(
-        "subagent.run",
-        Default::default(),
-        harness::ToolParallelism::ParallelSafe,
-        Default::default(),
-    );
-    let tool_id = WorkflowToolId::new(tools::subagents::AGENT_RUN_WORKFLOW_TOOL_ID);
-    let binding = harness::WorkflowToolBinding::admit(
-        uuid::Uuid::from_u128(1),
-        harness::WorkflowToolDefinition {
-            tool_id: tool_id.clone(),
-            revision: 1,
-            semantic_type: tools::subagents::AGENT_RUN_WORKFLOW_SEMANTIC_TYPE.to_owned(),
-            tool,
-        },
-        WorkflowToolTarget::Bound {
-            receiver: WorkflowEndpointRef {
-                workflow_id: "legacy-subagent-execution".to_owned(),
-                workflow_kind: "subagent.execution".to_owned(),
-            },
-            dispatch: BoundWorkflowToolDispatch::Push,
-        },
-        WorkflowToolCompletion::Joined {
-            reply_schema_ref: None,
-            deadline_after_ms: LEGACY_CEILING_MS,
-        },
-    )
-    .expect("legacy subagent binding");
-    let mut state = harness::CoreAgentState::new();
-    state.workflow_tools.bindings.insert(tool_id, binding);
-    let mut features = harness::FeaturesConfig {
-        subagents: Some(harness::SubagentsFeature {
-            agents: vec![harness::SubagentAgentConfig {
-                profile_id: "reviewer".to_owned(),
-            }],
-            limits: harness::SubagentLimits {
-                deadline_ms: LEGACY_CEILING_MS,
-                ..harness::SubagentLimits::default()
-            },
-            ..harness::SubagentsFeature::default()
-        }),
-        ..harness::FeaturesConfig::default()
-    };
-
-    validate_subagent_deadline_for_existing_bindings(&state, &features)
-        .expect("legacy ceiling remains valid");
-    features
-        .subagents
-        .as_mut()
-        .expect("subagents")
-        .limits
-        .deadline_ms += 1;
-    assert_eq!(
-        validate_subagent_deadline_for_existing_bindings(&state, &features)
-            .expect_err("deadline above the durable binding must fail")
-            .kind,
-        AgentApiErrorKind::InvalidRequest
-    );
-}
-
-#[test]
-fn managed_workflow_tools_api_maps_bound_promise_function_tools() {
+fn declared_workflow_tools_api_maps_bound_promise_function_tools() {
     let input_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
     let reply_schema_ref = BlobRef::from_bytes(br#"{"type":"string"}"#);
-    let declaration = managed_workflow_tools_from_api(ManagedSessionWorkflowToolsInput {
+    let declaration = declared_workflow_tools_from_api(SessionIntegrationInput {
         version: 1,
         lifecycle_controller: Some(WorkflowEndpointInput {
             workflow_id: "controller-1".to_owned(),
@@ -175,8 +136,8 @@ fn managed_workflow_tools_api_maps_bound_promise_function_tools() {
         }),
         tools: vec![WorkflowToolDeclarationInput {
             definition: WorkflowToolDefinitionInput {
-                tool_id: "accept-order".to_owned(),
-                revision: 2,
+                workflow_tool_id: "accept-order".to_owned(),
+                schema_revision: 2,
                 semantic_type: "orders.accepted.v1".to_owned(),
                 tool: WorkflowToolSpecInput {
                     name: "accept_order".to_owned(),
@@ -208,7 +169,7 @@ fn managed_workflow_tools_api_maps_bound_promise_function_tools() {
             },
         }],
     })
-    .expect("map managed workflow tools");
+    .expect("map declared workflow tools");
 
     assert_eq!(
         declaration.lifecycle_controller,
@@ -240,7 +201,7 @@ fn managed_workflow_tools_api_maps_bound_promise_function_tools() {
             dispatch: BoundWorkflowToolDispatch::Push,
         }
     );
-    assert_eq!(tool.definition.tool.name.as_str(), "accept_order");
+    assert_eq!(tool.definition.tool.id.as_str(), "accept_order");
     let ToolKind::Function(function) = &tool.definition.tool.kind else {
         panic!("API workflow tool must map to a function tool");
     };
@@ -249,15 +210,15 @@ fn managed_workflow_tools_api_maps_bound_promise_function_tools() {
 }
 
 #[test]
-fn managed_workflow_tools_api_maps_bound_accepted_function_tools() {
+fn declared_workflow_tools_api_maps_bound_accepted_function_tools() {
     let input_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
-    let declaration = managed_workflow_tools_from_api(ManagedSessionWorkflowToolsInput {
+    let declaration = declared_workflow_tools_from_api(SessionIntegrationInput {
         version: 1,
         lifecycle_controller: None,
         tools: vec![WorkflowToolDeclarationInput {
             definition: WorkflowToolDefinitionInput {
-                tool_id: "channel-noop".to_owned(),
-                revision: 1,
+                workflow_tool_id: "channel-noop".to_owned(),
+                schema_revision: 1,
                 semantic_type: "channels.noop.v1".to_owned(),
                 tool: WorkflowToolSpecInput {
                     name: "channel_noop".to_owned(),
@@ -300,16 +261,16 @@ fn managed_workflow_tools_api_maps_bound_accepted_function_tools() {
 }
 
 #[test]
-fn managed_workflow_tools_api_maps_joined_completion() {
+fn declared_workflow_tools_api_maps_joined_completion() {
     let input_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
     let reply_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
-    let declaration = managed_workflow_tools_from_api(ManagedSessionWorkflowToolsInput {
+    let declaration = declared_workflow_tools_from_api(SessionIntegrationInput {
         version: 1,
         lifecycle_controller: None,
         tools: vec![WorkflowToolDeclarationInput {
             definition: WorkflowToolDefinitionInput {
-                tool_id: "message-send".to_owned(),
-                revision: 1,
+                workflow_tool_id: "message-send".to_owned(),
+                schema_revision: 1,
                 semantic_type: "channels.receipt.v1".to_owned(),
                 tool: WorkflowToolSpecInput {
                     name: "message_send".to_owned(),
@@ -332,7 +293,7 @@ fn managed_workflow_tools_api_maps_joined_completion() {
             },
             completion: WorkflowToolCompletionInput::Joined {
                 reply_schema_ref: Some(reply_schema_ref.as_str().to_owned()),
-                deadline_after_ms: 30_000,
+                deadline_after_ms: Some(30_000),
             },
         }],
     })
@@ -342,24 +303,24 @@ fn managed_workflow_tools_api_maps_joined_completion() {
         declaration.tools[0].completion,
         WorkflowToolCompletion::Joined {
             reply_schema_ref: Some(reply_schema_ref),
-            deadline_after_ms: 30_000,
+            deadline_after_ms: Some(30_000),
         }
     );
 }
 
 #[test]
-fn managed_workflow_tools_api_maps_start_targets_and_reply_completion() {
+fn declared_workflow_tools_api_maps_start_targets_and_reply_completion() {
     let input_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
     let recipe_bytes = br#"{"workflowType":"ChannelsSendWorkflow","taskQueue":"channels"}"#;
     let recipe_ref = BlobRef::from_bytes(recipe_bytes);
     let recipe_fingerprint = temporal_workflow::workflow_tool_recipe_fingerprint(recipe_bytes);
-    let declaration = managed_workflow_tools_from_api(ManagedSessionWorkflowToolsInput {
+    let declaration = declared_workflow_tools_from_api(SessionIntegrationInput {
         version: 1,
         lifecycle_controller: None,
         tools: vec![WorkflowToolDeclarationInput {
             definition: WorkflowToolDefinitionInput {
-                tool_id: "channel-send".to_owned(),
-                revision: 1,
+                workflow_tool_id: "channel-send".to_owned(),
+                schema_revision: 1,
                 semantic_type: "channels.send.v1".to_owned(),
                 tool: WorkflowToolSpecInput {
                     name: "channel_send".to_owned(),
@@ -376,7 +337,7 @@ fn managed_workflow_tools_api_maps_start_targets_and_reply_completion() {
             target: WorkflowToolTargetInput::Start {
                 start: WorkflowStartRefInput {
                     recipe_format: temporal_workflow::WORKFLOW_TOOL_RECIPE_FORMAT_V1,
-                    revision: 3,
+                    recipe_revision: 3,
                     recipe_ref: recipe_ref.as_str().to_owned(),
                     recipe_fingerprint: recipe_fingerprint.clone(),
                 },
@@ -397,7 +358,7 @@ fn managed_workflow_tools_api_maps_start_targets_and_reply_completion() {
         WorkflowToolTarget::Start {
             start: WorkflowStartRef {
                 recipe_format: temporal_workflow::WORKFLOW_TOOL_RECIPE_FORMAT_V1,
-                revision: 3,
+                recipe_revision: 3,
                 recipe_ref,
                 recipe_fingerprint,
             }
@@ -414,14 +375,14 @@ fn managed_workflow_tools_api_maps_start_targets_and_reply_completion() {
 }
 
 #[test]
-fn managed_workflow_tools_api_rejects_an_empty_management_document() {
+fn declared_workflow_tools_api_rejects_an_empty_integration_document() {
     assert_eq!(
-        managed_workflow_tools_from_api(ManagedSessionWorkflowToolsInput {
+        declared_workflow_tools_from_api(SessionIntegrationInput {
             version: 1,
             lifecycle_controller: None,
             tools: Vec::new(),
         })
-        .expect_err("empty managed creation must fail")
+        .expect_err("empty declared creation must fail")
         .kind,
         AgentApiErrorKind::InvalidRequest
     );
@@ -527,7 +488,7 @@ fn environment_deactivation_lowers_to_clear_active_environment_command() {
 
 #[test]
 fn declared_mcp_attachment_materializes_remote_tool() {
-    let tool_name = ToolName::new("mcp_crm");
+    let tool_id = ToolId::new("mcp_crm");
     let active = BTreeMap::new();
     let mut record = test_mcp_server_record("durable-crm-server", mcp::McpServerStatus::Active);
     record.default_server_label = "crm".to_owned();
@@ -541,11 +502,11 @@ fn declared_mcp_attachment_materializes_remote_tool() {
 
     let tool = mcp_api::mcp_tool_from_config_attachment(&attachment, &record, None)
         .expect("materialize MCP tool from config attachment");
-    let desired = BTreeMap::from([(tool.name.clone(), tool)]);
+    let desired = BTreeMap::from([(tool.id.clone(), tool)]);
     let patch = temporal_workflow::session_toolset_patch(&active, &desired);
     let tools = patch.apply_to(&active).expect("apply MCP patch");
 
-    let tool = tools.get(&tool_name).expect("MCP tool");
+    let tool = tools.get(&tool_id).expect("MCP tool");
     let harness::ToolKind::RemoteMcp(spec) = &tool.kind else {
         panic!("expected remote MCP tool");
     };
@@ -554,14 +515,20 @@ fn declared_mcp_attachment_materializes_remote_tool() {
     assert_eq!(spec.allowed_tools, Some(vec!["lookup_customer".to_owned()]));
     assert_eq!(spec.approval, harness::RemoteMcpApprovalPolicy::Never);
     assert_eq!(spec.defer_loading, Some(true));
+    // The workflow selects activity options from this alone: a remote call that
+    // may have had an effect is never retried.
+    assert_eq!(
+        tool.execution,
+        harness::ToolExecutionSpec::new(harness::ToolExecutionClass::RemoteInteractive, false)
+    );
 }
 
 #[test]
 fn mcp_attachment_subsets_constrain_every_execution_and_exposure_mode() {
     for (execution, exposure) in [
         (mcp::McpExecution::Provider, mcp::McpExposure::Inject),
-        (mcp::McpExecution::Native, mcp::McpExposure::Inject),
-        (mcp::McpExecution::Native, mcp::McpExposure::Search),
+        (mcp::McpExecution::Runtime, mcp::McpExposure::Inject),
+        (mcp::McpExecution::Runtime, mcp::McpExposure::Search),
     ] {
         let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
         record.execution = execution;
@@ -669,10 +636,12 @@ fn mcp_server_put_enforces_required_and_optional_binding_states() {
 }
 
 #[test]
-fn mcp_attachment_with_grant_materializes_auth_ref_for_bearer_server() {
+fn mcp_attachment_leaves_url_and_credential_out_of_durable_state() {
     let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
+    record.server_url = "https://crm.example.com/s/PATH_SECRET/mcp?api_key=QUERY_SECRET".to_owned();
     record.auth_policy = mcp::McpServerAuthPolicy::RequiredBearer;
     record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
+    record.allow_private_network = true;
     let grant = test_auth_grant_record(
         "authgrant_1",
         auth::AuthProviderKind::StaticBearer,
@@ -684,16 +653,18 @@ fn mcp_attachment_with_grant_materializes_auth_ref_for_bearer_server() {
         mcp_api::mcp_tool_from_config_attachment(&mcp_config_attachment(), &record, Some(&grant))
             .expect("materialize MCP tool with grant");
 
-    let harness::ToolKind::RemoteMcp(spec) = &tool.kind else {
-        panic!("expected remote MCP tool");
-    };
-    assert_eq!(
-        spec.auth_ref,
-        Some(harness::SecretRef {
-            namespace: "mcp_server".to_owned(),
-            id: "crm".to_owned(),
-        })
-    );
+    let durable = serde_json::to_value(&tool).expect("durable spec");
+    let spec = &durable["kind"]["remote_mcp"];
+    assert_eq!(spec["server_id"], "crm");
+    for fact in [
+        "server_url",
+        "allow_private_network",
+        "auth_ref",
+        "auth_required",
+    ] {
+        assert!(spec.get(fact).is_none(), "{fact} is durable: {spec}");
+    }
+    assert!(!durable.to_string().contains("SECRET"));
 }
 
 #[test]
@@ -820,8 +791,8 @@ fn two_server_ids_can_share_an_endpoint_with_distinct_credentials() {
     )
     .expect("personal");
     let desired = BTreeMap::from([
-        (work_tool.name.clone(), work_tool),
-        (personal_tool.name.clone(), personal_tool),
+        (work_tool.id.clone(), work_tool),
+        (personal_tool.id.clone(), personal_tool),
     ]);
 
     let tools = temporal_workflow::session_toolset_patch(&BTreeMap::new(), &desired)
@@ -954,7 +925,7 @@ fn session_start_config_maps_tool_choice_and_parallel_tool_use() {
     assert_eq!(
         config.generation.tool_choice,
         Some(harness::ToolChoice::Specific {
-            tool_name: ToolName::new("web_fetch")
+            tool_id: ToolId::new("web_fetch")
         })
     );
     assert_eq!(config.generation.parallel_tool_use, Some(false));
@@ -1088,7 +1059,6 @@ fn run_start_without_overrides_keeps_session_defaults_out_of_run_config() {
     session_config.generation.max_output_tokens = Some(4096);
     session_config.generation.reasoning_effort = Some("high".to_owned());
     session_config.limits.max_turns = Some(12);
-    session_config.limits.max_tool_rounds = Some(3);
 
     let run_config = run_config_for_start(&session_config, None).expect("run config");
 
@@ -1184,23 +1154,18 @@ fn run_start_records_only_explicit_limit_overrides() {
         harness_session_config_from_api(api::SessionConfig::default(), openai_model())
             .expect("session config");
     session_config.limits.max_turns = Some(12);
-    session_config.limits.max_tool_rounds = Some(3);
 
     let run_config = run_config_for_start(
         &session_config,
         Some(RunStartConfig {
             model: None,
             generation: None,
-            limits: Some(api::RunLimitsConfig {
-                max_turns: Some(4),
-                max_tool_rounds: None,
-            }),
+            limits: Some(api::RunLimitsConfig { max_turns: Some(4) }),
         }),
     )
     .expect("run config");
 
     assert_eq!(run_config.max_turns, Some(4));
-    assert_eq!(run_config.max_tool_rounds, None);
 }
 
 #[test]
@@ -1216,16 +1181,16 @@ fn existing_run_submission_rejects_completed_duplicate_with_different_input() {
         input: changed_input,
     };
     let mut state = harness::CoreAgentState::new();
-    state.runs.completed.push(harness::RunRecord {
+    state.runs.finished.push(harness::RunRecord {
         notify_on_terminal: Vec::new(),
         run_id: RunId::new(7),
         status: RunStatus::Completed,
         submission_id: Some(submission_id.clone()),
-        submission_digest: Some(harness::request_run_submission_digest(
+        submission_digest: harness::request_run_submission_digest(
             &original_source,
             &run_config,
             &[],
-        )),
+        ),
         source: harness::RunSource::Input {
             input: original_input,
         },
@@ -1233,7 +1198,7 @@ fn existing_run_submission_rejects_completed_duplicate_with_different_input() {
         terminal_seq: harness::EventSeq::new(1),
         accepted_at_ms: 1,
         started_at_ms: Some(1),
-        completed_at_ms: 1,
+        finished_at_ms: 1,
         usage: None,
         output: None,
         failure: None,
@@ -1540,7 +1505,7 @@ fn profile_and_session_grants_derive_vfs_transfer_tools() {
                 ("vfs.capture", environments && surface == Some("edit")),
             ] {
                 assert_eq!(
-                    registered.tools.contains_key(&ToolName::new(id)),
+                    registered.tools.contains_key(&ToolId::new(id)),
                     expected,
                     "surface={surface:?}, environments={environments}, tool={id}"
                 );
@@ -1548,12 +1513,12 @@ fn profile_and_session_grants_derive_vfs_transfer_tools() {
             assert!(
                 !registered
                     .tools
-                    .contains_key(&ToolName::new("env.vfs_materialize"))
+                    .contains_key(&ToolId::new("env.vfs_materialize"))
             );
             assert!(
                 !registered
                     .tools
-                    .contains_key(&ToolName::new("env.vfs_capture"))
+                    .contains_key(&ToolId::new("env.vfs_capture"))
             );
             for api_kind in [
                 ProviderApiKind::OpenAiResponses,
@@ -1571,7 +1536,7 @@ fn profile_and_session_grants_derive_vfs_transfer_tools() {
                 ] {
                     assert_eq!(
                         visible.get(&ToolName::new(name)).is_some(),
-                        registered.tools.contains_key(&ToolName::new(id))
+                        registered.tools.contains_key(&ToolId::new(id))
                     );
                     if let Some(binding) = visible.get(&ToolName::new(name)) {
                         assert_eq!(binding.logical_id, id);
@@ -1797,6 +1762,28 @@ async fn run_input_from_api_maps_document_media_to_user_message_entry() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn run_input_from_api_bounds_media_names() {
+    let store = harness::storage::InMemoryBlobStore::new();
+    let blob_ref = store.put_bytes(b"png".to_vec()).await.unwrap();
+    let input = |name: String| {
+        vec![InputItem::Media {
+            origin: None,
+            blob_ref: blob_ref.as_str().to_owned(),
+            mime: "image/png".to_owned(),
+            kind: api::MediaKind::Image,
+            name: Some(name),
+        }]
+    };
+    run_input_from_api(&store, &input("é".repeat(256)))
+        .await
+        .expect("a name at the limit");
+    let error = run_input_from_api(&store, &input("é".repeat(257)))
+        .await
+        .expect_err("a longer name");
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn run_input_from_api_rejects_unsupported_document_media() {
     let store = harness::storage::InMemoryBlobStore::new();
     let blob_ref = store.put_bytes(vec![1, 2, 3]).await.expect("store blob");
@@ -1969,6 +1956,146 @@ async fn run_input_from_api_stores_text_and_preserves_refs() {
             .expect("stored input"),
         "first"
     );
+}
+
+fn config_with_limit(input_limit_tokens: Option<u32>) -> harness::SessionConfig {
+    harness_session_config_from_api(
+        api::SessionConfig {
+            context: Some(api::ContextConfig {
+                input_limit_tokens,
+                compaction: None,
+            }),
+            ..api::SessionConfig::default()
+        },
+        openai_model(),
+    )
+    .expect("map config")
+}
+
+/// Input whose entries carry the given text sizes, as admission stored them.
+async fn text_input(
+    store: &harness::storage::InMemoryBlobStore,
+    sizes: &[usize],
+) -> Vec<ContextEntryInput> {
+    let items: Vec<_> = sizes
+        .iter()
+        .map(|size| InputItem::Text {
+            provenance_ref: None,
+            origin: None,
+            text: "x".repeat(*size),
+        })
+        .collect();
+    run_input_from_api(store, &items).await.expect("input")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn oversized_text_is_refused_against_the_documents_limit() {
+    let store = harness::storage::InMemoryBlobStore::new();
+    let config = config_with_limit(Some(1_000));
+    let no_lookup = async { panic!("a declared limit needs no lookup") };
+    let input = text_input(&store, &[4_000]).await;
+    refuse_oversized_text(&store, &input, &config, &config.model, no_lookup)
+        .await
+        .expect("exactly the window fits");
+
+    let input = text_input(&store, &[4_001]).await;
+    let error = refuse_oversized_text(&store, &input, &config, &config.model, async { None })
+        .await
+        .expect_err("over the window");
+    assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
+    assert!(error.message.contains("about 1001 tokens"));
+    assert!(error.message.contains("window of 1000 tokens"));
+}
+
+/// Together they overflow, but compaction can still rescue them a chunk at a time.
+#[tokio::test(flavor = "current_thread")]
+async fn each_text_entry_is_judged_alone() {
+    let store = harness::storage::InMemoryBlobStore::new();
+    let config = config_with_limit(Some(1_000));
+    let input = text_input(&store, &[3_000, 3_000, 3_000]).await;
+    refuse_oversized_text(&store, &input, &config, &config.model, async { None })
+        .await
+        .expect("each entry fits");
+
+    let input = text_input(&store, &[3_000, 5_000, 3_000]).await;
+    refuse_oversized_text(&store, &input, &config, &config.model, async { None })
+        .await
+        .expect_err("the second does not");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_reported_limit_is_read_only_for_large_text() {
+    let store = harness::storage::InMemoryBlobStore::new();
+    let config = config_with_limit(None);
+    let window = 200_000;
+    let small = text_input(&store, &[60_000]).await;
+    refuse_oversized_text(&store, &small, &config, &config.model, async {
+        panic!("short text needs no lookup")
+    })
+    .await
+    .expect("short text");
+
+    let large = text_input(&store, &[4 * window + 1]).await;
+    let error = refuse_oversized_text(&store, &large, &config, &config.model, async {
+        Some(window as u32)
+    })
+    .await
+    .expect_err("over the reported window");
+    assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
+
+    refuse_oversized_text(&store, &large, &config, &config.model, async { None })
+        .await
+        .expect("an unknown limit refuses nothing");
+}
+
+/// A document's limit says nothing about the model a run overrides it with.
+#[tokio::test(flavor = "current_thread")]
+async fn a_declared_limit_does_not_cover_an_override_model() {
+    let store = harness::storage::InMemoryBlobStore::new();
+    let config = config_with_limit(Some(1_000));
+    let other = harness::ModelSelection {
+        model: "another-model".into(),
+        ..config.model.clone()
+    };
+    let input = text_input(&store, &[8_000]).await;
+    refuse_oversized_text(&store, &input, &config, &other, async { None })
+        .await
+        .expect("no limit is known for the other model");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn text_documents_count_as_text_and_binary_media_does_not() {
+    let store = harness::storage::InMemoryBlobStore::new();
+    let config = config_with_limit(Some(1_000));
+    let bytes = "x".repeat(8_000);
+    let blob_ref = store.insert_text(&bytes).await;
+    let media = |mime: &str, kind| InputItem::Media {
+        origin: None,
+        blob_ref: blob_ref.as_str().to_owned(),
+        mime: mime.to_owned(),
+        kind,
+        name: None,
+    };
+
+    let input = run_input_from_api(&store, &[media("text/markdown", MediaKind::Document)])
+        .await
+        .expect("input");
+    refuse_oversized_text(&store, &input, &config, &config.model, async { None })
+        .await
+        .expect_err("a text document reaches the model as text");
+
+    let input = run_input_from_api(
+        &store,
+        &[
+            media("application/pdf", MediaKind::Document),
+            media("image/png", MediaKind::Image),
+        ],
+    )
+    .await
+    .expect("input");
+    refuse_oversized_text(&store, &input, &config, &config.model, async { None })
+        .await
+        .expect("bytes say little about what a PDF or image costs");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -2461,6 +2588,52 @@ async fn input_origin_rejects_blank_and_oversized_values() {
     }
 }
 
+/// Every field below reaches a jsonb column, and a display name reaches a text column,
+/// and neither can hold U+0000. The caller is told here rather than having the log
+/// quietly change what it sent.
+#[tokio::test(flavor = "current_thread")]
+async fn a_nul_in_a_callers_own_field_is_an_invalid_request() {
+    let store = harness::storage::InMemoryBlobStore::new();
+    let image = store.put_bytes(b"png".to_vec()).await.unwrap();
+    let text_with_origin = InputItem::Text {
+        provenance_ref: None,
+        text: "hello".into(),
+        origin: Some("a\0".to_owned()),
+    };
+    let media_with_name = InputItem::Media {
+        origin: None,
+        blob_ref: image.as_str().to_owned(),
+        mime: "image/png".to_owned(),
+        kind: api::MediaKind::Image,
+        name: Some("a\0.png".to_owned()),
+    };
+    for item in [&text_with_origin, &media_with_name] {
+        let error = run_input_from_api(&store, std::slice::from_ref(item))
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest, "{error:?}");
+        assert!(error.message.contains("NUL"), "{error:?}");
+    }
+    let catalog = InputItem::Catalog {
+        title: "cat\0alog".to_owned(),
+        text: "body".to_owned(),
+    };
+    for item in [&text_with_origin, &media_with_name, &catalog] {
+        let error = context_entry_input_from_api(&store, item)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest, "{error:?}");
+        assert!(error.message.contains("NUL"), "{error:?}");
+    }
+    assert_eq!(
+        input::reject_nul("displayName", "bad\0name")
+            .unwrap_err()
+            .kind,
+        AgentApiErrorKind::InvalidRequest
+    );
+    input::reject_nul("displayName", "fine \u{FFFD} name").expect("only NUL is refused");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn skill_list_reads_latest_structured_provenance() {
     let blobs = harness::storage::InMemoryBlobStore::new();
@@ -2661,7 +2834,7 @@ fn environment_access_ladder_derives_the_union_tool_surface() {
             ("vfs.capture", access.is_some()),
         ] {
             assert_eq!(
-                registered.tools.contains_key(&ToolName::new(id)),
+                registered.tools.contains_key(&ToolId::new(id)),
                 granted,
                 "{id} under {access:?}"
             );
@@ -2670,8 +2843,8 @@ fn environment_access_ladder_derives_the_union_tool_surface() {
             config, false, false,
         ))
         .unwrap();
-        assert!(!absent.tools.contains_key(&ToolName::new("env.read_file")));
-        assert!(!absent.tools.contains_key(&ToolName::new("env.run_process")));
+        assert!(!absent.tools.contains_key(&ToolId::new("env.read_file")));
+        assert!(!absent.tools.contains_key(&ToolId::new("env.run_process")));
     }
 
     // No attachment: the feature is granted but installs no machine tools.
@@ -2751,16 +2924,7 @@ async fn text_inputs_preserve_generic_provenance_at_all_input_boundaries() {
                 provenance_ref: Some(source.to_string())
             }]
         );
-        let result = context_append_result(
-            &store,
-            "note".into(),
-            ContextAppendStatus::Applied,
-            &append,
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(result.activation_text.as_deref(), Some(text));
+        let result = context_append_result("note".into(), ContextAppendStatus::Applied, &append);
         assert_eq!(
             result.entry.unwrap().provenance_ref,
             Some(source.to_string())
@@ -2844,8 +3008,8 @@ fn code_mode_api_grant_round_trips_and_keeps_binding_deadline_immutable() {
     let binding = harness::WorkflowToolBinding::admit(
         uuid::Uuid::from_u128(1),
         harness::WorkflowToolDefinition {
-            tool_id: tool_id.clone(),
-            revision: 1,
+            workflow_tool_id: tool_id.clone(),
+            schema_revision: 1,
             semantic_type: tools::code::CODE_EXECUTE_WORKFLOW_SEMANTIC_TYPE.into(),
             tool: tools::definitions::register(
                 "code.execute",
@@ -2863,7 +3027,7 @@ fn code_mode_api_grant_round_trips_and_keeps_binding_deadline_immutable() {
         },
         harness::WorkflowToolCompletion::Joined {
             reply_schema_ref: None,
-            deadline_after_ms: tools::code::CODE_EXECUTION_OVERHEAD_MS + 44,
+            deadline_after_ms: Some(tools::code::CODE_EXECUTION_OVERHEAD_MS + 44),
         },
     )
     .unwrap();
@@ -2872,4 +3036,270 @@ fn code_mode_api_grant_round_trips_and_keeps_binding_deadline_immutable() {
     let mut features = config.features;
     features.code_mode.as_mut().unwrap().limits.timeout_ms = 44;
     validate_code_deadline_for_existing_bindings(&state, &features).unwrap();
+}
+
+#[test]
+fn prepared_toolsets_refuse_what_every_turn_would_refuse() {
+    let config = |api_kind, tool_choice| harness::SessionConfig {
+        model: harness::ModelSelection {
+            api_kind,
+            provider_id: "provider".to_owned(),
+            model: "model".to_owned(),
+        },
+        generation: harness::GenerationConfig {
+            tool_choice,
+            ..Default::default()
+        },
+        limits: Default::default(),
+        context: Default::default(),
+        features: Default::default(),
+    };
+    let record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
+    let tool = mcp_api::mcp_tool_from_config_attachment(&mcp_config_attachment(), &record, None)
+        .expect("provider-executed tool");
+    let tools = BTreeMap::from([(tool.id.clone(), tool.clone())]);
+
+    let refused = session_preparation::validate_prepared_toolset(
+        &config(harness::ProviderApiKind::OpenAiCompletions, None),
+        &tools,
+        false,
+    )
+    .expect_err("completions cannot run a provider-executed MCP tool");
+    assert_eq!(refused.kind, AgentApiErrorKind::InvalidRequest);
+    assert!(refused.message.contains("provider-executed MCP tool"));
+
+    let dangling = Some(harness::ToolChoice::Specific {
+        tool_id: harness::ToolId::new("typo"),
+    });
+    let refused = session_preparation::validate_prepared_toolset(
+        &config(harness::ProviderApiKind::OpenAiResponses, dangling.clone()),
+        &tools,
+        false,
+    )
+    .expect_err("the choice names no tool");
+    assert_eq!(refused.kind, AgentApiErrorKind::InvalidRequest);
+    assert_eq!(
+        refused.message,
+        "tool_choice references missing active tool typo"
+    );
+
+    // With a server left out the choice may be naming its tool. Runs fail on it,
+    // which is the funnel that reports it, rather than preparation refusing them.
+    session_preparation::validate_prepared_toolset(
+        &config(harness::ProviderApiKind::OpenAiResponses, dangling),
+        &tools,
+        true,
+    )
+    .expect("a left-out server does not refuse preparation");
+
+    let chosen = Some(harness::ToolChoice::Specific {
+        tool_id: tool.id.clone(),
+    });
+    session_preparation::validate_prepared_toolset(
+        &config(harness::ProviderApiKind::OpenAiResponses, chosen),
+        &tools,
+        false,
+    )
+    .expect("a real choice on an API kind that can run the tool");
+}
+
+#[test]
+fn only_the_timers_grant_installs_sleep() {
+    let surface = |features: harness::FeaturesConfig| {
+        let mut config = session_config_for_toolset();
+        config.features = features;
+        tools::toolset::register_toolset(&GatewayAgentApi::session_toolset_config(
+            &config, false, false,
+        ))
+        .unwrap()
+        .tools
+    };
+    let timers = || Some(harness::TimersFeature::default());
+    let subagents = || Some(harness::SubagentsFeature::default());
+
+    let spawn_only = surface(harness::FeaturesConfig {
+        subagents: subagents(),
+        ..Default::default()
+    });
+    for tool in [
+        harness::AWAIT_TOOL_ID,
+        harness::CANCEL_TOOL_ID,
+        harness::DETACH_TOOL_ID,
+    ] {
+        assert!(spawn_only.contains_key(&ToolId::new(tool)), "{tool}");
+    }
+    assert!(!spawn_only.contains_key(&ToolId::new(harness::SLEEP_TOOL_ID)));
+
+    for features in [
+        harness::FeaturesConfig {
+            timers: timers(),
+            ..Default::default()
+        },
+        harness::FeaturesConfig {
+            timers: timers(),
+            subagents: subagents(),
+            ..Default::default()
+        },
+    ] {
+        assert!(surface(features).contains_key(&ToolId::new(harness::SLEEP_TOOL_ID)));
+    }
+}
+
+fn session_config_for_toolset() -> harness::SessionConfig {
+    harness_session_config_from_api(api::SessionConfig::default(), openai_model()).unwrap()
+}
+
+fn attachment_to(server_id: &str, tools: Option<&[&str]>) -> harness::McpServerAttachment {
+    harness::McpServerAttachment {
+        server_id: server_id.to_owned(),
+        tools: tools.map(|tools| tools.iter().map(|tool| (*tool).to_owned()).collect()),
+    }
+}
+
+fn features_attaching(servers: Vec<harness::McpServerAttachment>) -> harness::FeaturesConfig {
+    harness::FeaturesConfig {
+        mcp: Some(harness::McpFeature {
+            servers,
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_request_only_answers_for_the_attachments_it_adds() {
+    let crm = attachment_to("crm", None);
+    let held = features_attaching(vec![crm.clone()]);
+    let docs = attachment_to("docs", None);
+    let document = features_attaching(vec![crm.clone(), docs.clone()]);
+
+    // Creation names everything, a put only what the session does not hold.
+    assert_eq!(
+        api_config::NewlyNamed::in_document(&document, None).mcp(),
+        [crm.clone(), docs.clone()]
+    );
+    assert_eq!(
+        api_config::NewlyNamed::in_document(&document, Some(&held)).mcp(),
+        [docs]
+    );
+    assert!(
+        api_config::NewlyNamed::in_document(&held, Some(&held))
+            .mcp()
+            .is_empty()
+    );
+
+    // Narrowing a held server's tools is a new request of that server.
+    let narrowed = attachment_to("crm", Some(&["search"]));
+    assert_eq!(
+        api_config::NewlyNamed::in_document(
+            &features_attaching(vec![narrowed.clone()]),
+            Some(&held)
+        )
+        .mcp(),
+        [narrowed]
+    );
+}
+
+#[test]
+fn a_catalog_action_makes_an_attachment_unavailable_and_an_outage_does_not() {
+    for error in [
+        mcp_api::mcp_tool_from_config_attachment(
+            &mcp_config_attachment(),
+            &test_mcp_server_record("crm", mcp::McpServerStatus::Disabled),
+            None,
+        )
+        .unwrap_err(),
+        mcp_api::mcp_tool_from_config_attachment(
+            &mcp_config_attachment(),
+            &test_mcp_server_record("crm", mcp::McpServerStatus::NeedsAuthConfig),
+            None,
+        )
+        .unwrap_err(),
+        mcp_api::map_mcp_error(mcp::McpRegistryError::NotFound {
+            server_id: mcp::McpServerId::new("crm"),
+        }),
+        map_auth_error(auth::AuthRegistryError::GrantNotFound {
+            grant_id: auth::AuthGrantId::new("grant"),
+        }),
+    ] {
+        assert!(mcp_api::mcp_attachment_is_unavailable(&error), "{error:?}");
+    }
+    let outage = mcp_api::map_mcp_error(mcp::McpRegistryError::Store {
+        message: "connection refused".to_owned(),
+    });
+    assert!(!mcp_api::mcp_attachment_is_unavailable(&outage));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_model_is_told_which_servers_it_cannot_use_and_why() {
+    let blobs = harness::storage::InMemoryBlobStore::new();
+    assert_eq!(mcp_api::mcp_catalog_entry(&blobs, &[]).await.unwrap(), None);
+
+    let unavailable = |server: &str, error: AgentApiError| mcp_api::UnavailableMcpServer {
+        attachment: attachment_to(server, None),
+        error,
+    };
+    let entry = mcp_api::mcp_catalog_entry(
+        &blobs,
+        &[
+            unavailable(
+                "crm",
+                AgentApiError::rejected("MCP server is disabled: crm"),
+            ),
+            unavailable(
+                "docs",
+                AgentApiError::not_found("MCP server not found: docs"),
+            ),
+        ],
+    )
+    .await
+    .unwrap()
+    .expect("a notice");
+    assert!(matches!(
+        entry.kind,
+        harness::ContextEntryKind::Catalog { .. }
+    ));
+    let text =
+        String::from_utf8(blobs.read_bytes(&entry.content.content_ref).await.unwrap()).unwrap();
+    assert!(
+        text.contains("- crm: MCP server is disabled: crm\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("- docs: MCP server not found: docs\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_request_only_answers_for_a_default_it_changes() {
+    fn attached(id: &str, default: bool) -> harness::EnvironmentAttachment {
+        harness::EnvironmentAttachment {
+            environment_id: id.to_owned(),
+            default,
+            access: harness::EnvironmentAccess::Read,
+            working_directory: None,
+        }
+    }
+    let features = |attachments: Vec<harness::EnvironmentAttachment>| harness::FeaturesConfig {
+        environments: Some(harness::EnvironmentsFeature {
+            environments: attachments,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let on_a = features(vec![attached("a", true), attached("b", false)]);
+    let named = |document: &harness::FeaturesConfig, current| {
+        api_config::NewlyNamed::in_document(document, current)
+            .default_environment()
+            .map(str::to_owned)
+    };
+
+    assert_eq!(named(&on_a, None).as_deref(), Some("a"));
+    // Saving other settings beside a default that has since closed still works.
+    assert_eq!(named(&on_a, Some(&on_a)), None);
+    let on_b = features(vec![attached("a", false), attached("b", true)]);
+    assert_eq!(named(&on_b, Some(&on_a)).as_deref(), Some("b"));
+    let no_default = features(vec![attached("a", false)]);
+    assert_eq!(named(&no_default, Some(&on_a)), None);
 }

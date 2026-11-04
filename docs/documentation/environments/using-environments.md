@@ -236,11 +236,14 @@ or choose **No active environment**, then **Apply setup**. This changes the
 reference; it does not migrate files, terminate existing jobs, or close the
 machine.
 
-A plain configuration replacement (`session/config/put`) never activates a
-default; it only clears an active environment that the new configuration no
-longer lists, so a deliberate deactivation is not undone by a configuration
-edit. Applying a profile fills an empty pointer from the profile's default
-attachment and leaves a live, still-listed selection alone. Creating a session
+A configuration replacement (`session/config/put`) clears an active environment that
+the new configuration no longer lists. If nothing is then active and the request
+changes the default, the new default becomes active, so adding an environment to an
+open session and marking it default is enough to start using it. A default that
+cannot be selected, such as a closed machine, is refused with `invalidRequest`. An
+unchanged default stays out of the way, so a deliberate deactivation is not undone by
+editing other settings. Applying a profile fills an empty pointer from the profile's
+default attachment and leaves a live, still-listed selection alone. Creating a session
 with `session/start` can name an attached environment or `none` to suppress
 the default.
 

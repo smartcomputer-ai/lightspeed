@@ -13,11 +13,7 @@ pub(super) struct PreparationCandidate {
 impl PreparationCandidate {
     pub(super) fn new(live: &CoreAgentDrive) -> Self {
         Self {
-            drive: CoreAgentDrive::from_replayed(
-                live.session_id().clone(),
-                live.state().clone(),
-                live.head().cloned(),
-            ),
+            drive: CoreAgentDrive::from_replayed(live.session_id().clone(), live.state().clone()),
             original_head: live.head().cloned(),
             events: Vec::new(),
         }
@@ -122,6 +118,11 @@ impl PreparationCandidate {
                 now,
             )?;
         }
+        if let Some(command) =
+            crate::session_mcp_catalog_command(self.state(), prepared.mcp_catalog.as_ref())
+        {
+            self.push(command, now)?;
+        }
         Ok(())
     }
 
@@ -147,7 +148,7 @@ impl PreparationCandidate {
 fn map_candidate_error(error: CoreAgentDriveError) -> AgentApiError {
     match error {
         CoreAgentDriveError::Command(CommandError::Rejected(rejection)) => {
-            AgentApiError::rejected(rejection.to_string())
+            crate::command_rejection_to_api_error(&rejection)
         }
         error => AgentApiError::internal(error.to_string()),
     }
@@ -180,7 +181,6 @@ mod tests {
         let mut live = CoreAgentDrive::from_replayed(
             SessionId::new("atomic-preparation"),
             CoreAgentState::new(),
-            None,
         );
         let mut candidate = PreparationCandidate::new(&live);
         candidate
@@ -255,10 +255,72 @@ mod tests {
         );
     }
 
+    fn mcp_notice(text: &str) -> ContextEntryInput {
+        ContextEntryInput {
+            kind: ContextEntryKind::Catalog {
+                title: "Unavailable MCP servers".into(),
+            },
+            content: harness::ContentRef::text(BlobRef::from_bytes(text.as_bytes())),
+            preview: None,
+            origin: None,
+            provenance_ref: None,
+            token_estimate: None,
+        }
+    }
+
+    fn observed(live: &CoreAgentDrive, notice: Option<ContextEntryInput>) -> AppendEventsRequest {
+        let mut candidate = PreparationCandidate::new(live);
+        candidate
+            .tools(
+                crate::SessionToolsetPreparation {
+                    source: crate::SessionToolsetSource::from_state(live.state()).unwrap(),
+                    declarations: Vec::new(),
+                    tools: live.state().tooling.tools.clone(),
+                    input_limit_tokens: None,
+                    mcp_catalog: notice,
+                },
+                uuid::Uuid::nil(),
+                2,
+            )
+            .unwrap();
+        candidate.finish(live).unwrap()
+    }
+
+    #[test]
+    fn the_mcp_notice_follows_each_observed_toolset_and_only_moves_when_it_changes() {
+        let mut live = live();
+        let key = ContextEntryKey::new(crate::MCP_CATALOG_CONTEXT_KEY);
+        let published = |live: &CoreAgentDrive| {
+            harness::current_catalog_inputs(live.state())
+                .get(&key)
+                .cloned()
+        };
+
+        assert!(observed(&live, None).events.is_empty());
+
+        let first = mcp_notice("crm is disabled");
+        let batch = observed(&live, Some(first.clone()));
+        assert_eq!(batch.events.len(), 1);
+        commit(&mut live, batch);
+        assert_eq!(published(&live), Some(first.clone()));
+
+        assert!(observed(&live, Some(first)).events.is_empty());
+
+        let second = mcp_notice("crm and docs are gone");
+        let batch = observed(&live, Some(second.clone()));
+        commit(&mut live, batch);
+        assert_eq!(published(&live), Some(second));
+
+        let batch = observed(&live, None);
+        assert_eq!(batch.events.len(), 1);
+        commit(&mut live, batch);
+        assert_eq!(published(&live), None);
+    }
+
     fn proposed(live: &CoreAgentDrive) -> PreparationCandidate {
         let mut candidate = PreparationCandidate::new(live);
         let tool = harness::ToolSpec {
-            name: harness::ToolName::new("new_tool"),
+            id: harness::ToolId::new("new_tool"),
             kind: harness::ToolKind::Function(harness::FunctionToolSpec {
                 description_ref: None,
                 input_schema_ref: BlobRef::from_bytes(b"schema"),
@@ -269,13 +331,15 @@ mod tests {
             parallelism: harness::ToolParallelism::ParallelSafe,
             execution: Default::default(),
         };
-        let tools = BTreeMap::from([(tool.name.clone(), tool)]);
+        let tools = BTreeMap::from([(tool.id.clone(), tool)]);
         candidate
             .tools(
                 crate::SessionToolsetPreparation {
                     source: crate::SessionToolsetSource::from_state(live.state()).unwrap(),
                     declarations: Vec::new(),
                     tools,
+                    input_limit_tokens: None,
+                    mcp_catalog: None,
                 },
                 uuid::Uuid::nil(),
                 2,
@@ -287,7 +351,7 @@ mod tests {
             ..Default::default()
         });
         config.generation.tool_choice = Some(harness::ToolChoice::Specific {
-            tool_name: harness::ToolName::new("new_tool"),
+            tool_id: harness::ToolId::new("new_tool"),
         });
         candidate
             .push(
@@ -382,7 +446,7 @@ mod tests {
                 3,
             )
             .unwrap_err();
-        assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
+        assert_eq!(error.kind, api::AgentApiErrorKind::Conflict);
         drop(candidate);
         assert_eq!(live.state(), &before);
         // A later valid attempt can still prepare from exactly the original state.

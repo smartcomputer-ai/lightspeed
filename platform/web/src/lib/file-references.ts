@@ -23,14 +23,14 @@ export function filesByHandle(entries: TranscriptEntry[]): Map<string, FileRefer
 export function filesFromAttachments(attachments: ToolAttachmentView[]): Map<string, FileReference | null> {
   const files = new Map<string, FileReference | null>();
   for (const attachment of attachments) {
-    if (attachment.kind !== "file" || !isFileHandle(attachment.handle)) continue;
-    const digest = blobDigest(attachment.contentRef);
+    if (!isFileHandle(attachment.handle)) continue;
+    const digest = blobDigest(attachment.blobRef);
     if (!digest || attachment.handle !== `file:${digest.slice(0, 24)}` || !attachment.name) continue;
     const source = attachment.source;
     const workspaceSource = source?.kind === "vfs_workspace" && validWorkspaceTransferPath(source.path) ? source : undefined;
     const file: FileReference = {
-      handle: attachment.handle, blobRef: attachment.contentRef, name: attachment.name,
-      ...(attachment.mediaType ? { type: attachment.mediaType } : {}),
+      handle: attachment.handle, blobRef: attachment.blobRef, name: attachment.name,
+      ...(attachment.mime ? { type: attachment.mime } : {}),
       ...(workspaceSource ? { workspace: workspaceSource.id, path: workspaceSource.path } : {}),
     };
     if (!files.has(file.handle)) files.set(file.handle, file);
@@ -50,7 +50,6 @@ export async function findFileReference(
   const recorded: ToolAttachmentView[] = [];
   for (;;) {
     const page = await readPage(before);
-    if (page.gap) throw new Error("File reference history is unavailable");
     recorded.push(...(page.events ?? []).flatMap((event) => event.kind.type === "toolCallCompleted"
       ? (event.kind.attachments ?? []).filter((item) => item.handle === handle) : []));
     if (page.complete) return filesFromAttachments(recorded).get(handle) ?? null;

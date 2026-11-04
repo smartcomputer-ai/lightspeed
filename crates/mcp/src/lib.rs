@@ -208,8 +208,9 @@ impl Default for McpToolDiscoveryLimits {
             max_pages: 64,
             max_tools: 2_048,
             max_response_bytes: 16 * 1024 * 1024,
-            // Execution results have a separate context-safety envelope;
-            // broadening discovery must not silently admit giant tool output.
+            // A wire bound on one tool result, kept apart from discovery so
+            // broadening discovery cannot admit giant output. The adapter that
+            // receives the result applies the smaller model-visible budget.
             max_tool_call_response_bytes: 2 * 1024 * 1024,
             max_name_bytes: 128,
             max_text_bytes: 16 * 1024,
@@ -415,9 +416,9 @@ pub enum RemoteMcpTransport {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum McpExecution {
-    #[default]
     Provider,
-    Native,
+    #[default]
+    Runtime,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -660,19 +661,19 @@ fn validate_execution_policy(
 ) -> Result<(), McpRegistryError> {
     if execution == McpExecution::Provider && exposure != McpExposure::Inject {
         return Err(McpRegistryError::InvalidInput {
-            message: "exposure applies only to native MCP execution".to_owned(),
+            message: "exposure applies only to runtime MCP execution".to_owned(),
         });
     }
-    if execution != McpExecution::Native || exposure != McpExposure::Inject {
+    if execution != McpExecution::Runtime || exposure != McpExposure::Inject {
         return Ok(());
     }
     let Some(allowed_tools) = allowed_tools else {
         return Ok(());
     };
-    let prefix = native_tool_prefix(server_label);
+    let prefix = runtime_tool_prefix(server_label);
     for remote_name in allowed_tools {
         validate_mcp_component(
-            "native injected MCP tool",
+            "runtime injected MCP tool",
             remote_name,
             "ASCII letters, digits, '_', '-'",
             |ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'),
@@ -681,7 +682,7 @@ fn validate_execution_policy(
         if combined.len() > 64 {
             return Err(McpRegistryError::InvalidInput {
                 message: format!(
-                    "native MCP tool name {combined:?} exceeds the 64-byte provider limit; shorten the server label or remote tool name, or use search exposure"
+                    "runtime MCP tool name {combined:?} exceeds the 64-byte provider limit; shorten the server label or remote tool name, or use search exposure"
                 ),
             });
         }
@@ -689,7 +690,7 @@ fn validate_execution_policy(
     Ok(())
 }
 
-pub fn native_tool_prefix(server_label: &str) -> String {
+pub fn runtime_tool_prefix(server_label: &str) -> String {
     let mut prefix = String::from("mcp_");
     for ch in server_label.chars() {
         prefix.push(if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
@@ -894,12 +895,12 @@ mod tests {
     }
 
     #[test]
-    fn native_inject_selected_tools_must_fit_provider_function_names() {
+    fn runtime_inject_selected_tools_must_fit_provider_function_names() {
         let mut record =
-            put_request("durable-native-server-identifier", McpServerStatus::Active).into_record();
-        record.execution = McpExecution::Native;
+            put_request("durable-runtime-server-identifier", McpServerStatus::Active).into_record();
+        record.execution = McpExecution::Runtime;
         record.exposure = McpExposure::Inject;
-        record.default_server_label = "native".to_owned();
+        record.default_server_label = "runtime".to_owned();
         record.allowed_tools = Some(vec!["lookup_customer".to_owned()]);
         record
             .validate()

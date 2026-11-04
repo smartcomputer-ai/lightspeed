@@ -20,7 +20,7 @@ pub(super) struct RolloverBlockers {
     pub awaiting_safe_checkpoint: bool,
     pub pending_admissions: usize,
     pub pending_preparations: usize,
-    pub pending_tool_batch_resumes: usize,
+    pub pending_tool_batch_unparks: usize,
     pub pending_emissions: usize,
     pub pending_source_resolutions: usize,
     pub pending_promise_cancellations: usize,
@@ -37,7 +37,7 @@ impl RolloverBlockers {
             pending_preparations: usize::from(state.run_preparation.is_some())
                 + state.pending_toolsets.len()
                 + usize::from(!state.ready),
-            pending_tool_batch_resumes: state.pending_tool_batch_resumes.len(),
+            pending_tool_batch_unparks: state.pending_tool_batch_unparks.len(),
             pending_emissions: state.pending_emissions.len(),
             pending_source_resolutions: state.pending_source_resolutions.len(),
             pending_promise_cancellations: state.pending_promise_cancellations.len(),
@@ -51,7 +51,7 @@ impl RolloverBlockers {
         !self.awaiting_safe_checkpoint
             && self.pending_admissions == 0
             && self.pending_preparations == 0
-            && self.pending_tool_batch_resumes == 0
+            && self.pending_tool_batch_unparks == 0
             && self.pending_emissions == 0
             && self.pending_source_resolutions == 0
             && self.pending_promise_cancellations == 0
@@ -92,9 +92,6 @@ pub(super) fn observe_rollover_delay(
         return;
     }
 
-    // The normal continue-as-new decision runs before this observer. Do not
-    // call `ctx.patched` here: diagnostics must not alter patch-marker command
-    // ordering for existing workflow histories.
     let blockers = ctx.state(|state| {
         let awaiting_safe_checkpoint = wait_loop::workflow_state_allows_continue_as_new(state)
             && !state.execution_has_rollover_checkpoint;
@@ -124,7 +121,7 @@ pub(super) fn observe_rollover_delay(
         awaiting_safe_checkpoint = blockers.awaiting_safe_checkpoint,
         pending_admissions = blockers.pending_admissions,
         pending_preparations = blockers.pending_preparations,
-        pending_tool_batch_resumes = blockers.pending_tool_batch_resumes,
+        pending_tool_batch_unparks = blockers.pending_tool_batch_unparks,
         pending_emissions = blockers.pending_emissions,
         pending_source_resolutions = blockers.pending_source_resolutions,
         pending_promise_cancellations = blockers.pending_promise_cancellations,
@@ -157,6 +154,90 @@ pub(super) fn log_workflow_failure(
         error_class,
         error,
         "session workflow failed"
+    );
+}
+
+/// A reducer refusal of an admitted command points at a bug in proposal building
+/// even though the session keeps running, so it logs at error level.
+pub(super) fn log_admission_refused(ctx: &WorkflowContext<AgentSessionWorkflow>, error: &str) {
+    if ctx.is_replaying() {
+        return;
+    }
+    let fields = session_fields(ctx);
+    tracing::error!(
+        target: "temporal_workflow",
+        event = "session_admission_refused",
+        universe_id = fields.universe_id,
+        session_id = fields.session_id,
+        workflow_id = ctx.workflow_id(),
+        temporal_run_id = ctx.run_id(),
+        lightspeed_run_id = fields.active_run_id,
+        session_head_seq = fields.session_head_seq,
+        error,
+        "session admission refused by the reducer"
+    );
+}
+
+/// A stalled pass has no caller to tell and no failure to raise. It means some wake
+/// predicate says work is ready that no step of the pass consumes, which is a bug.
+pub(super) fn log_loop_stalled(ctx: &WorkflowContext<AgentSessionWorkflow>) {
+    if ctx.is_replaying() {
+        return;
+    }
+    let fields = session_fields(ctx);
+    tracing::error!(
+        target: "temporal_workflow",
+        event = "session_loop_stalled",
+        universe_id = fields.universe_id,
+        session_id = fields.session_id,
+        workflow_id = ctx.workflow_id(),
+        temporal_run_id = ctx.run_id(),
+        lightspeed_run_id = fields.active_run_id,
+        session_head_seq = fields.session_head_seq,
+        history_length = ctx.history_length(),
+        "the session loop stopped awaiting; waiting out a timer instead of holding the worker"
+    );
+}
+
+pub(super) fn log_restarted(
+    ctx: &WorkflowContext<AgentSessionWorkflow>,
+    interrupted_run_id: Option<u64>,
+    failed_code_tool_calls: usize,
+) {
+    if ctx.is_replaying() {
+        return;
+    }
+    let fields = session_fields(ctx);
+    tracing::warn!(
+        target: "temporal_workflow",
+        event = "session_restarted",
+        universe_id = fields.universe_id,
+        session_id = fields.session_id,
+        workflow_id = ctx.workflow_id(),
+        temporal_run_id = ctx.run_id(),
+        session_head_seq = fields.session_head_seq,
+        interrupted_run_id,
+        failed_code_tool_calls,
+        "the session restarted from its log on a new execution"
+    );
+}
+
+pub(super) fn log_step_refused(ctx: &WorkflowContext<AgentSessionWorkflow>, error: &str) {
+    if ctx.is_replaying() {
+        return;
+    }
+    let fields = session_fields(ctx);
+    tracing::error!(
+        target: "temporal_workflow",
+        event = "session_step_refused",
+        universe_id = fields.universe_id,
+        session_id = fields.session_id,
+        workflow_id = ctx.workflow_id(),
+        temporal_run_id = ctx.run_id(),
+        lightspeed_run_id = fields.active_run_id,
+        session_head_seq = fields.session_head_seq,
+        error,
+        "the harness refused a step of the session; failing that work and carrying on"
     );
 }
 
@@ -248,7 +329,8 @@ fn session_fields(ctx: &WorkflowContext<AgentSessionWorkflow>) -> SessionFields 
             .map(|run| run.run_id.to_string())
             .unwrap_or_default();
         let session_head_seq = state
-            .head
+            .core_state
+            .reduced_to
             .as_ref()
             .map(|head| head.seq.to_string())
             .unwrap_or_default();

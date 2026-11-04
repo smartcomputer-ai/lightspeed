@@ -32,7 +32,7 @@ for (const entry of universeMethods) {
     throw new Error(`method ${entry.method} is missing description documentation`);
   }
 }
-const excludeMethods = validateFilter(filter, universeMethods);
+const { excludeMethods, excludeParams } = validateFilter(filter, universeMethods);
 const methods = universeMethods.filter((entry) => !excludeMethods.has(entry.method));
 
 const seenNames = new Map();
@@ -56,7 +56,7 @@ const tools = methods.map((entry) => {
     description: entry.description,
     paramsType: entry.params.type,
     resultType: entry.result.type,
-    inputSchema: standaloneSchema(entry.params.schema, entry.method, "params"),
+    inputSchema: standaloneSchema(entry.params.schema, entry.method, "params", excludeParams.get(entry.method)),
   };
 });
 
@@ -84,9 +84,10 @@ function validateFilter(value, universeEntries) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("tool-filter.json must contain one JSON object");
   }
-  const keys = Object.keys(value);
-  if (keys.some((key) => key !== "excludeMethods")) {
-    const unknownKeys = keys.filter((key) => key !== "excludeMethods");
+  const unknownKeys = Object.keys(value).filter(
+    (key) => key !== "excludeMethods" && key !== "excludeParams",
+  );
+  if (unknownKeys.length > 0) {
     throw new Error(`tool-filter.json has unknown keys: ${unknownKeys.join(", ")}`);
   }
   if (!Array.isArray(value.excludeMethods)) {
@@ -109,15 +110,44 @@ function validateFilter(value, universeEntries) {
       `tool-filter.json excludes unknown or non-universe methods: ${unknown.join(", ")}`,
     );
   }
-  return excluded;
+  return { excludeMethods: excluded, excludeParams: validateExcludedParams(value, universeEntries, excluded) };
+}
+
+function validateExcludedParams(value, universeEntries, excludedMethods) {
+  const entries = Object.entries(value.excludeParams ?? {});
+  const params = new Map();
+  for (const [method, names] of entries) {
+    const entry = universeEntries.find((candidate) => candidate.method === method);
+    if (!entry || excludedMethods.has(method)) {
+      throw new Error(`tool-filter.json excludeParams names a method with no tool: ${method}`);
+    }
+    if (!Array.isArray(names) || names.length === 0) {
+      throw new Error(`tool-filter.json excludeParams for ${method} must be a non-empty array`);
+    }
+    const root = dereferenceRoot(entry.params.schema, method, "params");
+    for (const name of names) {
+      // A renamed param must fail here, not quietly reappear on the tool.
+      if (!Object.hasOwn(root.properties ?? {}, name)) {
+        throw new Error(`tool-filter.json excludes unknown param of ${method}: ${name}`);
+      }
+      if (root.required?.includes(name)) {
+        throw new Error(`tool-filter.json excludes required param of ${method}: ${name}`);
+      }
+    }
+    params.set(method, names);
+  }
+  return params;
 }
 
 function toolName(method) {
   return `lightspeed_${method.replaceAll(/[^A-Za-z0-9_-]/g, "_")}`;
 }
 
-function standaloneSchema(schema, method, side) {
+function standaloneSchema(schema, method, side, excludedProperties = []) {
   const root = dereferenceRoot(schema, method, side);
+  for (const name of excludedProperties) {
+    delete root.properties[name];
+  }
   const reachable = new Set();
   collectDefinitionRefs(root, reachable);
   const pending = [...reachable];

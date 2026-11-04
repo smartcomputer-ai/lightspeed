@@ -3,10 +3,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { type SessionView, api } from "@/api";
+import { ApiError, type SessionView, api } from "@/api";
 import { useSessionCompaction } from "./compaction";
 
-vi.mock("@/api", () => ({ api: vi.fn() }));
+vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: vi.fn() }));
 let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
@@ -80,6 +80,15 @@ it("shows failures to both consumers and clears them on retry", async () => {
   await act(async () => result.compact());
   await flush();
   expect(observer.error).toBeNull();
+});
+
+it("does not call a wait that ran out a failure", async () => {
+  vi.mocked(api).mockRejectedValueOnce(new ApiError(409, { error: "still going", kind: "operationPending" }));
+  await show();
+  await act(async () => result.compact());
+  await flush();
+  expect(observer.error).toBeNull();
+  expect(invalidate).toHaveBeenCalled();
 });
 
 it("keeps an outstanding request scoped to its original session after navigation", async () => {

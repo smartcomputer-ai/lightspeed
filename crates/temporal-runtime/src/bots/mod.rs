@@ -9,7 +9,7 @@
 //! - [`schedules`] — upsert / pause / delete the Temporal Schedule of a
 //!   `schedule` or `poll` trigger; boot-time reconciliation.
 //! - [`sessions`] — ensure / rename / status / start / steer / append /
-//!   close / descendants, the controller's view of its managed sessions.
+//!   close / descendants, the controller's view of its controlled sessions.
 //! - [`tools`] — execution of the pushed `bot_*` tools.
 //! - [`receipts`] — delivery receipts, `bot.reply` receipts, the directory.
 //! - [`fires`] — schedule and poll trigger fires.

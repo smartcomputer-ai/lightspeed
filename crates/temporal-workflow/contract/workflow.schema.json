@@ -441,18 +441,14 @@
     },
     "CloseCodeToolScopeRequest": {
       "additionalProperties": false,
-      "description": "Close admission immediately. Cancellation additionally requests cleanup of\nadmitted work; closing a scope does not roll back any completed effects.",
+      "description": "Close admission immediately and cancel admitted work. Closing a scope does\nnot roll back any completed effects.",
       "properties": {
-        "cancel_pending": {
-          "type": "boolean"
-        },
         "execution_id": {
           "type": "string"
         }
       },
       "required": [
-        "execution_id",
-        "cancel_pending"
+        "execution_id"
       ],
       "type": "object"
     },
@@ -734,7 +730,7 @@
           "type": "string"
         },
         "status": {
-          "$ref": "#/definitions/CodeToolCallStatus"
+          "$ref": "#/definitions/CodeToolCallOutcomeStatus"
         }
       },
       "required": [
@@ -744,7 +740,7 @@
       ],
       "type": "object"
     },
-    "CodeToolCallStatus": {
+    "CodeToolCallOutcomeStatus": {
       "enum": [
         "pending",
         "waiting",
@@ -801,9 +797,6 @@
           "description": "Requests are keyed by execution-local request id, never arrival order.",
           "type": "object"
         },
-        "cancel_requested": {
-          "type": "boolean"
-        },
         "closed": {
           "type": "boolean"
         },
@@ -814,7 +807,6 @@
       "required": [
         "execution_id",
         "closed",
-        "cancel_requested",
         "bindings",
         "calls"
       ],
@@ -934,7 +926,7 @@
       "type": "object"
     },
     "EmissionBody": {
-      "description": "Closed internal vocabulary carried by the shared delivery signal.\n\nWorkflow-tool invocation bodies join this enum when the durable tool\ncontracts land. This first slice folds the two existing transports.",
+      "description": "Closed internal vocabulary carried by the shared delivery signal.",
       "oneOf": [
         {
           "properties": {
@@ -1020,7 +1012,7 @@
           "type": "object"
         },
         {
-          "description": "Best-effort notice to a bound receiver that the session already\nresolved one keyed completion promise as cancelled. The receiver may\nstop the domain work behind that key; a later reply is ignored\nbecause the promise is terminal.",
+          "description": "Best-effort notice to a bound receiver that the session stopped waiting\nfor one keyed completion promise: it is already cancelled, or failed at\nits hard deadline. The receiver may stop the domain work behind that\nkey; a later reply is ignored because the promise is terminal.",
           "properties": {
             "completion_key": {
               "type": "string"
@@ -1074,7 +1066,7 @@
       "description": "Durable producer identity carried with every emission.",
       "oneOf": [
         {
-          "description": "A session-log-backed emission. `log_seq` is the exact sequence of the\nevent that produced the fact.",
+          "description": "A session-log-backed emission. `log_seq` is the exact sequence of the\nevent that produced the fact, or the log's head for an invocation sent\nagain after a restart. `emission_id` identifies a repeat, not this.",
           "properties": {
             "kind": {
               "const": "session",
@@ -1263,7 +1255,7 @@
           "default": null,
           "description": "A supplied set narrows logical tool identities; an empty set grants no\ntools. None selects all currently host-callable tools except the parent\noperation. Reopening an existing scope retains its original bindings.",
           "items": {
-            "$ref": "#/definitions/ToolName"
+            "$ref": "#/definitions/ToolId"
           },
           "type": [
             "array",
@@ -1354,7 +1346,7 @@
       "type": "object"
     },
     "PromiseId": {
-      "description": "Stable identifier for a promise: a session-scoped counter rendered as\n`promise_<n>`, the same convention as `run_<n>`, so the model copies a\nshort handle rather than a digest. The harness hands every tool batch a\nbase one past the session cursor (`ToolInvocationBatchRequest::\npromise_id_base`); the executor numbers the promises it creates from\nthat base, and the reducer accepts a creation only at or above the\nbatch's base and never twice. Producer correlation lives on\n`PromiseSource`, not in the id.",
+      "description": "Stable identifier for a promise: a session-scoped counter rendered as\n`promise_<n>`, the same convention as `run_<n>`, so the model copies a\nshort handle rather than a digest. The harness hands every dispatch of a\ntool batch a base above the session cursor (`ToolInvocationBatchRequest::\npromise_id_base`); the executor numbers the promises it creates from that\nbase. Proposal building accepts a creation only at or above the batch's\nbase, and neither it nor the reducer accepts one twice. Producer correlation\nlives on `PromiseSource`, not in the id.",
       "type": "string"
     },
     "PromiseResolution": {
@@ -1428,7 +1420,7 @@
     },
     "RunStatus": {
       "enum": [
-        "active",
+        "running",
         "parked",
         "cancelling",
         "completed",
@@ -1441,6 +1433,9 @@
       "type": "string"
     },
     "ToolCallId": {
+      "type": "string"
+    },
+    "ToolId": {
       "type": "string"
     },
     "ToolName": {
@@ -1687,7 +1682,7 @@
       "type": "string"
     },
     "WorkflowToolInvocation": {
-      "description": "Bounded durable record of one successful workflow-tool tool call.\n\nThe model arguments remain in CAS and are referenced by `arguments_ref`.\nReceiver-specific interpretation belongs to the receiving workflow.",
+      "description": "Bounded durable record of one admitted workflow-tool call. A joined call is\nrecorded while it is still pending.\n\nThe model arguments remain in CAS and are referenced by `arguments_ref`.\nReceiver-specific interpretation belongs to the receiving workflow.",
       "properties": {
         "arguments_ref": {
           "type": "string"
@@ -1699,7 +1694,7 @@
           "additionalProperties": {
             "$ref": "#/definitions/PromiseId"
           },
-          "description": "Keyed promise set created atomically with this invocation; `None`\nfor notify (`Accepted`) completion. Request/reply is the single\nreserved key `reply`.",
+          "description": "Keyed promise set created atomically with this invocation; `None`\nfor `Accepted` completion. Request/reply is the single\nreserved key `reply`.",
           "type": [
             "object",
             "null"
@@ -1743,18 +1738,18 @@
         "tool_call_id": {
           "$ref": "#/definitions/ToolCallId"
         },
-        "tool_id": {
-          "$ref": "#/definitions/WorkflowToolId"
-        },
         "turn_id": {
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "workflow_tool_id": {
+          "$ref": "#/definitions/WorkflowToolId"
         }
       },
       "required": [
         "invocation_id",
-        "tool_id",
+        "workflow_tool_id",
         "semantic_type",
         "schema_revision",
         "binding_fingerprint",

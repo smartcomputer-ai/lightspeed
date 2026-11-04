@@ -51,8 +51,8 @@ export function DeleteSessionDialog({ universeId, sessionId, onCancel, onDeleted
       <label className="flex min-w-0 items-start gap-2 rounded-lg border p-3 text-sm">
         <Checkbox checked={cascade} onCheckedChange={(checked) => setCascade(checked === true)} disabled={deletion.isPending || softDeleted} />
         <span className="min-w-0">
-          <span className="block font-medium">Also delete forks and delegated children</span>
-          <span className="block text-xs text-muted-foreground">Required if the session has history forks or delegated children. Every selected session must already be closed. Config-only clones are not included.</span>
+          <span className="block font-medium">Also delete delegated children</span>
+          <span className="block text-xs text-muted-foreground">Required if the session has delegated children. Every selected session must already be closed.</span>
         </span>
       </label>
       {platformAdmin && <label className="flex min-w-0 items-start gap-2 rounded-lg border p-3 text-sm">

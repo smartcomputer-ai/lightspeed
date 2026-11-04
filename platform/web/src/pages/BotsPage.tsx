@@ -14,7 +14,7 @@ import {
 import { BotDetail, type BotTab } from "@/components/bot/detail";
 import { BotCreateDialog } from "@/pages/BotCreatePage";
 import { BotAvatar } from "@/components/bot/face";
-import { StatusDot, relativeTime, type BotTone } from "@/components/bot/status";
+import { StatusDot, outcomeLabel, relativeTime, type BotTone } from "@/components/bot/status";
 import { BotFace } from "@/components/icons/bot";
 import { Button } from "@/components/ui/button";
 import { DetailPrompt, ListNote, LoadingNote, UniverseNotFound } from "@/components/page";
@@ -42,7 +42,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
     );
   }
 
-  const create = permissions.can("create_bot");
+  const create = permissions.can("createBot");
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
       <ListPane detailOpen={Boolean(botId)}>
@@ -103,10 +103,10 @@ export function rosterLine(bot: BotListItem): { text: string; tone: BotTone } {
   }
   if (bot.activity === "working") return { text: "Working", tone: "live" };
   if (!last) return { text: "Waiting for its first event", tone: "idle" };
-  const failed = last.outcome === "run_failed" || last.outcome === "blocked";
+  const failed = last.outcome === "runFailed" || last.outcome === "blocked";
   const detail = last.outcomeDetail?.trim() || last.kind;
   return {
-    text: `#${last.seq} ${(last.outcome ?? "pending").replaceAll("_", " ")} · ${detail}`,
+    text: `#${last.seq} ${last.outcome ? outcomeLabel(last.outcome) : "pending"} · ${detail}`,
     tone: failed ? "attention" : "idle",
   };
 }

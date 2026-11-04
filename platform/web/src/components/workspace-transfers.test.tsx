@@ -30,7 +30,7 @@ vi.mock("@/api", async (original) => ({
 vi.mock("@/lib/permissions", () => ({
   useActionPermissions: () => ({
     can: (action: string) =>
-      mocks.editable && (action !== "configure_resource" || mocks.configurable),
+      mocks.editable && (action !== "configureResource" || mocks.configurable),
   }),
 }));
 vi.mock("@/lib/universes", () => ({

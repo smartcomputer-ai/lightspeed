@@ -3,7 +3,7 @@
 //! unreadable pointer falls back to the authoritative event log.
 
 use harness::{
-    EventSeq, SessionId,
+    EventSeq, SESSION_CHECKPOINT_FORMAT_VERSION, SessionId,
     storage::{
         AdvanceSessionCheckpoint, BlobStore, ReadSessionEventRange, SessionCheckpoint,
         SessionRecord, SessionStore,
@@ -16,7 +16,6 @@ use temporal_workflow::{
     reduce_session_entries_from,
 };
 
-pub(crate) const SESSION_CHECKPOINT_FORMAT_VERSION: u32 = 1;
 pub(crate) const CHECKPOINT_TAIL_EVENT_THRESHOLD: u64 = 512;
 pub(crate) const CHECKPOINT_TAIL_BYTE_THRESHOLD: u64 = 2 * 1024 * 1024;
 pub(crate) const CHECKPOINT_APPEND_BATCH_BYTE_THRESHOLD: u64 = 2 * 1024 * 1024;
@@ -27,14 +26,12 @@ const CHECKPOINT_READ_PAGE: usize = 512;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct CheckpointReduction {
     core_state: harness::CoreAgentState,
-    run_submissions: std::collections::BTreeMap<u64, Option<harness::SubmissionId>>,
 }
 
 impl From<CheckpointReduction> for ReducedSession {
     fn from(value: CheckpointReduction) -> Self {
         Self {
             core_state: value.core_state,
-            run_submissions: value.run_submissions,
             replayed_event_count: 0,
         }
     }
@@ -261,7 +258,7 @@ pub(crate) fn terminal_runs_checkpoint_due(
     let checkpoint_seq = checkpoint_through_seq.map_or(0, EventSeq::as_u64);
     let terminal_runs_since_checkpoint = state
         .runs
-        .completed
+        .finished
         .iter()
         .filter(|run| run.terminal_seq.as_u64() > checkpoint_seq)
         .count();
@@ -269,7 +266,7 @@ pub(crate) fn terminal_runs_checkpoint_due(
         return true;
     }
 
-    state.runs.completed.iter().any(|run| {
+    state.runs.finished.iter().any(|run| {
         newly_terminal_seqs.contains(&run.terminal_seq)
             && run
                 .terminal_seq
@@ -297,7 +294,6 @@ pub(crate) async fn write_checkpoint(
     };
     let bytes = serde_json::to_vec(&CheckpointReduction {
         core_state: reduced.core_state.clone(),
-        run_submissions: reduced.run_submissions.clone(),
     })?;
     anyhow::ensure!(
         bytes.len() as u64 <= DEFAULT_BOOTSTRAP_PAYLOAD_BUDGET_BYTES,
@@ -467,7 +463,49 @@ mod tests {
         .expect("read full log");
         let full = reduce_session_entries(&all).expect("full replay");
         assert_eq!(checkpointed.reduced.core_state, full.core_state);
-        assert_eq!(checkpointed.reduced.run_submissions, full.run_submissions);
+    }
+
+    /// A version bump rejects a checkpoint at an idle session's head. Replay reaches the
+    /// same sequence, so the pointer has to accept it or every load replays again.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_rejected_checkpoint_at_head_heals_after_one_replay() {
+        let (sessions, blobs, session_id, record) = session_with_open_event().await;
+        let old_state = b"{}".to_vec();
+        let old_len = old_state.len() as u64;
+        let state_ref = blobs.put_bytes(old_state).await.expect("put old state");
+        sessions
+            .advance_checkpoint(AdvanceSessionCheckpoint {
+                checkpoint: SessionCheckpoint {
+                    session_id: session_id.clone(),
+                    through_seq: record.head.as_ref().expect("head").seq,
+                    format_version: SESSION_CHECKPOINT_FORMAT_VERSION - 1,
+                    state_ref,
+                    lineage_source_session_id: None,
+                    lineage_source_seq: None,
+                    byte_len: old_len,
+                    created_at_ms: 3,
+                },
+            })
+            .await
+            .expect("store the old format");
+
+        let rejected = load_reduction(&sessions, &blobs, &record)
+            .await
+            .expect("load past the old format");
+        assert!(rejected.full_replay);
+        assert!(checkpoint_due(&rejected));
+        assert!(
+            write_checkpoint(&sessions, &blobs, &record, &rejected.reduced, 4)
+                .await
+                .expect("write checkpoint"),
+            "the same sequence in the current format replaces the pointer"
+        );
+
+        let healed = load_reduction(&sessions, &blobs, &record)
+            .await
+            .expect("load healed checkpoint");
+        assert!(!healed.full_replay);
+        assert_eq!(healed.tail_event_count, 0);
     }
 
     fn terminal_run(id: u64, first_seq: u64, terminal_seq: u64) -> harness::RunRecord {
@@ -475,13 +513,13 @@ mod tests {
             run_id: harness::RunId::new(id),
             status: harness::RunStatus::Completed,
             submission_id: None,
-            submission_digest: None,
+            submission_digest: 0,
             source: harness::RunSource::Input { input: Vec::new() },
             first_seq: EventSeq::new(first_seq),
             terminal_seq: EventSeq::new(terminal_seq),
             accepted_at_ms: first_seq,
             started_at_ms: Some(first_seq),
-            completed_at_ms: terminal_seq,
+            finished_at_ms: terminal_seq,
             usage: None,
             output: None,
             failure: None,
@@ -509,10 +547,7 @@ mod tests {
     fn terminal_runs_checkpoint_every_ten_since_the_pointer() {
         let mut state = harness::CoreAgentState::default();
         for id in 1..=9 {
-            state
-                .runs
-                .completed
-                .push(terminal_run(id, 10 + id, 10 + id));
+            state.runs.finished.push(terminal_run(id, 10 + id, 10 + id));
         }
         assert!(!terminal_runs_checkpoint_due(
             &state,
@@ -520,7 +555,7 @@ mod tests {
             &[EventSeq::new(19)],
         ));
 
-        state.runs.completed.push(terminal_run(10, 20, 20));
+        state.runs.finished.push(terminal_run(10, 20, 20));
         assert!(terminal_runs_checkpoint_due(
             &state,
             Some(EventSeq::new(10)),
@@ -531,15 +566,15 @@ mod tests {
     #[test]
     fn newly_terminal_run_over_one_hundred_events_checkpoints_immediately() {
         let mut state = harness::CoreAgentState::default();
-        state.runs.completed.push(terminal_run(1, 1, 100));
+        state.runs.finished.push(terminal_run(1, 1, 100));
         assert!(!terminal_runs_checkpoint_due(
             &state,
             None,
             &[EventSeq::new(100)],
         ));
 
-        state.runs.completed.clear();
-        state.runs.completed.push(terminal_run(2, 101, 201));
+        state.runs.finished.clear();
+        state.runs.finished.push(terminal_run(2, 101, 201));
         assert!(!terminal_runs_checkpoint_due(&state, None, &[]));
         assert!(terminal_runs_checkpoint_due(
             &state,

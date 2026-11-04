@@ -1,0 +1,1868 @@
+{
+  "format_version": 2,
+  "state": {
+    "code_tools": {
+      "scopes": {
+        "execution": {
+          "calls": {
+            "completed": {
+              "call_id": "code_completed",
+              "promise_id_base": 3,
+              "spec": {
+                "arguments_ref": "sha256:170e4f95b2c21e334b0e506a108d8c8cf6b7f7a0ac2d6538b80d2f5e8709a1b7",
+                "binding_id": "read",
+                "origin": {
+                  "execution_id": "execution",
+                  "request_id": "completed"
+                },
+                "tool_id": "read_file",
+                "tool_name": "read_file"
+              },
+              "status": {
+                "kind": "completed",
+                "result": {
+                  "attachments": [
+                    {
+                      "data": {
+                        "content_ref": "sha256:6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d",
+                        "handle": "media:0123456789ab",
+                        "kind": "image",
+                        "media_type": "image/png",
+                        "name": "chart.png"
+                      },
+                      "kind": "media"
+                    },
+                    {
+                      "data": {
+                        "content_ref": "sha256:3b9c358f36f0a31b6ad3e14f309c7cf198ac9246e8316f9ce543d5b19ac02b80",
+                        "handle": "file:0123456789ab",
+                        "media_type": "text/markdown",
+                        "name": "notes.md",
+                        "source": {
+                          "id": "env",
+                          "kind": "environment",
+                          "path": "/home/notes.md"
+                        }
+                      },
+                      "kind": "file"
+                    }
+                  ],
+                  "call_id": "code_completed",
+                  "duration_ms": 12,
+                  "error_ref": "sha256:258f3bdca4fb59fe7db647a374d4841fa3d2da44b05ccefe5f65a724fbcdd0bd",
+                  "output_bytes": 34,
+                  "output_ref": "sha256:4c2194274ca590f2839440a55b1b8dcd85a756df1c7516778f9ea0e0184dc3a6",
+                  "status": "failed",
+                  "truncated": true
+                }
+              }
+            },
+            "pending": {
+              "call_id": "code_pending",
+              "promise_id_base": 3,
+              "spec": {
+                "arguments_ref": "sha256:170e4f95b2c21e334b0e506a108d8c8cf6b7f7a0ac2d6538b80d2f5e8709a1b7",
+                "binding_id": "read",
+                "origin": {
+                  "execution_id": "execution",
+                  "request_id": "pending"
+                },
+                "tool_id": "read_file",
+                "tool_name": "read_file"
+              },
+              "status": {
+                "kind": "pending"
+              }
+            },
+            "waiting": {
+              "call_id": "code_waiting",
+              "promise_id_base": 3,
+              "spec": {
+                "arguments_ref": "sha256:170e4f95b2c21e334b0e506a108d8c8cf6b7f7a0ac2d6538b80d2f5e8709a1b7",
+                "binding_id": "read",
+                "origin": {
+                  "execution_id": "execution",
+                  "request_id": "waiting"
+                },
+                "tool_id": "read_file",
+                "tool_name": "read_file"
+              },
+              "status": {
+                "kind": "waiting",
+                "suspension": {
+                  "calls": [
+                    {
+                      "call_id": "code_waiting",
+                      "invocation_id": "wti:sha256:0000000000000000000000000000000000000000000000000000000000000001",
+                      "promise_id": "promise_2"
+                    }
+                  ],
+                  "kind": "joined_workflow_calls",
+                  "spec": {
+                    "deadline_at_ms": 9000,
+                    "mode": "any",
+                    "promise_ids": [
+                      "promise_1"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "closed": true,
+          "spec": {
+            "bindings": {
+              "read": {
+                "tool_id": "read_file",
+                "tool_name": "read_file"
+              }
+            },
+            "execution_id": "execution",
+            "max_calls": 10,
+            "max_in_flight": 2,
+            "parent_invocation_id": "wti:sha256:0000000000000000000000000000000000000000000000000000000000000001"
+          },
+          "toolset_revision": 5
+        }
+      }
+    },
+    "context": {
+      "compaction": {
+        "failure_floor": {
+          "entries": 90,
+          "tokens": 170000
+        },
+        "last_finished_revision": 10,
+        "last_manual_outcome": {
+          "failure_ref": "sha256:1d9dc549ef13fe9b1fdcbd80ff518ef552d7012572ddcd325acfc97ab4084899",
+          "revision": 9,
+          "status": "failed"
+        },
+        "phase": {
+          "pending": {
+            "covered_entry_ids": [
+              1
+            ],
+            "estimated_tokens": 180000,
+            "run_id": 9,
+            "trigger": "high_watermark"
+          }
+        }
+      },
+      "entries": [
+        {
+          "content": {
+            "content_ref": "sha256:923fe53966c6cd9343e11af776cd4b05be315ea4b200b02e4d5dfb0f929b73bf",
+            "media_type": "text/plain",
+            "provider_kind": "openai.responses.message"
+          },
+          "entry_id": 1,
+          "key": "key.0",
+          "kind": {
+            "message": {
+              "role": "assistant"
+            }
+          },
+          "origin": "channel",
+          "preview": "entry",
+          "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+          "source": {
+            "assistant_output": {
+              "run_id": 9,
+              "turn_id": 10
+            }
+          },
+          "supersedes": 100,
+          "token_estimate": {
+            "quality": "provider_counted",
+            "tokens": 120
+          }
+        },
+        {
+          "content": {
+            "content_ref": "sha256:923fe53966c6cd9343e11af776cd4b05be315ea4b200b02e4d5dfb0f929b73bf",
+            "media_type": "text/plain",
+            "provider_kind": "openai.responses.message"
+          },
+          "entry_id": 2,
+          "key": "key.1",
+          "kind": "instructions",
+          "origin": "channel",
+          "preview": "entry",
+          "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+          "source": "context_edit",
+          "supersedes": 100,
+          "token_estimate": {
+            "quality": "provider_counted",
+            "tokens": 120
+          }
+        },
+        {
+          "content": {
+            "content_ref": "sha256:923fe53966c6cd9343e11af776cd4b05be315ea4b200b02e4d5dfb0f929b73bf",
+            "media_type": "text/plain",
+            "provider_kind": "openai.responses.message"
+          },
+          "entry_id": 3,
+          "key": "key.2",
+          "kind": {
+            "catalog": {
+              "title": "Skills"
+            }
+          },
+          "origin": "channel",
+          "preview": "entry",
+          "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+          "source": {
+            "runtime": {
+              "label": "catalog"
+            }
+          },
+          "supersedes": 100,
+          "token_estimate": {
+            "quality": "provider_counted",
+            "tokens": 120
+          }
+        },
+        {
+          "content": {
+            "content_ref": "sha256:923fe53966c6cd9343e11af776cd4b05be315ea4b200b02e4d5dfb0f929b73bf",
+            "media_type": "text/plain",
+            "provider_kind": "openai.responses.message"
+          },
+          "entry_id": 4,
+          "key": "key.3",
+          "kind": {
+            "tool_call": {
+              "call_id": "call_finished",
+              "name": "read_file"
+            }
+          },
+          "origin": "channel",
+          "preview": "entry",
+          "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+          "source": {
+            "run_input": {
+              "input_index": 0,
+              "run_id": 9
+            }
+          },
+          "supersedes": 100,
+          "token_estimate": {
+            "quality": "provider_counted",
+            "tokens": 120
+          }
+        },
+        {
+          "content": {
+            "content_ref": "sha256:923fe53966c6cd9343e11af776cd4b05be315ea4b200b02e4d5dfb0f929b73bf",
+            "media_type": "text/plain",
+            "provider_kind": "openai.responses.message"
+          },
+          "entry_id": 5,
+          "key": "key.4",
+          "kind": {
+            "tool_result": {
+              "call_id": "call_finished",
+              "is_error": true
+            }
+          },
+          "origin": "channel",
+          "preview": "entry",
+          "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+          "source": {
+            "tool": {
+              "batch_id": 6,
+              "run_id": 9,
+              "turn_id": 10
+            }
+          },
+          "supersedes": 100,
+          "token_estimate": {
+            "quality": "provider_counted",
+            "tokens": 120
+          }
+        },
+        {
+          "content": {
+            "content_ref": "sha256:923fe53966c6cd9343e11af776cd4b05be315ea4b200b02e4d5dfb0f929b73bf",
+            "media_type": "text/plain",
+            "provider_kind": "openai.responses.message"
+          },
+          "entry_id": 6,
+          "key": "key.5",
+          "kind": "reasoning_state",
+          "origin": "channel",
+          "preview": "entry",
+          "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+          "source": {
+            "reasoning": {
+              "run_id": 9,
+              "turn_id": 10
+            }
+          },
+          "supersedes": 100,
+          "token_estimate": {
+            "quality": "provider_counted",
+            "tokens": 120
+          }
+        },
+        {
+          "content": {
+            "content_ref": "sha256:923fe53966c6cd9343e11af776cd4b05be315ea4b200b02e4d5dfb0f929b73bf",
+            "media_type": "text/plain",
+            "provider_kind": "openai.responses.message"
+          },
+          "entry_id": 7,
+          "key": "key.6",
+          "kind": "provider_opaque",
+          "origin": "channel",
+          "preview": "entry",
+          "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+          "source": {
+            "steering": {
+              "input_index": 1,
+              "run_id": 9,
+              "steering_id": 2
+            }
+          },
+          "supersedes": 100,
+          "token_estimate": {
+            "quality": "provider_counted",
+            "tokens": 120
+          }
+        },
+        {
+          "content": {
+            "content_ref": "sha256:923fe53966c6cd9343e11af776cd4b05be315ea4b200b02e4d5dfb0f929b73bf",
+            "media_type": "text/plain",
+            "provider_kind": "openai.responses.message"
+          },
+          "entry_id": 8,
+          "key": "key.7",
+          "kind": {
+            "mcp_approval_response": {
+              "approval_request_id": "mcpr_1",
+              "approve": true
+            }
+          },
+          "origin": "channel",
+          "preview": "entry",
+          "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+          "source": {
+            "approval_decision": {
+              "approval_id": "approval_1",
+              "run_id": 9
+            }
+          },
+          "supersedes": 100,
+          "token_estimate": {
+            "quality": "provider_counted",
+            "tokens": 120
+          }
+        }
+      ],
+      "last_generation": {
+        "input_limit_tokens": 200000,
+        "model": {
+          "api_kind": "open_ai_responses",
+          "model": "gpt-test",
+          "provider_id": "openai"
+        }
+      },
+      "revision": 12,
+      "usage_observation": {
+        "context_revision": 12,
+        "tokens": 90000
+      }
+    },
+    "environment": {
+      "active_environment_id": "env"
+    },
+    "id_cursors": {
+      "last_approval_id": 4,
+      "last_context_entry_id": 8,
+      "last_promise_id": 2,
+      "last_run_id": 10,
+      "last_steering_id": 2,
+      "last_tool_batch_id": 7,
+      "last_turn_id": 16
+    },
+    "lifecycle": {
+      "config": {
+        "context": {
+          "compaction": {
+            "compact_threshold_tokens": 150000,
+            "mode": "provider_standalone",
+            "target_tokens": 60000
+          },
+          "input_limit_tokens": 200000
+        },
+        "features": {
+          "code_mode": {
+            "allowed_tools": [
+              "read_file"
+            ],
+            "max_catalog_bytes": 5,
+            "max_memory_bytes": 2,
+            "max_output_bytes": 8,
+            "max_outstanding_tool_calls": 10,
+            "max_request_bytes": 6,
+            "max_result_bytes": 7,
+            "max_source_bytes": 4,
+            "max_stack_bytes": 3,
+            "max_tool_calls": 9,
+            "timeout_ms": 1,
+            "version": 1
+          },
+          "environments": {
+            "environments": [
+              {
+                "access": "exec",
+                "default": true,
+                "environment_id": "env",
+                "working_directory": "/home"
+              }
+            ],
+            "prompts": {
+              "roots": [
+                "/prompts"
+              ]
+            },
+            "selection": true,
+            "skills": {
+              "roots": [
+                "/skills"
+              ]
+            },
+            "version": 1
+          },
+          "mcp": {
+            "servers": [
+              {
+                "server_id": "server",
+                "tools": [
+                  "search"
+                ]
+              }
+            ],
+            "version": 1
+          },
+          "subagents": {
+            "agents": [
+              {
+                "profile_id": "researcher"
+              }
+            ],
+            "max_concurrent": 3,
+            "max_depth": 2,
+            "run_timeout_ms": 60000,
+            "version": 1
+          },
+          "timers": {
+            "version": 1
+          },
+          "vfs": {
+            "prompts": {
+              "roots": [
+                "/prompts"
+              ]
+            },
+            "skills": {
+              "roots": [
+                "/skills"
+              ]
+            },
+            "version": 1,
+            "working_directory": "/work",
+            "workspaces": [
+              {
+                "access": "edit",
+                "path": "/work",
+                "target": {
+                  "type": "workspace",
+                  "workspace_id": "workspace"
+                }
+              },
+              {
+                "access": "read",
+                "path": "/snapshot",
+                "target": {
+                  "snapshot_ref": "sha256:16a0eeb0791b6c92451fd284dd9f599e0a7dbe7f6ebea6e2d2d06c7f74aec112",
+                  "type": "snapshot"
+                }
+              }
+            ]
+          },
+          "web": {
+            "fetch": {},
+            "search": {
+              "allowed_domains": [
+                "example.com"
+              ],
+              "blocked_domains": [
+                "example.org"
+              ]
+            },
+            "version": 1
+          }
+        },
+        "generation": {
+          "max_output_tokens": 4096,
+          "parallel_tool_use": true,
+          "processing_tier": "fast",
+          "reasoning_effort": "high",
+          "tool_choice": {
+            "specific": {
+              "tool_id": "read_file"
+            }
+          }
+        },
+        "limits": {
+          "max_turns": 500
+        },
+        "model": {
+          "api_kind": "open_ai_responses",
+          "model": "gpt-test",
+          "provider_id": "openai"
+        }
+      },
+      "config_revision": 3,
+      "status": "open"
+    },
+    "promises": {
+      "promises": {
+        "promise_1": {
+          "deadline_at_ms": 9000,
+          "error_ref": "sha256:2ace289266629dda1397b731d63e3bc1a776dea2ba3e7f6ba7ee7799258c8e34",
+          "ownership": "model",
+          "payload_ref": "sha256:239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5",
+          "promise_id": "promise_1",
+          "scope": {
+            "kind": "run",
+            "run_id": 9
+          },
+          "source": {
+            "fire_at_ms": 9000,
+            "kind": "timer"
+          },
+          "status": "resolved"
+        },
+        "promise_2": {
+          "deadline_at_ms": 9000,
+          "error_ref": "sha256:2ace289266629dda1397b731d63e3bc1a776dea2ba3e7f6ba7ee7799258c8e34",
+          "ownership": "model",
+          "payload_ref": "sha256:239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5",
+          "promise_id": "promise_2",
+          "scope": {
+            "kind": "session"
+          },
+          "source": {
+            "completion_key": "reply",
+            "invocation_id": "invocation",
+            "kind": "workflow",
+            "producer_workflow_id": "producer",
+            "producer_workflow_kind": "ProducerWorkflow"
+          },
+          "status": "resolved"
+        }
+      },
+      "settled": [
+        "promise_2"
+      ]
+    },
+    "reduced_to": {
+      "seq": 90
+    },
+    "runs": {
+      "active": {
+        "accepted_at_ms": 1000,
+        "active_tool_batch_id": 7,
+        "active_turn_id": 16,
+        "approvals": {
+          "approval_1": {
+            "decided_by": {
+              "kind": "local"
+            },
+            "note": "looks fine",
+            "request": {
+              "approval_id": "approval_1",
+              "continuation": {
+                "kind": "provider_mcp",
+                "provider_request_id": "mcpr_1"
+              },
+              "run_id": 9,
+              "subject": {
+                "arguments_ref": "sha256:728d66eef4defaf3c16f23093f0c92a914e3e42da490882ef2096a281fb46260",
+                "kind": "mcp_tool_call",
+                "server_id": "server",
+                "server_label": "Server",
+                "tool_name": "search"
+              }
+            },
+            "requested_at_ms": 1000,
+            "status": "approved"
+          },
+          "approval_2": {
+            "decided_by": {
+              "id": "actor",
+              "kind": "actor"
+            },
+            "note": "looks fine",
+            "request": {
+              "approval_id": "approval_2",
+              "continuation": {
+                "batch_id": 7,
+                "call_id": "call_pending",
+                "kind": "runtime_mcp"
+              },
+              "run_id": 9,
+              "subject": {
+                "arguments_ref": "sha256:728d66eef4defaf3c16f23093f0c92a914e3e42da490882ef2096a281fb46260",
+                "kind": "mcp_tool_call",
+                "server_id": "server",
+                "server_label": "Server",
+                "tool_name": "search"
+              }
+            },
+            "requested_at_ms": 1000,
+            "status": "approved"
+          },
+          "approval_3": {
+            "decided_by": {
+              "kind": "key",
+              "prefix": "ls_abc"
+            },
+            "note": "looks fine",
+            "request": {
+              "approval_id": "approval_3",
+              "continuation": {
+                "kind": "provider_mcp",
+                "provider_request_id": "mcpr_1"
+              },
+              "run_id": 9,
+              "subject": {
+                "arguments_ref": "sha256:728d66eef4defaf3c16f23093f0c92a914e3e42da490882ef2096a281fb46260",
+                "kind": "mcp_tool_call",
+                "server_id": "server",
+                "server_label": "Server",
+                "tool_name": "search"
+              }
+            },
+            "requested_at_ms": 1000,
+            "status": "approved"
+          },
+          "approval_4": {
+            "decided_by": {
+              "cause": "closed",
+              "component": "reaper",
+              "kind": "internal"
+            },
+            "note": "looks fine",
+            "request": {
+              "approval_id": "approval_4",
+              "continuation": {
+                "kind": "provider_mcp",
+                "provider_request_id": "mcpr_1"
+              },
+              "run_id": 9,
+              "subject": {
+                "arguments_ref": "sha256:728d66eef4defaf3c16f23093f0c92a914e3e42da490882ef2096a281fb46260",
+                "kind": "mcp_tool_call",
+                "server_id": "server",
+                "server_label": "Server",
+                "tool_name": "search"
+              }
+            },
+            "requested_at_ms": 1000,
+            "status": "approved"
+          }
+        },
+        "completed_tool_batches": {
+          "6": {
+            "batch_id": 6,
+            "results": [
+              {
+                "attachments": [
+                  {
+                    "data": {
+                      "content_ref": "sha256:6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d",
+                      "handle": "media:0123456789ab",
+                      "kind": "image",
+                      "media_type": "image/png",
+                      "name": "chart.png"
+                    },
+                    "kind": "media"
+                  },
+                  {
+                    "data": {
+                      "content_ref": "sha256:3b9c358f36f0a31b6ad3e14f309c7cf198ac9246e8316f9ce543d5b19ac02b80",
+                      "handle": "file:0123456789ab",
+                      "media_type": "text/markdown",
+                      "name": "notes.md",
+                      "source": {
+                        "id": "env",
+                        "kind": "environment",
+                        "path": "/home/notes.md"
+                      }
+                    },
+                    "kind": "file"
+                  }
+                ],
+                "call_id": "call_finished",
+                "duration_ms": 12,
+                "effects": [
+                  {
+                    "data": {
+                      "key": "value"
+                    },
+                    "kind": "effect",
+                    "refs": {
+                      "ref": "sha256:dcb576426a17b7df13907007cb02a1f1dfc12fc6c69f603717abca59d03b888e"
+                    }
+                  }
+                ],
+                "error_ref": "sha256:ca00fccfb408989eddc401062c4d1219a6aceb6b9b55412357f1790862e8f178",
+                "model_visible_context_entries": [
+                  {
+                    "content": {
+                      "content_ref": "sha256:e2a78c7b5a05c0b34cbcac65007d1e2a5765341d79b159797db7baf5fa1ecb13",
+                      "media_type": "text/plain",
+                      "provider_kind": "openai.responses.message"
+                    },
+                    "kind": {
+                      "message": {
+                        "role": "user"
+                      }
+                    },
+                    "origin": "channel",
+                    "preview": "tool output",
+                    "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+                    "token_estimate": {
+                      "quality": "provider_counted",
+                      "tokens": 120
+                    }
+                  }
+                ],
+                "output_bytes": 34,
+                "output_ref": "sha256:e0ee8bb50685e05fa0f47ed04203ae953fdfd055f5bd2892ea186504254f8c3a",
+                "status": "succeeded",
+                "truncated": true
+              }
+            ],
+            "run_id": 9,
+            "turn_id": 15
+          }
+        },
+        "config_revision": 3,
+        "context_recovery": {
+          "attempts": 1,
+          "recovery_attempted_turn_id": 10
+        },
+        "entry_guard_attempted": true,
+        "first_seq": 40,
+        "input_consumed_by_turn_id": 10,
+        "input_entry_ids": [
+          1
+        ],
+        "input_limit_tokens": 200000,
+        "notify_on_terminal": [
+          {
+            "holder_workflow_id": "holder",
+            "token": "token"
+          }
+        ],
+        "parked_tool_batch": {
+          "batch_id": 7,
+          "suspension": {
+            "call_id": "call_pending",
+            "kind": "await_tool",
+            "spec": {
+              "deadline_at_ms": 9000,
+              "mode": "any",
+              "promise_ids": [
+                "promise_1"
+              ]
+            }
+          }
+        },
+        "run_config": {
+          "max_output_tokens": 100,
+          "max_turns": 10,
+          "model_override": {
+            "api_kind": "open_ai_responses",
+            "model": "gpt-test",
+            "provider_id": "openai"
+          },
+          "parallel_tool_use": false,
+          "processing_tier": "flex",
+          "reasoning_effort": "low",
+          "tool_choice": "required_any"
+        },
+        "run_id": 9,
+        "source": {
+          "input": [
+            {
+              "content": {
+                "content_ref": "sha256:c337a0e1ce36627b9883f7aad614820ac8808636f9617664ceb31b2db7ae80fb",
+                "media_type": "text/plain",
+                "provider_kind": "openai.responses.message"
+              },
+              "kind": {
+                "message": {
+                  "role": "user"
+                }
+              },
+              "origin": "channel",
+              "preview": "run input",
+              "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+              "token_estimate": {
+                "quality": "provider_counted",
+                "tokens": 120
+              }
+            }
+          ],
+          "type": "input"
+        },
+        "started_at_ms": 1001,
+        "status": "parked",
+        "steering": [
+          {
+            "consumed_by_turn_id": 11,
+            "entry_ids": [
+              2
+            ],
+            "input": [
+              {
+                "content": {
+                  "content_ref": "sha256:57fce44d7c6df51ad8525da1580a246e9d1142d79d1d1f176b1d29643d61ed44",
+                  "media_type": "text/plain",
+                  "provider_kind": "openai.responses.message"
+                },
+                "kind": {
+                  "message": {
+                    "role": "user"
+                  }
+                },
+                "origin": "channel",
+                "preview": "steer",
+                "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+                "token_estimate": {
+                  "quality": "provider_counted",
+                  "tokens": 120
+                }
+              }
+            ],
+            "steering_id": 2,
+            "submission_id": "submission-steer"
+          }
+        ],
+        "submission_id": "submission-active",
+        "tool_batches": {
+          "7": {
+            "batch_id": 7,
+            "calls": [
+              {
+                "call": {
+                  "arguments_ref": "sha256:b192017da47f5d35fb73a303a7ba74a8f4648d05176804ae49d9cdaa1d780812",
+                  "call_id": "call_pending",
+                  "native_call_ref": "sha256:6224eea874e5e831a0e1d5d06fb97fc2c3849241073ff98d2503f8d5627aa825",
+                  "provider_kind": "openai.responses.function_call",
+                  "tool_id": "read_file",
+                  "tool_name": "read_file"
+                },
+                "result": {
+                  "attachments": [
+                    {
+                      "data": {
+                        "content_ref": "sha256:6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d",
+                        "handle": "media:0123456789ab",
+                        "kind": "image",
+                        "media_type": "image/png",
+                        "name": "chart.png"
+                      },
+                      "kind": "media"
+                    },
+                    {
+                      "data": {
+                        "content_ref": "sha256:3b9c358f36f0a31b6ad3e14f309c7cf198ac9246e8316f9ce543d5b19ac02b80",
+                        "handle": "file:0123456789ab",
+                        "media_type": "text/markdown",
+                        "name": "notes.md",
+                        "source": {
+                          "id": "env",
+                          "kind": "environment",
+                          "path": "/home/notes.md"
+                        }
+                      },
+                      "kind": "file"
+                    }
+                  ],
+                  "call_id": "call_pending",
+                  "duration_ms": 12,
+                  "effects": [
+                    {
+                      "data": {
+                        "key": "value"
+                      },
+                      "kind": "effect",
+                      "refs": {
+                        "ref": "sha256:dcb576426a17b7df13907007cb02a1f1dfc12fc6c69f603717abca59d03b888e"
+                      }
+                    }
+                  ],
+                  "error_ref": "sha256:ca00fccfb408989eddc401062c4d1219a6aceb6b9b55412357f1790862e8f178",
+                  "model_visible_context_entries": [
+                    {
+                      "content": {
+                        "content_ref": "sha256:e2a78c7b5a05c0b34cbcac65007d1e2a5765341d79b159797db7baf5fa1ecb13",
+                        "media_type": "text/plain",
+                        "provider_kind": "openai.responses.message"
+                      },
+                      "kind": {
+                        "message": {
+                          "role": "user"
+                        }
+                      },
+                      "origin": "channel",
+                      "preview": "tool output",
+                      "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+                      "token_estimate": {
+                        "quality": "provider_counted",
+                        "tokens": 120
+                      }
+                    }
+                  ],
+                  "output_bytes": 34,
+                  "output_ref": "sha256:e0ee8bb50685e05fa0f47ed04203ae953fdfd055f5bd2892ea186504254f8c3a",
+                  "status": "succeeded",
+                  "truncated": true
+                },
+                "status": "pending"
+              }
+            ],
+            "promise_id_base": 1,
+            "run_id": 9,
+            "turn_id": 16
+          }
+        },
+        "turn_count": 7,
+        "turns": {
+          "10": {
+            "facts": {
+              "approval_requests": [
+                {
+                  "continuation": {
+                    "kind": "provider_mcp",
+                    "provider_request_id": "mcpr_1"
+                  },
+                  "subject": {
+                    "arguments_ref": "sha256:728d66eef4defaf3c16f23093f0c92a914e3e42da490882ef2096a281fb46260",
+                    "kind": "mcp_tool_call",
+                    "server_id": "server",
+                    "server_label": "Server",
+                    "tool_name": "search"
+                  }
+                }
+              ],
+              "context_token_estimate": {
+                "quality": "provider_counted",
+                "tokens": 120
+              },
+              "duration_ms": 900,
+              "finish": "tool_calls",
+              "provider_response_id": "resp_1",
+              "tool_calls": [
+                {
+                  "arguments_ref": "sha256:b192017da47f5d35fb73a303a7ba74a8f4648d05176804ae49d9cdaa1d780812",
+                  "call_id": "call_observed",
+                  "native_call_ref": "sha256:6224eea874e5e831a0e1d5d06fb97fc2c3849241073ff98d2503f8d5627aa825",
+                  "provider_kind": "openai.responses.function_call",
+                  "tool_id": "read_file",
+                  "tool_name": "read_file"
+                }
+              ],
+              "usage": {
+                "cache_miss_input_tokens": 7,
+                "cache_write_input_tokens": 6,
+                "cached_input_tokens": 5,
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "reasoning_tokens": 3,
+                "total_tokens": 4
+              }
+            },
+            "generation_status": "succeeded",
+            "outcome": {
+              "final_output": {
+                "output": {
+                  "content_ref": "sha256:2443630b4620165c8b173e7265e17526fe2787ae594364dd6d839ad58f2fc007",
+                  "media_type": "text/plain",
+                  "provider_kind": "openai.responses.message"
+                }
+              }
+            },
+            "planned_request": {
+              "config_revision": 1,
+              "context_revision": 2,
+              "request_fingerprint": "fingerprint",
+              "toolset_revision": 3
+            },
+            "run_id": 9,
+            "status": "completed",
+            "turn_id": 10
+          },
+          "11": {
+            "facts": {
+              "approval_requests": [
+                {
+                  "continuation": {
+                    "kind": "provider_mcp",
+                    "provider_request_id": "mcpr_1"
+                  },
+                  "subject": {
+                    "arguments_ref": "sha256:728d66eef4defaf3c16f23093f0c92a914e3e42da490882ef2096a281fb46260",
+                    "kind": "mcp_tool_call",
+                    "server_id": "server",
+                    "server_label": "Server",
+                    "tool_name": "search"
+                  }
+                }
+              ],
+              "context_token_estimate": {
+                "quality": "provider_counted",
+                "tokens": 120
+              },
+              "duration_ms": 900,
+              "finish": "tool_calls",
+              "provider_response_id": "resp_1",
+              "tool_calls": [
+                {
+                  "arguments_ref": "sha256:b192017da47f5d35fb73a303a7ba74a8f4648d05176804ae49d9cdaa1d780812",
+                  "call_id": "call_observed",
+                  "native_call_ref": "sha256:6224eea874e5e831a0e1d5d06fb97fc2c3849241073ff98d2503f8d5627aa825",
+                  "provider_kind": "openai.responses.function_call",
+                  "tool_id": "read_file",
+                  "tool_name": "read_file"
+                }
+              ],
+              "usage": {
+                "cache_miss_input_tokens": 7,
+                "cache_write_input_tokens": 6,
+                "cached_input_tokens": 5,
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "reasoning_tokens": 3,
+                "total_tokens": 4
+              }
+            },
+            "generation_status": "succeeded",
+            "outcome": "tool_calls_queued",
+            "planned_request": {
+              "config_revision": 1,
+              "context_revision": 2,
+              "request_fingerprint": "fingerprint",
+              "toolset_revision": 3
+            },
+            "run_id": 9,
+            "status": "completed",
+            "turn_id": 11
+          },
+          "12": {
+            "facts": {
+              "approval_requests": [
+                {
+                  "continuation": {
+                    "kind": "provider_mcp",
+                    "provider_request_id": "mcpr_1"
+                  },
+                  "subject": {
+                    "arguments_ref": "sha256:728d66eef4defaf3c16f23093f0c92a914e3e42da490882ef2096a281fb46260",
+                    "kind": "mcp_tool_call",
+                    "server_id": "server",
+                    "server_label": "Server",
+                    "tool_name": "search"
+                  }
+                }
+              ],
+              "context_token_estimate": {
+                "quality": "provider_counted",
+                "tokens": 120
+              },
+              "duration_ms": 900,
+              "finish": "tool_calls",
+              "provider_response_id": "resp_1",
+              "tool_calls": [
+                {
+                  "arguments_ref": "sha256:b192017da47f5d35fb73a303a7ba74a8f4648d05176804ae49d9cdaa1d780812",
+                  "call_id": "call_observed",
+                  "native_call_ref": "sha256:6224eea874e5e831a0e1d5d06fb97fc2c3849241073ff98d2503f8d5627aa825",
+                  "provider_kind": "openai.responses.function_call",
+                  "tool_id": "read_file",
+                  "tool_name": "read_file"
+                }
+              ],
+              "usage": {
+                "cache_miss_input_tokens": 7,
+                "cache_write_input_tokens": 6,
+                "cached_input_tokens": 5,
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "reasoning_tokens": 3,
+                "total_tokens": 4
+              }
+            },
+            "generation_status": "succeeded",
+            "outcome": {
+              "context_limit": {
+                "failure_ref": "sha256:55ea09e5715d0a8d9d94018d473bf23b2d7e630c2adb1f1acad3bada74c6fd05"
+              }
+            },
+            "planned_request": {
+              "config_revision": 1,
+              "context_revision": 2,
+              "request_fingerprint": "fingerprint",
+              "toolset_revision": 3
+            },
+            "run_id": 9,
+            "status": "completed",
+            "turn_id": 12
+          },
+          "13": {
+            "facts": {
+              "approval_requests": [
+                {
+                  "continuation": {
+                    "kind": "provider_mcp",
+                    "provider_request_id": "mcpr_1"
+                  },
+                  "subject": {
+                    "arguments_ref": "sha256:728d66eef4defaf3c16f23093f0c92a914e3e42da490882ef2096a281fb46260",
+                    "kind": "mcp_tool_call",
+                    "server_id": "server",
+                    "server_label": "Server",
+                    "tool_name": "search"
+                  }
+                }
+              ],
+              "context_token_estimate": {
+                "quality": "provider_counted",
+                "tokens": 120
+              },
+              "duration_ms": 900,
+              "finish": "tool_calls",
+              "provider_response_id": "resp_1",
+              "tool_calls": [
+                {
+                  "arguments_ref": "sha256:b192017da47f5d35fb73a303a7ba74a8f4648d05176804ae49d9cdaa1d780812",
+                  "call_id": "call_observed",
+                  "native_call_ref": "sha256:6224eea874e5e831a0e1d5d06fb97fc2c3849241073ff98d2503f8d5627aa825",
+                  "provider_kind": "openai.responses.function_call",
+                  "tool_id": "read_file",
+                  "tool_name": "read_file"
+                }
+              ],
+              "usage": {
+                "cache_miss_input_tokens": 7,
+                "cache_write_input_tokens": 6,
+                "cached_input_tokens": 5,
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "reasoning_tokens": 3,
+                "total_tokens": 4
+              }
+            },
+            "generation_status": "succeeded",
+            "outcome": "approvals_requested",
+            "planned_request": {
+              "config_revision": 1,
+              "context_revision": 2,
+              "request_fingerprint": "fingerprint",
+              "toolset_revision": 3
+            },
+            "run_id": 9,
+            "status": "completed",
+            "turn_id": 13
+          },
+          "14": {
+            "facts": {
+              "approval_requests": [
+                {
+                  "continuation": {
+                    "kind": "provider_mcp",
+                    "provider_request_id": "mcpr_1"
+                  },
+                  "subject": {
+                    "arguments_ref": "sha256:728d66eef4defaf3c16f23093f0c92a914e3e42da490882ef2096a281fb46260",
+                    "kind": "mcp_tool_call",
+                    "server_id": "server",
+                    "server_label": "Server",
+                    "tool_name": "search"
+                  }
+                }
+              ],
+              "context_token_estimate": {
+                "quality": "provider_counted",
+                "tokens": 120
+              },
+              "duration_ms": 900,
+              "finish": "tool_calls",
+              "provider_response_id": "resp_1",
+              "tool_calls": [
+                {
+                  "arguments_ref": "sha256:b192017da47f5d35fb73a303a7ba74a8f4648d05176804ae49d9cdaa1d780812",
+                  "call_id": "call_observed",
+                  "native_call_ref": "sha256:6224eea874e5e831a0e1d5d06fb97fc2c3849241073ff98d2503f8d5627aa825",
+                  "provider_kind": "openai.responses.function_call",
+                  "tool_id": "read_file",
+                  "tool_name": "read_file"
+                }
+              ],
+              "usage": {
+                "cache_miss_input_tokens": 7,
+                "cache_write_input_tokens": 6,
+                "cached_input_tokens": 5,
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "reasoning_tokens": 3,
+                "total_tokens": 4
+              }
+            },
+            "generation_status": "succeeded",
+            "outcome": {
+              "failed": {
+                "failure_ref": "sha256:5d28a90f4498a81461efbaf6f628a19d9778390bb5c81a393dd936181cc3d826"
+              }
+            },
+            "planned_request": {
+              "config_revision": 1,
+              "context_revision": 2,
+              "request_fingerprint": "fingerprint",
+              "toolset_revision": 3
+            },
+            "run_id": 9,
+            "status": "completed",
+            "turn_id": 14
+          },
+          "15": {
+            "facts": {
+              "approval_requests": [
+                {
+                  "continuation": {
+                    "kind": "provider_mcp",
+                    "provider_request_id": "mcpr_1"
+                  },
+                  "subject": {
+                    "arguments_ref": "sha256:728d66eef4defaf3c16f23093f0c92a914e3e42da490882ef2096a281fb46260",
+                    "kind": "mcp_tool_call",
+                    "server_id": "server",
+                    "server_label": "Server",
+                    "tool_name": "search"
+                  }
+                }
+              ],
+              "context_token_estimate": {
+                "quality": "provider_counted",
+                "tokens": 120
+              },
+              "duration_ms": 900,
+              "finish": "tool_calls",
+              "provider_response_id": "resp_1",
+              "tool_calls": [
+                {
+                  "arguments_ref": "sha256:b192017da47f5d35fb73a303a7ba74a8f4648d05176804ae49d9cdaa1d780812",
+                  "call_id": "call_observed",
+                  "native_call_ref": "sha256:6224eea874e5e831a0e1d5d06fb97fc2c3849241073ff98d2503f8d5627aa825",
+                  "provider_kind": "openai.responses.function_call",
+                  "tool_id": "read_file",
+                  "tool_name": "read_file"
+                }
+              ],
+              "usage": {
+                "cache_miss_input_tokens": 7,
+                "cache_write_input_tokens": 6,
+                "cached_input_tokens": 5,
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "reasoning_tokens": 3,
+                "total_tokens": 4
+              }
+            },
+            "generation_status": "succeeded",
+            "outcome": {
+              "rejected": {
+                "failure_ref": "sha256:20cd938a2ea64f612b3523bc9219130c6fc66cd09b394ea38437488c0b8898b2"
+              }
+            },
+            "planned_request": {
+              "config_revision": 1,
+              "context_revision": 2,
+              "request_fingerprint": "fingerprint",
+              "toolset_revision": 3
+            },
+            "run_id": 9,
+            "status": "completed",
+            "turn_id": 15
+          },
+          "16": {
+            "facts": {
+              "approval_requests": [
+                {
+                  "continuation": {
+                    "kind": "provider_mcp",
+                    "provider_request_id": "mcpr_1"
+                  },
+                  "subject": {
+                    "arguments_ref": "sha256:728d66eef4defaf3c16f23093f0c92a914e3e42da490882ef2096a281fb46260",
+                    "kind": "mcp_tool_call",
+                    "server_id": "server",
+                    "server_label": "Server",
+                    "tool_name": "search"
+                  }
+                }
+              ],
+              "context_token_estimate": {
+                "quality": "provider_counted",
+                "tokens": 120
+              },
+              "duration_ms": 900,
+              "finish": "tool_calls",
+              "provider_response_id": "resp_1",
+              "tool_calls": [
+                {
+                  "arguments_ref": "sha256:b192017da47f5d35fb73a303a7ba74a8f4648d05176804ae49d9cdaa1d780812",
+                  "call_id": "call_observed",
+                  "native_call_ref": "sha256:6224eea874e5e831a0e1d5d06fb97fc2c3849241073ff98d2503f8d5627aa825",
+                  "provider_kind": "openai.responses.function_call",
+                  "tool_id": "read_file",
+                  "tool_name": "read_file"
+                }
+              ],
+              "usage": {
+                "cache_miss_input_tokens": 7,
+                "cache_write_input_tokens": 6,
+                "cached_input_tokens": 5,
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "reasoning_tokens": 3,
+                "total_tokens": 4
+              }
+            },
+            "generation_status": "succeeded",
+            "outcome": "cancelled",
+            "planned_request": {
+              "config_revision": 1,
+              "context_revision": 2,
+              "request_fingerprint": "fingerprint",
+              "toolset_revision": 3
+            },
+            "run_id": 9,
+            "status": "completed",
+            "turn_id": 16
+          }
+        },
+        "usage": {
+          "cache_miss_input_tokens": 7,
+          "cache_write_input_tokens": 6,
+          "cached_input_tokens": 5,
+          "input_tokens": 1,
+          "output_tokens": 2,
+          "reasoning_tokens": 3,
+          "total_tokens": 4
+        }
+      },
+      "finished": [
+        {
+          "accepted_at_ms": 500,
+          "failure": {
+            "kind": "model_failure",
+            "message_ref": "sha256:131e42f3fb037dda76ebb51491e3da188e4b2013cc9f1eb1c33f9f660455b18f"
+          },
+          "finished_at_ms": 600,
+          "first_seq": 20,
+          "notify_on_terminal": [
+            {
+              "holder_workflow_id": "holder",
+              "token": "token"
+            }
+          ],
+          "output": {
+            "content_ref": "sha256:a4c7b520c630ff81aedaa02cea522154f941d2f8e4469c766f1fdd9daa5f65fe",
+            "media_type": "text/plain",
+            "provider_kind": "openai.responses.message"
+          },
+          "run_id": 8,
+          "source": {
+            "input": [
+              {
+                "content": {
+                  "content_ref": "sha256:c337a0e1ce36627b9883f7aad614820ac8808636f9617664ceb31b2db7ae80fb",
+                  "media_type": "text/plain",
+                  "provider_kind": "openai.responses.message"
+                },
+                "kind": {
+                  "message": {
+                    "role": "user"
+                  }
+                },
+                "origin": "channel",
+                "preview": "run input",
+                "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+                "token_estimate": {
+                  "quality": "provider_counted",
+                  "tokens": 120
+                }
+              }
+            ],
+            "type": "input"
+          },
+          "started_at_ms": 501,
+          "status": "failed",
+          "submission_digest": 77,
+          "submission_id": "submission-finished",
+          "terminal_seq": 39,
+          "usage": {
+            "cache_miss_input_tokens": 7,
+            "cache_write_input_tokens": 6,
+            "cached_input_tokens": 5,
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "reasoning_tokens": 3,
+            "total_tokens": 4
+          }
+        }
+      ],
+      "pruned_through": 2,
+      "queued": [
+        {
+          "accepted_at_ms": 2000,
+          "config_revision": 3,
+          "first_seq": 80,
+          "input_limit_tokens": 200000,
+          "notify_on_terminal": [
+            {
+              "holder_workflow_id": "holder",
+              "token": "token"
+            }
+          ],
+          "run_config": {},
+          "run_id": 10,
+          "source": {
+            "input": [
+              {
+                "content": {
+                  "content_ref": "sha256:c337a0e1ce36627b9883f7aad614820ac8808636f9617664ceb31b2db7ae80fb",
+                  "media_type": "text/plain",
+                  "provider_kind": "openai.responses.message"
+                },
+                "kind": {
+                  "message": {
+                    "role": "user"
+                  }
+                },
+                "origin": "channel",
+                "preview": "run input",
+                "provenance_ref": "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b",
+                "token_estimate": {
+                  "quality": "provider_counted",
+                  "tokens": 120
+                }
+              }
+            ],
+            "type": "input"
+          },
+          "submission_id": "submission-queued"
+        }
+      ]
+    },
+    "tooling": {
+      "revision": 5,
+      "tools": {
+        "agent_run": {
+          "execution": {
+            "class": "process",
+            "retry_safe": true
+          },
+          "id": "agent_run",
+          "kind": {
+            "builtin": {
+              "settings": {
+                "setting": true
+              }
+            }
+          },
+          "parallelism": "parallel_safe"
+        },
+        "mcp_server": {
+          "execution": {
+            "class": "process",
+            "retry_safe": true
+          },
+          "id": "mcp_server",
+          "kind": {
+            "remote_mcp": {
+              "allowed_tools": [
+                "search"
+              ],
+              "approval": "always",
+              "defer_loading": true,
+              "description_ref": "sha256:ed969f4dee41b8e5e02d2c6b61999776a7bb6aeeefb501ab70a355859b16d6c6",
+              "execution": "runtime",
+              "exposure": "search",
+              "record_revision": 4,
+              "server_id": "server",
+              "server_label": "Server"
+            }
+          },
+          "parallelism": "parallel_safe"
+        },
+        "read_file": {
+          "execution": {
+            "class": "process",
+            "retry_safe": true
+          },
+          "id": "read_file",
+          "kind": {
+            "function": {
+              "description_ref": "sha256:c9046f7a37ad0ea7cee73355984fa5428982f8b37c8f7bcec91f7ac71a7cd104",
+              "input_schema_ref": "sha256:3514f8b91b9f982e60ebdbfe41f004acccf6ee3b74017d2f44b2d5abb3c302b0",
+              "output_schema_ref": "sha256:98b4d1d9b9d557e9a9ca4b4e216aa77d1df0928665efb3379bfe266426ad45e1",
+              "provider_options_ref": "sha256:0059c388330f85959375b5716fe5d68687b44a43aaab543ed2b34d10dd4267c2",
+              "strict": true
+            }
+          },
+          "parallelism": "parallel_safe"
+        },
+        "web_search": {
+          "execution": {
+            "class": "process",
+            "retry_safe": true
+          },
+          "id": "web_search",
+          "kind": {
+            "provider_native": {
+              "api_kind": "open_ai_responses",
+              "execution": "provider_hosted",
+              "native_tool_ref": "sha256:74c7bb2fb8a4825ec56f3348d6a6833bd17b89c4bb53f75f01c53df685548a50"
+            }
+          },
+          "parallelism": "parallel_safe"
+        }
+      }
+    },
+    "workflow_tools": {
+      "bindings": {
+        "accepted": {
+          "binding_fingerprint": "fingerprint",
+          "completion": {
+            "kind": "accepted"
+          },
+          "definition": {
+            "schema_revision": 1,
+            "semantic_type": "semantic",
+            "tool": {
+              "execution": {
+                "class": "process",
+                "retry_safe": true
+              },
+              "id": "workflow_tool",
+              "kind": {
+                "function": {
+                  "description_ref": "sha256:c9046f7a37ad0ea7cee73355984fa5428982f8b37c8f7bcec91f7ac71a7cd104",
+                  "input_schema_ref": "sha256:3514f8b91b9f982e60ebdbfe41f004acccf6ee3b74017d2f44b2d5abb3c302b0",
+                  "output_schema_ref": "sha256:98b4d1d9b9d557e9a9ca4b4e216aa77d1df0928665efb3379bfe266426ad45e1",
+                  "provider_options_ref": "sha256:0059c388330f85959375b5716fe5d68687b44a43aaab543ed2b34d10dd4267c2",
+                  "strict": true
+                }
+              },
+              "parallelism": "parallel_safe"
+            },
+            "workflow_tool_id": "accepted"
+          },
+          "session_universe_id": "3f2c1e9a-7b1d-4f55-9a8e-2c6c1d9f4a10",
+          "target": {
+            "dispatch": "push",
+            "kind": "bound",
+            "receiver": {
+              "workflow_id": "controller",
+              "workflow_kind": "ControllerWorkflow"
+            }
+          }
+        },
+        "joined": {
+          "binding_fingerprint": "fingerprint",
+          "completion": {
+            "deadline_after_ms": 60000,
+            "kind": "joined",
+            "reply_schema_ref": "sha256:6df522e8fe8421cbe771689bdd3516a64fc3b18d5657fbed201a48567cfb6c53"
+          },
+          "definition": {
+            "schema_revision": 1,
+            "semantic_type": "semantic",
+            "tool": {
+              "execution": {
+                "class": "process",
+                "retry_safe": true
+              },
+              "id": "workflow_tool",
+              "kind": {
+                "function": {
+                  "description_ref": "sha256:c9046f7a37ad0ea7cee73355984fa5428982f8b37c8f7bcec91f7ac71a7cd104",
+                  "input_schema_ref": "sha256:3514f8b91b9f982e60ebdbfe41f004acccf6ee3b74017d2f44b2d5abb3c302b0",
+                  "output_schema_ref": "sha256:98b4d1d9b9d557e9a9ca4b4e216aa77d1df0928665efb3379bfe266426ad45e1",
+                  "provider_options_ref": "sha256:0059c388330f85959375b5716fe5d68687b44a43aaab543ed2b34d10dd4267c2",
+                  "strict": true
+                }
+              },
+              "parallelism": "parallel_safe"
+            },
+            "workflow_tool_id": "joined"
+          },
+          "session_universe_id": "3f2c1e9a-7b1d-4f55-9a8e-2c6c1d9f4a10",
+          "target": {
+            "kind": "start",
+            "start": {
+              "recipe_fingerprint": "recipe fingerprint",
+              "recipe_format": 1,
+              "recipe_ref": "sha256:e1d8e552330911f9f779f85b6f2c00a15e790dcc3fbb3b28f5da1d660a30c5b8",
+              "recipe_revision": 2
+            }
+          }
+        },
+        "keyed-fields": {
+          "binding_fingerprint": "fingerprint",
+          "completion": {
+            "deadline_after_ms": 60000,
+            "key_source": {
+              "field": "id",
+              "kind": "array_item_field",
+              "pointer": "/items"
+            },
+            "kind": "promises",
+            "max_promises": 4,
+            "reply_schema_ref": "sha256:6df522e8fe8421cbe771689bdd3516a64fc3b18d5657fbed201a48567cfb6c53"
+          },
+          "definition": {
+            "schema_revision": 1,
+            "semantic_type": "semantic",
+            "tool": {
+              "execution": {
+                "class": "process",
+                "retry_safe": true
+              },
+              "id": "workflow_tool",
+              "kind": {
+                "function": {
+                  "description_ref": "sha256:c9046f7a37ad0ea7cee73355984fa5428982f8b37c8f7bcec91f7ac71a7cd104",
+                  "input_schema_ref": "sha256:3514f8b91b9f982e60ebdbfe41f004acccf6ee3b74017d2f44b2d5abb3c302b0",
+                  "output_schema_ref": "sha256:98b4d1d9b9d557e9a9ca4b4e216aa77d1df0928665efb3379bfe266426ad45e1",
+                  "provider_options_ref": "sha256:0059c388330f85959375b5716fe5d68687b44a43aaab543ed2b34d10dd4267c2",
+                  "strict": true
+                }
+              },
+              "parallelism": "parallel_safe"
+            },
+            "workflow_tool_id": "keyed-fields"
+          },
+          "session_universe_id": "3f2c1e9a-7b1d-4f55-9a8e-2c6c1d9f4a10",
+          "target": {
+            "dispatch": "push",
+            "kind": "bound",
+            "receiver": {
+              "workflow_id": "controller",
+              "workflow_kind": "ControllerWorkflow"
+            }
+          }
+        },
+        "keyed-indices": {
+          "binding_fingerprint": "fingerprint",
+          "completion": {
+            "deadline_after_ms": 60000,
+            "key_source": {
+              "kind": "array_indices",
+              "pointer": "/items",
+              "prefix": "item-"
+            },
+            "kind": "promises",
+            "max_promises": 4,
+            "reply_schema_ref": "sha256:6df522e8fe8421cbe771689bdd3516a64fc3b18d5657fbed201a48567cfb6c53"
+          },
+          "definition": {
+            "schema_revision": 1,
+            "semantic_type": "semantic",
+            "tool": {
+              "execution": {
+                "class": "process",
+                "retry_safe": true
+              },
+              "id": "workflow_tool",
+              "kind": {
+                "function": {
+                  "description_ref": "sha256:c9046f7a37ad0ea7cee73355984fa5428982f8b37c8f7bcec91f7ac71a7cd104",
+                  "input_schema_ref": "sha256:3514f8b91b9f982e60ebdbfe41f004acccf6ee3b74017d2f44b2d5abb3c302b0",
+                  "output_schema_ref": "sha256:98b4d1d9b9d557e9a9ca4b4e216aa77d1df0928665efb3379bfe266426ad45e1",
+                  "provider_options_ref": "sha256:0059c388330f85959375b5716fe5d68687b44a43aaab543ed2b34d10dd4267c2",
+                  "strict": true
+                }
+              },
+              "parallelism": "parallel_safe"
+            },
+            "workflow_tool_id": "keyed-indices"
+          },
+          "session_universe_id": "3f2c1e9a-7b1d-4f55-9a8e-2c6c1d9f4a10",
+          "target": {
+            "dispatch": "push",
+            "kind": "bound",
+            "receiver": {
+              "workflow_id": "controller",
+              "workflow_kind": "ControllerWorkflow"
+            }
+          }
+        },
+        "keyed-reply": {
+          "binding_fingerprint": "fingerprint",
+          "completion": {
+            "deadline_after_ms": 60000,
+            "key_source": {
+              "kind": "reply"
+            },
+            "kind": "promises",
+            "max_promises": 4,
+            "reply_schema_ref": "sha256:6df522e8fe8421cbe771689bdd3516a64fc3b18d5657fbed201a48567cfb6c53"
+          },
+          "definition": {
+            "schema_revision": 1,
+            "semantic_type": "semantic",
+            "tool": {
+              "execution": {
+                "class": "process",
+                "retry_safe": true
+              },
+              "id": "workflow_tool",
+              "kind": {
+                "function": {
+                  "description_ref": "sha256:c9046f7a37ad0ea7cee73355984fa5428982f8b37c8f7bcec91f7ac71a7cd104",
+                  "input_schema_ref": "sha256:3514f8b91b9f982e60ebdbfe41f004acccf6ee3b74017d2f44b2d5abb3c302b0",
+                  "output_schema_ref": "sha256:98b4d1d9b9d557e9a9ca4b4e216aa77d1df0928665efb3379bfe266426ad45e1",
+                  "provider_options_ref": "sha256:0059c388330f85959375b5716fe5d68687b44a43aaab543ed2b34d10dd4267c2",
+                  "strict": true
+                }
+              },
+              "parallelism": "parallel_safe"
+            },
+            "workflow_tool_id": "keyed-reply"
+          },
+          "session_universe_id": "3f2c1e9a-7b1d-4f55-9a8e-2c6c1d9f4a10",
+          "target": {
+            "dispatch": "push",
+            "kind": "bound",
+            "receiver": {
+              "workflow_id": "controller",
+              "workflow_kind": "ControllerWorkflow"
+            }
+          }
+        },
+        "keyed-strings": {
+          "binding_fingerprint": "fingerprint",
+          "completion": {
+            "deadline_after_ms": 60000,
+            "key_source": {
+              "kind": "string_array",
+              "pointer": "/ids"
+            },
+            "kind": "promises",
+            "max_promises": 4,
+            "reply_schema_ref": "sha256:6df522e8fe8421cbe771689bdd3516a64fc3b18d5657fbed201a48567cfb6c53"
+          },
+          "definition": {
+            "schema_revision": 1,
+            "semantic_type": "semantic",
+            "tool": {
+              "execution": {
+                "class": "process",
+                "retry_safe": true
+              },
+              "id": "workflow_tool",
+              "kind": {
+                "function": {
+                  "description_ref": "sha256:c9046f7a37ad0ea7cee73355984fa5428982f8b37c8f7bcec91f7ac71a7cd104",
+                  "input_schema_ref": "sha256:3514f8b91b9f982e60ebdbfe41f004acccf6ee3b74017d2f44b2d5abb3c302b0",
+                  "output_schema_ref": "sha256:98b4d1d9b9d557e9a9ca4b4e216aa77d1df0928665efb3379bfe266426ad45e1",
+                  "provider_options_ref": "sha256:0059c388330f85959375b5716fe5d68687b44a43aaab543ed2b34d10dd4267c2",
+                  "strict": true
+                }
+              },
+              "parallelism": "parallel_safe"
+            },
+            "workflow_tool_id": "keyed-strings"
+          },
+          "session_universe_id": "3f2c1e9a-7b1d-4f55-9a8e-2c6c1d9f4a10",
+          "target": {
+            "dispatch": "push",
+            "kind": "bound",
+            "receiver": {
+              "workflow_id": "controller",
+              "workflow_kind": "ControllerWorkflow"
+            }
+          }
+        }
+      },
+      "bound_invocations": {
+        "wti:sha256:0000000000000000000000000000000000000000000000000000000000000001": {
+          "arguments_ref": "sha256:b192017da47f5d35fb73a303a7ba74a8f4648d05176804ae49d9cdaa1d780812",
+          "binding_fingerprint": "fingerprint",
+          "completion_promises": {
+            "reply": "promise_2"
+          },
+          "execution_context_ref": "sha256:e5d90f979d76cf4c4ecd87a96eebce6a7579e84b58f7f903b7f3b1f6b53b5ecc",
+          "invocation_id": "wti:sha256:0000000000000000000000000000000000000000000000000000000000000001",
+          "run_id": 9,
+          "schema_revision": 1,
+          "semantic_type": "semantic",
+          "session_id": "session",
+          "session_universe_id": "3f2c1e9a-7b1d-4f55-9a8e-2c6c1d9f4a10",
+          "tool_batch_id": 7,
+          "tool_call_id": "call_pending",
+          "turn_id": 16,
+          "workflow_tool_id": "joined"
+        }
+      },
+      "declaration_version": 1,
+      "declared_creation_fingerprint": "declared",
+      "delivery_failures": {
+        "wti:sha256:0000000000000000000000000000000000000000000000000000000000000001": "sha256:743ece7350e13b9bd273e2f2df0f3eb2b874c3d33e570d8ca93c1dccfb8a17f7"
+      },
+      "lifecycle_controller": {
+        "workflow_id": "controller",
+        "workflow_kind": "ControllerWorkflow"
+      },
+      "session_universe_id": "3f2c1e9a-7b1d-4f55-9a8e-2c6c1d9f4a10",
+      "start_failures": {
+        "wti:sha256:0000000000000000000000000000000000000000000000000000000000000002": "sha256:fcd0fb666a3e68333404a2fe99d750e8a011b269ba8a41532f087aac56446cd0"
+      },
+      "start_requests": {
+        "wti:sha256:0000000000000000000000000000000000000000000000000000000000000002": {
+          "arguments_ref": "sha256:b192017da47f5d35fb73a303a7ba74a8f4648d05176804ae49d9cdaa1d780812",
+          "binding_fingerprint": "fingerprint",
+          "completion_promises": {
+            "reply": "promise_2"
+          },
+          "execution_context_ref": "sha256:e5d90f979d76cf4c4ecd87a96eebce6a7579e84b58f7f903b7f3b1f6b53b5ecc",
+          "invocation_id": "wti:sha256:0000000000000000000000000000000000000000000000000000000000000002",
+          "run_id": 9,
+          "schema_revision": 1,
+          "semantic_type": "semantic",
+          "session_id": "session",
+          "session_universe_id": "3f2c1e9a-7b1d-4f55-9a8e-2c6c1d9f4a10",
+          "tool_batch_id": 7,
+          "tool_call_id": "call_pending",
+          "turn_id": 16,
+          "workflow_tool_id": "joined"
+        }
+      },
+      "system_binding_ids": [
+        "accepted"
+      ]
+    }
+  }
+}

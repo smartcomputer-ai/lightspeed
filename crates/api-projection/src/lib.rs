@@ -10,35 +10,35 @@ use api::{
     ActiveToolsView, AgentApiError, ApprovalDecisionKind, ApprovalSubjectView,
     BoundWorkflowToolDispatchInput, ContextEntryInputView, ContextEntryKindView,
     ContextEntrySourceView, ContextEntryView, ContextMessageRoleView, ContextView, EventCursor,
-    EventJoinsView, InputItem, LlmUsageView, ManagedSessionWorkflowToolsInput, MediaKind,
-    ModelConfig, PendingApprovalView, ProviderContextDisplayView, ProviderNativeToolExecutionView,
-    RunAcceptedSourceView, RunFailureKindView, RunStatus as ApiRunStatus, RunSummarySourceView,
-    RunSummaryView, RunView, RunViewSource, SessionEventKindView, SessionEventView,
-    SessionManagementView, SessionRetentionView, SessionStatus as ApiSessionStatus, SessionView,
-    TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
-    ToolCallDisplayView, ToolCallEventView, ToolCallMediaView, ToolCallView, ToolEffectView,
-    ToolItemStatus, ToolKindView, ToolParallelismView, ToolView, WorkflowEndpointInput,
-    WorkflowStartRefInput, WorkflowToolCompletionInput, WorkflowToolCompletionKeySourceInput,
+    EventJoinsView, InputItem, LlmUsageView, MediaKind, ModelConfig, PendingApprovalView,
+    ProviderContextDisplayView, ProviderNativeToolExecutionView, RunAcceptedSourceView,
+    RunFailureKindView, RunStatus as ApiRunStatus, RunSummarySourceView, RunSummaryView, RunView,
+    RunViewSource, SessionEventKindView, SessionEventView, SessionIntegrationInput,
+    SessionIntegrationView, SessionRetentionView, SessionView, TokenEstimateQualityView,
+    TokenEstimateView, ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView,
+    ToolCallMediaView, ToolCallView, ToolEffectView, ToolItemStatus, ToolKindView,
+    ToolParallelismView, ToolView, WorkflowEndpointInput, WorkflowStartRefInput,
+    WorkflowToolCompletionInput, WorkflowToolCompletionKeySourceInput,
     WorkflowToolDeclarationInput, WorkflowToolDefinitionInput, WorkflowToolKindInput,
     WorkflowToolSpecInput, WorkflowToolTargetInput,
 };
 use futures_util::future::try_join_all;
 use harness::{
-    ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
-    ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND,
     CompactionPolicy, ContextCompactionStatus, ContextCompactionTrigger, ContextEntry,
     ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent,
-    ContextMessageRole, ContextRemovalReason, ContextRewriteReason, CoreAgentCodec, CoreAgentEntry,
-    CoreAgentEvent, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
-    EventSeq, LlmGenerationStatus, ModelSelection, OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND,
-    OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND, OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
-    ObservedToolCall, ProviderApiKind, RunEvent, RunFailure, RunFailureKind, RunId, RunSource,
-    RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId, ToolCallStatus, ToolChoice,
-    ToolConfigEvent, ToolEvent, ToolKind, ToolParallelism, ToolSpec, TurnEvent, TurnId,
-    storage::{
-        BlobStore, BlobStoreError, ReadSessionEvents, SessionRecord, SessionStore,
-        SessionStoreError, StoredSessionEntry,
-    },
+    ContextMessageRole, ContextRemovalReason, CoreAgentCodec, CoreAgentEntry, CoreAgentEvent,
+    CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus, EventSeq,
+    LlmGenerationStatus, ModelSelection, ObservedToolCall, ProviderApiKind, RunEvent, RunFailure,
+    RunFailureKind, RunId, RunSource, RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId,
+    ToolCallStatus, ToolChoice, ToolConfigEvent, ToolEvent, ToolKind, ToolParallelism, ToolSpec,
+    TurnEvent, TurnId,
+    storage::{BlobStore, BlobStoreError, SessionRecord, SessionStoreError, StoredSessionEntry},
+};
+use llm_clients::content::{
+    ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
+    ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND,
+    OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND,
+    OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
 };
 use serde_json::Value;
 
@@ -48,6 +48,8 @@ pub use content::{content_ref_to_api, project_content_text};
 pub const DEFAULT_EVENT_PAGE_LIMIT: u32 = 128;
 pub const MAX_EVENT_PAGE_LIMIT: u32 = 512;
 const MAX_INLINE_TEXT_BYTES: usize = 4_096;
+/// Bound on what a run summary quotes from its input and its failure.
+const RUN_SUMMARY_PREVIEW_BYTES: usize = 512;
 
 pub struct ProjectSession<'a> {
     pub session_id: &'a SessionId,
@@ -66,8 +68,10 @@ pub struct ProjectRun<'a> {
     pub output: Option<&'a harness::ContentRef>,
     pub source: &'a RunSource,
     pub started_at_ms: Option<u64>,
-    pub completed_at_ms: Option<u64>,
+    pub finished_at_ms: Option<u64>,
     pub usage: Option<&'a harness::LlmUsage>,
+    pub failure: Option<&'a RunFailure>,
+    pub earlier_events_omitted: bool,
 }
 
 pub struct CoreAgentProjector<'a> {
@@ -77,7 +81,7 @@ pub struct CoreAgentProjector<'a> {
 /// One run in reducer state, whichever queue bucket holds it.
 #[derive(Clone, Copy)]
 pub enum RunStateRef<'a> {
-    Completed(&'a harness::RunRecord),
+    Finished(&'a harness::RunRecord),
     Active(&'a harness::ActiveRun),
     Queued(&'a harness::AcceptedRun),
 }
@@ -85,7 +89,7 @@ pub enum RunStateRef<'a> {
 impl RunStateRef<'_> {
     fn id(&self) -> RunId {
         match self {
-            Self::Completed(run) => run.run_id,
+            Self::Finished(run) => run.run_id,
             Self::Active(run) => run.run_id,
             Self::Queued(run) => run.run_id,
         }
@@ -102,7 +106,7 @@ impl<'a> CoreAgentProjector<'a> {
         params: ProjectSession<'_>,
     ) -> Result<(SessionView, Option<api::RunId>, bool), AgentApiError> {
         let (runs, next_run_cursor, has_older_runs) = self
-            .project_run_summaries(params.state, params.run_cursor, params.run_limit)
+            .project_run_summaries(params.state, &[], params.run_cursor, params.run_limit)
             .await?;
         let active_run = self.project_active_run_summary(params.state).await?;
 
@@ -112,15 +116,17 @@ impl<'a> CoreAgentProjector<'a> {
         };
 
         let session = SessionView {
+            // Store facts only: session/read adds what Temporal says.
+            execution_failure: None,
             access: params.access.clone(),
             id: params.session_id.as_str().to_owned(),
             display_name: params.record.display_name.clone(),
             metadata: params.record.metadata.clone(),
-            status: session_status(params.state),
+            lifecycle_status: session_lifecycle_status(params.state),
             activity: session_activity(params.state),
             closed_at_ms: params.record.closed_at_ms,
             retention: params.retention.clone(),
-            managed: params.record.managed,
+            lifecycle_controlled: params.record.lifecycle_controlled,
             config_revision: params.state.lifecycle.config_revision,
             config,
             created_at_ms: params.record.created_at_ms,
@@ -147,7 +153,7 @@ impl<'a> CoreAgentProjector<'a> {
                 .active_environment_id
                 .as_ref()
                 .map(|id| id.as_str().to_owned()),
-            management: session_management_to_api(params.state),
+            integration: session_integration_to_api(params.state),
             origin: params
                 .record
                 .origin
@@ -158,20 +164,29 @@ impl<'a> CoreAgentProjector<'a> {
         Ok((session, next_run_cursor, has_older_runs))
     }
 
-    /// Project one newest-first keyset page directly from reducer state.
+    /// Project one newest-first keyset page from reducer state and any `pruned` records
+    /// read back from the log. Those need to reach one run past the page, so that
+    /// `has_older_runs` stays true across the boundary between the two sources.
     pub async fn project_run_summaries(
         &self,
         state: &CoreAgentState,
+        pruned: &[harness::RunRecord],
         cursor: Option<RunId>,
         limit: usize,
     ) -> Result<(Vec<RunSummaryView>, Option<api::RunId>, bool), AgentApiError> {
         let mut candidates = state
             .runs
-            .completed
+            .finished
             .iter()
-            .map(RunStateRef::Completed)
+            .map(RunStateRef::Finished)
             .chain(state.runs.active.iter().map(RunStateRef::Active))
             .chain(state.runs.queued.iter().map(RunStateRef::Queued))
+            .chain(
+                pruned
+                    .iter()
+                    .filter(|run| state.runs.is_pruned(run.run_id))
+                    .map(RunStateRef::Finished),
+            )
             .filter(|run| cursor.is_none_or(|cursor| run.id() < cursor))
             .collect::<Vec<_>>();
         candidates.sort_by_key(|run| std::cmp::Reverse(run.id()));
@@ -190,6 +205,47 @@ impl<'a> CoreAgentProjector<'a> {
         let next_cursor = has_older_runs
             .then(|| api_run_id(last_run_id.expect("older runs imply a non-empty page")));
         Ok((runs, next_cursor, has_older_runs))
+    }
+
+    /// One run's summary wherever it is held: in state, or among `pruned` records read
+    /// back from the log.
+    pub async fn project_run_summary(
+        &self,
+        state: &CoreAgentState,
+        pruned: Option<&harness::RunRecord>,
+        run_id: RunId,
+    ) -> Result<Option<RunSummaryView>, AgentApiError> {
+        let run = state
+            .runs
+            .finished
+            .iter()
+            .find(|run| run.run_id == run_id)
+            .map(RunStateRef::Finished)
+            .or_else(|| {
+                state
+                    .runs
+                    .active
+                    .iter()
+                    .find(|run| run.run_id == run_id)
+                    .map(RunStateRef::Active)
+            })
+            .or_else(|| {
+                state
+                    .runs
+                    .queued
+                    .iter()
+                    .find(|run| run.run_id == run_id)
+                    .map(RunStateRef::Queued)
+            })
+            .or_else(|| {
+                pruned
+                    .filter(|run| run.run_id == run_id)
+                    .map(RunStateRef::Finished)
+            });
+        match run {
+            Some(run) => Ok(Some(self.run_state_summary(state, run).await?)),
+            None => Ok(None),
+        }
     }
 
     /// The currently executing run's summary, independent of any page window.
@@ -211,14 +267,17 @@ impl<'a> CoreAgentProjector<'a> {
         state: &CoreAgentState,
         run: RunStateRef<'_>,
     ) -> Result<RunSummaryView, AgentApiError> {
-        let (id, status, accepted_at_ms, started_at_ms, completed_at_ms, usage, source) = match run
-        {
-            RunStateRef::Completed(run) => (
+        let failure = match run {
+            RunStateRef::Finished(run) => run.failure.as_ref(),
+            RunStateRef::Active(_) | RunStateRef::Queued(_) => None,
+        };
+        let (id, status, accepted_at_ms, started_at_ms, finished_at_ms, usage, source) = match run {
+            RunStateRef::Finished(run) => (
                 run.run_id,
                 core_run_status_to_api_status(run.status),
                 run.accepted_at_ms,
                 run.started_at_ms,
-                Some(run.completed_at_ms),
+                Some(run.finished_at_ms),
                 run.usage.as_ref(),
                 Some(&run.source),
             ),
@@ -265,22 +324,45 @@ impl<'a> CoreAgentProjector<'a> {
             status,
             accepted_at_ms,
             started_at_ms,
-            completed_at_ms,
+            finished_at_ms,
             source: self.project_run_summary_source(source).await?,
             usage: usage.map(llm_usage_to_api),
             pending_approvals,
+            failure: match failure {
+                Some(failure) => Some(
+                    self.run_failure_view(failure, Some(RUN_SUMMARY_PREVIEW_BYTES))
+                        .await,
+                ),
+                None => None,
+            },
         })
+    }
+
+    async fn run_failure_view(
+        &self,
+        failure: &RunFailure,
+        max_bytes: Option<usize>,
+    ) -> api::RunFailureView {
+        let message = self.run_failure_message(failure).await;
+        let message_truncated = max_bytes.is_some_and(|max_bytes| message.len() > max_bytes);
+        api::RunFailureView {
+            kind: run_failure_kind_to_api(failure.kind.clone()),
+            message: match max_bytes {
+                Some(max_bytes) => truncate_utf8(&message, max_bytes),
+                None => message,
+            },
+            message_truncated,
+        }
     }
 
     async fn project_run_summary_source(
         &self,
         source: Option<&RunSource>,
     ) -> Result<RunSummarySourceView, AgentApiError> {
-        const PREVIEW_BYTES: usize = 512;
         match source {
             Some(RunSource::Input { input }) => {
                 let first = input.first();
-                let content_ref = first.map(|entry| entry.content.content_ref.as_str().to_owned());
+                let blob_ref = first.map(|entry| entry.content.content_ref.as_str().to_owned());
                 let text = match first {
                     Some(entry)
                         if is_text_message_media_type(entry.content.media_type.as_deref()) =>
@@ -290,16 +372,17 @@ impl<'a> CoreAgentProjector<'a> {
                     Some(entry) => entry.preview.clone(),
                     None => None,
                 };
-                let preview_truncated =
-                    text.as_ref().is_some_and(|text| text.len() > PREVIEW_BYTES);
+                let preview_truncated = text
+                    .as_ref()
+                    .is_some_and(|text| text.len() > RUN_SUMMARY_PREVIEW_BYTES);
                 Ok(RunSummarySourceView::Input {
-                    content_ref,
-                    preview: text.map(|text| truncate_utf8(&text, PREVIEW_BYTES)),
+                    blob_ref,
+                    preview: text.map(|text| truncate_utf8(&text, RUN_SUMMARY_PREVIEW_BYTES)),
                     preview_truncated,
                 })
             }
             None => Ok(RunSummarySourceView::Input {
-                content_ref: None,
+                blob_ref: None,
                 preview: None,
                 preview_truncated: false,
             }),
@@ -325,7 +408,7 @@ impl<'a> CoreAgentProjector<'a> {
                 None => None,
             },
             started_at_ms: params.started_at_ms,
-            completed_at_ms: params.completed_at_ms,
+            finished_at_ms: params.finished_at_ms,
             source: match params.source {
                 RunSource::Input { input } => RunViewSource::Input {
                     items: self.project_input_entries(input).await?,
@@ -333,12 +416,22 @@ impl<'a> CoreAgentProjector<'a> {
             },
             entries: projected_entries,
             tool_batches: self
-                .project_tool_batches_for_run(&projection, &context_entries, params.run_id)
+                .project_tool_batches_for_run(
+                    &projection,
+                    &context_entries,
+                    params.run_id,
+                    params.status,
+                )
                 .await?,
             usage: params.usage.map(llm_usage_to_api),
             pending_approvals: self
                 .pending_approvals_for_run(&projection, params.run_id)
                 .await?,
+            failure: match params.failure {
+                Some(failure) => Some(self.run_failure_view(failure, None).await),
+                None => None,
+            },
+            earlier_events_omitted: params.earlier_events_omitted,
         })
     }
 
@@ -632,7 +725,7 @@ impl<'a> CoreAgentProjector<'a> {
                             blob_ref: entry.content.content_ref.as_str().to_owned(),
                             kind: media_kind_for_mime(&mime),
                             mime,
-                            name: None,
+                            name: harness::media::media_preview_name(entry.preview.as_deref()),
                         }
                     }
                 }
@@ -722,7 +815,7 @@ impl<'a> CoreAgentProjector<'a> {
                 CoreAgentLifecycleEvent::Closed => Ok(SessionEventKindView::SessionClosed),
             },
             CoreAgentEvent::WorkflowToolConfig(event) => match event {
-                harness::WorkflowToolConfigEvent::ManagedBindingsAdmitted {
+                harness::WorkflowToolConfigEvent::DeclaredBindingsAdmitted {
                     lifecycle_controller,
                     creation_fingerprint,
                     bindings,
@@ -732,23 +825,23 @@ impl<'a> CoreAgentProjector<'a> {
                         .as_ref()
                         .map(|controller| controller.workflow_kind.clone()),
                     creation_fingerprint: creation_fingerprint.clone(),
-                    tool_ids: bindings
+                    workflow_tool_ids: bindings
                         .iter()
-                        .map(|binding| binding.definition.tool_id.as_str().to_owned())
+                        .map(|binding| binding.definition.workflow_tool_id.as_str().to_owned())
                         .collect(),
                 }),
                 harness::WorkflowToolConfigEvent::SystemBindingAdmitted { binding } => {
                     Ok(SessionEventKindView::SystemWorkflowToolConfigured {
-                        tool_id: binding.definition.tool_id.as_str().to_owned(),
+                        workflow_tool_id: binding.definition.workflow_tool_id.as_str().to_owned(),
                         binding_fingerprint: binding.binding_fingerprint.clone(),
                     })
                 }
             },
             CoreAgentEvent::WorkflowTool(event) => match event {
-                harness::WorkflowToolEvent::Emitted { invocation } => {
-                    Ok(SessionEventKindView::WorkflowToolEmitted {
+                harness::WorkflowToolEvent::Invoked { invocation } => {
+                    Ok(SessionEventKindView::WorkflowToolInvoked {
                         invocation_id: invocation.invocation_id.as_str().to_owned(),
-                        tool_id: invocation.tool_id.as_str().to_owned(),
+                        workflow_tool_id: invocation.workflow_tool_id.as_str().to_owned(),
                         semantic_type: invocation.semantic_type.clone(),
                         schema_revision: invocation.schema_revision,
                         binding_fingerprint: invocation.binding_fingerprint.clone(),
@@ -774,7 +867,7 @@ impl<'a> CoreAgentProjector<'a> {
                     execution_id,
                 } => Ok(SessionEventKindView::WorkflowToolStartRequested {
                     invocation_id: invocation.invocation_id.as_str().to_owned(),
-                    tool_id: invocation.tool_id.as_str().to_owned(),
+                    workflow_tool_id: invocation.workflow_tool_id.as_str().to_owned(),
                     semantic_type: invocation.semantic_type.clone(),
                     schema_revision: invocation.schema_revision,
                     binding_fingerprint: invocation.binding_fingerprint.clone(),
@@ -834,6 +927,7 @@ impl<'a> CoreAgentProjector<'a> {
                     steering_id,
                     input,
                     requested_by,
+                    ..
                 } => Ok(SessionEventKindView::RunSteeringAccepted {
                     run_id: api_run_id(*run_id),
                     steering_id: api_steering_id(*steering_id),
@@ -883,6 +977,11 @@ impl<'a> CoreAgentProjector<'a> {
                         run_id: api_run_id(*run_id),
                     })
                 }
+                harness::ApprovalEvent::RunUnparked { run_id } => {
+                    Ok(SessionEventKindView::ApprovalRunUnparked {
+                        run_id: api_run_id(*run_id),
+                    })
+                }
                 harness::ApprovalEvent::Decided {
                     approval_id,
                     run_id,
@@ -911,7 +1010,7 @@ impl<'a> CoreAgentProjector<'a> {
                 harness::PromiseEvent::Created { promise } => {
                     Ok(SessionEventKindView::PromiseCreated {
                         promise_id: promise.promise_id.as_str().to_owned(),
-                        source: promise_source_name(&promise.source).to_owned(),
+                        source: promise_source_to_api(&promise.source),
                     })
                 }
                 harness::PromiseEvent::Resolved {
@@ -964,7 +1063,7 @@ impl<'a> CoreAgentProjector<'a> {
                 } => Ok(SessionEventKindView::TurnGenerationCompleted {
                     run_id: api_run_id(*run_id),
                     turn_id: api_turn_id(*turn_id),
-                    status: llm_generation_status_to_api(status).to_owned(),
+                    status: llm_generation_status_to_api(status),
                     usage: facts.usage.as_ref().map(llm_usage_to_api),
                 }),
                 TurnEvent::Completed { turn_id, .. } => Ok(SessionEventKindView::TurnCompleted {
@@ -1000,7 +1099,7 @@ impl<'a> CoreAgentProjector<'a> {
                         .iter()
                         .map(|entry_id| api_item_id(*entry_id))
                         .collect(),
-                    reason: context_removal_reason_to_api(reason).to_owned(),
+                    reason: context_removal_reason_to_api(reason),
                 }),
                 ContextEvent::EntriesReplaced {
                     base_revision,
@@ -1034,19 +1133,6 @@ impl<'a> CoreAgentProjector<'a> {
                         entries: projected,
                     })
                 }
-                ContextEvent::StateReplaced {
-                    base_revision,
-                    entries,
-                    reason,
-                } => {
-                    let projected = self.project_context_event_entries(entries).await?;
-                    Ok(SessionEventKindView::ContextStateReplaced {
-                        base_revision: *base_revision,
-                        revision: context_event_revision(*base_revision)?,
-                        entries: projected,
-                        reason: context_rewrite_reason_to_api(reason).to_owned(),
-                    })
-                }
                 ContextEvent::CompactionRequested {
                     base_revision,
                     trigger,
@@ -1054,13 +1140,11 @@ impl<'a> CoreAgentProjector<'a> {
                 } => Ok(SessionEventKindView::ContextCompactionRequested {
                     base_revision: *base_revision,
                     revision: context_event_revision(*base_revision)?,
-                    trigger: context_compaction_trigger_to_api(*trigger).to_owned(),
+                    trigger: context_compaction_trigger_to_api(*trigger),
                 }),
                 ContextEvent::CompactionQueued { base_revision } => {
-                    Ok(SessionEventKindView::ContextCompactionRequested {
+                    Ok(SessionEventKindView::ContextCompactionQueued {
                         base_revision: *base_revision,
-                        revision: *base_revision,
-                        trigger: "manualQueued".into(),
                     })
                 }
                 ContextEvent::CompactionFinished {
@@ -1074,7 +1158,7 @@ impl<'a> CoreAgentProjector<'a> {
                     calls: *calls,
                     base_revision: *base_revision,
                     revision: context_event_revision(*base_revision)?,
-                    status: context_compaction_status_to_api(*status).to_owned(),
+                    status: context_compaction_status_to_api(*status),
                     failure_ref: failure_ref
                         .as_ref()
                         .map(|blob_ref| blob_ref.as_str().to_owned()),
@@ -1108,7 +1192,7 @@ impl<'a> CoreAgentProjector<'a> {
                     upserted: patch
                         .upsert
                         .iter()
-                        .map(|tool| tool.name.as_str().to_owned())
+                        .map(|tool| tool.id.as_str().to_owned())
                         .collect(),
                     removed: patch
                         .remove
@@ -1158,21 +1242,21 @@ impl<'a> CoreAgentProjector<'a> {
                     output_bytes: result.output_bytes,
                     truncated: result.truncated,
                 }),
-                ToolEvent::BatchDeferred {
+                ToolEvent::BatchParked {
                     run_id,
                     turn_id,
                     batch_id,
                     ..
-                } => Ok(SessionEventKindView::ToolBatchDeferred {
+                } => Ok(SessionEventKindView::ToolBatchParked {
                     run_id: api_run_id(*run_id),
                     turn_id: api_turn_id(*turn_id),
                     batch_id: api_tool_batch_id(*batch_id),
                 }),
-                ToolEvent::BatchResumed {
+                ToolEvent::BatchUnparked {
                     run_id,
                     turn_id,
                     batch_id,
-                } => Ok(SessionEventKindView::ToolBatchResumed {
+                } => Ok(SessionEventKindView::ToolBatchUnparked {
                     run_id: api_run_id(*run_id),
                     turn_id: api_turn_id(*turn_id),
                     batch_id: api_tool_batch_id(*batch_id),
@@ -1213,6 +1297,7 @@ impl<'a> CoreAgentProjector<'a> {
         projection: &CoreAgentProjection<'_>,
         context_entries: &[&ContextEntry],
         run_id: RunId,
+        run_status: ApiRunStatus,
     ) -> Result<Vec<ToolBatchView>, AgentApiError> {
         let result_by_call = self.project_tool_results_for_run(context_entries).await?;
         let effect_by_call = tool_effects_for_run(projection, run_id);
@@ -1241,11 +1326,23 @@ impl<'a> CoreAgentProjector<'a> {
                             tool_name: call.tool_name.as_str().to_owned(),
                             arguments_ref: call.arguments_ref.as_str().to_owned(),
                             arguments: Some(truncate_utf8(&arguments, MAX_INLINE_TEXT_BYTES)),
+                            arguments_preview_truncated: arguments.len() > MAX_INLINE_TEXT_BYTES,
                             output: result.and_then(|result| result.output.clone()),
+                            output_ref: result.map(|result| result.output_ref.clone()),
+                            output_preview_truncated: result
+                                .is_some_and(|result| result.output_preview_truncated),
+                            output_bytes: None,
+                            truncated: false,
                             is_error: result.is_some_and(|result| result.is_error),
-                            status: result
-                                .map(|result| result.status)
-                                .unwrap_or(ToolItemStatus::Running),
+                            // A call that names no tool never starts. Any other is
+                            // only requested until its start commits.
+                            status: result.map(|result| result.status).unwrap_or(
+                                if call.tool_id.is_some() {
+                                    ToolItemStatus::Requested
+                                } else {
+                                    ToolItemStatus::Unavailable
+                                },
+                            ),
                             attachments: attachment_by_call
                                 .get(call.call_id.as_str())
                                 .cloned()
@@ -1256,7 +1353,7 @@ impl<'a> CoreAgentProjector<'a> {
                                 .unwrap_or_default(),
                             display: tool_call_display(call.tool_name.as_str(), &arguments),
                             started_at_ms: None,
-                            completed_at_ms: None,
+                            finished_at_ms: None,
                             duration_ms: None,
                             media: result
                                 .map(|result| result.media.clone())
@@ -1289,6 +1386,9 @@ impl<'a> CoreAgentProjector<'a> {
                         })
                     {
                         call.started_at_ms = Some(entry.observed_at_ms);
+                        if call.status == ToolItemStatus::Requested {
+                            call.status = ToolItemStatus::Running;
+                        }
                     }
                 }
                 // The durable per-call completion carries the harness's call
@@ -1313,8 +1413,10 @@ impl<'a> CoreAgentProjector<'a> {
                     {
                         call.status = core_tool_status_to_api_status(result.status);
                         call.is_error = result.status.is_error();
-                        call.completed_at_ms = Some(entry.observed_at_ms);
+                        call.finished_at_ms = Some(entry.observed_at_ms);
                         call.duration_ms = result.duration_ms;
+                        call.output_bytes = result.output_bytes;
+                        call.truncated = result.truncated;
                     }
                 }
                 ToolEvent::BatchCompleted {
@@ -1336,6 +1438,18 @@ impl<'a> CoreAgentProjector<'a> {
                         ToolItemStatus::Running | ToolItemStatus::Requested
                     ) {
                         call.status = ToolItemStatus::Unavailable;
+                    }
+                }
+            } else if matches!(
+                run_status,
+                ApiRunStatus::Completed | ApiRunStatus::Failed | ApiRunStatus::Cancelled
+            ) {
+                // The run ended with this batch open, so a call with no completion
+                // of its own never finished, whatever result answers it in context.
+                for call in &mut batch.calls {
+                    if call.finished_at_ms.is_none() {
+                        call.status = ToolItemStatus::Cancelled;
+                        call.is_error = true;
                     }
                 }
             }
@@ -1380,13 +1494,13 @@ impl<'a> CoreAgentProjector<'a> {
             };
             let media = media_by_call.remove(call_id.as_str()).unwrap_or_default();
             Some(async move {
+                let output = self.read_blob_text(&item.content.content_ref).await?;
                 Ok((
                     call_id.as_str().to_owned(),
                     ProjectedToolResult {
-                        output: Some(truncate_utf8(
-                            &self.read_blob_text(&item.content.content_ref).await?,
-                            MAX_INLINE_TEXT_BYTES,
-                        )),
+                        output: Some(truncate_utf8(&output, MAX_INLINE_TEXT_BYTES)),
+                        output_ref: item.content.content_ref.as_str().to_owned(),
+                        output_preview_truncated: output.len() > MAX_INLINE_TEXT_BYTES,
                         is_error: *is_error,
                         status: if *is_error {
                             ToolItemStatus::Failed
@@ -1435,7 +1549,7 @@ impl<'a> CoreAgentProjector<'a> {
         {
             return message;
         }
-        format!("{:?}", failure.kind)
+        UNREADABLE_RUN_FAILURE_MESSAGE.to_owned()
     }
 }
 
@@ -1582,21 +1696,25 @@ fn openai_annotated_span(text: &str, annotation: &Value) -> Option<String> {
     (!cited.is_empty()).then_some(cited)
 }
 
+/// Every failure the harness records carries a message. This is for a message that
+/// cannot be read back; the kind is on the event already.
+const UNREADABLE_RUN_FAILURE_MESSAGE: &str = "the run failed and its message could not be read";
+
 fn run_failure_kind_to_api(kind: RunFailureKind) -> RunFailureKindView {
     match kind {
+        RunFailureKind::ContextFailure => RunFailureKindView::ContextFailure,
         RunFailureKind::ModelFailure => RunFailureKindView::ModelFailure,
         RunFailureKind::RequestRejected => RunFailureKindView::RequestRejected,
-        RunFailureKind::ToolFailure => RunFailureKindView::ToolFailure,
-        RunFailureKind::ContextFailure => RunFailureKindView::ContextFailure,
+        RunFailureKind::OutputTruncated => RunFailureKindView::OutputTruncated,
+        RunFailureKind::ContentFiltered => RunFailureKindView::ContentFiltered,
         RunFailureKind::LimitExceeded => RunFailureKindView::LimitExceeded,
-        RunFailureKind::Cancelled => RunFailureKindView::Cancelled,
         RunFailureKind::Internal => RunFailureKindView::Internal,
     }
 }
 
-fn session_management_to_api(state: &CoreAgentState) -> Option<SessionManagementView> {
-    let version = state.workflow_tools.managed_declaration_version?;
-    Some(ManagedSessionWorkflowToolsInput {
+fn session_integration_to_api(state: &CoreAgentState) -> Option<SessionIntegrationView> {
+    let version = state.workflow_tools.declaration_version?;
+    Some(SessionIntegrationInput {
         version,
         lifecycle_controller: state.workflow_tools.lifecycle_controller.as_ref().map(
             |controller| WorkflowEndpointInput {
@@ -1619,11 +1737,11 @@ fn workflow_tool_declaration_to_api(
 ) -> Option<WorkflowToolDeclarationInput> {
     Some(WorkflowToolDeclarationInput {
         definition: WorkflowToolDefinitionInput {
-            tool_id: binding.definition.tool_id.as_str().to_owned(),
-            revision: binding.definition.revision,
+            workflow_tool_id: binding.definition.workflow_tool_id.as_str().to_owned(),
+            schema_revision: binding.definition.schema_revision,
             semantic_type: binding.definition.semantic_type.clone(),
             tool: WorkflowToolSpecInput {
-                name: binding.definition.tool.name.as_str().to_owned(),
+                name: binding.definition.tool.id.as_str().to_owned(),
                 kind: match &binding.definition.tool.kind {
                     harness::ToolKind::Function(function) => WorkflowToolKindInput::Function {
                         description_ref: function
@@ -1666,7 +1784,7 @@ fn workflow_tool_declaration_to_api(
             harness::WorkflowToolTarget::Start { start } => WorkflowToolTargetInput::Start {
                 start: WorkflowStartRefInput {
                     recipe_format: start.recipe_format,
-                    revision: start.revision,
+                    recipe_revision: start.recipe_revision,
                     recipe_ref: start.recipe_ref.as_str().to_owned(),
                     recipe_fingerprint: start.recipe_fingerprint.clone(),
                 },
@@ -1724,6 +1842,8 @@ fn workflow_tool_declaration_to_api(
 #[derive(Clone, Debug)]
 struct ProjectedToolResult {
     output: Option<String>,
+    output_ref: String,
+    output_preview_truncated: bool,
     is_error: bool,
     status: ToolItemStatus,
     media: Vec<ToolCallMediaView>,
@@ -1788,33 +1908,6 @@ pub fn context_entry_run_id(entry: &ContextEntry) -> Option<RunId> {
     }
 }
 
-pub async fn read_all_session_entries(
-    sessions: &dyn SessionStore,
-    session_id: &SessionId,
-    page_limit: usize,
-) -> Result<Vec<CoreAgentEntry>, AgentApiError> {
-    let mut after = None;
-    let mut entries = Vec::new();
-    let codec = CoreAgentCodec;
-    loop {
-        let page = sessions
-            .read_after(ReadSessionEvents {
-                session_id: session_id.clone(),
-                after,
-                limit: page_limit,
-            })
-            .await
-            .map_err(map_session_store_error)?;
-        after = page.next_after;
-        for entry in &page.entries {
-            entries.push(decode_stored_entry(&codec, entry)?);
-        }
-        if page.complete {
-            return Ok(entries);
-        }
-    }
-}
-
 pub fn decode_stored_entry(
     codec: &CoreAgentCodec,
     entry: &StoredSessionEntry,
@@ -1822,52 +1915,6 @@ pub fn decode_stored_entry(
     codec
         .decode_entry(entry)
         .map_err(|error| AgentApiError::internal(error.to_string()))
-}
-
-pub fn replay_core_agent_state(
-    entries: &[CoreAgentEntry],
-) -> Result<CoreAgentState, AgentApiError> {
-    let mut state = CoreAgentState::new();
-    for entry in entries {
-        harness::apply_event(&mut state, entry)
-            .map_err(|error| AgentApiError::internal(error.to_string()))?;
-    }
-    Ok(state)
-}
-
-pub fn input_text(input: &[InputItem]) -> Result<String, AgentApiError> {
-    let mut parts = Vec::new();
-    for item in input {
-        match item {
-            InputItem::Text { text, .. } => {
-                let text = text.trim();
-                if !text.is_empty() {
-                    parts.push(text);
-                }
-            }
-            InputItem::TextRef { .. } => {
-                return Err(AgentApiError::invalid_request(
-                    "session/runs/start textRef input requires blob store resolution",
-                ));
-            }
-            InputItem::Media { .. } => {
-                return Err(AgentApiError::invalid_request(
-                    "session/runs/start media input requires blob store resolution",
-                ));
-            }
-            InputItem::Catalog { .. } => {
-                return Err(AgentApiError::invalid_request(
-                    "catalog items are context, not conversation: publish them with session/context/append",
-                ));
-            }
-        }
-    }
-    if parts.is_empty() {
-        return Err(AgentApiError::invalid_request(
-            "session/runs/start input must contain at least one non-empty text item",
-        ));
-    }
-    Ok(parts.join("\n\n"))
 }
 
 pub fn event_page_limit(limit: Option<u32>) -> Result<usize, AgentApiError> {
@@ -1947,10 +1994,10 @@ pub fn api_run_id(run_id: RunId) -> String {
     format!("run_{}", run_id.as_u64())
 }
 
-fn promise_source_name(source: &harness::PromiseSource) -> &'static str {
+fn promise_source_to_api(source: &harness::PromiseSource) -> api::PromiseSourceKind {
     match source {
-        harness::PromiseSource::Timer { .. } => "timer",
-        harness::PromiseSource::Workflow { .. } => "workflow",
+        harness::PromiseSource::Timer { .. } => api::PromiseSourceKind::Timer,
+        harness::PromiseSource::Workflow { .. } => api::PromiseSourceKind::Workflow,
     }
 }
 
@@ -2024,33 +2071,28 @@ fn tool_event_revision(base_revision: u64) -> Result<u64, AgentApiError> {
         .ok_or_else(|| AgentApiError::internal("tool event revision overflow"))
 }
 
-fn context_removal_reason_to_api(reason: &ContextRemovalReason) -> &'static str {
+fn context_removal_reason_to_api(reason: &ContextRemovalReason) -> api::ContextRemovalReason {
     match reason {
-        ContextRemovalReason::Pruned => "pruned",
-        ContextRemovalReason::ProviderCompacted => "providerCompacted",
-    }
-}
-
-fn context_rewrite_reason_to_api(reason: &ContextRewriteReason) -> &'static str {
-    match reason {
-        ContextRewriteReason::Pruned => "pruned",
-        ContextRewriteReason::PolicyChanged => "policyChanged",
-        ContextRewriteReason::ProviderCompacted => "providerCompacted",
+        ContextRemovalReason::ProviderCompacted => api::ContextRemovalReason::ProviderCompacted,
     }
 }
 
 fn context_compaction_to_api(state: &CoreAgentState) -> Option<api::ContextCompactionView> {
+    use api::{
+        ContextCompactionMode as Mode, ContextCompactionStrategy as Strategy,
+        ContextCompactionThresholdSource as Source,
+    };
     let config = state.lifecycle.config.as_ref()?;
     let policy = config.context.compaction.as_ref();
     let requested = match policy {
-        Some(CompactionPolicy::ProviderTriggered { .. }) => "providerTriggered",
-        Some(CompactionPolicy::ProviderStandalone { .. }) => "providerStandalone",
-        _ => "disabled",
+        Some(CompactionPolicy::ProviderTriggered { .. }) => Mode::ProviderTriggered,
+        Some(CompactionPolicy::ProviderStandalone { .. }) => Mode::ProviderStandalone,
+        _ => Mode::Disabled,
     };
     let signed_window = state.context.entries.iter().any(|entry| entry.content.provider_kind.as_deref() == Some(harness::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND)
         && matches!(entry.kind, ContextEntryKind::ProviderOpaque) && matches!(&entry.source, ContextEntrySource::Runtime { label } if label == harness::STANDALONE_COMPACTION_SOURCE));
-    let effective = if requested == "providerTriggered" && signed_window {
-        "providerStandalone"
+    let effective = if requested == Mode::ProviderTriggered && signed_window {
+        Mode::ProviderStandalone
     } else {
         requested
     };
@@ -2062,10 +2104,10 @@ fn context_compaction_to_api(state: &CoreAgentState) -> Option<api::ContextCompa
         .or(state.context.last_generation_model())
         .unwrap_or(&config.model);
     let strategy = match (effective, &model.api_kind) {
-        ("disabled", _) => "disabled",
-        ("providerTriggered", _) => "providerTriggered",
-        (_, ProviderApiKind::OpenAiCompletions) => "modelSummary",
-        _ => "nativePreferred",
+        (Mode::Disabled, _) => Strategy::Disabled,
+        (Mode::ProviderTriggered, _) => Strategy::ProviderTriggered,
+        (_, ProviderApiKind::OpenAiCompletions) => Strategy::ModelSummary,
+        _ => Strategy::NativePreferred,
     };
     let input_limit_tokens = harness::compaction_input_limit_tokens(state);
     let override_threshold = match policy {
@@ -2080,23 +2122,23 @@ fn context_compaction_to_api(state: &CoreAgentState) -> Option<api::ContextCompa
         ) => *compact_threshold_tokens,
         _ => None,
     };
-    let (compact_threshold_tokens, source) = if effective == "disabled" {
-        (None, "disabled")
+    let (compact_threshold_tokens, source) = if effective == Mode::Disabled {
+        (None, Source::Disabled)
     } else if let Some(threshold) = override_threshold {
-        (Some(threshold), "override")
-    } else if effective == "providerTriggered" {
-        (None, "providerDefault")
+        (Some(threshold), Source::Override)
+    } else if effective == Mode::ProviderTriggered {
+        (None, Source::ProviderDefault)
     } else if let Some(limit) = input_limit_tokens {
-        (Some(limit.saturating_mul(4) / 5), "inputCapacity")
+        (Some(limit.saturating_mul(4) / 5), Source::InputCapacity)
     } else {
-        (None, "contextLengthError")
+        (None, Source::ContextLengthError)
     };
     Some(api::ContextCompactionView {
-        requested_mode: requested.into(),
-        effective_mode: effective.into(),
-        effective_strategy: strategy.into(),
+        requested_mode: requested,
+        effective_mode: effective,
+        effective_strategy: strategy,
         compact_threshold_tokens,
-        threshold_source: source.into(),
+        threshold_source: source,
         input_limit_tokens,
         observed_tokens: state.context.observed_tokens(),
         pending: state.context.compaction.is_pending(),
@@ -2109,18 +2151,22 @@ fn context_compaction_to_api(state: &CoreAgentState) -> Option<api::ContextCompa
     })
 }
 
-fn context_compaction_trigger_to_api(trigger: ContextCompactionTrigger) -> &'static str {
+fn context_compaction_trigger_to_api(
+    trigger: ContextCompactionTrigger,
+) -> api::ContextCompactionTrigger {
     match trigger {
-        ContextCompactionTrigger::Manual => "manual",
-        ContextCompactionTrigger::HighWatermark => "highWatermark",
-        ContextCompactionTrigger::ContextLimit => "contextLimit",
+        ContextCompactionTrigger::Manual => api::ContextCompactionTrigger::Manual,
+        ContextCompactionTrigger::HighWatermark => api::ContextCompactionTrigger::HighWatermark,
+        ContextCompactionTrigger::ContextLimit => api::ContextCompactionTrigger::ContextLimit,
     }
 }
 
-fn context_compaction_status_to_api(status: ContextCompactionStatus) -> &'static str {
+fn context_compaction_status_to_api(
+    status: ContextCompactionStatus,
+) -> api::ContextCompactionStatus {
     match status {
-        ContextCompactionStatus::Succeeded => "succeeded",
-        ContextCompactionStatus::Failed => "failed",
+        ContextCompactionStatus::Succeeded => api::ContextCompactionStatus::Succeeded,
+        ContextCompactionStatus::Failed => api::ContextCompactionStatus::Failed,
     }
 }
 
@@ -2155,27 +2201,25 @@ pub fn event_joins_to_api(joins: &CoreAgentJoins) -> EventJoinsView {
             .submission_id
             .as_ref()
             .map(|submission_id| submission_id.as_str().to_owned()),
-        correlation_id: joins
-            .correlation_id
-            .as_ref()
-            .map(|correlation_id| correlation_id.as_str().to_owned()),
     }
 }
 
-pub fn session_status(state: &CoreAgentState) -> ApiSessionStatus {
+pub fn session_lifecycle_status(state: &CoreAgentState) -> api::SessionLifecycleStatus {
     match state.lifecycle.status {
-        CoreAgentStatus::New => ApiSessionStatus::NotLoaded,
-        CoreAgentStatus::Closed => ApiSessionStatus::Closed,
-        CoreAgentStatus::Open if state.runs.active.is_some() => ApiSessionStatus::Active,
-        CoreAgentStatus::Open => ApiSessionStatus::Idle,
+        CoreAgentStatus::New => api::SessionLifecycleStatus::New,
+        CoreAgentStatus::Open => api::SessionLifecycleStatus::Open,
+        CoreAgentStatus::Closed => api::SessionLifecycleStatus::Closed,
     }
 }
 
-/// What the session is doing now, from its state: the same value lists read
-/// from the stored projection.
+/// What the session is doing now, from its state. Lists read the stored
+/// projection, which follows the same park: waiting from `RunParked` until the
+/// run leaves it.
 pub fn session_activity(state: &CoreAgentState) -> api::SessionActivity {
     match (&state.lifecycle.status, state.runs.active.as_ref()) {
-        (CoreAgentStatus::Open, Some(run)) if run.pending_approvals().next().is_some() => {
+        (CoreAgentStatus::Open, Some(run))
+            if run.status == RunStatus::Parked && run.pending_approvals().next().is_some() =>
+        {
             api::SessionActivity::Waiting
         }
         (CoreAgentStatus::Open, Some(_)) => api::SessionActivity::Working,
@@ -2194,7 +2238,7 @@ pub fn record_activity(record: &harness::storage::SessionRecord) -> api::Session
 
 pub fn core_run_status_to_api_status(status: RunStatus) -> ApiRunStatus {
     match status {
-        RunStatus::Active => ApiRunStatus::Running,
+        RunStatus::Running => ApiRunStatus::Running,
         RunStatus::Parked => ApiRunStatus::Parked,
         RunStatus::Cancelling => ApiRunStatus::Cancelling,
         RunStatus::Completed => ApiRunStatus::Completed,
@@ -2205,7 +2249,7 @@ pub fn core_run_status_to_api_status(status: RunStatus) -> ApiRunStatus {
 
 pub fn core_tool_status_to_api_status(status: ToolCallStatus) -> ToolItemStatus {
     match status {
-        ToolCallStatus::Observed | ToolCallStatus::Accepted => ToolItemStatus::Requested,
+        ToolCallStatus::Accepted => ToolItemStatus::Requested,
         ToolCallStatus::Pending => ToolItemStatus::Running,
         ToolCallStatus::Succeeded => ToolItemStatus::Succeeded,
         ToolCallStatus::Failed => ToolItemStatus::Failed,
@@ -2227,8 +2271,8 @@ fn tool_choice_to_api(choice: &ToolChoice) -> api::ToolChoice {
         ToolChoice::Auto => api::ToolChoice::Auto,
         ToolChoice::None => api::ToolChoice::None,
         ToolChoice::RequiredAny => api::ToolChoice::RequiredAny,
-        ToolChoice::Specific { tool_name } => api::ToolChoice::Specific {
-            tool_id: tool_name.as_str().to_owned(),
+        ToolChoice::Specific { tool_id } => api::ToolChoice::Specific {
+            tool_id: tool_id.as_str().to_owned(),
         },
     }
 }
@@ -2242,7 +2286,6 @@ pub fn session_config_to_api(config: &SessionConfig) -> Result<api::SessionConfi
             .then(|| generation_config_to_api(&config.generation)),
         limits: (!config.limits.is_default()).then_some(api::LimitsConfig {
             max_turns: config.limits.max_turns,
-            max_tool_rounds: config.limits.max_tool_rounds,
         }),
         context: (!config.context.is_default()).then(|| api::ContextConfig {
             input_limit_tokens: config.context.input_limit_tokens,
@@ -2360,7 +2403,7 @@ fn vfs_feature_to_api(vfs: &harness::VfsFeature) -> api::VfsFeature {
                         (Some(workspace_id.clone()), None)
                     }
                     harness::WorkspaceAttachmentTarget::Snapshot { snapshot_ref } => {
-                        (None, Some(snapshot_ref.clone()))
+                        (None, Some(snapshot_ref.to_string()))
                     }
                 };
                 api::WorkspaceAttachment {
@@ -2416,9 +2459,8 @@ fn subagents_feature_to_api(
             })
             .collect::<Result<Vec<_>, AgentApiError>>()?,
         max_depth: subagents.limits.max_depth,
-        max_descendants: subagents.limits.max_descendants,
         max_concurrent: subagents.limits.max_concurrent,
-        deadline_ms: subagents.limits.deadline_ms,
+        run_timeout_ms: subagents.limits.run_timeout_ms,
     })
 }
 
@@ -2451,9 +2493,8 @@ pub fn session_origin_to_api(
 pub fn subagent_limits_to_api(limits: harness::SubagentLimits) -> api::SubagentLimitsView {
     api::SubagentLimitsView {
         max_depth: limits.max_depth,
-        max_descendants: limits.max_descendants,
         max_concurrent: limits.max_concurrent,
-        deadline_ms: limits.deadline_ms,
+        run_timeout_ms: limits.run_timeout_ms,
     }
 }
 
@@ -2482,7 +2523,7 @@ fn remote_mcp_approval_to_api(
 
 fn active_tools_to_api(
     revision: u64,
-    tools: &BTreeMap<harness::ToolName, ToolSpec>,
+    tools: &BTreeMap<harness::ToolId, ToolSpec>,
 ) -> ActiveToolsView {
     ActiveToolsView {
         revision,
@@ -2492,7 +2533,7 @@ fn active_tools_to_api(
 
 fn tool_to_api(tool: &ToolSpec) -> ToolView {
     ToolView {
-        tool_id: tool.name.as_str().to_owned(),
+        tool_id: tool.id.as_str().to_owned(),
         kind: tool_kind_to_api(&tool.kind),
         parallelism: tool_parallelism_to_api(tool.parallelism),
     }
@@ -2534,7 +2575,6 @@ fn tool_kind_to_api(kind: &ToolKind) -> ToolKindView {
         ToolKind::RemoteMcp(remote_mcp) => ToolKindView::RemoteMcp {
             server_id: remote_mcp.server_id.clone(),
             server_label: remote_mcp.server_label.clone(),
-            server_url: remote_mcp.server_url.clone(),
             description_ref: remote_mcp
                 .description_ref
                 .as_ref()
@@ -2542,7 +2582,6 @@ fn tool_kind_to_api(kind: &ToolKind) -> ToolKindView {
             allowed_tools: remote_mcp.allowed_tools.clone(),
             approval: remote_mcp_approval_to_api(&remote_mcp.approval),
             defer_loading: remote_mcp.defer_loading,
-            auth_required: remote_mcp.auth_required,
         },
     }
 }
@@ -2552,25 +2591,6 @@ fn tool_parallelism_to_api(parallelism: ToolParallelism) -> ToolParallelismView 
         ToolParallelism::Exclusive => ToolParallelismView::Exclusive,
         ToolParallelism::ParallelSafe => ToolParallelismView::ParallelSafe,
     }
-}
-
-pub fn session_config_for_api_model(
-    default_config: &SessionConfig,
-    model: Option<ModelConfig>,
-) -> Result<SessionConfig, AgentApiError> {
-    let Some(model) = model else {
-        return Ok(default_config.clone());
-    };
-    let mut config = default_config.clone();
-    config.model = ModelSelection {
-        api_kind: api_kind_from_str(&model.api_kind)?,
-        provider_id: model.provider_id,
-        model: model.model,
-    };
-    config
-        .validate()
-        .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
-    Ok(config)
 }
 
 pub fn api_kind_to_str(api_kind: &ProviderApiKind) -> &'static str {
@@ -2583,15 +2603,9 @@ pub fn api_kind_to_str(api_kind: &ProviderApiKind) -> &'static str {
 
 pub fn api_kind_from_str(value: &str) -> Result<ProviderApiKind, AgentApiError> {
     match value {
-        "openai:responses" | "openai_responses" | "openAiResponses" => {
-            Ok(ProviderApiKind::OpenAiResponses)
-        }
-        "anthropic:messages" | "anthropic_messages" | "anthropicMessages" => {
-            Ok(ProviderApiKind::AnthropicMessages)
-        }
-        "openai:completions" | "openai_completions" | "openAiCompletions" => {
-            Ok(ProviderApiKind::OpenAiCompletions)
-        }
+        "openai:responses" => Ok(ProviderApiKind::OpenAiResponses),
+        "anthropic:messages" => Ok(ProviderApiKind::AnthropicMessages),
+        "openai:completions" => Ok(ProviderApiKind::OpenAiCompletions),
         _ => Err(AgentApiError::invalid_request(format!(
             "unsupported provider api kind: {value}"
         ))),
@@ -2684,7 +2698,7 @@ pub fn map_session_store_error(error: SessionStoreError) -> AgentApiError {
         }
         SessionStoreError::OriginLimitExceeded { .. } => AgentApiError::rejected(error.to_string()),
         SessionStoreError::SessionNotClosed { .. } => AgentApiError::rejected(error.to_string()),
-        SessionStoreError::ManagedSessionCannotBranch { .. } => {
+        SessionStoreError::LifecycleControlledSessionCannotBranch { .. } => {
             AgentApiError::rejected(error.to_string())
         }
         SessionStoreError::SessionHasChildren { .. }
@@ -2698,7 +2712,9 @@ pub fn map_session_store_error(error: SessionStoreError) -> AgentApiError {
         SessionStoreError::ExpectedHeadMismatch { .. } => {
             AgentApiError::conflict(error.to_string())
         }
-        SessionStoreError::MissingBlobs { .. } => AgentApiError::invalid_request(error.to_string()),
+        SessionStoreError::MissingBlobs { .. } | SessionStoreError::DataRejected { .. } => {
+            AgentApiError::invalid_request(error.to_string())
+        }
         SessionStoreError::Store { message } => AgentApiError::internal(message),
     }
 }
@@ -2716,14 +2732,7 @@ fn aggregate_api_tool_status(calls: &[ToolCallView]) -> ToolItemStatus {
     if calls.is_empty() {
         return ToolItemStatus::Unavailable;
     }
-    if calls.iter().any(|call| {
-        matches!(
-            call.status,
-            ToolItemStatus::Failed | ToolItemStatus::Unavailable
-        )
-    }) {
-        return ToolItemStatus::Failed;
-    }
+    // Per-call results commit while siblings run, so one failure does not end a batch.
     if calls.iter().any(|call| {
         matches!(
             call.status,
@@ -2731,6 +2740,14 @@ fn aggregate_api_tool_status(calls: &[ToolCallView]) -> ToolItemStatus {
         )
     }) {
         return ToolItemStatus::Running;
+    }
+    if calls.iter().any(|call| {
+        matches!(
+            call.status,
+            ToolItemStatus::Failed | ToolItemStatus::Unavailable
+        )
+    }) {
+        return ToolItemStatus::Failed;
     }
     if calls
         .iter()
@@ -2747,12 +2764,12 @@ fn aggregate_api_tool_status(calls: &[ToolCallView]) -> ToolItemStatus {
     ToolItemStatus::Unavailable
 }
 
-fn llm_generation_status_to_api(status: &LlmGenerationStatus) -> &'static str {
+fn llm_generation_status_to_api(status: &LlmGenerationStatus) -> api::TurnGenerationStatus {
     match status {
-        LlmGenerationStatus::Succeeded => "succeeded",
-        LlmGenerationStatus::Failed => "failed",
-        LlmGenerationStatus::Rejected => "rejected",
-        LlmGenerationStatus::Cancelled => "cancelled",
+        LlmGenerationStatus::Succeeded => api::TurnGenerationStatus::Succeeded,
+        LlmGenerationStatus::Failed => api::TurnGenerationStatus::Failed,
+        LlmGenerationStatus::Rejected => api::TurnGenerationStatus::Rejected,
+        LlmGenerationStatus::Cancelled => api::TurnGenerationStatus::Cancelled,
     }
 }
 
@@ -2794,12 +2811,9 @@ fn tool_attachments_for_run(
                 ..
             }) = &entry.event
                 && *event_run_id == run_id
-                && !result.attachments.is_empty()
             {
-                Some((
-                    result.call_id.to_string(),
-                    tool_attachments_to_api(&result.attachments),
-                ))
+                let attachments = tool_attachments_to_api(&result.attachments);
+                (!attachments.is_empty()).then(|| (result.call_id.to_string(), attachments))
             } else {
                 None
             }
@@ -2807,24 +2821,18 @@ fn tool_attachments_for_run(
         .collect()
 }
 
+/// Media a call supplied is on the call's `media` and in context entries, so the wire's
+/// attachments are its files alone.
 fn tool_attachments_to_api(attachments: &[harness::Attachment]) -> Vec<api::ToolAttachmentView> {
     attachments
         .iter()
-        .map(|attachment| match attachment {
-            harness::Attachment::Media(media) => api::ToolAttachmentView {
-                kind: api::ToolAttachmentKind::Media,
-                handle: media.handle.clone(),
-                content_ref: media.content_ref.to_string(),
-                name: media.name.clone(),
-                media_type: Some(media.media_type.clone()),
-                source: None,
-            },
-            harness::Attachment::File(file) => api::ToolAttachmentView {
-                kind: api::ToolAttachmentKind::File,
+        .filter_map(|attachment| match attachment {
+            harness::Attachment::Media(_) => None,
+            harness::Attachment::File(file) => Some(api::ToolAttachmentView {
                 handle: file.handle.clone(),
-                content_ref: file.content_ref.to_string(),
-                name: Some(file.name.clone()),
-                media_type: file.media_type.clone(),
+                blob_ref: file.content_ref.to_string(),
+                name: file.name.clone(),
+                mime: file.media_type.clone(),
                 source: file
                     .source
                     .as_ref()
@@ -2833,7 +2841,7 @@ fn tool_attachments_to_api(attachments: &[harness::Attachment]) -> Vec<api::Tool
                         id: source.id.clone(),
                         path: source.path.clone(),
                     }),
-            },
+            }),
         })
         .collect()
 }
@@ -2841,10 +2849,20 @@ fn tool_attachments_to_api(attachments: &[harness::Attachment]) -> Vec<api::Tool
 fn tool_effects_to_api(effects: &[harness::ToolEffect]) -> Vec<ToolEffectView> {
     effects
         .iter()
-        .filter(|effect| effect.kind != harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND)
+        .filter(|effect| effect.kind != harness::WORKFLOW_TOOL_INVOKE_EFFECT_KIND)
         .map(|effect| ToolEffectView {
             kind: effect.kind.clone(),
-            data: effect.data.clone(),
+            data: effect
+                .data
+                .clone()
+                .into_iter()
+                .chain(
+                    effect
+                        .refs
+                        .iter()
+                        .map(|(key, blob_ref)| (key.clone(), blob_ref.to_string())),
+                )
+                .collect(),
         })
         .collect()
 }
@@ -3116,7 +3134,7 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                     .or_else(|| first_string(json, &["query"]))
             }),
         },
-        // Same sentence as a provider-native MCP block: the server is the
+        // Same sentence as a provider-hosted MCP block: the server is the
         // verb, the tool the target, so both paths read alike.
         "mcp_call" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Mcp,
@@ -3508,11 +3526,13 @@ mod tests {
                     compact_threshold_tokens: None,
                 }),
                 input_limit_tokens: Some(100_000),
-                reported_input_limit_tokens: None,
             },
         });
         let view = context_compaction_to_api(&state).unwrap();
-        assert_eq!(view.threshold_source, "providerDefault");
+        assert_eq!(
+            view.threshold_source,
+            api::ContextCompactionThresholdSource::ProviderDefault
+        );
         let mut retained = context_entry(
             1,
             ContextEntrySource::Runtime {
@@ -3524,19 +3544,28 @@ mod tests {
         state.context.entries.push(retained);
         assert_eq!(
             context_compaction_to_api(&state).unwrap().effective_mode,
-            "providerTriggered",
-            "plain legacy summaries do not force a native transition"
+            api::ContextCompactionMode::ProviderTriggered,
+            "plain summaries do not force a native transition"
         );
         state.context.entries[0].kind = ContextEntryKind::ProviderOpaque;
         let view = context_compaction_to_api(&state).unwrap();
-        assert_eq!(view.requested_mode, "providerTriggered");
-        assert_eq!(view.effective_mode, "providerStandalone");
+        assert_eq!(
+            view.requested_mode,
+            api::ContextCompactionMode::ProviderTriggered
+        );
+        assert_eq!(
+            view.effective_mode,
+            api::ContextCompactionMode::ProviderStandalone
+        );
         assert_eq!(view.compact_threshold_tokens, Some(80_000));
-        assert_eq!(view.threshold_source, "inputCapacity");
+        assert_eq!(
+            view.threshold_source,
+            api::ContextCompactionThresholdSource::InputCapacity
+        );
         state.lifecycle.config.as_mut().unwrap().context.compaction =
             Some(CompactionPolicy::Disabled);
         let view = context_compaction_to_api(&state).unwrap();
-        assert_eq!(view.effective_mode, "disabled");
+        assert_eq!(view.effective_mode, api::ContextCompactionMode::Disabled);
         assert_eq!(view.compact_threshold_tokens, None);
     }
 
@@ -3548,13 +3577,18 @@ mod tests {
             tool_name: "read_file".to_owned(),
             arguments_ref: "sha256:args".to_owned(),
             arguments: None,
+            arguments_preview_truncated: false,
             output: None,
+            output_ref: None,
+            output_preview_truncated: false,
+            output_bytes: None,
+            truncated: false,
             is_error: false,
             status,
             effects: Vec::new(),
             display: None,
             started_at_ms: None,
-            completed_at_ms: None,
+            finished_at_ms: None,
             duration_ms: None,
             media: Vec::new(),
         }
@@ -3756,7 +3790,7 @@ mod tests {
     }
 
     #[test]
-    fn native_mcp_search_call_displays_the_resolved_server_and_tool() {
+    fn runtime_mcp_search_call_displays_the_resolved_server_and_tool() {
         let display = tool_call_display(
             "mcp_call",
             r#"{"server":"configurator","tool":"lightspeed_models_list","arguments":{}}"#,
@@ -3776,7 +3810,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_native_mcp_call_reads_like_the_builtin_bridge() {
+    fn provider_hosted_mcp_call_reads_like_the_builtin_bridge() {
         let display = openai_mcp_call_display(&serde_json::json!({
             "type": "mcp_call",
             "name": "retrieve_subscription",
@@ -3885,7 +3919,7 @@ mod tests {
     }
 
     #[test]
-    fn native_mcp_detail_display_names_the_requested_tools() {
+    fn runtime_mcp_detail_display_names_the_requested_tools() {
         let display = tool_call_display(
             "mcp_find_tools",
             r#"{"server":"configurator","names":["models_list","sessions_read"]}"#,
@@ -3926,20 +3960,247 @@ mod tests {
             ]),
             ToolItemStatus::Failed
         );
+        // A failed call does not end a batch whose siblings are still going.
+        assert_eq!(
+            aggregate_api_tool_status(&[
+                tool_call_with_status(ToolItemStatus::Failed),
+                tool_call_with_status(ToolItemStatus::Running),
+            ]),
+            ToolItemStatus::Running
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn each_call_of_a_batch_shows_how_far_it_got() {
+        let blobs = InMemoryBlobStore::new();
+        let long = "x".repeat(MAX_INLINE_TEXT_BYTES + 1);
+        let arguments_ref = blobs.insert_text(&long).await;
+        let output_ref = blobs.insert_text(&long).await;
+        let run_id = RunId::new(1);
+        let turn_id = harness::TurnId::new(1);
+        let batch_id = harness::ToolBatchId::new(1);
+        let call = |id: &str, tool_id: Option<&str>| harness::ObservedToolCall {
+            call_id: harness::ToolCallId::new(id),
+            tool_id: tool_id.map(harness::ToolId::new),
+            tool_name: harness::ToolName::new("read_file"),
+            provider_kind: None,
+            arguments_ref: arguments_ref.clone(),
+            native_call_ref: None,
+        };
+        let event = |seq: u64, event: CoreAgentEvent| CoreAgentEntry {
+            position: SessionPosition {
+                seq: EventSeq::new(seq),
+            },
+            observed_at_ms: seq,
+            joins: CoreAgentJoins::default(),
+            event,
+        };
+        let entries = [
+            event(
+                1,
+                CoreAgentEvent::Tool(ToolEvent::BatchStarted {
+                    run_id,
+                    turn_id,
+                    batch_id,
+                    toolset_revision: 0,
+                    calls: vec![
+                        call("waiting", Some("read_file")),
+                        call("started", Some("read_file")),
+                        call("no_such_tool", None),
+                        call("finished", Some("read_file")),
+                    ],
+                }),
+            ),
+            event(
+                2,
+                CoreAgentEvent::Tool(ToolEvent::CallStarted {
+                    run_id,
+                    turn_id,
+                    batch_id,
+                    call_id: harness::ToolCallId::new("started"),
+                    tool_name: harness::ToolName::new("read_file"),
+                    arguments_ref: arguments_ref.clone(),
+                }),
+            ),
+            event(
+                3,
+                CoreAgentEvent::Tool(ToolEvent::CallStarted {
+                    run_id,
+                    turn_id,
+                    batch_id,
+                    call_id: harness::ToolCallId::new("finished"),
+                    tool_name: harness::ToolName::new("read_file"),
+                    arguments_ref: arguments_ref.clone(),
+                }),
+            ),
+            event(
+                4,
+                CoreAgentEvent::Context(ContextEvent::EntriesApplied {
+                    base_revision: 0,
+                    entries: vec![ContextEntry {
+                        kind: ContextEntryKind::ToolResult {
+                            call_id: harness::ToolCallId::new("finished"),
+                            is_error: true,
+                        },
+                        content: harness::ContentRef {
+                            content_ref: output_ref.clone(),
+                            media_type: None,
+                            provider_kind: None,
+                        },
+                        ..context_entry(
+                            1,
+                            ContextEntrySource::Tool {
+                                run_id,
+                                turn_id,
+                                batch_id: Some(batch_id),
+                            },
+                        )
+                    }],
+                }),
+            ),
+            event(
+                5,
+                CoreAgentEvent::Tool(ToolEvent::CallCompleted {
+                    run_id,
+                    turn_id,
+                    batch_id,
+                    result: harness::ToolCallResult {
+                        call_id: harness::ToolCallId::new("finished"),
+                        status: ToolCallStatus::Failed,
+                        output_ref: None,
+                        model_visible_context_entries: Vec::new(),
+                        error_ref: None,
+                        effects: Vec::new(),
+                        attachments: Vec::new(),
+                        duration_ms: None,
+                        output_bytes: Some(9_000),
+                        truncated: true,
+                    },
+                }),
+            ),
+        ];
+        let source = RunSource::Input { input: Vec::new() };
+        let view = CoreAgentProjector::new(&blobs)
+            .project_run_with_metadata(ProjectRun {
+                entries: &entries,
+                run_id,
+                status: ApiRunStatus::Running,
+                output: None,
+                source: &source,
+                started_at_ms: Some(1),
+                finished_at_ms: None,
+                usage: None,
+                failure: None,
+                earlier_events_omitted: false,
+            })
+            .await
+            .expect("project run");
+        let batch = &view.tool_batches[0];
+        assert_eq!(batch.status, ToolItemStatus::Running);
+        let status = |id: &str| {
+            batch
+                .calls
+                .iter()
+                .find(|call| call.call_id == id)
+                .expect("call")
+        };
+        assert_eq!(status("waiting").status, ToolItemStatus::Requested);
+        assert_eq!(status("started").status, ToolItemStatus::Running);
+        assert_eq!(status("no_such_tool").status, ToolItemStatus::Unavailable);
+        let finished = status("finished");
+        assert_eq!(finished.status, ToolItemStatus::Failed);
+        assert_eq!(finished.output_ref.as_deref(), Some(output_ref.as_str()));
+        assert!(finished.output_preview_truncated);
+        assert!(finished.arguments_preview_truncated);
+        assert_eq!(finished.output_bytes, Some(9_000));
+        assert!(finished.truncated);
+        assert_eq!(status("waiting").output_ref, None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_failed_run_says_why_in_full_on_read_and_as_a_preview_on_its_summary() {
+        let blobs = InMemoryBlobStore::new();
+        let message = "é".repeat(RUN_SUMMARY_PREVIEW_BYTES);
+        let message_ref = blobs.insert_text(&message).await;
+        let failure = RunFailure {
+            kind: RunFailureKind::ModelFailure,
+            message_ref: Some(message_ref),
+        };
+        let source = RunSource::Input { input: Vec::new() };
+        let projector = CoreAgentProjector::new(&blobs);
+        let view = projector
+            .project_run_with_metadata(ProjectRun {
+                entries: &[],
+                run_id: RunId::new(1),
+                status: ApiRunStatus::Failed,
+                output: None,
+                source: &source,
+                started_at_ms: None,
+                finished_at_ms: Some(1),
+                usage: None,
+                failure: Some(&failure),
+                earlier_events_omitted: false,
+            })
+            .await
+            .expect("project run");
+        let full = view.failure.expect("failure");
+        assert_eq!(full.kind, RunFailureKindView::ModelFailure);
+        assert_eq!(full.message, message);
+        assert!(!full.message_truncated);
+
+        let record = harness::RunRecord {
+            failure: Some(failure),
+            ..terminal_run_record(RunId::new(1))
+        };
+        let summary = projector
+            .project_run_summary(&CoreAgentState::new(), Some(&record), RunId::new(1))
+            .await
+            .expect("summary")
+            .expect("found in the pruned record");
+        let preview = summary.failure.expect("failure");
+        assert_eq!(preview.kind, RunFailureKindView::ModelFailure);
+        assert!(preview.message_truncated);
+        assert!(preview.message.len() <= RUN_SUMMARY_PREVIEW_BYTES + "…".len());
+        assert_eq!(
+            projector
+                .project_run_summary(&CoreAgentState::new(), Some(&record), RunId::new(2))
+                .await
+                .expect("summary"),
+            None
+        );
+    }
+
+    fn terminal_run_record(run_id: RunId) -> harness::RunRecord {
+        harness::RunRecord {
+            run_id,
+            status: RunStatus::Failed,
+            submission_id: None,
+            submission_digest: 0,
+            source: RunSource::Input { input: Vec::new() },
+            first_seq: EventSeq::new(1),
+            terminal_seq: EventSeq::new(2),
+            accepted_at_ms: 1,
+            started_at_ms: None,
+            finished_at_ms: 2,
+            output: None,
+            failure: None,
+            usage: None,
+            notify_on_terminal: Vec::new(),
+        }
     }
 
     #[test]
-    fn managed_session_projection_exposes_controller_ownership() {
+    fn integrated_session_projection_exposes_controller_ownership() {
         let mut state = CoreAgentState::new();
-        state.workflow_tools.managed_declaration_version = Some(1);
+        state.workflow_tools.declaration_version = Some(1);
         state.workflow_tools.lifecycle_controller = Some(harness::WorkflowEndpointRef {
             workflow_id: "channels/session-1".to_owned(),
             workflow_kind: "channelSessionWorkflowV1".to_owned(),
         });
 
         assert_eq!(
-            session_management_to_api(&state),
-            Some(ManagedSessionWorkflowToolsInput {
+            session_integration_to_api(&state),
+            Some(SessionIntegrationInput {
                 version: 1,
                 lifecycle_controller: Some(WorkflowEndpointInput {
                     workflow_id: "channels/session-1".to_owned(),
@@ -3948,13 +4209,13 @@ mod tests {
                 tools: Vec::new(),
             })
         );
-        assert_eq!(session_management_to_api(&CoreAgentState::new()), None);
+        assert_eq!(session_integration_to_api(&CoreAgentState::new()), None);
     }
 
     #[test]
-    fn managed_session_projection_reuses_the_joined_declaration_contract() {
+    fn integrated_session_projection_reuses_the_joined_completion_contract() {
         let mut state = CoreAgentState::new();
-        state.workflow_tools.managed_declaration_version = Some(1);
+        state.workflow_tools.declaration_version = Some(1);
         let universe_id = "00000000-0000-0000-0000-000000000001"
             .parse()
             .expect("universe id");
@@ -3966,11 +4227,11 @@ mod tests {
         let binding = harness::WorkflowToolBinding::admit(
             universe_id,
             harness::WorkflowToolDefinition {
-                tool_id: harness::WorkflowToolId::new("message-send"),
-                revision: 1,
+                workflow_tool_id: harness::WorkflowToolId::new("message-send"),
+                schema_revision: 1,
                 semantic_type: "channels.message.send.v1".to_owned(),
                 tool: ToolSpec {
-                    name: harness::ToolName::new("message_send"),
+                    id: harness::ToolId::new("message_send"),
                     execution: Default::default(),
                     kind: ToolKind::Function(harness::FunctionToolSpec {
                         description_ref: None,
@@ -3988,14 +4249,14 @@ mod tests {
             },
             harness::WorkflowToolCompletion::Joined {
                 reply_schema_ref: None,
-                deadline_after_ms: 30_000,
+                deadline_after_ms: Some(30_000),
             },
         )
         .expect("joined binding");
         let mut system_definition = binding.definition.clone();
-        system_definition.tool_id = harness::WorkflowToolId::new("subagent-run");
+        system_definition.workflow_tool_id = harness::WorkflowToolId::new("subagent-run");
         system_definition.semantic_type = "lightspeed.subagent.run.v1".to_owned();
-        system_definition.tool.name = harness::ToolName::new("subagent.run");
+        system_definition.tool.id = harness::ToolId::new("subagent.run");
         system_definition.tool.kind = ToolKind::Builtin(Default::default());
         let system_binding = harness::WorkflowToolBinding::admit(
             universe_id,
@@ -4007,17 +4268,17 @@ mod tests {
         state
             .workflow_tools
             .system_binding_ids
-            .insert(system_binding.definition.tool_id.clone());
+            .insert(system_binding.definition.workflow_tool_id.clone());
+        state.workflow_tools.bindings.insert(
+            system_binding.definition.workflow_tool_id.clone(),
+            system_binding,
+        );
         state
             .workflow_tools
             .bindings
-            .insert(system_binding.definition.tool_id.clone(), system_binding);
-        state
-            .workflow_tools
-            .bindings
-            .insert(binding.definition.tool_id.clone(), binding);
+            .insert(binding.definition.workflow_tool_id.clone(), binding);
 
-        let projected = session_management_to_api(&state).expect("managed projection");
+        let projected = session_integration_to_api(&state).expect("integration projection");
         assert_eq!(projected.tools.len(), 1);
         assert_eq!(
             projected.tools[0].target,
@@ -4033,7 +4294,7 @@ mod tests {
             projected.tools[0].completion,
             WorkflowToolCompletionInput::Joined {
                 reply_schema_ref: None,
-                deadline_after_ms: 30_000,
+                deadline_after_ms: Some(30_000),
             }
         );
     }
@@ -4106,17 +4367,17 @@ mod tests {
         let projector = CoreAgentProjector::new(&blobs);
         let mut state = CoreAgentState::new();
         for id in 1..=3 {
-            state.runs.completed.push(harness::RunRecord {
+            state.runs.finished.push(harness::RunRecord {
                 run_id: RunId::new(id),
                 status: RunStatus::Completed,
                 submission_id: None,
-                submission_digest: None,
+                submission_digest: 0,
                 source: RunSource::Input { input: Vec::new() },
                 first_seq: EventSeq::new(id * 2 - 1),
                 terminal_seq: EventSeq::new(id * 2),
                 accepted_at_ms: id,
                 started_at_ms: Some(id + 10),
-                completed_at_ms: id + 20,
+                finished_at_ms: id + 20,
                 usage: None,
                 output: None,
                 failure: None,
@@ -4125,7 +4386,7 @@ mod tests {
         }
 
         let (first, next, has_older) = projector
-            .project_run_summaries(&state, None, 2)
+            .project_run_summaries(&state, &[], None, 2)
             .await
             .expect("first page");
         assert_eq!(
@@ -4136,7 +4397,7 @@ mod tests {
         assert_eq!(next.as_deref(), Some("run_2"));
 
         let (last, next, has_older) = projector
-            .project_run_summaries(&state, Some(RunId::new(2)), 2)
+            .project_run_summaries(&state, &[], Some(RunId::new(2)), 2)
             .await
             .expect("last page");
         assert_eq!(last[0].id, "run_1");
@@ -4145,10 +4406,10 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn detailed_session_projects_managed_catalog_flag() {
+    async fn detailed_session_projects_lifecycle_controlled_catalog_flag() {
         let blobs = InMemoryBlobStore::new();
         let projector = CoreAgentProjector::new(&blobs);
-        let session_id = SessionId::new("managed-session");
+        let session_id = SessionId::new("integrated-session");
         let state = CoreAgentState::new();
         let record = SessionRecord {
             metadata: Default::default(),
@@ -4161,7 +4422,7 @@ mod tests {
             retention_root_session_id: session_id.clone(),
             delete_after_close_ms: None,
             delete_at_ms: None,
-            managed: true,
+            lifecycle_controlled: true,
             head: None,
             source_session_id: None,
             source_seq: None,
@@ -4189,9 +4450,9 @@ mod tests {
                 run_cursor: None,
             })
             .await
-            .expect("project detailed managed session");
+            .expect("project detailed integrated session");
 
-        assert!(session.0.managed);
+        assert!(session.0.lifecycle_controlled);
     }
 
     #[test]
@@ -4233,11 +4494,8 @@ mod tests {
         }]);
 
         assert_eq!(projected.len(), 1);
-        assert_eq!(projected[0].content.content_ref, blob_ref.as_str());
-        assert_eq!(
-            projected[0].content.media_type.as_deref(),
-            Some("text/plain")
-        );
+        assert_eq!(projected[0].content.blob_ref, blob_ref.as_str());
+        assert_eq!(projected[0].content.mime.as_deref(), Some("text/plain"));
         assert!(matches!(
             projected[0].kind,
             ContextEntryKindView::Message {
@@ -4280,8 +4538,89 @@ mod tests {
                 blob_ref: image_ref.as_str().to_owned(),
                 mime: "image/jpeg".to_owned(),
                 kind: MediaKind::Image,
-                name: None,
+                name: Some("photo.jpg".to_owned()),
             }]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_failed_projects_its_message_and_never_the_kind_name() {
+        let blobs = InMemoryBlobStore::new();
+        harness::storage::ensure_harness_blobs(&blobs)
+            .await
+            .expect("engine blobs");
+        let projector = CoreAgentProjector::new(&blobs);
+        let failed = |kind, message_ref| {
+            CoreAgentEvent::Run(RunEvent::Failed {
+                run_id: harness::RunId::new(1),
+                failure: RunFailure { kind, message_ref },
+            })
+        };
+        for (kind, view, message_ref, message) in [
+            (
+                RunFailureKind::LimitExceeded,
+                RunFailureKindView::LimitExceeded,
+                Some(harness::turn_limit_failure_ref()),
+                harness::TURN_LIMIT_FAILURE_CONTENT,
+            ),
+            (
+                RunFailureKind::ModelFailure,
+                RunFailureKindView::ModelFailure,
+                Some(harness::provider_cancelled_failure_ref()),
+                harness::PROVIDER_CANCELLED_FAILURE_CONTENT,
+            ),
+            (
+                RunFailureKind::OutputTruncated,
+                RunFailureKindView::OutputTruncated,
+                Some(harness::output_truncated_failure_ref()),
+                harness::OUTPUT_TRUNCATED_FAILURE_CONTENT,
+            ),
+            (
+                RunFailureKind::ContentFiltered,
+                RunFailureKindView::ContentFiltered,
+                Some(harness::content_filtered_failure_ref()),
+                harness::CONTENT_FILTERED_FAILURE_CONTENT,
+            ),
+            (
+                RunFailureKind::Internal,
+                RunFailureKindView::Internal,
+                Some(BlobRef::from_bytes(b"never stored")),
+                UNREADABLE_RUN_FAILURE_MESSAGE,
+            ),
+            (
+                RunFailureKind::ContextFailure,
+                RunFailureKindView::ContextFailure,
+                None,
+                UNREADABLE_RUN_FAILURE_MESSAGE,
+            ),
+        ] {
+            let projected = projector
+                .project_event_kind(&failed(kind, message_ref))
+                .await
+                .expect("project run failure");
+            assert_eq!(
+                projected,
+                SessionEventKindView::RunFailed {
+                    run_id: api_run_id(harness::RunId::new(1)),
+                    kind: view,
+                    message: message.to_owned(),
+                }
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_queued_compaction_projects_its_own_event_and_keeps_the_revision() {
+        let blobs = InMemoryBlobStore::new();
+        let projector = CoreAgentProjector::new(&blobs);
+        assert_eq!(
+            projector
+                .project_event_kind(&CoreAgentEvent::Context(ContextEvent::CompactionQueued {
+                    base_revision: 7,
+                }))
+                .await
+                .expect("project queued compaction"),
+            SessionEventKindView::ContextCompactionQueued { base_revision: 7 }
         );
     }
 
@@ -4304,44 +4643,26 @@ mod tests {
                 base_revision: 7,
                 revision: 8,
                 entry_ids: vec!["item_11".to_owned(), "item_12".to_owned()],
-                reason: "providerCompacted".to_owned(),
-            }
-        );
-
-        let replaced = projector
-            .project_event_kind(&CoreAgentEvent::Context(ContextEvent::StateReplaced {
-                base_revision: 8,
-                entries: Vec::new(),
-                reason: ContextRewriteReason::ProviderCompacted,
-            }))
-            .await
-            .expect("project provider-compacted rewrite");
-        assert_eq!(
-            replaced,
-            SessionEventKindView::ContextStateReplaced {
-                base_revision: 8,
-                revision: 9,
-                entries: Vec::new(),
-                reason: "providerCompacted".to_owned(),
+                reason: api::ContextRemovalReason::ProviderCompacted,
             }
         );
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn managed_port_config_projects_bounded_diagnostics() {
+    async fn workflow_tool_config_projects_bounded_diagnostics() {
         let blobs = InMemoryBlobStore::new();
         let projector = CoreAgentProjector::new(&blobs);
         let universe_id = "00000000-0000-0000-0000-000000000001";
         let config_event: harness::WorkflowToolConfigEvent =
             serde_json::from_value(serde_json::json!({
-                "managed_bindings_admitted": {
+                "declared_bindings_admitted": {
                     "session_universe_id": universe_id,
                     "declaration_version": 1,
                     "lifecycle_controller": {
                         "workflow_id": "global controller/work-1",
                         "workflow_kind": "agent_work",
                     },
-                    "creation_fingerprint": "msc:sha256:test",
+                    "creation_fingerprint": "dsc:sha256:test",
                     "bindings": [],
                 }
             }))
@@ -4349,14 +4670,14 @@ mod tests {
         let projected = projector
             .project_event_kind(&CoreAgentEvent::WorkflowToolConfig(config_event))
             .await
-            .expect("project managed-session tools");
+            .expect("project integrated-session tools");
 
         assert_eq!(
             projected,
             SessionEventKindView::WorkflowToolsConfigured {
                 lifecycle_controller_workflow_kind: Some("agent_work".to_owned()),
-                creation_fingerprint: "msc:sha256:test".to_owned(),
-                tool_ids: Vec::new(),
+                creation_fingerprint: "dsc:sha256:test".to_owned(),
+                workflow_tool_ids: Vec::new(),
             }
         );
     }
@@ -4368,11 +4689,11 @@ mod tests {
         let arguments_ref = BlobRef::from_bytes(br#"{"status":"complete"}"#);
         let error_ref = BlobRef::from_bytes(b"delivery failed");
         let invocation_id = format!("wti:sha256:{}", "a".repeat(64));
-        let emitted: harness::WorkflowToolEvent = serde_json::from_value(serde_json::json!({
-            "emitted": {
+        let invoked: harness::WorkflowToolEvent = serde_json::from_value(serde_json::json!({
+            "invoked": {
                 "invocation": {
                     "invocation_id": invocation_id,
-                    "tool_id": "report",
+                    "workflow_tool_id": "report",
                     "semantic_type": "lightspeed.work.report.v1",
                     "schema_revision": 1,
                     "binding_fingerprint": "wtb:sha256:test",
@@ -4386,16 +4707,16 @@ mod tests {
                 }
             }
         }))
-        .expect("decode emitted event");
+        .expect("decode invoked event");
         let projected = projector
-            .project_event_kind(&CoreAgentEvent::WorkflowTool(emitted))
+            .project_event_kind(&CoreAgentEvent::WorkflowTool(invoked))
             .await
-            .expect("project emitted event");
+            .expect("project invoked event");
         assert_eq!(
             projected,
-            SessionEventKindView::WorkflowToolEmitted {
+            SessionEventKindView::WorkflowToolInvoked {
                 invocation_id: invocation_id.clone(),
-                tool_id: "report".to_owned(),
+                workflow_tool_id: "report".to_owned(),
                 semantic_type: "lightspeed.work.report.v1".to_owned(),
                 schema_revision: 1,
                 binding_fingerprint: "wtb:sha256:test".to_owned(),
@@ -4440,8 +4761,9 @@ mod tests {
                     model_visible_context_entries: Vec::new(),
                     error_ref: None,
                     effects: vec![harness::ToolEffect {
-                        kind: harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND.to_owned(),
+                        kind: harness::WORKFLOW_TOOL_INVOKE_EFFECT_KIND.to_owned(),
                         data: Default::default(),
+                        refs: Default::default(),
                     }],
                 },
             }))
@@ -4451,6 +4773,23 @@ mod tests {
             completed,
             SessionEventKindView::ToolCallCompleted { effects, .. } if effects.is_empty()
         ));
+    }
+
+    #[test]
+    fn an_effects_refs_stay_in_the_data_the_api_shows() {
+        let snapshot = harness::BlobRef::from_bytes(b"workspace head");
+        let views = tool_effects_to_api(&[harness::ToolEffect {
+            kind: "vfs.workspace_commit".to_owned(),
+            data: BTreeMap::from([("revision".to_owned(), "2".to_owned())]),
+            refs: BTreeMap::from([("snapshot_ref".to_owned(), snapshot.clone())]),
+        }]);
+        assert_eq!(
+            views[0].data,
+            BTreeMap::from([
+                ("revision".to_owned(), "2".to_owned()),
+                ("snapshot_ref".to_owned(), snapshot.to_string()),
+            ])
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -4471,6 +4810,7 @@ mod tests {
                 effects: vec![harness::ToolEffect {
                     kind: "private-effect".to_owned(),
                     data: Default::default(),
+                    refs: Default::default(),
                 }],
                 attachments: vec![],
                 duration_ms: None,
@@ -4537,12 +4877,12 @@ mod tests {
                 key: None,
                 kind: ContextEntryKindView::ProviderOpaque,
                 content: api::ContentRefView {
-                    content_ref: BlobRef::from_bytes(
+                    blob_ref: BlobRef::from_bytes(
                         br#"{"type":"compaction","id":"item_compaction_1"}"#
                     )
                     .as_str()
                     .to_owned(),
-                    media_type: Some("application/json".to_owned()),
+                    mime: Some("application/json".to_owned()),
                     provider_kind: Some("openai.responses.compaction".to_owned()),
                     media_handle: None,
                 },
@@ -4611,8 +4951,8 @@ mod tests {
                 key: None,
                 kind: ContextEntryKindView::ProviderOpaque,
                 content: api::ContentRefView {
-                    content_ref: content_ref.as_str().to_owned(),
-                    media_type: Some("application/json".to_owned()),
+                    blob_ref: content_ref.as_str().to_owned(),
+                    mime: Some("application/json".to_owned()),
                     provider_kind: Some(OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND.to_owned()),
                     media_handle: None,
                 },
@@ -4972,17 +5312,15 @@ mod tests {
                 max_output_tokens: Some(2048),
                 reasoning_effort: Some("high".to_owned()),
                 tool_choice: Some(ToolChoice::Specific {
-                    tool_name: harness::ToolName::new("read_file"),
+                    tool_id: harness::ToolId::new("read_file"),
                 }),
                 parallel_tool_use: Some(false),
                 processing_tier: None,
             },
             limits: harness::LimitsConfig {
                 max_turns: Some(12),
-                max_tool_rounds: Some(3),
             },
             context: harness::ContextConfig {
-                reported_input_limit_tokens: None,
                 input_limit_tokens: None,
                 compaction: Some(harness::CompactionPolicy::ProviderStandalone {
                     compact_threshold_tokens: Some(20_000),
@@ -5022,9 +5360,8 @@ mod tests {
                     }],
                     limits: harness::SubagentLimits {
                         max_depth: 3,
-                        max_descendants: 10,
                         max_concurrent: 2,
-                        deadline_ms: 120_000,
+                        run_timeout_ms: Some(120_000),
                     },
                 }),
                 code_mode: Some(harness::CodeModeFeature::default()),
@@ -5069,7 +5406,6 @@ mod tests {
                 }),
                 limits: Some(api::LimitsConfig {
                     max_turns: Some(12),
-                    max_tool_rounds: Some(3),
                 }),
                 context: Some(api::ContextConfig {
                     input_limit_tokens: None,
@@ -5110,9 +5446,8 @@ mod tests {
                                 .expect("valid profile id"),
                         }],
                         max_depth: 3,
-                        max_descendants: 10,
                         max_concurrent: 2,
-                        deadline_ms: 120_000,
+                        run_timeout_ms: Some(120_000),
                     }),
                     code_mode: Some(api::CodeModeFeature::default()),
                     timers: Some(api::TimersFeature {
@@ -5171,39 +5506,16 @@ mod tests {
     }
 
     #[test]
-    fn input_text_joins_non_empty_text_items() {
-        let text = input_text(&[
-            InputItem::Text {
-                provenance_ref: None,
-                origin: None,
-                text: " first ".to_owned(),
-            },
-            InputItem::Text {
-                provenance_ref: None,
-                origin: None,
-                text: "".to_owned(),
-            },
-            InputItem::Text {
-                provenance_ref: None,
-                origin: None,
-                text: "second".to_owned(),
-            },
-        ])
-        .expect("valid input");
-
-        assert_eq!(text, "first\n\nsecond");
-    }
-
-    #[test]
-    fn input_text_rejects_unresolved_text_refs() {
-        let error = input_text(&[InputItem::TextRef {
-            provenance_ref: None,
-            origin: None,
-            blob_ref: BlobRef::from_bytes(b"hello").as_str().to_owned(),
-        }])
-        .expect_err("text refs require store resolution");
-
-        assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
+    fn api_kinds_have_one_spelling() {
+        for kind in [
+            ProviderApiKind::OpenAiResponses,
+            ProviderApiKind::AnthropicMessages,
+            ProviderApiKind::OpenAiCompletions,
+        ] {
+            let spelled = api_kind_to_str(&kind);
+            assert_eq!(api_kind_from_str(spelled).unwrap(), kind);
+            assert!(api_kind_from_str(&spelled.replace(':', "_")).is_err());
+        }
     }
 
     fn entry(seq: u64, entries: Vec<ContextEntry>) -> CoreAgentEntry {
@@ -5289,6 +5601,34 @@ mod tests {
         assert_eq!(content_ref_to_api(&result.content).media_handle, None);
     }
 
+    #[test]
+    fn only_file_attachments_reach_the_wire() {
+        let image =
+            harness::media::MediaDescriptor::new(BlobRef::from_bytes(b"png"), "image/png", None)
+                .expect("an admitted media type");
+        let file_ref = BlobRef::from_bytes(b"report");
+        let file = harness::FileAttachment::new(
+            file_ref.clone(),
+            "report.md".to_owned(),
+            Some("text/markdown".to_owned()),
+        );
+        let handle = file.handle.clone();
+        let projected = tool_attachments_to_api(&[
+            harness::Attachment::Media(image),
+            harness::Attachment::File(file),
+        ]);
+        assert_eq!(
+            projected,
+            vec![api::ToolAttachmentView {
+                handle,
+                blob_ref: file_ref.to_string(),
+                name: "report.md".to_owned(),
+                mime: Some("text/markdown".to_owned()),
+                source: None,
+            }]
+        );
+    }
+
     fn context_entry(id: u64, source: ContextEntrySource) -> ContextEntry {
         ContextEntry {
             entry_id: ContextEntryId::new(id),
@@ -5308,5 +5648,177 @@ mod tests {
             token_estimate: None,
             supersedes: None,
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_run_ended_with_its_batch_open_reports_no_pending_or_running_work() {
+        let blobs = InMemoryBlobStore::new();
+        let arguments_ref = blobs.insert_text("{}").await;
+        let run_id = RunId::new(1);
+        let turn_id = harness::TurnId::new(1);
+        let batch_id = harness::ToolBatchId::new(1);
+        let call_id = harness::ToolCallId::new("call_1");
+        let event = |seq: u64, event: CoreAgentEvent| CoreAgentEntry {
+            position: SessionPosition {
+                seq: EventSeq::new(seq),
+            },
+            observed_at_ms: seq,
+            joins: CoreAgentJoins::default(),
+            event,
+        };
+        let approval_id = harness::ApprovalId::new("approval_1");
+        let entries = [
+            event(
+                1,
+                CoreAgentEvent::Tool(ToolEvent::BatchStarted {
+                    run_id,
+                    turn_id,
+                    batch_id,
+                    toolset_revision: 0,
+                    calls: vec![harness::ObservedToolCall {
+                        call_id: call_id.clone(),
+                        tool_id: None,
+                        tool_name: harness::ToolName::new("mcp_echo__hello"),
+                        provider_kind: None,
+                        arguments_ref: arguments_ref.clone(),
+                        native_call_ref: None,
+                    }],
+                }),
+            ),
+            event(
+                2,
+                CoreAgentEvent::Approval(harness::ApprovalEvent::Requested {
+                    approval: harness::ApprovalRequested {
+                        approval_id: approval_id.clone(),
+                        run_id,
+                        subject: harness::ApprovalSubject::McpToolCall {
+                            server_id: "echo".into(),
+                            server_label: "echo".into(),
+                            tool_name: "hello".into(),
+                            arguments_ref: arguments_ref.clone(),
+                        },
+                        continuation: harness::ApprovalContinuation::RuntimeMcp {
+                            batch_id,
+                            call_id,
+                        },
+                    },
+                }),
+            ),
+            event(
+                3,
+                CoreAgentEvent::Approval(harness::ApprovalEvent::Cancelled {
+                    approval_id,
+                    run_id,
+                }),
+            ),
+            event(
+                4,
+                CoreAgentEvent::Run(harness::RunEvent::ForceCancelled { run_id }),
+            ),
+        ];
+        let source = RunSource::Input { input: Vec::new() };
+        let view = CoreAgentProjector::new(&blobs)
+            .project_run_with_metadata(ProjectRun {
+                entries: &entries,
+                run_id,
+                status: ApiRunStatus::Cancelled,
+                output: None,
+                source: &source,
+                started_at_ms: Some(1),
+                finished_at_ms: Some(4),
+                usage: None,
+                failure: None,
+                earlier_events_omitted: false,
+            })
+            .await
+            .expect("project run");
+        assert!(view.pending_approvals.is_empty());
+        assert_eq!(view.tool_batches[0].status, ToolItemStatus::Cancelled);
+        assert_eq!(
+            view.tool_batches[0].calls[0].status,
+            ToolItemStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn activity_waits_only_while_the_run_is_parked_on_an_approval() {
+        let mut state = CoreAgentState::new();
+        state.lifecycle.status = CoreAgentStatus::Open;
+        let run_id = RunId::new(1);
+        let mut run = harness::ActiveRun {
+            context_recovery: Default::default(),
+            run_id,
+            status: RunStatus::Running,
+            submission_id: None,
+            source: RunSource::Input { input: Vec::new() },
+            input_entry_ids: Vec::new(),
+            input_consumed_by_turn_id: None,
+            run_config: Default::default(),
+            input_limit_tokens: None,
+            config_revision: 0,
+            first_seq: EventSeq::new(1),
+            accepted_at_ms: 1,
+            started_at_ms: Some(1),
+            usage: None,
+            steering: Vec::new(),
+            turns: BTreeMap::new(),
+            turn_count: 0,
+            entry_guard_attempted: false,
+            active_turn_id: None,
+            active_tool_batch_id: None,
+            approvals: BTreeMap::new(),
+            parked_tool_batch: None,
+            tool_batches: BTreeMap::new(),
+            completed_tool_batches: BTreeMap::new(),
+            notify_on_terminal: Vec::new(),
+        };
+        let approval_id = harness::ApprovalId::new("approval_1");
+        run.approvals.insert(
+            approval_id.clone(),
+            harness::ApprovalRecord {
+                request: harness::ApprovalRequested {
+                    approval_id: approval_id.clone(),
+                    run_id,
+                    subject: harness::ApprovalSubject::McpToolCall {
+                        server_id: "echo".into(),
+                        server_label: "echo".into(),
+                        tool_name: "hello".into(),
+                        arguments_ref: BlobRef::from_bytes(b"{}"),
+                    },
+                    continuation: harness::ApprovalContinuation::ProviderMcp {
+                        provider_request_id: "mcpr_1".into(),
+                    },
+                },
+                requested_at_ms: 1,
+                status: harness::ApprovalStatus::Pending,
+                note: None,
+                decided_by: None,
+            },
+        );
+        state.runs.active = Some(run);
+        // Requested but deferred behind work the same turn still has to do.
+        assert_eq!(session_activity(&state), api::SessionActivity::Working);
+        state.runs.active.as_mut().unwrap().status = RunStatus::Parked;
+        assert_eq!(session_activity(&state), api::SessionActivity::Waiting);
+    }
+
+    #[test]
+    fn session_lifecycle_status_names_the_three_states() {
+        let mut state = CoreAgentState::new();
+        assert_eq!(
+            session_lifecycle_status(&state),
+            api::SessionLifecycleStatus::New
+        );
+        state.lifecycle.status = CoreAgentStatus::Open;
+        assert_eq!(
+            session_lifecycle_status(&state),
+            api::SessionLifecycleStatus::Open
+        );
+        state.lifecycle.status = CoreAgentStatus::Closed;
+        assert_eq!(
+            session_lifecycle_status(&state),
+            api::SessionLifecycleStatus::Closed
+        );
+        assert_eq!(session_activity(&state), api::SessionActivity::Idle);
     }
 }

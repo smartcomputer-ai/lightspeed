@@ -116,7 +116,7 @@ unavailable. The runtime reports that failure; it does not silently select a
 replacement. Update the session or profile explicitly when choosing another
 machine.
 
-Standalone API calls can receive `environment_not_ready` while a machine
+Standalone API calls can receive `environmentNotReady` while a machine
 provisions, wakes, or reconnects. Follow the retry rules for the operation
 rather than blindly resubmitting new work;
 [Processes and jobs](processes-and-jobs.md#start-jobs-through-the-api) covers job

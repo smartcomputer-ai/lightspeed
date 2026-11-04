@@ -2,9 +2,7 @@ use crate::string_id::string_id;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-pub use crate::session::{
-    CorrelationId, EventSeq, SessionId, StringIdError, validate_general_string_id,
-};
+pub use crate::session::{EventSeq, SessionId, StringIdError, validate_general_string_id};
 
 const TOOL_NAME_MAX_LEN: usize = 64;
 
@@ -45,6 +43,7 @@ string_id!(SubmissionId, validate_general_string_id);
 string_id!(ContextEntryKey, validate_general_string_id);
 string_id!(EnvironmentId, validate_general_string_id);
 string_id!(ToolCallId, validate_general_string_id);
+string_id!(ToolId, validate_tool_name);
 string_id!(ToolName, validate_tool_name);
 string_id!(WorkflowToolId, validate_general_string_id);
 string_id!(ApprovalId, validate_approval_id);
@@ -53,19 +52,28 @@ string_id!(
     validate_workflow_tool_invocation_id
 );
 
+impl ToolId {
+    /// The name this tool presents under when nothing renames it, as a function tool's
+    /// does: its registry identity and its wire name are then the same value.
+    pub fn as_wire_name(&self) -> ToolName {
+        ToolName::new(self.as_str())
+    }
+}
+
 numeric_id!(RunId);
 numeric_id!(SteeringId);
 numeric_id!(TurnId);
 numeric_id!(ToolBatchId);
-numeric_id!(ContextItemId);
+numeric_id!(ContextEntryId);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct IdCursors {
     pub last_run_id: u64,
     pub last_steering_id: u64,
     pub last_turn_id: u64,
     pub last_tool_batch_id: u64,
-    pub last_context_item_id: u64,
+    pub last_context_entry_id: u64,
     #[serde(default)]
     pub last_promise_id: u64,
     #[serde(default)]

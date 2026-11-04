@@ -1,6 +1,6 @@
 use harness::{
     CodeModePresentation, ContextSnapshot, FunctionToolSpec, LlmRequest, ModelSelection,
-    ProviderApiKind, ToolKind, ToolName, ToolSpec, WorkflowToolCompletion,
+    ProviderApiKind, ToolId, ToolKind, ToolSpec, WorkflowToolCompletion,
     WorkflowToolCompletionKeySource, WorkflowToolResultContract,
     storage::{BlobStore, InMemoryBlobStore},
 };
@@ -85,7 +85,7 @@ async fn descriptions_match_call_results_without_changing_provider_input_contrac
         .await
         .unwrap();
     let mut authored = ToolSpec {
-        name: ToolName::new("authored"),
+        id: ToolId::new("authored"),
         kind: ToolKind::Function(FunctionToolSpec {
             description_ref: Some(
                 blobs
@@ -102,12 +102,12 @@ async fn descriptions_match_call_results_without_changing_provider_input_contrac
         parallelism: harness::ToolParallelism::ParallelSafe,
     };
     let mut unknown = authored.clone();
-    unknown.name = ToolName::new("unknown");
+    unknown.id = ToolId::new("unknown");
     if let ToolKind::Function(spec) = &mut unknown.kind {
         spec.output_schema_ref = None;
     }
     let mut never = unknown.clone();
-    never.name = ToolName::new("never");
+    never.id = ToolId::new("never");
     if let ToolKind::Function(spec) = &mut never.kind {
         spec.output_schema_ref = Some(blobs.put_bytes(b"false".to_vec()).await.unwrap());
     }
@@ -133,8 +133,8 @@ async fn descriptions_match_call_results_without_changing_provider_input_contrac
         ];
         let allowed_tools = tools
             .iter()
-            .filter(|tool| tool.name.as_str() != "unknown")
-            .map(|tool| tool.name.clone())
+            .filter(|tool| tool.id.as_str() != "unknown")
+            .map(|tool| tool.id.clone())
             .collect();
         let mut request = LlmRequest {
             model: ModelSelection {
@@ -161,7 +161,6 @@ async fn descriptions_match_call_results_without_changing_provider_input_contrac
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: None,
         };
@@ -170,27 +169,27 @@ async fn descriptions_match_call_results_without_changing_provider_input_contrac
             allowed_tools,
             workflow_results: [
                 (
-                    ToolName::new("authored"),
+                    ToolId::new("authored"),
                     WorkflowToolResultContract {
                         starts_workflow: true,
                         completion: WorkflowToolCompletion::Joined {
                             reply_schema_ref: Some(declared_ref.clone()),
-                            deadline_after_ms: 1000,
+                            deadline_after_ms: Some(1000),
                         },
                     },
                 ),
                 (
-                    ToolName::new("env.job_run"),
+                    ToolId::new("env.job_run"),
                     WorkflowToolResultContract {
                         starts_workflow: true,
                         completion: WorkflowToolCompletion::Joined {
                             reply_schema_ref: None,
-                            deadline_after_ms: 1000,
+                            deadline_after_ms: Some(1000),
                         },
                     },
                 ),
                 (
-                    ToolName::new("subagent.spawn"),
+                    ToolId::new("subagent.spawn"),
                     WorkflowToolResultContract {
                         starts_workflow: true,
                         completion: WorkflowToolCompletion::Promises {

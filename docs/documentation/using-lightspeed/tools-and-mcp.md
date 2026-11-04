@@ -102,9 +102,9 @@ to every agent.
 2. Enter a **Name** and **Server URL**, then choose **Continue**. Use the
    server's Streamable HTTP endpoint. This field does not accept a local
    executable or a stdio command.
-3. Under **Execution**, choose **Lightspeed connects** for the native path
-   described here. The form defaults to **Model provider connects directly**;
-   the differences are explained below.
+3. Under **Execution**, keep the default, **Lightspeed connects**, for the runtime
+   path described here. The differences from **Model provider connects directly** are
+   explained below.
 4. Under **Tool exposure**, choose **Show tools to the model up front** for a
    small inventory, or **Let the model search on demand** for a larger one.
 5. Configure authentication and finish adding the server.
@@ -156,27 +156,41 @@ in the transcript.
 
 The registered server is shared configuration: changing its endpoint,
 credential, tools, or approval policy can affect every profile using it.
-Profiles reference that connection and may narrow its tool selection.
+Profiles reference that connection and may narrow its tool selection. Sessions do not
+keep a copy of the URL or credential: each fetch and call reads the current record,
+so a change applies at once to running sessions, including to a call already approved.
+
+A server that goes away does not stop the sessions attaching it. If it is disabled,
+deleted, or no longer covered by its grant, the next run leaves its tools out and tells
+the model why, and a warning goes to the log. Newly attaching such a server is still
+refused, so a typo gets an error. A server that is configured but failing keeps its
+last known tool list, or none, for 60 seconds before the next attempt.
 
 ## Choose how MCP executes
 
 | Choice | Where calls happen | What it requires |
 | --- | --- | --- |
-| **Lightspeed connects** | Lightspeed discovers and calls the server, returning results to the model. | Runtime network access to the endpoint. Supports Responses, Chat Completions, and Anthropic Messages. |
-| **Model provider connects directly** | The model provider connects to the MCP server through its hosted MCP support. | A publicly reachable endpoint and a supporting provider/model. Chat Completions does not support this path. |
+| **Lightspeed connects** (`runtime`, the default) | Lightspeed discovers and calls the server, returning results to the model. | Runtime network access to the endpoint. Supports Responses, Chat Completions, and Anthropic Messages. |
+| **Model provider connects directly** (`provider`) | The model provider connects to the MCP server through its hosted MCP support. | A publicly reachable endpoint and a supporting provider/model. Chat Completions does not support this path. |
 
-With native execution, showing tools up front places the selected definitions
+With runtime execution, a call runs once and credentials and tool traffic stay between
+Lightspeed and the server. A provider-hosted call is at-least-once. It happens inside
+the model's generation, so a generation retried after a connection failure can run the
+tool again. Prefer runtime execution for a tool whose effects must not repeat.
+
+With runtime execution, showing tools up front places the selected definitions
 in the model request. Search-on-demand exposes discovery and call tools so the
-model can find relevant operations without loading the whole inventory. Native
+model can find relevant operations without loading the whole inventory. Runtime
 injection is capped at 256 MCP tools per request; narrow the selection or use
-search-on-demand for larger catalogs.
+search-on-demand for larger catalogs. A tool result longer than 64 KiB is cut for the
+model, and the whole output stays available by reference.
 
 Provider-hosted Anthropic MCP additionally requires the operator to enable
 `ANTHROPIC_BETA=mcp-client-2025-11-20`. Its approval restriction is described
 below. An OpenAI-compatible endpoint is not guaranteed to implement hosted
 MCP simply because it accepts another part of the Responses API.
 
-For a private endpoint under native execution, enable **Advanced options →
+For a private endpoint under runtime execution, enable **Advanced options →
 Allow private-network egress** on the server and have the operator include
 the destination in `LIGHTSPEED_MCP_PRIVATE_NETWORKS`. Both controls must
 permit the connection.
@@ -223,15 +237,16 @@ The server's **Advanced options → Tool approval** defaults to **Never require
 approval**. Choose **Always require approval** to pause proposed calls for a
 decision. The transcript shows each pending operation and its arguments;
 choose **Approve** to allow it or **Reject** to refuse it. A batch continues
-after all pending decisions are supplied.
+after all pending decisions are supplied. Other calls already running finish first, and
+calls later in the batch, including a sub-agent spawn, wait for the decision.
 
 Approval applies to MCP calls on that server. It does not create a universal
 approval gate for every other feature in the profile. Configure those grants
 according to the operations the agent should be able to perform.
 
-Native MCP supports approval with all three API kinds. Provider-hosted
+Runtime MCP supports approval with all three API kinds. Provider-hosted
 Responses supports it too. Provider-hosted Anthropic MCP rejects **Always
-require approval**; choose native execution when that combination needs
+require approval**; choose runtime execution when that combination needs
 approval.
 
 Verify the policy using a harmless read operation. Confirm that the run waits
@@ -243,10 +258,10 @@ already completed.
 
 | Symptom | What to check |
 | --- | --- |
-| A registered MCP server supplies no tools to the agent | Enable it under the profile or session's **MCP Servers** feature, then apply that setup. |
+| A registered MCP server supplies no tools to the agent | Enable it under the profile or session's **MCP Servers** feature, then apply that setup. If it was attached and is now disabled or deleted, the session's context has a notice saying its tools were left out. |
 | Only discovery and call tools appear | The server may use search-on-demand. Ask for the task so the agent can discover the relevant operation. |
 | **Load tools** is unavailable after editing | Save the connection changes first. |
-| Calls cannot reach a private endpoint | Check native execution, runtime network access, server egress permission, and the deployment allowlist. |
+| Calls cannot reach a private endpoint | Check runtime execution, runtime network access, server egress permission, and the deployment allowlist. |
 | A run is waiting without another model response | Look for pending approvals and decide every call in the batch. |
 | A provider rejects MCP or web configuration | Check its API kind and execution mode against the compatibility rules above. |
 | The server advertises a tool but calls are refused | Check the record's tool allowlist, the profile's `tools` subset for that server, credential scopes, and the remote service's own permissions. |

@@ -1,7 +1,9 @@
-//! Code-mode integration with native MCP, registered environment jobs, and
+//! Code-mode integration with runtime MCP, registered environment jobs, and
 //! real sub-agent sessions. Only model generation and the remote MCP service
 //! are scripted; all Lightspeed workflows, activities, and JS are production.
 
+#[path = "support/code_log.rs"]
+mod code_log;
 mod support;
 
 use std::{future::Future, sync::Arc, time::Duration};
@@ -40,7 +42,7 @@ use temporal_runtime::{
     },
 };
 use temporal_workflow::{
-    CodeToolCallStatus, CodeToolScopeReport, ReducedSession, reduce_session_entries_from,
+    CodeToolCallOutcomeStatus, CodeToolScopeReport, ReducedSession, reduce_session_entries_from,
 };
 use tokio::sync::Mutex;
 
@@ -171,7 +173,7 @@ impl Fixture {
         &self,
         mut features: api::FeaturesConfig,
         source: &str,
-    ) -> anyhow::Result<(Value, CodeToolScopeReport, harness::CoreAgentState)> {
+    ) -> anyhow::Result<(Value, CodeToolScopeReport)> {
         features.code_mode = Some(api::CodeModeFeature {
             timeout_ms: 60_000,
             ..Default::default()
@@ -253,7 +255,7 @@ impl Fixture {
             scope.closed && scope.calls.values().all(|call| call.status.is_terminal()),
             "scope not settled: {scope:?}"
         );
-        Ok((model, scope, state))
+        Ok((model, scope))
     }
 }
 
@@ -353,7 +355,7 @@ where
             let state = ActivityState::from_pg_store(worker_store.clone(), Arc::new(ScriptedLlm(worker_store.clone())), hosted.clone())
                 .with_hosted_tools(hosted).with_workflow_tool_executions(client).with_code_task_queue(worker_code_queue)
                 .with_subagent_runtime(Arc::new(AgentApiSubagentRuntime::new(api))).with_environment_gateway(worker_gateway)
-                .with_native_mcp_from_pg_store(worker_store)?;
+                .with_runtime_mcp_from_pg_store(worker_store)?;
             Ok(WorkerActivities::for_universe(universe, state))
         }, move |client, queue, session| async move {
             let api = Arc::new(GatewayAgentApi::builder(client.clone(), store.clone()).with_task_queue(queue).with_code_task_queue(code_queue.clone()).with_environment_gateway(gateway).build());
@@ -446,11 +448,11 @@ async fn mcp_rpc(
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local Temporal/PostgreSQL/MinIO and MCP private-network policy allowing loopback; run serially"]
-async fn code_mode_discovers_and_calls_native_mcp_tools() -> anyhow::Result<()> {
-    scenario(false, native_mcp_case).await
+async fn code_mode_discovers_and_calls_runtime_mcp_tools() -> anyhow::Result<()> {
+    scenario(false, runtime_mcp_case).await
 }
 
-async fn native_mcp_case(fixture: Fixture) -> anyhow::Result<()> {
+async fn runtime_mcp_case(fixture: Fixture) -> anyhow::Result<()> {
     let state = Arc::new(Mutex::new(McpState::default()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let url = format!("http://{}/mcp", listener.local_addr()?);
@@ -476,7 +478,7 @@ async fn native_mcp_case(fixture: Fixture) -> anyhow::Result<()> {
                     default_server_label: id.into(),
                     description: None,
                     allowed_tools: None,
-                    execution: api::RemoteMcpExecution::Native,
+                    execution: api::RemoteMcpExecution::Runtime,
                     exposure,
                     approval: api::RemoteMcpApprovalPolicy::Never,
                     defer_loading: None,
@@ -492,7 +494,7 @@ async fn native_mcp_case(fixture: Fixture) -> anyhow::Result<()> {
     let features: api::FeaturesConfig = serde_json::from_value(
         json!({"mcp":{"servers":[{"serverId":"injected"},{"serverId":"discovered"}]}}),
     )?;
-    let (model, scope, _) = fixture.run(features, r#"
+    let (model, scope) = fixture.run(features, r#"
             const found = await tools.mcp_find_tools({server:"discovered",query:"echo"});
             if (found.tools.length !== 1) throw new Error("missing discovered tool");
             const named = found.tools[0].name;
@@ -530,7 +532,7 @@ async fn native_mcp_case(fixture: Fixture) -> anyhow::Result<()> {
             && scope
                 .calls
                 .values()
-                .filter(|call| call.status == CodeToolCallStatus::Failed)
+                .filter(|call| call.status == CodeToolCallOutcomeStatus::Failed)
                 .count()
                 == 1,
         "{scope:?}"
@@ -585,9 +587,9 @@ async fn jobs_and_subagents_case(fixture: Fixture) -> anyhow::Result<()> {
         .profile;
     let features = serde_json::from_value(json!({
         "environments":{"environments":[{"environmentId":environment,"default":true,"access":"jobs","workingDirectory":fixture.root}]},
-        "subagents":{"agents":[{"profileId":child.profile_id}],"maxDepth":2,"maxDescendants":4,"maxConcurrent":2,"deadlineMs":60000}
+        "subagents":{"agents":[{"profileId":child.profile_id}],"maxDepth":2,"maxConcurrent":2,"runTimeoutMs":60000}
     }))?;
-    let (model, scope, state) = fixture.run(features, r#"
+    let (model, scope) = fixture.run(features, r#"
             const [job, agent] = await Promise.all([
                 tools.job_run({argv:["/bin/sh","-c","printf joined-value > joined.txt; printf joined-value"],timeout_ms:10000}),
                 tools.agent_run({agent:"code_child",input:"CHILD:joined",label:"joined child"})
@@ -673,14 +675,14 @@ async fn jobs_and_subagents_case(fixture: Fixture) -> anyhow::Result<()> {
             && scope
                 .calls
                 .values()
-                .all(|call| call.status == CodeToolCallStatus::Succeeded),
+                .all(|call| call.status == CodeToolCallOutcomeStatus::Succeeded),
         "{scope:?}"
     );
-    let durable = &state.code_tools.scopes[&scope.execution_id];
-    let names: std::collections::BTreeSet<_> = durable
-        .calls
-        .values()
-        .map(|call| call.spec.tool_id.as_str())
+    let log = code_log::read_code_log(&fixture.store, &fixture.session).await?;
+    let names: std::collections::BTreeSet<_> = log
+        .calls_in(&scope.execution_id)
+        .into_iter()
+        .map(|call| call.tool_id.as_str())
         .collect();
     anyhow::ensure!(
         names
@@ -732,7 +734,7 @@ async fn jobs_and_subagents_case(fixture: Fixture) -> anyhow::Result<()> {
             .result
             .session;
         anyhow::ensure!(
-            view.status == api::SessionStatus::Closed
+            view.lifecycle_status == api::SessionLifecycleStatus::Closed
                 && view
                     .origin
                     .as_ref()

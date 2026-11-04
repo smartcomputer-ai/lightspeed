@@ -9,8 +9,9 @@ pub(super) fn parse_client_context_key(value: String) -> Result<ContextEntryKey,
             "runtime context keys are owned by the runtime",
         ));
     }
-    harness::validate_external_context_key(&key)
-        .map_err(|error| AgentApiError::invalid_request(format!("invalid context key: {error}")))?;
+    harness::validate_external_context_key(&key).map_err(|error| {
+        AgentApiError::invalid_request(format!("invalid context key: {}", error.message()))
+    })?;
     Ok(key)
 }
 

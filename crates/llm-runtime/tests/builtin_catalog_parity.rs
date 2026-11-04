@@ -56,7 +56,7 @@ fn registered(case: &str, api: &ProviderApiKind) -> Vec<ToolSpec> {
                 harness::ToolParallelism::ParallelSafe,
                 Default::default(),
             );
-            registered.tools.insert(tool.name.clone(), tool);
+            registered.tools.insert(tool.id.clone(), tool);
         }
         for operation in [
             BuiltinToolOperation::JobSubmit,
@@ -73,7 +73,7 @@ fn registered(case: &str, api: &ProviderApiKind) -> Vec<ToolSpec> {
                 builtin.parallelism(),
                 builtin.execution_spec(),
             );
-            registered.tools.insert(tool.name.clone(), tool);
+            registered.tools.insert(tool.id.clone(), tool);
         }
     }
     registered.tools.into_values().collect()
@@ -99,7 +99,7 @@ async fn fixture(api: ProviderApiKind, case: &str, code_mode: bool) -> Value {
     let mut tools = registered(case, &api);
     let code_mode = code_mode.then(|| {
         let presentation = harness::CodeModePresentation {
-            allowed_tools: tools.iter().map(|tool| tool.name.clone()).collect(),
+            allowed_tools: tools.iter().map(|tool| tool.id.clone()).collect(),
             ..Default::default()
         };
         tools.push(tools::definitions::register(
@@ -126,7 +126,6 @@ async fn fixture(api: ProviderApiKind, case: &str, code_mode: bool) -> Value {
         reasoning_effort: None,
         parallel_tool_use: Some(true),
         processing_tier: None,
-        provider_response_id: None,
         compaction: None,
         params: None,
     };

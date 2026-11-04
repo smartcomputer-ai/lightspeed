@@ -294,10 +294,8 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
 
   const limits = record(source.limits);
   const limitsResult: RecordValue = {};
-  for (const key of ["maxTurns", "maxToolRounds"] as const) {
-    const number = parseNumber(numberString(limits[key]));
-    if (number !== undefined) limitsResult[key] = number;
-  }
+  const maxTurns = parseNumber(numberString(limits.maxTurns));
+  if (maxTurns !== undefined) limitsResult.maxTurns = maxTurns;
   if (omitEmptyRecord(limitsResult)) result.limits = limitsResult;
 
   const context = record(source.context);
@@ -361,7 +359,7 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
     if (name === "subagents") {
       const agents = subagentProfileIds(feature.agents);
       next.agents = agents.map((profileId) => ({ profileId }));
-      for (const key of ["maxDepth", "maxDescendants", "maxConcurrent", "deadlineMs"] as const) {
+      for (const key of ["maxDepth", "maxConcurrent", "runTimeoutMs"] as const) {
         const value = parseNumber(numberString(feature[key]));
         if (value !== undefined && value > 0) next[key] = value;
       }
@@ -1265,7 +1263,7 @@ function LimitsFields({ config, change }: { config: RecordValue; change: (fn: (n
     if (number === undefined) delete item[key]; else item[key] = number;
     if (Object.keys(item).length) next.limits = item; else delete next.limits;
   });
-  return <div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Max turns</FieldLabel><Input readOnly={readOnly} type="number" min="0" value={numberString(limits.maxTurns)} onChange={(e) => update("maxTurns", e.target.value)} /></Field><Field><FieldLabel>Max tool rounds</FieldLabel><Input readOnly={readOnly} type="number" min="0" value={numberString(limits.maxToolRounds)} onChange={(e) => update("maxToolRounds", e.target.value)} /></Field></div>;
+  return <div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Max turns</FieldLabel><Input readOnly={readOnly} type="number" min="1" value={numberString(limits.maxTurns)} onChange={(e) => update("maxTurns", e.target.value)} /></Field></div>;
 }
 
 function ContextFields({ config, change }: { config: RecordValue; change: (fn: (next: RecordValue) => void) => void }) {
@@ -1690,9 +1688,8 @@ function SubagentFields({
   const agents = subagentProfileIds(feature.agents);
   const limits = [
     { key: "maxDepth", label: "Max depth", placeholder: "2", hint: "How deep sub-agents may nest below this session." },
-    { key: "maxDescendants", label: "Max descendants", placeholder: "16", hint: "Lifetime total of sub-agent sessions under the root." },
-    { key: "maxConcurrent", label: "Max concurrent", placeholder: "4", hint: "Open sub-agent sessions under the root at once." },
-    { key: "deadlineMs", label: "Deadline (ms)", placeholder: "3600000", hint: "Per-child run deadline; at most 24 hours." },
+    { key: "maxConcurrent", label: "Max concurrent", placeholder: "8", hint: "Sub-agents running at once under the root. A finished sub-agent frees its slot." },
+    { key: "runTimeoutMs", label: "Run timeout (ms)", placeholder: "No limit", hint: "Optional per-child run deadline. Leave blank for no time limit." },
   ] as const;
   const customLimits = limits.filter((limit) => feature[limit.key] != null).length;
   return (

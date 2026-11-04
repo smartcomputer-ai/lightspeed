@@ -305,9 +305,9 @@ impl GatewayAgentApi {
         requested
     }
 
-    /// Admission of what a configuration attaches: every workspace,
-    /// environment and MCP server it names must exist in the universe.
-    /// Removing a resource is never checked, only what remains.
+    /// Admission of what a configuration attaches: every workspace and
+    /// environment it names must exist in the universe. Removing a resource is
+    /// never checked, only what remains.
     pub(super) async fn admit_attachments(
         &self,
         features: &harness::FeaturesConfig,

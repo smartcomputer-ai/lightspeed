@@ -5,7 +5,7 @@ use crate::worker::ContextCompactActivityRequest;
 
 use super::{
     common::{
-        activity_error, failed_context_compaction_result_from_error, transient_provider_failure,
+        failed_context_compaction_result_from_error, transient_llm_failure, unrecorded_llm_failure,
     },
     state::LlmActivityDeps,
 };
@@ -23,7 +23,7 @@ pub(super) async fn compact_context(
         Err(CoreAgentIoError::Retryable {
             message,
             retry_after,
-        }) => Err(transient_provider_failure(
+        }) => Err(transient_llm_failure(
             "context compaction",
             attempt,
             message,
@@ -32,7 +32,7 @@ pub(super) async fn compact_context(
         Err(error) => {
             failed_context_compaction_result_from_error(deps.blobs.as_ref(), request, error)
                 .await
-                .map_err(activity_error)
+                .map_err(|error| unrecorded_llm_failure("context compaction", attempt, error))
         }
     }
 }

@@ -24,8 +24,8 @@ use harness::{
     BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentIoError,
     CoreAgentLlm, CoreAgentTools, EmissionBody, EmissionEnvelope, EmissionProducer,
     FunctionToolSpec, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
-    LlmGenerationStatus, ObservedToolCall, PromiseResolution, SessionId, ToolCallId, ToolKind,
-    ToolName, ToolParallelism, ToolSpec, WorkflowEndpointRef, WorkflowStartRef,
+    LlmGenerationStatus, ObservedToolCall, PromiseResolution, SessionId, ToolCallId, ToolId,
+    ToolKind, ToolName, ToolParallelism, ToolSpec, WorkflowEndpointRef, WorkflowStartRef,
     WorkflowToolCompletion, WorkflowToolDeclaration, WorkflowToolDefinition, WorkflowToolTarget,
     storage::BlobStore,
 };
@@ -44,6 +44,7 @@ use temporal_workflow::{
     WorkflowToolStartArgs, compose_workflow_id, connect_temporal, workflow_tool_recipe_fingerprint,
 };
 use temporalio_client::{Client, WorkflowStartOptions, WorkflowTerminateOptions};
+use temporalio_common::{data_converters::RawValue, protos::temporal::api::common::v1::Payload};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ContinueAsNewOptions, SyncWorkflowContext, WorkerOptions, WorkflowContext, WorkflowContextView,
@@ -137,7 +138,7 @@ impl TestBoundPluginWorkflow {
                                     .external_workflow(holder.clone(), None)
                                     .signal(
                                         AgentSessionWorkflow::deliver_emission,
-                                        reply.clone(),
+                                        temporal_workflow::emission_signal_input(&reply),
                                         Default::default(),
                                     )
                                     .await;
@@ -200,7 +201,7 @@ pub struct SelfReceiverControllerArgs {
 
 /// Channels-shaped lifecycle controller and promise-bearing tool receiver.
 /// Pushed invocations are processed directly from the workflow inbox while
-/// the managed run is active; run-terminal handling is a separate branch and
+/// the declared session's run is active; run-terminal handling is a separate branch and
 /// is never a prerequisite for enqueue or reply.
 #[workflow]
 #[derive(Default)]
@@ -263,7 +264,7 @@ impl TestSelfReceiverControllerWorkflow {
                                     .external_workflow(holder.clone(), None)
                                     .signal(
                                         AgentSessionWorkflow::deliver_emission,
-                                        reply.clone(),
+                                        temporal_workflow::emission_signal_input(&reply),
                                         Default::default(),
                                     )
                                     .await;
@@ -354,7 +355,7 @@ impl TestStartPluginWorkflow {
                 .external_workflow(args.holder_workflow_id.clone(), None)
                 .signal(
                     AgentSessionWorkflow::deliver_emission,
-                    envelope,
+                    temporal_workflow::emission_signal_input(&envelope),
                     Default::default(),
                 )
                 .await;
@@ -451,11 +452,11 @@ impl TestSlowStartPluginWorkflow {
                 .fuse();
             let cancelled = ctx.cancelled();
             futures_util::pin_mut!(work, cancelled);
-            futures_util::select! {
-                _ = work => {}
+            futures_util::select_biased! {
                 _ = cancelled => {
                     return Err(temporalio_sdk::WorkflowTermination::cancelled());
                 }
+                _ = work => {}
             }
         }
         for (key, promise_id) in args.invocation.completion_promises.iter().flatten() {
@@ -477,7 +478,7 @@ impl TestSlowStartPluginWorkflow {
                 .external_workflow(args.holder_workflow_id.clone(), None)
                 .signal(
                     AgentSessionWorkflow::deliver_emission,
-                    envelope,
+                    temporal_workflow::emission_signal_input(&envelope),
                     Default::default(),
                 )
                 .await;
@@ -530,8 +531,12 @@ impl TestCancellationPluginWorkflow {
 // Scripted session LLM: `CALL <tool>` -> tool call -> await its keyed
 // promise -> final text carrying the await result. `CALL_NOWAIT <tool>`
 // finishes the run right after the acknowledgement, leaving the run-scoped
-// keyed promise to auto-cancel at run terminal.
+// keyed promise to auto-cancel at run terminal. `CALL_HOLD <tool>` does the same
+// but keeps the second generation in flight until `SECOND_GENERATION_RELEASE`,
+// so a test can look at what went out while the run is still generating.
 // ---------------------------------------------------------------------------
+
+static SECOND_GENERATION_RELEASE: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 struct WorkflowToolScriptedLlm {
     blobs: Arc<dyn BlobStore>,
@@ -706,22 +711,16 @@ impl CoreAgentLlm for WorkflowToolScriptedLlm {
                         .read_text(&entry.content.content_ref)
                         .await
                         .map_err(io_error)?;
-                    if tool_result.contains("\"accepted\":true")
+                    if user_text.starts_with("CALL_HOLD ") {
+                        SECOND_GENERATION_RELEASE.notified().await;
+                    } else if tool_result.contains("\"accepted\":true")
                         && !user_text.starts_with("CALL_NOWAIT ")
                         && let Some(promise_id) = parse_completion_promise(&tool_result)
                     {
-                        // A short await timeout ends the run while the keyed
-                        // promise is still pending (an await timeout never
-                        // changes the underlying promise).
-                        let timeout_ms: u64 = if user_text.starts_with("CALL_SHORTWAIT ") {
-                            5_000
-                        } else {
-                            120_000
-                        };
                         let arguments = serde_json::json!({
                             "promises": [promise_id],
                             "mode": "all",
-                            "timeout_ms": timeout_ms
+                            "timeout_ms": 120_000
                         });
                         return self
                             .tool_call_result(&request, AWAIT_TOOL_NAME, arguments)
@@ -742,7 +741,7 @@ impl CoreAgentLlm for WorkflowToolScriptedLlm {
                     if let Some(tool_name) = text
                         .strip_prefix("CALL ")
                         .or_else(|| text.strip_prefix("CALL_NOWAIT "))
-                        .or_else(|| text.strip_prefix("CALL_SHORTWAIT "))
+                        .or_else(|| text.strip_prefix("CALL_HOLD "))
                     {
                         return self
                             .tool_call_result(
@@ -783,11 +782,11 @@ async fn tool_definition(
         )?)
         .await?;
     Ok(WorkflowToolDefinition {
-        tool_id: harness::WorkflowToolId::new(tool_id),
-        revision: 1,
+        workflow_tool_id: harness::WorkflowToolId::new(tool_id),
+        schema_revision: 1,
         semantic_type: semantic_type.to_owned(),
         tool: ToolSpec {
-            name: ToolName::new(tool_name),
+            id: ToolId::new(tool_name),
             execution: Default::default(),
             kind: ToolKind::Function(FunctionToolSpec {
                 description_ref: None,
@@ -823,7 +822,7 @@ fn joined_completion(
 ) -> WorkflowToolCompletion {
     WorkflowToolCompletion::Joined {
         reply_schema_ref,
-        deadline_after_ms,
+        deadline_after_ms: Some(deadline_after_ms),
     }
 }
 
@@ -938,21 +937,21 @@ where
 
 use std::future::Future;
 
-async fn start_managed_session_and_run(
+async fn start_integrated_session_and_run(
     api: &GatewayAgentApi,
     session_id: &SessionId,
     declarations: Vec<WorkflowToolDeclaration>,
     call_tool: &str,
 ) -> anyhow::Result<api::RunView> {
-    api.start_managed_session_for_workflow_with_profile(
+    api.start_integrated_session_for_workflow_with_profile(
         session_id,
         false,
         None,
-        harness::ManagedSessionWorkflowTools::v1(None, declarations),
+        harness::DeclaredSessionWorkflowTools::v1(None, declarations),
     )
     .await
-    .map_err(|error| anyhow::anyhow!("start managed session: {error:?}"))?;
-    eprintln!("managed session started: {session_id}");
+    .map_err(|error| anyhow::anyhow!("start declared session: {error:?}"))?;
+    eprintln!("declared session started: {session_id}");
     let run = api
         .start_run(RunStartParams {
             notify_on_terminal: None,
@@ -970,6 +969,41 @@ async fn start_managed_session_and_run(
         .await
         .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
     wait_for_terminal_run_slow(api, session_id, &run.result.run.id).await
+}
+
+/// Start a run that calls `call_tool` and then stays in its next generation until
+/// `SECOND_GENERATION_RELEASE`. Returns the run id, with the run still going.
+async fn start_integrated_session_and_hold_run(
+    api: &GatewayAgentApi,
+    session_id: &SessionId,
+    declarations: Vec<WorkflowToolDeclaration>,
+    call_tool: &str,
+) -> anyhow::Result<String> {
+    api.start_integrated_session_for_workflow_with_profile(
+        session_id,
+        false,
+        None,
+        harness::DeclaredSessionWorkflowTools::v1(None, declarations),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("start declared session: {error:?}"))?;
+    let run = api
+        .start_run(RunStartParams {
+            notify_on_terminal: None,
+            submission_id: None,
+            session_id: session_id.as_str().to_owned(),
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    provenance_ref: None,
+                    origin: None,
+                    text: format!("CALL_HOLD {call_tool}"),
+                }],
+            },
+            config: None,
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
+    Ok(run.result.run.id)
 }
 
 /// Delivery retries, recovery polls, and start backoff make some scenarios
@@ -1024,7 +1058,7 @@ async fn workflow_tool_bound_request_reply_resolves_via_plugin_worker() -> anyho
             "lightspeed.test.approval.v1",
         )
         .await?;
-        let run = start_managed_session_and_run(
+        let run = start_integrated_session_and_run(
             &api,
             &session_id,
             vec![WorkflowToolDeclaration::new(
@@ -1154,11 +1188,11 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
             "channels.message.send.v1",
         )
         .await?;
-        api.start_managed_session_for_workflow_with_profile(
+        api.start_integrated_session_for_workflow_with_profile(
             &session_id,
             false,
             None,
-            harness::ManagedSessionWorkflowTools::v1(
+            harness::DeclaredSessionWorkflowTools::v1(
                 Some(controller.clone()),
                 vec![WorkflowToolDeclaration::new(
                     definition,
@@ -1171,7 +1205,7 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
             ),
         )
         .await
-        .map_err(|error| anyhow::anyhow!("start managed Channels session: {error:?}"))?;
+        .map_err(|error| anyhow::anyhow!("start declared Channels session: {error:?}"))?;
 
         let terminal_token = format!("channel-terminal-{}", uuid::Uuid::new_v4().simple());
         let started = api
@@ -1191,7 +1225,7 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
                 config: None,
             })
             .await
-            .map_err(|error| anyhow::anyhow!("start managed Channels run: {error:?}"))?;
+            .map_err(|error| anyhow::anyhow!("start declared Channels run: {error:?}"))?;
         let run = wait_for_terminal_run_slow(&api, &session_id, &started.result.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
         let output = final_assistant_text(&run).expect("assistant output");
@@ -1327,7 +1361,7 @@ async fn workflow_tool_pushed_accepted_delivers_after_run_terminal() -> anyhow::
             "channels.message.accepted.v1",
         )
         .await?;
-        let run = start_managed_session_and_run(
+        let run = start_integrated_session_and_run(
             &api,
             &session_id,
             vec![WorkflowToolDeclaration::new(
@@ -1392,7 +1426,7 @@ async fn workflow_tool_pushed_accepted_delivers_after_run_terminal() -> anyhow::
 
 /// The self-receiver deadline is an executable backstop, not documentation:
 /// a controller that accepts the invocation but never resolves it cannot
-/// park its own managed run forever.
+/// park its own declared run forever.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() -> anyhow::Result<()>
@@ -1430,11 +1464,11 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
             "channels.message.send.v1",
         )
         .await?;
-        api.start_managed_session_for_workflow_with_profile(
+        api.start_integrated_session_for_workflow_with_profile(
             &session_id,
             false,
             None,
-            harness::ManagedSessionWorkflowTools::v1(
+            harness::DeclaredSessionWorkflowTools::v1(
                 Some(controller.clone()),
                 vec![WorkflowToolDeclaration::new(
                     definition,
@@ -1447,7 +1481,7 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
             ),
         )
         .await
-        .map_err(|error| anyhow::anyhow!("start stalled managed session: {error:?}"))?;
+        .map_err(|error| anyhow::anyhow!("start stalled declared session: {error:?}"))?;
 
         let terminal_token = format!("stalled-terminal-{}", uuid::Uuid::new_v4().simple());
         let started = api
@@ -1467,7 +1501,7 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
                 config: None,
             })
             .await
-            .map_err(|error| anyhow::anyhow!("start stalled managed run: {error:?}"))?;
+            .map_err(|error| anyhow::anyhow!("start stalled declared run: {error:?}"))?;
         let run = wait_for_terminal_run_slow(&api, &session_id, &started.result.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
         let joined_call = run
@@ -1521,6 +1555,60 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
     .await
 }
 
+/// Signals that fail to decode as an envelope, each with the words of the warning
+/// the session reports for it.
+fn malformed_emissions(
+    promise_id: &str,
+    universe_id: uuid::Uuid,
+    session_id: &harness::SessionId,
+) -> Vec<(&'static str, &'static str, RawValue)> {
+    let valid = serde_json::to_value(EmissionEnvelope::source_resolution(
+        universe_id,
+        "plugin/any".to_owned(),
+        &temporal_workflow::compose_workflow_id(universe_id, session_id),
+        harness::PromiseId::new(promise_id),
+        PromiseResolution::Resolved { payload_ref: None },
+    ))
+    .expect("encode envelope");
+    let with = |pointer: &str, value: serde_json::Value| {
+        let mut envelope = valid.clone();
+        *envelope.pointer_mut(pointer).expect("envelope field") = value;
+        RawValue::new(vec![Payload {
+            data: serde_json::to_vec(&envelope).expect("encode"),
+            ..Default::default()
+        }])
+    };
+    vec![
+        ("no payload", "no payload", RawValue::new(Vec::new())),
+        (
+            "not json",
+            "does not decode",
+            RawValue::new(vec![Payload {
+                data: vec![0xff, 0x00, 0x7b],
+                ..Default::default()
+            }]),
+        ),
+        (
+            "invalid promise id",
+            "does not decode",
+            with("/body/promise_id", serde_json::json!("reply")),
+        ),
+        (
+            "unknown body kind",
+            "does not decode",
+            with("/body/kind", serde_json::json!("source_resolved")),
+        ),
+        (
+            "malformed payload ref",
+            "does not decode",
+            with(
+                "/body/resolution/payload_ref",
+                serde_json::json!("sha256:ABC"),
+            ),
+        ),
+    ]
+}
+
 /// Producer authorization: a forged resolution from the wrong workflow id is
 /// dropped; the exact stored producer resolves the promise.
 #[tokio::test(flavor = "current_thread")]
@@ -1552,11 +1640,11 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
             "lightspeed.test.approval.v1",
         )
         .await?;
-        api.start_managed_session_for_workflow_with_profile(
+        api.start_integrated_session_for_workflow_with_profile(
             &session_id,
             false,
             None,
-            harness::ManagedSessionWorkflowTools::v1(
+            harness::DeclaredSessionWorkflowTools::v1(
                 None,
                 vec![WorkflowToolDeclaration::new(
                     definition,
@@ -1572,7 +1660,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
             ),
         )
         .await
-        .map_err(|error| anyhow::anyhow!("start managed session: {error:?}"))?;
+        .map_err(|error| anyhow::anyhow!("start declared session: {error:?}"))?;
         let run = api
             .start_run(RunStartParams {
                 notify_on_terminal: None,
@@ -1642,7 +1730,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
             .events
             .iter()
             .find_map(|event| match &event.kind {
-                api::SessionEventKindView::WorkflowToolEmitted {
+                api::SessionEventKindView::WorkflowToolInvoked {
                     completion_promises: Some(promises),
                     ..
                 } => promises.values().next().cloned(),
@@ -1650,8 +1738,8 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
             })
             .ok_or_else(|| anyhow::anyhow!("no emitted completion promise in events"))?;
 
-        // Delivery can precede the model's await. Wait for the parked run so
-        // unrelated appends cannot clear the rejection diagnostic below.
+        // Delivery can precede the model's await. Wait for the parked run so the
+        // forged reply below reaches a promise that is actually being awaited.
         support::live::wait_until(
             "run parked on the plugin reply",
             Duration::from_secs(30),
@@ -1670,6 +1758,67 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
         )
         .await?;
 
+        // Nothing a sender puts on the wire can fail the receiver's workflow task.
+        // Each of these is logged and dropped, and the run stays parked on its reply.
+        for (what, warning_words, garbage) in
+            malformed_emissions(&promise_id, universe_id, &session_id)
+        {
+            session_handle
+                .signal(
+                    AgentSessionWorkflow::deliver_emission,
+                    garbage,
+                    temporalio_client::WorkflowSignalOptions::default(),
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!("signal {what}: {error}"))?;
+            support::live::wait_until(what, Duration::from_secs(20), async || {
+                let status = session_handle
+                    .query(
+                        AgentSessionWorkflow::status,
+                        (),
+                        temporalio_client::WorkflowQueryOptions::default(),
+                    )
+                    .await?;
+                assert_eq!(status.fatal_error, None, "{what}");
+                Ok(status
+                    .last_warning
+                    .is_some_and(|warning| warning.contains(warning_words)))
+            })
+            .await?;
+            // The next signal's warning has to be a new one to be seen.
+            session_handle
+                .signal(
+                    AgentSessionWorkflow::deliver_emission,
+                    temporal_workflow::emission_signal_input(&EmissionEnvelope::source_resolution(
+                        universe_id,
+                        "plugin/imposter".to_owned(),
+                        &temporal_workflow::compose_workflow_id(universe_id, &session_id),
+                        harness::PromiseId::new(promise_id.clone()),
+                        PromiseResolution::Resolved { payload_ref: None },
+                    )),
+                    temporalio_client::WorkflowSignalOptions::default(),
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!("signal after {what}: {error}"))?;
+            support::live::wait_until(
+                "a later signal is processed",
+                Duration::from_secs(20),
+                async || {
+                    let status = session_handle
+                        .query(
+                            AgentSessionWorkflow::status,
+                            (),
+                            temporalio_client::WorkflowQueryOptions::default(),
+                        )
+                        .await?;
+                    Ok(status
+                        .last_warning
+                        .is_some_and(|warning| warning.contains("unauthorized producer")))
+                },
+            )
+            .await?;
+        }
+
         // Forged producer: wrong workflow id. Must be dropped.
         let forged = EmissionEnvelope::source_resolution(
             universe_id,
@@ -1681,7 +1830,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
         session_handle
             .signal(
                 AgentSessionWorkflow::deliver_emission,
-                forged,
+                temporal_workflow::emission_signal_input(&forged),
                 temporalio_client::WorkflowSignalOptions::default(),
             )
             .await
@@ -1700,10 +1849,20 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
                 .await
                 .map_err(|error| anyhow::anyhow!("query session: {error}"))?;
             if status
-                .last_error
+                .last_warning
                 .as_deref()
-                .is_some_and(|error| error.contains("unauthorized producer"))
+                .is_some_and(|warning| warning.contains("unauthorized producer"))
             {
+                // A drop is advisory: the session reads normally and the
+                // workflow keeps running until the authorized reply below.
+                assert_eq!(status.fatal_error, None);
+                let session = api
+                    .read_session(api::SessionReadParams {
+                        session_id: session_id.as_str().to_owned(),
+                        run_limit: None,
+                    })
+                    .await?;
+                assert_eq!(session.result.session.execution_failure, None);
                 break;
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
@@ -1720,29 +1879,11 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
         session_handle
             .signal(
                 AgentSessionWorkflow::deliver_emission,
-                authorized.clone(),
+                temporal_workflow::emission_signal_input(&authorized),
                 temporalio_client::WorkflowSignalOptions::default(),
             )
             .await
             .map_err(|error| anyhow::anyhow!("signal authorized reply: {error}"))?;
-
-        // Signal acknowledgement precedes processing. Public reads report the
-        // prior rejection until the authorized reply has actually been applied.
-        support::live::wait_until(
-            "authorized reply applied",
-            Duration::from_secs(30),
-            async || {
-                let status = session_handle
-                    .query(
-                        AgentSessionWorkflow::status,
-                        (),
-                        temporalio_client::WorkflowQueryOptions::default(),
-                    )
-                    .await?;
-                Ok(status.last_error.is_none())
-            },
-        )
-        .await?;
 
         let run = wait_for_terminal_run_slow(&api, &session_id, &run.result.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
@@ -1753,7 +1894,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
         session_handle
             .signal(
                 AgentSessionWorkflow::deliver_emission,
-                authorized,
+                temporal_workflow::emission_signal_input(&authorized),
                 temporalio_client::WorkflowSignalOptions::default(),
             )
             .await
@@ -1776,7 +1917,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
                 "wti:sha256:{}",
                 "b".repeat(64)
             )),
-            tool_id: harness::WorkflowToolId::new("approve"),
+            workflow_tool_id: harness::WorkflowToolId::new("approve"),
             semantic_type: "lightspeed.test.approval.v1".to_owned(),
             schema_revision: 1,
             binding_fingerprint: format!("wtb:sha256:{}", "c".repeat(64)),
@@ -1865,7 +2006,8 @@ async fn workflow_tool_start_on_call_resolves_via_plugin_worker() -> anyhow::Res
             "lightspeed.test.launch.v1",
         )
         .await?;
-        let run = start_managed_session_and_run(
+        let started = std::time::Instant::now();
+        let run = start_integrated_session_and_run(
             &api,
             &session_id,
             vec![WorkflowToolDeclaration::new(
@@ -1873,7 +2015,7 @@ async fn workflow_tool_start_on_call_resolves_via_plugin_worker() -> anyhow::Res
                 WorkflowToolTarget::Start {
                     start: WorkflowStartRef {
                         recipe_format: 1,
-                        revision: 1,
+                        recipe_revision: 1,
                         recipe_ref,
                         recipe_fingerprint,
                     },
@@ -1914,17 +2056,14 @@ async fn workflow_tool_start_on_call_resolves_via_plugin_worker() -> anyhow::Res
                 _ => None,
             })
             .ok_or_else(|| anyhow::anyhow!("Start + Joined execution event was not projected"))?;
-        let handle = client.get_workflow_handle::<TestStartPluginWorkflow>(execution_id);
-        use temporalio_client::WorkflowExecutionStatus;
-        let description = handle
-            .describe(temporalio_client::WorkflowDescribeOptions::default())
-            .await
-            .map_err(|error| anyhow::anyhow!("describe early-reply execution: {error}"))?;
-        assert_eq!(
-            description.status(),
-            WorkflowExecutionStatus::Running,
+        // The execution holds a 60 second timer after replying, so the call only
+        // finishes this soon by following the reply. The session cancels an
+        // execution it has finished with, which may already have ended it.
+        assert!(
+            started.elapsed() < Duration::from_secs(45),
             "semantic reply must complete the Joined call before execution termination"
         );
+        let handle = client.get_workflow_handle::<TestStartPluginWorkflow>(execution_id);
         let _ = handle.terminate(WorkflowTerminateOptions::default()).await;
         Ok(())
     })
@@ -1956,7 +2095,7 @@ async fn workflow_tool_start_recovery_query_resolves_silent_execution() -> anyho
             "lightspeed.test.launch.v1",
         )
         .await?;
-        let run = start_managed_session_and_run(
+        let run = start_integrated_session_and_run(
             &api,
             &session_id,
             vec![WorkflowToolDeclaration::new(
@@ -1964,7 +2103,7 @@ async fn workflow_tool_start_recovery_query_resolves_silent_execution() -> anyho
                 WorkflowToolTarget::Start {
                     start: WorkflowStartRef {
                         recipe_format: 1,
-                        revision: 1,
+                        recipe_revision: 1,
                         recipe_ref,
                         recipe_fingerprint,
                     },
@@ -1980,6 +2119,66 @@ async fn workflow_tool_start_recovery_query_resolves_silent_execution() -> anyho
         assert!(
             output.contains("resolved"),
             "recovery query must resolve the silent execution's promise: {output}"
+        );
+        Ok(())
+    })
+    .await
+}
+
+/// A recovered result meets the binding's reply schema the way a signal does: this
+/// silent execution recovers `Resolved` with no payload, which its schema refuses.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn workflow_tool_start_recovery_query_meets_the_reply_schema() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    run_with_plugin_worker(|_client, api, blobs, session_id, plugin_queue| async move {
+        let recipe = serde_json::to_vec(&WorkflowToolRecipeV1 {
+            workflow_type: "TestSilentStartPluginWorkflow".to_owned(),
+            task_queue: plugin_queue,
+        })?;
+        let recipe_fingerprint = workflow_tool_recipe_fingerprint(&recipe);
+        let recipe_ref = blobs.put_bytes(recipe).await?;
+        let reply_schema_ref = blobs
+            .put_bytes(serde_json::to_vec(&serde_json::json!({
+                "type": "object",
+                "required": ["ok"]
+            }))?)
+            .await?;
+
+        let definition = tool_definition(
+            &blobs,
+            "launch",
+            LAUNCH_JOB_TOOL,
+            "lightspeed.test.launch.v1",
+        )
+        .await?;
+        let run = start_integrated_session_and_run(
+            &api,
+            &session_id,
+            vec![WorkflowToolDeclaration::new(
+                definition,
+                WorkflowToolTarget::Start {
+                    start: WorkflowStartRef {
+                        recipe_format: 1,
+                        recipe_revision: 1,
+                        recipe_ref,
+                        recipe_fingerprint,
+                    },
+                },
+                promises_completion(None, Some(reply_schema_ref)),
+            )],
+            LAUNCH_JOB_TOOL,
+        )
+        .await?;
+
+        assert_eq!(run.status, api::RunStatus::Completed);
+        let output = final_assistant_text(&run).expect("assistant output");
+        assert!(
+            output.contains("failed"),
+            "the schema must refuse the recovered result: {output}"
         );
         Ok(())
     })
@@ -2009,11 +2208,11 @@ async fn workflow_tool_dead_receiver_fails_promise_terminally() -> anyhow::Resul
                 "lightspeed.test.approval.v1",
             )
             .await?;
-            api.start_managed_session_for_workflow_with_profile(
+            api.start_integrated_session_for_workflow_with_profile(
                 &session_id,
                 false,
                 None,
-                harness::ManagedSessionWorkflowTools::v1(
+                harness::DeclaredSessionWorkflowTools::v1(
                     Some(absent_controller.clone()),
                     vec![WorkflowToolDeclaration::new(
                         definition,
@@ -2106,8 +2305,8 @@ async fn started_execution_ids(
         .collect())
 }
 
-/// All keyed completion promises emitted so far, in session-log order.
-async fn emitted_promises(
+/// All keyed completion promises the invocations created so far, in session-log order.
+async fn invocation_promises(
     api: &GatewayAgentApi,
     session_id: &SessionId,
 ) -> anyhow::Result<Vec<String>> {
@@ -2127,7 +2326,7 @@ async fn emitted_promises(
         .events
         .iter()
         .filter_map(|event| match &event.kind {
-            api::SessionEventKindView::WorkflowToolEmitted {
+            api::SessionEventKindView::WorkflowToolInvoked {
                 completion_promises: Some(promises),
                 ..
             } => promises.values().next().cloned(),
@@ -2176,11 +2375,11 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
             "lightspeed.test.approval.v1",
         )
         .await?;
-        api.start_managed_session_for_workflow_with_profile(
+        api.start_integrated_session_for_workflow_with_profile(
             &session_id,
             false,
             None,
-            harness::ManagedSessionWorkflowTools::v1(
+            harness::DeclaredSessionWorkflowTools::v1(
                 None,
                 vec![WorkflowToolDeclaration::new(
                     definition,
@@ -2196,12 +2395,11 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
             ),
         )
         .await
-        .map_err(|error| anyhow::anyhow!("start managed session: {error:?}"))?;
+        .map_err(|error| anyhow::anyhow!("start declared session: {error:?}"))?;
 
         let session_handle = live_workflow_handle(&client, &session_id)?;
-        let resolve_run = |payload: Vec<u8>, expect: &'static str| {
+        let resolve_run = |resolution: PromiseResolution, expect: &'static str| {
             let api = api.clone();
-            let blobs = blobs.clone();
             let session_id = session_id.clone();
             let session_handle = &session_handle;
             let receiver_id = receiver_id.clone();
@@ -2233,26 +2431,23 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
                     if started.elapsed() > Duration::from_secs(30) {
                         anyhow::bail!("emitted promise never appeared for {expect}");
                     }
-                    let promises = emitted_promises(&api, &session_id).await?;
+                    let promises = invocation_promises(&api, &session_id).await?;
                     if promises.len() >= expected_promises {
                         break promises[expected_promises - 1].clone();
                     }
                     tokio::time::sleep(Duration::from_millis(200)).await;
                 };
-                let payload_ref = blobs.put_bytes(payload).await?;
                 let reply = EmissionEnvelope::source_resolution(
                     live_universe_id()?,
                     receiver_id,
                     &temporal_workflow::compose_workflow_id(live_universe_id()?, &session_id),
                     harness::PromiseId::new(promise_id),
-                    PromiseResolution::Resolved {
-                        payload_ref: Some(payload_ref),
-                    },
+                    resolution,
                 );
                 session_handle
                     .signal(
                         AgentSessionWorkflow::deliver_emission,
-                        reply,
+                        temporal_workflow::emission_signal_input(&reply),
                         temporalio_client::WorkflowSignalOptions::default(),
                     )
                     .await
@@ -2269,11 +2464,24 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
                 anyhow::Ok(())
             }
         };
+        let resolved = |payload_ref| PromiseResolution::Resolved {
+            payload_ref: Some(payload_ref),
+        };
 
         // Schema-invalid payload -> the keyed promise fails.
-        resolve_run(b"\"not an object\"".to_vec(), "failed").await?;
+        let invalid = blobs.put_bytes(b"\"not an object\"".to_vec()).await?;
+        resolve_run(resolved(invalid), "failed").await?;
         // Valid payload -> the keyed promise resolves.
-        resolve_run(br#"{"ok":true}"#.to_vec(), "resolved").await?;
+        let valid = blobs.put_bytes(br#"{"ok":true}"#.to_vec()).await?;
+        resolve_run(resolved(valid), "resolved").await?;
+        // A reply naming a blob that was never stored fails its promise and the
+        // session carries on with the next run.
+        let unstored = harness::BlobRef::from_bytes(b"never stored");
+        resolve_run(resolved(unstored.clone()), "failed").await?;
+        let failed_with_unstored = PromiseResolution::Failed {
+            error_ref: Some(unstored),
+        };
+        resolve_run(failed_with_unstored, "failed").await?;
 
         let _ = client
             .get_workflow_handle::<TestBoundPluginWorkflow>(receiver_id)
@@ -2332,7 +2540,7 @@ async fn workflow_tool_closed_receiver_fails_delivery_terminally() -> anyhow::Re
             "lightspeed.test.approval.v1",
         )
         .await?;
-        let run = start_managed_session_and_run(
+        let run = start_integrated_session_and_run(
             &api,
             &session_id,
             vec![WorkflowToolDeclaration::new(
@@ -2387,7 +2595,7 @@ async fn workflow_tool_start_survives_continue_as_new() -> anyhow::Result<()> {
                 "lightspeed.test.launch.v1",
             )
             .await?;
-            let run = start_managed_session_and_run(
+            let run = start_integrated_session_and_run(
                 &api,
                 &session_id,
                 vec![WorkflowToolDeclaration::new(
@@ -2395,7 +2603,7 @@ async fn workflow_tool_start_survives_continue_as_new() -> anyhow::Result<()> {
                     WorkflowToolTarget::Start {
                         start: WorkflowStartRef {
                             recipe_format: 1,
-                            revision: 1,
+                            recipe_revision: 1,
                             recipe_ref,
                             recipe_fingerprint,
                         },
@@ -2430,16 +2638,16 @@ async fn workflow_tool_start_survives_continue_as_new() -> anyhow::Result<()> {
             let completion = &session
                 .result
                 .session
-                .management
+                .integration
                 .as_ref()
-                .and_then(|management| management.tools.first())
+                .and_then(|declaration| declaration.tools.first())
                 .ok_or_else(|| anyhow::anyhow!("continued Joined declaration was not projected"))?
                 .completion;
             assert_eq!(
                 completion.clone(),
                 api::WorkflowToolCompletionInput::Joined {
                     reply_schema_ref: None,
-                    deadline_after_ms: 60_000,
+                    deadline_after_ms: Some(60_000),
                 }
             );
 
@@ -2514,11 +2722,11 @@ async fn workflow_tool_run_terminal_auto_cancel_notifies_bound_receiver() -> any
             "lightspeed.test.approval.v1",
         )
         .await?;
-        api.start_managed_session_for_workflow_with_profile(
+        api.start_integrated_session_for_workflow_with_profile(
             &session_id,
             false,
             None,
-            harness::ManagedSessionWorkflowTools::v1(
+            harness::DeclaredSessionWorkflowTools::v1(
                 None,
                 vec![WorkflowToolDeclaration::new(
                     definition,
@@ -2534,7 +2742,7 @@ async fn workflow_tool_run_terminal_auto_cancel_notifies_bound_receiver() -> any
             ),
         )
         .await
-        .map_err(|error| anyhow::anyhow!("start managed session: {error:?}"))?;
+        .map_err(|error| anyhow::anyhow!("start declared session: {error:?}"))?;
         let run = api
             .start_run(RunStartParams {
                 notify_on_terminal: None,
@@ -2586,6 +2794,154 @@ async fn workflow_tool_run_terminal_auto_cancel_notifies_bound_receiver() -> any
     .await
 }
 
+/// A run that keeps generating after a start-on-call acknowledgement does not hold
+/// the execution back: it is running while the next generation is still in flight.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn workflow_tool_start_goes_out_before_the_next_generation_finishes() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    run_with_plugin_worker(|client, api, blobs, session_id, plugin_queue| async move {
+        let recipe = serde_json::to_vec(&WorkflowToolRecipeV1 {
+            workflow_type: "TestCancellationPluginWorkflow".to_owned(),
+            task_queue: plugin_queue,
+        })?;
+        let recipe_fingerprint = workflow_tool_recipe_fingerprint(&recipe);
+        let recipe_ref = blobs.put_bytes(recipe).await?;
+        let definition = tool_definition(
+            &blobs,
+            "launch",
+            LAUNCH_JOB_TOOL,
+            "lightspeed.test.launch.v1",
+        )
+        .await?;
+        let run_id = start_integrated_session_and_hold_run(
+            &api,
+            &session_id,
+            vec![WorkflowToolDeclaration::new(
+                definition,
+                WorkflowToolTarget::Start {
+                    start: WorkflowStartRef {
+                        recipe_format: 1,
+                        recipe_revision: 1,
+                        recipe_ref,
+                        recipe_fingerprint,
+                    },
+                },
+                reply_completion(),
+            )],
+            LAUNCH_JOB_TOOL,
+        )
+        .await?;
+
+        let started = std::time::Instant::now();
+        loop {
+            if started.elapsed() > Duration::from_secs(30) {
+                anyhow::bail!("the execution did not start during the next generation");
+            }
+            if let Some(execution_id) = started_execution_ids(&api, &session_id)
+                .await?
+                .into_iter()
+                .next()
+                && client
+                    .get_workflow_handle::<temporalio_client::UntypedWorkflow>(execution_id)
+                    .describe(temporalio_client::WorkflowDescribeOptions::default())
+                    .await
+                    .is_ok()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+
+        SECOND_GENERATION_RELEASE.notify_one();
+        let run = wait_for_terminal_run_slow(&api, &session_id, &run_id).await?;
+        assert_eq!(run.status, api::RunStatus::Completed);
+        Ok(())
+    })
+    .await
+}
+
+/// A pushed invocation reaches its receiver while the run that made the call is
+/// still generating, not when that run parks or ends.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn workflow_tool_pushed_accepted_delivers_before_the_next_generation_finishes()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    run_with_plugin_worker(|client, api, blobs, session_id, plugin_queue| async move {
+        let universe_id = live_universe_id()?;
+        let receiver_id = format!("plugin/accepted-{}", uuid::Uuid::new_v4().simple());
+        client
+            .start_workflow(
+                TestBoundPluginWorkflow::run,
+                BoundPluginArgs {
+                    universe_id,
+                    auto_reply: false,
+                },
+                WorkflowStartOptions::new(plugin_queue, receiver_id.clone()).build(),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("start Accepted receiver: {error}"))?;
+        let definition = tool_definition(
+            &blobs,
+            "accepted-message",
+            MESSAGE_SEND_TOOL,
+            "channels.message.accepted.v1",
+        )
+        .await?;
+        let run_id = start_integrated_session_and_hold_run(
+            &api,
+            &session_id,
+            vec![WorkflowToolDeclaration::new(
+                definition,
+                WorkflowToolTarget::Bound {
+                    receiver: WorkflowEndpointRef {
+                        workflow_id: receiver_id.clone(),
+                        workflow_kind: "test_accepted_receiver".to_owned(),
+                    },
+                    dispatch: harness::BoundWorkflowToolDispatch::Push,
+                },
+                WorkflowToolCompletion::Accepted,
+            )],
+            MESSAGE_SEND_TOOL,
+        )
+        .await?;
+
+        let handle = client.get_workflow_handle::<TestBoundPluginWorkflow>(receiver_id);
+        let started = std::time::Instant::now();
+        loop {
+            if started.elapsed() > Duration::from_secs(30) {
+                anyhow::bail!("the invocation was not delivered during the next generation");
+            }
+            let snapshot = handle
+                .query(
+                    TestBoundPluginWorkflow::plugin_snapshot,
+                    (),
+                    temporalio_client::WorkflowQueryOptions::default(),
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!("query Accepted receiver: {error}"))?;
+            if snapshot.invocations == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+
+        SECOND_GENERATION_RELEASE.notify_one();
+        let run = wait_for_terminal_run_slow(&api, &session_id, &run_id).await?;
+        assert_eq!(run.status, api::RunStatus::Completed);
+        let _ = handle.terminate(WorkflowTerminateOptions::default()).await;
+        Ok(())
+    })
+    .await
+}
+
 /// When run-terminal auto-cancel turns the last pending keyed promise of a
 /// session-owned started execution terminal, the exact execution is
 /// cancelled.
@@ -2606,18 +2962,18 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
         let definition =
             tool_definition(&blobs, "launch", LAUNCH_JOB_TOOL, "lightspeed.test.launch.v1")
                 .await?;
-        api.start_managed_session_for_workflow_with_profile(
+        api.start_integrated_session_for_workflow_with_profile(
             &session_id,
             false,
             None,
-            harness::ManagedSessionWorkflowTools::v1(
+            harness::DeclaredSessionWorkflowTools::v1(
                 None,
                 vec![WorkflowToolDeclaration::new(
                     definition,
                     WorkflowToolTarget::Start {
                         start: WorkflowStartRef {
                             recipe_format: 1,
-                            revision: 1,
+                            recipe_revision: 1,
                             recipe_ref,
                             recipe_fingerprint,
                         },
@@ -2627,11 +2983,10 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
             ),
         )
         .await
-        .map_err(|error| anyhow::anyhow!("start managed session: {error:?}"))?;
-        // A short await parks on the keyed promise long enough for the
-        // deterministic start to be issued, then times out; the run
-        // terminal auto-cancels the still-pending promise while the
-        // execution is waiting for cancellation.
+        .map_err(|error| anyhow::anyhow!("start declared session: {error:?}"))?;
+        // The start goes out before the next generation, and the run then finishes
+        // without awaiting. Its terminal auto-cancels the still-pending promise while
+        // the execution is waiting for cancellation.
         let run = api
             .start_run(RunStartParams {
         notify_on_terminal: None,
@@ -2639,7 +2994,7 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
                 session_id: session_id.as_str().to_owned(),
                 source: RunStartSource::Input {
                     items: vec![InputItem::Text { provenance_ref: None, origin: None,
-                        text: format!("CALL_SHORTWAIT {LAUNCH_JOB_TOOL}"),
+                        text: format!("CALL_NOWAIT {LAUNCH_JOB_TOOL}"),
                     }],
                 },
                 config: None,
@@ -2689,9 +3044,9 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
                     )
                     .await
                     .ok()
-                    .and_then(|status| status.last_error);
+                    .and_then(|status| status.fatal_error.or(status.last_warning));
                 anyhow::bail!(
-                    "expected running-then-cancelled, got {status:?}; session last_error: {session_error:?}"
+                    "expected running-then-cancelled, got {status:?}; session error: {session_error:?}"
                 );
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -2726,7 +3081,7 @@ async fn workflow_tool_start_deadline_fails_unserved_queue() -> anyhow::Result<(
                 "lightspeed.test.launch.v1",
             )
             .await?;
-            let run = start_managed_session_and_run(
+            let run = start_integrated_session_and_run(
                 &api,
                 &session_id,
                 vec![WorkflowToolDeclaration::new(
@@ -2734,7 +3089,7 @@ async fn workflow_tool_start_deadline_fails_unserved_queue() -> anyhow::Result<(
                     WorkflowToolTarget::Start {
                         start: WorkflowStartRef {
                             recipe_format: 1,
-                            revision: 1,
+                            recipe_revision: 1,
                             recipe_ref,
                             recipe_fingerprint,
                         },

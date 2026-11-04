@@ -1,6 +1,6 @@
 //! Live universe-environment discovery and session selection tool contracts.
 
-use harness::ToolName;
+use harness::ToolId;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -65,14 +65,14 @@ pub struct EnvironmentDeactivateOutput {
     pub active: bool,
 }
 
-pub fn is_environment_control_tool(tool_id: &ToolName) -> bool {
+pub fn is_environment_control_tool(tool_id: &ToolId) -> bool {
     matches!(
         tool_id.as_str(),
         "environment.list" | "environment.read" | "environment.activate" | "environment.deactivate"
     )
 }
 
-pub fn is_environment_selection_tool(tool_id: &ToolName) -> bool {
+pub fn is_environment_selection_tool(tool_id: &ToolId) -> bool {
     matches!(
         tool_id.as_str(),
         "environment.activate" | "environment.deactivate"
@@ -200,16 +200,16 @@ mod tests {
 
     #[test]
     fn selection_classification_excludes_discovery_tools() {
-        assert!(!is_environment_selection_tool(&ToolName::new(
+        assert!(!is_environment_selection_tool(&ToolId::new(
             "environment.list",
         )));
-        assert!(!is_environment_selection_tool(&ToolName::new(
+        assert!(!is_environment_selection_tool(&ToolId::new(
             "environment.read",
         )));
-        assert!(is_environment_selection_tool(&ToolName::new(
+        assert!(is_environment_selection_tool(&ToolId::new(
             "environment.activate",
         )));
-        assert!(is_environment_selection_tool(&ToolName::new(
+        assert!(is_environment_selection_tool(&ToolId::new(
             "environment.deactivate",
         )));
     }

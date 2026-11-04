@@ -353,8 +353,8 @@ pub trait FileSystem: Send + Sync {
     async fn remove(&self, path: &FsPath, options: RemoveOptions) -> FsResult<()>;
 
     /// Move a file to `destination_path`, keeping its mode. The default
-    /// writes the destination and removes the source; backends with a
-    /// native rename override it to move atomically.
+    /// writes the destination and removes the source, which carries no mode,
+    /// so a backend with modes or a native rename overrides it.
     async fn rename(
         &self,
         source_path: &FsPath,

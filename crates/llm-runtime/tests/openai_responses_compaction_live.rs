@@ -15,7 +15,7 @@ mod support;
 
 use support::{env_or_dotenv_var, openai_responses_live_client as live_client};
 
-use support::retrying_openai_responses_client;
+use support::unstored_openai_responses_client;
 
 const LIVE_MARKER: &str = "LIGHTSPEED-COMPACTION-LIVE-87421";
 
@@ -53,7 +53,7 @@ async fn openai_responses_live_harness_prunes_and_reuses_provider_compaction() {
         LlmAdapterRegistry::new().with_generation_adapter(
             ProviderApiKind::OpenAiResponses,
             Arc::new(OpenAiResponsesLlmAdapter::new(
-                retrying_openai_responses_client(live_client()),
+                unstored_openai_responses_client(live_client()),
                 blobs.clone(),
             )),
         ),
@@ -88,6 +88,7 @@ async fn openai_responses_live_harness_prunes_and_reuses_provider_compaction() {
                     input: user_input(first_input_ref.clone()),
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(128),
         })
@@ -96,7 +97,7 @@ async fn openai_responses_live_harness_prunes_and_reuses_provider_compaction() {
 
     assert_eq!(first.quiescence, RunnerQuiescence::Idle);
     assert_eq!(
-        first.state.runs.completed[0].status,
+        first.state.runs.finished[0].status,
         RunStatus::Completed,
         "{}",
         run_failure_text(blobs.as_ref(), &first.state).await
@@ -144,6 +145,7 @@ async fn openai_responses_live_harness_prunes_and_reuses_provider_compaction() {
                     input: user_input(second_input_ref),
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(128),
         })
@@ -152,19 +154,19 @@ async fn openai_responses_live_harness_prunes_and_reuses_provider_compaction() {
 
     assert_eq!(second.quiescence, RunnerQuiescence::Idle);
     assert_eq!(
-        second.state.runs.completed[1].status,
+        second.state.runs.finished[1].status,
         RunStatus::Completed,
         "{}",
         run_failure_text(blobs.as_ref(), &second.state).await
     );
-    let output = second.state.runs.completed[1]
+    let output = second.state.runs.finished[1]
         .output
         .as_ref()
         .expect("completed run output");
     assert_eq!(output.media_type.as_deref(), Some("application/json"));
     assert_eq!(
         output.provider_kind.as_deref(),
-        Some(harness::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND)
+        Some(llm_clients::content::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND)
     );
     let assistant_text = support::content_text(blobs.as_ref(), output).await;
     assert!(
@@ -275,22 +277,44 @@ async fn openai_responses_live_high_watermark_standalone_compaction() {
 
     let context_ref = store_openai_raw_message(
         blobs.as_ref(),
-        "Summarize this short context for future continuation: Lightspeed is testing idle high-watermark standalone compaction.",
+        "Summarize this short context for future continuation: Lightspeed is testing high-watermark standalone compaction.",
     )
     .await;
-    let compacted = runner
+    runner
         .drive_command(DriveCommand {
-            session_id,
+            session_id: session_id.clone(),
             observed_at_ms: 20,
             command: CoreAgentCommand::UpsertContext {
                 expected_revision: None,
                 key: ContextEntryKey::new("client.openai.raw.high_watermark"),
                 entry: openai_raw_context_input(context_ref.clone(), Some(11)),
             },
+            max_steps: Some(64),
+        })
+        .await
+        .expect("seed context");
+    let prompt_ref = blobs
+        .put_bytes(b"Reply with the single word OK.".to_vec())
+        .await
+        .expect("store prompt");
+    let compacted = runner
+        .drive_command(DriveCommand {
+            session_id,
+            observed_at_ms: 30,
+            command: CoreAgentCommand::RequestRun(harness::RunRequestCommand {
+                requested_by: None,
+                notify_on_terminal: Vec::new(),
+                submission_id: None,
+                source: harness::RunRequestSource::Input {
+                    input: user_input(prompt_ref),
+                },
+                run_config: run_config(),
+                input_limit_tokens: None,
+            }),
             max_steps: Some(128),
         })
         .await
-        .expect("seed context and compact at high watermark");
+        .expect("compact at high watermark when the run starts");
 
     assert_eq!(compacted.quiescence, RunnerQuiescence::Idle);
     assert!(
@@ -339,7 +363,7 @@ async fn live_runner(session_id: &SessionId) -> (SessionRunner, Arc<InMemoryBlob
         .expect("create session");
 
     let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(
-        retrying_openai_responses_client(live_client()),
+        unstored_openai_responses_client(live_client()),
         blobs.clone(),
     ));
     let llm = Arc::new(LlmRuntime::new(
@@ -373,7 +397,6 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         },
         limits: Default::default(),
         context: ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: None,
             compaction: Some(CompactionPolicy::ProviderTriggered {
                 compact_threshold_tokens: Some(2_000),
@@ -398,7 +421,6 @@ fn standalone_session_config(
         },
         limits: Default::default(),
         context: ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: None,
             compaction: Some(CompactionPolicy::ProviderStandalone {
                 compact_threshold_tokens,
@@ -411,21 +433,12 @@ fn standalone_session_config(
 
 fn run_config() -> RunConfig {
     RunConfig {
-        input_limit_tokens: None,
-        max_turns: Some(4),
+        max_turns: None,
         reasoning_effort: None,
         parallel_tool_use: None,
         processing_tier: None,
-        max_tool_rounds: Some(0),
         model_override: None,
         max_output_tokens: None,
-        provider_params: Some(support::openai_params(
-            &llm_runtime::OpenAiResponsesParams {
-                store: Some(false),
-                stream: Some(false),
-                ..llm_runtime::OpenAiResponsesParams::default()
-            },
-        )),
         tool_choice: None,
     }
 }
@@ -574,7 +587,7 @@ async fn compaction_failure_text(
 }
 
 async fn run_failure_text(blobs: &dyn BlobStore, state: &harness::CoreAgentState) -> String {
-    let Some(run) = state.runs.completed.last() else {
+    let Some(run) = state.runs.finished.last() else {
         return "run did not complete".to_owned();
     };
     let Some(failure) = run.failure.as_ref() else {
@@ -625,13 +638,14 @@ async fn openai_responses_live_provider_triggered_without_threshold_override() {
                     input: user_input(input),
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
         })
         .await
         .unwrap();
     assert_eq!(result.quiescence, RunnerQuiescence::Idle);
     assert_eq!(
-        result.state.runs.completed.last().unwrap().status,
+        result.state.runs.finished.last().unwrap().status,
         harness::RunStatus::Completed,
         "{}",
         run_failure_text(blobs.as_ref(), &result.state).await

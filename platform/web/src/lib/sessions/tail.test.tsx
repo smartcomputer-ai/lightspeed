@@ -24,7 +24,7 @@ function message(seq: number): SessionEvent {
     sessionId: "session", cursor: { seq }, observedAtMs: seq, joins: {},
     kind: { type: "contextEntriesApplied", baseRevision: seq - 1, revision: seq, entries: [{
       id: `message-${seq}`, kind: { type: "message", role: "assistant" },
-      content: { contentRef: `sha256:${seq}` }, text: `Message ${seq}`,
+      content: { blobRef: `sha256:${seq}` }, text: `Message ${seq}`,
     }] },
   };
 }

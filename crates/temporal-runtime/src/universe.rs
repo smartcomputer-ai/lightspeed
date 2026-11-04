@@ -445,7 +445,8 @@ impl UniverseRuntime {
                 self.client.clone(),
                 self.environment_gateway.clone(),
             )?
-            .with_code_task_queue(self.task_queues.code.clone()),
+            .with_code_task_queue(self.task_queues.code.clone())
+            .with_model_discovery(api.model_discovery()),
         );
         Ok(UniverseState {
             universe_id,

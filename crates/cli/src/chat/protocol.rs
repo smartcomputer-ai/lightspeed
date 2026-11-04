@@ -1,4 +1,4 @@
-use api::{RunStatus, SessionStatus};
+use api::{RunStatus, SessionActivity, SessionLifecycleStatus};
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
@@ -152,10 +152,6 @@ pub(crate) enum ChatEvent {
         compactions: Vec<ChatCompactionView>,
     },
     StatusChanged(ChatStatus),
-    GapObserved {
-        requested_from: u64,
-        retained_from: u64,
-    },
     Reconnecting {
         from: u64,
         reason: String,
@@ -202,7 +198,6 @@ pub(crate) struct ChatSettingsView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ChatSessionSummary {
     pub session_id: String,
-    pub status: Option<SessionStatus>,
     pub lifecycle: Option<ChatSessionLifecycle>,
     pub updated_at_ns: Option<u64>,
     pub run_count: u64,
@@ -214,7 +209,6 @@ pub(crate) struct ChatSessionSummary {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ChatSessionLifecycle {
-    NotLoaded,
     Idle,
     Active,
     Closed,
@@ -495,24 +489,54 @@ fn compact_count(n: u32) -> String {
     }
 }
 
-pub(crate) fn session_lifecycle(status: SessionStatus) -> ChatSessionLifecycle {
-    match status {
-        SessionStatus::NotLoaded => ChatSessionLifecycle::NotLoaded,
-        SessionStatus::Idle => ChatSessionLifecycle::Idle,
-        SessionStatus::Active => ChatSessionLifecycle::Active,
-        SessionStatus::Closed => ChatSessionLifecycle::Closed,
-        SessionStatus::Error => ChatSessionLifecycle::Error,
+/// What the chat shows for a session: a new one is idle until its first run opens it,
+/// and only `session/read` can report a stopped execution, so a caller without that
+/// fact passes `false`.
+pub(crate) fn session_lifecycle(
+    lifecycle_status: SessionLifecycleStatus,
+    activity: SessionActivity,
+    execution_stopped: bool,
+) -> ChatSessionLifecycle {
+    match (lifecycle_status, activity) {
+        (SessionLifecycleStatus::Closed, _) => ChatSessionLifecycle::Closed,
+        _ if execution_stopped => ChatSessionLifecycle::Error,
+        (_, SessionActivity::Idle) => ChatSessionLifecycle::Idle,
+        (_, SessionActivity::Working | SessionActivity::Waiting) => ChatSessionLifecycle::Active,
     }
 }
 
-#[allow(dead_code)]
-pub(crate) fn session_active(lifecycle: ChatSessionLifecycle) -> bool {
-    matches!(lifecycle, ChatSessionLifecycle::Active)
+pub(crate) fn session_lifecycle_text(lifecycle: ChatSessionLifecycle) -> &'static str {
+    match lifecycle {
+        ChatSessionLifecycle::Idle => "idle",
+        ChatSessionLifecycle::Active => "active",
+        ChatSessionLifecycle::Closed => "closed",
+        ChatSessionLifecycle::Error => "error",
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_lifecycle_answers_closed_first_and_reads_a_stopped_execution_as_error() {
+        use SessionActivity::{Idle, Waiting, Working};
+        use SessionLifecycleStatus::{Closed, New, Open};
+        for (lifecycle, activity, stopped, expected) in [
+            (New, Idle, false, ChatSessionLifecycle::Idle),
+            (Open, Idle, false, ChatSessionLifecycle::Idle),
+            (Open, Working, false, ChatSessionLifecycle::Active),
+            (Open, Waiting, false, ChatSessionLifecycle::Active),
+            (Open, Working, true, ChatSessionLifecycle::Error),
+            (Closed, Idle, true, ChatSessionLifecycle::Closed),
+        ] {
+            assert_eq!(
+                session_lifecycle(lifecycle, activity, stopped),
+                expected,
+                "{lifecycle:?} {activity:?} {stopped}"
+            );
+        }
+    }
 
     #[test]
     fn parse_reasoning_effort_maps_default_to_high_and_none_to_off() {

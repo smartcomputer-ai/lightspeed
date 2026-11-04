@@ -27,6 +27,7 @@ fn optional_nullable_delete_after_close_ms_schema(
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionStartParams {
     pub session_id: Option<SessionId>,
+    /// Cannot contain NUL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     /// Descriptive key/value metadata, applied only when the session is
@@ -54,46 +55,21 @@ pub struct SessionStartParams {
     /// means unshared until `session/share`; a retry keeps the original.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<AccessInput>,
-}
-
-/// Creation request for a session with immutable workflow ownership and
-/// workflow-backed tools.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ManagedSessionStartParams {
-    pub session_id: Option<SessionId>,
+    /// Immutable lifecycle controller and workflow tools connecting this session
+    /// to outside workflows, admitted only when it is first created, with bound
+    /// dispatch stated explicitly. This document is not part of `SessionConfig`
+    /// and cannot be changed through `session/config/put`. Retrying an id with an
+    /// integration requires the same one, and a session started without one
+    /// cannot gain one. Any retry of an integrated session answers
+    /// `sessionExecutionStopped` for a stopped workflow execution instead of
+    /// restarting it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    /// Descriptive key/value metadata with the same bounds as
-    /// `session/start`; applied only when the session is first created.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub metadata: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config: Option<SessionConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile: Option<ProfileSource>,
-    /// Root-owned automatic deletion measured from close. Absent inherits a
-    /// profile default, explicit null keeps the tree, and a duration overrides
-    /// the profile.
-    #[serde(
-        default,
-        deserialize_with = "deserialize_optional_nullable_delete_after_close_ms",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(schema_with = "optional_nullable_delete_after_close_ms_schema")]
-    pub delete_after_close_ms: Option<Option<u64>>,
-    /// Audience of the new session, as for `session/start`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub access: Option<AccessInput>,
-    /// Immutable workflow tools admitted only when the session is first
-    /// created. This document is not part of `SessionConfig` and cannot be
-    /// changed through `session/config/put`.
-    pub workflow_tools: ManagedSessionWorkflowToolsInput,
+    pub integration: Option<SessionIntegrationInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ManagedSessionWorkflowToolsInput {
+pub struct SessionIntegrationInput {
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_controller: Option<WorkflowEndpointInput>,
@@ -152,7 +128,7 @@ pub enum BoundWorkflowToolDispatchInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowStartRefInput {
     pub recipe_format: u32,
-    pub revision: u32,
+    pub recipe_revision: u32,
     pub recipe_ref: String,
     pub recipe_fingerprint: String,
 }
@@ -172,7 +148,12 @@ pub enum WorkflowToolCompletionInput {
     Joined {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reply_schema_ref: Option<String>,
-        deadline_after_ms: u64,
+        /// Hard deadline for the reply, in milliseconds. Required for a bound
+        /// receiver, which has no other way to free a caller it never answers.
+        /// A started execution may omit it, because the recovery poll detects
+        /// an execution that died.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deadline_after_ms: Option<u64>,
     },
     Promises {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -209,8 +190,10 @@ pub enum WorkflowToolCompletionKeySourceInput {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowToolDefinitionInput {
-    pub tool_id: String,
-    pub revision: u32,
+    /// The workflow-tool namespace: what invocations and bindings are keyed on. The
+    /// registry identity the model sees through `activeTools` is `tool.name`.
+    pub workflow_tool_id: String,
+    pub schema_revision: u32,
     pub semantic_type: String,
     pub tool: WorkflowToolSpecInput,
 }
@@ -255,7 +238,7 @@ fn default_feature_version() -> u32 {
     CURRENT_FEATURE_VERSION
 }
 
-/// Declared session configuration document.
+/// Session configuration document.
 ///
 /// Sparse and capability-oriented: an omitted section means defaults, an
 /// absent feature is not granted (no tools, no access). The document is
@@ -268,7 +251,10 @@ pub struct SessionConfig {
     /// default. On configuration replacement or profile application to an
     /// existing session, omission preserves its current model. Documents read
     /// back from a session always carry the model. Provider identity and API
-    /// kind are fixed for the session lifetime; the model name may change.
+    /// kind are fixed for the session lifetime. The model name may change at
+    /// any time: retained reasoning and compaction state goes to the new model
+    /// unchanged, and the provider keeps or drops it. A combination the provider
+    /// refuses fails that run as `requestRejected`, and the session stays open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -327,20 +313,19 @@ pub enum ToolChoice {
     Specific { tool_id: String },
 }
 
-/// Run budget defaults enforced by the harness drive loop.
+/// Limits applied to every run of the session unless the run sets its own.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LimitsConfig {
+    /// Model turns a run may start, at least 1. A run that needs another turn past this fails with `limitExceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tool_rounds: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ContextConfig {
-    /// Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.
+    /// Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors. Where a limit is known, a run start or steering holding one text entry over it is refused with `invalidRequest`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_limit_tokens: Option<u32>,
     /// Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
@@ -355,27 +340,18 @@ pub struct ContextConfig {
     tag = "mode"
 )]
 pub enum CompactionPolicy {
+    /// The engine never compacts on its own, and `session/context/compact` still works.
+    /// Once active context reaches 2,000 entries each run fails at its next turn
+    /// boundary, until a compaction brings the count down or the policy changes.
     Disabled,
     ProviderTriggered {
-        #[serde(
-            default,
-            alias = "compact_threshold_tokens",
-            skip_serializing_if = "Option::is_none"
-        )]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         compact_threshold_tokens: Option<u32>,
     },
     ProviderStandalone {
-        #[serde(
-            default,
-            alias = "compact_threshold_tokens",
-            skip_serializing_if = "Option::is_none"
-        )]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         compact_threshold_tokens: Option<u32>,
-        #[serde(
-            default,
-            alias = "target_tokens",
-            skip_serializing_if = "Option::is_none"
-        )]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         target_tokens: Option<u32>,
     },
 }
@@ -571,16 +547,12 @@ pub struct SubagentsFeature {
     /// A child at depth `d` may spawn only while `d + 1 <= maxDepth`.
     #[serde(default = "default_subagent_max_depth")]
     pub max_depth: u32,
-    /// Lifetime total of sessions ever created under the root.
-    #[serde(default = "default_subagent_max_descendants")]
-    pub max_descendants: u32,
     /// Open sessions under the root at any time, excluding the root.
     #[serde(default = "default_subagent_max_concurrent")]
     pub max_concurrent: u32,
-    /// Per-child run deadline in milliseconds; at most the execution
-    /// ceiling of 24 hours.
-    #[serde(default = "default_subagent_deadline_ms")]
-    pub deadline_ms: u64,
+    /// Per-child run deadline in milliseconds. Omit it for no time limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_timeout_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -593,16 +565,8 @@ fn default_subagent_max_depth() -> u32 {
     2
 }
 
-fn default_subagent_max_descendants() -> u32 {
-    16
-}
-
 fn default_subagent_max_concurrent() -> u32 {
-    4
-}
-
-fn default_subagent_deadline_ms() -> u64 {
-    60 * 60 * 1_000
+    8
 }
 
 /// Grants timer promises through the sleep tool plus the base concurrency
@@ -658,8 +622,10 @@ pub struct EnvironmentAttachment {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub inherit: bool,
     /// Activated when a profile is applied while the session has no active
-    /// environment; creation is the trivial case. Never overrides a live
-    /// selection and never applies on a plain `session/config/put`.
+    /// environment; creation is the trivial case. A `session/config/put` that
+    /// changes the default activates it when the put leaves nothing active, and
+    /// refuses a default that cannot be selected. Never overrides a live selection,
+    /// and an unchanged default never undoes a deliberate deactivation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub default: bool,
     pub access: EnvironmentAccess,
@@ -723,7 +689,11 @@ pub struct McpFeature {
 
 /// A selected universe MCP server. Its catalog record owns connection,
 /// execution, exposure, approval, and auth; the attachment may only narrow the
-/// record's tool allowlist for this session.
+/// record's tool allowlist for this session. A request that newly names a
+/// server it cannot resolve is refused. Once attached, or when brought in by a
+/// profile, a server that is disabled, deleted, or otherwise unusable is left out
+/// of later runs and the model is told, so a catalog action never stops the
+/// session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpServerAttachment {
@@ -747,7 +717,8 @@ pub struct SessionStartResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SessionMutationView {
     pub id: SessionId,
-    pub status: SessionStatus,
+    pub lifecycle_status: SessionLifecycleStatus,
+    pub activity: SessionActivity,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head_cursor: Option<EventCursor>,
     pub config_revision: u64,
@@ -820,7 +791,6 @@ pub enum ToolKindView {
     RemoteMcp {
         server_id: String,
         server_label: String,
-        server_url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         description_ref: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -829,8 +799,6 @@ pub enum ToolKindView {
         approval: RemoteMcpApprovalPolicy,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         defer_loading: Option<bool>,
-        #[serde(default)]
-        auth_required: bool,
     },
 }
 
@@ -872,8 +840,11 @@ pub struct ContextAppendParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextAppendEntry {
-    /// Stable client-chosen context key. Re-sending the same key with the
-    /// same content is a no-op, so the key doubles as the idempotency handle.
+    /// Stable client-chosen context key, which names one entry. Re-sending
+    /// the key with the same content is a no-op, so a retry lands once. With
+    /// different content the earlier entry leaves active context and the new
+    /// one goes last under a new id; a catalog keeps the earlier version
+    /// rendered and supersedes it instead.
     /// `run`, `run.*`, `runtime`, and `runtime.*` are reserved for the runtime.
     pub key: String,
     pub item: InputItem,
@@ -895,12 +866,6 @@ pub struct ContextAppendResult {
     pub entry: Option<ContextEntryInputView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<InputAdmissionFailureView>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub activation_text: Option<String>,
-    /// True when `activation_text` was cut off at the server-side length cap.
-    /// The committed context entry always holds the full text.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub activation_text_truncated: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1015,8 +980,10 @@ pub struct SessionReadParams {
     pub run_limit: Option<u32>,
 }
 
+/// Filters for `session/list`. An unknown field is refused, so a misspelled
+/// filter fails rather than returning a wider list.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionListParams {
     /// Opaque cursor from the previous page's `nextCursor`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1028,11 +995,11 @@ pub struct SessionListParams {
     /// one does not filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed: Option<bool>,
-    /// Only work whose root a lifecycle controller manages (`true`), or
-    /// work nobody manages (`false`); sub-agents follow their root. Absent
-    /// lists both.
+    /// Only work whose root a lifecycle controller owns (`true`), or work no
+    /// controller owns (`false`); sub-agents follow their root. Absent lists
+    /// both.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub managed: Option<bool>,
+    pub lifecycle_controlled: Option<bool>,
     /// Only sub-agent sessions (`true`), or only root sessions (`false`).
     /// Absent lists both.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1080,9 +1047,8 @@ pub struct SessionSummaryView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed_at_ms: Option<u64>,
     pub retention: SessionRetentionView,
-    /// True only when immutable lifecycle ownership was admitted with a
-    /// lifecycle controller at managed-session creation.
-    pub managed: bool,
+    /// True only when the session's integration names a lifecycle controller.
+    pub lifecycle_controlled: bool,
     /// Sub-agent lineage; absent for root sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<SessionOriginView>,
@@ -1096,7 +1062,7 @@ pub struct SessionSummaryView {
 /// What a session is doing now. A queued run counts as idle until it starts;
 /// a closed session is idle.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum SessionActivity {
     #[default]
     Idle,
@@ -1106,8 +1072,8 @@ pub enum SessionActivity {
     Waiting,
 }
 
-/// Effective tree-owned retention for a session. Forks and delegated children
-/// name their owning root and project that root's policy and deadline.
+/// Effective tree-owned retention for a session. Delegated children name their
+/// owning root and project that root's policy and deadline.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRetentionView {
@@ -1156,9 +1122,10 @@ pub struct SubagentAgentPin {
 #[serde(rename_all = "camelCase")]
 pub struct SubagentLimitsView {
     pub max_depth: u32,
-    pub max_descendants: u32,
     pub max_concurrent: u32,
-    pub deadline_ms: u64,
+    /// Absent when a child's run has no time limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_timeout_ms: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1173,7 +1140,7 @@ pub enum SessionLifecycleStatus {
 #[serde(rename_all = "camelCase")]
 pub struct SessionRenameParams {
     pub session_id: SessionId,
-    /// New display name; absent clears it.
+    /// New display name; absent clears it. Cannot contain NUL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
 }
@@ -1248,8 +1215,8 @@ pub struct SessionDeleteParams {
     /// False (the default) permanently deletes them without prior soft deletion.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub soft_delete: bool,
-    /// Delete history forks and delegated descendants too. False requires the
-    /// target to be a closed retention-tree leaf.
+    /// Delete delegated descendants too. False requires the target to be a
+    /// closed retention-tree leaf.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cascade: bool,
     /// Atomically require every selected session's audience to be shared.
@@ -1333,8 +1300,20 @@ pub struct SessionEventsReadResponse {
     /// No more events in the requested direction at the time of this read.
     /// This does not imply that the session is closed.
     pub complete: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gap: Option<EventLogGap>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRestartParams {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRestartResponse {
+    pub session: SessionMutationView,
+    /// A new execution started. False when one was already running.
+    pub restarted: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1343,7 +1322,9 @@ pub struct SessionCloseParams {
     pub session_id: SessionId,
     /// Cancel the active run and drop queued runs instead of rejecting on
     /// active work. Recovers sessions whose workflow no longer exists (e.g.
-    /// after an operator terminate) by reconciling the session log directly.
+    /// after an operator terminate) by reconciling the session log directly. A
+    /// session that never opened has no log to close, so it is removed and the
+    /// call answers `notFound`.
     #[serde(default)]
     pub force: bool,
 }
@@ -1358,14 +1339,6 @@ pub struct SessionCloseResponse {
 #[serde(rename_all = "camelCase")]
 pub struct EventCursor {
     pub seq: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct EventLogGap {
-    pub requested_after: Option<EventCursor>,
-    pub retained_after: Option<EventCursor>,
-    pub next_cursor: Option<EventCursor>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1391,8 +1364,6 @@ pub struct EventJoinsView {
     pub tool_call_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submission_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub correlation_id: Option<String>,
 }
 
 /// Bounded lifecycle telemetry for a session-owned code tool execution.
@@ -1423,17 +1394,17 @@ pub enum SessionEventKindView {
     WorkflowToolsConfigured {
         lifecycle_controller_workflow_kind: Option<String>,
         creation_fingerprint: String,
-        tool_ids: Vec<String>,
+        workflow_tool_ids: Vec<String>,
     },
     /// One system-owned workflow-backed tool was durably admitted without
     /// assigning lifecycle ownership to the session.
     SystemWorkflowToolConfigured {
-        tool_id: String,
+        workflow_tool_id: String,
         binding_fingerprint: String,
     },
-    WorkflowToolEmitted {
+    WorkflowToolInvoked {
         invocation_id: String,
-        tool_id: String,
+        workflow_tool_id: String,
         semantic_type: String,
         schema_revision: u32,
         binding_fingerprint: String,
@@ -1443,7 +1414,7 @@ pub enum SessionEventKindView {
         call_id: String,
         arguments_ref: String,
         /// Keyed completion promises created atomically with the
-        /// invocation; absent for notify-only (accepted) invocations.
+        /// invocation; absent for accepted invocations.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         completion_promises: Option<std::collections::BTreeMap<String, String>>,
     },
@@ -1456,7 +1427,7 @@ pub enum SessionEventKindView {
     /// start replay-safe.
     WorkflowToolStartRequested {
         invocation_id: String,
-        tool_id: String,
+        workflow_tool_id: String,
         semantic_type: String,
         schema_revision: u32,
         binding_fingerprint: String,
@@ -1510,6 +1481,11 @@ pub enum SessionEventKindView {
     ApprovalRunParked {
         run_id: RunId,
     },
+    /// No approval remains and no batch holds the run parked, so it is working
+    /// again even if no other event follows for a while.
+    ApprovalRunUnparked {
+        run_id: RunId,
+    },
     ApprovalDecided {
         run_id: RunId,
         approval_id: String,
@@ -1529,7 +1505,7 @@ pub enum SessionEventKindView {
     },
     /// The run ended in failure. `kind` is the harness's classification;
     /// `message` is free text for display, and the provider's own message for
-    /// `request_rejected`.
+    /// `requestRejected`.
     RunFailed {
         run_id: RunId,
         kind: RunFailureKindView,
@@ -1544,7 +1520,7 @@ pub enum SessionEventKindView {
     },
     PromiseCreated {
         promise_id: String,
-        source: String,
+        source: PromiseSourceKind,
     },
     PromiseResolved {
         promise_id: String,
@@ -1575,7 +1551,7 @@ pub enum SessionEventKindView {
     TurnGenerationCompleted {
         run_id: RunId,
         turn_id: String,
-        status: String,
+        status: TurnGenerationStatus,
         /// Provider token usage for this generation, including the
         /// prompt-cache read/write counts, when the provider reported it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1599,7 +1575,7 @@ pub enum SessionEventKindView {
         base_revision: u64,
         revision: u64,
         entry_ids: Vec<ItemId>,
-        reason: String,
+        reason: ContextRemovalReason,
     },
     /// Active entries replaced in place by id (`session/context/replace`).
     /// Each keeps its id, position, and kind; the replaced content stays in
@@ -1620,16 +1596,16 @@ pub enum SessionEventKindView {
         key_prefix: String,
         entries: Vec<ContextEntryView>,
     },
-    ContextStateReplaced {
+    /// A compaction was asked for while something else held the context. It waits
+    /// for a safe boundary, where `contextCompactionRequested` follows, and the
+    /// context revision does not move until then.
+    ContextCompactionQueued {
         base_revision: u64,
-        revision: u64,
-        entries: Vec<ContextEntryView>,
-        reason: String,
     },
     ContextCompactionRequested {
         base_revision: u64,
         revision: u64,
-        trigger: String,
+        trigger: ContextCompactionTrigger,
     },
     ContextCompactionFinished {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1638,7 +1614,7 @@ pub enum SessionEventKindView {
         calls: u32,
         base_revision: u64,
         revision: u64,
-        status: String,
+        status: ContextCompactionStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         failure_ref: Option<String>,
     },
@@ -1682,7 +1658,7 @@ pub enum SessionEventKindView {
         status: ToolItemStatus,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         effects: Vec<ToolEffectView>,
-        /// Portable immutable assets, separate from effects and native media input.
+        /// Files the call linked. Media it supplied arrives as context entries.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<ToolAttachmentView>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1690,12 +1666,12 @@ pub enum SessionEventKindView {
         #[serde(default)]
         truncated: bool,
     },
-    ToolBatchDeferred {
+    ToolBatchParked {
         run_id: RunId,
         turn_id: String,
         batch_id: String,
     },
-    ToolBatchResumed {
+    ToolBatchUnparked {
         run_id: RunId,
         turn_id: String,
         batch_id: String,
@@ -1718,19 +1694,79 @@ pub enum SessionEventKindView {
     },
 }
 
+/// Where a promise's answer comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum PromiseSourceKind {
+    Timer,
+    Workflow,
+}
+
+/// How a generation ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TurnGenerationStatus {
+    Succeeded,
+    Failed,
+    /// The provider rejected the request instead of serving it.
+    Rejected,
+    Cancelled,
+}
+
+/// Why entries left the active context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextRemovalReason {
+    /// A compaction the provider ran replaced them.
+    ProviderCompacted,
+}
+
+/// What asked for a compaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextCompactionTrigger {
+    /// `session/context/compact`.
+    Manual,
+    /// The context passed its compaction threshold.
+    HighWatermark,
+    /// The provider reported that the context no longer fits.
+    ContextLimit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextCompactionStatus {
+    Succeeded,
+    Failed,
+}
+
 /// Why a run failed, as the harness classified it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum RunFailureKindView {
+    /// The context no longer fits the model, or holds too many entries to keep
+    /// running, and compaction did not bring it down. `message` says what to do.
+    ContextFailure,
+    /// The provider or the path to it failed the generation, including a generation
+    /// the provider cancelled unasked. A run someone cancelled has status `cancelled`
+    /// and no failure.
     ModelFailure,
     /// The provider rejected the request as invalid or larger than the model
     /// accepts. `message` is the provider's own text, unchanged; resending the
     /// same context fails the same way.
     RequestRejected,
-    ToolFailure,
-    ContextFailure,
+    /// The provider cut the response off at its output cap. Raising
+    /// `maxOutputTokens` or lowering `reasoningEffort` can help; the partial text
+    /// stays in context.
+    OutputTruncated,
+    /// The provider refused the request or filtered the response.
+    ContentFiltered,
+    /// The run needed another turn and its `maxTurns` allowed none. Its tool calls
+    /// have results and the session stays usable.
     LimitExceeded,
-    Cancelled,
+    /// The harness refused a step of this run because of what the session holds.
+    /// `message` is the refusal's own text. The session stays usable, and open
+    /// tool calls were answered as cancelled.
     Internal,
 }
 
@@ -1784,20 +1820,6 @@ mod compaction_wire_tests {
             let decoded: CompactionPolicy = serde_json::from_value(value.clone()).unwrap();
             assert_eq!(decoded, expected);
             assert_eq!(serde_json::to_value(decoded).unwrap(), value);
-        }
-    }
-
-    #[test]
-    fn legacy_compaction_fields_remain_readable() {
-        for mode in ["providerTriggered", "providerStandalone"] {
-            let mut legacy = json!({"mode": mode, "compact_threshold_tokens": 250000});
-            let mut canonical = json!({"mode": mode, "compactThresholdTokens": 250000});
-            if mode == "providerStandalone" {
-                legacy["target_tokens"] = json!(100000);
-                canonical["targetTokens"] = json!(100000);
-            }
-            let decoded: CompactionPolicy = serde_json::from_value(legacy).unwrap();
-            assert_eq!(serde_json::to_value(decoded).unwrap(), canonical);
         }
     }
 }

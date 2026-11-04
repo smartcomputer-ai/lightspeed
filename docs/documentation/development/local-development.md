@@ -280,6 +280,12 @@ Stopping the application and deleting its data are separate operations:
 | `./dev.sh reset` | Recreates both local databases, migrates the runtime database, and clears the Lightspeed MinIO prefix. On success, also clears the launcher's saved development credentials and CLI handoff. Stop the supervisor first. |
 
 Use reset for disposable development data when that is the intended outcome.
+It does not touch Temporal. After a change that breaks retained workflow histories,
+also create a new namespace and set `TEMPORAL_NAMESPACE` to it in `.env`, as described in
+[Upgrades and recovery](../deployment/upgrades-and-recovery.md#decide-whether-the-release-breaks-open-work).
+With the infrastructure up, create it using
+`docker exec lightspeed-temporal temporal operator namespace create --namespace <name>`;
+`./dev.sh` fails waiting for a namespace that does not exist.
 After a successful reset, start `./dev.sh` to provision development keys again,
 then run `target/debug/lightspeed connect dev` to refresh the CLI connection.
 Manual database resets leave the launcher's saved credentials in place and

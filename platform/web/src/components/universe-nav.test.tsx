@@ -16,9 +16,9 @@ vi.mock("@/lib/universes", async (original) => ({
 
 const ROLE_ACTIONS: Record<string, PermissionAction[]> = {
   viewer: ["read"],
-  contributor: ["read", "create_session", "use_resource"],
-  operator: ["read", "create_session", "use_resource", "configure_resource"],
-  admin: ["read", "create_session", "use_resource", "configure_resource", "manage_access"],
+  contributor: ["read", "createSession", "useResource"],
+  operator: ["read", "createSession", "useResource", "configureResource"],
+  admin: ["read", "createSession", "useResource", "configureResource", "manageAccess"],
 };
 const DESTINATIONS: [string, string][] = [
   ["viewer", "/u/test/bots"],

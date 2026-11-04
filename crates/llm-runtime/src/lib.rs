@@ -27,13 +27,13 @@ pub use anthropic_messages::{
 };
 pub use error::{LlmAdapterError, LlmAdapterResult};
 pub use executor::{LlmAdapterRegistry, LlmCompactionAdapter, LlmGenerationAdapter, LlmRuntime};
-pub use mcp::{McpInventoryError, McpInventoryResolver, NativeMcpTool, injected_native_tools};
+pub use mcp::{McpInventoryError, McpInventoryResolver, RuntimeMcpTool, injected_runtime_tools};
 pub use openai_completions::{OpenAiCompletionsApi, OpenAiCompletionsLlmAdapter};
 pub use openai_responses::{OpenAiResponsesApi, OpenAiResponsesLlmAdapter};
 pub use params::{
     AnthropicMessagesParams, AnthropicThinkingConfig, OpenAiCompletionsParams,
     OpenAiReasoningConfig, OpenAiResponsesParams, OpenAiServiceTier, PROVIDER_PARAMS_VERSION,
-    ThinkingPrefixMismatch, validate_provider_params,
+    ThinkingPrefixMismatch,
 };
 pub use provider_keys::{
     ModelProviderResolver, NoStoredModelProviders, NoStoredProviderKeys, ProviderAuthScheme,
@@ -43,7 +43,7 @@ pub use provider_keys::{
 pub use result::{LlmDebugDumps, LlmGenerationExecution, failed_generation_result};
 pub use secrets::{
     EnvSecretResolver, REDACTED_SECRET_PLACEHOLDER, ResolvedSecretValue, SECRET_NAMESPACE_ENV,
-    SECRET_NAMESPACE_MCP_SERVER, SecretResolveError, SecretResolver, StaticSecretResolver,
-    UnconfiguredSecretResolver,
+    SECRET_NAMESPACE_MCP_SERVER, SecretRef, SecretResolveError, SecretResolver,
+    StaticSecretResolver, UnconfiguredSecretResolver,
 };
 mod tool_catalog;

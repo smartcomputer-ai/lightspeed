@@ -1,4 +1,5 @@
 use super::*;
+use harness::ToolChoice;
 use tools::fs::{FileSystem, FsPath, FsToolContext, InMemoryFileSystem};
 use tools::toolset::{BuiltinToolPresentation, EnvironmentToolsetConfig, ToolsetConfig};
 
@@ -37,7 +38,7 @@ async fn responses_patches_use_freeform_and_scripts_keep_json_arguments() {
             let request = &mut generation.request;
             if code_mode {
                 request.code_mode = Some(harness::CodeModePresentation {
-                    allowed_tools: request.tools.iter().map(|tool| tool.name.clone()).collect(),
+                    allowed_tools: request.tools.iter().map(|tool| tool.id.clone()).collect(),
                     ..Default::default()
                 });
             }
@@ -46,7 +47,7 @@ async fn responses_patches_use_freeform_and_scripts_keep_json_arguments() {
                 ("vfs.apply_patch", "vfs_apply_patch"),
             ] {
                 request.tool_choice = Some(ToolChoice::Specific {
-                    tool_name: ToolName::new(id),
+                    tool_id: ToolId::new(id),
                 });
                 let wire = serde_json::to_value(
                     materialize_create_request(&blobs, request).await.unwrap(),
@@ -103,7 +104,7 @@ async fn responses_patches_use_freeform_and_scripts_keep_json_arguments() {
     }
     let mut request = editing_request(BuiltinToolPresentation::Canonical).request;
     request.tool_choice = Some(ToolChoice::Specific {
-        tool_name: ToolName::new("env.apply_patch"),
+        tool_id: ToolId::new("env.apply_patch"),
     });
     let wire =
         serde_json::to_value(materialize_create_request(&blobs, &request).await.unwrap()).unwrap();
@@ -146,7 +147,7 @@ async fn freeform_patches_normalize_for_execution_and_replay_original_call_types
         "vfs.apply_patch",
         "env.apply_patch",
     ]) {
-        assert_eq!(call.tool_id, Some(ToolName::new(id)));
+        assert_eq!(call.tool_id, Some(ToolId::new(id)));
         assert_eq!(
             read_json(blobs.as_ref(), &call.arguments_ref)
                 .await
@@ -234,7 +235,6 @@ async fn freeform_patches_normalize_for_execution_and_replay_original_call_types
         covered_entry_ids: Vec::new(),
         tools: Vec::new(),
         input_limit_tokens: None,
-        params: None,
     };
     let compact = serde_json::to_value(
         materialize_compact_request(blobs.as_ref(), &task)
@@ -276,7 +276,7 @@ async fn custom_calls_require_an_advertised_freeform_patch_and_string_input() {
         );
         assert!(matches!(
             result_from_response(&blobs, &request, &response).await,
-            Err(LlmAdapterError::InvalidProviderRequest { .. })
+            Err(LlmAdapterError::InvalidProviderResponse { .. })
         ));
     }
 }

@@ -97,7 +97,7 @@ export function EnvironmentsPage({ admin: _admin }: { admin: boolean }) {
 const REFRESH_MS = 10_000;
 
 function EnvironmentList({ universeId }: { universeId: string }) {
-  const writable = useActionPermissions(universeId).can("configure_resource");
+  const writable = useActionPermissions(universeId).can("configureResource");
   const [showClosed, setShowClosed] = useState(false);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string | null>(null);
   const detailsTriggerRef = useRef<HTMLElement | null>(null);

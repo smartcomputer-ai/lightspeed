@@ -16,11 +16,11 @@ pub enum CoreAgentCloneError {
     #[error(transparent)]
     Codec(#[from] CodecError),
 
-    #[error("source session has incomplete managed workflow-tool creation state")]
-    IncompleteManagedWorkflowTools,
+    #[error("source session has incomplete declared workflow-tool creation state")]
+    IncompleteDeclaredWorkflowTools,
 
-    #[error("lifecycle-managed sessions cannot be cloned")]
-    LifecycleManagedSession,
+    #[error("lifecycle-controlled sessions cannot be cloned")]
+    LifecycleControlledSession,
 }
 
 /// Materializes the source state needed to open a config-only clone.
@@ -34,7 +34,7 @@ pub fn core_agent_clone_opening_events(
     observed_at_ms: u64,
 ) -> Result<Vec<UncommittedStoredEvent>, CoreAgentCloneError> {
     if state.workflow_tools.lifecycle_controller.is_some() {
-        return Err(CoreAgentCloneError::LifecycleManagedSession);
+        return Err(CoreAgentCloneError::LifecycleControlledSession);
     }
     let config = state
         .lifecycle
@@ -56,19 +56,19 @@ pub fn core_agent_clone_opening_events(
     if let Some(session_universe_id) = state.workflow_tools.session_universe_id {
         let declaration_version = state
             .workflow_tools
-            .managed_declaration_version
-            .ok_or(CoreAgentCloneError::IncompleteManagedWorkflowTools)?;
+            .declaration_version
+            .ok_or(CoreAgentCloneError::IncompleteDeclaredWorkflowTools)?;
         let creation_fingerprint = state
             .workflow_tools
-            .managed_creation_fingerprint
+            .declared_creation_fingerprint
             .clone()
-            .ok_or(CoreAgentCloneError::IncompleteManagedWorkflowTools)?;
+            .ok_or(CoreAgentCloneError::IncompleteDeclaredWorkflowTools)?;
         events.push(
             codec.encode_uncommitted(&UncommittedCoreAgentEvent {
                 observed_at_ms,
                 joins: CoreAgentJoins::default(),
                 event: CoreAgentEvent::WorkflowToolConfig(
-                    WorkflowToolConfigEvent::ManagedBindingsAdmitted {
+                    WorkflowToolConfigEvent::DeclaredBindingsAdmitted {
                         session_universe_id,
                         declaration_version,
                         lifecycle_controller: state.workflow_tools.lifecycle_controller.clone(),
@@ -86,12 +86,12 @@ pub fn core_agent_clone_opening_events(
                 ),
             })?,
         );
-    } else if state.workflow_tools.managed_declaration_version.is_some()
-        || state.workflow_tools.managed_creation_fingerprint.is_some()
+    } else if state.workflow_tools.declaration_version.is_some()
+        || state.workflow_tools.declared_creation_fingerprint.is_some()
         || state.workflow_tools.lifecycle_controller.is_some()
         || has_non_system_bindings
     {
-        return Err(CoreAgentCloneError::IncompleteManagedWorkflowTools);
+        return Err(CoreAgentCloneError::IncompleteDeclaredWorkflowTools);
     }
 
     let system_tool_names = state
@@ -99,7 +99,7 @@ pub fn core_agent_clone_opening_events(
         .system_binding_ids
         .iter()
         .filter_map(|tool_id| state.workflow_tools.bindings.get(tool_id))
-        .map(|binding| &binding.definition.tool.name)
+        .map(|binding| &binding.definition.tool.id)
         .collect::<std::collections::BTreeSet<_>>();
     let cloned_tools: std::collections::BTreeMap<_, _> = state
         .tooling
@@ -136,7 +136,7 @@ pub fn core_agent_clone_opening_events(
 mod tests {
     use super::*;
     use crate::{
-        ContextConfig, ManagedSessionWorkflowTools, ModelSelection, ProviderApiKind, SessionConfig,
+        ContextConfig, DeclaredSessionWorkflowTools, ModelSelection, ProviderApiKind, SessionConfig,
     };
     use uuid::Uuid;
 
@@ -150,7 +150,6 @@ mod tests {
             generation: Default::default(),
             limits: Default::default(),
             context: ContextConfig {
-                reported_input_limit_tokens: None,
                 input_limit_tokens: None,
                 compaction: None,
             },
@@ -171,36 +170,36 @@ mod tests {
         state.lifecycle.config = Some(config());
         let events = core_agent_clone_opening_events(&state, 10).expect("clone opening events");
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event.kind, "lightspeed.core.lifecycle.opened");
+        assert_eq!(events[0].event.kind, crate::event_kind::LIFECYCLE_OPENED);
         assert_eq!(events[0].observed_at_ms, 10);
     }
 
     #[test]
     fn clone_opening_events_preserve_tool_only_workflow_creation_state() {
         let universe_id = Uuid::from_u128(7);
-        let admitted = ManagedSessionWorkflowTools::v1(None, Vec::new())
+        let admitted = DeclaredSessionWorkflowTools::v1(None, Vec::new())
             .admit(universe_id)
-            .expect("managed declaration");
+            .expect("declaration");
         let mut state = CoreAgentState::new();
         state.lifecycle.config = Some(config());
         state.workflow_tools.session_universe_id = Some(admitted.session_universe_id);
-        state.workflow_tools.managed_declaration_version = Some(admitted.version);
+        state.workflow_tools.declaration_version = Some(admitted.version);
         state.workflow_tools.lifecycle_controller = admitted.lifecycle_controller;
-        state.workflow_tools.managed_creation_fingerprint = Some(admitted.creation_fingerprint);
+        state.workflow_tools.declared_creation_fingerprint = Some(admitted.creation_fingerprint);
 
         let events = core_agent_clone_opening_events(&state, 10).expect("clone opening events");
 
         assert_eq!(events.len(), 2);
         assert_eq!(
             events[1].event.kind,
-            "lightspeed.core.workflow_tool_config.managed_bindings_admitted"
+            crate::event_kind::WORKFLOW_TOOL_CONFIG_DECLARED_BINDINGS_ADMITTED
         );
     }
 
     #[test]
-    fn clone_opening_events_reject_lifecycle_managed_sessions() {
+    fn clone_opening_events_reject_lifecycle_controlled_sessions() {
         let universe_id = Uuid::from_u128(7);
-        let admitted = ManagedSessionWorkflowTools::v1(
+        let admitted = DeclaredSessionWorkflowTools::v1(
             Some(crate::WorkflowEndpointRef {
                 workflow_id: "controller/session-1".to_owned(),
                 workflow_kind: "controller.workflow.v1".to_owned(),
@@ -208,20 +207,20 @@ mod tests {
             Vec::new(),
         )
         .admit(universe_id)
-        .expect("managed declaration");
+        .expect("declaration");
         let mut state = CoreAgentState::new();
         state.lifecycle.config = Some(config());
         state.workflow_tools.session_universe_id = Some(admitted.session_universe_id);
-        state.workflow_tools.managed_declaration_version = Some(admitted.version);
+        state.workflow_tools.declaration_version = Some(admitted.version);
         state.workflow_tools.lifecycle_controller = admitted.lifecycle_controller;
-        state.workflow_tools.managed_creation_fingerprint = Some(admitted.creation_fingerprint);
+        state.workflow_tools.declared_creation_fingerprint = Some(admitted.creation_fingerprint);
 
         let error = core_agent_clone_opening_events(&state, 10)
-            .expect_err("lifecycle-managed session cannot be cloned");
+            .expect_err("lifecycle-controlled session cannot be cloned");
 
         assert!(matches!(
             error,
-            CoreAgentCloneError::LifecycleManagedSession
+            CoreAgentCloneError::LifecycleControlledSession
         ));
     }
 
@@ -231,11 +230,11 @@ mod tests {
         let mut state = CoreAgentState::new();
         state.lifecycle.config = Some(config());
         let tool = crate::WorkflowToolDefinition {
-            tool_id: crate::WorkflowToolId::new("core-job-submit"),
-            revision: 1,
+            workflow_tool_id: crate::WorkflowToolId::new("core-job-submit"),
+            schema_revision: 1,
             semantic_type: "lightspeed.environment.job.submit.v1".to_owned(),
             tool: crate::ToolSpec {
-                name: crate::ToolName::new("job_submit"),
+                id: crate::ToolId::new("job_submit"),
                 execution: Default::default(),
                 kind: crate::ToolKind::Function(crate::FunctionToolSpec {
                     description_ref: None,
@@ -253,7 +252,7 @@ mod tests {
             crate::WorkflowToolTarget::Start {
                 start: crate::WorkflowStartRef {
                     recipe_format: 1,
-                    revision: 1,
+                    recipe_revision: 1,
                     recipe_ref: crate::BlobRef::from_bytes(b"recipe"),
                     recipe_fingerprint: "recipe".to_owned(),
                 },
@@ -269,19 +268,16 @@ mod tests {
         state
             .workflow_tools
             .system_binding_ids
-            .insert(tool.tool_id.clone());
+            .insert(tool.workflow_tool_id.clone());
         state
             .workflow_tools
             .bindings
-            .insert(tool.tool_id.clone(), binding);
-        state
-            .tooling
-            .tools
-            .insert(tool.tool.name.clone(), tool.tool);
+            .insert(tool.workflow_tool_id.clone(), binding);
+        state.tooling.tools.insert(tool.tool.id.clone(), tool.tool);
 
         let events = core_agent_clone_opening_events(&state, 10).expect("clone opening events");
 
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event.kind, "lightspeed.core.lifecycle.opened");
+        assert_eq!(events[0].event.kind, crate::event_kind::LIFECYCLE_OPENED);
     }
 }

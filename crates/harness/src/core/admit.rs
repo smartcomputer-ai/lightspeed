@@ -7,8 +7,12 @@ use crate::{
     CoreAgentStatus, DomainError, PromiseEvent, PromiseResolution, RunEvent, RunRequestSource,
     RunSource, RunStatus, ToolConfigEvent, WorkflowToolConfigEvent,
     core::components::{
+        approval::pending_approval_cancellations,
         config::{validate_config_update_for_state, validate_run_config_for_state},
-        tooling::validate_tool_map,
+        context::{
+            compaction_abandoned_proposal, entries_applied_proposal, missing_steering_entries_after,
+        },
+        tooling::{open_tool_group_closing_entries, validate_tool_map},
     },
 };
 
@@ -46,15 +50,14 @@ pub fn admit_command(
             observed_at_ms,
         )
         .map_err(command_rejection_from_domain),
-        CoreAgentCommand::CloseCodeToolScope {
-            execution_id,
-            cancel,
-        } => crate::close_code_tool_scope_proposals(state, execution_id, cancel)
-            .map_err(command_rejection_from_domain),
+        CoreAgentCommand::CloseCodeToolScope { execution_id } => {
+            crate::close_code_tool_scope_proposals(state, execution_id)
+                .map_err(command_rejection_from_domain)
+        }
         CoreAgentCommand::OpenSession { mut config } => {
             if state.lifecycle.status != CoreAgentStatus::New {
                 return reject(
-                    CommandRejectionKind::CoreAgentState,
+                    CommandRejectionKind::SessionLifecycle,
                     "session can only be opened from new state",
                 );
             }
@@ -65,14 +68,14 @@ pub fn admit_command(
                 CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Opened { config }),
             )])
         }
-        CoreAgentCommand::OpenManagedSession {
+        CoreAgentCommand::OpenDeclaredSession {
             mut config,
             session_universe_id,
             workflow_tools,
         } => {
             if state.lifecycle.status != CoreAgentStatus::New {
                 return reject(
-                    CommandRejectionKind::CoreAgentState,
+                    CommandRejectionKind::SessionLifecycle,
                     "session can only be opened from new state",
                 );
             }
@@ -89,7 +92,7 @@ pub fn admit_command(
                 CoreAgentEventProposal::new(
                     CoreAgentJoins::default(),
                     CoreAgentEvent::WorkflowToolConfig(
-                        WorkflowToolConfigEvent::ManagedBindingsAdmitted {
+                        WorkflowToolConfigEvent::DeclaredBindingsAdmitted {
                             session_universe_id: admitted.session_universe_id,
                             declaration_version: admitted.version,
                             lifecycle_controller: admitted.lifecycle_controller,
@@ -112,14 +115,14 @@ pub fn admit_command(
                 declaration.completion,
             )
             .map_err(command_rejection_from_domain)?;
-            let tool_id = &binding.definition.tool_id;
+            let tool_id = &binding.definition.workflow_tool_id;
             if let Some(existing) = state.workflow_tools.bindings.get(tool_id) {
                 if existing == &binding && state.workflow_tools.system_binding_ids.contains(tool_id)
                 {
                     return Ok(Vec::new());
                 }
                 return reject(
-                    CommandRejectionKind::InvalidConfiguration,
+                    CommandRejectionKind::Invalid,
                     format!(
                         "system workflow tool {tool_id} conflicts with an existing immutable binding"
                     ),
@@ -129,13 +132,13 @@ pub fn admit_command(
                 .workflow_tools
                 .bindings
                 .values()
-                .find(|existing| existing.definition.tool.name == binding.definition.tool.name)
+                .find(|existing| existing.definition.tool.id == binding.definition.tool.id)
             {
                 return reject(
-                    CommandRejectionKind::InvalidConfiguration,
+                    CommandRejectionKind::Invalid,
                     format!(
                         "system workflow tool {tool_id} name {} collides with workflow tool {}",
-                        binding.definition.tool.name, existing.definition.tool_id
+                        binding.definition.tool.id, existing.definition.workflow_tool_id
                     ),
                 );
             }
@@ -161,7 +164,7 @@ pub fn admit_command(
                 let actual_revision = state.lifecycle.config_revision;
                 if expected_revision != actual_revision {
                     return reject(
-                        CommandRejectionKind::InvalidConfiguration,
+                        CommandRejectionKind::RevisionConflict,
                         format!(
                             "expected config revision {}, got {}",
                             expected_revision, actual_revision
@@ -175,13 +178,13 @@ pub fn admit_command(
                     "open session is missing config".to_owned(),
                 ))
             })?;
+            validate_config_update_for_state(state, &config)
+                .map_err(command_rejection_from_domain)?;
             if &config == current {
                 // Replacing with the identical document is an idempotent
                 // no-op; the revision stays untouched.
                 return Ok(Vec::new());
             }
-            validate_config_update_for_state(state, &config)
-                .map_err(command_rejection_from_domain)?;
             let revision = state
                 .lifecycle
                 .config_revision
@@ -193,10 +196,11 @@ pub fn admit_command(
                 })?;
             // The attachment list is the allowed set: an active environment
             // the new document no longer attaches is cleared in the same
-            // batch so no batch runs against an unlisted machine. The
-            // pointer is filled when an empty session gains a new default.
-            // An unchanged default does not undo an explicit deactivation
-            // during an unrelated configuration edit.
+            // batch so no batch runs against an unlisted machine. A pointer
+            // that ends up empty is then filled when the document names a new
+            // default, since choosing one is a deliberate act. An unchanged
+            // default does not undo an explicit deactivation during an
+            // unrelated configuration edit.
             let default_id = |config: &crate::SessionConfig| {
                 config
                     .features
@@ -205,24 +209,20 @@ pub fn admit_command(
                     .and_then(|environments| environments.default_attachment())
                     .map(|attachment| attachment.environment_id.clone())
             };
-            let activates_default = if state.environment.active_environment_id.is_none()
-                && default_id(&config) != default_id(current)
-            {
-                default_id(&config).map(crate::EnvironmentId::new)
-            } else {
-                None
-            };
-            let clears_active = state
-                .environment
-                .active_environment_id
-                .as_ref()
-                .is_some_and(|active| {
-                    !config
-                        .features
-                        .environments
-                        .as_ref()
-                        .is_some_and(|environments| environments.is_attached(active.as_str()))
-                });
+            let active = state.environment.active_environment_id.as_ref();
+            let clears_active = active.is_some_and(|active| {
+                !config
+                    .features
+                    .environments
+                    .as_ref()
+                    .is_some_and(|environments| environments.is_attached(active.as_str()))
+            });
+            let fills_with = default_id(&config)
+                .filter(|_| {
+                    default_id(&config) != default_id(current)
+                        && (active.is_none() || clears_active)
+                })
+                .map(crate::EnvironmentId::new);
             let mut proposals = vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
                 CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::ConfigChanged {
@@ -235,7 +235,8 @@ pub fn admit_command(
                     CoreAgentJoins::default(),
                     CoreAgentEvent::Environment(crate::EnvironmentEvent::ActiveEnvironmentCleared),
                 ));
-            } else if let Some(environment_id) = activates_default {
+            }
+            if let Some(environment_id) = fills_with {
                 proposals.push(CoreAgentEventProposal::new(
                     CoreAgentJoins::default(),
                     CoreAgentEvent::Environment(crate::EnvironmentEvent::ActiveEnvironmentSet {
@@ -281,6 +282,12 @@ pub fn admit_command(
             )?;
             validate_run_config_for_state(state, &request.run_config)
                 .map_err(command_rejection_from_domain)?;
+            if request.input_limit_tokens == Some(0) {
+                return reject(
+                    CommandRejectionKind::Invalid,
+                    "input_limit_tokens must be positive",
+                );
+            }
             let next_run_id = state.id_cursors.last_run_id.checked_add(1).ok_or_else(|| {
                 CommandError::Domain(DomainError::InvariantViolation(
                     "run id cursor exhausted".to_owned(),
@@ -290,7 +297,7 @@ pub fn admit_command(
             let RunRequestSource::Input { input } = request.source;
             if input.is_empty() {
                 return reject(
-                    CommandRejectionKind::InvariantViolation,
+                    CommandRejectionKind::Invalid,
                     "run input must contain at least one entry",
                 );
             }
@@ -309,6 +316,7 @@ pub fn admit_command(
                     submission_id: request.submission_id,
                     source,
                     run_config: request.run_config,
+                    input_limit_tokens: request.input_limit_tokens,
                     config_revision: state.lifecycle.config_revision,
                     notify_on_terminal: request.notify_on_terminal,
                     requested_by: request.requested_by,
@@ -460,9 +468,21 @@ pub fn admit_command(
         }
         CoreAgentCommand::CompactContext => {
             require_open(state)?;
-            crate::core::components::context::manual_compaction_requested_proposal(state)
-                .map(|proposal| vec![proposal])
-                .map_err(command_rejection_from_domain)
+            if state.context.compaction.is_pending() || state.context.compaction.is_queued() {
+                return reject(
+                    CommandRejectionKind::ActiveWork,
+                    "context compaction is already pending",
+                );
+            }
+            if crate::core::components::context::standalone_prefix_ids(state).is_empty() {
+                return reject(
+                    CommandRejectionKind::Refused,
+                    "no older compactable context is available",
+                );
+            }
+            Ok(vec![
+                crate::core::components::context::manual_compaction_requested_proposal(state),
+            ])
         }
         CoreAgentCommand::CloseSession { force } => {
             if force && state.lifecycle.status == crate::CoreAgentStatus::Closed {
@@ -475,6 +495,7 @@ pub fn admit_command(
                 && (state.runs.active.is_some()
                     || !state.runs.queued.is_empty()
                     || state.context.compaction.is_pending()
+                    || state.context.compaction.is_queued()
                     || state
                         .promises
                         .pending()
@@ -487,7 +508,13 @@ pub fn admit_command(
             }
             let mut proposals = Vec::new();
             if force {
+                // A closed session never compacts, so a request still open would
+                // stay open for good. Nothing else in this append reads the revision.
+                if state.context.compaction.is_pending() || state.context.compaction.is_queued() {
+                    proposals.push(compaction_abandoned_proposal(state));
+                }
                 if let Some(active_run) = state.runs.active.as_ref() {
+                    proposals.extend(pending_approval_cancellations(active_run));
                     proposals.push(CoreAgentEventProposal::new(
                         CoreAgentJoins {
                             run_id: Some(active_run.run_id),
@@ -531,6 +558,7 @@ pub fn admit_command(
         }
         CoreAgentCommand::RequestRunSteering {
             run_id,
+            submission_id,
             input,
             requested_by,
         } => {
@@ -540,6 +568,17 @@ pub fn admit_command(
                 return reject(
                     CommandRejectionKind::UnknownReference,
                     format!("steering target run {run_id} is no longer active"),
+                );
+            }
+            if let Some(existing) = active_run.steering_for_submission(&submission_id) {
+                if existing.input == input {
+                    return Ok(Vec::new());
+                }
+                return reject(
+                    CommandRejectionKind::DuplicateSubmission,
+                    format!(
+                        "submission id {submission_id} was already used with different steering input"
+                    ),
                 );
             }
             crate::core::components::context::validate_steering_input_entries(&input)
@@ -562,6 +601,7 @@ pub fn admit_command(
                 CoreAgentEvent::Run(RunEvent::SteeringAccepted {
                     run_id: active_run.run_id,
                     steering_id: crate::SteeringId::new(next_steering_id),
+                    submission_id,
                     input,
                     requested_by,
                 }),
@@ -578,7 +618,7 @@ pub fn admit_command(
                 if active_run.status == RunStatus::Cancelling {
                     return Ok(Vec::new());
                 }
-                if matches!(active_run.status, RunStatus::Active | RunStatus::Parked) {
+                if matches!(active_run.status, RunStatus::Running | RunStatus::Parked) {
                     let mut proposals = vec![CoreAgentEventProposal::new(
                         CoreAgentJoins {
                             run_id: Some(active_run.run_id),
@@ -589,18 +629,7 @@ pub fn admit_command(
                             requested_by,
                         }),
                     )];
-                    proposals.extend(active_run.pending_approvals().map(|record| {
-                        CoreAgentEventProposal::new(
-                            CoreAgentJoins {
-                                run_id: Some(run_id),
-                                ..CoreAgentJoins::default()
-                            },
-                            CoreAgentEvent::Approval(ApprovalEvent::Cancelled {
-                                approval_id: record.request.approval_id.clone(),
-                                run_id,
-                            }),
-                        )
-                    }));
+                    proposals.extend(pending_approval_cancellations(active_run));
                     return Ok(proposals);
                 }
                 return Ok(Vec::new());
@@ -659,24 +688,24 @@ pub fn admit_command(
             }
             if record.status != ApprovalStatus::Pending {
                 return reject(
-                    CommandRejectionKind::InvalidConfiguration,
+                    CommandRejectionKind::ApprovalAlreadyTerminal,
                     format!("approval {} is already terminal", command.approval_id),
                 );
             }
-            if !matches!(active_run.status, RunStatus::Active | RunStatus::Parked) {
+            if !matches!(active_run.status, RunStatus::Running | RunStatus::Parked) {
                 return reject(
                     CommandRejectionKind::ActiveWork,
                     "approval decision does not target the accepting active run",
                 );
             }
             let provider_expectation = match &record.request.continuation {
-                ApprovalContinuation::OpenAiMcp {
+                ApprovalContinuation::ProviderMcp {
                     provider_request_id,
                 } => Some((
                     provider_request_id.as_str(),
                     command.decision == crate::ApprovalDecision::Approved,
                 )),
-                ApprovalContinuation::NativeMcp { .. } => None,
+                ApprovalContinuation::RuntimeMcp { .. } => None,
             };
             if let Some((expected_provider_id, expected_approve)) = provider_expectation {
                 match command.response.as_ref().map(|response| &response.kind) {
@@ -687,15 +716,15 @@ pub fn admit_command(
                         && *approve == expected_approve => {}
                     _ => {
                         return reject(
-                            CommandRejectionKind::InvariantViolation,
+                            CommandRejectionKind::Invalid,
                             "approval response context does not match the pending continuation",
                         );
                     }
                 }
             } else if command.response.is_some() {
                 return reject(
-                    CommandRejectionKind::InvariantViolation,
-                    "native MCP approval decisions must not add provider response context",
+                    CommandRejectionKind::Invalid,
+                    "runtime MCP approval decisions must not add provider response context",
                 );
             }
             let entries = if let Some(response) = command.response {
@@ -713,6 +742,10 @@ pub fn admit_command(
             } else {
                 Vec::new()
             };
+            // The decision being admitted is the last one the run waits on.
+            let unparks = active_run.status == RunStatus::Parked
+                && active_run.parked_tool_batch.is_none()
+                && active_run.pending_approvals().count() == 1;
             let mut proposals = vec![CoreAgentEventProposal::new(
                 CoreAgentJoins {
                     run_id: Some(command.run_id),
@@ -726,6 +759,17 @@ pub fn admit_command(
                     decided_by: command.decided_by,
                 }),
             )];
+            if unparks {
+                proposals.push(CoreAgentEventProposal::new(
+                    CoreAgentJoins {
+                        run_id: Some(command.run_id),
+                        ..CoreAgentJoins::default()
+                    },
+                    CoreAgentEvent::Approval(ApprovalEvent::RunUnparked {
+                        run_id: command.run_id,
+                    }),
+                ));
+            }
             if !entries.is_empty() {
                 proposals.push(CoreAgentEventProposal::new(
                     CoreAgentJoins {
@@ -745,6 +789,11 @@ pub fn admit_command(
             resolution,
         } => {
             let Some(promise) = state.promises.promises.get(&promise_id) else {
+                // State keeps only recent terminal promises, so an old id settled long
+                // ago and this delivery is as late as one for a terminal promise.
+                if crate::core::components::promise::promise_was_pruned(state, &promise_id) {
+                    return Ok(Vec::new());
+                }
                 return reject(
                     CommandRejectionKind::UnknownReference,
                     format!("unknown promise {promise_id}"),
@@ -774,18 +823,17 @@ pub fn admit_command(
             invocation_id,
             error_ref,
         } => {
-            let Some(invocation) = state.workflow_tools.emissions.get(&invocation_id) else {
-                return reject(
-                    CommandRejectionKind::UnknownReference,
-                    format!("unknown workflow tool invocation {invocation_id}"),
-                );
+            // A finished invocation leaves state, and nothing waits on its delivery.
+            let Some(invocation) = state.workflow_tools.bound_invocations.get(&invocation_id)
+            else {
+                return Ok(Vec::new());
             };
             match state.workflow_tools.delivery_failures.get(&invocation_id) {
                 // First terminal failure won; retried admission is a no-op.
                 Some(existing) if existing == &error_ref => return Ok(Vec::new()),
                 Some(_) => {
                     return reject(
-                        CommandRejectionKind::CoreAgentState,
+                        CommandRejectionKind::Conflict,
                         format!(
                             "workflow tool invocation {invocation_id} already has a different delivery failure"
                         ),
@@ -815,18 +863,16 @@ pub fn admit_command(
             invocation_id,
             error_ref,
         } => {
+            // A finished invocation leaves state, and nothing waits on its start.
             let Some(invocation) = state.workflow_tools.start_requests.get(&invocation_id) else {
-                return reject(
-                    CommandRejectionKind::UnknownReference,
-                    format!("unknown workflow tool start intent {invocation_id}"),
-                );
+                return Ok(Vec::new());
             };
             match state.workflow_tools.start_failures.get(&invocation_id) {
                 // First terminal failure won; retried admission is a no-op.
                 Some(existing) if existing == &error_ref => return Ok(Vec::new()),
                 Some(_) => {
                     return reject(
-                        CommandRejectionKind::CoreAgentState,
+                        CommandRejectionKind::Conflict,
                         format!(
                             "workflow tool start intent {invocation_id} already has a different terminal failure"
                         ),
@@ -861,24 +907,51 @@ pub fn admit_command(
             if active_run.run_id != run_id {
                 return Ok(Vec::new());
             }
-            Ok(vec![CoreAgentEventProposal::new(
+            let mut proposals = Vec::new();
+            let closing = open_tool_group_closing_entries(state, active_run)?;
+            if !closing.is_empty() {
+                proposals.push(entries_applied_proposal(state, run_id, closing));
+            }
+            proposals.push(CoreAgentEventProposal::new(
                 CoreAgentJoins {
                     run_id: Some(run_id),
                     ..CoreAgentJoins::default()
                 },
                 CoreAgentEvent::Run(RunEvent::ForceCancelled { run_id }),
-            )])
+            ));
+            Ok(proposals)
         }
-        CoreAgentCommand::ResumeToolBatch(command) => {
+        CoreAgentCommand::FailRun {
+            run_id,
+            message_ref,
+        } => {
             require_open(state)?;
-            crate::core::drive::resume_tool_batch_proposals(state, command, observed_at_ms)
-                .map_err(command_rejection_from_domain)
+            let Some(active_run) = state
+                .runs
+                .active
+                .as_ref()
+                .filter(|run| run.run_id == run_id)
+            else {
+                return Ok(Vec::new());
+            };
+            fail_run_proposals(state, active_run, message_ref).map_err(CommandError::Domain)
+        }
+        CoreAgentCommand::UnparkToolBatch(command) => {
+            require_open(state)?;
+            if let Some(message) =
+                crate::core::drive::overtaken_unpark_claim(state, &command, observed_at_ms)
+            {
+                return reject(CommandRejectionKind::Conflict, message);
+            }
+            crate::core::drive::unpark_tool_batch_proposals(state, command)
+                .map_err(CommandError::Domain)
         }
         CoreAgentCommand::ReplaceTools {
             expected_revision,
             tools,
         } => {
             require_open(state)?;
+            require_tools_not_frozen(state)?;
             validate_expected_tool_revision(state, expected_revision)?;
             validate_tool_map(&tools).map_err(command_rejection_from_domain)?;
 
@@ -895,6 +968,7 @@ pub fn admit_command(
             patch,
         } => {
             require_open(state)?;
+            require_tools_not_frozen(state)?;
             validate_expected_tool_revision(state, expected_revision)?;
             if patch.is_empty() {
                 return Ok(Vec::new());
@@ -920,13 +994,13 @@ pub fn admit_command(
                 .and_then(|config| config.features.environments.as_ref())
             else {
                 return reject(
-                    CommandRejectionKind::InvalidConfiguration,
+                    CommandRejectionKind::Invalid,
                     "active environment requires the environments feature",
                 );
             };
             if !environments.is_attached(environment_id.as_str()) {
                 return reject(
-                    CommandRejectionKind::InvalidConfiguration,
+                    CommandRejectionKind::Invalid,
                     format!("environment {environment_id} is not attached to this session"),
                 );
             }
@@ -953,6 +1027,54 @@ pub fn admit_command(
             )])
         }
     }
+}
+
+/// One append that leaves nothing of the run for a later request to trip on: open
+/// calls answered, approvals ended, accepted steering written down, then the failure.
+/// A cancelling run's steering stays dropped, as it would have been.
+fn fail_run_proposals(
+    state: &CoreAgentState,
+    active_run: &crate::ActiveRun,
+    message_ref: crate::BlobRef,
+) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
+    let run_id = active_run.run_id;
+    let joins = CoreAgentJoins {
+        run_id: Some(run_id),
+        ..CoreAgentJoins::default()
+    };
+    let mut proposals = Vec::new();
+    let mut base_revision = state.context.revision;
+    let mut last_entry_id = state.id_cursors.last_context_entry_id;
+    let closing = open_tool_group_closing_entries(state, active_run)?;
+    if let Some(last) = closing.last() {
+        last_entry_id = last.entry_id.as_u64();
+        proposals.push(entries_applied_proposal(state, run_id, closing));
+        base_revision += 1;
+    }
+    proposals.extend(pending_approval_cancellations(active_run));
+    if active_run.status != RunStatus::Cancelling {
+        let steering = missing_steering_entries_after(state, last_entry_id)?;
+        if !steering.is_empty() {
+            proposals.push(CoreAgentEventProposal::new(
+                joins.clone(),
+                CoreAgentEvent::Context(ContextEvent::EntriesApplied {
+                    base_revision,
+                    entries: steering,
+                }),
+            ));
+        }
+    }
+    proposals.push(CoreAgentEventProposal::new(
+        joins,
+        CoreAgentEvent::Run(RunEvent::Failed {
+            run_id,
+            failure: crate::RunFailure {
+                kind: crate::RunFailureKind::Internal,
+                message_ref: Some(message_ref),
+            },
+        }),
+    ));
+    Ok(proposals)
 }
 
 fn fail_pending_completion_promises(
@@ -994,6 +1116,17 @@ fn require_no_active_or_queued_work(
     }
 }
 
+fn require_tools_not_frozen(state: &CoreAgentState) -> Result<(), CommandError> {
+    if crate::tools_frozen(state) {
+        reject(
+            CommandRejectionKind::ActiveWork,
+            "tools cannot change between a turn's start and the end of its tool batch",
+        )
+    } else {
+        Ok(())
+    }
+}
+
 fn validate_expected_tool_revision(
     state: &CoreAgentState,
     expected_revision: Option<u64>,
@@ -1002,7 +1135,7 @@ fn validate_expected_tool_revision(
         let actual_revision = state.tooling.revision;
         if expected_revision != actual_revision {
             return reject(
-                CommandRejectionKind::InvalidConfiguration,
+                CommandRejectionKind::RevisionConflict,
                 format!(
                     "expected tool revision {}, got {}",
                     expected_revision, actual_revision
@@ -1043,14 +1176,17 @@ fn require_open(state: &CoreAgentState) -> Result<(), CommandError> {
     if state.lifecycle.status == CoreAgentStatus::Open {
         Ok(())
     } else {
-        reject(CommandRejectionKind::CoreAgentState, "session must be open")
+        reject(
+            CommandRejectionKind::SessionLifecycle,
+            "session must be open",
+        )
     }
 }
 
-/// The run a steering command targets: the active run while it is `Active`
-/// or `Parked`. A parked run (model-chosen `await`) accepts steering without
-/// waking; the steering materializes in the first turn after it resumes
-/// A cancelling run no longer accepts commands.
+/// The run a steering command targets: the active run while it is `Running`
+/// or `Parked`. A parked run, waiting on approvals or a batch await, accepts
+/// steering without waking; the steering materializes at its first boundary after
+/// the park ends. A cancelling run no longer accepts commands.
 fn active_run_for_command(state: &CoreAgentState) -> Result<&crate::ActiveRun, CommandError> {
     let Some(active_run) = state.runs.active.as_ref() else {
         return reject(
@@ -1058,10 +1194,10 @@ fn active_run_for_command(state: &CoreAgentState) -> Result<&crate::ActiveRun, C
             "command requires an active run",
         );
     };
-    if !matches!(active_run.status, RunStatus::Active | RunStatus::Parked) {
+    if !matches!(active_run.status, RunStatus::Running | RunStatus::Parked) {
         return reject(
             CommandRejectionKind::ActiveWork,
-            "active run is not accepting commands",
+            "the run is cancelling and accepts no further commands",
         );
     }
     Ok(active_run)
@@ -1075,16 +1211,16 @@ fn command_rejection_from_domain(error: DomainError) -> CommandError {
     let kind = match error {
         DomainError::ProviderCompatibility(_) => CommandRejectionKind::ProviderCompatibility,
         DomainError::InvariantViolation(_) | DomainError::EventOrdering(_) => {
-            CommandRejectionKind::InvariantViolation
+            CommandRejectionKind::Invalid
         }
     };
-    CommandError::Rejected(CommandRejection::new(kind, error.to_string()))
+    CommandError::Rejected(CommandRejection::new(kind, error.message()))
 }
 
 fn unknown_reference_rejection_from_domain(error: DomainError) -> CommandError {
     CommandError::Rejected(CommandRejection::new(
         CommandRejectionKind::UnknownReference,
-        error.to_string(),
+        error.message(),
     ))
 }
 
@@ -1131,7 +1267,7 @@ mod tests {
                     status,
                     payload_ref: None,
                     error_ref: None,
-                    deadline_ms: None,
+                    deadline_at_ms: None,
                 },
             );
         }

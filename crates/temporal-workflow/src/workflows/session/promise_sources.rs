@@ -80,76 +80,84 @@ pub(super) async fn process_due(
     });
     let had_due = !due.is_empty();
 
-    for mut poll in due {
-        let check = match &poll.source {
-            harness::PromiseSource::Timer { fire_at_ms } if *fire_at_ms <= now => {
-                harness::PromiseSourceCheckResult::Resolved { payload_ref: None }
-            }
-            harness::PromiseSource::Timer { .. } => {
-                advance(&mut poll, now);
-                ctx.state_mut(|state| {
-                    state
-                        .promise_source_polls
-                        .insert(poll.promise_id.clone(), poll);
-                });
+    // All keys of an invocation describe one execution, so one answer per sweep says
+    // what a running execution's other keys would hear.
+    let mut pending_executions = BTreeSet::new();
+    for poll in due {
+        // Only started executions and timers get a poll entry.
+        let (producer_workflow_id, completion_key) = match &poll.source {
+            harness::PromiseSource::Timer { fire_at_ms } => {
+                if *fire_at_ms <= now {
+                    queue_resolution(
+                        ctx,
+                        poll.promise_id,
+                        harness::PromiseResolution::Resolved { payload_ref: None },
+                    );
+                } else {
+                    reinstall(ctx, poll);
+                }
                 continue;
             }
             harness::PromiseSource::Workflow {
                 producer_workflow_id,
-                producer_workflow_kind,
                 completion_key,
                 ..
-            } if producer_workflow_kind == harness::WORKFLOW_TOOL_EXECUTION_KIND => {
-                let check = ctx
-                    .execute_activity(
-                        WorkflowActivities::check_workflow_tool_execution,
-                        crate::WorkflowToolExecutionCheckRequest {
-                            execution_id: producer_workflow_id.clone(),
-                            completion_key: completion_key.clone(),
-                        },
-                        activity_options(),
-                    )
-                    .await
-                    .map_err(|error| anyhow::anyhow!("{error}"))?;
-                if matches!(check, harness::PromiseSourceCheckResult::Pending) {
-                    advance(&mut poll, now);
-                    ctx.state_mut(|state| {
-                        state
-                            .promise_source_polls
-                            .insert(poll.promise_id.clone(), poll);
-                    });
-                    continue;
-                }
-                check
-            }
-            harness::PromiseSource::Workflow { .. } => continue,
+            } => (producer_workflow_id.clone(), completion_key.clone()),
         };
-        match check {
-            harness::PromiseSourceCheckResult::Pending => {
-                if matches!(poll.source, harness::PromiseSource::Timer { .. }) {
-                    advance(&mut poll, now);
-                    ctx.state_mut(|state| {
-                        state
-                            .promise_source_polls
-                            .insert(poll.promise_id.clone(), poll);
-                    });
-                }
-            }
-            harness::PromiseSourceCheckResult::Resolved { payload_ref } => {
-                queue_resolution(
-                    ctx,
-                    poll.promise_id,
-                    harness::PromiseResolution::Resolved { payload_ref },
-                );
-            }
-            harness::PromiseSourceCheckResult::Failed { error_ref } => {
-                queue_resolution(
-                    ctx,
-                    poll.promise_id,
-                    harness::PromiseResolution::Failed { error_ref },
-                );
-            }
+        if pending_executions.contains(&producer_workflow_id) {
+            reinstall(ctx, poll);
+            continue;
         }
+        let check = ctx
+            .execute_activity(
+                WorkflowActivities::check_workflow_tool_execution,
+                crate::WorkflowToolExecutionCheckRequest {
+                    execution_id: producer_workflow_id.clone(),
+                    completion_key,
+                },
+                crate::recovery_poll_activity_options(),
+            )
+            .await;
+        let resolution = match check {
+            Ok(harness::PromiseSourceCheckResult::Pending) => {
+                pending_executions.insert(producer_workflow_id);
+                reinstall(ctx, poll);
+                continue;
+            }
+            // A backstop that cannot run now loses nothing by asking again later.
+            Err(error) => {
+                record_warning(
+                    ctx,
+                    format!("recovery check of execution {producer_workflow_id} failed: {error}"),
+                );
+                pending_executions.insert(producer_workflow_id);
+                reinstall(ctx, poll);
+                continue;
+            }
+            Ok(harness::PromiseSourceCheckResult::Resolved { payload_ref }) => {
+                harness::PromiseResolution::Resolved { payload_ref }
+            }
+            Ok(harness::PromiseSourceCheckResult::Failed { error_ref }) => {
+                harness::PromiseResolution::Failed { error_ref }
+            }
+        };
+        let Some((universe_id, _)) = split_workflow_id(ctx.workflow_id()) else {
+            continue;
+        };
+        // The same queue as a signal, so the reply schema applies and a signal that
+        // arrived during this check stays ahead of what the check found.
+        ctx.state_mut(|state| {
+            state
+                .pending_source_resolutions
+                .push(PendingSourceResolution {
+                    promise_id: harness::PromiseId::new(poll.promise_id),
+                    resolution,
+                    producer: harness::EmissionProducer::Workflow {
+                        universe_id,
+                        workflow_id: producer_workflow_id,
+                    },
+                });
+        });
     }
     if had_due {
         // A completed poll with its next schedule installed is a safe
@@ -162,7 +170,7 @@ pub(super) async fn process_due(
 }
 
 /// Harness-owned hard promise deadlines: a pending promise whose
-/// `deadline_ms` has passed fails through the ordinary `ResolvePromise`
+/// `deadline_at_ms` has passed fails through the ordinary `ResolvePromise`
 /// funnel (first-writer-wins keeps a racing real resolution harmless). An
 /// `await` timeout never changes the underlying promise; this is the
 /// promise's own deadline.
@@ -171,8 +179,16 @@ pub(super) fn nearest_promise_deadline_ms(state: &AgentSessionWorkflow) -> Optio
         .core_state
         .promises
         .pending()
-        .filter_map(|promise| promise.deadline_ms)
+        .filter_map(|promise| promise.deadline_at_ms)
         .min()
+}
+
+pub(super) fn has_due_promise_deadline(state: &AgentSessionWorkflow, now_ms: u64) -> bool {
+    state.core_state.promises.pending().any(|promise| {
+        promise
+            .deadline_at_ms
+            .is_some_and(|deadline| deadline <= now_ms)
+    })
 }
 
 pub(super) fn process_due_promise_deadlines(ctx: &mut WorkflowContext<AgentSessionWorkflow>) {
@@ -182,7 +198,11 @@ pub(super) fn process_due_promise_deadlines(ctx: &mut WorkflowContext<AgentSessi
             .core_state
             .promises
             .pending()
-            .filter(|promise| promise.deadline_ms.is_some_and(|deadline| deadline <= now))
+            .filter(|promise| {
+                promise
+                    .deadline_at_ms
+                    .is_some_and(|deadline| deadline <= now)
+            })
             .map(|promise| promise.promise_id.as_str().to_owned())
             .collect::<Vec<_>>()
     });
@@ -190,7 +210,9 @@ pub(super) fn process_due_promise_deadlines(ctx: &mut WorkflowContext<AgentSessi
         queue_resolution(
             ctx,
             promise_id,
-            harness::PromiseResolution::Failed { error_ref: None },
+            harness::PromiseResolution::Failed {
+                error_ref: Some(harness::promise_deadline_exceeded_ref()),
+            },
         );
     }
 }
@@ -234,7 +256,7 @@ pub(super) async fn flush_pending_promise_cancellations(
                     .external_workflow(producer_workflow_id, None)
                     .signal(
                         AgentSessionWorkflow::deliver_emission,
-                        envelope,
+                        crate::workflows::emission_signal_input(&envelope),
                         crate::workflows::signal_options(),
                     )
                     .await;
@@ -244,112 +266,159 @@ pub(super) async fn flush_pending_promise_cancellations(
     Ok(())
 }
 
-/// Producer-authorize and (optionally) schema-validate received
-/// source-resolutions, then converge them on the ordinary `ResolvePromise`
-/// admission funnel. Resolutions for non-workflow sources pass through
-/// unchanged; resolutions for workflow-tool promises must come from the
-/// exact stored producer, and `Resolved` payloads must satisfy the
-/// binding's immutable reply schema when one is declared.
+/// What the session does with one received source-resolution.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum SourceResolutionGate {
+    /// Admit it, once its refs and a declared schema pass the ingest check.
+    Admit {
+        reply_schema_ref: Option<BlobRef>,
+        text_reply: bool,
+    },
+    /// Nothing to do, and any reason is already recorded.
+    Drop,
+}
+
+/// Only the exact stored producer of a workflow-tool promise may settle it, and
+/// nothing outside the session settles a timer. A delivery for a terminal promise is
+/// the designed late reply. One for an absent promise can be late too, since state
+/// prunes old promises, so neither may disturb the session.
+pub(super) fn source_resolution_gate(
+    state: &mut AgentSessionWorkflow,
+    replaying: bool,
+    pending: &PendingSourceResolution,
+) -> SourceResolutionGate {
+    let promise_id = &pending.promise_id;
+    let Some(promise) = state.core_state.promises.promises.get(promise_id) else {
+        state.record_warning(
+            replaying,
+            format!("source resolution for unknown promise {promise_id} ignored"),
+        );
+        return SourceResolutionGate::Drop;
+    };
+    if promise.status.is_terminal() {
+        if !replaying {
+            tracing::info!(
+                target: "temporal_workflow",
+                event = "source_resolution_late",
+                promise_id = promise_id.as_str(),
+                "source resolution for a settled promise ignored"
+            );
+        }
+        return SourceResolutionGate::Drop;
+    }
+    let authorized_invocation = match &promise.source {
+        harness::PromiseSource::Workflow {
+            producer_workflow_id,
+            invocation_id,
+            ..
+        } if matches!(
+            &pending.producer,
+            harness::EmissionProducer::Workflow { workflow_id, .. }
+                if workflow_id == producer_workflow_id.as_str()
+        ) =>
+        {
+            Some(invocation_id.clone())
+        }
+        _ => None,
+    };
+    let Some(invocation_id) = authorized_invocation else {
+        state.record_warning(
+            replaying,
+            format!("unauthorized producer for promise {promise_id}"),
+        );
+        return SourceResolutionGate::Drop;
+    };
+    let tools = &state.core_state.workflow_tools;
+    let completion = harness::WorkflowToolInvocationId::try_new(invocation_id)
+        .ok()
+        .and_then(|invocation_id| {
+            tools
+                .bound_invocations
+                .get(&invocation_id)
+                .or_else(|| tools.start_requests.get(&invocation_id))
+        })
+        .and_then(|invocation| tools.bindings.get(&invocation.workflow_tool_id))
+        .map(|binding| &binding.completion);
+    let (reply_schema_ref, text_reply) = match completion {
+        Some(harness::WorkflowToolCompletion::Joined {
+            reply_schema_ref, ..
+        }) => (reply_schema_ref.clone(), true),
+        Some(harness::WorkflowToolCompletion::Promises {
+            reply_schema_ref, ..
+        }) => (reply_schema_ref.clone(), false),
+        Some(harness::WorkflowToolCompletion::Accepted) | None => (None, false),
+    };
+    SourceResolutionGate::Admit {
+        reply_schema_ref,
+        text_reply,
+    }
+}
+
+/// Whether a resolution has anything for the ingest check to look at.
+pub(super) fn resolution_needs_ingest_check(
+    reply_schema_ref: Option<&BlobRef>,
+    resolution: &harness::PromiseResolution,
+) -> bool {
+    match resolution {
+        harness::PromiseResolution::Resolved { payload_ref } => {
+            payload_ref.is_some() || reply_schema_ref.is_some()
+        }
+        harness::PromiseResolution::Failed { error_ref } => error_ref.is_some(),
+        harness::PromiseResolution::Cancelled => false,
+    }
+}
+
+/// The one way a producer's resolution enters the session. It is authorized, and its
+/// refs and declared schema are checked, before `ResolvePromise` is admitted. A reply
+/// the store could never accept or a later read could never use fails its own promise
+/// here, so nothing past this point can be blocked by what a producer sent.
 pub(super) async fn process_pending_source_resolutions(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
 ) -> anyhow::Result<()> {
-    let pending = ctx.state_mut(|state| std::mem::take(&mut state.pending_source_resolutions));
+    let pending = ctx.state_mut(|state| {
+        let pending = std::mem::take(&mut state.pending_source_resolutions);
+        // A refused producer appends nothing and its signal still grew the history.
+        state.execution_has_rollover_checkpoint |= !pending.is_empty();
+        pending
+    });
+    let replaying = ctx.is_replaying();
     for pending in pending {
+        let gate = ctx.state_mut(|state| source_resolution_gate(state, replaying, &pending));
+        let SourceResolutionGate::Admit {
+            reply_schema_ref,
+            text_reply,
+        } = gate
+        else {
+            continue;
+        };
         let PendingSourceResolution {
             promise_id,
             resolution,
-            producer,
+            ..
         } = pending;
-        let (authorized, reply_schema_ref) = ctx.state(|state| {
-            let Some(promise) = state.core_state.promises.promises.get(&promise_id) else {
-                // Unknown promises fall through to ordinary admission,
-                // which rejects them with the standard funnel semantics.
-                return (true, None);
-            };
-            let harness::PromiseSource::Workflow {
-                producer_workflow_id,
-                invocation_id,
-                ..
-            } = &promise.source
-            else {
-                return (true, None);
-            };
-            let producer_matches = matches!(
-                &producer,
-                harness::EmissionProducer::Workflow { workflow_id, .. }
-                    if workflow_id == producer_workflow_id.as_str()
-            );
-            if !producer_matches {
-                return (false, None);
-            }
-            let reply_schema_ref =
-                harness::WorkflowToolInvocationId::try_new(invocation_id.clone())
-                    .ok()
-                    .and_then(|invocation_id| {
-                        state
-                            .core_state
-                            .workflow_tools
-                            .emissions
-                            .get(&invocation_id)
-                            .or_else(|| {
-                                state
-                                    .core_state
-                                    .workflow_tools
-                                    .start_requests
-                                    .get(&invocation_id)
-                            })
-                    })
-                    .and_then(|invocation| {
-                        state
-                            .core_state
-                            .workflow_tools
-                            .bindings
-                            .get(&invocation.tool_id)
-                    })
-                    .and_then(|binding| match &binding.completion {
-                        harness::WorkflowToolCompletion::Joined {
-                            reply_schema_ref, ..
-                        }
-                        | harness::WorkflowToolCompletion::Promises {
-                            reply_schema_ref, ..
-                        } => reply_schema_ref.clone(),
-                        harness::WorkflowToolCompletion::Accepted => None,
-                    });
-            (true, reply_schema_ref)
-        });
-        if !authorized {
-            ctx.state_mut(|state| {
-                state.last_error = Some(format!(
-                    "unauthorized producer for workflow-tool promise {promise_id}"
-                ));
-            });
-            continue;
-        }
-        let resolution = match (reply_schema_ref, resolution) {
-            (Some(reply_schema_ref), harness::PromiseResolution::Resolved { payload_ref }) => {
-                let validation = ctx
-                    .execute_activity(
-                        WorkflowActivities::validate_workflow_tool_reply,
-                        crate::WorkflowToolReplyValidationRequest {
-                            reply_schema_ref,
-                            payload_ref: payload_ref.clone(),
-                        },
-                        activity_options(),
-                    )
-                    .await
-                    .map_err(|error| anyhow::anyhow!("{error}"))?;
-                match validation {
-                    crate::WorkflowToolReplyValidationResult::Valid => {
-                        harness::PromiseResolution::Resolved { payload_ref }
-                    }
-                    crate::WorkflowToolReplyValidationResult::Invalid { error_ref } => {
-                        harness::PromiseResolution::Failed {
-                            error_ref: Some(error_ref),
-                        }
+        let resolution = if resolution_needs_ingest_check(reply_schema_ref.as_ref(), &resolution) {
+            let validation = ctx
+                .execute_activity(
+                    WorkflowActivities::validate_workflow_tool_reply,
+                    crate::WorkflowToolReplyValidationRequest {
+                        resolution: resolution.clone(),
+                        reply_schema_ref,
+                        text_reply,
+                    },
+                    activity_options(),
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(errors::activity_failure_message(&error)))?;
+            match validation {
+                crate::WorkflowToolReplyValidationResult::Valid => resolution,
+                crate::WorkflowToolReplyValidationResult::Invalid { error_ref } => {
+                    harness::PromiseResolution::Failed {
+                        error_ref: Some(error_ref),
                     }
                 }
             }
-            (_, resolution) => resolution,
+        } else {
+            resolution
         };
         queue_resolution(ctx, promise_id.as_str().to_owned(), resolution);
     }
@@ -361,14 +430,14 @@ fn queue_resolution(
     promise_id: String,
     resolution: harness::PromiseResolution,
 ) {
+    let promise_id = match harness::PromiseId::try_new(promise_id) {
+        Ok(promise_id) => promise_id,
+        Err(error) => {
+            record_warning(ctx, format!("cannot queue promise resolution: {error}"));
+            return;
+        }
+    };
     ctx.state_mut(|state| {
-        let promise_id = match harness::PromiseId::try_new(promise_id) {
-            Ok(promise_id) => promise_id,
-            Err(error) => {
-                state.last_error = Some(format!("cannot queue promise resolution: {error}"));
-                return;
-            }
-        };
         state.queue_admission(AgentAdmission {
             command: CoreAgentCommand::ResolvePromise {
                 promise_id,
@@ -379,9 +448,11 @@ fn queue_resolution(
     });
 }
 
-/// The started-execution recovery poll is a slow backstop behind the
-/// primary pushed-emission path, not a delivery mechanism.
+/// The started-execution recovery poll is a backstop behind the primary
+/// pushed-emission path, not a delivery mechanism. Each poll is an activity in
+/// history, so a long-running execution is asked less and less often.
 const WORKFLOW_EXECUTION_RECOVERY_POLL_MS: u64 = 10_000;
+const WORKFLOW_EXECUTION_RECOVERY_POLL_MAX_MS: u64 = 60_000;
 
 fn initial_check_at_ms(source: &harness::PromiseSource, now_ms: u64) -> u64 {
     match source {
@@ -390,10 +461,28 @@ fn initial_check_at_ms(source: &harness::PromiseSource, now_ms: u64) -> u64 {
     }
 }
 
-fn advance(poll: &mut PromiseSourcePoll, now_ms: u64) {
+pub(super) fn advance(poll: &mut PromiseSourcePoll, now_ms: u64) {
     poll.poll_attempt = poll.poll_attempt.saturating_add(1);
     poll.next_check_at_ms = match &poll.source {
         harness::PromiseSource::Timer { fire_at_ms } => *fire_at_ms,
-        harness::PromiseSource::Workflow { .. } => now_ms + WORKFLOW_EXECUTION_RECOVERY_POLL_MS,
+        harness::PromiseSource::Workflow { .. } => {
+            let doublings = 1u64.checked_shl(poll.poll_attempt).unwrap_or(u64::MAX);
+            let backoff = WORKFLOW_EXECUTION_RECOVERY_POLL_MS
+                .saturating_mul(doublings)
+                .min(WORKFLOW_EXECUTION_RECOVERY_POLL_MAX_MS);
+            now_ms.saturating_add(backoff)
+        }
     };
+}
+
+/// Schedules from the clock as it is now, not as the sweep began: the checks ahead of
+/// this one may have held the sweep for minutes, and a backoff measured from before them
+/// would already be due, so a slow check would run back to back.
+fn reinstall(ctx: &WorkflowContext<AgentSessionWorkflow>, mut poll: PromiseSourcePoll) {
+    advance(&mut poll, workflow_time_ms(ctx));
+    ctx.state_mut(|state| {
+        state
+            .promise_source_polls
+            .insert(poll.promise_id.clone(), poll);
+    });
 }

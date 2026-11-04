@@ -10,7 +10,7 @@ use harness::{
     BlobRef, ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind,
     ContextEntrySource, ContextMessageRole, ContextSnapshot, LlmGenerationRequest,
     LlmGenerationStatus, LlmRequest, LlmUsage, ModelSelection, ProviderApiKind, RunId, SessionId,
-    ToolChoice, ToolName, ToolSpec, TurnId,
+    ToolChoice, ToolId, ToolSpec, TurnId,
     storage::{BlobStore, InMemoryBlobStore},
 };
 use llm_runtime::{LlmGenerationAdapter, OpenAiCompletionsLlmAdapter, OpenAiCompletionsParams};
@@ -124,7 +124,6 @@ fn intent_request(entries: Vec<ContextEntry>) -> LlmRequest {
         reasoning_effort: None,
         parallel_tool_use: None,
         processing_tier: None,
-        provider_response_id: None,
         compaction: None,
         params: Some(openai_completions_params(&OpenAiCompletionsParams {
             store: Some(false),
@@ -219,7 +218,7 @@ async fn weather_tool(blobs: &InMemoryBlobStore) -> ToolSpec {
         .expect("schema blob");
     let description_ref = text_blob(blobs, "Get current weather for a city").await;
     ToolSpec {
-        name: ToolName::new("get_weather"),
+        id: ToolId::new("get_weather"),
         execution: Default::default(),
         kind: harness::ToolKind::Function(harness::FunctionToolSpec {
             description_ref: Some(description_ref),

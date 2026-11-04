@@ -6,7 +6,6 @@ describe("generated universe tools", () => {
   it("contains the configured universe-method surface and no deployment methods", () => {
     const excluded = new Set([
       "initialize",
-      "session/managed/start",
       "environments/jobs/create",
       "environments/jobs/read",
       "environments/jobs/cancel",
@@ -30,7 +29,6 @@ describe("generated universe tools", () => {
     expect(GENERATED_TOOLS.map((tool) => tool.method)).not.toEqual(
       expect.arrayContaining([
         "initialize",
-        "session/managed/start",
         "environments/jobs/create",
         "environments/jobs/read",
         "environments/jobs/cancel",
@@ -38,6 +36,14 @@ describe("generated universe tools", () => {
         "environments/registration-keys/revoke",
       ]),
     );
+  });
+
+  it("leaves the integration off the session start tool and refuses it as unknown", () => {
+    const schema = GENERATED_TOOLS.find((tool) => tool.method === "session/start")?.inputSchema;
+    expect(Object.keys(schema?.properties as object)).not.toContain("integration");
+    // The generator writes `false` schemas in this form.
+    expect(schema?.additionalProperties).toEqual({ not: {} });
+    expect(Object.keys((schema?.definitions ?? {}) as object)).not.toContain("SessionIntegrationInput");
   });
 
   it("fits every injected tool name under the first-party server label", () => {

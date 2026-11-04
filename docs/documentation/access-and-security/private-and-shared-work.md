@@ -62,8 +62,7 @@ work by managing profiles or environments. Platform admins act as Admin in
 every universe.
 
 Soft deletion requires closing the session first and hides it even from universe
-Admins. A cascade must contain only closed sessions; Operators cannot include
-private forks. Permanent deletion requires a Platform admin and prior soft
+Admins. A cascade must contain only closed sessions. Permanent deletion requires a Platform admin and prior soft
 deletion. See [Sessions and runs](../using-lightspeed/sessions-and-runs.md#close-and-retain-a-session)
 for the procedure and retention behavior.
 

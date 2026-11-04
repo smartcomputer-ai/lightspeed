@@ -3,8 +3,9 @@
 //!
 //! Signals only mutate state and wake the loop; every decision that needs
 //! no I/O lives in [`state`]. The loop runs one pass per wake — teardown
-//! check, emissions, rotations, ripe buffers, idle-close sweep, descendant
-//! budget, rename, main-session reconcile, dispatch, continue-as-new — then
+//! check, emissions, dead-session sweep, rotations, ripe buffers, idle-close
+//! sweep, descendant budget, rename, main-session reconcile, dispatch,
+//! continue-as-new — then
 //! parks on a wait condition raced against the earliest deadline. Deliveries
 //! run as lanes: boxed futures polled beside whatever the loop awaits, one
 //! per target session plus one steer/append sidecar, so a stalled run
@@ -29,9 +30,10 @@ use bots::{
     BotControllerConfig, BotEvent, BotSessionRotate,
 };
 use futures::future::poll_fn;
-use futures::{FutureExt, pin_mut, select};
-use harness::{EmissionEnvelope, WorkflowEndpointRef};
+use futures::{FutureExt, pin_mut, select_biased};
+use harness::WorkflowEndpointRef;
 use serde::{Deserialize, Serialize};
+use temporalio_common::data_converters::RawValue;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ContinueAsNewOptions, SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult,
@@ -39,11 +41,11 @@ use temporalio_sdk::{
 
 use super::{
     BOT_BUSY_RETRY_DELAY, BotActivities, BotCloseSessionRequest, BotCountDescendantsRequest,
-    BotEnsureSessionRequest, BotEnsureSessionResult, BotReadJsonBlobRequest,
-    BotReadToolInvocationsRequest, BotRecordClosedRequest, BotRecordOutcomesRequest,
-    BotRenameSessionRequest, BotSessionRequest, BotSessionStatus, bot_activity_options,
+    BotEnsureSessionRequest, BotEnsureSessionResult, BotReadDeadSessionsRequest,
+    BotReadJsonBlobRequest, BotReadToolInvocationsRequest, BotRecordClosedRequest,
+    BotRecordOutcomesRequest, BotRenameSessionRequest, BotSessionStatus, bot_activity_options,
 };
-pub use state::{BotDelivery, CoalesceBuffer, ManagedSession};
+pub use state::{BotDelivery, CoalesceBuffer, ControlledSession, WaitingLane};
 use state::{
     ControllerState, DispatchAction, EmissionDisposition, LaneResolution, LaneTerminal,
     PendingInvocation, ROTATION_RETRY_DELAY_MS, resolve_invocations_for_run, used_carried_tool,
@@ -53,8 +55,9 @@ use state::{
 /// pushed-tool receiver of its sessions.
 pub const BOT_CONTROLLER_WORKFLOW_KIND: &str = "BotControllerWorkflow";
 
-/// Start argument of the controller: the bot's configuration and, after a
-/// continue-as-new, what the previous execution carried over.
+/// Start argument of the controller: the bot's configuration and what it starts
+/// from, which is the previous execution's state after a continue-as-new and
+/// the generations of the bot's retained sessions at any other start.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BotControllerArgs {
     pub config: BotControllerConfig,
@@ -67,6 +70,10 @@ pub struct BotControllerArgs {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BotControllerCarry {
+    /// Lanes parked on a run that is still going.
+    pub waiting_lanes: Vec<WaitingLane>,
+    /// The main session still owes a reconcile.
+    pub config_dirty: bool,
     pub pending_deliveries: Vec<BotDelivery>,
     pub buffers: BTreeMap<String, CoalesceBuffer>,
     pub recent_deliveries: Vec<BotRecentDeliverySnapshot>,
@@ -91,7 +98,7 @@ pub struct BotControllerCarry {
     pub budget_roots: Vec<String>,
     /// Routed sessions this controller created, capped at
     /// `BOT_EXTRA_SESSION_CAP`.
-    pub extra_sessions: Vec<ManagedSession>,
+    pub extra_sessions: Vec<ControlledSession>,
     /// Routed base id → generation, bumped each time that session closes.
     pub session_generations: BTreeMap<String, u32>,
     /// Operator rotations that have not reached an idle boundary yet.
@@ -100,6 +107,10 @@ pub struct BotControllerCarry {
     pub main_generation: u32,
     /// Tool declaration revision the main session was created under.
     pub tools_revision: Option<u32>,
+    /// Failed main-session reconciles since the last success or config signal.
+    pub reconcile_attempts: u32,
+    /// That streak has already rotated the main session once.
+    pub reconcile_rotated: bool,
 }
 
 #[workflow]
@@ -191,13 +202,11 @@ impl BotControllerWorkflow {
 
     /// Pushed `bot_*` invocations and run terminals of the bot's sessions.
     #[signal(name = "deliver_emission")]
-    pub fn deliver_emission(
-        &mut self,
-        ctx: &mut SyncWorkflowContext<Self>,
-        envelope: EmissionEnvelope,
-    ) {
+    pub fn deliver_emission(&mut self, ctx: &mut SyncWorkflowContext<Self>, emission: RawValue) {
         self.state.clock_ms = self.state.clock_ms.max(sync_now_ms(ctx));
-        self.state.queue_emission(envelope);
+        if let Ok(envelope) = crate::workflows::receive_emission(ctx, &emission) {
+            self.state.queue_emission(envelope);
+        }
     }
 
     /// Pure: derives everything from state at the last observed workflow
@@ -212,14 +221,11 @@ impl BotControllerWorkflow {
 
 async fn run_controller(ctx: &mut Ctx) -> WorkflowResult<()> {
     let ctx: &Ctx = &*ctx;
-    let mut lanes: Vec<LaneFuture> = Vec::new();
-
-    tick_clock(ctx);
-    if ctx.state(|state| state.close_requested()) {
-        teardown(ctx).await;
-        return Ok(());
-    }
-    reconcile_session(ctx).await;
+    let mut lanes: Vec<LaneFuture> = ctx
+        .state(|state| state.waiting_lanes())
+        .into_iter()
+        .map(|lane| Box::pin(lanes::resume_run_wait(ctx.clone(), lane)) as LaneFuture)
+        .collect();
 
     loop {
         tick_clock(ctx);
@@ -229,6 +235,7 @@ async fn run_controller(ctx: &mut Ctx) -> WorkflowResult<()> {
         }
         with_lanes(&mut lanes, process_emissions(ctx)).await;
         spawn_invocation_lanes(ctx, &mut lanes);
+        with_lanes(&mut lanes, sweep_dead_sessions(ctx)).await;
         with_lanes(&mut lanes, rotate_requested_sessions(ctx)).await;
         let now = now_ms(ctx);
         ctx.state_mut(|state| state.flush_ripe_buffers(now));
@@ -237,16 +244,11 @@ async fn run_controller(ctx: &mut Ctx) -> WorkflowResult<()> {
         if ctx.state(|state| state.rename_dirty) {
             with_lanes(&mut lanes, apply_display_name(ctx)).await;
         }
-        if ctx.state(|state| state.config_dirty && state.main_session_free()) {
-            // A rotated generation does not exist until reconcile creates
-            // it; only an already-ready session needs the idle check.
-            if ctx.state(|state| state.session_ready) {
-                let main = ctx.state(|state| state.main_session_id());
-                let _ = with_lanes(&mut lanes, wait_until_session_idle(ctx, &main)).await;
-            }
-            with_lanes(&mut lanes, reconcile_session(ctx)).await;
+        let now = now_ms(ctx);
+        if ctx.state(|state| state.reconcile_due(now)) {
+            with_lanes(&mut lanes, reconcile_unless_busy(ctx)).await;
         }
-        if ctx.state(|state| state.config.enabled && state.session_ready && !state.config_dirty) {
+        if ctx.state(|state| state.config.enabled) {
             let now = now_ms(ctx);
             for action in ctx.state_mut(|state| state.dispatch(now)) {
                 lanes.push(match action {
@@ -260,7 +262,7 @@ async fn run_controller(ctx: &mut Ctx) -> WorkflowResult<()> {
             }
         }
         let suggested = ctx.continue_as_new_suggested();
-        if ctx.state(|state| state.can_continue_as_new(suggested, !lanes.is_empty())) {
+        if ctx.state(|state| state.can_continue_as_new(suggested, lanes.len())) {
             return request_continue_as_new(ctx);
         }
         park(ctx, &mut lanes).await;
@@ -268,9 +270,9 @@ async fn run_controller(ctx: &mut Ctx) -> WorkflowResult<()> {
 }
 
 /// Wait for the earliest of: state the loop must act on, or the earliest
-/// time-driven deadline (buffer flush, idle-close deadline, rotation retry,
-/// UTC day boundary while budget-parked, descendant refresh). Lanes keep
-/// running underneath.
+/// time-driven deadline (buffer flush, idle-close deadline, rotation or
+/// reconcile retry, a waiting delivery, UTC day boundary while budget-parked,
+/// descendant refresh, dead-session sweep). Lanes keep running underneath.
 async fn park(ctx: &Ctx, lanes: &mut Vec<LaneFuture>) {
     let now = now_ms(ctx);
     let (lane_tick, event_tick, deadline) =
@@ -286,7 +288,7 @@ async fn park(ctx: &Ctx, lanes: &mut Vec<LaneFuture>) {
                 .fuse();
             with_lanes(lanes, async move {
                 pin_mut!(wait, timer);
-                select! {
+                select_biased! {
                     _ = wait => {}
                     _ = timer => {}
                 }
@@ -371,9 +373,11 @@ pub(super) async fn activity<AD: temporalio_common::ActivityDefinition>(
     definition: AD,
     input: AD::Input,
 ) -> Result<AD::Output, String> {
-    ctx.execute_activity(definition, input, bot_activity_options())
-        .await
-        .map_err(|error| error.to_string())
+    crate::workflows::fail_task_if_undecodable(
+        ctx.execute_activity(definition, input, bot_activity_options())
+            .await,
+    )
+    .map_err(|error| error.to_string())
 }
 
 pub(super) fn ensure_request(
@@ -409,9 +413,8 @@ pub(super) fn ensure_request(
 
 /// Drain the emission inbox: pushed invocations queue a lane, run
 /// terminals first pull the run's `bot_event_resolve` calls from the log
-/// and then attach to the lane whose delivery token they carry. Callable
-/// from a lane too (a busy-wait drains terminals for the other lanes).
-pub(super) async fn process_emissions(ctx: &Ctx) {
+/// and then attach to the lane whose delivery token they carry.
+async fn process_emissions(ctx: &Ctx) {
     while let Some(envelope) = ctx.state_mut(|state| state.emission_inbox.pop_front()) {
         let Some(disposition) = ctx.state_mut(|state| state.classify_emission(envelope)) else {
             continue;
@@ -439,6 +442,13 @@ pub(super) async fn process_emissions(ctx: &Ctx) {
                 status,
                 failure_message_ref,
             } => {
+                // With no lane on that session the delivery is between attempts, has
+                // moved on, or has settled. Reading the log now would move the cursor
+                // past calls its next attempt, or the next delivery's lane, still
+                // needs.
+                if !ctx.state(|state| state.lane_awaits_terminal_from(&session_id, &token)) {
+                    continue;
+                }
                 reconcile_run(ctx, &run_id, &session_id).await;
                 ctx.state_mut(|state| {
                     state.attach_terminal(
@@ -447,6 +457,7 @@ pub(super) async fn process_emissions(ctx: &Ctx) {
                             status,
                             run_id,
                             failure_message_ref,
+                            dead_session: None,
                         },
                     )
                 });
@@ -550,12 +561,44 @@ async fn reconcile_run(ctx: &Ctx, run_id: &str, target: &str) {
 
 // ── Sessions ────────────────────────────────────────────────────────────────
 
+/// One attempt at a dirty main session per pass. A main session running work
+/// the controller does not own, such as an operator's direct run, is read once
+/// and tried again later, so the loop keeps serving everything else meanwhile.
+/// A dead one is left behind, and reconcile creates its successor.
+async fn reconcile_unless_busy(ctx: &Ctx) {
+    // A rotated generation does not exist until reconcile creates it; only an
+    // already-ready session needs the check. A failed read says nothing about
+    // the session, and reconcile reports its own failures.
+    if ctx.state(|state| state.session_ready) {
+        let main = ctx.state(|state| state.main_session_id());
+        match lanes::read_session_status(ctx, &main).await {
+            Ok(BotSessionStatus::Busy { .. }) => {
+                let retry_at = now_ms(ctx) + BOT_BUSY_RETRY_DELAY.as_millis() as i64;
+                ctx.state_mut(|state| state.reconcile_retry_at_ms = Some(retry_at));
+                return;
+            }
+            Ok(status) if status.is_dead() => {
+                let rolled_forward = roll_forward(ctx, &main, &status).await;
+                if !rolled_forward {
+                    let now = now_ms(ctx);
+                    let message = lanes::dead_session_message(&main, &status);
+                    ctx.state_mut(|state| state.mark_session_degraded(message, now));
+                    return;
+                }
+            }
+            _ => {}
+        }
+    }
+    reconcile_session(ctx).await;
+}
+
 /// Create or bring the main session in line with the configuration. Tool
 /// declarations are immutable per session and a pinned provider api kind
 /// may refuse the new profile, so a mismatch rotates to a successor
-/// generation and retries once; any other failure degrades the
-/// controller until the next config signal.
-pub(super) async fn reconcile_session(ctx: &Ctx) -> bool {
+/// generation and retries once, and so does a session that turns out dead;
+/// any other failure degrades the controller, which tries again with a
+/// backoff or at once on the next config signal.
+async fn reconcile_session(ctx: &Ctx) {
     for attempt in 0..2 {
         let request = ctx.state(|state| {
             ensure_request(
@@ -568,57 +611,97 @@ pub(super) async fn reconcile_session(ctx: &Ctx) -> bool {
                 None,
             )
         });
-        match activity(ctx, BotActivities::ensure_session, request).await {
+        let message = match activity(ctx, BotActivities::ensure_session, request).await {
             Ok(BotEnsureSessionResult::Ready {
                 profile_revision, ..
             }) => {
                 ctx.state_mut(|state| state.mark_session_ready(profile_revision));
-                return true;
+                return;
             }
             Ok(
                 BotEnsureSessionResult::DeclarationMismatch { message }
                 | BotEnsureSessionResult::ProfileUnapplicable { message },
             ) => {
-                if attempt == 0 {
-                    ctx.state_mut(|state| state.rotate_main_session(false));
+                if attempt == 0 && ctx.state_mut(|state| state.rotate_main_for_reconcile()) {
                     continue;
                 }
-                ctx.state_mut(|state| state.mark_session_degraded(message));
-                return false;
+                message
             }
-            Err(message) => {
-                ctx.state_mut(|state| state.mark_session_degraded(message));
-                return false;
+            Ok(BotEnsureSessionResult::SessionDead { message }) => {
+                let main = ctx.state(|state| state.main_session_id());
+                if attempt == 0
+                    && !ctx.state(|state| state.reconcile_rotated)
+                    && roll_forward(ctx, &main, &BotSessionStatus::Failed).await
+                {
+                    ctx.state_mut(|state| state.reconcile_rotated = true);
+                    continue;
+                }
+                message
             }
-        }
+            Err(message) => message,
+        };
+        let now = now_ms(ctx);
+        ctx.state_mut(|state| state.mark_session_degraded(message, now));
+        return;
     }
-    false
 }
 
-/// Poll the session until it is idle, draining emissions between polls so
-/// other lanes' terminals keep landing. A closed or missing session is an
-/// error: waiting on it would never end.
-pub(super) async fn wait_until_session_idle(ctx: &Ctx, target: &str) -> Result<(), String> {
-    loop {
-        process_emissions(ctx).await;
-        let universe_id = ctx.state(|state| state.config.universe_id);
-        let status = activity(
-            ctx,
-            BotActivities::read_session_status,
-            BotSessionRequest {
-                universe_id,
-                session_id: target.to_owned(),
-            },
-        )
-        .await?;
-        match status {
-            BotSessionStatus::Idle => return Ok(()),
-            BotSessionStatus::Busy { .. } => {}
-            BotSessionStatus::Closed => return Err(format!("session {target} is closed")),
-            BotSessionStatus::Missing => return Err(format!("session {target} is missing")),
+/// Move a conversation off a dead session: close it for good, then advance its
+/// generation. The next delivery opens a successor with no context, and the old
+/// transcript stays readable. Coming back on the same session is an operator's
+/// `session/restart`, never this. `false`, with the generation unchanged, when the
+/// close failed, which is recorded: the next delivery finds the session dead again
+/// and has another try.
+pub(super) async fn roll_forward(ctx: &Ctx, session_id: &str, status: &BotSessionStatus) -> bool {
+    if needs_close_to_roll_forward(status) && !close_session(ctx, session_id, true).await {
+        return false;
+    }
+    ctx.state_mut(|state| state.roll_session_forward(session_id));
+    true
+}
+
+/// A missing session has no row left to close.
+fn needs_close_to_roll_forward(status: &BotSessionStatus) -> bool {
+    *status != BotSessionStatus::Missing
+}
+
+/// Lanes waiting on a started run hear from nothing but a run terminal, which a dead
+/// session never sends. On a slow clock, one read covers every such lane, and a dead
+/// session settles its lane `runFailed` and moves on. A live session is left alone
+/// however long its run takes, even if it is wedged: that one is an operator's to
+/// force-close, and the close sends the terminal. A failed read waits for the next
+/// sweep.
+async fn sweep_dead_sessions(ctx: &Ctx) {
+    let now = now_ms(ctx);
+    let session_ids = ctx.state_mut(|state| state.take_dead_session_sweep(now));
+    if session_ids.is_empty() {
+        return;
+    }
+    let universe_id = ctx.state(|state| state.config.universe_id);
+    let dead = match activity(
+        ctx,
+        BotActivities::read_dead_sessions,
+        BotReadDeadSessionsRequest {
+            universe_id,
+            session_ids,
+        },
+    )
+    .await
+    {
+        Ok(result) => result.dead,
+        Err(message) => {
+            ctx.state_mut(|state| state.record_error(format!("read dead sessions: {message}")));
+            return;
         }
-        ctx.timer_with_manual_cancellation(BOT_BUSY_RETRY_DELAY)
-            .await;
+    };
+    for session in dead {
+        let message = format!(
+            "{}; the run reported no end and may have partly happened",
+            lanes::dead_session_message(&session.session_id, &session.status)
+        );
+        if ctx.state_mut(|state| state.fail_lane_on_dead_session(&session.session_id, message)) {
+            roll_forward(ctx, &session.session_id, &session.status).await;
+        }
     }
 }
 
@@ -746,7 +829,7 @@ async fn refresh_descendants_today(ctx: &Ctx) {
     }
 }
 
-/// Apply a display-name change to every managed session. Label-only and
+/// Apply a display-name change to every controlled session. Label-only and
 /// best effort: a failed rename costs a stale label, never a delivery.
 async fn apply_display_name(ctx: &Ctx) {
     let targets: Vec<(String, String)> = ctx.state_mut(|state| {
@@ -847,6 +930,28 @@ mod tests {
         assert_eq!(BOT_CONFIG_SIGNAL, "bot_config");
         assert_eq!(BOT_SESSION_ROTATE_SIGNAL, "bot_session_rotate");
         assert_eq!(BOT_STATE_QUERY, "bot_state");
+    }
+
+    #[test]
+    fn only_a_missing_session_rolls_forward_without_a_close() {
+        assert!(!needs_close_to_roll_forward(&BotSessionStatus::Missing));
+        assert!(needs_close_to_roll_forward(&BotSessionStatus::Failed));
+        assert!(needs_close_to_roll_forward(&BotSessionStatus::Closed));
+    }
+
+    #[test]
+    fn controller_args_decode_from_their_identity_alone() {
+        let args: BotControllerArgs = serde_json::from_value(serde_json::json!({
+            "config": {
+                "universe_id": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f",
+                "bot_id": "triage",
+                "profile_id": "triager",
+            },
+            "carry": {},
+        }))
+        .expect("a payload already in Temporal history stopped decoding: give the new field a serde default");
+        assert_eq!(args.config.bot_id.as_str(), "triage");
+        assert_eq!(args.carry, Some(BotControllerCarry::default()));
     }
 
     #[test]

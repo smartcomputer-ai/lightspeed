@@ -5,12 +5,6 @@ use super::*;
 pub enum AgentNotification {
     #[serde(rename = "session/started")]
     SessionStarted { session: Box<SessionView> },
-    #[serde(rename = "session/status/changed")]
-    SessionStatusChanged {
-        #[serde(rename = "sessionId")]
-        session_id: SessionId,
-        status: SessionStatus,
-    },
     #[serde(rename = "session/event")]
     SessionEvent { event: Box<SessionEventView> },
     #[serde(rename = "session/runs/started")]
@@ -37,7 +31,6 @@ impl AgentNotification {
     pub fn method(&self) -> &'static str {
         match self {
             Self::SessionStarted { .. } => NOTIFY_SESSION_STARTED,
-            Self::SessionStatusChanged { .. } => NOTIFY_SESSION_STATUS_CHANGED,
             Self::SessionEvent { .. } => NOTIFY_SESSION_EVENT,
             Self::RunStarted { .. } => NOTIFY_SESSION_RUNS_STARTED,
             Self::RunCompleted { .. } => NOTIFY_SESSION_RUNS_COMPLETED,

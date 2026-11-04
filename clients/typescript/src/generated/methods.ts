@@ -8,13 +8,13 @@ export const METHODS = [
   "vfs/workspaces/files/read",
   "initialize",
   "session/start",
-  "session/managed/start",
   "session/read",
   "session/list",
   "session/config/put",
   "session/rename",
   "session/metadata/put",
   "session/retention/put",
+  "session/restart",
   "session/close",
   "session/delete",
   "session/share",
@@ -163,67 +163,67 @@ export const METHOD_INFO = {
   },
   "session/start": {
     scope: "universe",
-    access: {"action":"create_session","kind":"universe"},
-    summary: "Create or reopen a session",
-    description: "Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.",
-  },
-  "session/managed/start": {
-    scope: "universe",
-    access: {"action":"create_session","kind":"universe"},
-    summary: "Create or reopen a managed session",
-    description: "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.",
+    access: {"action":"createSession","kind":"universe"},
+    summary: "Start a session",
+    description: "Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.",
   },
   "session/read": {
     scope: "universe",
     access: {"action":"read","kind":"universe"},
     summary: "Read a session",
-    description: "Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
+    description: "Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
   },
   "session/list": {
     scope: "universe",
     access: {"action":"read","kind":"universe"},
     summary: "List sessions",
-    description: "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.",
+    description: "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by filters such as visibleTo, which keeps sessions whose root is shared with the universe or was created by that actor. An unknown parameter is refused. Pages may shift while sessions are changing.",
   },
   "session/config/put": {
     scope: "universe",
-    access: {"action":"configure_session","kind":"universe"},
+    access: {"action":"configureSession","kind":"universe"},
     summary: "Replace session configuration",
-    description: "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.",
+    description: "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.",
   },
   "session/rename": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Rename a session",
     description: "Sets the display name, or clears it when displayName is omitted.",
   },
   "session/metadata/put": {
     scope: "universe",
-    access: {"action":"configure_session","kind":"universe"},
+    access: {"action":"configureSession","kind":"universe"},
     summary: "Replace session metadata",
     description: "Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.",
   },
   "session/retention/put": {
     scope: "universe",
-    access: {"action":"set_session_retention","kind":"universe"},
+    access: {"action":"setSessionRetention","kind":"universe"},
     summary: "Replace session retention",
-    description: "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
+    description: "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
+  },
+  "session/restart": {
+    scope: "universe",
+    access: {"action":"configureSession","kind":"universe"},
+    summary: "Restart a stopped session",
+    description: "Starts a new workflow execution for an open session whose last one stopped, from its log. A run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards. A running session is left alone. Refused for a closed session and for one with no run history.",
   },
   "session/close": {
     scope: "universe",
-    access: {"action":"close_session","kind":"universe"},
+    access: {"action":"closeSession","kind":"universe"},
     summary: "Close a session",
-    description: "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
+    description: "Closes an idle session and detaches its environment bindings. Without force, active work of any kind, including a pending detached promise, rejects the call. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
   },
   "session/delete": {
     scope: "universe",
-    access: {"action":"delete_session","kind":"universe"},
+    access: {"action":"deleteSession","kind":"universe"},
     summary: "Delete closed sessions",
-    description: "Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.",
+    description: "Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.",
   },
   "session/share": {
     scope: "universe",
-    access: {"action":"share_session","kind":"universe"},
+    access: {"action":"shareSession","kind":"universe"},
     summary: "Share a session with the universe",
     description: "Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.",
   },
@@ -235,63 +235,63 @@ export const METHOD_INFO = {
   },
   "session/context/append": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Append keyed session context",
-    description: "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.",
+    description: "Admits a batch of keyed context entries with per-entry results. The same content under a key is a no-op. Different content replaces the earlier entry, which leaves active context, and goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry without discarding successful entries.",
   },
   "session/context/remove": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Remove keyed session context",
     description: "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
   },
   "session/context/replace": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Replace session context entries",
     description: "Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.",
   },
   "session/context/compact": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Compact session context",
-    description: "Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.",
+    description: "Performs one standalone compaction in any automatic mode, including Disabled, and waits for its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves the context unchanged and fails the call with its reason. A wait that runs out fails with operationPending while it can still complete; session events report the outcome.",
   },
   "session/runs/start": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Start an agent run",
-    description: "Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.",
+    description: "Returns once the run is accepted — queued behind an active run, or running — not when it finishes. A compacting session holds the request; if the wait runs out the call fails with operationPending and the submission id, and the run still starts later. Retrying with that id cannot start a second run. Follow session events or reread the session.",
   },
   "session/runs/list": {
     scope: "universe",
     access: {"action":"read","kind":"universe"},
     summary: "List session runs",
-    description: "Returns a newest-first keyset page of bounded run summaries projected from current reducer state.",
+    description: "Returns a newest-first keyset page of bounded run summaries, from current state for recent runs and from the session's log for older ones.",
   },
   "session/runs/read": {
     scope: "universe",
     access: {"action":"read","kind":"universe"},
     summary: "Read one session run",
-    description: "Reads and projects one run from its bounded event interval, paged by event sequence.",
+    description: "Projects one run from its events. A run past the server's detail limit keeps its opening and its most recent turns and sets earlierEventsOmitted; session/events/read has the rest.",
   },
   "session/runs/cancel": {
     scope: "universe",
-    access: {"action":"stop_session","kind":"universe"},
+    access: {"action":"stopSession","kind":"universe"},
     summary: "Cancel a run",
-    description: "Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
+    description: "Requests cancellation of the named queued or active run and returns its summary; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
   },
   "session/runs/approvals/decide": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Decide pending run approvals",
-    description: "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.",
+    description: "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision. A decision whose wait runs out reports status pending and can still apply.",
   },
   "session/runs/steer": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Steer the active run",
-    description: "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.",
+    description: "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. A parked run holds it without waking. Rejected for queued, cancelling, or finished runs. Supply submissionId so a retry lands once; a wait that runs out fails with operationPending and the steering can still land.",
   },
   "session/skills/list": {
     scope: "universe",
@@ -301,43 +301,43 @@ export const METHOD_INFO = {
   },
   "session/profiles/apply": {
     scope: "universe",
-    access: {"action":"configure_session","kind":"universe"},
+    access: {"action":"configureSession","kind":"universe"},
     summary: "Apply a profile to a session",
     description: "Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
   },
   "session/environments/activate": {
     scope: "universe",
-    access: {"action":"configure_session","kind":"universe"},
+    access: {"action":"configureSession","kind":"universe"},
     summary: "Activate a session environment",
     description: "Selects an attached, live universe environment for environment-targeted tools while the session is idle.",
   },
   "session/environments/deactivate": {
     scope: "universe",
-    access: {"action":"configure_session","kind":"universe"},
+    access: {"action":"configureSession","kind":"universe"},
     summary: "Deactivate the session environment",
     description: "Clears active environment selection without changing or closing the universe environment.",
   },
   "environments/credentials/bind": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Bind a credential into an environment",
     description: "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
   },
   "environments/credentials/list": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "List environment credential bindings",
     description: "Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.",
   },
   "environments/credentials/unbind": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Unbind an environment credential",
     description: "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
   },
   "environments/create": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Create an environment",
     description: "Creates a provisioned environment, attributed to the caller, from a template of a provider enabled for the universe. Idempotent per requestId: same inputs, same environment; others conflict. Provisioning until the target's first envd handshake, then open; idle overrides the template default.",
   },
@@ -349,7 +349,7 @@ export const METHOD_INFO = {
   },
   "environments/update": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Update an environment",
     description: "Replaces the display name and caller metadata of an environment of any kind. Refused for a closed environment.",
   },
@@ -361,25 +361,25 @@ export const METHOD_INFO = {
   },
   "environments/close": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Close an environment",
     description: "Closes an environment; idempotent. A provisioned environment moves to closing while Lightspeed asks its provider to remove the target, retrying until it is gone, then closed. External and registered environments close at once, and a connected registered daemon is told its environment closed.",
   },
   "environments/external/create": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Register an external environment",
     description: "Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use.",
   },
   "environments/ingress/put": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Configure environment public ingress",
     description: "Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.",
   },
   "environments/power/put": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Set environment power",
     description: "Synchronously moves an open provisioned environment's target to running, paused, suspended, or stopped via its provider and records the observation; the provider may also change power on idle. Rejected without provider power control or when the template lacks the state; an internal error, safe to retry, when the provider is unreachable or times out.",
   },
@@ -409,9 +409,9 @@ export const METHOD_INFO = {
   },
   "environments/jobs/create": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Create environment jobs",
-    description: "Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environment_not_ready while it wakes or reconnects; retry with backoff.",
+    description: "Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environmentNotReady while it wakes or reconnects; retry with backoff.",
   },
   "environments/jobs/read": {
     scope: "universe",
@@ -421,49 +421,49 @@ export const METHOD_INFO = {
   },
   "environments/jobs/cancel": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Cancel environment jobs",
     description: "Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.",
   },
   "environments/registration-keys/create": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Mint an environment registration key",
     description: "Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode (immutable), active limit, disconnect grace, offline close-after, and expiry are the key's policy. Treat the secret like a cluster-join credential.",
   },
   "environments/registration-keys/read": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Read an environment registration key",
     description: "Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.",
   },
   "environments/registration-keys/list": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "List environment registration keys",
     description: "Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted.",
   },
   "environments/registration-keys/update": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Update an environment registration key",
     description: "Replaces a key's editable policy: display name, active limit, disconnect grace, offline close-after, and expiry; an omitted field is unset. The identity mode is immutable. The active limit and expiry apply to later admissions; a changed disconnect grace or offline close-after applies at the next sweep to environments whose daemon is away.",
   },
   "environments/registration-keys/rotate": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Rotate an environment registration key",
     description: "Replaces the key's secret and display prefix and retires the old secret at once. The key keeps its id, group, policy, and the environments it admitted; daemons already registered are unaffected because they never present the key again. Returns the new secret once. Refused for a revoked key.",
   },
   "environments/registration-keys/revoke": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Revoke an environment registration key",
     description: "Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.",
   },
   "transcriptions/start": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Start transcription",
     description: "Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created.",
   },
@@ -475,7 +475,7 @@ export const METHOD_INFO = {
   },
   "transcriptions/cancel": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Cancel transcription",
     description: "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.",
   },
@@ -487,7 +487,7 @@ export const METHOD_INFO = {
   },
   "models/defaults/put": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Set a universe model default",
     description: "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
   },
@@ -499,7 +499,7 @@ export const METHOD_INFO = {
   },
   "profiles/create": {
     scope: "universe",
-    access: {"action":"create_profile","kind":"universe"},
+    access: {"action":"createProfile","kind":"universe"},
     summary: "Create an agent profile",
     description: "Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.",
   },
@@ -517,19 +517,19 @@ export const METHOD_INFO = {
   },
   "profiles/put": {
     scope: "universe",
-    access: {"action":"manage_profile","kind":"universe"},
+    access: {"action":"manageProfile","kind":"universe"},
     summary: "Create or replace an agent profile",
     description: "Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.",
   },
   "profiles/delete": {
     scope: "universe",
-    access: {"action":"manage_profile","kind":"universe"},
+    access: {"action":"manageProfile","kind":"universe"},
     summary: "Delete an agent profile",
     description: "Deletes the catalog document; sessions previously created or configured from it retain their materialized state.",
   },
   "blobs/put": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Store content-addressed blobs",
     description: "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
   },
@@ -547,7 +547,7 @@ export const METHOD_INFO = {
   },
   "vfs/snapshots/commit": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Commit a VFS snapshot",
     description: "Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.",
   },
@@ -559,7 +559,7 @@ export const METHOD_INFO = {
   },
   "vfs/workspaces/create": {
     scope: "universe",
-    access: {"action":"create_workspace","kind":"universe"},
+    access: {"action":"createWorkspace","kind":"universe"},
     summary: "Create a mutable VFS workspace",
     description: "Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.",
   },
@@ -577,31 +577,31 @@ export const METHOD_INFO = {
   },
   "vfs/workspaces/update": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Update a VFS workspace",
     description: "Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.",
   },
   "vfs/workspaces/delete": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Delete a VFS workspace",
     description: "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.",
   },
   "mcp/servers/put": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Create or replace an MCP server record",
-    description: "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.",
+    description: "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.",
   },
   "mcp/servers/auth/discover": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Discover MCP server authentication",
     description: "Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.",
   },
   "mcp/servers/tools/discover": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Discover MCP server tools",
     description: "Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.",
   },
@@ -619,13 +619,13 @@ export const METHOD_INFO = {
   },
   "mcp/servers/delete": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Delete an MCP server record",
     description: "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.",
   },
   "auth/grants/import": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Import a static bearer grant",
     description: "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
   },
@@ -649,13 +649,13 @@ export const METHOD_INFO = {
   },
   "auth/grants/revoke": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Revoke an authentication grant",
     description: "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
   },
   "auth/clients/create": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Register an OAuth client",
     description: "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
   },
@@ -673,25 +673,25 @@ export const METHOD_INFO = {
   },
   "auth/clients/delete": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Delete an OAuth client",
     description: "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
   },
   "auth/flows/start": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Start an OAuth authorization flow",
     description: "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
   },
   "auth/flows/read": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Read OAuth flow status",
     description: "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
   },
   "auth/providers/create": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Register an authentication provider",
     description: "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
   },
@@ -709,31 +709,31 @@ export const METHOD_INFO = {
   },
   "auth/providers/delete": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Delete an authentication provider",
     description: "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
   },
   "auth/github/installations/list": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "List GitHub App installations",
     description: "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
   },
   "auth/github/installations/grant": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Grant access to a GitHub App installation",
     description: "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
   },
   "bots/create": {
     scope: "universe",
-    access: {"action":"create_bot","kind":"universe"},
+    access: {"action":"createBot","kind":"universe"},
     summary: "Create a bot",
     description: "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.",
   },
   "bots/put": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Create or replace a bot document",
     description: "Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.",
   },
@@ -751,13 +751,13 @@ export const METHOD_INFO = {
   },
   "bots/close": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Close a bot",
     description: "Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.",
   },
   "bots/delete": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Delete a bot",
     description: "Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.",
   },
@@ -769,13 +769,13 @@ export const METHOD_INFO = {
   },
   "bots/sessions/rotate": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Rotate a bot session",
     description: "Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.",
   },
   "bots/triggers/put": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Create or replace a trigger",
     description: "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.",
   },
@@ -793,19 +793,19 @@ export const METHOD_INFO = {
   },
   "bots/triggers/delete": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Delete a trigger",
     description: "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.",
   },
   "bots/events/admit": {
     scope: "universe",
-    access: {"action":"invoke_bot","kind":"universe"},
+    access: {"action":"invokeBot","kind":"universe"},
     summary: "Admit an event manually",
     description: "Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.",
   },
   "bots/events/replay": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Replay a stored event",
     description: "Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.",
   },
@@ -823,19 +823,19 @@ export const METHOD_INFO = {
   },
   "bots/filters/test": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Test a CEL filter",
     description: "Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.",
   },
   "channels/accounts/create": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Create a channel account",
     description: "Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.",
   },
   "channels/accounts/put": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Create or replace a channel account",
     description: "Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.",
   },
@@ -853,7 +853,7 @@ export const METHOD_INFO = {
   },
   "channels/accounts/delete": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Delete a channel account",
     description: "Removes the account and its pairings; chat triggers that reference it stop serving conversations.",
   },
@@ -871,7 +871,7 @@ export const METHOD_INFO = {
   },
   "channels/pairings/delete": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Unpair a conversation",
     description: "Removes one pairing; the conversation must present the pairing code again to reconnect.",
   },
@@ -957,7 +957,7 @@ export const METHOD_INFO = {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Put an environment provider",
-    description: "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalid_request, unreachable is accepted. The provider never calls Lightspeed.",
+    description: "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.",
   },
   "deployment/environment-providers/list": {
     scope: "deployment",
@@ -999,7 +999,6 @@ export const METHOD_INFO = {
 
 export const NOTIFICATIONS = [
   "session/started",
-  "session/status/changed",
   "session/event",
   "session/runs/started",
   "session/runs/completed",
@@ -1029,27 +1028,18 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfInitializeResponse;
   };
   /**
-   * Create or reopen a session
+   * Start a session
    *
-   * Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.
+   * Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.
    */
   "session/start": {
     params: Api.SessionStartParams;
     result: Api.AgentApiOutcomeOfSessionStartResponse;
   };
   /**
-   * Create or reopen a managed session
-   *
-   * Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.
-   */
-  "session/managed/start": {
-    params: Api.ManagedSessionStartParams;
-    result: Api.AgentApiOutcomeOfSessionStartResponse;
-  };
-  /**
    * Read a session
    *
-   * Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
+   * Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
    */
   "session/read": {
     params: Api.SessionReadParams;
@@ -1058,7 +1048,7 @@ export interface MethodMap {
   /**
    * List sessions
    *
-   * Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.
+   * Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by filters such as visibleTo, which keeps sessions whose root is shared with the universe or was created by that actor. An unknown parameter is refused. Pages may shift while sessions are changing.
    */
   "session/list": {
     params: Api.SessionListParams;
@@ -1067,7 +1057,7 @@ export interface MethodMap {
   /**
    * Replace session configuration
    *
-   * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.
+   * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.
    */
   "session/config/put": {
     params: Api.SessionConfigPutParams;
@@ -1094,16 +1084,25 @@ export interface MethodMap {
   /**
    * Replace session retention
    *
-   * Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
+   * Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
    */
   "session/retention/put": {
     params: Api.SessionRetentionPutParams;
     result: Api.AgentApiOutcomeOfSessionRetentionPutResponse;
   };
   /**
+   * Restart a stopped session
+   *
+   * Starts a new workflow execution for an open session whose last one stopped, from its log. A run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards. A running session is left alone. Refused for a closed session and for one with no run history.
+   */
+  "session/restart": {
+    params: Api.SessionRestartParams;
+    result: Api.AgentApiOutcomeOfSessionRestartResponse;
+  };
+  /**
    * Close a session
    *
-   * Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
+   * Closes an idle session and detaches its environment bindings. Without force, active work of any kind, including a pending detached promise, rejects the call. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
    */
   "session/close": {
     params: Api.SessionCloseParams;
@@ -1112,7 +1111,7 @@ export interface MethodMap {
   /**
    * Delete closed sessions
    *
-   * Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.
+   * Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.
    */
   "session/delete": {
     params: Api.SessionDeleteParams;
@@ -1139,7 +1138,7 @@ export interface MethodMap {
   /**
    * Append keyed session context
    *
-   * Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.
+   * Admits a batch of keyed context entries with per-entry results. The same content under a key is a no-op. Different content replaces the earlier entry, which leaves active context, and goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry without discarding successful entries.
    */
   "session/context/append": {
     params: Api.ContextAppendParams;
@@ -1166,7 +1165,7 @@ export interface MethodMap {
   /**
    * Compact session context
    *
-   * Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.
+   * Performs one standalone compaction in any automatic mode, including Disabled, and waits for its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves the context unchanged and fails the call with its reason. A wait that runs out fails with operationPending while it can still complete; session events report the outcome.
    */
   "session/context/compact": {
     params: Api.ContextCompactParams;
@@ -1175,7 +1174,7 @@ export interface MethodMap {
   /**
    * Start an agent run
    *
-   * Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.
+   * Returns once the run is accepted — queued behind an active run, or running — not when it finishes. A compacting session holds the request; if the wait runs out the call fails with operationPending and the submission id, and the run still starts later. Retrying with that id cannot start a second run. Follow session events or reread the session.
    */
   "session/runs/start": {
     params: Api.RunStartParams;
@@ -1184,7 +1183,7 @@ export interface MethodMap {
   /**
    * List session runs
    *
-   * Returns a newest-first keyset page of bounded run summaries projected from current reducer state.
+   * Returns a newest-first keyset page of bounded run summaries, from current state for recent runs and from the session's log for older ones.
    */
   "session/runs/list": {
     params: Api.RunListParams;
@@ -1193,7 +1192,7 @@ export interface MethodMap {
   /**
    * Read one session run
    *
-   * Reads and projects one run from its bounded event interval, paged by event sequence.
+   * Projects one run from its events. A run past the server's detail limit keeps its opening and its most recent turns and sets earlierEventsOmitted; session/events/read has the rest.
    */
   "session/runs/read": {
     params: Api.RunReadParams;
@@ -1202,7 +1201,7 @@ export interface MethodMap {
   /**
    * Cancel a run
    *
-   * Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.
+   * Requests cancellation of the named queued or active run and returns its summary; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.
    */
   "session/runs/cancel": {
     params: Api.RunCancelParams;
@@ -1211,7 +1210,7 @@ export interface MethodMap {
   /**
    * Decide pending run approvals
    *
-   * Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.
+   * Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision. A decision whose wait runs out reports status pending and can still apply.
    */
   "session/runs/approvals/decide": {
     params: Api.RunApprovalsDecideParams;
@@ -1220,7 +1219,7 @@ export interface MethodMap {
   /**
    * Steer the active run
    *
-   * Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.
+   * Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. A parked run holds it without waking. Rejected for queued, cancelling, or finished runs. Supply submissionId so a retry lands once; a wait that runs out fails with operationPending and the steering can still land.
    */
   "session/runs/steer": {
     params: Api.RunSteerParams;
@@ -1400,7 +1399,7 @@ export interface MethodMap {
   /**
    * Create environment jobs
    *
-   * Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environment_not_ready while it wakes or reconnects; retry with backoff.
+   * Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environmentNotReady while it wakes or reconnects; retry with backoff.
    */
   "environments/jobs/create": {
     params: Api.EnvironmentJobCreateParams;
@@ -1670,7 +1669,7 @@ export interface MethodMap {
   /**
    * Create or replace an MCP server record
    *
-   * Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.
+   * Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.
    */
   "mcp/servers/put": {
     params: Api.McpServerPutParams;
@@ -2219,7 +2218,7 @@ export interface MethodMap {
   /**
    * Put an environment provider
    *
-   * Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalid_request, unreachable is accepted. The provider never calls Lightspeed.
+   * Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.
    */
   "deployment/environment-providers/put": {
     params: Api.DeploymentEnvironmentProviderPutParams;
@@ -2283,1138 +2282,3 @@ export interface MethodMap {
 
 export type MethodParams<M extends Method> = MethodMap[M]["params"];
 export type MethodResult<M extends Method> = MethodMap[M]["result"];
-
-export interface RpcCaller {
-  call<M extends Method>(method: M, params: MethodParams<M>): Promise<MethodResult<M>>;
-}
-
-export const rpc = {
-  /**
-   * Read a workspace file
-   *
-   * Reads bytes at a path in the current workspace head.
-   */
-  vfsWorkspacesFilesRead(client: RpcCaller, params: Api.VfsWorkspaceFileReadParams): Promise<Api.AgentApiOutcomeOfBlobReadResponse> {
-    return client.call("vfs/workspaces/files/read", params);
-  },
-  /**
-   * Inspect the Lightspeed protocol
-   *
-   * Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.
-   */
-  initialize(client: RpcCaller, params: Api.InitializeParams): Promise<Api.AgentApiOutcomeOfInitializeResponse> {
-    return client.call("initialize", params);
-  },
-  /**
-   * Create or reopen a session
-   *
-   * Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.
-   */
-  sessionStart(client: RpcCaller, params: Api.SessionStartParams): Promise<Api.AgentApiOutcomeOfSessionStartResponse> {
-    return client.call("session/start", params);
-  },
-  /**
-   * Create or reopen a managed session
-   *
-   * Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.
-   */
-  sessionManagedStart(client: RpcCaller, params: Api.ManagedSessionStartParams): Promise<Api.AgentApiOutcomeOfSessionStartResponse> {
-    return client.call("session/managed/start", params);
-  },
-  /**
-   * Read a session
-   *
-   * Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
-   */
-  sessionRead(client: RpcCaller, params: Api.SessionReadParams): Promise<Api.AgentApiOutcomeOfSessionReadResponse> {
-    return client.call("session/read", params);
-  },
-  /**
-   * List sessions
-   *
-   * Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.
-   */
-  sessionList(client: RpcCaller, params: Api.SessionListParams): Promise<Api.AgentApiOutcomeOfSessionListResponse> {
-    return client.call("session/list", params);
-  },
-  /**
-   * Replace session configuration
-   *
-   * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.
-   */
-  sessionConfigPut(client: RpcCaller, params: Api.SessionConfigPutParams): Promise<Api.AgentApiOutcomeOfSessionConfigPutResponse> {
-    return client.call("session/config/put", params);
-  },
-  /**
-   * Rename a session
-   *
-   * Sets the display name, or clears it when displayName is omitted.
-   */
-  sessionRename(client: RpcCaller, params: Api.SessionRenameParams): Promise<Api.AgentApiOutcomeOfSessionRenameResponse> {
-    return client.call("session/rename", params);
-  },
-  /**
-   * Replace session metadata
-   *
-   * Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.
-   */
-  sessionMetadataPut(client: RpcCaller, params: Api.SessionMetadataPutParams): Promise<Api.AgentApiOutcomeOfSessionMetadataPutResponse> {
-    return client.call("session/metadata/put", params);
-  },
-  /**
-   * Replace session retention
-   *
-   * Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
-   */
-  sessionRetentionPut(client: RpcCaller, params: Api.SessionRetentionPutParams): Promise<Api.AgentApiOutcomeOfSessionRetentionPutResponse> {
-    return client.call("session/retention/put", params);
-  },
-  /**
-   * Close a session
-   *
-   * Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
-   */
-  sessionClose(client: RpcCaller, params: Api.SessionCloseParams): Promise<Api.AgentApiOutcomeOfSessionCloseResponse> {
-    return client.call("session/close", params);
-  },
-  /**
-   * Delete closed sessions
-   *
-   * Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.
-   */
-  sessionDelete(client: RpcCaller, params: Api.SessionDeleteParams): Promise<Api.AgentApiOutcomeOfSessionDeleteResponse> {
-    return client.call("session/delete", params);
-  },
-  /**
-   * Share a session with the universe
-   *
-   * Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.
-   */
-  sessionShare(client: RpcCaller, params: Api.SessionShareParams): Promise<Api.AgentApiOutcomeOfSessionShareResponse> {
-    return client.call("session/share", params);
-  },
-  /**
-   * Read the session event stream
-   *
-   * Returns chronological events. Forward (default) follows after and supports long-polling. Backward reads the latest window below before (or the head); pass nextCursor as before until complete. Follow live events after the initial backward headCursor. Windows may split runs/tool batches; keep historical reconstruction separate from live controls.
-   */
-  sessionEventsRead(client: RpcCaller, params: Api.SessionEventsReadParams): Promise<Api.AgentApiOutcomeOfSessionEventsReadResponse> {
-    return client.call("session/events/read", params);
-  },
-  /**
-   * Append keyed session context
-   *
-   * Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.
-   */
-  sessionContextAppend(client: RpcCaller, params: Api.ContextAppendParams): Promise<Api.AgentApiOutcomeOfContextAppendResponse> {
-    return client.call("session/context/append", params);
-  },
-  /**
-   * Remove keyed session context
-   *
-   * Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.
-   */
-  sessionContextRemove(client: RpcCaller, params: Api.ContextRemoveParams): Promise<Api.AgentApiOutcomeOfContextRemoveResponse> {
-    return client.call("session/context/remove", params);
-  },
-  /**
-   * Replace session context entries
-   *
-   * Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.
-   */
-  sessionContextReplace(client: RpcCaller, params: Api.ContextReplaceParams): Promise<Api.AgentApiOutcomeOfContextReplaceResponse> {
-    return client.call("session/context/replace", params);
-  },
-  /**
-   * Compact session context
-   *
-   * Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.
-   */
-  sessionContextCompact(client: RpcCaller, params: Api.ContextCompactParams): Promise<Api.AgentApiOutcomeOfContextCompactResponse> {
-    return client.call("session/context/compact", params);
-  },
-  /**
-   * Start an agent run
-   *
-   * Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.
-   */
-  sessionRunsStart(client: RpcCaller, params: Api.RunStartParams): Promise<Api.AgentApiOutcomeOfRunStartResponse> {
-    return client.call("session/runs/start", params);
-  },
-  /**
-   * List session runs
-   *
-   * Returns a newest-first keyset page of bounded run summaries projected from current reducer state.
-   */
-  sessionRunsList(client: RpcCaller, params: Api.RunListParams): Promise<Api.AgentApiOutcomeOfRunListResponse> {
-    return client.call("session/runs/list", params);
-  },
-  /**
-   * Read one session run
-   *
-   * Reads and projects one run from its bounded event interval, paged by event sequence.
-   */
-  sessionRunsRead(client: RpcCaller, params: Api.RunReadParams): Promise<Api.AgentApiOutcomeOfRunReadResponse> {
-    return client.call("session/runs/read", params);
-  },
-  /**
-   * Cancel a run
-   *
-   * Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.
-   */
-  sessionRunsCancel(client: RpcCaller, params: Api.RunCancelParams): Promise<Api.AgentApiOutcomeOfRunCancelResponse> {
-    return client.call("session/runs/cancel", params);
-  },
-  /**
-   * Decide pending run approvals
-   *
-   * Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.
-   */
-  sessionRunsApprovalsDecide(client: RpcCaller, params: Api.RunApprovalsDecideParams): Promise<Api.AgentApiOutcomeOfRunApprovalsDecideResponse> {
-    return client.call("session/runs/approvals/decide", params);
-  },
-  /**
-   * Steer the active run
-   *
-   * Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.
-   */
-  sessionRunsSteer(client: RpcCaller, params: Api.RunSteerParams): Promise<Api.AgentApiOutcomeOfRunSteerResponse> {
-    return client.call("session/runs/steer", params);
-  },
-  /**
-   * List available session skills
-   *
-   * Returns separate VFS and environment catalogs with source, reference, availability, readable skill paths, and warnings. Refreshes only when open with no active or queued run, without waking environments. Absent catalogs are omitted.
-   */
-  sessionSkillsList(client: RpcCaller, params: Api.SkillListParams): Promise<Api.AgentApiOutcomeOfSkillListResponse> {
-    return client.call("session/skills/list", params);
-  },
-  /**
-   * Apply a profile to a session
-   *
-   * Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.
-   */
-  sessionProfilesApply(client: RpcCaller, params: Api.ProfileApplyParams): Promise<Api.AgentApiOutcomeOfProfileApplyResponse> {
-    return client.call("session/profiles/apply", params);
-  },
-  /**
-   * Activate a session environment
-   *
-   * Selects an attached, live universe environment for environment-targeted tools while the session is idle.
-   */
-  sessionEnvironmentsActivate(client: RpcCaller, params: Api.SessionEnvironmentActivateParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentActivateResponse> {
-    return client.call("session/environments/activate", params);
-  },
-  /**
-   * Deactivate the session environment
-   *
-   * Clears active environment selection without changing or closing the universe environment.
-   */
-  sessionEnvironmentsDeactivate(client: RpcCaller, params: Api.SessionEnvironmentDeactivateParams): Promise<Api.AgentApiOutcomeOfSessionEnvironmentDeactivateResponse> {
-    return client.call("session/environments/deactivate", params);
-  },
-  /**
-   * Bind a credential into an environment
-   *
-   * Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.
-   */
-  environmentsCredentialsBind(client: RpcCaller, params: Api.EnvironmentCredentialBindParams): Promise<Api.AgentApiOutcomeOfEnvironmentCredentialBindResponse> {
-    return client.call("environments/credentials/bind", params);
-  },
-  /**
-   * List environment credential bindings
-   *
-   * Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.
-   */
-  environmentsCredentialsList(client: RpcCaller, params: Api.EnvironmentCredentialListParams): Promise<Api.AgentApiOutcomeOfEnvironmentCredentialListResponse> {
-    return client.call("environments/credentials/list", params);
-  },
-  /**
-   * Unbind an environment credential
-   *
-   * Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.
-   */
-  environmentsCredentialsUnbind(client: RpcCaller, params: Api.EnvironmentCredentialUnbindParams): Promise<Api.AgentApiOutcomeOfEnvironmentCredentialUnbindResponse> {
-    return client.call("environments/credentials/unbind", params);
-  },
-  /**
-   * Create an environment
-   *
-   * Creates a provisioned environment, attributed to the caller, from a template of a provider enabled for the universe. Idempotent per requestId: same inputs, same environment; others conflict. Provisioning until the target's first envd handshake, then open; idle overrides the template default.
-   */
-  environmentsCreate(client: RpcCaller, params: Api.EnvironmentCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentCreateResponse> {
-    return client.call("environments/create", params);
-  },
-  /**
-   * Read an environment
-   *
-   * Returns one environment: its source, lifecycle state, derived display status, state message, close reason, daemon build, and the latest provider observation.
-   */
-  environmentsRead(client: RpcCaller, params: Api.EnvironmentReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentReadResponse> {
-    return client.call("environments/read", params);
-  },
-  /**
-   * Update an environment
-   *
-   * Replaces the display name and caller metadata of an environment of any kind. Refused for a closed environment.
-   */
-  environmentsUpdate(client: RpcCaller, params: Api.EnvironmentUpdateParams): Promise<Api.AgentApiOutcomeOfEnvironmentUpdateResponse> {
-    return client.call("environments/update", params);
-  },
-  /**
-   * List environments
-   *
-   * Lists the universe environments in id order, one page at a time, optionally filtered by provider, registration key, state, or metadata. Closed environments are omitted unless includeClosed is set or state is closed. Continue from nextAfter.
-   */
-  environmentsList(client: RpcCaller, params: Api.EnvironmentListParams): Promise<Api.AgentApiOutcomeOfEnvironmentListResponse> {
-    return client.call("environments/list", params);
-  },
-  /**
-   * Close an environment
-   *
-   * Closes an environment; idempotent. A provisioned environment moves to closing while Lightspeed asks its provider to remove the target, retrying until it is gone, then closed. External and registered environments close at once, and a connected registered daemon is told its environment closed.
-   */
-  environmentsClose(client: RpcCaller, params: Api.EnvironmentCloseParams): Promise<Api.AgentApiOutcomeOfEnvironmentCloseResponse> {
-    return client.call("environments/close", params);
-  },
-  /**
-   * Register an external environment
-   *
-   * Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use.
-   */
-  environmentsExternalCreate(client: RpcCaller, params: Api.EnvironmentExternalCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentExternalCreateResponse> {
-    return client.call("environments/external/create", params);
-  },
-  /**
-   * Configure environment public ingress
-   *
-   * Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.
-   */
-  environmentsIngressPut(client: RpcCaller, params: Api.EnvironmentIngressPutParams): Promise<Api.AgentApiOutcomeOfEnvironmentIngressPutResponse> {
-    return client.call("environments/ingress/put", params);
-  },
-  /**
-   * Set environment power
-   *
-   * Synchronously moves an open provisioned environment's target to running, paused, suspended, or stopped via its provider and records the observation; the provider may also change power on idle. Rejected without provider power control or when the template lacks the state; an internal error, safe to retry, when the provider is unreachable or times out.
-   */
-  environmentsPowerPut(client: RpcCaller, params: Api.EnvironmentPowerPutParams): Promise<Api.AgentApiOutcomeOfEnvironmentPowerPutResponse> {
-    return client.call("environments/power/put", params);
-  },
-  /**
-   * List environment provider bindings
-   *
-   * Lists this universe's bindings to deployment providers and whether each is enabled.
-   */
-  environmentsProviderBindingsList(client: RpcCaller, params: Api.EnvironmentProviderBindingListParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderBindingListResponse> {
-    return client.call("environments/provider-bindings/list", params);
-  },
-  /**
-   * Read an environment provider binding
-   *
-   * Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.
-   */
-  environmentsProviderBindingsRead(client: RpcCaller, params: Api.EnvironmentProviderBindingReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderBindingReadResponse> {
-    return client.call("environments/provider-bindings/read", params);
-  },
-  /**
-   * List environment templates
-   *
-   * Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.
-   */
-  environmentsTemplatesList(client: RpcCaller, params: Api.EnvironmentTemplateListParams): Promise<Api.AgentApiOutcomeOfEnvironmentTemplateListResponse> {
-    return client.call("environments/templates/list", params);
-  },
-  /**
-   * Read an environment template
-   *
-   * Returns one template, read live from a bound provider's controller.
-   */
-  environmentsTemplatesRead(client: RpcCaller, params: Api.EnvironmentTemplateReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentTemplateReadResponse> {
-    return client.call("environments/templates/read", params);
-  },
-  /**
-   * Create environment jobs
-   *
-   * Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environment_not_ready while it wakes or reconnects; retry with backoff.
-   */
-  environmentsJobsCreate(client: RpcCaller, params: Api.EnvironmentJobCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobCreateResponse> {
-    return client.call("environments/jobs/create", params);
-  },
-  /**
-   * Read environment jobs
-   *
-   * Reads selected job handles with bounded output from a byte offset or the output tail; continue from each entry's outputNext and poll on the returned status.
-   */
-  environmentsJobsRead(client: RpcCaller, params: Api.EnvironmentJobReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobReadResponse> {
-    return client.call("environments/jobs/read", params);
-  },
-  /**
-   * Cancel environment jobs
-   *
-   * Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.
-   */
-  environmentsJobsCancel(client: RpcCaller, params: Api.EnvironmentJobCancelParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobCancelResponse> {
-    return client.call("environments/jobs/cancel", params);
-  },
-  /**
-   * Mint an environment registration key
-   *
-   * Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode (immutable), active limit, disconnect grace, offline close-after, and expiry are the key's policy. Treat the secret like a cluster-join credential.
-   */
-  environmentsRegistrationKeysCreate(client: RpcCaller, params: Api.EnvironmentRegistrationKeyCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse> {
-    return client.call("environments/registration-keys/create", params);
-  },
-  /**
-   * Read an environment registration key
-   *
-   * Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.
-   */
-  environmentsRegistrationKeysRead(client: RpcCaller, params: Api.EnvironmentRegistrationKeyReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentRegistrationKeyReadResponse> {
-    return client.call("environments/registration-keys/read", params);
-  },
-  /**
-   * List environment registration keys
-   *
-   * Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted.
-   */
-  environmentsRegistrationKeysList(client: RpcCaller, params: Api.EnvironmentRegistrationKeyListParams): Promise<Api.AgentApiOutcomeOfEnvironmentRegistrationKeyListResponse> {
-    return client.call("environments/registration-keys/list", params);
-  },
-  /**
-   * Update an environment registration key
-   *
-   * Replaces a key's editable policy: display name, active limit, disconnect grace, offline close-after, and expiry; an omitted field is unset. The identity mode is immutable. The active limit and expiry apply to later admissions; a changed disconnect grace or offline close-after applies at the next sweep to environments whose daemon is away.
-   */
-  environmentsRegistrationKeysUpdate(client: RpcCaller, params: Api.EnvironmentRegistrationKeyUpdateParams): Promise<Api.AgentApiOutcomeOfEnvironmentRegistrationKeyUpdateResponse> {
-    return client.call("environments/registration-keys/update", params);
-  },
-  /**
-   * Rotate an environment registration key
-   *
-   * Replaces the key's secret and display prefix and retires the old secret at once. The key keeps its id, group, policy, and the environments it admitted; daemons already registered are unaffected because they never present the key again. Returns the new secret once. Refused for a revoked key.
-   */
-  environmentsRegistrationKeysRotate(client: RpcCaller, params: Api.EnvironmentRegistrationKeyRotateParams): Promise<Api.AgentApiOutcomeOfEnvironmentRegistrationKeyRotateResponse> {
-    return client.call("environments/registration-keys/rotate", params);
-  },
-  /**
-   * Revoke an environment registration key
-   *
-   * Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.
-   */
-  environmentsRegistrationKeysRevoke(client: RpcCaller, params: Api.EnvironmentRegistrationKeyRevokeParams): Promise<Api.AgentApiOutcomeOfEnvironmentRegistrationKeyRevokeResponse> {
-    return client.call("environments/registration-keys/revoke", params);
-  },
-  /**
-   * Start transcription
-   *
-   * Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created.
-   */
-  transcriptionsStart(client: RpcCaller, params: Api.TranscriptionStartParams): Promise<Api.AgentApiOutcomeOfTranscriptionResponse> {
-    return client.call("transcriptions/start", params);
-  },
-  /**
-   * Read transcription
-   *
-   * Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire.
-   */
-  transcriptionsRead(client: RpcCaller, params: Api.TranscriptionReadParams): Promise<Api.AgentApiOutcomeOfTranscriptionResponse> {
-    return client.call("transcriptions/read", params);
-  },
-  /**
-   * Cancel transcription
-   *
-   * Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.
-   */
-  transcriptionsCancel(client: RpcCaller, params: Api.TranscriptionCancelParams): Promise<Api.AgentApiOutcomeOfTranscriptionResponse> {
-    return client.call("transcriptions/cancel", params);
-  },
-  /**
-   * Read universe model defaults
-   *
-   * Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers.
-   */
-  modelsDefaultsRead(client: RpcCaller, params: Api.ModelDefaultsReadParams): Promise<Api.AgentApiOutcomeOfModelDefaultsResponse> {
-    return client.call("models/defaults/read", params);
-  },
-  /**
-   * Set a universe model default
-   *
-   * Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
-   */
-  modelsDefaultsPut(client: RpcCaller, params: Api.ModelDefaultsPutParams): Promise<Api.AgentApiOutcomeOfModelDefaultsResponse> {
-    return client.call("models/defaults/put", params);
-  },
-  /**
-   * Discover available models
-   *
-   * Queries supported providers directly, with a brief process-local burst cache, and returns best-effort selectable routes. One provider failure does not discard successful results from others.
-   */
-  modelsList(client: RpcCaller, params: Api.ModelListParams): Promise<Api.AgentApiOutcomeOfModelListResponse> {
-    return client.call("models/list", params);
-  },
-  /**
-   * Create an agent profile
-   *
-   * Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.
-   */
-  profilesCreate(client: RpcCaller, params: Api.ProfileCreateParams): Promise<Api.AgentApiOutcomeOfProfileCreateResponse> {
-    return client.call("profiles/create", params);
-  },
-  /**
-   * Read an agent profile
-   *
-   * Returns the complete profile document and current revision.
-   */
-  profilesRead(client: RpcCaller, params: Api.ProfileReadParams): Promise<Api.AgentApiOutcomeOfProfileReadResponse> {
-    return client.call("profiles/read", params);
-  },
-  /**
-   * List agent profiles
-   *
-   * Returns lightweight summaries of universe-scoped reusable profiles.
-   */
-  profilesList(client: RpcCaller, params: Api.ProfileListParams): Promise<Api.AgentApiOutcomeOfProfileListResponse> {
-    return client.call("profiles/list", params);
-  },
-  /**
-   * Create or replace an agent profile
-   *
-   * Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.
-   */
-  profilesPut(client: RpcCaller, params: Api.ProfilePutParams): Promise<Api.AgentApiOutcomeOfProfilePutResponse> {
-    return client.call("profiles/put", params);
-  },
-  /**
-   * Delete an agent profile
-   *
-   * Deletes the catalog document; sessions previously created or configured from it retain their materialized state.
-   */
-  profilesDelete(client: RpcCaller, params: Api.ProfileDeleteParams): Promise<Api.AgentApiOutcomeOfProfileDeleteResponse> {
-    return client.call("profiles/delete", params);
-  },
-  /**
-   * Store content-addressed blobs
-   *
-   * Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.
-   */
-  blobsPut(client: RpcCaller, params: Api.BlobPutParams): Promise<Api.AgentApiOutcomeOfBlobPutResponse> {
-    return client.call("blobs/put", params);
-  },
-  /**
-   * Read a content-addressed blob
-   *
-   * Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.
-   */
-  blobsRead(client: RpcCaller, params: Api.BlobReadParams): Promise<Api.AgentApiOutcomeOfBlobReadResponse> {
-    return client.call("blobs/read", params);
-  },
-  /**
-   * Check blob availability
-   *
-   * Checks a batch of content references without returning blob bodies, preserving request order.
-   */
-  blobsHas(client: RpcCaller, params: Api.BlobHasParams): Promise<Api.AgentApiOutcomeOfBlobHasResponse> {
-    return client.call("blobs/has", params);
-  },
-  /**
-   * Commit a VFS snapshot
-   *
-   * Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.
-   */
-  vfsSnapshotsCommit(client: RpcCaller, params: Api.VfsSnapshotCommitParams): Promise<Api.AgentApiOutcomeOfVfsSnapshotCommitResponse> {
-    return client.call("vfs/snapshots/commit", params);
-  },
-  /**
-   * Read a VFS snapshot
-   *
-   * Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.
-   */
-  vfsSnapshotsRead(client: RpcCaller, params: Api.VfsSnapshotReadParams): Promise<Api.AgentApiOutcomeOfVfsSnapshotReadResponse> {
-    return client.call("vfs/snapshots/read", params);
-  },
-  /**
-   * Create a mutable VFS workspace
-   *
-   * Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.
-   */
-  vfsWorkspacesCreate(client: RpcCaller, params: Api.VfsWorkspaceCreateParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceCreateResponse> {
-    return client.call("vfs/workspaces/create", params);
-  },
-  /**
-   * Read a VFS workspace
-   *
-   * Returns workspace metadata, current head snapshot, and revision for safe updates.
-   */
-  vfsWorkspacesRead(client: RpcCaller, params: Api.VfsWorkspaceReadParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceReadResponse> {
-    return client.call("vfs/workspaces/read", params);
-  },
-  /**
-   * List VFS workspaces
-   *
-   * Lists the mutable universe workspaces with head snapshots, sizes, and revisions.
-   */
-  vfsWorkspacesList(client: RpcCaller, params: Api.VfsWorkspaceListParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceListResponse> {
-    return client.call("vfs/workspaces/list", params);
-  },
-  /**
-   * Update a VFS workspace
-   *
-   * Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.
-   */
-  vfsWorkspacesUpdate(client: RpcCaller, params: Api.VfsWorkspaceUpdateParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceUpdateResponse> {
-    return client.call("vfs/workspaces/update", params);
-  },
-  /**
-   * Delete a VFS workspace
-   *
-   * Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.
-   */
-  vfsWorkspacesDelete(client: RpcCaller, params: Api.VfsWorkspaceDeleteParams): Promise<Api.AgentApiOutcomeOfVfsWorkspaceDeleteResponse> {
-    return client.call("vfs/workspaces/delete", params);
-  },
-  /**
-   * Create or replace an MCP server record
-   *
-   * Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.
-   */
-  mcpServersPut(client: RpcCaller, params: Api.McpServerPutParams): Promise<Api.AgentApiOutcomeOfMcpServerPutResponse> {
-    return client.call("mcp/servers/put", params);
-  },
-  /**
-   * Discover MCP server authentication
-   *
-   * Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.
-   */
-  mcpServersAuthDiscover(client: RpcCaller, params: Api.McpServerAuthDiscoverParams): Promise<Api.AgentApiOutcomeOfMcpServerAuthDiscoverResponse> {
-    return client.call("mcp/servers/auth/discover", params);
-  },
-  /**
-   * Discover MCP server tools
-   *
-   * Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.
-   */
-  mcpServersToolsDiscover(client: RpcCaller, params: Api.McpServerToolsDiscoverParams): Promise<Api.AgentApiOutcomeOfMcpServerToolsDiscoverResponse> {
-    return client.call("mcp/servers/tools/discover", params);
-  },
-  /**
-   * Read an MCP server record
-   *
-   * Returns one catalog document with defaults, auth policy, non-secret grant binding, status, and revision; no credential value is exposed.
-   */
-  mcpServersRead(client: RpcCaller, params: Api.McpServerReadParams): Promise<Api.AgentApiOutcomeOfMcpServerReadResponse> {
-    return client.call("mcp/servers/read", params);
-  },
-  /**
-   * List MCP server records
-   *
-   * Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.
-   */
-  mcpServersList(client: RpcCaller, params: Api.McpServerListParams): Promise<Api.AgentApiOutcomeOfMcpServerListResponse> {
-    return client.call("mcp/servers/list", params);
-  },
-  /**
-   * Delete an MCP server record
-   *
-   * Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.
-   */
-  mcpServersDelete(client: RpcCaller, params: Api.McpServerDeleteParams): Promise<Api.AgentApiOutcomeOfMcpServerDeleteResponse> {
-    return client.call("mcp/servers/delete", params);
-  },
-  /**
-   * Import a static bearer grant
-   *
-   * Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.
-   */
-  authGrantsImport(client: RpcCaller, params: Api.AuthGrantImportParams): Promise<Api.AgentApiOutcomeOfAuthGrantImportResponse> {
-    return client.call("auth/grants/import", params);
-  },
-  /**
-   * Lease a retrievable authentication grant
-   *
-   * Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.
-   */
-  authGrantsLease(client: RpcCaller, params: Api.AuthGrantLeaseParams): Promise<Api.AgentApiOutcomeOfAuthGrantLeaseResponse> {
-    return client.call("auth/grants/lease", params);
-  },
-  /**
-   * Read authentication grant metadata
-   *
-   * Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.
-   */
-  authGrantsRead(client: RpcCaller, params: Api.AuthGrantReadParams): Promise<Api.AgentApiOutcomeOfAuthGrantReadResponse> {
-    return client.call("auth/grants/read", params);
-  },
-  /**
-   * List authentication grants
-   *
-   * Lists non-secret grant metadata for the universe, optionally filtered by status.
-   */
-  authGrantsList(client: RpcCaller, params: Api.AuthGrantListParams): Promise<Api.AgentApiOutcomeOfAuthGrantListResponse> {
-    return client.call("auth/grants/list", params);
-  },
-  /**
-   * Revoke an authentication grant
-   *
-   * Marks the grant unusable by token consumers while retaining non-secret audit metadata.
-   */
-  authGrantsRevoke(client: RpcCaller, params: Api.AuthGrantRevokeParams): Promise<Api.AgentApiOutcomeOfAuthGrantRevokeResponse> {
-    return client.call("auth/grants/revoke", params);
-  },
-  /**
-   * Register an OAuth client
-   *
-   * Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.
-   */
-  authClientsCreate(client: RpcCaller, params: Api.AuthClientCreateParams): Promise<Api.AgentApiOutcomeOfAuthClientCreateResponse> {
-    return client.call("auth/clients/create", params);
-  },
-  /**
-   * Read OAuth client metadata
-   *
-   * Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.
-   */
-  authClientsRead(client: RpcCaller, params: Api.AuthClientReadParams): Promise<Api.AgentApiOutcomeOfAuthClientReadResponse> {
-    return client.call("auth/clients/read", params);
-  },
-  /**
-   * List OAuth clients
-   *
-   * Lists non-secret OAuth client registrations in the universe.
-   */
-  authClientsList(client: RpcCaller, params: Api.AuthClientListParams): Promise<Api.AgentApiOutcomeOfAuthClientListResponse> {
-    return client.call("auth/clients/list", params);
-  },
-  /**
-   * Delete an OAuth client
-   *
-   * Deletes the client registration and its stored client secret; grants already created from it remain separate records.
-   */
-  authClientsDelete(client: RpcCaller, params: Api.AuthClientDeleteParams): Promise<Api.AgentApiOutcomeOfAuthClientDeleteResponse> {
-    return client.call("auth/clients/delete", params);
-  },
-  /**
-   * Start an OAuth authorization flow
-   *
-   * Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.
-   */
-  authFlowsStart(client: RpcCaller, params: Api.AuthFlowStartParams): Promise<Api.AgentApiOutcomeOfAuthFlowStartResponse> {
-    return client.call("auth/flows/start", params);
-  },
-  /**
-   * Read OAuth flow status
-   *
-   * Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.
-   */
-  authFlowsRead(client: RpcCaller, params: Api.AuthFlowStatusParams): Promise<Api.AgentApiOutcomeOfAuthFlowStatusResponse> {
-    return client.call("auth/flows/read", params);
-  },
-  /**
-   * Register an authentication provider
-   *
-   * Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.
-   */
-  authProvidersCreate(client: RpcCaller, params: Api.AuthProviderCreateParams): Promise<Api.AgentApiOutcomeOfAuthProviderCreateResponse> {
-    return client.call("auth/providers/create", params);
-  },
-  /**
-   * Read authentication provider metadata
-   *
-   * Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.
-   */
-  authProvidersRead(client: RpcCaller, params: Api.AuthProviderReadParams): Promise<Api.AgentApiOutcomeOfAuthProviderReadResponse> {
-    return client.call("auth/providers/read", params);
-  },
-  /**
-   * List authentication providers
-   *
-   * Lists non-secret model/GitHub provider registrations for the universe.
-   */
-  authProvidersList(client: RpcCaller, params: Api.AuthProviderListParams): Promise<Api.AgentApiOutcomeOfAuthProviderListResponse> {
-    return client.call("auth/providers/list", params);
-  },
-  /**
-   * Delete an authentication provider
-   *
-   * Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.
-   */
-  authProvidersDelete(client: RpcCaller, params: Api.AuthProviderDeleteParams): Promise<Api.AgentApiOutcomeOfAuthProviderDeleteResponse> {
-    return client.call("auth/providers/delete", params);
-  },
-  /**
-   * List GitHub App installations
-   *
-   * Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.
-   */
-  authGithubInstallationsList(client: RpcCaller, params: Api.AuthGitHubInstallationListParams): Promise<Api.AgentApiOutcomeOfAuthGitHubInstallationListResponse> {
-    return client.call("auth/github/installations/list", params);
-  },
-  /**
-   * Grant access to a GitHub App installation
-   *
-   * Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.
-   */
-  authGithubInstallationsGrant(client: RpcCaller, params: Api.AuthGitHubInstallationGrantParams): Promise<Api.AgentApiOutcomeOfAuthGitHubInstallationGrantResponse> {
-    return client.call("auth/github/installations/grant", params);
-  },
-  /**
-   * Create a bot
-   *
-   * Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.
-   */
-  botsCreate(client: RpcCaller, params: Api.BotCreateParams): Promise<Api.AgentApiOutcomeOfBotCreateResponse> {
-    return client.call("bots/create", params);
-  },
-  /**
-   * Create or replace a bot document
-   *
-   * Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.
-   */
-  botsPut(client: RpcCaller, params: Api.BotPutParams): Promise<Api.AgentApiOutcomeOfBotPutResponse> {
-    return client.call("bots/put", params);
-  },
-  /**
-   * Read a bot
-   *
-   * Returns the bot record, its current revision, and lifecycle columns.
-   */
-  botsRead(client: RpcCaller, params: Api.BotReadParams): Promise<Api.AgentApiOutcomeOfBotReadResponse> {
-    return client.call("bots/read", params);
-  },
-  /**
-   * List bots
-   *
-   * Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.
-   */
-  botsList(client: RpcCaller, params: Api.BotListParams): Promise<Api.AgentApiOutcomeOfBotListResponse> {
-    return client.call("bots/list", params);
-  },
-  /**
-   * Close a bot
-   *
-   * Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.
-   */
-  botsClose(client: RpcCaller, params: Api.BotCloseParams): Promise<Api.AgentApiOutcomeOfBotCloseResponse> {
-    return client.call("bots/close", params);
-  },
-  /**
-   * Delete a bot
-   *
-   * Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.
-   */
-  botsDelete(client: RpcCaller, params: Api.BotDeleteParams): Promise<Api.AgentApiOutcomeOfBotDeleteResponse> {
-    return client.call("bots/delete", params);
-  },
-  /**
-   * Read bot controller state
-   *
-   * Queries the controller workflow for its live snapshot (sessions, buffers, active and recent deliveries, budget) and lists sub-agent descendants. The controller is absent until the bot's first event.
-   */
-  botsStateRead(client: RpcCaller, params: Api.BotStateReadParams): Promise<Api.AgentApiOutcomeOfBotStateReadResponse> {
-    return client.call("bots/state/read", params);
-  },
-  /**
-   * Rotate a bot session
-   *
-   * Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.
-   */
-  botsSessionsRotate(client: RpcCaller, params: Api.BotSessionRotateParams): Promise<Api.AgentApiOutcomeOfBotSessionRotateResponse> {
-    return client.call("bots/sessions/rotate", params);
-  },
-  /**
-   * Create or replace a trigger
-   *
-   * Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.
-   */
-  botsTriggersPut(client: RpcCaller, params: Api.BotTriggerPutParams): Promise<Api.AgentApiOutcomeOfBotTriggerPutResponse> {
-    return client.call("bots/triggers/put", params);
-  },
-  /**
-   * Read a trigger
-   *
-   * Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.
-   */
-  botsTriggersRead(client: RpcCaller, params: Api.BotTriggerReadParams): Promise<Api.AgentApiOutcomeOfBotTriggerReadResponse> {
-    return client.call("bots/triggers/read", params);
-  },
-  /**
-   * List a bot's triggers
-   *
-   * Returns every trigger of the bot ordered by id, secrets included for bot-management callers.
-   */
-  botsTriggersList(client: RpcCaller, params: Api.BotTriggerListParams): Promise<Api.AgentApiOutcomeOfBotTriggerListResponse> {
-    return client.call("bots/triggers/list", params);
-  },
-  /**
-   * Delete a trigger
-   *
-   * Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.
-   */
-  botsTriggersDelete(client: RpcCaller, params: Api.BotTriggerDeleteParams): Promise<Api.AgentApiOutcomeOfBotTriggerDeleteResponse> {
-    return client.call("bots/triggers/delete", params);
-  },
-  /**
-   * Admit an event manually
-   *
-   * Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.
-   */
-  botsEventsAdmit(client: RpcCaller, params: Api.BotEventAdmitParams): Promise<Api.AgentApiOutcomeOfBotEventAdmitResponse> {
-    return client.call("bots/events/admit", params);
-  },
-  /**
-   * Replay a stored event
-   *
-   * Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.
-   */
-  botsEventsReplay(client: RpcCaller, params: Api.BotEventReplayParams): Promise<Api.AgentApiOutcomeOfBotEventReplayResponse> {
-    return client.call("bots/events/replay", params);
-  },
-  /**
-   * List a bot's events
-   *
-   * Cursor-paginated event log, newest first, with outcomes; payload documents stay in the CAS.
-   */
-  botsEventsList(client: RpcCaller, params: Api.BotEventListParams): Promise<Api.AgentApiOutcomeOfBotEventListResponse> {
-    return client.call("bots/events/list", params);
-  },
-  /**
-   * Read an event by number
-   *
-   * Returns the event row and its full stored envelope document.
-   */
-  botsEventsRead(client: RpcCaller, params: Api.BotEventReadParams): Promise<Api.AgentApiOutcomeOfBotEventReadResponse> {
-    return client.call("bots/events/read", params);
-  },
-  /**
-   * Test a CEL filter
-   *
-   * Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.
-   */
-  botsFiltersTest(client: RpcCaller, params: Api.BotFilterTestParams): Promise<Api.AgentApiOutcomeOfBotFilterTestResponse> {
-    return client.call("bots/filters/test", params);
-  },
-  /**
-   * Create a channel account
-   *
-   * Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.
-   */
-  channelsAccountsCreate(client: RpcCaller, params: Api.ChannelAccountCreateParams): Promise<Api.AgentApiOutcomeOfChannelAccountCreateResponse> {
-    return client.call("channels/accounts/create", params);
-  },
-  /**
-   * Create or replace a channel account
-   *
-   * Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.
-   */
-  channelsAccountsPut(client: RpcCaller, params: Api.ChannelAccountPutParams): Promise<Api.AgentApiOutcomeOfChannelAccountPutResponse> {
-    return client.call("channels/accounts/put", params);
-  },
-  /**
-   * Read a channel account
-   *
-   * Returns the account document and revision.
-   */
-  channelsAccountsRead(client: RpcCaller, params: Api.ChannelAccountReadParams): Promise<Api.AgentApiOutcomeOfChannelAccountReadResponse> {
-    return client.call("channels/accounts/read", params);
-  },
-  /**
-   * List channel accounts
-   *
-   * Lists this universe's provider accounts, optionally by provider.
-   */
-  channelsAccountsList(client: RpcCaller, params: Api.ChannelAccountListParams): Promise<Api.AgentApiOutcomeOfChannelAccountListResponse> {
-    return client.call("channels/accounts/list", params);
-  },
-  /**
-   * Delete a channel account
-   *
-   * Removes the account and its pairings; chat triggers that reference it stop serving conversations.
-   */
-  channelsAccountsDelete(client: RpcCaller, params: Api.ChannelAccountDeleteParams): Promise<Api.AgentApiOutcomeOfChannelAccountDeleteResponse> {
-    return client.call("channels/accounts/delete", params);
-  },
-  /**
-   * Admit a provider message
-   *
-   * Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.
-   */
-  channelsInboundAdmit(client: RpcCaller, params: Api.ChannelInboundAdmitParams): Promise<Api.AgentApiOutcomeOfChannelInboundAdmitResponse> {
-    return client.call("channels/inbound/admit", params);
-  },
-  /**
-   * List chat pairings
-   *
-   * Lists conversations paired to chat triggers, optionally by account or bot.
-   */
-  channelsPairingsList(client: RpcCaller, params: Api.ChannelPairingListParams): Promise<Api.AgentApiOutcomeOfChannelPairingListResponse> {
-    return client.call("channels/pairings/list", params);
-  },
-  /**
-   * Unpair a conversation
-   *
-   * Removes one pairing; the conversation must present the pairing code again to reconnect.
-   */
-  channelsPairingsDelete(client: RpcCaller, params: Api.ChannelPairingDeleteParams): Promise<Api.AgentApiOutcomeOfChannelPairingDeleteResponse> {
-    return client.call("channels/pairings/delete", params);
-  },
-  /**
-   * Read a conversation snapshot
-   *
-   * Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.
-   */
-  channelsConversationsRead(client: RpcCaller, params: Api.ChannelConversationReadParams): Promise<Api.AgentApiOutcomeOfChannelConversationReadResponse> {
-    return client.call("channels/conversations/read", params);
-  },
-  /**
-   * List deleted sessions
-   *
-   * Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods.
-   */
-  deploymentSessionsDeletedList(client: RpcCaller, params: Api.DeploymentDeletedSessionsListParams): Promise<Api.AgentApiOutcomeOfDeploymentDeletedSessionsListResponse> {
-    return client.call("deployment/sessions/deleted/list", params);
-  },
-  /**
-   * Permanently delete a session
-   *
-   * Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history.
-   */
-  deploymentSessionsPurge(client: RpcCaller, params: Api.DeploymentSessionPurgeParams): Promise<Api.AgentApiOutcomeOfDeploymentSessionPurgeResponse> {
-    return client.call("deployment/sessions/purge", params);
-  },
-  /**
-   * List a universe's deployment provider bindings
-   *
-   * Deployment configuration inventory of one universe's provider bindings.
-   */
-  deploymentEnvironmentProviderBindingsList(client: RpcCaller, params: Api.DeploymentUniverseReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentProviderBindingListResponse> {
-    return client.call("deployment/environment-provider-bindings/list", params);
-  },
-  /**
-   * Create a universe
-   *
-   * Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.
-   */
-  deploymentUniversesCreate(client: RpcCaller, params: Api.DeploymentUniverseCreateParams): Promise<Api.AgentApiOutcomeOfDeploymentUniverseCreateResponse> {
-    return client.call("deployment/universes/create", params);
-  },
-  /**
-   * List universes
-   *
-   * Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.
-   */
-  deploymentUniversesList(client: RpcCaller, params: Api.DeploymentUniverseListParams): Promise<Api.AgentApiOutcomeOfDeploymentUniverseListResponse> {
-    return client.call("deployment/universes/list", params);
-  },
-  /**
-   * Read a universe
-   *
-   * Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.
-   */
-  deploymentUniversesRead(client: RpcCaller, params: Api.DeploymentUniverseReadParams): Promise<Api.AgentApiOutcomeOfDeploymentUniverseReadResponse> {
-    return client.call("deployment/universes/read", params);
-  },
-  /**
-   * Set a universe slug
-   *
-   * Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.
-   */
-  deploymentUniversesSlugPut(client: RpcCaller, params: Api.DeploymentUniverseSlugPutParams): Promise<Api.AgentApiOutcomeOfDeploymentUniverseReadResponse> {
-    return client.call("deployment/universes/slug/put", params);
-  },
-  /**
-   * Purge a universe
-   *
-   * Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.
-   */
-  deploymentUniversesDelete(client: RpcCaller, params: Api.DeploymentUniverseDeleteParams): Promise<Api.AgentApiOutcomeOfDeploymentUniverseDeleteResponse> {
-    return client.call("deployment/universes/delete", params);
-  },
-  /**
-   * Create a scoped API key
-   *
-   * Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.
-   */
-  deploymentApiKeysCreate(client: RpcCaller, params: Api.DeploymentApiKeyCreateParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse> {
-    return client.call("deployment/api-keys/create", params);
-  },
-  /**
-   * List scoped API keys
-   *
-   * Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned.
-   */
-  deploymentApiKeysList(client: RpcCaller, params: Api.DeploymentApiKeyListParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyListResponse> {
-    return client.call("deployment/api-keys/list", params);
-  },
-  /**
-   * Rotate a scoped API key
-   *
-   * Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.
-   */
-  deploymentApiKeysRotate(client: RpcCaller, params: Api.DeploymentApiKeyRotateParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse> {
-    return client.call("deployment/api-keys/rotate", params);
-  },
-  /**
-   * Revoke a scoped API key
-   *
-   * Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.
-   */
-  deploymentApiKeysRevoke(client: RpcCaller, params: Api.DeploymentApiKeyRevokeParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyRevokeResponse> {
-    return client.call("deployment/api-keys/revoke", params);
-  },
-  /**
-   * Put an environment provider
-   *
-   * Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalid_request, unreachable is accepted. The provider never calls Lightspeed.
-   */
-  deploymentEnvironmentProvidersPut(client: RpcCaller, params: Api.DeploymentEnvironmentProviderPutParams): Promise<Api.AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse> {
-    return client.call("deployment/environment-providers/put", params);
-  },
-  /**
-   * List environment providers
-   *
-   * Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.
-   */
-  deploymentEnvironmentProvidersList(client: RpcCaller, params: Api.DeploymentEnvironmentProviderListParams): Promise<Api.AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse> {
-    return client.call("deployment/environment-providers/list", params);
-  },
-  /**
-   * Read an environment provider
-   *
-   * Returns one deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.
-   */
-  deploymentEnvironmentProvidersRead(client: RpcCaller, params: Api.DeploymentEnvironmentProviderReadParams): Promise<Api.AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse> {
-    return client.call("deployment/environment-providers/read", params);
-  },
-  /**
-   * Delete an environment provider
-   *
-   * Deletes a deployment provider only when no universe binding and no non-closed environment references it.
-   */
-  deploymentEnvironmentProvidersDelete(client: RpcCaller, params: Api.DeploymentEnvironmentProviderDeleteParams): Promise<Api.AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse> {
-    return client.call("deployment/environment-providers/delete", params);
-  },
-  /**
-   * Put an environment provider binding
-   *
-   * Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.
-   */
-  deploymentEnvironmentProvidersBindingsPut(client: RpcCaller, params: Api.DeploymentProviderBindingPutParams): Promise<Api.AgentApiOutcomeOfDeploymentProviderBindingPutResponse> {
-    return client.call("deployment/environment-providers/bindings/put", params);
-  },
-  /**
-   * Delete an environment provider binding
-   *
-   * Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.
-   */
-  deploymentEnvironmentProvidersBindingsDelete(client: RpcCaller, params: Api.DeploymentProviderBindingDeleteParams): Promise<Api.AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse> {
-    return client.call("deployment/environment-providers/bindings/delete", params);
-  },
-  /**
-   * List channel accounts across universes
-   *
-   * The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.
-   */
-  deploymentChannelsAccountsList(client: RpcCaller, params: Api.DeploymentChannelAccountListParams): Promise<Api.AgentApiOutcomeOfDeploymentChannelAccountListResponse> {
-    return client.call("deployment/channels/accounts/list", params);
-  },
-} as const;

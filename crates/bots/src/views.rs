@@ -625,7 +625,12 @@ fn event_input_items(event: &BotEvent) -> impl Iterator<Item = InputItem> + '_ {
                 blob_ref: item.blob_ref.clone(),
                 mime: item.mime.clone(),
                 kind: media_kind(item.kind),
-                name: item.name.clone(),
+                // A channel's file name is not the sender's mistake to pay for, so a
+                // long one is cut instead of refusing the delivery.
+                name: item
+                    .name
+                    .as_ref()
+                    .map(|name| name.chars().take(api::MAX_MEDIA_NAME_CHARS).collect()),
             }
         }
     }))
@@ -951,7 +956,7 @@ mod tests {
         );
         assert!(view["bot"].get("profileId").is_none());
         assert!(view.get("invocation").is_none());
-        assert_eq!(view["controllerStatus"], json!("delivering_event"));
+        assert_eq!(view["controllerStatus"], json!("deliveringEvent"));
         assert_eq!(view["sessions"][0]["label"], json!("main"));
         assert_eq!(view["sessions"][0]["kind"], json!("main"));
         assert_eq!(view["sessions"][1]["busy"], json!(true));
@@ -1450,7 +1455,7 @@ mod tests {
                 T0
             )
             .data,
-            Some(json!({ "status": "run_failed" }))
+            Some(json!({ "status": "runFailed" }))
         );
         // Rendered, the correlation is #N at the answering bot, never an id.
         let prompt = crate::render::render_event_prompt(12, &document, None, 2_048);
@@ -1538,6 +1543,25 @@ mod tests {
                 origin: Some("event".into()),
                 blob_ref: reference
             }
+        );
+    }
+
+    #[test]
+    fn a_long_media_name_is_cut_to_what_run_input_accepts() {
+        let mut event = signal_event(&format!("sha256:{}", "a".repeat(64)), None);
+        event.media.push(BotEventMedia {
+            text_ref: None,
+            blob_ref: format!("sha256:{}", "c".repeat(64)),
+            kind: BotEventMediaKind::Image,
+            mime: "image/png".into(),
+            name: Some("é".repeat(api::MAX_MEDIA_NAME_CHARS + 1)),
+        });
+        let InputItem::Media { name, .. } = &delivery_input_items(&[event])[1] else {
+            panic!("expected a media item");
+        };
+        assert_eq!(
+            name.as_deref().map(|name| name.chars().count()),
+            Some(api::MAX_MEDIA_NAME_CHARS)
         );
     }
 

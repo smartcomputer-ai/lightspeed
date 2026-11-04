@@ -7,7 +7,7 @@ use harness::{
     ToolInvocationRequest, ToolKind, TurnId, WorkflowToolBinding, WorkflowToolCompletion,
     WorkflowToolCompletionKeySource, WorkflowToolDefinition, WorkflowToolInvocation,
     WorkflowToolInvocationId, WorkflowToolTarget, storage::BlobStore, validate_completion_key,
-    with_completion_deadline, workflow_tool_emit_effect, workflow_tool_execution_id,
+    with_completion_deadline, workflow_tool_execution_id, workflow_tool_invoke_effect,
 };
 use serde_json::{Value, json};
 
@@ -89,7 +89,7 @@ pub async fn validate_workflow_tool_definition_documents(
     if let ToolKind::Builtin(spec) = &definition.tool.kind {
         let target =
             crate::runtime::ToolTarget::api_kind(harness::ProviderApiKind::OpenAiCompletions);
-        let resolved = crate::definitions::resolve(&definition.tool.name, spec, &target)?;
+        let resolved = crate::definitions::resolve(&definition.tool.id, spec, &target)?;
         if resolved.is_empty()
             || resolved
                 .iter()
@@ -114,7 +114,7 @@ pub async fn validate_workflow_tool_definition_documents(
         return Err(ToolError::InvalidRequest {
             message: format!(
                 "workflow tool {} is not a function tool",
-                definition.tool_id
+                definition.workflow_tool_id
             ),
         });
     };
@@ -163,7 +163,7 @@ pub async fn validate_workflow_tool_arguments(
                     message: "built-in workflow call is missing original turn inputs".to_owned(),
                 })?;
             crate::definitions::resolve(
-                &binding.definition.tool.name,
+                &binding.definition.tool.id,
                 spec,
                 &crate::runtime::ToolTarget::from(&runtime.model),
             )?
@@ -187,14 +187,14 @@ pub async fn validate_workflow_tool_arguments(
         jsonschema::validator_for(&schema).map_err(|error| ToolError::InvalidRequest {
             message: format!(
                 "workflow tool {} has an unsupported input schema: {error}",
-                binding.definition.tool_id
+                binding.definition.workflow_tool_id
             ),
         })?;
     if let Err(error) = validator.validate(&arguments) {
         return Err(ToolError::InvalidRequest {
             message: format!(
                 "arguments for workflow tool {} do not match its input schema: {error}",
-                binding.definition.tool_id
+                binding.definition.workflow_tool_id
             ),
         });
     }
@@ -226,17 +226,18 @@ pub async fn invoke_workflow_tool(
 ) -> ToolResult<ToolInvocationOutput> {
     binding
         .validate()
+        .and_then(|()| binding.validate_policy())
         .map_err(|error| ToolError::InvalidRequest {
             message: format!(
                 "invalid workflow tool {} binding: {error}",
-                binding.definition.tool_id
+                binding.definition.workflow_tool_id
             ),
         })?;
-    if call.tool_id.as_ref() != Some(&binding.definition.tool.name) {
+    if call.tool_id.as_ref() != Some(&binding.definition.tool.id) {
         return Err(ToolError::InvalidRequest {
             message: format!(
                 "workflow tool {} is bound to tool {}, got {}",
-                binding.definition.tool_id, binding.definition.tool.name, call.tool_name
+                binding.definition.workflow_tool_id, binding.definition.tool.id, call.tool_name
             ),
         });
     }
@@ -251,7 +252,7 @@ pub async fn invoke_workflow_tool(
         &call.call_id,
         &binding.binding_fingerprint,
     );
-    let (completion_promises, completion_deadline_ms) = match &binding.completion {
+    let (completion_promises, completion_deadline_at_ms) = match &binding.completion {
         WorkflowToolCompletion::Accepted => (None, None),
         WorkflowToolCompletion::Joined {
             deadline_after_ms, ..
@@ -262,7 +263,7 @@ pub async fn invoke_workflow_tool(
             )]);
             (
                 Some(promises),
-                Some(now_ms.saturating_add(*deadline_after_ms)),
+                deadline_after_ms.map(|after| now_ms.saturating_add(after)),
             )
         }
         WorkflowToolCompletion::Promises {
@@ -281,9 +282,9 @@ pub async fn invoke_workflow_tool(
     };
     let invocation = WorkflowToolInvocation {
         invocation_id: invocation_id.clone(),
-        tool_id: binding.definition.tool_id.clone(),
+        workflow_tool_id: binding.definition.workflow_tool_id.clone(),
         semantic_type: binding.definition.semantic_type.clone(),
-        schema_revision: binding.definition.revision,
+        schema_revision: binding.definition.schema_revision,
         binding_fingerprint: binding.binding_fingerprint.clone(),
         session_universe_id: binding.session_universe_id,
         session_id: session_id.clone(),
@@ -336,8 +337,8 @@ pub async fn invoke_workflow_tool(
         }
     }
     let effect = with_completion_deadline(
-        workflow_tool_emit_effect(&invocation),
-        completion_deadline_ms,
+        workflow_tool_invoke_effect(&invocation),
+        completion_deadline_at_ms,
     );
     Ok(ToolInvocationOutput {
         model_visible_text: model_visible.to_string(),
@@ -373,7 +374,7 @@ fn derive_completion_keys(
         WorkflowToolCompletion::Accepted => return Ok(Vec::new()),
     };
     derive_completion_keys_from_source(
-        &binding.definition.tool_id,
+        &binding.definition.workflow_tool_id,
         max_promises,
         key_source,
         arguments,
@@ -513,7 +514,7 @@ mod tests {
     use std::sync::Arc;
 
     use harness::{
-        FunctionToolSpec, ToolCallId, ToolKind, ToolName, ToolParallelism, ToolSpec,
+        FunctionToolSpec, ToolCallId, ToolId, ToolKind, ToolName, ToolParallelism, ToolSpec,
         WorkflowEndpointRef, WorkflowToolId,
         storage::{BlobStore, InMemoryBlobStore},
     };
@@ -554,14 +555,14 @@ mod tests {
             )
             .await
             .expect("put schema");
-        WorkflowToolBinding::admit_bound_notify(
+        WorkflowToolBinding::admit(
             Uuid::from_u128(1),
             WorkflowToolDefinition {
-                tool_id: WorkflowToolId::new("report"),
-                revision: 1,
+                workflow_tool_id: WorkflowToolId::new("report"),
+                schema_revision: 1,
                 semantic_type: "lightspeed.work.report.v1".to_owned(),
                 tool: ToolSpec {
-                    name: ToolName::new("work_report"),
+                    id: ToolId::new("work_report"),
                     kind: ToolKind::Function(FunctionToolSpec {
                         description_ref: None,
                         input_schema_ref: schema_ref,
@@ -573,10 +574,14 @@ mod tests {
                     execution: Default::default(),
                 },
             },
-            WorkflowEndpointRef {
-                workflow_id: "work arbitrary id".to_owned(),
-                workflow_kind: "agent_work".to_owned(),
+            WorkflowToolTarget::Bound {
+                receiver: WorkflowEndpointRef {
+                    workflow_id: "work arbitrary id".to_owned(),
+                    workflow_kind: "agent_work".to_owned(),
+                },
+                dispatch: harness::BoundWorkflowToolDispatch::Pull,
             },
+            WorkflowToolCompletion::Accepted,
         )
         .expect("binding")
     }
@@ -592,7 +597,7 @@ mod tests {
         let call = ToolInvocationRequest {
             builtin: None,
             call_id: ToolCallId::new("call-1"),
-            tool_id: Some(ToolName::new("work_report")),
+            tool_id: Some(ToolId::new("work_report")),
             tool_name: ToolName::new("work_report"),
             arguments_ref,
             workflow_tool: None,
@@ -633,7 +638,7 @@ mod tests {
         assert_eq!(first.effects.len(), 1);
         assert_eq!(
             first.effects[0].kind,
-            harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND
+            harness::WORKFLOW_TOOL_INVOKE_EFFECT_KIND
         );
     }
 
@@ -649,11 +654,11 @@ mod tests {
         WorkflowToolBinding::admit(
             Uuid::from_u128(1),
             WorkflowToolDefinition {
-                tool_id: WorkflowToolId::new("approve"),
-                revision: 1,
+                workflow_tool_id: WorkflowToolId::new("approve"),
+                schema_revision: 1,
                 semantic_type: "lightspeed.approval.request.v1".to_owned(),
                 tool: ToolSpec {
-                    name: ToolName::new("request_approval"),
+                    id: ToolId::new("request_approval"),
                     kind: ToolKind::Function(FunctionToolSpec {
                         description_ref: None,
                         input_schema_ref: schema_ref,
@@ -698,7 +703,7 @@ mod tests {
         let call = ToolInvocationRequest {
             builtin: None,
             call_id: ToolCallId::new("call-1"),
-            tool_id: Some(ToolName::new("request_approval")),
+            tool_id: Some(ToolId::new("request_approval")),
             tool_name: ToolName::new("request_approval"),
             arguments_ref,
             workflow_tool: None,
@@ -729,7 +734,7 @@ mod tests {
         assert!(output.output_json["invocationId"].is_string());
         assert_eq!(output.effects.len(), 1);
         assert_eq!(
-            output.effects[0].data.get("completion_deadline_ms"),
+            output.effects[0].data.get("completion_deadline_at_ms"),
             Some(&"31000".to_owned())
         );
     }
@@ -749,7 +754,7 @@ mod tests {
             explicit.target,
             WorkflowToolCompletion::Joined {
                 reply_schema_ref: None,
-                deadline_after_ms: 30_000,
+                deadline_after_ms: Some(30_000),
             },
         )
         .expect("Joined binding");
@@ -763,7 +768,7 @@ mod tests {
         let call = ToolInvocationRequest {
             builtin: None,
             call_id: ToolCallId::new("call-1"),
-            tool_id: Some(ToolName::new("request_approval")),
+            tool_id: Some(ToolId::new("request_approval")),
             tool_name: ToolName::new("request_approval"),
             arguments_ref,
             workflow_tool: None,
@@ -790,7 +795,7 @@ mod tests {
         assert!(output.output_json.get("promises").is_none());
         assert_eq!(output.model_visible_text, r#"{"accepted":true}"#);
         assert_eq!(
-            output.effects[0].data.get("completion_deadline_ms"),
+            output.effects[0].data.get("completion_deadline_at_ms"),
             Some(&"31000".to_owned())
         );
         let encoded_promises = output.effects[0]
@@ -815,7 +820,7 @@ mod tests {
         let call = |arguments_ref| ToolInvocationRequest {
             builtin: None,
             call_id: ToolCallId::new("call-1"),
-            tool_id: Some(ToolName::new("request_approval")),
+            tool_id: Some(ToolId::new("request_approval")),
             tool_name: ToolName::new("request_approval"),
             arguments_ref,
             workflow_tool: None,
@@ -909,7 +914,7 @@ mod tests {
         let call = ToolInvocationRequest {
             builtin: None,
             call_id: ToolCallId::new("call-1"),
-            tool_id: Some(ToolName::new("request_approval")),
+            tool_id: Some(ToolId::new("request_approval")),
             tool_name: ToolName::new("request_approval"),
             arguments_ref,
             workflow_tool: None,
@@ -955,7 +960,7 @@ mod tests {
         let call = |arguments_ref| ToolInvocationRequest {
             builtin: None,
             call_id: ToolCallId::new("call-1"),
-            tool_id: Some(ToolName::new("request_approval")),
+            tool_id: Some(ToolId::new("request_approval")),
             tool_name: ToolName::new("request_approval"),
             arguments_ref,
             workflow_tool: None,
@@ -1021,11 +1026,11 @@ mod tests {
         let binding = WorkflowToolBinding::admit(
             Uuid::from_u128(1),
             WorkflowToolDefinition {
-                tool_id: WorkflowToolId::new("launch"),
-                revision: 1,
+                workflow_tool_id: WorkflowToolId::new("launch"),
+                schema_revision: 1,
                 semantic_type: "lightspeed.job.launch.v1".to_owned(),
                 tool: ToolSpec {
-                    name: ToolName::new("launch_job"),
+                    id: ToolId::new("launch_job"),
                     kind: ToolKind::Function(FunctionToolSpec {
                         description_ref: None,
                         input_schema_ref: schema_ref,
@@ -1040,7 +1045,7 @@ mod tests {
             WorkflowToolTarget::Start {
                 start: harness::WorkflowStartRef {
                     recipe_format: 1,
-                    revision: 1,
+                    recipe_revision: 1,
                     recipe_ref: BlobRef::from_bytes(b"recipe"),
                     recipe_fingerprint: "wtr:sha256:recipe".to_owned(),
                 },
@@ -1060,7 +1065,7 @@ mod tests {
         let call = ToolInvocationRequest {
             builtin: None,
             call_id: ToolCallId::new("call-1"),
-            tool_id: Some(ToolName::new("launch_job")),
+            tool_id: Some(ToolId::new("launch_job")),
             tool_name: ToolName::new("launch_job"),
             arguments_ref,
             workflow_tool: None,
@@ -1114,7 +1119,7 @@ mod tests {
             binding.target.clone(),
             WorkflowToolCompletion::Joined {
                 reply_schema_ref: None,
-                deadline_after_ms: 30_000,
+                deadline_after_ms: Some(30_000),
             },
         )
         .expect("start Joined binding");
@@ -1156,8 +1161,8 @@ mod tests {
             &ToolInvocationRequest {
                 builtin: None,
                 call_id: ToolCallId::new("invalid-call"),
-                tool_id: Some(binding.definition.tool.name.clone()),
-                tool_name: binding.definition.tool.name.clone(),
+                tool_id: Some(binding.definition.tool.id.clone()),
+                tool_name: binding.definition.tool.id.as_wire_name(),
                 arguments_ref,
                 workflow_tool: None,
                 promise_control: None,
@@ -1175,10 +1180,10 @@ mod tests {
         let binding = binding(blobs.as_ref()).await;
         let mut toolset = register_toolset(&ToolsetConfig::empty()).expect("empty toolset");
 
-        register_workflow_tools(&mut toolset, [&binding]).expect("materialize port");
+        register_workflow_tools(&mut toolset, [&binding]).expect("materialize workflow tool");
 
         assert_eq!(
-            toolset.tools.get(&binding.definition.tool.name),
+            toolset.tools.get(&binding.definition.tool.id),
             Some(&binding.definition.tool)
         );
         assert!(register_workflow_tools(&mut toolset, [&binding]).is_err());

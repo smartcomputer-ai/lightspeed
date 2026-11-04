@@ -42,7 +42,8 @@ pub struct ProcessRequest {
     /// Allocate a PTY. Interactive input through `continue_process` needs
     /// one; plain pipes read end of file from `/dev/null`.
     pub tty: bool,
-    /// Kill deadline. Absent means the call never kills a running process.
+    /// Kill deadline. Absent means a command whose handle came back is never
+    /// killed by the call; one abandoned before that is terminated.
     pub timeout_ms: Option<u64>,
     /// Return with a handle after this long if the process is still
     /// running. Absent waits until exit.
@@ -136,6 +137,7 @@ pub struct ProcessOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
     pub exit_code: Option<i32>,
+    /// Why the command failed, or on a running result why the wait ended early.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
     pub stdout: StreamOutput,

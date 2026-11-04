@@ -53,25 +53,70 @@ fn admission_failure_status_does_not_poison_later_admission() {
         Some("admit_test")
     );
     assert_eq!(status.admission_failures[0].rejection, Some(rejection));
-    assert_eq!(status.last_error, None);
+    assert_eq!(status.fatal_error, None);
+}
+
+#[test]
+fn status_names_the_submissions_still_pending() {
+    let mut workflow = AgentSessionWorkflow::default();
+    workflow.queue_admission(admission(request_input_run("submit_queued")));
+    workflow.queue_admission(admission(CoreAgentCommand::RequestRunSteering {
+        run_id: harness::RunId::new(1),
+        submission_id: SubmissionId::new("steer_queued"),
+        input: Vec::new(),
+        requested_by: None,
+    }));
+    workflow.queue_admission(admission(CoreAgentCommand::CompactContext));
+
+    assert_eq!(
+        workflow.status_snapshot().pending_submission_ids,
+        [
+            SubmissionId::new("submit_queued"),
+            SubmissionId::new("steer_queued"),
+        ]
+    );
+}
+
+#[test]
+fn admission_failures_keep_a_recent_window_for_their_waiters() {
+    let mut workflow = AgentSessionWorkflow::default();
+    for index in 0..300 {
+        workflow.record_admission_failure(AgentAdmissionFailure {
+            preparation_error: None,
+            submission_id: None,
+            correlation_token: Some(format!("admit_{index}")),
+            kind: AgentAdmissionFailureKind::RejectedCommand,
+            message: "refused".to_owned(),
+            rejection: None,
+        });
+    }
+    let failures = workflow.status_snapshot().admission_failures;
+    assert_eq!(failures.len(), 256);
+    assert_eq!(failures[0].correlation_token.as_deref(), Some("admit_44"));
+    assert_eq!(
+        failures[255].correlation_token.as_deref(),
+        Some("admit_299")
+    );
 }
 
 #[test]
 fn source_resolution_emission_queues_pending_resolution_with_producer() {
     let mut workflow = AgentSessionWorkflow::default();
     let payload_ref = harness::BlobRef::from_bytes(b"job output");
-    workflow.queue_emission(
-        test_universe(),
-        harness::EmissionEnvelope::source_resolution(
+    workflow
+        .queue_emission(
             test_universe(),
-            "universe/envjob-job_1".to_owned(),
-            "universe/session_1",
-            harness::PromiseId::new("promise_1"),
-            harness::PromiseResolution::Resolved {
-                payload_ref: Some(payload_ref.clone()),
-            },
-        ),
-    );
+            harness::EmissionEnvelope::source_resolution(
+                test_universe(),
+                "universe/envjob-job_1".to_owned(),
+                "universe/session_1",
+                harness::PromiseId::new("promise_1"),
+                harness::PromiseResolution::Resolved {
+                    payload_ref: Some(payload_ref.clone()),
+                },
+            ),
+        )
+        .expect("queue resolution");
 
     // Source resolutions defer to the main loop for producer authorization
     // and optional reply-schema validation before ResolvePromise admission.
@@ -109,12 +154,15 @@ fn duplicate_source_resolution_delivery_is_an_end_to_end_noop() {
             payload_ref: Some(payload_ref.clone()),
         },
     );
-    workflow.queue_emission(test_universe(), envelope.clone());
-    workflow.queue_emission(test_universe(), envelope);
+    workflow
+        .queue_emission(test_universe(), envelope.clone())
+        .expect("first delivery");
+    workflow
+        .queue_emission(test_universe(), envelope)
+        .expect("second delivery");
 
-    // Both deliveries pass through the deferred authorization stage; a
-    // non-workflow promise source needs no producer check or reply schema,
-    // so each becomes an ordinary ResolvePromise admission.
+    // Each delivery becomes an ordinary ResolvePromise admission here, skipping the
+    // deferred authorization stage, so the harness's first writer decides.
     let pending = std::mem::take(&mut workflow.pending_source_resolutions);
     assert_eq!(pending.len(), 2);
     let admissions: Vec<_> = pending
@@ -170,23 +218,40 @@ fn duplicate_source_resolution_delivery_is_an_end_to_end_noop() {
 fn cross_universe_emission_is_rejected_before_admission() {
     let mut workflow = AgentSessionWorkflow::default();
     let producer_universe = uuid::Uuid::from_u128(2);
-    workflow.queue_emission(
-        test_universe(),
-        harness::EmissionEnvelope::source_resolution(
-            producer_universe,
-            "other-universe/envjob-job_1".to_owned(),
-            "universe/session_1",
-            harness::PromiseId::new("promise_1"),
-            harness::PromiseResolution::Resolved { payload_ref: None },
-        ),
-    );
+    let warning = workflow
+        .queue_emission(
+            test_universe(),
+            harness::EmissionEnvelope::source_resolution(
+                producer_universe,
+                "other-universe/envjob-job_1".to_owned(),
+                "universe/session_1",
+                harness::PromiseId::new("promise_1"),
+                harness::PromiseResolution::Resolved { payload_ref: None },
+            ),
+        )
+        .expect_err("another universe's emission is refused");
 
+    assert!(warning.contains("cross-universe emission rejected"));
     assert!(workflow.pending_admissions.is_empty());
-    assert!(
-        workflow
-            .last_error
-            .as_deref()
-            .is_some_and(|error| error.contains("cross-universe emission rejected"))
+    assert!(workflow.pending_source_resolutions.is_empty());
+}
+
+#[test]
+fn a_warning_is_advisory_and_stays_out_of_the_fatal_error() {
+    let mut workflow = AgentSessionWorkflow {
+        session_id: Some(SessionId::new("session_1")),
+        ..Default::default()
+    };
+
+    workflow.record_warning(true, "first".to_owned());
+    workflow.record_warning(true, "unauthorized producer".to_owned());
+
+    let status = workflow.status_snapshot();
+    assert_eq!(status.fatal_error, None);
+    assert!(!status.bootstrap_failed);
+    assert_eq!(
+        status.last_warning.as_deref(),
+        Some("unauthorized producer")
     );
 }
 
@@ -199,18 +264,18 @@ fn close_on_terminal_requires_idle_open_session_with_completed_run() {
     state.lifecycle.status = CoreAgentStatus::Open;
     assert!(!drive::should_close_on_terminal(&args, &state));
 
-    state.runs.completed.push(RunRecord {
+    state.runs.finished.push(RunRecord {
         notify_on_terminal: Vec::new(),
         run_id: RunId::new(1),
         status: RunStatus::Completed,
         submission_id: None,
-        submission_digest: None,
+        submission_digest: 0,
         source: harness::RunSource::Input { input: Vec::new() },
         first_seq: EventSeq::new(1),
         terminal_seq: EventSeq::new(1),
         accepted_at_ms: 1,
         started_at_ms: Some(1),
-        completed_at_ms: 1,
+        finished_at_ms: 1,
         usage: None,
         output: None,
         failure: None,
@@ -264,15 +329,417 @@ fn continue_as_new_policy_uses_default_threshold() {
 }
 
 #[test]
-fn active_drive_rollover_outcome_is_typed_and_waits_for_transport_drain() {
-    assert_eq!(drive::history_boundary_outcome_for(false, true), None);
+fn a_due_rollover_continues_when_safe_and_yields_only_to_real_outer_work() {
+    use drive::history_boundary_outcome_for as outcome;
+
+    assert_eq!(outcome(false, true, true), None);
+    assert_eq!(outcome(false, false, true), None);
     assert_eq!(
-        drive::history_boundary_outcome_for(true, true),
+        outcome(true, true, false),
         Some(DriveOutcome::ContinueAsNew)
     );
+    assert_eq!(outcome(true, true, true), Some(DriveOutcome::ContinueAsNew));
     assert_eq!(
-        drive::history_boundary_outcome_for(true, false),
+        outcome(true, false, true),
         Some(DriveOutcome::YieldForWorkflowWork)
+    );
+    assert_eq!(
+        outcome(true, false, false),
+        None,
+        "a blocker the outer loop cannot clear leaves the drive to carry on"
+    );
+}
+
+#[test]
+fn blockers_that_need_the_drive_or_the_clock_never_yield_to_the_outer_loop() {
+    const NOW: u64 = 1_000;
+    let unblocked = || AgentSessionWorkflow {
+        ready: true,
+        ..Default::default()
+    };
+    let blocked_and_not_clearable = |state: &AgentSessionWorkflow, blocker: &str| {
+        assert!(
+            !wait_loop::workflow_state_allows_continue_as_new(state),
+            "{blocker} blocks continuation"
+        );
+        assert!(
+            !wait_loop::outer_loop_can_clear_now(state, NOW),
+            "{blocker} cannot be cleared by the outer loop now"
+        );
+    };
+
+    let mut watchdog = unblocked();
+    watchdog.cancelling_watchdog = Some(CancellingWatchdog {
+        run_id: 1,
+        since_ms: NOW,
+    });
+    blocked_and_not_clearable(&watchdog, "an armed watchdog");
+
+    let mut backing_off = unblocked();
+    let mut retrying = pending_run_emission();
+    retrying.next_attempt_at_ms = NOW + 1;
+    backing_off.pending_emissions.push(retrying);
+    blocked_and_not_clearable(&backing_off, "an emission in backoff");
+
+    let mut start_backoff = workflow_with_start_intent().workflow;
+    start_backoff.ready = true;
+    let invocation = start_backoff
+        .core_state
+        .workflow_tools
+        .start_requests
+        .keys()
+        .next()
+        .expect("start intent")
+        .as_str()
+        .to_owned();
+    start_backoff
+        .workflow_start_backoffs
+        .insert(invocation, (1, NOW + 1));
+    blocked_and_not_clearable(&start_backoff, "a start in backoff");
+
+    let mut held = workflow_with_turn_in_flight();
+    held.queue_admission(admission(CoreAgentCommand::RemoveContext {
+        expected_revision: None,
+        key: harness::ContextEntryKey::new("client.note"),
+    }));
+    assert!(!admissions::has_admissible_admissions(&held));
+    blocked_and_not_clearable(&held, "an admission held behind a turn");
+}
+
+#[test]
+fn work_the_outer_loop_consumes_with_an_await_makes_a_blocked_rollover_yield() {
+    const NOW: u64 = 1_000;
+    let mut workflow = AgentSessionWorkflow {
+        ready: true,
+        ..Default::default()
+    };
+    assert!(!wait_loop::outer_loop_can_clear_now(&workflow, NOW));
+
+    workflow.queue_admission(admission(request_input_run("submit_1")));
+    assert!(wait_loop::outer_loop_can_clear_now(&workflow, NOW));
+    workflow.pending_admissions.clear();
+
+    workflow.pending_tool_batch_unparks.push(pending_unpark(1));
+    assert!(wait_loop::outer_loop_can_clear_now(&workflow, NOW));
+    workflow.pending_tool_batch_unparks.clear();
+
+    workflow
+        .pending_promise_cancellations
+        .push(pending_promise_cancellation("promise_1"));
+    assert!(wait_loop::outer_loop_can_clear_now(&workflow, NOW));
+    workflow.pending_promise_cancellations.clear();
+
+    // A retained emission counts once its retry is due, not only when it is new.
+    let mut retrying = pending_run_emission();
+    retrying.next_attempt_at_ms = NOW;
+    workflow.pending_emissions.push(retrying);
+    assert!(wait_loop::outer_loop_can_clear_now(&workflow, NOW));
+    assert!(!wait_loop::outer_loop_can_clear_now(&workflow, NOW - 1));
+}
+
+#[test]
+fn transport_work_is_due_until_a_service_pass_so_a_yield_cannot_repeat() {
+    const NOW: u64 = 1_000;
+    let mut workflow = AgentSessionWorkflow {
+        ready: true,
+        ..Default::default()
+    };
+    assert!(!wait_loop::transport_work_due(&workflow, NOW));
+
+    // An emission: a failed attempt keeps it, with its retry ahead of the clock.
+    workflow.pending_emissions.push(pending_run_emission());
+    assert!(wait_loop::transport_work_due(&workflow, NOW));
+    workflow.pending_emissions[0].next_attempt_at_ms = NOW + 2_000;
+    assert!(!wait_loop::transport_work_due(&workflow, NOW));
+    assert!(wait_loop::transport_work_due(&workflow, NOW + 2_000));
+    workflow.pending_emissions.clear();
+
+    // Queues the pass takes whole.
+    workflow
+        .pending_promise_cancellations
+        .push(pending_promise_cancellation("promise_1"));
+    assert!(wait_loop::transport_work_due(&workflow, NOW));
+    workflow.pending_promise_cancellations.clear();
+    workflow
+        .pending_source_resolutions
+        .push(PendingSourceResolution {
+            promise_id: harness::PromiseId::new("promise_1"),
+            resolution: harness::PromiseResolution::Resolved { payload_ref: None },
+            producer: harness::EmissionProducer::Workflow {
+                universe_id: test_universe(),
+                workflow_id: "producer".to_owned(),
+            },
+        });
+    assert!(wait_loop::transport_work_due(&workflow, NOW));
+    workflow.pending_source_resolutions.clear();
+    assert!(!wait_loop::transport_work_due(&workflow, NOW));
+
+    // A start: a new intent is due, a failed attempt backs off, a started one is done.
+    let StartIntent {
+        mut workflow,
+        invocation_id,
+        promise_id,
+        ..
+    } = workflow_with_start_intent();
+    assert!(wait_loop::transport_work_due(&workflow, NOW));
+    let key = invocation_id.as_str().to_owned();
+    workflow
+        .workflow_start_backoffs
+        .insert(key.clone(), (1, NOW + 2_000));
+    assert!(!wait_loop::transport_work_due(&workflow, NOW));
+    assert!(wait_loop::transport_work_due(&workflow, NOW + 2_000));
+    workflow.workflow_start_backoffs.clear();
+    workflow.confirmed_workflow_starts.insert(key);
+    assert!(!wait_loop::transport_work_due(&workflow, NOW));
+
+    // A deadline: due while the promise is pending, spent once it has failed.
+    let promise = workflow
+        .core_state
+        .promises
+        .promises
+        .get_mut(&promise_id)
+        .expect("promise");
+    promise.deadline_at_ms = Some(NOW);
+    assert!(wait_loop::transport_work_due(&workflow, NOW));
+    assert!(!wait_loop::transport_work_due(&workflow, NOW - 1));
+    workflow
+        .core_state
+        .promises
+        .promises
+        .get_mut(&promise_id)
+        .expect("promise")
+        .status = PromiseStatus::Failed;
+    assert!(!wait_loop::transport_work_due(&workflow, NOW));
+}
+
+fn promise_entry(event: harness::PromiseEvent) -> CoreAgentEntry {
+    CoreAgentEntry {
+        position: SessionPosition {
+            seq: harness::EventSeq::new(1),
+        },
+        observed_at_ms: 1,
+        joins: Default::default(),
+        event: CoreAgentEvent::Promise(event),
+    }
+}
+
+#[test]
+fn any_terminal_outcome_of_the_last_keyed_promise_queues_one_cancel() {
+    let terminal = |promise_id: &harness::PromiseId| {
+        [
+            harness::PromiseEvent::Resolved {
+                promise_id: promise_id.clone(),
+                payload_ref: None,
+            },
+            harness::PromiseEvent::Failed {
+                promise_id: promise_id.clone(),
+                error_ref: None,
+            },
+            harness::PromiseEvent::Cancelled {
+                promise_id: promise_id.clone(),
+            },
+        ]
+    };
+    let StartIntent {
+        workflow: fixture,
+        promise_id,
+        execution_id,
+        ..
+    } = workflow_with_start_intent();
+
+    for event in terminal(&promise_id) {
+        let mut workflow = AgentSessionWorkflow {
+            universe_id: fixture.universe_id,
+            session_id: fixture.session_id.clone(),
+            core_state: fixture.core_state.clone(),
+            ..Default::default()
+        };
+        // Still pending in state: this entry did not end the set.
+        workflow.queue_execution_cancel_for_entry(&promise_entry(event.clone()));
+        assert!(workflow.pending_execution_cancels.is_empty());
+
+        workflow
+            .core_state
+            .promises
+            .promises
+            .get_mut(&promise_id)
+            .expect("promise")
+            .status = PromiseStatus::Cancelled;
+        workflow.queue_execution_cancel_for_entry(&promise_entry(event.clone()));
+        workflow.queue_execution_cancel_for_entry(&promise_entry(event));
+        assert_eq!(
+            workflow.pending_execution_cancels,
+            BTreeSet::from([execution_id.clone()]),
+            "deduplicated by execution"
+        );
+        assert!(wait_loop::workflow_state_has_immediate_work(&workflow));
+        assert!(wait_loop::transport_work_due(&workflow, 0));
+    }
+}
+
+#[test]
+fn a_promise_with_no_started_invocation_queues_no_cancel() {
+    let mut workflow = AgentSessionWorkflow::default();
+    add_promises(
+        &mut workflow,
+        vec![
+            promise_with_source(
+                "promise_1",
+                PromiseStatus::Resolved,
+                bound_workflow_source("peer"),
+                PromiseScope::Session,
+            ),
+            promise("promise_2", PromiseStatus::Resolved),
+        ],
+    );
+    for id in ["promise_1", "promise_2", "promise_99"] {
+        workflow.queue_execution_cancel_for_entry(&promise_entry(
+            harness::PromiseEvent::Resolved {
+                promise_id: harness::PromiseId::new(id),
+                payload_ref: None,
+            },
+        ));
+    }
+    assert!(workflow.pending_execution_cancels.is_empty());
+}
+
+#[test]
+fn past_invocations_cost_a_continued_execution_nothing_and_queued_cancels_travel() {
+    let StartIntent {
+        mut workflow,
+        promise_id,
+        execution_id,
+        ..
+    } = workflow_with_start_intent();
+    workflow.ready = true;
+    workflow
+        .core_state
+        .promises
+        .promises
+        .get_mut(&promise_id)
+        .expect("promise")
+        .status = PromiseStatus::Resolved;
+
+    // Finished long ago, so a fresh execution has nothing queued and nothing to do.
+    assert!(!wait_loop::workflow_state_has_immediate_work(&workflow));
+    assert!(!wait_loop::transport_work_due(&workflow, 1_000));
+
+    // A queued cancel does not hold a rollover back: it goes along.
+    workflow
+        .pending_execution_cancels
+        .insert(execution_id.clone());
+    assert!(wait_loop::workflow_state_allows_continue_as_new(&workflow));
+    let continuation = AgentSessionContinuationState {
+        version: AgentSessionContinuationState::VERSION,
+        ready: true,
+        operation_outcomes: Default::default(),
+        admission_failures: Vec::new(),
+        pending_execution_cancels: workflow.pending_execution_cancels.clone(),
+    };
+    let restored: AgentSessionContinuationState =
+        serde_json::from_slice(&serde_json::to_vec(&continuation).unwrap()).unwrap();
+    assert_eq!(
+        restored.pending_execution_cancels,
+        BTreeSet::from([execution_id])
+    );
+}
+
+#[test]
+fn a_closing_session_sends_its_queued_cancels_before_it_completes() {
+    let mut workflow = AgentSessionWorkflow {
+        initialized: true,
+        ..Default::default()
+    };
+    workflow.core_state.lifecycle.status = CoreAgentStatus::Closed;
+    assert!(wait_loop::workflow_state_is_closed_and_quiescent(&workflow));
+    workflow
+        .pending_execution_cancels
+        .insert("execution".to_owned());
+    assert!(!wait_loop::workflow_state_is_closed_and_quiescent(
+        &workflow
+    ));
+}
+
+#[test]
+fn a_start_backoff_whose_candidate_is_gone_does_not_block_rollover_for_good() {
+    let StartIntent {
+        mut workflow,
+        invocation_id,
+        promise_id,
+        ..
+    } = workflow_with_start_intent();
+    workflow.ready = true;
+    let key = invocation_id.as_str().to_owned();
+    workflow
+        .workflow_start_backoffs
+        .insert(key.clone(), (1, 2_000));
+    workflow_starts::forget_stale_backoffs(&mut workflow);
+    assert!(
+        workflow.workflow_start_backoffs.contains_key(&key),
+        "a live candidate keeps its backoff"
+    );
+
+    workflow
+        .core_state
+        .promises
+        .promises
+        .get_mut(&promise_id)
+        .expect("promise")
+        .status = PromiseStatus::Cancelled;
+    workflow_starts::forget_stale_backoffs(&mut workflow);
+
+    assert!(workflow.workflow_start_backoffs.is_empty());
+    assert!(wait_loop::workflow_state_allows_continue_as_new(&workflow));
+}
+
+#[test]
+fn blockers_that_already_ended_do_not_hold_a_rollover_through_a_long_drive() {
+    let StartIntent {
+        mut workflow,
+        invocation_id,
+        promise_id,
+        ..
+    } = workflow_with_start_intent();
+    workflow.ready = true;
+    workflow
+        .core_state
+        .promises
+        .promises
+        .get_mut(&promise_id)
+        .expect("promise")
+        .status = PromiseStatus::Cancelled;
+    workflow
+        .workflow_start_backoffs
+        .insert(invocation_id.as_str().to_owned(), (1, 2_000));
+    workflow.cancelling_watchdog = Some(CancellingWatchdog {
+        run_id: 7,
+        since_ms: 1_000,
+    });
+    assert!(!wait_loop::workflow_state_allows_continue_as_new(&workflow));
+    assert!(
+        !wait_loop::transport_work_due(&workflow, 1_000)
+            && !wait_loop::outer_loop_can_clear_now(&workflow, 1_000),
+        "nothing would send this drive back to the outer loop"
+    );
+
+    wait_loop::forget_ended_rollover_blockers(&mut workflow, 1_000);
+
+    assert!(wait_loop::workflow_state_allows_continue_as_new(&workflow));
+}
+
+#[test]
+fn a_loop_that_stops_awaiting_is_caught_and_a_moving_clock_is_not() {
+    let mut guard = wait_loop::StallGuard::default();
+    for now in 0..1_000 {
+        assert!(!guard.stalled(1, now), "the clock moved");
+    }
+    for history_length in 2..1_000 {
+        assert!(!guard.stalled(history_length, 1_000), "history moved");
+    }
+    let passes = (0..100).filter(|_| guard.stalled(1_000, 1_000)).count();
+    assert!(
+        (2..=4).contains(&passes),
+        "a frozen activation reports repeatedly, got {passes}"
     );
 }
 
@@ -299,30 +766,90 @@ fn rehydrated_active_run_wakes_core_drive_without_a_new_signal() {
 }
 
 #[test]
-fn legacy_step_limit_decodes_but_is_never_serialized() {
-    let args = agent_session_args_with_close_on_terminal(false);
-    let mut encoded = serde_json::to_value(&args).expect("serialize workflow args");
-    assert!(encoded.get("max_steps_per_input").is_none());
+fn only_commands_reissued_from_state_escape_a_rejected_admission() {
+    let run_id = RunId::new(1);
+    assert!(drive::reissued_from_state(
+        &CoreAgentCommand::ForceCancelRun { run_id }
+    ));
+    assert!(drive::reissued_from_state(
+        &CoreAgentCommand::UnparkToolBatch(harness::UnparkToolBatchCommand {
+            run_id,
+            batch_id: harness::ToolBatchId::new(1),
+            claim: harness::AwaitOutcome::Terminal,
+            claim_observed_at_ms: 1,
+            output: harness::ToolBatchUnparkOutput::JoinedWorkflowCalls {
+                additional_context: Vec::new(),
+            },
+        })
+    ));
+    assert!(!drive::reissued_from_state(&CoreAgentCommand::CancelRun {
+        requested_by: None,
+        run_id,
+    }));
+    assert!(!drive::reissued_from_state(&request_input_run("client")));
+}
 
-    encoded
-        .as_object_mut()
-        .expect("workflow args object")
-        .insert("max_steps_per_input".to_owned(), serde_json::json!(128));
-    let decoded: AgentSessionArgs =
-        serde_json::from_value(encoded).expect("decode legacy workflow args");
-    assert_eq!(decoded.legacy_max_steps_per_input, Some(128));
-    assert!(
-        serde_json::to_value(decoded)
-            .expect("re-serialize legacy workflow args")
-            .get("max_steps_per_input")
-            .is_none()
-    );
+#[test]
+fn a_deferred_toolset_waits_out_a_parked_batch_without_spinning_the_loop() {
+    let mut workflow = workflow_with_parked_tool_batch(AwaitSpec {
+        promise_ids: vec![harness::PromiseId::new("promise_1")],
+        mode: harness::AwaitMode::All,
+        deadline_at_ms: Some(50_000),
+    });
+    let config = crate::default_session_config(harness::ModelSelection {
+        api_kind: harness::ProviderApiKind::OpenAiResponses,
+        provider_id: "openai".to_owned(),
+        model: "gpt-test".to_owned(),
+    });
+    workflow.pending_toolsets.push(preparation::PendingToolset {
+        prepared: crate::SessionToolsetPreparation {
+            source: crate::SessionToolsetSource {
+                config,
+                config_revision: 0,
+                bindings: Default::default(),
+                system_binding_ids: Default::default(),
+            },
+            declarations: Vec::new(),
+            tools: Default::default(),
+            input_limit_tokens: None,
+            mcp_catalog: None,
+        },
+        run_id: RunId::new(2),
+        admission: admission(request_input_run("queued_behind_parked_batch")),
+    });
+    assert!(harness::tools_frozen(&workflow.core_state));
+    assert!(!wait_loop::workflow_state_needs_core_drive_for_state(
+        &workflow
+    ));
+    assert!(!wait_loop::workflow_state_has_immediate_work(&workflow));
+
+    // Once the batch is gone the toolset publishes at the very next wake.
+    let run = workflow.core_state.runs.active.as_mut().unwrap();
+    run.parked_tool_batch = None;
+    run.active_tool_batch_id = None;
+    run.status = RunStatus::Running;
+    assert!(!harness::tools_frozen(&workflow.core_state));
+    assert!(wait_loop::workflow_state_needs_core_drive_for_state(
+        &workflow
+    ));
+}
+
+fn continuation_state(
+    admission_failures: Vec<AgentAdmissionFailure>,
+) -> AgentSessionContinuationState {
+    AgentSessionContinuationState {
+        version: AgentSessionContinuationState::VERSION,
+        ready: false,
+        operation_outcomes: crate::SessionOperationReceipts::default(),
+        admission_failures,
+        pending_execution_cancels: BTreeSet::from(["execution".to_owned()]),
+    }
 }
 
 #[test]
 fn continuation_state_round_trips_admission_failure_correlation() {
     let rejection = harness::CommandRejection::context_revision_conflict(3, 4);
-    let continuation = AgentSessionContinuationState::v1(vec![AgentAdmissionFailure {
+    let continuation = continuation_state(vec![AgentAdmissionFailure {
         preparation_error: None,
         submission_id: Some(SubmissionId::new("submit_rejected")),
         correlation_token: Some("admit_test".to_owned()),
@@ -347,6 +874,7 @@ fn request_input_run(submission_id: &str) -> CoreAgentCommand {
             input: user_input(harness::BlobRef::from_bytes(submission_id.as_bytes())),
         },
         run_config: crate::default_run_config(),
+        input_limit_tokens: None,
     })
 }
 
@@ -388,10 +916,10 @@ fn agent_session_args_with_close_on_terminal(close_on_terminal: bool) -> AgentSe
             model: "gpt-test".to_owned(),
         }),
         workflow_tools: None,
-        legacy_max_steps_per_input: None,
         continue_as_new_history_threshold: None,
         close_on_terminal,
         auto_reject_approvals: false,
+        restart: false,
         continuation_state: None,
     }
 }
@@ -400,8 +928,8 @@ fn test_universe() -> uuid::Uuid {
     uuid::Uuid::from_u128(1)
 }
 
-fn managed_workflow_tools(controller_workflow_id: &str) -> harness::ManagedSessionWorkflowTools {
-    harness::ManagedSessionWorkflowTools::v1(
+fn declared_workflow_tools(controller_workflow_id: &str) -> harness::DeclaredSessionWorkflowTools {
+    harness::DeclaredSessionWorkflowTools::v1(
         Some(harness::WorkflowEndpointRef {
             workflow_id: controller_workflow_id.to_owned(),
             workflow_kind: "agent_work".to_owned(),
@@ -412,18 +940,18 @@ fn managed_workflow_tools(controller_workflow_id: &str) -> harness::ManagedSessi
 
 #[test]
 fn bootstrap_creation_identity_records_source_universe_and_is_immutable() {
-    let declaration = managed_workflow_tools("deployment-global work controller 🔧");
+    let declaration = declared_workflow_tools("deployment-global work controller 🔧");
     bootstrap::validate_session_creation_identity(
         test_universe(),
         &CoreAgentState::new(),
         true,
         Some(&declaration),
     )
-    .expect("fresh managed session with opaque controller id");
+    .expect("fresh declared session with opaque controller id");
 
     let mut existing = CoreAgentState::new();
     existing.workflow_tools.session_universe_id = Some(test_universe());
-    existing.workflow_tools.managed_creation_fingerprint = Some(
+    existing.workflow_tools.declared_creation_fingerprint = Some(
         declaration
             .creation_fingerprint(test_universe())
             .expect("creation fingerprint"),
@@ -440,7 +968,7 @@ fn bootstrap_creation_identity_records_source_universe_and_is_immutable() {
             test_universe(),
             &existing,
             false,
-            Some(&managed_workflow_tools("another arbitrary controller id")),
+            Some(&declared_workflow_tools("another arbitrary controller id")),
         )
         .is_err()
     );
@@ -475,15 +1003,15 @@ fn pending_run_emission() -> PendingEmission {
     )
 }
 
-fn pending_resume(batch_id: u64) -> PendingToolBatchResume {
-    PendingToolBatchResume {
+fn pending_unpark(batch_id: u64) -> PendingToolBatchUnpark {
+    PendingToolBatchUnpark {
         batch_id: ToolBatchId::new(batch_id),
-        command: harness::ResumeToolBatchCommand {
+        command: harness::UnparkToolBatchCommand {
             run_id: RunId::new(1),
             batch_id: ToolBatchId::new(batch_id),
-            claim: harness::WakeReason::Timeout,
+            claim: harness::AwaitOutcome::Timeout,
             claim_observed_at_ms: 1_000,
-            output: harness::ToolBatchResumeOutput::AwaitTool {
+            output: harness::ToolBatchUnparkOutput::AwaitTool {
                 result_ref: harness::BlobRef::from_bytes(b"await output"),
                 additional_context: Vec::new(),
                 attachments: Vec::new(),
@@ -521,14 +1049,13 @@ fn workflow_with_parked_tool_batch(spec: harness::AwaitSpec) -> AgentSessionWork
             calls: vec![harness::ToolCallState {
                 call: harness::ObservedToolCall {
                     call_id: call_id.clone(),
-                    tool_id: Some((harness::ToolName::new("await")).clone()),
+                    tool_id: Some(harness::ToolId::new("await")),
                     tool_name: harness::ToolName::new("await"),
                     provider_kind: None,
                     arguments_ref: harness::BlobRef::from_bytes(b"{}"),
                     native_call_ref: None,
                 },
                 status: harness::ToolCallStatus::Pending,
-                execution_policy: None,
                 result: None,
             }],
         },
@@ -544,6 +1071,7 @@ fn workflow_with_parked_tool_batch(spec: harness::AwaitSpec) -> AgentSessionWork
         input_entry_ids: Vec::new(),
         input_consumed_by_turn_id: None,
         run_config: crate::default_run_config(),
+        input_limit_tokens: None,
         config_revision: 0,
         first_seq: EventSeq::new(1),
         accepted_at_ms: 1,
@@ -551,6 +1079,8 @@ fn workflow_with_parked_tool_batch(spec: harness::AwaitSpec) -> AgentSessionWork
         usage: None,
         steering: Vec::new(),
         turns: std::collections::BTreeMap::new(),
+        turn_count: 0,
+        entry_guard_attempted: false,
         active_turn_id: None,
         active_tool_batch_id: Some(batch_id),
         approvals: Default::default(),
@@ -560,8 +1090,6 @@ fn workflow_with_parked_tool_batch(spec: harness::AwaitSpec) -> AgentSessionWork
         }),
         tool_batches,
         completed_tool_batches: std::collections::BTreeMap::new(),
-        output: None,
-        failure: None,
         notify_on_terminal: Vec::new(),
     });
     workflow
@@ -624,26 +1152,27 @@ fn cancelling_watchdog_wake_is_since_plus_timeout() {
 #[test]
 fn run_terminal_notifications_cannot_drop_output_encoding_into_a_session_promise() {
     let mut workflow = AgentSessionWorkflow::default();
-    workflow.queue_emission(
-        test_universe(),
-        harness::EmissionEnvelope::run_terminal(
+    workflow
+        .queue_emission(
             test_universe(),
-            SessionId::new("child_a"),
-            EventSeq::new(8),
-            "promise_1".to_owned(),
-            RunId::new(1),
-            RunStatus::Completed,
-            Some(harness::ContentRef {
-                content_ref: harness::BlobRef::from_bytes(b"native output"),
-                media_type: Some("application/json".to_owned()),
-                provider_kind: Some("provider.message".to_owned()),
-            }),
-            None,
-        ),
-    );
+            harness::EmissionEnvelope::run_terminal(
+                test_universe(),
+                SessionId::new("child_a"),
+                EventSeq::new(8),
+                "promise_1".to_owned(),
+                RunId::new(1),
+                RunStatus::Completed,
+                Some(harness::ContentRef {
+                    content_ref: harness::BlobRef::from_bytes(b"native output"),
+                    media_type: Some("application/json".to_owned()),
+                    provider_kind: Some("provider.message".to_owned()),
+                }),
+                None,
+            ),
+        )
+        .expect_err("a session does not take run-terminal notifications");
     assert!(workflow.pending_admissions.is_empty());
     assert!(workflow.pending_source_resolutions.is_empty());
-    assert!(workflow.last_error.is_some());
 }
 
 #[test]
@@ -657,11 +1186,11 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
     let binding = harness::WorkflowToolBinding::admit(
         test_universe(),
         harness::WorkflowToolDefinition {
-            tool_id: harness::WorkflowToolId::new("approve"),
-            revision: 1,
+            workflow_tool_id: harness::WorkflowToolId::new("approve"),
+            schema_revision: 1,
             semantic_type: "lightspeed.approval.request.v1".to_owned(),
             tool: harness::ToolSpec {
-                name: harness::ToolName::new("request_approval"),
+                id: harness::ToolId::new("request_approval"),
                 execution: Default::default(),
                 kind: harness::ToolKind::Function(harness::FunctionToolSpec {
                     description_ref: None,
@@ -699,7 +1228,7 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
     );
     let invocation = harness::WorkflowToolInvocation {
         invocation_id: invocation_id.clone(),
-        tool_id: binding.definition.tool_id.clone(),
+        workflow_tool_id: binding.definition.workflow_tool_id.clone(),
         semantic_type: binding.definition.semantic_type.clone(),
         schema_revision: 1,
         binding_fingerprint: binding.binding_fingerprint.clone(),
@@ -720,7 +1249,7 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         .core_state
         .workflow_tools
         .bindings
-        .insert(binding.definition.tool_id.clone(), binding.clone());
+        .insert(binding.definition.workflow_tool_id.clone(), binding.clone());
 
     let entry = harness::CoreAgentEntry {
         position: SessionPosition {
@@ -728,7 +1257,7 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         },
         observed_at_ms: 100,
         joins: CoreAgentJoins::default(),
-        event: CoreAgentEvent::WorkflowTool(harness::WorkflowToolEvent::Emitted {
+        event: CoreAgentEvent::WorkflowTool(harness::WorkflowToolEvent::Invoked {
             invocation: invocation.clone(),
         }),
     };
@@ -779,9 +1308,9 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
     );
     let accepted_invocation = harness::WorkflowToolInvocation {
         invocation_id: accepted_invocation_id.clone(),
-        tool_id: accepted_binding.definition.tool_id.clone(),
+        workflow_tool_id: accepted_binding.definition.workflow_tool_id.clone(),
         semantic_type: accepted_binding.definition.semantic_type.clone(),
-        schema_revision: accepted_binding.definition.revision,
+        schema_revision: accepted_binding.definition.schema_revision,
         binding_fingerprint: accepted_binding.binding_fingerprint.clone(),
         session_universe_id: test_universe(),
         session_id: SessionId::new("child_session"),
@@ -794,7 +1323,7 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         completion_promises: None,
     };
     workflow.core_state.workflow_tools.bindings.insert(
-        accepted_binding.definition.tool_id.clone(),
+        accepted_binding.definition.workflow_tool_id.clone(),
         accepted_binding.clone(),
     );
     let accepted_entry = harness::CoreAgentEntry {
@@ -803,7 +1332,7 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         },
         observed_at_ms: 101,
         joins: CoreAgentJoins::default(),
-        event: CoreAgentEvent::WorkflowTool(harness::WorkflowToolEvent::Emitted {
+        event: CoreAgentEvent::WorkflowTool(harness::WorkflowToolEvent::Invoked {
             invocation: accepted_invocation.clone(),
         }),
     };
@@ -818,17 +1347,17 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
 
     // Caller run completion does not abandon an independently queued pushed
     // Accepted delivery.
-    workflow.core_state.runs.completed.push(RunRecord {
+    workflow.core_state.runs.finished.push(RunRecord {
         run_id: RunId::new(1),
         status: RunStatus::Completed,
         submission_id: None,
-        submission_digest: None,
+        submission_digest: 0,
         source: harness::RunSource::Input { input: Vec::new() },
         first_seq: EventSeq::new(1),
         terminal_seq: EventSeq::new(1),
         accepted_at_ms: 1,
         started_at_ms: Some(1),
-        completed_at_ms: 1,
+        finished_at_ms: 1,
         usage: None,
         output: None,
         failure: None,
@@ -876,9 +1405,9 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
     );
     let pull_invocation = harness::WorkflowToolInvocation {
         invocation_id: pull_invocation_id,
-        tool_id: pull_binding.definition.tool_id.clone(),
+        workflow_tool_id: pull_binding.definition.workflow_tool_id.clone(),
         semantic_type: pull_binding.definition.semantic_type.clone(),
-        schema_revision: pull_binding.definition.revision,
+        schema_revision: pull_binding.definition.schema_revision,
         binding_fingerprint: pull_binding.binding_fingerprint.clone(),
         session_universe_id: test_universe(),
         session_id: SessionId::new("child_session"),
@@ -890,18 +1419,17 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         execution_context_ref: None,
         completion_promises: None,
     };
-    workflow
-        .core_state
-        .workflow_tools
-        .bindings
-        .insert(pull_binding.definition.tool_id.clone(), pull_binding);
+    workflow.core_state.workflow_tools.bindings.insert(
+        pull_binding.definition.workflow_tool_id.clone(),
+        pull_binding,
+    );
     let pull_entry = harness::CoreAgentEntry {
         position: SessionPosition {
             seq: EventSeq::new(12),
         },
         observed_at_ms: 103,
         joins: CoreAgentJoins::default(),
-        event: CoreAgentEvent::WorkflowTool(harness::WorkflowToolEvent::Emitted {
+        event: CoreAgentEvent::WorkflowTool(harness::WorkflowToolEvent::Invoked {
             invocation: pull_invocation,
         }),
     };
@@ -913,107 +1441,12 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
 
 #[test]
 fn start_intents_recompute_pending_start_work_from_durable_state() {
-    let mut workflow = AgentSessionWorkflow {
-        universe_id: Some(test_universe()),
-        session_id: Some(SessionId::new("child_session")),
-        ..Default::default()
-    };
-
-    let start = harness::WorkflowStartRef {
-        recipe_format: 1,
-        revision: 1,
-        recipe_ref: harness::BlobRef::from_bytes(b"recipe"),
-        recipe_fingerprint: "wtr:sha256:recipe".to_owned(),
-    };
-    let binding = harness::WorkflowToolBinding::admit(
-        test_universe(),
-        harness::WorkflowToolDefinition {
-            tool_id: harness::WorkflowToolId::new("launch"),
-            revision: 1,
-            semantic_type: "lightspeed.job.launch.v1".to_owned(),
-            tool: harness::ToolSpec {
-                name: harness::ToolName::new("launch_job"),
-                execution: Default::default(),
-                kind: harness::ToolKind::Function(harness::FunctionToolSpec {
-                    description_ref: None,
-                    input_schema_ref: harness::BlobRef::from_bytes(b"{}"),
-                    output_schema_ref: None,
-                    strict: None,
-                    provider_options_ref: None,
-                }),
-                parallelism: harness::ToolParallelism::ParallelSafe,
-            },
-        },
-        harness::WorkflowToolTarget::Start {
-            start: start.clone(),
-        },
-        harness::WorkflowToolCompletion::Promises {
-            reply_schema_ref: None,
-            deadline_after_ms: None,
-            max_promises: 1,
-            key_source: harness::WorkflowToolCompletionKeySource::Reply,
-        },
-    )
-    .expect("start binding");
-    let invocation_id = harness::WorkflowToolInvocationId::for_call(
-        test_universe(),
-        &SessionId::new("child_session"),
-        RunId::new(1),
-        harness::TurnId::new(1),
-        ToolBatchId::new(1),
-        &harness::ToolCallId::new("call-1"),
-        &binding.binding_fingerprint,
-    );
-    let promise_id = harness::PromiseId::from_number(1);
-    let execution_id =
-        harness::workflow_tool_execution_id(&invocation_id, &start.recipe_fingerprint);
-    let invocation = harness::WorkflowToolInvocation {
-        invocation_id: invocation_id.clone(),
-        tool_id: binding.definition.tool_id.clone(),
-        semantic_type: binding.definition.semantic_type.clone(),
-        schema_revision: 1,
-        binding_fingerprint: binding.binding_fingerprint.clone(),
-        session_universe_id: test_universe(),
-        session_id: SessionId::new("child_session"),
-        run_id: RunId::new(1),
-        turn_id: harness::TurnId::new(1),
-        tool_batch_id: ToolBatchId::new(1),
-        tool_call_id: harness::ToolCallId::new("call-1"),
-        arguments_ref: harness::BlobRef::from_bytes(b"{}"),
-        execution_context_ref: None,
-        completion_promises: Some(std::collections::BTreeMap::from([(
-            harness::REPLY_COMPLETION_KEY.to_owned(),
-            promise_id.clone(),
-        )])),
-    };
-    workflow
-        .core_state
-        .workflow_tools
-        .bindings
-        .insert(binding.definition.tool_id.clone(), binding);
-    workflow
-        .core_state
-        .workflow_tools
-        .start_requests
-        .insert(invocation_id.clone(), invocation);
-    workflow.core_state.promises.promises.insert(
-        promise_id.clone(),
-        harness::Promise {
-            promise_id: promise_id.clone(),
-            source: harness::PromiseSource::Workflow {
-                producer_workflow_id: execution_id.clone(),
-                producer_workflow_kind: harness::WORKFLOW_TOOL_EXECUTION_KIND.to_owned(),
-                invocation_id: invocation_id.as_str().to_owned(),
-                completion_key: harness::REPLY_COMPLETION_KEY.to_owned(),
-            },
-            scope: harness::PromiseScope::Session,
-            ownership: harness::PromiseOwnership::Model,
-            status: PromiseStatus::Pending,
-            payload_ref: None,
-            error_ref: None,
-            deadline_ms: None,
-        },
-    );
+    let StartIntent {
+        mut workflow,
+        invocation_id,
+        promise_id,
+        ..
+    } = workflow_with_start_intent();
 
     // A durable start intent with a pending keyed promise is immediate
     // start work — recomputed from state, so replay and continue-as-new
@@ -1066,6 +1499,181 @@ fn start_intents_recompute_pending_start_work_from_durable_state() {
     );
 }
 
+/// A session holding one start-on-call invocation with its keyed promise pending.
+struct StartIntent {
+    workflow: AgentSessionWorkflow,
+    invocation_id: harness::WorkflowToolInvocationId,
+    promise_id: harness::PromiseId,
+    execution_id: String,
+}
+
+fn workflow_with_start_intent() -> StartIntent {
+    let mut workflow = AgentSessionWorkflow {
+        universe_id: Some(test_universe()),
+        session_id: Some(SessionId::new("child_session")),
+        ..Default::default()
+    };
+
+    let start = harness::WorkflowStartRef {
+        recipe_format: 1,
+        recipe_revision: 1,
+        recipe_ref: harness::BlobRef::from_bytes(b"recipe"),
+        recipe_fingerprint: "wtr:sha256:recipe".to_owned(),
+    };
+    let binding = harness::WorkflowToolBinding::admit(
+        test_universe(),
+        harness::WorkflowToolDefinition {
+            workflow_tool_id: harness::WorkflowToolId::new("launch"),
+            schema_revision: 1,
+            semantic_type: "lightspeed.job.launch.v1".to_owned(),
+            tool: harness::ToolSpec {
+                id: harness::ToolId::new("launch_job"),
+                execution: Default::default(),
+                kind: harness::ToolKind::Function(harness::FunctionToolSpec {
+                    description_ref: None,
+                    input_schema_ref: harness::BlobRef::from_bytes(b"{}"),
+                    output_schema_ref: None,
+                    strict: None,
+                    provider_options_ref: None,
+                }),
+                parallelism: harness::ToolParallelism::ParallelSafe,
+            },
+        },
+        harness::WorkflowToolTarget::Start {
+            start: start.clone(),
+        },
+        harness::WorkflowToolCompletion::Promises {
+            reply_schema_ref: None,
+            deadline_after_ms: None,
+            max_promises: 1,
+            key_source: harness::WorkflowToolCompletionKeySource::Reply,
+        },
+    )
+    .expect("start binding");
+    let invocation_id = harness::WorkflowToolInvocationId::for_call(
+        test_universe(),
+        &SessionId::new("child_session"),
+        RunId::new(1),
+        harness::TurnId::new(1),
+        ToolBatchId::new(1),
+        &harness::ToolCallId::new("call-1"),
+        &binding.binding_fingerprint,
+    );
+    let promise_id = harness::PromiseId::from_number(1);
+    let execution_id =
+        harness::workflow_tool_execution_id(&invocation_id, &start.recipe_fingerprint);
+    let invocation = harness::WorkflowToolInvocation {
+        invocation_id: invocation_id.clone(),
+        workflow_tool_id: binding.definition.workflow_tool_id.clone(),
+        semantic_type: binding.definition.semantic_type.clone(),
+        schema_revision: 1,
+        binding_fingerprint: binding.binding_fingerprint.clone(),
+        session_universe_id: test_universe(),
+        session_id: SessionId::new("child_session"),
+        run_id: RunId::new(1),
+        turn_id: harness::TurnId::new(1),
+        tool_batch_id: ToolBatchId::new(1),
+        tool_call_id: harness::ToolCallId::new("call-1"),
+        arguments_ref: harness::BlobRef::from_bytes(b"{}"),
+        execution_context_ref: None,
+        completion_promises: Some(std::collections::BTreeMap::from([(
+            harness::REPLY_COMPLETION_KEY.to_owned(),
+            promise_id.clone(),
+        )])),
+    };
+    workflow
+        .core_state
+        .workflow_tools
+        .bindings
+        .insert(binding.definition.workflow_tool_id.clone(), binding);
+    workflow
+        .core_state
+        .workflow_tools
+        .start_requests
+        .insert(invocation_id.clone(), invocation);
+    workflow.core_state.promises.promises.insert(
+        promise_id.clone(),
+        harness::Promise {
+            promise_id: promise_id.clone(),
+            source: harness::PromiseSource::Workflow {
+                producer_workflow_id: execution_id.clone(),
+                producer_workflow_kind: harness::WORKFLOW_TOOL_EXECUTION_KIND.to_owned(),
+                invocation_id: invocation_id.as_str().to_owned(),
+                completion_key: harness::REPLY_COMPLETION_KEY.to_owned(),
+            },
+            scope: harness::PromiseScope::Session,
+            ownership: harness::PromiseOwnership::Model,
+            status: PromiseStatus::Pending,
+            payload_ref: None,
+            error_ref: None,
+            deadline_at_ms: None,
+        },
+    );
+    StartIntent {
+        workflow,
+        invocation_id,
+        promise_id,
+        execution_id,
+    }
+}
+
+/// A ready session with an active run whose turn has started.
+fn workflow_with_turn_in_flight() -> AgentSessionWorkflow {
+    let mut workflow = AgentSessionWorkflow {
+        ready: true,
+        ..Default::default()
+    };
+    let mut drive = CoreAgentDrive::from_replayed(SessionId::new("held"), CoreAgentState::new());
+    let commit = |drive: &mut CoreAgentDrive, action: CoreAgentAction| {
+        let CoreAgentAction::AppendEvents { events, .. } = action else {
+            panic!("expected an append, got {action:?}");
+        };
+        let mut seq = drive.head().map_or(0, |head| head.seq.as_u64());
+        let entries = events
+            .into_iter()
+            .map(|event| {
+                seq += 1;
+                harness::storage::StoredSessionEntry {
+                    position: SessionPosition {
+                        seq: harness::EventSeq::new(seq),
+                    },
+                    observed_at_ms: event.observed_at_ms,
+                    joins: event.joins,
+                    event: event.event,
+                }
+            })
+            .collect();
+        drive.resume_appended(entries).expect("apply");
+    };
+    let open = drive
+        .admit_command(
+            CoreAgentCommand::OpenSession {
+                config: crate::default_session_config(harness::ModelSelection {
+                    api_kind: harness::ProviderApiKind::OpenAiResponses,
+                    provider_id: "openai".into(),
+                    model: "gpt-test".into(),
+                }),
+            },
+            1,
+        )
+        .expect("open");
+    commit(&mut drive, open);
+    let run = drive
+        .admit_command(request_input_run("submit_held"), 2)
+        .expect("run");
+    commit(&mut drive, run);
+    for now in 3..64 {
+        match drive.next_action_unbounded(now).expect("next action") {
+            CoreAgentAction::GenerateLlm { .. } => {
+                workflow.core_state = drive.state().clone();
+                return workflow;
+            }
+            action => commit(&mut drive, action),
+        }
+    }
+    panic!("the run never reached its generation");
+}
+
 #[test]
 fn terminal_run_with_notify_intent_queues_emission() {
     let mut workflow = AgentSessionWorkflow {
@@ -1074,17 +1682,17 @@ fn terminal_run_with_notify_intent_queues_emission() {
         ..Default::default()
     };
     let output_ref = harness::ContentRef::text(harness::BlobRef::from_bytes(b"done"));
-    workflow.core_state.runs.completed.push(RunRecord {
+    workflow.core_state.runs.finished.push(RunRecord {
         run_id: RunId::new(3),
         status: RunStatus::Completed,
         submission_id: None,
-        submission_digest: None,
+        submission_digest: 0,
         source: harness::RunSource::Input { input: Vec::new() },
         first_seq: EventSeq::new(1),
         terminal_seq: EventSeq::new(1),
         accepted_at_ms: 1,
         started_at_ms: Some(1),
-        completed_at_ms: 1,
+        finished_at_ms: 1,
         usage: None,
         output: Some(output_ref.clone()),
         failure: None,
@@ -1136,13 +1744,247 @@ fn terminal_run_with_notify_intent_queues_emission() {
     ));
     // A run without intents queues nothing.
     workflow.pending_emissions.clear();
-    workflow.core_state.runs.completed[0]
+    workflow.core_state.runs.finished[0]
         .notify_on_terminal
         .clear();
     workflow
         .queue_emissions_for_entries(std::slice::from_ref(&entry))
         .expect("queue no emission");
     assert!(workflow.pending_emissions.is_empty());
+}
+
+#[test]
+fn a_receiver_hears_of_a_hard_deadline_but_not_its_own_failure_report() {
+    let mut workflow = workflow_holding(vec![
+        promise("promise_1", PromiseStatus::Failed),
+        promise("promise_2", PromiseStatus::Failed),
+        promise("promise_3", PromiseStatus::Failed),
+        promise("promise_4", PromiseStatus::Cancelled),
+    ]);
+    let failed = |id: &str, error_ref| {
+        promise_entry(harness::PromiseEvent::Failed {
+            promise_id: harness::PromiseId::new(id),
+            error_ref,
+        })
+    };
+    for entry in [
+        failed("promise_1", Some(harness::promise_deadline_exceeded_ref())),
+        failed(
+            "promise_2",
+            Some(harness::BlobRef::from_bytes(b"its error")),
+        ),
+        failed("promise_3", None),
+        promise_entry(harness::PromiseEvent::Cancelled {
+            promise_id: harness::PromiseId::new("promise_4"),
+        }),
+    ] {
+        workflow.queue_promise_cancellation_for_entry(&entry);
+    }
+    let notified = workflow
+        .pending_promise_cancellations
+        .iter()
+        .map(|pending| pending.promise_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(notified, ["promise_1", "promise_4"]);
+}
+
+fn delivery_from(producer: &str, promise_id: &str) -> PendingSourceResolution {
+    PendingSourceResolution {
+        promise_id: harness::PromiseId::new(promise_id),
+        resolution: harness::PromiseResolution::Resolved {
+            payload_ref: Some(harness::BlobRef::from_bytes(b"forged")),
+        },
+        producer: harness::EmissionProducer::Workflow {
+            universe_id: test_universe(),
+            workflow_id: producer.to_owned(),
+        },
+    }
+}
+
+fn workflow_holding(promises: Vec<harness::Promise>) -> AgentSessionWorkflow {
+    let mut workflow = AgentSessionWorkflow::default();
+    add_promises(&mut workflow, promises);
+    workflow
+}
+
+#[test]
+fn a_late_or_unknown_source_resolution_is_a_no_op_that_never_fails_the_session() {
+    let mut workflow = workflow_holding(vec![promise("promise_1", PromiseStatus::Resolved)]);
+
+    // A pruned promise looks unknown, and its late reply still reports nothing fatal.
+    assert_eq!(
+        promise_sources::source_resolution_gate(
+            &mut workflow,
+            false,
+            &delivery_from("universe/child", "promise_9"),
+        ),
+        promise_sources::SourceResolutionGate::Drop
+    );
+    assert!(
+        workflow
+            .last_warning
+            .as_deref()
+            .is_some_and(|warning| warning.contains("promise_9"))
+    );
+    assert!(workflow.fatal_error.is_none());
+    assert!(workflow.admission_failures.is_empty());
+
+    // The first writer won on a terminal promise, which is the designed path.
+    workflow.last_warning = None;
+    assert_eq!(
+        promise_sources::source_resolution_gate(
+            &mut workflow,
+            false,
+            &delivery_from("universe/child", "promise_1"),
+        ),
+        promise_sources::SourceResolutionGate::Drop
+    );
+    assert!(workflow.last_warning.is_none());
+    assert!(workflow.pending_admissions.is_empty());
+}
+
+/// What a recovery poll found arrives from the promise's own producer and goes through
+/// the gate a signal does, so the binding's reply schema applies.
+#[test]
+fn a_recovered_result_meets_the_reply_schema_a_signal_would() {
+    let StartIntent {
+        mut workflow,
+        promise_id,
+        execution_id,
+        ..
+    } = workflow_with_start_intent();
+    let schema = harness::BlobRef::from_bytes(b"{}");
+    workflow
+        .core_state
+        .workflow_tools
+        .bindings
+        .get_mut(&harness::WorkflowToolId::new("launch"))
+        .expect("binding")
+        .completion = harness::WorkflowToolCompletion::Promises {
+        reply_schema_ref: Some(schema.clone()),
+        deadline_after_ms: None,
+        max_promises: 1,
+        key_source: harness::WorkflowToolCompletionKeySource::Reply,
+    };
+    assert_eq!(
+        promise_sources::source_resolution_gate(
+            &mut workflow,
+            false,
+            &delivery_from(&execution_id, promise_id.as_str()),
+        ),
+        promise_sources::SourceResolutionGate::Admit {
+            reply_schema_ref: Some(schema),
+            text_reply: false,
+        }
+    );
+    assert!(workflow.last_warning.is_none());
+}
+
+/// A joined reply becomes its call's result, which providers read as text.
+#[test]
+fn a_joined_binding_asks_the_ingest_check_for_a_text_reply() {
+    let StartIntent {
+        mut workflow,
+        promise_id,
+        execution_id,
+        ..
+    } = workflow_with_start_intent();
+    workflow
+        .core_state
+        .workflow_tools
+        .bindings
+        .get_mut(&harness::WorkflowToolId::new("launch"))
+        .expect("binding")
+        .completion = harness::WorkflowToolCompletion::Joined {
+        reply_schema_ref: None,
+        deadline_after_ms: Some(1_000),
+    };
+    assert_eq!(
+        promise_sources::source_resolution_gate(
+            &mut workflow,
+            false,
+            &delivery_from(&execution_id, promise_id.as_str()),
+        ),
+        promise_sources::SourceResolutionGate::Admit {
+            reply_schema_ref: None,
+            text_reply: true,
+        }
+    );
+}
+
+#[test]
+fn the_ingest_check_runs_for_every_ref_and_every_declared_schema() {
+    let schema = harness::BlobRef::from_bytes(b"{}");
+    let blob = harness::BlobRef::from_bytes(b"reply");
+    let needs = promise_sources::resolution_needs_ingest_check;
+    assert!(needs(
+        None,
+        &harness::PromiseResolution::Resolved {
+            payload_ref: Some(blob.clone())
+        }
+    ));
+    assert!(needs(
+        None,
+        &harness::PromiseResolution::Failed {
+            error_ref: Some(blob)
+        }
+    ));
+    // A schema requires a payload, so its absence is for the check to report.
+    assert!(needs(
+        Some(&schema),
+        &harness::PromiseResolution::Resolved { payload_ref: None }
+    ));
+    assert!(!needs(
+        None,
+        &harness::PromiseResolution::Resolved { payload_ref: None }
+    ));
+    assert!(!needs(
+        Some(&schema),
+        &harness::PromiseResolution::Failed { error_ref: None }
+    ));
+    assert!(!needs(
+        Some(&schema),
+        &harness::PromiseResolution::Cancelled
+    ));
+}
+
+#[test]
+fn only_the_stored_producer_settles_a_promise_and_nothing_outside_settles_a_timer() {
+    let timer = promise_with_source(
+        "promise_2",
+        PromiseStatus::Pending,
+        PromiseSource::Timer { fire_at_ms: 1_000 },
+        PromiseScope::Session,
+    );
+    let mut workflow = workflow_holding(vec![promise("promise_1", PromiseStatus::Pending), timer]);
+
+    for delivery in [
+        delivery_from("universe/other", "promise_1"),
+        delivery_from("universe/child", "promise_2"),
+    ] {
+        workflow.last_warning = None;
+        assert_eq!(
+            promise_sources::source_resolution_gate(&mut workflow, false, &delivery),
+            promise_sources::SourceResolutionGate::Drop
+        );
+        assert!(
+            workflow
+                .last_warning
+                .as_deref()
+                .is_some_and(|warning| warning.contains("unauthorized producer"))
+        );
+    }
+    assert_eq!(
+        promise_sources::source_resolution_gate(
+            &mut workflow,
+            false,
+            &delivery_from("universe/child", "promise_1"),
+        ),
+        promise_sources::SourceResolutionGate::Admit {
+            reply_schema_ref: None,
+            text_reply: false,
+        }
+    );
 }
 
 fn promise(id: &str, status: PromiseStatus) -> harness::Promise {
@@ -1179,7 +2021,7 @@ fn promise_with_source(
         status,
         payload_ref: None,
         error_ref: None,
-        deadline_ms: None,
+        deadline_at_ms: None,
     }
 }
 
@@ -1286,7 +2128,7 @@ fn parked_join_reconstructs_wake_from_runtime_owned_terminal_promises() {
             status: PromiseStatus::Resolved,
             payload_ref: Some(harness::BlobRef::from_bytes(b"receipt")),
             error_ref: None,
-            deadline_ms: Some(50_000),
+            deadline_at_ms: Some(50_000),
         },
     );
 
@@ -1349,6 +2191,7 @@ fn queued_followups_do_not_spin_while_the_active_run_awaits_a_timer() {
             submission_id: None,
             source: active.source.clone(),
             run_config: active.run_config.clone(),
+            input_limit_tokens: None,
             config_revision: active.config_revision,
             first_seq: EventSeq::new(run_id),
             accepted_at_ms: 1_000,
@@ -1516,6 +2359,35 @@ fn promise_source_polls_rehydrate_from_pending_poll_sources() {
 }
 
 #[test]
+fn a_started_execution_poll_backs_off_to_a_cap_and_a_timer_keeps_its_time() {
+    let mut poll = PromiseSourcePoll {
+        promise_id: "promise_1".to_owned(),
+        source: bound_workflow_source("child"),
+        next_check_at_ms: 0,
+        poll_attempt: 0,
+    };
+    let delays = (0..6)
+        .map(|_| {
+            promise_sources::advance(&mut poll, 1_000);
+            poll.next_check_at_ms - 1_000
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(delays, [20_000, 40_000, 60_000, 60_000, 60_000, 60_000]);
+    poll.poll_attempt = u32::MAX;
+    promise_sources::advance(&mut poll, u64::MAX);
+    assert_eq!(poll.next_check_at_ms, u64::MAX);
+
+    let mut timer = PromiseSourcePoll {
+        promise_id: "promise_2".to_owned(),
+        source: PromiseSource::Timer { fire_at_ms: 9_000 },
+        next_check_at_ms: 0,
+        poll_attempt: 0,
+    };
+    promise_sources::advance(&mut timer, 1_000);
+    assert_eq!(timer.next_check_at_ms, 9_000);
+}
+
+#[test]
 fn continue_as_new_is_blocked_by_non_reconstructible_workflow_state() {
     let mut workflow = AgentSessionWorkflow {
         ready: true,
@@ -1527,9 +2399,9 @@ fn continue_as_new_is_blocked_by_non_reconstructible_workflow_state() {
     assert!(!wait_loop::workflow_state_allows_continue_as_new(&workflow));
     workflow.pending_admissions.clear();
 
-    workflow.pending_tool_batch_resumes.push(pending_resume(1));
+    workflow.pending_tool_batch_unparks.push(pending_unpark(1));
     assert!(!wait_loop::workflow_state_allows_continue_as_new(&workflow));
-    workflow.pending_tool_batch_resumes.clear();
+    workflow.pending_tool_batch_unparks.clear();
 
     workflow.pending_emissions.push(pending_run_emission());
     assert!(!wait_loop::workflow_state_allows_continue_as_new(&workflow));
@@ -1573,11 +2445,11 @@ fn closed_quiescent_workflow_can_complete() {
     workflow.core_state.lifecycle.status = CoreAgentStatus::Closed;
     assert!(wait_loop::workflow_state_is_closed_and_quiescent(&workflow));
 
-    workflow.pending_tool_batch_resumes.push(pending_resume(1));
+    workflow.pending_tool_batch_unparks.push(pending_unpark(1));
     assert!(!wait_loop::workflow_state_is_closed_and_quiescent(
         &workflow
     ));
-    workflow.pending_tool_batch_resumes.clear();
+    workflow.pending_tool_batch_unparks.clear();
 
     workflow.pending_emissions.push(pending_run_emission());
     assert!(!wait_loop::workflow_state_is_closed_and_quiescent(
@@ -2207,19 +3079,158 @@ fn accepted_submission_skips_new_policy_observations_even_after_config_is_remove
 }
 
 #[test]
-fn continuations_require_explicit_preparation_state() {
+fn continuations_round_trip_and_a_missing_field_falls_back_to_its_default() {
     for ready in [false, true] {
-        let mut current = AgentSessionContinuationState::v1(Vec::new());
+        let mut current = continuation_state(Vec::new());
         current.ready = ready;
         let wire = serde_json::to_value(&current).unwrap();
         assert_eq!(
             serde_json::from_value::<AgentSessionContinuationState>(wire.clone()).unwrap(),
             current
         );
-        for field in ["ready", "operation_outcomes"] {
-            let mut incomplete = wire.clone();
-            incomplete.as_object_mut().unwrap().remove(field);
-            assert!(serde_json::from_value::<AgentSessionContinuationState>(incomplete).is_err());
-        }
+        let mut incomplete = wire;
+        incomplete.as_object_mut().unwrap().remove("ready");
+        assert!(
+            !serde_json::from_value::<AgentSessionContinuationState>(incomplete)
+                .unwrap()
+                .ready
+        );
     }
+}
+
+#[test]
+fn only_a_forced_close_passes_a_pending_compaction() {
+    let mut workflow = AgentSessionWorkflow::default();
+    workflow.core_state.context.compaction.phase =
+        harness::ContextCompactionPhase::Pending(harness::ContextCompactionPlan {
+            run_id: None,
+            covered_entry_ids: Vec::new(),
+            trigger: harness::ContextCompactionTrigger::Manual,
+            estimated_tokens: None,
+        });
+    let close = |force| {
+        SessionAdmission::Core(AgentAdmission {
+            command: CoreAgentCommand::CloseSession { force },
+            correlation_token: None,
+        })
+    };
+    workflow.pending_admissions = vec![close(false)];
+    assert!(!admissions::has_admissible_admissions(&workflow));
+    workflow.pending_admissions = vec![close(true)];
+    assert!(admissions::has_admissible_admissions(&workflow));
+}
+
+/// A batch or run ending in the append that settles a promise prunes what the host
+/// has to read about that promise, so each entry is read before the next applies.
+#[test]
+fn a_terminal_event_and_a_pruning_boundary_in_one_append_still_reach_the_host() {
+    let StartIntent {
+        mut workflow,
+        invocation_id,
+        promise_id,
+        execution_id,
+    } = workflow_with_start_intent();
+    workflow.core_state.runs.active = workflow_with_parked_tool_batch(await_spec(
+        &[promise_id.as_str()],
+        harness::AwaitMode::All,
+        None,
+    ))
+    .core_state
+    .runs
+    .active;
+    workflow.core_state.reduced_to = None;
+    let entry = |seq, event| CoreAgentEntry {
+        position: SessionPosition {
+            seq: harness::EventSeq::new(seq),
+        },
+        observed_at_ms: 1,
+        joins: Default::default(),
+        event,
+    };
+
+    for appended in [
+        entry(
+            1,
+            CoreAgentEvent::Promise(harness::PromiseEvent::Cancelled {
+                promise_id: promise_id.clone(),
+            }),
+        ),
+        entry(
+            2,
+            CoreAgentEvent::Run(harness::RunEvent::ForceCancelled {
+                run_id: RunId::new(1),
+            }),
+        ),
+    ] {
+        drive::apply_appended_entry(&mut workflow, &appended).expect("apply");
+    }
+
+    assert_eq!(
+        workflow.pending_execution_cancels,
+        BTreeSet::from([execution_id])
+    );
+    assert_eq!(workflow.pending_promise_cancellations.len(), 1);
+    assert_eq!(
+        workflow.pending_promise_cancellations[0].promise_id,
+        promise_id.as_str()
+    );
+    let state = &workflow.core_state;
+    assert!(
+        !state
+            .workflow_tools
+            .start_requests
+            .contains_key(&invocation_id)
+    );
+}
+
+/// The sibling settled long ago and left state, which says nothing against the
+/// invocation's promises all being terminal.
+#[test]
+fn the_last_promise_of_an_invocation_cancels_its_execution_with_a_sibling_already_pruned() {
+    let StartIntent {
+        mut workflow,
+        invocation_id,
+        promise_id,
+        execution_id,
+    } = workflow_with_start_intent();
+    workflow
+        .core_state
+        .workflow_tools
+        .start_requests
+        .get_mut(&invocation_id)
+        .expect("start intent")
+        .completion_promises
+        .as_mut()
+        .expect("keyed promises")
+        .insert("pruned".to_owned(), harness::PromiseId::from_number(9_999));
+    workflow.core_state.reduced_to = None;
+    drive::apply_appended_entry(
+        &mut workflow,
+        &promise_entry(harness::PromiseEvent::Cancelled {
+            promise_id: promise_id.clone(),
+        }),
+    )
+    .expect("apply");
+    assert_eq!(
+        workflow.pending_execution_cancels,
+        BTreeSet::from([execution_id])
+    );
+}
+
+#[test]
+fn a_runner_closing_after_its_scope_left_state_reads_it_as_closed() {
+    let workflow = AgentSessionWorkflow::default();
+    let report = code_tools::closed_report(&workflow, "execution").expect("report");
+    assert!(report.closed);
+    assert!(report.calls.is_empty());
+    assert_eq!(report.execution_id, "execution");
+}
+
+/// A runner that lost its prepare receipt opens and closes the scope on this rejection,
+/// which is what stops a delayed prepare opening it later.
+#[test]
+fn a_query_does_not_read_a_scope_never_opened_as_closed() {
+    let workflow = AgentSessionWorkflow::default();
+    let error = code_tools::report(&workflow, "execution").expect_err("unknown");
+    assert_eq!(error.kind, crate::CodeToolRejectionKind::UnknownScope);
 }

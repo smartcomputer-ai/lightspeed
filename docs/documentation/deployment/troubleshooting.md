@@ -107,13 +107,28 @@ Temporal run ID differs from the Lightspeed run ID shown for one agent task.
 [Operations](operations.md#find-the-responsible-process-and-workflow) explains
 the log identifiers.
 
-If Temporal says the workflow is terminal or missing while the session still
-shows an active run, look for `session_workflow_failed`,
-`stale_active_projection`, or `session_bootstrap_failed`. The maintenance
-reaper does not automatically resume an arbitrary failed workflow. Preserve
-the history and error, then follow [recovery guidance](upgrades-and-recovery.md#recover-a-failed-upgrade).
-Terminating, resetting, or force-closing work changes its lifecycle; it is not
-an ordinary retry of a read request.
+If Temporal says the workflow is terminal or missing while the session is open,
+`session/read` reports `executionFailure`, run starts answer
+`sessionExecutionStopped`, and the session page shows a banner. Look for
+`session_workflow_failed` or `stale_active_projection` in the logs. Nothing restarts
+the session by itself. Preserve the history and error, then
+[restart it](upgrades-and-recovery.md#restart-a-stopped-session), which fails a run that
+was executing and keeps a parked one. A session that never finished setup answers
+`sessionBootstrapFailed` instead. It has no run history to restart from, so force close
+it and create a new one. A force close is permanent, so don't reach for it when you
+still want the session back.
+
+If the workflow shows as running but its tasks keep failing with a nondeterminism
+error, or a panic saying an activity payload does not convert, the deployed release
+cannot replay its history. See
+[Decide whether the release breaks open work](upgrades-and-recovery.md#decide-whether-the-release-breaks-open-work).
+A `promise_repair_repeated` log line can be the first sign of this.
+
+A failed run reports its `kind` and real message. `modelFailure` covers a provider
+failure after up to 21 minutes of retries, and `internal` is a refusal inside
+Lightspeed that the `session_step_refused` error log also records. A call that answers
+`operationPending` has not failed: it was held, usually behind a compaction, and
+retrying it with the same submission ID is safe.
 
 See [Sessions and runs](../using-lightspeed/sessions-and-runs.md) for queueing,
 steering, cancellation, and closure behavior.
@@ -131,28 +146,32 @@ not confuse removal with disabling access. A coding-agent subscription login
 also does not authenticate Lightspeed's own session inference. Follow
 [Models and credentials](../using-lightspeed/models-and-credentials.md).
 
-If session creation reports `model_default_unset`, select an explicit session
+If session creation reports `modelDefaultUnset`, select an explicit session
 or profile model, or configure **Models → Defaults → Agent runs**. A provider
 key alone does not choose a model. Voice preparation and dictation need the
 separate **Speech-to-text** default.
 
 For context-length errors, inspect the effective compaction policy and recovery
 attempts in session settings. Enabled sessions can compact and retry within
-the same run; Disabled and historical omitted policies do not recover
-automatically. A protected input larger than the usable window can still fail.
-See [Manage long conversations](../using-lightspeed/sessions-and-runs.md#manage-long-conversations).
+the same run; Disabled sessions do not recover automatically. A protected input larger
+than the usable window can still fail, and the failure names the largest entry. A run
+failing because the session holds too many context entries has reached the
+2,000-entry limit: enable compaction or request one. See
+[Manage long conversations](../using-lightspeed/sessions-and-runs.md#manage-long-conversations).
 
 If a specific entry keeps making the provider reject requests, stop active
 work and use [CLI context repair](../using-lightspeed/cli.md#repair-rejected-context)
 to inspect and replace a user message or tool result. This preserves the
-event history; do not rewrite the stored log to repair active context.
+event history; do not rewrite the stored log to repair active context. A provider
+refusing a request after a model switch fails the run with its message, and switching
+back is enough.
 
 If discovery succeeds but an agent has no expected tool, inspect its profile's
 capability grants and the MCP server/tool selection. Registering a server
 does not grant every session permission to use it. Also distinguish a tool
 waiting for approval from one that was never exposed.
 
-For private MCP endpoints, native discovery and execution require both the
+For private MCP endpoints, runtime discovery and execution require both the
 server's private-network opt-in and the runtime's host/CIDR allowlist. OAuth
 network permission is separate. Provider-hosted execution requires the model
 provider to reach the MCP endpoint, which is a different network path from
@@ -235,8 +254,9 @@ A bucket or endpoint change does not copy the old bytes.
 
 Closing a session retains history unless a deletion policy later removes it.
 Automatic deletion waits for the root's configured deadline and for its
-retained descendant tree to be closed. Blob collection then follows durable
-references and its own grace period; repeated reads do not renew that period.
+retained descendant tree to be closed, and a warning names up to eight roots held back
+by an open descendant. Blob collection then follows durable references and its own
+grace period; repeated reads do not renew that period.
 
 A machine's lifecycle is separate. Inspect environment ownership, retention,
 and provider cleanup before expecting a session close to destroy a VM. A

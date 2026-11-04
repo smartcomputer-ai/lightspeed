@@ -122,7 +122,6 @@ export function useSessionTail(universeId: string, sessionId: string): SessionTa
           const waitMs = recovering ? 0 : WAIT_MS;
           const response = await fetchEvents(universeId, sessionId, cursor, waitMs, signal);
           if (signal.aborted) return;
-          if (response.gap) throw new Error("The session event stream contains an unavailable interval");
           const events = (response.events ?? []).filter((event) => event.cursor.seq > cursor);
           if (events.length) {
             if (events.some((event, index) => event.cursor.seq !== cursor + index + 1)) {
@@ -174,7 +173,7 @@ export async function fetchHistory(universeId: string, sessionId: string, before
   // A server that ignores backward pagination must not make us accept an old
   // prefix and then jump over all recent messages. Check every history boundary
   // before mutating the cache or either continuation cursor.
-  if (page.gap || head === undefined || !Number.isSafeInteger(head) || head < 0 ||
+  if (head === undefined || !Number.isSafeInteger(head) || head < 0 ||
       (through === 0 ? events.length !== 0 : events.at(-1)?.cursor.seq !== through) ||
       events.some((event, index) => event.cursor.seq !== (first ?? 0) + index) ||
       (page.complete

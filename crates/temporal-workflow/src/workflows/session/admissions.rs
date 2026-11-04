@@ -19,9 +19,12 @@ pub(super) async fn admit_admissions(
             }
             SessionAdmission::Core(admission) => admission,
             SessionAdmission::PreparedRun { admission, result } => {
-                let admission = *admission;
+                let mut admission = *admission;
                 match result {
-                    Ok(prepared) => observed_tools = Some(prepared),
+                    Ok(prepared) => {
+                        preparation::take_input_capacity(&mut admission.command, &prepared);
+                        observed_tools = Some(prepared);
+                    }
                     Err(error) => {
                         record_admission_failure(
                             ctx,
@@ -39,28 +42,6 @@ pub(super) async fn admit_admissions(
         };
         let correlation_token = admission.correlation_token.clone();
         let command = admission.command;
-        if let CoreAgentCommand::ReplaceSessionConfig {
-            config,
-            expected_revision,
-        } = &command
-        {
-            if let Err(error) = preparation::execute_operation(
-                ctx,
-                drive,
-                crate::SessionOperation::Configure {
-                    config: config.clone(),
-                    expected_revision: *expected_revision,
-                },
-            )
-            .await?
-            {
-                record_admission_failure(
-                    ctx,
-                    preparation::failure(&command, correlation_token, error),
-                );
-            }
-            continue;
-        }
         let mut deferred_tools = None;
         if drive.state().lifecycle.status == CoreAgentStatus::Open
             && matches!(command, CoreAgentCommand::RequestRun(_))
@@ -103,7 +84,7 @@ pub(super) async fn admit_admissions(
                         "configuration changed during tool preparation",
                     ));
                 }
-                if turn_in_flight(drive.state()) {
+                if harness::tools_frozen(drive.state()) {
                     deferred_tools = Some(prepared);
                 } else {
                     preparation::publish_tools(ctx, drive, prepared).await?;
@@ -157,8 +138,8 @@ pub(super) async fn admit_admissions(
 /// the live drive. Returns whether anything was admitted (accepted or
 /// rejected). Two classes are held back, in order, for a later drain:
 ///
-/// - context/config/tool mutations while compaction is pending. Cancellation
-///   passes immediately and can abandon the frozen compaction request;
+/// - context/config/tool mutations while compaction is pending. Cancellation and
+///   force close pass immediately and can abandon the frozen compaction request;
 /// - context/config/tool mutations while a turn's generation is in flight.
 ///   That turn's request is frozen at its planned revisions and the runtime
 ///   re-derives it from state, so those revisions must not move until the
@@ -198,6 +179,10 @@ pub(super) async fn drain_pending_admissions(
         return Ok(false);
     }
     admit_admissions(ctx, drive, admissions).await?;
+    // Admitted, rejected or a no-op operation, the work was consumed even when it
+    // appended nothing. Without this an execution that only does such work never
+    // earns a rollover and its history grows to the server's limit.
+    ctx.state_mut(|state| state.execution_has_rollover_checkpoint = true);
     Ok(true)
 }
 
@@ -224,7 +209,7 @@ pub(super) fn has_admissible_admissions(state: &AgentSessionWorkflow) -> bool {
         .any(|admission| admission.admissible_during_turn())
 }
 
-pub(super) fn turn_in_flight(state: &CoreAgentState) -> bool {
+fn turn_in_flight(state: &CoreAgentState) -> bool {
     state
         .runs
         .active
@@ -236,7 +221,9 @@ fn admissible_during_compaction(admission: &SessionAdmission) -> bool {
     admission.core().is_some_and(|admission| {
         matches!(
             admission.command,
-            CoreAgentCommand::CancelRun { .. } | CoreAgentCommand::ForceCancelRun { .. }
+            CoreAgentCommand::CancelRun { .. }
+                | CoreAgentCommand::ForceCancelRun { .. }
+                | CoreAgentCommand::CloseSession { force: true }
         )
     })
 }
@@ -255,7 +242,7 @@ pub(super) fn admissible_during_turn(command: &CoreAgentCommand) -> bool {
             | CoreAgentCommand::ResolvePromise { .. }
             | CoreAgentCommand::FailWorkflowToolDelivery { .. }
             | CoreAgentCommand::FailWorkflowToolStart { .. }
-            | CoreAgentCommand::ResumeToolBatch(_)
+            | CoreAgentCommand::UnparkToolBatch(_)
             | CoreAgentCommand::CloseSession { .. }
     )
 }

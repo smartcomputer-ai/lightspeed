@@ -18,10 +18,10 @@ use crate::worker::{
     ACTIVITY_ENVIRONMENT_JOB_START, ACTIVITY_LLM_GENERATE, ACTIVITY_MATERIALIZE_AWAIT_RESULT,
     ACTIVITY_PREPARE_JOINED_CONTEXT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
     ACTIVITY_RUNTIME_PROJECTION_REFRESH, ACTIVITY_START_WORKFLOW_TOOL_EXECUTION,
-    ACTIVITY_SUBAGENT_CLOSE, ACTIVITY_SUBAGENT_PREPARE, ACTIVITY_SUBAGENT_RESOLVE,
-    ACTIVITY_TOOL_INVOKE_BATCH, ACTIVITY_TOOL_INVOKE_CALL, ACTIVITY_TOOL_PREPARE_PROMISE_CONTROLS,
-    ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY, AppendEventsRequest,
-    AwaitEnvironmentReadyActivityRequest, AwaitEnvironmentReadyActivityResult,
+    ACTIVITY_SUBAGENT_CLOSE, ACTIVITY_SUBAGENT_LIVENESS, ACTIVITY_SUBAGENT_PREPARE,
+    ACTIVITY_SUBAGENT_RESOLVE, ACTIVITY_TOOL_INVOKE_BATCH, ACTIVITY_TOOL_INVOKE_CALL,
+    ACTIVITY_TOOL_PREPARE_PROMISE_CONTROLS, ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY,
+    AppendEventsRequest, AwaitEnvironmentReadyActivityRequest, AwaitEnvironmentReadyActivityResult,
     ContextCompactActivityRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
     EnvironmentJobCancelActivityRequest, EnvironmentJobPollActivityRequest,
     EnvironmentJobPollActivityResult, EnvironmentJobStartActivityRequest,
@@ -300,6 +300,10 @@ mod tests {
             WorkerActivities::subagent_close.name(),
             temporal_workflow::WorkflowActivities::subagent_close.name()
         );
+        assert_eq!(
+            WorkerActivities::subagent_liveness.name(),
+            temporal_workflow::WorkflowActivities::subagent_liveness.name()
+        );
     }
 
     #[test]
@@ -353,7 +357,7 @@ mod tests {
                     calls: vec![ToolInvocationRequest {
                         builtin: None,
                         call_id: tool_call.call_id.clone(),
-                        tool_id: Some(tool_call.tool_name.clone()),
+                        tool_id: Some(harness::ToolId::new(tool_call.tool_name.as_str())),
                         tool_name: tool_call.tool_name.clone(),
                         arguments_ref: tool_call.arguments_ref.clone(),
                         workflow_tool: None,
@@ -440,7 +444,7 @@ mod tests {
                     token_estimate: None,
                 },
                 tools: vec![harness::ToolSpec {
-                    name: harness::ToolName::new(FAKE_TOOL_NAME),
+                    id: harness::ToolId::new(FAKE_TOOL_NAME),
                     execution: Default::default(),
                     kind: harness::ToolKind::Function(harness::FunctionToolSpec {
                         description_ref: None,
@@ -458,7 +462,6 @@ mod tests {
                 parallel_tool_use: None,
                 processing_tier: None,
                 output_limit: None,
-                provider_response_id: None,
                 compaction: None,
                 params: None,
             },
@@ -646,7 +649,15 @@ impl WorkerActivities {
         {
             return preparation_activity_result(Err(error));
         }
-        preparation_activity_result(service.prepare_toolset(request.source).await)
+        let mut prepared = service.prepare_toolset(request.source).await;
+        if let (Ok(prepared), Some(model), Some(discovery)) = (
+            prepared.as_mut(),
+            request.input_capacity_model.as_ref(),
+            state.model_discovery.as_ref(),
+        ) {
+            prepared.input_limit_tokens = discovery.input_limit(model).await;
+        }
+        preparation_activity_result(prepared)
     }
 
     #[activity(name = "WorkflowActivities::prepare_session_profile")]
@@ -783,6 +794,16 @@ impl WorkerActivities {
     ) -> Result<(), ActivityError> {
         let state = self.state_for_universe(request.universe_id).await?;
         subagents::close(state.subagents(), request).await
+    }
+
+    #[activity(name = ACTIVITY_SUBAGENT_LIVENESS)]
+    pub async fn subagent_liveness(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: temporal_workflow::SubagentLivenessActivityRequest,
+    ) -> Result<temporal_workflow::SubagentLivenessActivityResult, ActivityError> {
+        let state = self.state_for_universe(request.universe_id).await?;
+        subagents::liveness(state.subagents(), request).await
     }
 }
 

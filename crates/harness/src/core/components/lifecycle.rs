@@ -27,6 +27,7 @@ pub type CoreAgentLifecycleEvent = Event;
 pub type CoreAgentStatus = Status;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LifecycleState {
     pub status: Status,
     pub config: Option<SessionConfig>,
@@ -51,7 +52,6 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     "session can only be opened from new state".into(),
                 ));
             }
-            config.validate()?;
             state.lifecycle.status = Status::Open;
             state.lifecycle.config = Some(config.clone());
             state.lifecycle.config_revision = 0;

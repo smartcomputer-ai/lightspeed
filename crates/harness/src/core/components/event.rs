@@ -5,6 +5,11 @@ use crate::{
     ToolConfigEvent, ToolEvent, TurnEvent, WorkflowToolConfigEvent, WorkflowToolEvent,
 };
 
+/// A stored session's log has no fallback: it decodes and reduces, or the session cannot
+/// load. So a new field on any event gets a serde default, removing a field is harmless,
+/// and a variant is never renamed or removed while logs hold it. An unknown event stays a
+/// decode error and is never skipped, because a session missing history must not load as
+/// if it were whole. `tests/recorded_log.rs` holds these rules against a recorded log.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 // These durable, serde-backed domain events deliberately retain direct variant

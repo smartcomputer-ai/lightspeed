@@ -12,8 +12,8 @@ use base64::Engine;
 use harness::RemoteMcpToolSpec;
 use ipnet::IpNet;
 use llm_runtime::{
-    McpInventoryError, McpInventoryResolver, NativeMcpTool,
-    secrets::{SecretResolveError, SecretResolver},
+    McpInventoryError, McpInventoryResolver, RuntimeMcpTool,
+    secrets::{SecretResolveError, SecretResolver, resolve_mcp_bearer},
 };
 use mcp::search::McpToolSearchQuery;
 use tokio::sync::Mutex;
@@ -24,15 +24,15 @@ use crate::gateway::service::mcp_discovery::{
     McpToolCallRequest, McpToolDiscoverer,
 };
 
-pub enum NativeMcpExecutionOutcome {
+pub enum RuntimeMcpExecutionOutcome {
     Completed {
         output: serde_json::Value,
         visible: String,
         is_error: bool,
-        assets: Vec<NativeMcpAsset>,
+        assets: Vec<RuntimeMcpAsset>,
         /// Admitted `content` assets, in content order, that become media
         /// entries after the tool result. Indexes point into `assets`.
-        media: Vec<NativeMcpMedia>,
+        media: Vec<RuntimeMcpMedia>,
     },
     NeedsApproval {
         subject: harness::ApprovalSubject,
@@ -42,7 +42,7 @@ pub enum NativeMcpExecutionOutcome {
 /// Binary content stripped out of a tool result: `image` and `audio` blocks
 /// and embedded `resource` blobs, from `content` first and then from
 /// `structuredContent`, in document order.
-pub struct NativeMcpAsset {
+pub struct RuntimeMcpAsset {
     pub bytes: Vec<u8>,
     /// Content identity of `bytes`; the store returns the same reference.
     pub blob_ref: harness::BlobRef,
@@ -54,7 +54,7 @@ pub struct NativeMcpAsset {
 
 /// One admitted asset the model gets to see.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NativeMcpMedia {
+pub struct RuntimeMcpMedia {
     pub asset_index: usize,
     pub kind: harness::media::MediaKind,
     pub media_type: String,
@@ -62,10 +62,10 @@ pub struct NativeMcpMedia {
 }
 
 #[derive(Clone)]
-pub struct NativeMcpRuntime {
+pub struct RuntimeMcpExecutor {
     servers: Arc<dyn mcp::McpRegistryStore>,
     secrets: Arc<dyn SecretResolver>,
-    inventory: Arc<NativeMcpInventoryResolver>,
+    inventory: Arc<RuntimeMcpInventoryResolver>,
     transport: HttpMcpToolDiscoverer,
     private_networks: McpPrivateNetworkPolicy,
     trusted_header: ConfiguratorTrustedHeaderPolicy,
@@ -76,13 +76,18 @@ pub struct NativeMcpRuntime {
 pub const MCP_INVENTORY_CACHE_TTL: Duration = Duration::from_secs(300);
 /// Short fallback while Lightspeed does not maintain notification subscriptions.
 pub const MCP_LIST_CHANGED_CACHE_TTL: Duration = Duration::from_secs(60);
+/// How long a failed fetch answers for its server. Without it every turn would
+/// fetch again, and concurrent turns would queue behind the per-server lock.
+pub const MCP_INVENTORY_FAILURE_TTL: Duration = Duration::from_secs(60);
 const MCP_FIND_HIT_MAX_BYTES: usize = 8 * 1024;
 const MCP_FIND_PAGE_MAX_BYTES: usize = 64 * 1024;
 const MCP_FIND_DETAIL_MAX_NAMES: usize = 5;
 const MCP_FIND_TRUNCATED_NOTE: &str =
     "Call mcp_find_tools with server and names for the full definition.";
 
-type InventoryCacheKey = (String, u64);
+/// Server, record revision and the attachment's tool subset: two sessions on one
+/// server can allow different tools, and each must get its own list.
+type InventoryCacheKey = (String, u64, Option<Vec<String>>);
 type InventoryLocks = HashMap<InventoryCacheKey, Arc<Mutex<()>>>;
 
 #[derive(Clone, Debug, Default)]
@@ -151,7 +156,8 @@ impl McpPrivateNetworkPolicy {
 }
 
 #[derive(Clone)]
-pub struct NativeMcpInventoryResolver {
+pub struct RuntimeMcpInventoryResolver {
+    servers: Arc<dyn mcp::McpRegistryStore>,
     discoverer: Arc<dyn McpToolDiscoverer>,
     secrets: Arc<dyn SecretResolver>,
     private_networks: McpPrivateNetworkPolicy,
@@ -161,23 +167,26 @@ pub struct NativeMcpInventoryResolver {
     locks: Arc<Mutex<InventoryLocks>>,
     ttl: Duration,
     list_changed_ttl: Duration,
+    failure_ttl: Duration,
 }
 
 #[derive(Clone)]
 struct CachedInventory {
     fetched_at: Instant,
     ttl: Duration,
-    tools: Vec<NativeMcpTool>,
+    tools: Vec<RuntimeMcpTool>,
 }
 
-impl NativeMcpInventoryResolver {
+impl RuntimeMcpInventoryResolver {
     pub(crate) fn new(
+        servers: Arc<dyn mcp::McpRegistryStore>,
         secrets: Arc<dyn SecretResolver>,
         private_networks: McpPrivateNetworkPolicy,
         trusted_header: ConfiguratorTrustedHeaderPolicy,
         universe_id: uuid::Uuid,
     ) -> Self {
         Self {
+            servers,
             discoverer: Arc::new(HttpMcpToolDiscoverer::new()),
             secrets,
             private_networks,
@@ -187,6 +196,7 @@ impl NativeMcpInventoryResolver {
             locks: Arc::new(Mutex::new(HashMap::new())),
             ttl: MCP_INVENTORY_CACHE_TTL,
             list_changed_ttl: MCP_LIST_CHANGED_CACHE_TTL,
+            failure_ttl: MCP_INVENTORY_FAILURE_TTL,
         }
     }
 
@@ -197,6 +207,7 @@ impl NativeMcpInventoryResolver {
         list_changed_ttl: Duration,
     ) -> Self {
         Self {
+            servers: Arc::new(tests::OneServer),
             discoverer,
             secrets: Arc::new(llm_runtime::secrets::AbsentSecretResolver),
             private_networks: McpPrivateNetworkPolicy::parse(Some("127.0.0.1"))
@@ -207,49 +218,40 @@ impl NativeMcpInventoryResolver {
             locks: Arc::new(Mutex::new(HashMap::new())),
             ttl,
             list_changed_ttl,
-        }
-    }
-
-    async fn bearer(
-        &self,
-        spec: &RemoteMcpToolSpec,
-    ) -> Result<Option<SecretValue>, McpInventoryError> {
-        let Some(secret_ref) = spec.auth_ref.as_ref() else {
-            return Ok(None);
-        };
-        match self
-            .secrets
-            .resolve(secret_ref, Some(spec.server_url.as_str()))
-            .await
-        {
-            Ok(value) => Ok(Some(SecretValue::new(value.expose()))),
-            Err(SecretResolveError::CredentialAbsent { .. }) if !spec.auth_required => Ok(None),
-            Err(error) => Err(McpInventoryError::new(format!(
-                "resolve MCP credential: {error}"
-            ))),
+            failure_ttl: list_changed_ttl,
         }
     }
 
     async fn uncached(
         &self,
         spec: &RemoteMcpToolSpec,
-    ) -> Result<(Vec<NativeMcpTool>, bool, Option<Duration>), McpInventoryError> {
+    ) -> Result<(Vec<RuntimeMcpTool>, bool, Option<Duration>), McpInventoryError> {
+        let record = usable_record(self.servers.as_ref(), &spec.server_id)
+            .await
+            .map_err(McpInventoryError::new)?
+            .ok_or_else(|| {
+                McpInventoryError::new(format!("MCP server {} is not available", spec.server_id))
+            })?;
         let trusted_universe = self
             .trusted_header
-            .permits(&spec.server_id, &spec.server_url)
+            .permits(&spec.server_id, &record.server_url)
             .then_some(self.universe_id);
         let bearer = if trusted_universe.is_some() {
             None
         } else {
-            self.bearer(spec).await?
+            record_bearer(self.secrets.as_ref(), &record)
+                .await
+                .map_err(|error| {
+                    McpInventoryError::new(format!("resolve MCP credential: {error}"))
+                })?
         };
         let allow_private = self
             .private_networks
-            .permits(&spec.server_url, spec.allow_private_network);
+            .permits(&record.server_url, record.allow_private_network);
         let discovered = self
             .discoverer
             .discover_tools(
-                &spec.server_url,
+                &record.server_url,
                 bearer.as_ref(),
                 trusted_universe,
                 allow_private,
@@ -269,12 +271,12 @@ impl NativeMcpInventoryResolver {
                     .as_ref()
                     .is_none_or(|allowed| allowed.iter().any(|candidate| candidate == &tool.name))
             })
-            .map(|tool| NativeMcpTool {
+            .map(|tool| RuntimeMcpTool {
                 remote_name: tool.name,
                 description: tool.description,
                 input_schema: tool.input_schema,
                 output_schema: tool.output_schema,
-                annotations: tool.annotations.map(native_tool_annotations),
+                annotations: tool.annotations.map(mcp_tool_annotations),
             })
             .collect::<Vec<_>>();
         tools.sort_by(|left, right| left.remote_name.cmp(&right.remote_name));
@@ -282,7 +284,41 @@ impl NativeMcpInventoryResolver {
     }
 }
 
-impl NativeMcpRuntime {
+/// A server's live record, which decides its URL, network opt-in and credential at
+/// each use, so an admin's change applies at once. `None` when it is gone or
+/// switched off.
+async fn usable_record(
+    servers: &dyn mcp::McpRegistryStore,
+    server_id: &str,
+) -> Result<Option<mcp::McpServerRecord>, String> {
+    let id = mcp::McpServerId::try_new(server_id.to_owned())
+        .map_err(|error| format!("invalid MCP server id: {error}"))?;
+    match servers.read_server(&id).await {
+        Ok(record)
+            if matches!(
+                record.status,
+                mcp::McpServerStatus::Active | mcp::McpServerStatus::Unverified
+            ) =>
+        {
+            Ok(Some(record))
+        }
+        Ok(_) | Err(mcp::McpRegistryError::NotFound { .. }) => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+async fn record_bearer(
+    secrets: &dyn SecretResolver,
+    record: &mcp::McpServerRecord,
+) -> Result<Option<SecretValue>, SecretResolveError> {
+    Ok(
+        resolve_mcp_bearer(secrets, record.server_id.as_str(), &record.server_url)
+            .await?
+            .map(|value| SecretValue::new(value.expose())),
+    )
+}
+
+impl RuntimeMcpExecutor {
     /// Use the same injected inventory and naming rules as the model adapters
     /// when preparing an execution-scoped callable namespace.
     pub(crate) async fn injected_tools(
@@ -290,8 +326,8 @@ impl NativeMcpRuntime {
         spec: &RemoteMcpToolSpec,
         server_name: &harness::ToolName,
         request_tool_count: &mut usize,
-    ) -> Result<Vec<(String, NativeMcpTool)>, llm_runtime::LlmAdapterError> {
-        llm_runtime::injected_native_tools(
+    ) -> Result<Vec<(String, RuntimeMcpTool)>, llm_runtime::LlmAdapterError> {
+        llm_runtime::injected_runtime_tools(
             self.inventory.as_ref(),
             spec,
             server_name,
@@ -303,7 +339,7 @@ impl NativeMcpRuntime {
     pub(crate) fn new(
         servers: Arc<dyn mcp::McpRegistryStore>,
         secrets: Arc<dyn SecretResolver>,
-        inventory: Arc<NativeMcpInventoryResolver>,
+        inventory: Arc<RuntimeMcpInventoryResolver>,
         private_networks: McpPrivateNetworkPolicy,
         trusted_header: ConfiguratorTrustedHeaderPolicy,
         universe_id: uuid::Uuid,
@@ -323,12 +359,12 @@ impl NativeMcpRuntime {
         &self,
         request: &harness::ToolInvocationCallRequest,
         arguments: serde_json::Value,
-    ) -> Result<NativeMcpExecutionOutcome, String> {
+    ) -> Result<RuntimeMcpExecutionOutcome, String> {
         let runtime = request
             .call
             .remote_mcp
             .as_ref()
-            .ok_or_else(|| "native MCP runtime facts are missing".to_owned())?;
+            .ok_or_else(|| "runtime MCP routing facts are missing".to_owned())?;
         match runtime {
             harness::RemoteMcpCallRuntime::Injected {
                 target,
@@ -338,7 +374,7 @@ impl NativeMcpRuntime {
                 let arguments = arguments
                     .as_object()
                     .cloned()
-                    .ok_or_else(|| "native MCP tool arguments must be a JSON object".to_owned())?;
+                    .ok_or_else(|| "runtime MCP tool arguments must be a JSON object".to_owned())?;
                 self.call(
                     request,
                     target,
@@ -355,7 +391,7 @@ impl NativeMcpRuntime {
                 .call
                 .tool_id
                 .as_ref()
-                .is_some_and(|id| id.as_str() == "mcp.find_tools") =>
+                .is_some_and(|id| id.as_str() == harness::MCP_FIND_TOOLS_TOOL_ID) =>
             {
                 self.find_tools(targets, arguments).await
             }
@@ -366,7 +402,7 @@ impl NativeMcpRuntime {
                 .call
                 .tool_id
                 .as_ref()
-                .is_some_and(|id| id.as_str() == "mcp.call") =>
+                .is_some_and(|id| id.as_str() == harness::MCP_CALL_TOOL_ID) =>
             {
                 let object = arguments
                     .as_object()
@@ -393,7 +429,7 @@ impl NativeMcpRuntime {
                     .await
             }
             harness::RemoteMcpCallRuntime::Search { .. } => {
-                Err("unknown native MCP search meta-tool".to_owned())
+                Err("unknown runtime MCP search meta-tool".to_owned())
             }
         }
     }
@@ -402,7 +438,7 @@ impl NativeMcpRuntime {
         &self,
         targets: &[harness::RemoteMcpCallTarget],
         arguments: serde_json::Value,
-    ) -> Result<NativeMcpExecutionOutcome, String> {
+    ) -> Result<RuntimeMcpExecutionOutcome, String> {
         let object = arguments
             .as_object()
             .ok_or_else(|| "mcp_find_tools arguments must be a JSON object".to_owned())?;
@@ -469,7 +505,7 @@ impl NativeMcpRuntime {
                 tools.push(full_tool_definition(server, tool));
             }
             let output = serde_json::json!({"tools": tools, "nextCursor": null});
-            return Ok(NativeMcpExecutionOutcome::Completed {
+            return Ok(RuntimeMcpExecutionOutcome::Completed {
                 visible: serde_json::to_string(&output).map_err(|error| error.to_string())?,
                 output,
                 is_error: false,
@@ -517,7 +553,7 @@ impl NativeMcpRuntime {
                 .then_with(|| left.2.remote_name.cmp(&right.2.remote_name))
         });
         let output = paged_tool_output(&matches, cursor)?;
-        Ok(NativeMcpExecutionOutcome::Completed {
+        Ok(RuntimeMcpExecutionOutcome::Completed {
             visible: serde_json::to_string(&output).map_err(|error| error.to_string())?,
             output,
             is_error: false,
@@ -567,11 +603,11 @@ impl NativeMcpRuntime {
         tool_name: &str,
         arguments: serde_json::Map<String, serde_json::Value>,
         approval_decision: Option<bool>,
-    ) -> Result<NativeMcpExecutionOutcome, String> {
+    ) -> Result<RuntimeMcpExecutionOutcome, String> {
         if target.approval == harness::RemoteMcpApprovalPolicy::Always {
             match approval_decision {
                 None => {
-                    return Ok(NativeMcpExecutionOutcome::NeedsApproval {
+                    return Ok(RuntimeMcpExecutionOutcome::NeedsApproval {
                         subject: harness::ApprovalSubject::McpToolCall {
                             server_id: target.server_id.clone(),
                             server_label: target.server_label.clone(),
@@ -586,7 +622,7 @@ impl NativeMcpRuntime {
                         "server": target.server_id,
                         "tool": tool_name,
                     });
-                    return Ok(NativeMcpExecutionOutcome::Completed {
+                    return Ok(RuntimeMcpExecutionOutcome::Completed {
                         visible: serde_json::to_string(&output)
                             .map_err(|error| error.to_string())?,
                         output,
@@ -598,23 +634,25 @@ impl NativeMcpRuntime {
                 Some(true) => {}
             }
         }
-        self.validate_current_record(target).await?;
+        let record = self.runtime_record(target).await?;
         let trusted_universe = self
             .trusted_header
-            .permits(&target.server_id, &target.server_url)
+            .permits(&target.server_id, &record.server_url)
             .then_some(self.universe_id);
         let bearer = if trusted_universe.is_some() {
             None
         } else {
-            self.bearer_for_target(target).await?
+            record_bearer(self.secrets.as_ref(), &record)
+                .await
+                .map_err(|error| format!("resolve MCP credential: {error}"))?
         };
         let allow_private = self
             .private_networks
-            .permits(&target.server_url, target.allow_private_network);
+            .permits(&record.server_url, record.allow_private_network);
         let result = self
             .transport
             .call_tool(
-                &target.server_url,
+                &record.server_url,
                 bearer.as_ref(),
                 trusted_universe,
                 allow_private,
@@ -633,7 +671,7 @@ impl NativeMcpRuntime {
         if let Some(structured) = result.structured_content {
             output
                 .as_object_mut()
-                .expect("native MCP output object")
+                .expect("runtime MCP output object")
                 .insert("structuredContent".to_owned(), structured);
         }
         let mut assets = Vec::new();
@@ -646,7 +684,7 @@ impl NativeMcpRuntime {
             extract_mcp_assets(structured, &mut assets)?;
         }
         let (visible, media) = visible_mcp_result(&raw, &output, &assets);
-        Ok(NativeMcpExecutionOutcome::Completed {
+        Ok(RuntimeMcpExecutionOutcome::Completed {
             output,
             visible,
             is_error: result.is_error.unwrap_or(false),
@@ -655,57 +693,26 @@ impl NativeMcpRuntime {
         })
     }
 
-    async fn validate_current_record(
+    /// The record a runtime call runs against. Its errors become model-visible
+    /// failed results, so they never carry the server's URL, which can hold a token.
+    async fn runtime_record(
         &self,
         target: &harness::RemoteMcpCallTarget,
-    ) -> Result<(), String> {
-        let id = mcp::McpServerId::try_new(target.server_id.clone())
-            .map_err(|error| format!("invalid MCP server id: {error}"))?;
-        let record = self
-            .servers
-            .read_server(&id)
-            .await
-            .map_err(|error| error.to_string())?;
-        if record.server_url != target.server_url {
+    ) -> Result<mcp::McpServerRecord, String> {
+        let record = usable_record(self.servers.as_ref(), &target.server_id)
+            .await?
+            .ok_or_else(|| format!("MCP server {} is not available", target.server_id))?;
+        if record.execution != mcp::McpExecution::Runtime {
             return Err(format!(
-                "MCP server URL changed from admitted audience {} to {}",
-                target.server_url, record.server_url
-            ));
-        }
-        if record.status != mcp::McpServerStatus::Active
-            && record.status != mcp::McpServerStatus::Unverified
-        {
-            return Err(format!("MCP server {} is not active", target.server_id));
-        }
-        if record.execution != mcp::McpExecution::Native {
-            return Err(format!(
-                "MCP server {} is no longer configured for native execution",
+                "MCP server {} is no longer configured for runtime execution",
                 target.server_id
             ));
         }
-        Ok(())
-    }
-
-    async fn bearer_for_target(
-        &self,
-        target: &harness::RemoteMcpCallTarget,
-    ) -> Result<Option<SecretValue>, String> {
-        let Some(secret_ref) = target.auth_ref.as_ref() else {
-            return Ok(None);
-        };
-        match self
-            .secrets
-            .resolve(secret_ref, Some(&target.server_url))
-            .await
-        {
-            Ok(value) => Ok(Some(SecretValue::new(value.expose()))),
-            Err(SecretResolveError::CredentialAbsent { .. }) if !target.auth_required => Ok(None),
-            Err(error) => Err(format!("resolve MCP credential: {error}")),
-        }
+        Ok(record)
     }
 }
 
-fn native_tool_annotations(annotations: mcp::McpToolAnnotations) -> serde_json::Value {
+fn mcp_tool_annotations(annotations: mcp::McpToolAnnotations) -> serde_json::Value {
     let mut value = serde_json::Map::new();
     for (name, hint) in [
         ("readOnlyHint", annotations.read_only_hint),
@@ -722,7 +729,7 @@ fn native_tool_annotations(annotations: mcp::McpToolAnnotations) -> serde_json::
 
 fn validate_mcp_arguments(
     tool_name: &str,
-    tool: &NativeMcpTool,
+    tool: &RuntimeMcpTool,
     arguments: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
     let schema = serde_json::to_string(&tool.input_schema).map_err(|error| error.to_string())?;
@@ -738,7 +745,7 @@ fn validate_mcp_arguments(
         })
 }
 
-fn full_tool_definition(server: &str, tool: &NativeMcpTool) -> serde_json::Value {
+fn full_tool_definition(server: &str, tool: &RuntimeMcpTool) -> serde_json::Value {
     let mut definition = serde_json::json!({
         "server": server,
         "name": tool.remote_name,
@@ -752,7 +759,7 @@ fn full_tool_definition(server: &str, tool: &NativeMcpTool) -> serde_json::Value
     definition
 }
 
-fn compact_search_hit(server: &str, tool: &NativeMcpTool) -> Result<serde_json::Value, String> {
+fn compact_search_hit(server: &str, tool: &RuntimeMcpTool) -> Result<serde_json::Value, String> {
     let full = full_tool_definition(server, tool);
     if serde_json::to_vec(&full)
         .map_err(|error| error.to_string())?
@@ -842,7 +849,7 @@ fn paged_tool_output(
     matches: &[(
         Option<mcp::search::McpToolSearchScore>,
         String,
-        NativeMcpTool,
+        RuntimeMcpTool,
     )],
     cursor: usize,
 ) -> Result<serde_json::Value, String> {
@@ -870,7 +877,7 @@ fn serialized_len(value: &serde_json::Value) -> Result<usize, String> {
 
 fn extract_mcp_assets(
     value: &mut serde_json::Value,
-    assets: &mut Vec<NativeMcpAsset>,
+    assets: &mut Vec<RuntimeMcpAsset>,
 ) -> Result<(), String> {
     match value {
         serde_json::Value::Array(values) => {
@@ -892,7 +899,7 @@ fn extract_mcp_assets(
                     .decode(encoded)
                     .map_err(|error| format!("MCP {kind:?} content is invalid base64: {error}"))?;
                 let index = assets.len();
-                assets.push(NativeMcpAsset {
+                assets.push(RuntimeMcpAsset {
                     blob_ref: harness::BlobRef::from_bytes(&bytes),
                     bytes,
                     media_type: object
@@ -916,7 +923,7 @@ fn extract_mcp_assets(
                     .decode(encoded)
                     .map_err(|error| format!("MCP resource content is invalid base64: {error}"))?;
                 let index = assets.len();
-                assets.push(NativeMcpAsset {
+                assets.push(RuntimeMcpAsset {
                     blob_ref: harness::BlobRef::from_bytes(&bytes),
                     bytes,
                     media_type: resource
@@ -972,16 +979,12 @@ fn spec_from_target(
         server_id: target.server_id.clone(),
         record_revision: target.record_revision,
         server_label: target.server_label.clone(),
-        server_url: target.server_url.clone(),
         description_ref: None,
         allowed_tools: target.allowed_tools.clone(),
-        execution: harness::RemoteMcpExecution::Native,
+        execution: harness::RemoteMcpExecution::Runtime,
         exposure,
         approval: target.approval.clone(),
         defer_loading: None,
-        auth_ref: target.auth_ref.clone(),
-        auth_required: target.auth_required,
-        allow_private_network: target.allow_private_network,
     }
 }
 
@@ -995,8 +998,8 @@ fn spec_from_target(
 fn visible_mcp_result(
     raw: &serde_json::Value,
     fallback: &serde_json::Value,
-    assets: &[NativeMcpAsset],
-) -> (String, Vec<NativeMcpMedia>) {
+    assets: &[RuntimeMcpAsset],
+) -> (String, Vec<RuntimeMcpMedia>) {
     let mut lines = Vec::new();
     let mut media = Vec::new();
     let mut next_asset = 0usize;
@@ -1100,12 +1103,12 @@ fn visible_mcp_result(
 
 /// Admit and render one binary block against the shared result-wide media cap.
 fn render_mcp_asset(
-    asset: &NativeMcpAsset,
+    asset: &RuntimeMcpAsset,
     asset_index: usize,
     label: &str,
     index: usize,
     name: Option<String>,
-    media: &mut Vec<NativeMcpMedia>,
+    media: &mut Vec<RuntimeMcpMedia>,
 ) -> String {
     use harness::media::{
         MediaRejection, admit_tool_media, tool_media_line, tool_media_omitted_line,
@@ -1143,7 +1146,7 @@ fn render_mcp_asset(
                 name.as_deref(),
                 asset.bytes.len() as u64,
             );
-            media.push(NativeMcpMedia {
+            media.push(RuntimeMcpMedia {
                 asset_index,
                 kind,
                 media_type,
@@ -1167,12 +1170,16 @@ fn resource_name(uri: &str) -> String {
 }
 
 #[async_trait]
-impl McpInventoryResolver for NativeMcpInventoryResolver {
+impl McpInventoryResolver for RuntimeMcpInventoryResolver {
     async fn list_tools(
         &self,
         spec: &RemoteMcpToolSpec,
-    ) -> Result<Vec<NativeMcpTool>, McpInventoryError> {
-        let key = (spec.server_id.clone(), spec.record_revision);
+    ) -> Result<Vec<RuntimeMcpTool>, McpInventoryError> {
+        let key = (
+            spec.server_id.clone(),
+            spec.record_revision,
+            spec.allowed_tools.clone(),
+        );
         if let Some(cached) = self.cache.lock().await.get(&key)
             && cached.fetched_at.elapsed() < cached.ttl
         {
@@ -1191,14 +1198,35 @@ impl McpInventoryResolver for NativeMcpInventoryResolver {
         {
             return Ok(cached.tools.clone());
         }
-        let (tools, tools_list_changed, advertised_ttl) = self.uncached(spec).await?;
+        let (tools, tools_list_changed, advertised_ttl) = match self.uncached(spec).await {
+            Ok(fetched) => fetched,
+            // A server that cannot list its tools never fails the turn. Keep the
+            // last list, or none, and ask again after the failure TTL. An old list
+            // grants nothing, since each call re-reads the record and credential.
+            Err(error) => {
+                tracing::warn!(
+                    server_id = %spec.server_id,
+                    %error,
+                    "MCP tools/list failed; keeping the last inventory"
+                );
+                let mut cache = self.cache.lock().await;
+                let entry = cache.entry(key).or_insert_with(|| CachedInventory {
+                    fetched_at: Instant::now(),
+                    ttl: self.failure_ttl,
+                    tools: Vec::new(),
+                });
+                entry.fetched_at = Instant::now();
+                entry.ttl = self.failure_ttl;
+                return Ok(entry.tools.clone());
+            }
+        };
         let ttl = advertised_ttl.unwrap_or(if tools_list_changed {
             self.list_changed_ttl
         } else {
             self.ttl
         });
         let mut cache = self.cache.lock().await;
-        cache.retain(|(server_id, revision), _| {
+        cache.retain(|(server_id, revision, _), _| {
             server_id != &spec.server_id || *revision == spec.record_revision
         });
         cache.insert(
@@ -1211,20 +1239,32 @@ impl McpInventoryResolver for NativeMcpInventoryResolver {
         );
         Ok(tools)
     }
+
+    async fn server_url(&self, server_id: &str) -> Result<Option<String>, McpInventoryError> {
+        // A record moved to the runtime can name a private server and hold a credential
+        // meant for Lightspeed, neither of which should reach a model provider.
+        Ok(usable_record(self.servers.as_ref(), server_id)
+            .await
+            .map_err(McpInventoryError::transient)?
+            .filter(|record| record.execution == mcp::McpExecution::Provider)
+            .map(|record| record.server_url))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use mcp::McpRegistryStore;
 
     use super::*;
 
-    fn native_tool(
+    fn runtime_tool(
         name: &str,
         description: Option<String>,
         input_schema: serde_json::Value,
-    ) -> NativeMcpTool {
-        NativeMcpTool {
+    ) -> RuntimeMcpTool {
+        RuntimeMcpTool {
             remote_name: name.to_owned(),
             description,
             input_schema,
@@ -1274,17 +1314,236 @@ mod tests {
             server_id: "test".to_owned(),
             record_revision: revision,
             server_label: "test".to_owned(),
-            server_url: "http://127.0.0.1/mcp".to_owned(),
             description_ref: None,
             allowed_tools: None,
-            execution: harness::RemoteMcpExecution::Native,
+            execution: harness::RemoteMcpExecution::Runtime,
             exposure: harness::RemoteMcpExposure::Inject,
             approval: harness::RemoteMcpApprovalPolicy::Never,
             defer_loading: None,
-            auth_ref: None,
-            auth_required: false,
-            allow_private_network: true,
         }
+    }
+
+    fn server_input(server_url: &str, allow_private_network: bool) -> mcp::PutMcpServerRecord {
+        mcp::PutMcpServerRecord {
+            server_id: mcp::McpServerId::new("test"),
+            display_name: None,
+            server_url: server_url.to_owned(),
+            transport: mcp::RemoteMcpTransport::default(),
+            default_server_label: "test".to_owned(),
+            description: None,
+            allowed_tools: None,
+            execution: mcp::McpExecution::Runtime,
+            exposure: mcp::McpExposure::Inject,
+            approval: mcp::McpApprovalPolicy::Never,
+            defer_loading: None,
+            allow_private_network,
+            auth_policy: mcp::McpServerAuthPolicy::None,
+            auth_grant_id: None,
+            status: mcp::McpServerStatus::Active,
+            now_ms: 1,
+        }
+    }
+
+    /// A registry holding one usable record for the cache tests, which only look
+    /// at what the discoverer returns.
+    pub(super) struct OneServer;
+
+    #[async_trait]
+    impl mcp::McpRegistryStore for OneServer {
+        async fn put_server(
+            &self,
+            _record: mcp::PutMcpServerRecord,
+            _expected_revision: Option<u64>,
+        ) -> Result<mcp::McpServerRecord, mcp::McpRegistryError> {
+            unreachable!("the cache tests only read")
+        }
+
+        async fn read_server(
+            &self,
+            _server_id: &mcp::McpServerId,
+        ) -> Result<mcp::McpServerRecord, mcp::McpRegistryError> {
+            Ok(server_input("http://127.0.0.1/mcp", true).into_record())
+        }
+
+        async fn list_servers(
+            &self,
+            _request: mcp::ListMcpServers,
+        ) -> Result<Vec<mcp::McpServerRecord>, mcp::McpRegistryError> {
+            unreachable!("the cache tests only read")
+        }
+
+        async fn delete_server(
+            &self,
+            _server_id: &mcp::McpServerId,
+        ) -> Result<mcp::McpServerRecord, mcp::McpRegistryError> {
+            unreachable!("the cache tests only read")
+        }
+    }
+
+    /// Records where each fetch went and what it was allowed to reach.
+    #[derive(Default)]
+    struct RecordingDiscoverer {
+        fetches: std::sync::Mutex<Vec<(String, bool)>>,
+    }
+
+    #[async_trait]
+    impl McpToolDiscoverer for RecordingDiscoverer {
+        async fn discover_tools(
+            &self,
+            server_url: &str,
+            _bearer: Option<&SecretValue>,
+            _trusted_universe: Option<uuid::Uuid>,
+            allow_private_network: bool,
+            _limits: mcp::McpToolDiscoveryLimits,
+        ) -> Result<DiscoveredMcpInventory, mcp::McpToolDiscoveryFailure> {
+            self.fetches
+                .lock()
+                .expect("fetches")
+                .push((server_url.to_owned(), allow_private_network));
+            Ok(DiscoveredMcpInventory {
+                tools: Vec::new(),
+                tools_list_changed: false,
+                ttl_ms: Some(0),
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn each_fetch_reads_the_url_and_network_opt_in_from_the_live_record() {
+        let servers = Arc::new(mcp::InMemoryMcpRegistryStore::new());
+        servers
+            .put_server(server_input("http://127.0.0.1/first", true), None)
+            .await
+            .expect("record");
+        let discoverer = Arc::new(RecordingDiscoverer::default());
+        let resolver = RuntimeMcpInventoryResolver {
+            servers: servers.clone(),
+            ..RuntimeMcpInventoryResolver::for_test(
+                discoverer.clone(),
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+            )
+        };
+
+        resolver.list_tools(&spec(1)).await.expect("first");
+        servers
+            .put_server(server_input("http://127.0.0.1/moved", false), None)
+            .await
+            .expect("edit");
+        // The session's durable spec still names revision 1.
+        resolver.list_tools(&spec(1)).await.expect("second");
+
+        assert_eq!(
+            *discoverer.fetches.lock().expect("fetches"),
+            [
+                ("http://127.0.0.1/first".to_owned(), true),
+                ("http://127.0.0.1/moved".to_owned(), false),
+            ]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn server_url_answers_only_for_a_usable_provider_hosted_record() {
+        let servers = Arc::new(mcp::InMemoryMcpRegistryStore::new());
+        let resolver = RuntimeMcpInventoryResolver {
+            servers: servers.clone(),
+            ..RuntimeMcpInventoryResolver::for_test(
+                Arc::new(RecordingDiscoverer::default()),
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+            )
+        };
+        assert_eq!(resolver.server_url("test").await.expect("gone"), None);
+
+        let hosted = || mcp::PutMcpServerRecord {
+            execution: mcp::McpExecution::Provider,
+            ..server_input("https://mcp.example.com/mcp", false)
+        };
+        servers.put_server(hosted(), None).await.expect("record");
+        assert_eq!(
+            resolver
+                .server_url("test")
+                .await
+                .expect("usable")
+                .as_deref(),
+            Some("https://mcp.example.com/mcp")
+        );
+
+        let disabled = mcp::PutMcpServerRecord {
+            status: mcp::McpServerStatus::Disabled,
+            ..hosted()
+        };
+        servers.put_server(disabled, None).await.expect("disable");
+        assert_eq!(resolver.server_url("test").await.expect("disabled"), None);
+
+        // Moved to the runtime mid-run, it can name a private server: keep it from the provider.
+        let runtime = server_input("http://10.0.0.1/private", true);
+        servers.put_server(runtime, None).await.expect("runtime");
+        assert_eq!(resolver.server_url("test").await.expect("runtime"), None);
+    }
+
+    /// A deleted or disabled server, or one moved to provider execution, becomes a
+    /// failed call the model can read, and that text never holds the URL.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_runtime_call_against_an_unusable_record_fails_without_echoing_the_url() {
+        let token_url = "https://mcp.example.com/s/PATH_SECRET/mcp?api_key=QUERY_SECRET";
+        let servers = Arc::new(mcp::InMemoryMcpRegistryStore::new());
+        let secrets: Arc<dyn SecretResolver> = Arc::new(llm_runtime::secrets::AbsentSecretResolver);
+        let policy = McpPrivateNetworkPolicy::default();
+        let runtime = RuntimeMcpExecutor::new(
+            servers.clone(),
+            secrets.clone(),
+            Arc::new(RuntimeMcpInventoryResolver::new(
+                servers.clone(),
+                secrets,
+                policy.clone(),
+                ConfiguratorTrustedHeaderPolicy,
+                uuid::Uuid::nil(),
+            )),
+            policy,
+            ConfiguratorTrustedHeaderPolicy,
+            uuid::Uuid::nil(),
+        );
+        let target = harness::RemoteMcpCallTarget {
+            server_id: "test".to_owned(),
+            record_revision: 1,
+            server_label: "test".to_owned(),
+            allowed_tools: None,
+            approval: harness::RemoteMcpApprovalPolicy::Never,
+        };
+
+        let missing = runtime.runtime_record(&target).await.expect_err("missing");
+        assert!(missing.contains("not available"), "{missing}");
+
+        for (edit, expected) in [
+            (
+                mcp::PutMcpServerRecord {
+                    status: mcp::McpServerStatus::Disabled,
+                    ..server_input(token_url, false)
+                },
+                "not available",
+            ),
+            (
+                mcp::PutMcpServerRecord {
+                    execution: mcp::McpExecution::Provider,
+                    ..server_input(token_url, false)
+                },
+                "no longer configured",
+            ),
+        ] {
+            servers.put_server(edit, None).await.expect("edit");
+            let error = runtime.runtime_record(&target).await.expect_err("refused");
+            assert!(error.contains(expected), "{error}");
+            assert!(!error.contains("SECRET"), "{error}");
+        }
+
+        // A changed URL needs no pin: the call uses the record as it stands.
+        servers
+            .put_server(server_input(token_url, false), None)
+            .await
+            .expect("edit");
+        let record = runtime.runtime_record(&target).await.expect("usable");
+        assert_eq!(record.server_url, token_url);
     }
 
     #[test]
@@ -1304,7 +1563,7 @@ mod tests {
             tools_list_changed: false,
             ttl_ms: None,
         });
-        let resolver = Arc::new(NativeMcpInventoryResolver::for_test(
+        let resolver = Arc::new(RuntimeMcpInventoryResolver::for_test(
             discoverer.clone(),
             Duration::from_secs(60),
             Duration::from_secs(60),
@@ -1336,7 +1595,7 @@ mod tests {
             tools_list_changed: false,
             ttl_ms: None,
         });
-        let resolver = NativeMcpInventoryResolver::for_test(
+        let resolver = RuntimeMcpInventoryResolver::for_test(
             discoverer.clone(),
             Duration::from_millis(1),
             Duration::from_secs(60),
@@ -1354,7 +1613,7 @@ mod tests {
             tools_list_changed: true,
             ttl_ms: None,
         });
-        let resolver = NativeMcpInventoryResolver::for_test(
+        let resolver = RuntimeMcpInventoryResolver::for_test(
             discoverer.clone(),
             Duration::from_secs(60),
             Duration::from_millis(1),
@@ -1375,7 +1634,7 @@ mod tests {
             tools_list_changed: true,
             ttl_ms: Some(60_000),
         });
-        let resolver = NativeMcpInventoryResolver::for_test(
+        let resolver = RuntimeMcpInventoryResolver::for_test(
             discoverer.clone(),
             Duration::from_millis(1),
             Duration::from_millis(1),
@@ -1389,9 +1648,161 @@ mod tests {
         assert_eq!(discoverer.calls.load(Ordering::SeqCst), 1);
     }
 
+    /// A discoverer whose server can go down, with tools `tool_a` and `tool_b`.
+    struct FlakyDiscoverer {
+        calls: AtomicUsize,
+        failing: AtomicBool,
+        delay: Duration,
+    }
+
+    impl FlakyDiscoverer {
+        fn new(failing: bool, delay: Duration) -> Arc<Self> {
+            Arc::new(Self {
+                calls: AtomicUsize::new(0),
+                failing: AtomicBool::new(failing),
+                delay,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl McpToolDiscoverer for FlakyDiscoverer {
+        async fn discover_tools(
+            &self,
+            _server_url: &str,
+            _bearer: Option<&SecretValue>,
+            _trusted_universe: Option<uuid::Uuid>,
+            _allow_private_network: bool,
+            _limits: mcp::McpToolDiscoveryLimits,
+        ) -> Result<DiscoveredMcpInventory, mcp::McpToolDiscoveryFailure> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(self.delay).await;
+            if self.failing.load(Ordering::SeqCst) {
+                return Err(mcp::McpToolDiscoveryFailure::new(
+                    mcp::McpToolDiscoveryFailureKind::Unreachable,
+                    "MCP endpoint timed out",
+                ));
+            }
+            let tool = |name: &str| mcp::DiscoveredMcpTool {
+                name: name.to_owned(),
+                title: None,
+                description: None,
+                input_schema: serde_json::json!({"type": "object"}),
+                output_schema: None,
+                annotations: None,
+            };
+            Ok(DiscoveredMcpInventory {
+                tools: vec![tool("tool_a"), tool("tool_b")],
+                tools_list_changed: false,
+                ttl_ms: None,
+            })
+        }
+    }
+
+    fn tool_names(tools: &[RuntimeMcpTool]) -> Vec<&str> {
+        tools.iter().map(|tool| tool.remote_name.as_str()).collect()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_failed_refresh_keeps_the_last_list_and_waits_before_asking_again() {
+        let discoverer = FlakyDiscoverer::new(false, Duration::ZERO);
+        let resolver = RuntimeMcpInventoryResolver::for_test(
+            discoverer.clone(),
+            Duration::from_millis(1),
+            Duration::from_millis(60),
+        );
+        resolver.list_tools(&spec(1)).await.expect("first");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        discoverer.failing.store(true, Ordering::SeqCst);
+        let kept = resolver.list_tools(&spec(1)).await.expect("kept");
+        assert_eq!(tool_names(&kept), ["tool_a", "tool_b"]);
+        assert_eq!(discoverer.calls.load(Ordering::SeqCst), 2);
+        resolver.list_tools(&spec(1)).await.expect("inside window");
+        assert_eq!(discoverer.calls.load(Ordering::SeqCst), 2);
+
+        discoverer.failing.store(false, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(70)).await;
+        resolver.list_tools(&spec(1)).await.expect("recovered");
+        assert_eq!(discoverer.calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_cold_worker_with_a_failing_server_gets_no_tools_and_no_error() {
+        let discoverer = FlakyDiscoverer::new(true, Duration::ZERO);
+        let resolver = RuntimeMcpInventoryResolver::for_test(
+            discoverer.clone(),
+            Duration::from_secs(60),
+            Duration::from_millis(60),
+        );
+        let mut count = 0;
+        let injected = llm_runtime::injected_runtime_tools(
+            &resolver,
+            &spec(1),
+            &harness::ToolName::new("mcp_test"),
+            &mut count,
+        )
+        .await
+        .expect("a failing server never fails the turn");
+        assert!(injected.is_empty());
+        resolver.list_tools(&spec(1)).await.expect("inside window");
+        assert_eq!(discoverer.calls.load(Ordering::SeqCst), 1);
+
+        discoverer.failing.store(false, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(70)).await;
+        let recovered = resolver.list_tools(&spec(1)).await.expect("recovered");
+        assert_eq!(tool_names(&recovered), ["tool_a", "tool_b"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_turns_do_not_queue_fetches_behind_a_hanging_server() {
+        let discoverer = FlakyDiscoverer::new(true, Duration::from_millis(50));
+        let resolver = Arc::new(RuntimeMcpInventoryResolver::for_test(
+            discoverer.clone(),
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        ));
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let resolver = resolver.clone();
+            tasks.push(tokio::spawn(
+                async move { resolver.list_tools(&spec(1)).await },
+            ));
+        }
+        for task in tasks {
+            assert!(task.await.expect("join").expect("no error").is_empty());
+        }
+        assert_eq!(discoverer.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn each_tool_subset_gets_its_own_list_through_a_failed_refresh() {
+        let discoverer = FlakyDiscoverer::new(false, Duration::ZERO);
+        let resolver = RuntimeMcpInventoryResolver::for_test(
+            discoverer.clone(),
+            Duration::from_millis(1),
+            Duration::from_secs(60),
+        );
+        let subset = |tool: &str| RemoteMcpToolSpec {
+            allowed_tools: Some(vec![tool.to_owned()]),
+            ..spec(1)
+        };
+        let a = resolver.list_tools(&subset("tool_a")).await.expect("a");
+        let b = resolver.list_tools(&subset("tool_b")).await.expect("b");
+        assert_eq!(tool_names(&a), ["tool_a"]);
+        assert_eq!(tool_names(&b), ["tool_b"]);
+
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        discoverer.failing.store(true, Ordering::SeqCst);
+        let a = resolver.list_tools(&subset("tool_a")).await.expect("a");
+        let b = resolver.list_tools(&subset("tool_b")).await.expect("b");
+        assert_eq!(tool_names(&a), ["tool_a"]);
+        assert_eq!(tool_names(&b), ["tool_b"]);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn discovered_output_schema_reaches_cached_full_definitions() {
-        let resolver = NativeMcpInventoryResolver::for_test(
+        let resolver = RuntimeMcpInventoryResolver::for_test(
             Arc::new(CountingDiscoverer {
                 calls: AtomicUsize::new(0),
                 tools_list_changed: false,
@@ -1457,7 +1868,7 @@ mod tests {
     fn search_hits_are_uniform_and_oversized_descriptions_are_utf8_safe() {
         let whole = compact_search_hit(
             "docs",
-            &native_tool(
+            &runtime_tool(
                 "read",
                 Some("Read a document".to_owned()),
                 serde_json::json!({
@@ -1477,7 +1888,7 @@ mod tests {
 
         let oversized = compact_search_hit(
             "docs",
-            &native_tool(
+            &runtime_tool(
                 "long",
                 Some("é".repeat(8_000)),
                 serde_json::json!({"type": "object"}),
@@ -1496,7 +1907,7 @@ mod tests {
 
     #[test]
     fn deferred_definitions_and_search_hits_preserve_optional_output_schemas() {
-        let mut tool = native_tool("read", None, serde_json::json!({"type": "object"}));
+        let mut tool = runtime_tool("read", None, serde_json::json!({"type": "object"}));
         assert!(
             full_tool_definition("docs", &tool)
                 .get("outputSchema")
@@ -1531,7 +1942,7 @@ mod tests {
 
     #[test]
     fn oversized_output_schemas_are_omitted_only_from_compact_hits() {
-        let mut tool = native_tool("read", None, serde_json::json!({"type": "object"}));
+        let mut tool = runtime_tool("read", None, serde_json::json!({"type": "object"}));
         let schema = serde_json::json!({
             "type": "object",
             "properties": {"title": {"type": "string", "description": "d".repeat(MCP_FIND_HIT_MAX_BYTES)}}
@@ -1548,7 +1959,7 @@ mod tests {
     fn oversized_schemas_fall_back_to_top_level_argument_names() {
         let hit = compact_search_hit(
             "docs",
-            &native_tool(
+            &runtime_tool(
                 "update",
                 Some("Update a page".to_owned()),
                 serde_json::json!({
@@ -1568,7 +1979,7 @@ mod tests {
 
     #[test]
     fn argument_validation_errors_include_the_full_input_schema() {
-        let tool = native_tool(
+        let tool = runtime_tool(
             "update",
             None,
             serde_json::json!({
@@ -1590,7 +2001,7 @@ mod tests {
                 (
                     None,
                     "docs".to_owned(),
-                    native_tool(
+                    runtime_tool(
                         &format!("tool_{index:02}"),
                         Some("d".repeat(2_000)),
                         serde_json::json!({"type": "object"}),
@@ -1621,9 +2032,9 @@ mod tests {
         base64::engine::general_purpose::STANDARD.encode(bytes)
     }
 
-    fn native_result(
+    fn runtime_result(
         content: serde_json::Value,
-    ) -> (String, Vec<NativeMcpMedia>, Vec<NativeMcpAsset>) {
+    ) -> (String, Vec<RuntimeMcpMedia>, Vec<RuntimeMcpAsset>) {
         let raw = serde_json::json!({ "content": content });
         let mut output = serde_json::json!({ "content": raw["content"].clone() });
         let mut assets = Vec::new();
@@ -1638,7 +2049,7 @@ mod tests {
         let png = png_bytes();
         let jpeg = b"\xff\xd8\xff\xe0 second".to_vec();
         let pdf = b"%PDF-1.7 report".to_vec();
-        let (visible, media, assets) = native_result(serde_json::json!([
+        let (visible, media, assets) = runtime_result(serde_json::json!([
             {"type": "text", "text": "Row 1 rendered."},
             {"type": "image", "mimeType": "image/png", "data": b64(&png)},
             {"type": "image", "mimeType": "image/jpeg", "data": b64(&jpeg)},
@@ -1678,19 +2089,19 @@ mod tests {
         assert_eq!(
             media,
             vec![
-                NativeMcpMedia {
+                RuntimeMcpMedia {
                     asset_index: 0,
                     kind: harness::media::MediaKind::Image,
                     media_type: "image/png".into(),
                     name: None
                 },
-                NativeMcpMedia {
+                RuntimeMcpMedia {
                     asset_index: 1,
                     kind: harness::media::MediaKind::Image,
                     media_type: "image/jpeg".into(),
                     name: None
                 },
-                NativeMcpMedia {
+                RuntimeMcpMedia {
                     asset_index: 2,
                     kind: harness::media::MediaKind::Document,
                     media_type: "application/pdf".into(),
@@ -1715,7 +2126,7 @@ mod tests {
         for index in 0..9u8 {
             content.push(serde_json::json!({"type": "image", "mimeType": "image/png", "data": b64(&[index; 16])}));
         }
-        let (visible, media, _) = native_result(serde_json::Value::Array(content));
+        let (visible, media, _) = runtime_result(serde_json::Value::Array(content));
         let lines = visible.lines().collect::<Vec<_>>();
         assert_eq!(
             lines[0],
@@ -1765,7 +2176,7 @@ mod tests {
                     Some(name),
                 )
             };
-            expected_media.push(NativeMcpMedia {
+            expected_media.push(RuntimeMcpMedia {
                 asset_index: index + 2,
                 kind,
                 media_type: media_type.to_owned(),
@@ -1782,7 +2193,7 @@ mod tests {
                 "mimeType": "image/svg+xml", "blob": b64(b"svg")
             }}),
         ]);
-        let (visible, media, assets) = native_result(serde_json::Value::Array(content));
+        let (visible, media, assets) = runtime_result(serde_json::Value::Array(content));
         assert_eq!(media, expected_media);
         assert_eq!(assets.len(), harness::media::MAX_TOOL_MEDIA_ITEMS + 5);
         let lines: Vec<_> = visible.lines().collect();
@@ -1825,7 +2236,7 @@ mod tests {
 
     #[test]
     fn media_entries_are_built_from_admitted_assets_in_order() {
-        let (_, media, assets) = native_result(serde_json::json!([
+        let (_, media, assets) = runtime_result(serde_json::json!([
             {"type": "image", "mimeType": "image/png", "data": b64(&png_bytes())}
         ]));
         let item = &media[0];

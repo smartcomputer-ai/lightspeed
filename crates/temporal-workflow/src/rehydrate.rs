@@ -1,26 +1,18 @@
 //! Deterministic session-log reduction shared between the bootstrap activity
 //! and the workflow.
 //!
-//! rehydration reduces the durable session log into the compact
-//! `CoreAgentState` plus the workflow-only `run_submissions` index. Previously
-//! the workflow pulled every persisted entry through the activity result and
-//! reduced in-workflow; that transported the full log through Temporal history
-//! and failed long-lived sessions. The reduction now happens inside the
-//! activity using this helper, and only the compact result crosses the boundary.
+//! Rehydration reduces the durable session log into the compact
+//! `CoreAgentState`. The reduction happens inside the activity, and only the
+//! compact result crosses the boundary: carrying the log through Temporal
+//! history would fail long-lived sessions.
 
-use std::collections::BTreeMap;
-
-use harness::{
-    CoreAgentCodec, CoreAgentEntry, CoreAgentEvent, CoreAgentState, RunEvent, SubmissionId,
-    storage::StoredSessionEntry,
-};
+use harness::{CoreAgentCodec, CoreAgentState, storage::StoredSessionEntry};
 use serde::{Deserialize, Serialize};
 
 /// Outcome of reducing a session's persisted log.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReducedSession {
     pub core_state: CoreAgentState,
-    pub run_submissions: BTreeMap<u64, Option<SubmissionId>>,
     /// Entries applied by this process; excluded from serialized checkpoints
     /// because a checkpoint restart counts only its own tail.
     #[serde(skip)]
@@ -47,11 +39,10 @@ impl std::fmt::Display for RehydrateError {
 
 impl std::error::Error for RehydrateError {}
 
-/// Decode and reduce persisted session entries into compact agent state plus the
-/// `run_id -> submission_id` index the workflow reconstructs from accepted-run
-/// events. This is the single source of truth for replay; both the bootstrap
-/// activity and any in-workflow cold path must use it so reduced state is
-/// identical regardless of where replay runs.
+/// Decode and reduce persisted session entries into compact agent state. This
+/// is the single source of truth for replay; both the bootstrap activity and
+/// any in-workflow cold path must use it so reduced state is identical
+/// regardless of where replay runs.
 pub fn reduce_session_entries(
     entries: &[StoredSessionEntry],
 ) -> Result<ReducedSession, RehydrateError> {
@@ -69,7 +60,8 @@ pub fn reduce_session_entries_from(
         let decoded = CoreAgentCodec
             .decode_entry(entry)
             .map_err(|error| RehydrateError::Decode(error.to_string()))?;
-        accumulate_session_entry(&mut reduced, &decoded)?;
+        harness::apply_event(&mut reduced.core_state, &decoded)
+            .map_err(|error| RehydrateError::Apply(error.to_string()))?;
     }
     reduced.replayed_event_count = reduced
         .replayed_event_count
@@ -77,32 +69,18 @@ pub fn reduce_session_entries_from(
     Ok(reduced)
 }
 
-pub fn accumulate_session_entry(
-    reduced: &mut ReducedSession,
-    entry: &CoreAgentEntry,
-) -> Result<(), RehydrateError> {
-    if let CoreAgentEvent::Run(RunEvent::Accepted(accepted)) = &entry.event {
-        reduced
-            .run_submissions
-            .insert(accepted.run_id.as_u64(), accepted.submission_id.clone());
-    }
-    harness::apply_event(&mut reduced.core_state, entry)
-        .map_err(|error| RehydrateError::Apply(error.to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use harness::{
-        CoreAgentEntry, CoreAgentJoins, CoreAgentLifecycleEvent, EventSeq, ModelSelection,
-        ProviderApiKind, SessionPosition,
+        CoreAgentEntry, CoreAgentEvent, CoreAgentJoins, CoreAgentLifecycleEvent, EventSeq,
+        ModelSelection, ProviderApiKind, SessionPosition,
     };
 
     #[test]
     fn empty_log_reduces_to_default_state() {
         let reduced = reduce_session_entries(&[]).expect("reduce empty");
         assert_eq!(reduced.replayed_event_count, 0);
-        assert!(reduced.run_submissions.is_empty());
         assert_eq!(reduced.core_state, CoreAgentState::new());
     }
 

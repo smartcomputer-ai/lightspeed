@@ -27,7 +27,7 @@ export function SendEventDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const permissions = useActionPermissions(universeId);
-  const invoke = permissions.can("invoke_bot");
+  const invoke = permissions.can("invokeBot");
   const queryClient = useQueryClient();
   const [kind, setKind] = useState("operator.requested");
   const [summary, setSummary] = useState("");

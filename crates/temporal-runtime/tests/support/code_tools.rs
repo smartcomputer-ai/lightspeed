@@ -19,7 +19,7 @@ use harness::{
     ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentIoError, CoreAgentLlm,
     CoreAgentState, FunctionToolSpec, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
     LlmGenerationResult, LlmGenerationStatus, ObservedToolCall, PromiseResolution, SessionId,
-    ToolCallId, ToolKind, ToolName, ToolParallelism, ToolSpec, WorkflowToolCompletion,
+    ToolCallId, ToolId, ToolKind, ToolName, ToolParallelism, ToolSpec, WorkflowToolCompletion,
     WorkflowToolDeclaration, WorkflowToolDefinition, WorkflowToolInvocation, WorkflowToolTarget,
     storage::{BlobStore, ReadSessionEvents, SessionStore},
 };
@@ -287,9 +287,9 @@ impl Fixture {
                 let state = self.state().await?;
                 if let Some(invocation) = state
                     .workflow_tools
-                    .emissions
+                    .bound_invocations
                     .values()
-                    .find(|invocation| invocation.tool_id.as_str() == tool_name)
+                    .find(|invocation| invocation.workflow_tool_id.as_str() == tool_name)
                 {
                     return Ok(invocation.clone());
                 }
@@ -315,12 +315,14 @@ impl Fixture {
             .get_workflow_handle::<AgentSessionWorkflow>(workflow_id.clone())
             .signal(
                 AgentSessionWorkflow::deliver_emission,
-                harness::EmissionEnvelope::source_resolution(
-                    live_universe_id()?,
-                    self.receiver_id.clone(),
-                    &workflow_id,
-                    promise.clone(),
-                    resolution,
+                temporal_workflow::emission_signal_input(
+                    &harness::EmissionEnvelope::source_resolution(
+                        live_universe_id()?,
+                        self.receiver_id.clone(),
+                        &workflow_id,
+                        promise.clone(),
+                        resolution,
+                    ),
                 ),
                 WorkflowSignalOptions::default(),
             )
@@ -382,11 +384,11 @@ async fn declaration(
 ) -> anyhow::Result<WorkflowToolDeclaration> {
     Ok(WorkflowToolDeclaration::new(
         WorkflowToolDefinition {
-            tool_id: harness::WorkflowToolId::new(name),
-            revision: 1,
+            workflow_tool_id: harness::WorkflowToolId::new(name),
+            schema_revision: 1,
             semantic_type: format!("lightspeed.test.{name}.v1"),
             tool: ToolSpec {
-                name: ToolName::new(name),
+                id: ToolId::new(name),
                 execution: Default::default(),
                 parallelism: ToolParallelism::ParallelSafe,
                 kind: ToolKind::Function(FunctionToolSpec {
@@ -408,7 +410,7 @@ async fn declaration(
         if joined {
             WorkflowToolCompletion::Joined {
                 reply_schema_ref: None,
-                deadline_after_ms: 120_000,
+                deadline_after_ms: Some(120_000),
             }
         } else {
             WorkflowToolCompletion::Promises {
@@ -464,11 +466,11 @@ where
             for (name, joined) in [(OUTER, true), (JOB, true), (AGENT, true), (SUBMIT, false)] {
                 declarations.push(declaration(store.as_ref(), name, &receiver_id, joined).await?);
             }
-            api.start_managed_session_for_workflow_with_profile(
+            api.start_integrated_session_for_workflow_with_profile(
                 &session_id,
                 false,
                 None,
-                harness::ManagedSessionWorkflowTools::v1(None, declarations),
+                harness::DeclaredSessionWorkflowTools::v1(None, declarations),
             )
             .await?;
             api.put_session_config(api::SessionConfigPutParams {
@@ -520,9 +522,9 @@ where
                         temporal_workflow::reduce_session_entries(&page.entries)?.core_state;
                     if let Some(invocation) = state
                         .workflow_tools
-                        .emissions
+                        .bound_invocations
                         .values()
-                        .find(|invocation| invocation.tool_id.as_str() == OUTER)
+                        .find(|invocation| invocation.workflow_tool_id.as_str() == OUTER)
                         && state
                             .runs
                             .active
@@ -542,7 +544,7 @@ where
                 parent_invocation_id: outer.invocation_id.clone(),
                 allowed_tools: Some(["concurrency.sleep", "concurrency.await", JOB, AGENT, SUBMIT]
                     .into_iter()
-                    .map(ToolName::new)
+                    .map(ToolId::new)
                     .collect::<BTreeSet<_>>()),
                 max_calls: 32,
                 max_in_flight: 8,

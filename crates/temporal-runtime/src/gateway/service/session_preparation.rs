@@ -1,7 +1,9 @@
 //! Shared materialization service used by workflow activities and API preflight.
 use super::*;
 use ::profiles::ProfileStore;
-use temporal_workflow::{SessionToolsetPreparation, SessionToolsetSource};
+use temporal_workflow::{
+    SessionProfileInstructions, SessionToolsetPreparation, SessionToolsetSource,
+};
 
 #[derive(Clone)]
 pub(crate) struct SessionPreparationService {
@@ -46,11 +48,12 @@ impl SessionPreparationService {
                 config.web.fetch = true;
             }
         }
-        if features.timers.is_some() || features.subagents.is_some() {
-            // Joining spawned sub-agents depends on the base concurrency
-            // tools, so the subagents grant implies them; the timers grant
-            // adds nothing extra today beyond the same surface.
+        if features.timers.is_some() {
             config.concurrency = tools::concurrency::ConcurrencyToolsetConfig::timer();
+        } else if features.subagents.is_some() {
+            // `agent_spawn` returns promises the model joins with the base
+            // concurrency tools. Sleep stays behind the timers grant.
+            config.concurrency = tools::concurrency::ConcurrencyToolsetConfig::enabled();
         }
         if include_environment_tools && let Some(environment) = &features.environments {
             let access = environment.tool_access();
@@ -121,7 +124,7 @@ impl SessionPreparationService {
                 JOB_RUN_WORKFLOW_SEMANTIC_TYPE,
                 WorkflowToolCompletion::Joined {
                     reply_schema_ref: Some(reply_schema_ref.clone()),
-                    deadline_after_ms: JOB_RUN_DEADLINE_AFTER_MS,
+                    deadline_after_ms: Some(JOB_RUN_DEADLINE_AFTER_MS),
                 },
             ),
         ];
@@ -140,15 +143,15 @@ impl SessionPreparationService {
             );
             declarations.push(WorkflowToolDeclaration::new(
                 WorkflowToolDefinition {
-                    tool_id: WorkflowToolId::new(tool_id),
-                    revision: 1,
+                    workflow_tool_id: WorkflowToolId::new(tool_id),
+                    schema_revision: 1,
                     semantic_type: semantic_type.to_owned(),
                     tool,
                 },
                 WorkflowToolTarget::Start {
                     start: WorkflowStartRef {
                         recipe_format: temporal_workflow::WORKFLOW_TOOL_RECIPE_FORMAT_V1,
-                        revision: 1,
+                        recipe_revision: 1,
                         recipe_ref: recipe_ref.clone(),
                         recipe_fingerprint: recipe_fingerprint.clone(),
                     },
@@ -185,22 +188,23 @@ impl SessionPreparationService {
             )
             .await
             .map_err(map_blob_store_error)?;
-        // The binding carries the hard ceiling; the grant's `deadlineMs` is
-        // pinned per call and enforced inside the execution, so the
-        // immutable binding never has to change with the grant.
+        // No hard promise deadline: the grant's optional `runTimeoutMs` is pinned
+        // per call and enforced inside the execution, so the immutable binding
+        // never has to change with the grant. A dead execution is found by the
+        // holder's recovery poll, and a dead child by the execution.
         let definitions = [
             (
                 tools::subagents::SubagentToolKind::Run,
                 WorkflowToolCompletion::Joined {
                     reply_schema_ref: Some(reply_schema_ref.clone()),
-                    deadline_after_ms: harness::SUBAGENT_DEADLINE_CEILING_MS,
+                    deadline_after_ms: None,
                 },
             ),
             (
                 tools::subagents::SubagentToolKind::Spawn,
                 WorkflowToolCompletion::Promises {
                     reply_schema_ref: Some(reply_schema_ref.clone()),
-                    deadline_after_ms: Some(harness::SUBAGENT_DEADLINE_CEILING_MS),
+                    deadline_after_ms: None,
                     max_promises: 1,
                     key_source: WorkflowToolCompletionKeySource::Reply,
                 },
@@ -219,15 +223,15 @@ impl SessionPreparationService {
             );
             declarations.push(WorkflowToolDeclaration::new(
                 WorkflowToolDefinition {
-                    tool_id: WorkflowToolId::new(kind.workflow_tool_id()),
-                    revision: 1,
+                    workflow_tool_id: WorkflowToolId::new(kind.workflow_tool_id()),
+                    schema_revision: 1,
                     semantic_type: kind.semantic_type().to_owned(),
                     tool,
                 },
                 WorkflowToolTarget::Start {
                     start: WorkflowStartRef {
                         recipe_format: temporal_workflow::WORKFLOW_TOOL_RECIPE_FORMAT_V1,
-                        revision: 1,
+                        recipe_revision: 1,
                         recipe_ref: recipe_ref.clone(),
                         recipe_fingerprint: recipe_fingerprint.clone(),
                     },
@@ -265,8 +269,8 @@ impl SessionPreparationService {
             .map_err(map_blob_store_error)?;
         Ok(WorkflowToolDeclaration::new(
             WorkflowToolDefinition {
-                tool_id: WorkflowToolId::new(tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID),
-                revision: 1,
+                workflow_tool_id: WorkflowToolId::new(tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID),
+                schema_revision: 1,
                 semantic_type: tools::code::CODE_EXECUTE_WORKFLOW_SEMANTIC_TYPE.to_owned(),
                 tool: tools::definitions::register(
                     "code.execute",
@@ -278,14 +282,14 @@ impl SessionPreparationService {
             WorkflowToolTarget::Start {
                 start: WorkflowStartRef {
                     recipe_format: temporal_workflow::WORKFLOW_TOOL_RECIPE_FORMAT_V1,
-                    revision: 1,
+                    recipe_revision: 1,
                     recipe_ref,
                     recipe_fingerprint,
                 },
             },
             WorkflowToolCompletion::Joined {
                 reply_schema_ref: Some(reply_schema_ref),
-                deadline_after_ms: tools::code::CODE_EXECUTION_DEADLINE_CEILING_MS,
+                deadline_after_ms: Some(tools::code::CODE_EXECUTION_DEADLINE_CEILING_MS),
             },
         ))
     }
@@ -317,12 +321,12 @@ impl SessionPreparationService {
             declarations.push(self.core_code_workflow_tool_declaration().await?);
         }
         for declaration in &declarations {
-            let id = &declaration.definition.tool_id;
+            let id = &declaration.definition.workflow_tool_id;
             if let Some(existing) = source.bindings.get(id)
                 && (!source.system_binding_ids.contains(id)
                     || existing.session_universe_id != self.store.config().universe_id
                     || existing.definition.semantic_type != declaration.definition.semantic_type
-                    || existing.definition.tool.name != declaration.definition.tool.name)
+                    || existing.definition.tool.id != declaration.definition.tool.id)
             {
                 return Err(AgentApiError::invalid_request(format!(
                     "system workflow tool {id} conflicts with an existing immutable binding"
@@ -331,15 +335,11 @@ impl SessionPreparationService {
         }
         let mut validation_state = harness::CoreAgentState::new();
         validation_state.workflow_tools.bindings = source.bindings.clone();
-        validate_subagent_deadline_for_existing_bindings(
-            &validation_state,
-            &session_config.features,
-        )?;
         validate_code_deadline_for_existing_bindings(&validation_state, &session_config.features)?;
         declarations.retain(|declaration| {
             !source
                 .bindings
-                .contains_key(&declaration.definition.tool_id)
+                .contains_key(&declaration.definition.workflow_tool_id)
         });
         let mut bindings = source.bindings.clone();
         for declaration in &declarations {
@@ -349,8 +349,8 @@ impl SessionPreparationService {
                 declaration.target.clone(),
                 declaration.completion.clone(),
             )
-            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
-            bindings.insert(binding.definition.tool_id.clone(), binding);
+            .map_err(|error| AgentApiError::invalid_request(error.message()))?;
+            bindings.insert(binding.definition.workflow_tool_id.clone(), binding);
         }
         let materialized = bindings
             .values()
@@ -358,7 +358,7 @@ impl SessionPreparationService {
                 (jobs || !is_core_environment_job_binding(binding))
                     && (subagents || !is_core_subagent_binding(binding))
                     && (code_mode
-                        || binding.definition.tool_id.as_str()
+                        || binding.definition.workflow_tool_id.as_str()
                             != tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID)
             })
             .collect::<Vec<_>>();
@@ -373,24 +373,57 @@ impl SessionPreparationService {
         register_workflow_tools(&mut toolset, materialized.iter().copied()).map_err(|e| {
             AgentApiError::invalid_request(format!("materialize workflow tools: {e}"))
         })?;
-        let desired_mcp = self.desired_mcp_tools(&session_config.features).await?;
+        let inventory = self.mcp_inventory(&session_config.features).await?;
         if let Some(name) = toolset
             .tools
             .keys()
-            .find(|name| desired_mcp.contains_key(*name))
+            .find(|name| inventory.tools.contains_key(*name))
         {
             return Err(AgentApiError::invalid_request(format!(
                 "tool name {name} collides with a remote MCP tool"
             )));
         }
         let mut tools = toolset.tools;
-        tools.extend(desired_mcp);
+        tools.extend(inventory.tools);
+        for server in &inventory.unavailable {
+            tracing::warn!(
+                session_config_revision = source.config_revision,
+                server_id = %server.attachment.server_id,
+                reason = %server.error.message,
+                "attached MCP server is unavailable and its tool is left out"
+            );
+        }
+        validate_prepared_toolset(session_config, &tools, !inventory.unavailable.is_empty())?;
+        let mcp_catalog =
+            mcp_api::mcp_catalog_entry(self.store.as_ref(), &inventory.unavailable).await?;
         Ok(SessionToolsetPreparation {
             source,
             declarations,
             tools,
+            input_limit_tokens: None,
+            mcp_catalog,
         })
     }
+}
+
+/// What every turn's request would refuse, told to the caller while they can still
+/// change it: session start, run start and config put all prepare a toolset first.
+/// With an MCP server left out, a tool choice may name its tool, and refusing here
+/// would let one catalog action stop the session after all. That choice stands and
+/// each run it touches fails with the reason.
+pub(super) fn validate_prepared_toolset(
+    config: &harness::SessionConfig,
+    tools: &BTreeMap<harness::ToolId, harness::ToolSpec>,
+    mcp_server_left_out: bool,
+) -> Result<(), AgentApiError> {
+    harness::validate_tools_for_api_kind(tools.values(), &config.model.api_kind)
+        .and_then(|()| {
+            if mcp_server_left_out {
+                return Ok(());
+            }
+            harness::validate_tool_choice_for_tools(tools, config.generation.tool_choice.as_ref())
+        })
+        .map_err(|error| AgentApiError::invalid_request(error.message()))
 }
 
 impl SessionPreparationService {
@@ -425,8 +458,9 @@ impl SessionPreparationService {
     ) -> Result<(), AgentApiError> {
         config
             .validate()
-            .map_err(|e| AgentApiError::invalid_request(e.to_string()))?;
-        // Everything attached must exist before anything resolves it.
+            .map_err(|e| AgentApiError::invalid_request(e.message()))?;
+        // What must exist before anything resolves it. An MCP server is not among
+        // it: a server that has gone away is left out of the toolset instead.
         authorization::require_resources(
             &store_pg::PgAccessStore::new(self.store.pool().clone()),
             self.store.config().universe_id,
@@ -456,24 +490,23 @@ impl SessionPreparationService {
         let mut instructions = BTreeMap::new();
         if let Some(input) = request.instructions {
             let reference = match input {
-                ProfileInstructions::Text { text } => self
+                SessionProfileInstructions::Text { text } => self
                     .store
                     .put_bytes(text.into_bytes())
                     .await
                     .map_err(map_blob_store_error)?,
-                ProfileInstructions::TextRef { blob_ref } => {
-                    let reference = parse_blob_ref(&blob_ref)?;
+                SessionProfileInstructions::TextRef { blob_ref } => {
                     if !self
                         .store
-                        .has_blob(&reference)
+                        .has_blob(&blob_ref)
                         .await
                         .map_err(map_blob_store_error)?
                     {
                         return Err(AgentApiError::not_found(format!(
-                            "profile instructions blob not found: {reference}"
+                            "profile instructions blob not found: {blob_ref}"
                         )));
                     }
-                    reference
+                    blob_ref
                 }
             };
             instructions.insert(

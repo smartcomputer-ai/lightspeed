@@ -68,8 +68,16 @@ it.each([
 
 it("preserves the typed missing-default error for web clients", async () => {
   const app = new Hono();
-  app.get("/", (c) => withGateway(c, async () => { throw new LightspeedRpcError({ code: -32014, message: "Choose a model", data: { kind: "model_default_unset", message: "Choose a model", modelDefaultSlot: "agentRun" } }); }));
+  app.get("/", (c) => withGateway(c, async () => { throw new LightspeedRpcError({ code: -32014, message: "Choose a model", data: { kind: "modelDefaultUnset", message: "Choose a model", modelDefaultSlot: "agentRun" } }); }));
   const response = await app.request("/");
   expect(response.status).toBe(400);
-  expect(await response.json()).toMatchObject({ kind: "model_default_unset", modelDefaultSlot: "agentRun" });
+  expect(await response.json()).toMatchObject({ kind: "modelDefaultUnset", modelDefaultSlot: "agentRun" });
+});
+
+it("tells web clients a held request is pending and which id to retry with", async () => {
+  const app = new Hono();
+  app.get("/", (c) => withGateway(c, async () => { throw new LightspeedRpcError({ code: -32015, message: "still held", data: { kind: "operationPending", message: "still held", submissionId: "submission" } }); }));
+  const response = await app.request("/");
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({ kind: "operationPending", submissionId: "submission" });
 });

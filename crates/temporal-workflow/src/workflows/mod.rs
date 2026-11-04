@@ -1,20 +1,27 @@
+mod activity_payload;
 pub mod bots;
 mod cancellation;
 pub mod channels;
 mod code_execution;
+mod emission_signal;
 mod environment_job;
 mod session;
 mod subagent_execution;
 mod transcriptions;
 
+pub(crate) use activity_payload::fail_task_if_undecodable;
 pub(crate) use cancellation::{WorkflowContextExt, signal_options};
+pub use emission_signal::emission_signal_input;
+pub(crate) use emission_signal::receive_emission;
 
 pub use bots::{BotControllerWorkflow, BotTriggerFireWorkflow};
 pub use channels::ChannelConversationWorkflow;
 pub use code_execution::CodeExecutionWorkflow;
 pub use environment_job::EnvironmentJobWorkflow;
-pub use session::AgentSessionWorkflow;
-pub use subagent_execution::SubagentExecutionWorkflow;
+pub use session::{AgentSessionWorkflow, run_terminal_emissions};
+pub use subagent_execution::{
+    SubagentExecutionWorkflow, subagent_child_session_id, subagent_submission_id,
+};
 
 pub use transcriptions::{
     TranscriptionActivityResult, TranscriptionSnapshot, TranscriptionWorkflow,

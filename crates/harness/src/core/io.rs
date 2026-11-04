@@ -1,7 +1,6 @@
 //! CoreAgent runtime I/O traits and request/result records.
 //!
-//! These traits are specific to CoreAgent; the lower-level session kernel
-//! should not impose this I/O shape on custom agents.
+//! These traits are specific to CoreAgent.
 //!
 //! `LlmGenerationRequest`, `LlmGenerationResult`,
 //! `ToolInvocationBatchRequest`, and `ToolInvocationBatchResult` are shared
@@ -11,7 +10,7 @@
 //! hold `Send + Sync` async adapters should fulfill `CoreAgentAction` values
 //! directly instead of implementing these traits inside the workflow.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -21,7 +20,7 @@ use crate::{
     AwaitSpec, BlobRef, ContextCompactionRequest, ContextCompactionResult, ContextEntryInput,
     ContextEntryKind, EnvironmentId, LlmGenerationFacts, LlmGenerationStatus, LlmRequest,
     PromiseId, PromiseOwnership, PromiseScope, PromiseStatus, RunId, SessionId, ToolBatchId,
-    ToolCallId, ToolCallStatus, ToolExecutionSpec, ToolName, TurnId, WorkflowToolBinding,
+    ToolCallId, ToolCallStatus, ToolExecutionSpec, ToolId, ToolName, TurnId, WorkflowToolBinding,
     WorkspaceAttachment,
 };
 
@@ -115,10 +114,11 @@ pub struct ToolInvocationBatchRequest {
     /// Admitted code-mode grant, pinned before dispatching the script workflow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_mode_policy: Option<crate::CodeModeFeature>,
-    /// First promise id the executors of this dispatch may mint (see
-    /// `ActiveToolBatch::promise_id_base`). A batch-unit dispatch counts up
-    /// from here across all its calls; a per-call dispatch gets its own
-    /// slot (`base + call index`) and may create at most one promise.
+    /// First promise id the executors of this dispatch may mint: never below
+    /// the batch's own base and always above everything the session has already
+    /// minted. A batch-unit dispatch counts up from here across all its calls; a
+    /// per-call dispatch gets its own slot (`base + call index`) and may create
+    /// at most one promise.
     pub promise_id_base: u64,
     pub calls: Vec<ToolInvocationRequest>,
 }
@@ -126,7 +126,7 @@ pub struct ToolInvocationBatchRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInvocationRequest {
     pub call_id: ToolCallId,
-    pub tool_id: Option<ToolName>,
+    pub tool_id: Option<ToolId>,
     pub tool_name: ToolName,
     pub arguments_ref: BlobRef,
     /// Original turn inputs for the shared built-in resolver. Provider wire
@@ -136,11 +136,9 @@ pub struct ToolInvocationRequest {
     pub workflow_tool: Option<WorkflowToolCallRuntime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub promise_control: Option<PromiseControlCallRuntime>,
-    /// Native MCP routing facts for an injected or search-exposure call,
+    /// Runtime MCP routing facts for an injected or search-exposure call,
     /// materialized by the deterministic owner for every dispatch of the
-    /// batch. Present on the batch request and on the per-call request
-    /// alike, so batch-unit and per-call execution route the call the same
-    /// way; absent for every other tool.
+    /// batch; absent for every other tool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_mcp: Option<RemoteMcpCallRuntime>,
 }
@@ -156,12 +154,8 @@ pub struct RemoteMcpCallTarget {
     pub server_id: String,
     pub record_revision: u64,
     pub server_label: String,
-    pub server_url: String,
     pub allowed_tools: Option<Vec<String>>,
     pub approval: crate::RemoteMcpApprovalPolicy,
-    pub auth_ref: Option<crate::SecretRef>,
-    pub auth_required: bool,
-    pub allow_private_network: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,10 +180,10 @@ pub enum PromiseControlKind {
 }
 
 impl PromiseControlKind {
-    fn for_tool_id(tool_id: &ToolName) -> Option<Self> {
+    fn for_tool_id(tool_id: &ToolId) -> Option<Self> {
         match tool_id.as_str() {
-            "concurrency.cancel" => Some(Self::Cancel),
-            "concurrency.detach" => Some(Self::Detach),
+            crate::CANCEL_TOOL_ID => Some(Self::Cancel),
+            crate::DETACH_TOOL_ID => Some(Self::Detach),
             _ => None,
         }
     }
@@ -324,24 +318,18 @@ pub struct ToolInvocationCallRequest {
     /// Admitted code-mode grant, pinned before dispatching the script workflow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_mode_policy: Option<crate::CodeModeFeature>,
-    /// The one promise id this call may mint: the batch base plus the
-    /// call's index, so sibling per-call dispatches never collide.
+    /// The one promise id this call may mint: the dispatch base plus the
+    /// call's index. Slots are unique within a dispatch, and every dispatch
+    /// numbers above what earlier ones minted, so no two calls collide.
     pub promise_id_base: u64,
     pub call: ToolInvocationRequest,
+    /// Distinct tool identities of the other calls in this dispatch, including
+    /// those that wait for the batch activity, for the cross-call batch rules.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sibling_calls: Vec<ToolCallSummary>,
+    pub sibling_tool_ids: Vec<ToolId>,
     /// Execution policy facts selected from the admitted tool binding.
     #[serde(default)]
     pub execution: ToolExecutionSpec,
-}
-
-/// Bounded summary of one sibling call in the same tool batch.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolCallSummary {
-    pub call_id: ToolCallId,
-    pub tool_id: Option<ToolName>,
-    pub tool_name: ToolName,
-    pub arguments_ref: BlobRef,
 }
 
 impl ToolInvocationCallRequest {
@@ -367,24 +355,23 @@ impl ToolInvocationCallRequest {
 
 impl ToolInvocationBatchRequest {
     /// Split one call out of this batch request, carrying batch-scoped runtime
-    /// facts and bounded sibling summaries.
+    /// facts and the tool identities of its siblings. A sibling with no resolved
+    /// tool never triggers a batch rule, and the call itself is excluded by
+    /// position, so a second call to the same tool still appears.
     pub fn call_request(
         &self,
         index: usize,
         execution: ToolExecutionSpec,
     ) -> Option<ToolInvocationCallRequest> {
         let call = self.calls.get(index)?.clone();
-        let sibling_calls = self
+        let sibling_tool_ids = self
             .calls
             .iter()
             .enumerate()
             .filter(|(sibling_index, _)| *sibling_index != index)
-            .map(|(_, sibling)| ToolCallSummary {
-                call_id: sibling.call_id.clone(),
-                tool_id: sibling.tool_id.clone(),
-                tool_name: sibling.tool_name.clone(),
-                arguments_ref: sibling.arguments_ref.clone(),
-            })
+            .filter_map(|(_, sibling)| sibling.tool_id.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
             .collect();
         Some(ToolInvocationCallRequest {
             session_id: self.session_id.clone(),
@@ -399,7 +386,7 @@ impl ToolInvocationBatchRequest {
             code_mode_policy: self.code_mode_policy.clone(),
             promise_id_base: self.promise_id_base + index as u64,
             call,
-            sibling_calls,
+            sibling_tool_ids,
             execution,
         })
     }
@@ -408,23 +395,23 @@ impl ToolInvocationBatchRequest {
 /// Bounded session-owned facts needed to execute one admitted workflow-tool call.
 ///
 /// This is transient runtime input, not durable session vocabulary. Carrying it
-/// on the activity request makes retries use the exact binding and emission
+/// on the activity request makes retries use the exact binding and in-flight
 /// count observed when the deterministic owner scheduled the batch.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowToolCallRuntime {
     pub version: u32,
     pub binding: WorkflowToolBinding,
-    pub prior_emission_count: u32,
+    pub in_flight_invocation_count: u32,
 }
 
 impl WorkflowToolCallRuntime {
     pub const VERSION: u32 = 1;
 
-    pub fn v1(binding: WorkflowToolBinding, prior_emission_count: u32) -> Self {
+    pub fn v1(binding: WorkflowToolBinding, in_flight_invocation_count: u32) -> Self {
         Self {
             version: Self::VERSION,
             binding,
-            prior_emission_count,
+            in_flight_invocation_count,
         }
     }
 }
@@ -452,10 +439,10 @@ impl ToolInvocationBatchResult {
     }
 }
 
-/// One native MCP call of a batch that must receive a run-owned approval
+/// One runtime MCP call of a batch that must receive a run-owned approval
 /// decision before the worker performs any MCP wire I/O.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NativeMcpApprovalRequest {
+pub struct RuntimeMcpApprovalRequest {
     pub call_id: ToolCallId,
     pub subject: crate::ApprovalSubject,
 }
@@ -466,23 +453,12 @@ pub enum ToolBatchOutcome {
     Completed {
         result: ToolInvocationBatchResult,
     },
-    Deferred {
+    Parked {
         batch_id: ToolBatchId,
         call_id: ToolCallId,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         completed_results: Vec<ToolInvocationResult>,
         spec: AwaitSpec,
-    },
-    /// One or more native MCP calls are gated on approval. Every ungated
-    /// sibling has already executed and reports its terminal result here;
-    /// the gated calls (and an `await` sibling, which never defers while a
-    /// decision is outstanding) stay pending and are re-dispatched once the
-    /// run is unparked.
-    AwaitingApproval {
-        batch_id: ToolBatchId,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        completed_results: Vec<ToolInvocationResult>,
-        approvals: Vec<NativeMcpApprovalRequest>,
     },
 }
 
@@ -494,13 +470,8 @@ impl ToolBatchOutcome {
     pub fn completed_result(self) -> Result<ToolInvocationBatchResult, CoreAgentIoError> {
         match self {
             Self::Completed { result } => Ok(result),
-            Self::Deferred { batch_id, .. } => Err(CoreAgentIoError::Failed {
-                message: format!("tool batch {batch_id} deferred instead of completing"),
-            }),
-            Self::AwaitingApproval { batch_id, .. } => Err(CoreAgentIoError::Failed {
-                message: format!(
-                    "tool batch {batch_id} is awaiting approval instead of completing"
-                ),
+            Self::Parked { batch_id, .. } => Err(CoreAgentIoError::Failed {
+                message: format!("tool batch {batch_id} parked instead of completing"),
             }),
         }
     }
@@ -512,6 +483,11 @@ pub struct ToolEffect {
     pub kind: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub data: BTreeMap<String, String>,
+    /// Blobs the effect names. They are typed apart from `data` because the log
+    /// retains a blob only through a typed ref: a tool edit moves a workspace head
+    /// with no snapshot row, and this is what keeps older heads readable.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub refs: BTreeMap<String, BlobRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -594,19 +570,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn call_requests_carry_the_call_native_mcp_routing() {
+    fn call_requests_carry_the_call_runtime_mcp_routing() {
         let mut batch = batch_request_with_calls(&["call_a", "call_b"]);
         let routing = RemoteMcpCallRuntime::Injected {
             target: RemoteMcpCallTarget {
                 server_id: "echo".to_owned(),
                 record_revision: 1,
                 server_label: "echo".to_owned(),
-                server_url: "https://echo.example.com/mcp".to_owned(),
                 allowed_tools: None,
                 approval: crate::RemoteMcpApprovalPolicy::Never,
-                auth_ref: None,
-                auth_required: false,
-                allow_private_network: false,
             },
             remote_tool_name: "hello".to_owned(),
             approval_decision: Some(true),
@@ -653,7 +625,7 @@ mod tests {
                 .map(|call_id| ToolInvocationRequest {
                     builtin: None,
                     call_id: ToolCallId::new(*call_id),
-                    tool_id: Some(ToolName::new("tool")),
+                    tool_id: Some(ToolId::new("tool")),
                     tool_name: ToolName::new("tool"),
                     arguments_ref: BlobRef::from_bytes(call_id.as_bytes()),
                     workflow_tool: None,
@@ -665,7 +637,7 @@ mod tests {
     }
 
     #[test]
-    fn call_request_splits_one_call_with_sibling_summaries_and_batch_facts() {
+    fn call_request_splits_one_call_with_sibling_tool_ids_and_batch_facts() {
         let batch = batch_request_with_calls(&["call_a", "call_b", "call_c"]);
 
         let request = batch
@@ -675,14 +647,7 @@ mod tests {
         assert_eq!(request.call.call_id, ToolCallId::new("call_b"));
         assert_eq!(request.batch_id, batch.batch_id);
         assert_eq!(request.active_environment_id, batch.active_environment_id);
-        assert_eq!(
-            request
-                .sibling_calls
-                .iter()
-                .map(|sibling| sibling.call_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["call_a", "call_c"]
-        );
+        assert_eq!(request.sibling_tool_ids, vec![ToolId::new("tool")]);
         assert!(
             batch
                 .call_request(3, ToolExecutionSpec::default())
@@ -693,6 +658,39 @@ mod tests {
         assert_eq!(rebuilt.batch_id, batch.batch_id);
         assert_eq!(rebuilt.calls.len(), 1);
         assert_eq!(rebuilt.calls[0].call_id, ToolCallId::new("call_b"));
+    }
+
+    #[test]
+    fn sibling_tool_ids_exclude_unresolved_calls_and_repeat_only_once() {
+        let mut batch = batch_request_with_calls(&["call_a", "call_b", "call_c", "call_d"]);
+        batch.calls[0].tool_id = Some(ToolId::new("tool_b"));
+        batch.calls[1].tool_id = Some(ToolId::new("tool_b"));
+        batch.calls[2].tool_id = Some(ToolId::new("tool_a"));
+        batch.calls[3].tool_id = None;
+
+        let request = batch
+            .call_request(1, ToolExecutionSpec::default())
+            .expect("call request");
+
+        // The call's own position is excluded, so a second call to its tool shows.
+        assert_eq!(
+            request.sibling_tool_ids,
+            vec![ToolId::new("tool_a"), ToolId::new("tool_b")]
+        );
+    }
+
+    #[test]
+    fn sibling_tool_ids_grow_with_distinct_tools_not_with_the_batch() {
+        let ids = (0..32)
+            .map(|index| format!("call_{index}"))
+            .collect::<Vec<_>>();
+        let batch = batch_request_with_calls(&ids.iter().map(String::as_str).collect::<Vec<_>>());
+
+        let request = batch
+            .call_request(0, ToolExecutionSpec::default())
+            .expect("call request");
+
+        assert_eq!(request.sibling_tool_ids, vec![ToolId::new("tool")]);
     }
 
     struct BatchOnlyTools;
@@ -753,7 +751,7 @@ mod promise_base_tests {
         ToolInvocationRequest {
             builtin: None,
             call_id: ToolCallId::new(id),
-            tool_id: Some(ToolName::new("sleep")),
+            tool_id: Some(ToolId::new("sleep")),
             tool_name: ToolName::new("sleep"),
             arguments_ref: BlobRef::from_bytes(b"{}"),
             workflow_tool: None,

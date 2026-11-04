@@ -82,10 +82,17 @@ installation uses the interface configured for its Temporal service.
 
 `session_workflow_failed` and `session_rollover_delayed` identify failures and
 delayed history rollover. `stale_active_projection` means stored session state
-still shows active work while Temporal reports a terminal or missing workflow.
-The promise reaper observes this condition; it does not resurrect an arbitrary
-failed workflow. Preserve the evidence and follow the recovery guidance before
-using destructive Temporal operations.
+shows active work on a workflow that has stopped. The promise reaper checks a fresh
+read before reporting it, and it does not restart anything. Bring the session back with
+[`session/restart`](upgrades-and-recovery.md#restart-a-stopped-session), and preserve
+the evidence before using destructive Temporal operations. A force close is permanent.
+
+`promise_repair_repeated` means a repair signalled on the previous pass, five minutes
+earlier, has still not landed in the log. The workflow may be stalled, or busy. Look at
+its pending workflow task in the Temporal UI next. A stalled workflow with no due
+promise and no overdue timer is not reported by anything here, since the runtime exports
+no SDK metrics. Every reaper pass logs a summary with `duration_ms`, `sessions_scanned`,
+`events_read` and its repair counts. Each `sessions` replica makes its own pass.
 
 ### Metrics and diagnostic payloads
 
@@ -156,11 +163,13 @@ keeps its history. If the root session has a `deleteAfterCloseMs` policy,
 it owns the later soft-deletion deadline; otherwise there is no automatic
 deletion deadline. In Platform, setting deletion retention requires an Admin.
 
-Forked and delegated descendants share that retained root. Automatic soft
-deletion waits until the deadline and until the entire retained tree is closed. An
-open descendant therefore prevents deletion of the tree. The session
-retention reaper checks every five minutes and reports due roots, deletions,
-open-tree skips, conflicts, and errors.
+Delegated descendants share that retained root. Automatic soft deletion waits until
+the deadline and until the entire retained tree is closed. An open descendant therefore
+prevents deletion of the tree. The session retention reaper checks every five minutes
+and reports due roots, deletions, open-tree skips, conflicts, and errors. A skip also
+logs a warning naming up to eight of the stuck roots. Force close clears a child that
+never opened, since a session that never started has nothing to retain: it answers
+`notFound` afterwards.
 
 Soft deletion hides sessions but retains events, checkpoints and blob roots.
 There is no automatic purge: use `deployment/sessions/purge` or
@@ -191,10 +200,12 @@ with `LIGHTSPEED_RELEASE_ID` set to the deployed image's revision-specific tag.
 The standalone binary equivalent is `lightspeed-runtime cas-sweep --dry-run`.
 
 The report includes `rows_scanned`, `candidates`, `rows_deleted`, `bytes_freed`,
-`objects_deleted`, and errors/conflicts. A pass is bounded, so its candidate
-count is not a complete inventory of all reclaimable storage. Current passes
+`objects_deleted`, `walks_completed`, and errors/conflicts. A pass is bounded, so its
+candidate count is not a complete inventory of all reclaimable storage. Current passes
 examine at most 100,000 rows per universe in pages of up to 1,024, with a soft
-ten-minute deadline; the background leader retains a cursor for later passes.
+ten-minute deadline. Each universe's position is stored, so a restart or a new leader
+carries on where the last pass stopped, and `walks_completed` counts universes that
+reached the end of the catalog. A dry run reads that position and never writes it.
 
 Removing `--dry-run` requests deletion of eligible content. A manual deleting
 pass yields to an active background leader and can report `leader_busy: true`.
@@ -210,16 +221,23 @@ controls.
 
 ## Stop and restart services
 
-Use the service manager's normal shutdown path. The current Rust runtime
-handles Ctrl-C/SIGINT, which is why the self-hosting container uses
-`--stop-signal SIGINT --stop-timeout 30`. Platform and connector hosts handle
-both SIGINT and SIGTERM. Worker shutdown is bounded; stopping the process is
-not proof that every long-running external operation completed.
+Use the service manager's normal shutdown path. The runtime, Platform and connector
+hosts all handle both SIGINT and SIGTERM, and the self-hosting container sets
+`--stop-timeout 30` to give the runtime time. Worker shutdown is bounded; stopping the
+process is not proof that every long-running external operation completed. A foreground
+command whose tool call is dropped by the shutdown is sent a terminate.
 
 Restarting a worker is distinct from canceling a run, closing a session, or
 deleting data. With compatible code and retained Temporal/store state, workers
 can resume durable workflow processing. Preserve the databases, object data,
-keys, and optional local state that those workflows use.
+keys, and optional local state that those workflows use. A release that changes
+workflow code needs [a new namespace](upgrades-and-recovery.md#decide-whether-the-release-breaks-open-work)
+rather than a rolling restart.
+
+Closing a session waits at most 45 seconds for the workflow. A plain close that is
+held, for example behind a compaction, answers `operationPending` after that. A force
+close terminates a workflow it has not heard from in that time, closes the log itself,
+and sends terminal notifications to the session's controller.
 
 For planned maintenance, inspect active runs and jobs and control incoming
 work before stopping processes. Follow the

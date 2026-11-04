@@ -42,7 +42,6 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";
-import { ProfileRetentionEditor } from "@/components/session/profile-retention-editor";
 import { SessionConfigEditor } from "@/components/session/session-config-editor";
 import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
 import { openEnvironmentsQuery } from "@/lib/environments";
@@ -393,7 +392,7 @@ function SessionProfileSection({
   profileError: string | undefined;
 }) {
   const permissions = useActionPermissions(universeId);
-  const manageProfile = permissions.can("manage_profile");
+  const manageProfile = permissions.can("manageProfile");
   const queryClient = useQueryClient();
   const profileUrl = `/api/v1/universes/${universeId}/profiles/${encodeURIComponent(bot.profileId)}`;
   const options = useSessionConfigEditorOptions(universeId, true);
@@ -409,9 +408,7 @@ function SessionProfileSection({
   const [configDraft, setConfigDraft] = useState<Record<string, unknown> | undefined>();
   const [instructionsDraft, setInstructionsDraft] = useState("");
   const [metadataDraft, setMetadataDraft] = useState<Record<string, string> | undefined>();
-  const [retentionDraft, setRetentionDraft] = useState<number | undefined>();
   const [configError, setConfigError] = useState<string | null>(null);
-  const [retentionError, setRetentionError] = useState<string | null>(null);
   const revision = profile?.revision;
   useEffect(() => {
     if (!profile) return;
@@ -419,7 +416,6 @@ function SessionProfileSection({
     const instructions = profile.instructions as { type: "text"; text: string } | { type: "textRef" } | undefined;
     setInstructionsDraft(instructions?.type === "text" ? instructions.text : "");
     setMetadataDraft(profile.metadata ? structuredClone(profile.metadata) : undefined);
-    setRetentionDraft(profile.retention?.deleteAfterCloseMs);
     // Re-sync on a new revision only; an unrelated refetch must not wipe edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revision, bot.profileId]);
@@ -433,8 +429,6 @@ function SessionProfileSection({
   const instructionsDirty = profile !== undefined && instructionsDraft !== baseInstructions;
   const metadataDirty =
     profile !== undefined && JSON.stringify(metadataDraft ?? null) !== JSON.stringify(profile.metadata ?? null);
-  const retentionDirty =
-    profile !== undefined && retentionDraft !== profile.retention?.deleteAfterCloseMs;
 
   const save = useMutation({
     mutationFn: async ({ fields }: ProfileSaveRequest) => {
@@ -467,7 +461,7 @@ function SessionProfileSection({
     <SetupSection
       id="session-profile"
       title="Session profile"
-      description="The model, instructions, tools, environment, metadata, and retention applied to this bot's sessions."
+      description="The model, instructions, tools, environment, and metadata applied to this bot's sessions. Its conversations are kept until someone deletes them, whatever deletion schedule the profile sets."
       summary={profileError
         ? `Profile ${bot.profileId} could not be read`
         : [
@@ -510,20 +504,11 @@ function SessionProfileSection({
                 <MetadataMapEditor value={metadataDraft} onChange={setMetadataDraft} disabled={readOnly} />
               )}
               metadataDescription="Defaults copied to every session this bot creates. Metadata helps with filtering and does not affect runtime behavior."
-              retentionSetup={(
-                <ProfileRetentionEditor
-                  value={retentionDraft}
-                  onChange={setRetentionDraft}
-                  onValidityChange={setRetentionError}
-                  disabled={readOnly}
-                />
-              )}
-              retentionDescription="Default automatic deletion for each new root session this bot creates."
               onValidityChange={setConfigError}
               onChange={(config) => setConfigDraft(config as Record<string, unknown> | undefined)}
             /> : (
               <pre className="overflow-auto whitespace-pre-wrap break-words rounded-md border p-3 text-xs" aria-label="Profile configuration">
-                {JSON.stringify({ config: profile.config, metadata: profile.metadata, retention: profile.retention }, null, 2)}
+                {JSON.stringify({ config: profile.config, metadata: profile.metadata }, null, 2)}
               </pre>
             )}
             {defaultEnvironment?.environmentId && (
@@ -531,10 +516,10 @@ function SessionProfileSection({
             )}
             {manageProfile && (
               <SaveRow
-                dirty={configDirty || instructionsDirty || metadataDirty || retentionDirty}
+                dirty={configDirty || instructionsDirty || metadataDirty}
                 pending={save.isPending}
-                error={configError ? `Config: ${configError}` : retentionError ? `Retention: ${retentionError}` : save.error?.message}
-                disabled={closed || configError !== null || retentionError !== null}
+                error={configError ? `Config: ${configError}` : save.error?.message}
+                disabled={closed || configError !== null}
                 onSave={() =>
                   save.mutate({
                     fields: {
@@ -547,9 +532,6 @@ function SessionProfileSection({
                           }
                         : {}),
                       ...(metadataDirty ? { metadata: metadataDraft } : {}),
-                      ...(retentionDirty
-                        ? { retention: retentionDraft === undefined ? undefined : { deleteAfterCloseMs: retentionDraft } }
-                        : {}),
                     },
                   })
                 }
@@ -629,7 +611,7 @@ function ProfileSwitcher({
             changes below reach {sharedWith.length === 1 ? "it" : "them"} as well.
           </>
         ) : (
-          "Everything below belongs to this profile; switching profiles swaps its instructions, model, tools, environment, metadata, and retention at the bot's next idle moment."
+          "Everything below belongs to this profile; switching profiles swaps its instructions, model, tools, environment, and metadata at the bot's next idle moment."
         )}
       </FieldDescription>
     </Field>

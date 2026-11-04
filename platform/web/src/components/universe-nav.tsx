@@ -46,9 +46,9 @@ export interface UniverseNavGroup {
 
 /// The universe's own configuration, in the order `/settings` resolves.
 const SETTINGS_NAV: UniverseNavItem[] = [
-  { path: "settings/general", label: "General", icon: Settings, action: "manage_access" },
-  { path: "settings/channels", label: "Channels", icon: RadioTower, action: "configure_resource", feature: "channels" },
-  { path: "settings/templates", label: "Templates", icon: PackageOpen, action: "configure_resource" },
+  { path: "settings/general", label: "General", icon: Settings, action: "manageAccess" },
+  { path: "settings/channels", label: "Channels", icon: RadioTower, action: "configureResource", feature: "channels" },
+  { path: "settings/templates", label: "Templates", icon: PackageOpen, action: "configureResource" },
 ];
 
 /// The work itself, the setup agents are made from, access (credentials,
@@ -76,8 +76,8 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
   {
     label: "Access",
     items: [
-      { path: "credentials", label: "Credentials", icon: LockKeyhole, action: "configure_resource" },
-      { path: "api-keys", label: "API keys", icon: KeyRound, action: "manage_access" },
+      { path: "credentials", label: "Credentials", icon: LockKeyhole, action: "configureResource" },
+      { path: "api-keys", label: "API keys", icon: KeyRound, action: "manageAccess" },
       { path: "members", label: "Members", icon: Users, action: "read" },
     ],
   },

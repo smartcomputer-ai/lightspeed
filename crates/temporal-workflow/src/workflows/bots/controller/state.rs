@@ -6,6 +6,7 @@
 //! this; nothing here awaits.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::time::Duration;
 
 use api::{
     BotActiveDeliverySnapshot, BotBufferSnapshot, BotControllerSnapshot, BotControllerStatus,
@@ -22,8 +23,10 @@ use harness::{
 use serde::{Deserialize, Serialize};
 
 use super::super::{
-    BOT_CONTINUE_AS_NEW_AFTER_EVENTS, BOT_DESCENDANT_REFRESH_INTERVAL, BOT_RECENT_DELIVERY_CAP,
-    BOT_SEEN_ID_CAP, BotControllerSummary, BotToolInvocationRef,
+    BOT_BUSY_RETRY_DELAY, BOT_CONTINUE_AS_NEW_AFTER_EVENTS, BOT_DEAD_SESSION_SWEEP_INTERVAL,
+    BOT_DESCENDANT_REFRESH_INTERVAL, BOT_RECENT_DELIVERY_CAP, BOT_RECONCILE_RETRY_MAX_DELAY,
+    BOT_SEEN_ID_CAP, BOT_START_MAX_ATTEMPTS, BOT_START_RETRY_MAX_DELAY, BotControllerSummary,
+    BotToolInvocationRef,
 };
 use super::{BotControllerArgs, BotControllerCarry};
 
@@ -46,6 +49,15 @@ pub struct BotDelivery {
     pub session: Option<RoutedSession>,
     #[serde(default)]
     pub when_busy: BotWhenBusy,
+    /// Failed run starts so far; bounded by `BOT_START_MAX_ATTEMPTS`.
+    #[serde(default)]
+    pub attempts: u32,
+    /// Dispatch leaves the delivery, and later ones to its target, until then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_before_ms: Option<i64>,
+    /// Already moved off a dead session once. A second dead session ends it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rolled_forward: bool,
 }
 
 impl BotDelivery {
@@ -55,7 +67,14 @@ impl BotDelivery {
             session: event.session.clone(),
             when_busy: event.when_busy.unwrap_or_default(),
             events: vec![event],
+            attempts: 0,
+            not_before_ms: None,
+            rolled_forward: false,
         }
+    }
+
+    fn waiting(&self, now_ms: i64) -> bool {
+        self.not_before_ms.is_some_and(|at| now_ms < at)
     }
 
     /// `#N`s of the delivery's events.
@@ -130,13 +149,16 @@ impl CoalesceBuffer {
             events: self.events,
             session: self.session,
             when_busy: self.when_busy,
+            attempts: 0,
+            not_before_ms: None,
+            rolled_forward: false,
         }
     }
 }
 
 /// A routed (perKey / perEvent) session this controller created.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ManagedSession {
+pub struct ControlledSession {
     pub session_id: String,
     pub label: String,
     /// Preserved for self events and federation receipts across continuations.
@@ -220,6 +242,9 @@ pub struct LaneTerminal {
     pub status: RunStatus,
     pub run_id: String,
     pub failure_message_ref: Option<BlobRef>,
+    /// Why the controller ended this run's wait itself, because no terminal can
+    /// come from a dead session.
+    pub dead_session: Option<String>,
 }
 
 /// The model's `bot_event_resolve` decision for a lane's run.
@@ -238,6 +263,19 @@ pub struct ActiveLane {
     pub run_id: Option<String>,
     pub terminal: Option<LaneTerminal>,
     pub resolution: Option<LaneResolution>,
+    pub started_at_ms: i64,
+    /// Doing nothing but waiting for its run's end, so it can cross a
+    /// continue-as-new.
+    pub parked: bool,
+}
+
+/// A lane parked on its run, as a controller execution hands it to the next. A run
+/// can outlast any number of executions, and the history has to roll over meanwhile.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WaitingLane {
+    pub delivery: BotDelivery,
+    pub session_id: String,
+    pub run_id: String,
     pub started_at_ms: i64,
 }
 
@@ -309,7 +347,7 @@ pub struct ControllerState {
     pub handled_invocation_ids: SeenIds,
     pub emission_inbox: VecDeque<EmissionEnvelope>,
     pub pending_invocations: Vec<PendingInvocation>,
-    pub extra_sessions: Vec<ManagedSession>,
+    pub extra_sessions: Vec<ControlledSession>,
     /// Session log cursor per session (main generations included).
     pub session_cursors: BTreeMap<String, u64>,
     /// Routed base id → generation, bumped each time that session closes.
@@ -335,6 +373,12 @@ pub struct ControllerState {
     /// Bumped by every accepted event so the loop schedules buffer timers.
     pub event_tick: u64,
     pub rotation_retry_at_ms: Option<i64>,
+    /// While a lane waits on a started run, when to check its session is alive.
+    pub dead_session_sweep_at_ms: Option<i64>,
+    /// While `config_dirty`, no attempt on the main session before this.
+    pub reconcile_retry_at_ms: Option<i64>,
+    pub reconcile_attempts: u32,
+    pub reconcile_rotated: bool,
     pub setup_status: BotSetupStatus,
     pub config_dirty: bool,
     pub rename_dirty: bool,
@@ -359,6 +403,32 @@ impl ControllerState {
         } else {
             SeenIds::from_ids(carry.seen_event_ids, BOT_SEEN_ID_CAP)
         };
+        let main_session_id =
+            ids::bot_main_session_id(&config.bot_id, carry.main_generation.max(1));
+        let main_run_carried = carry
+            .waiting_lanes
+            .iter()
+            .any(|lane| lane.session_id == main_session_id);
+        let dead_session_sweep_at_ms = (!carry.waiting_lanes.is_empty())
+            .then_some(now_ms + BOT_DEAD_SESSION_SWEEP_INTERVAL.as_millis() as i64);
+        let active_by_session = carry
+            .waiting_lanes
+            .into_iter()
+            .map(|lane| {
+                (
+                    lane.session_id.clone(),
+                    ActiveLane {
+                        delivery: lane.delivery,
+                        session_id: lane.session_id,
+                        run_id: Some(lane.run_id),
+                        terminal: None,
+                        resolution: None,
+                        started_at_ms: lane.started_at_ms,
+                        parked: true,
+                    },
+                )
+            })
+            .collect();
         Self {
             config,
             main_generation: carry.main_generation.max(1),
@@ -378,7 +448,7 @@ impl ControllerState {
             session_cursors: carry.session_cursors,
             session_generations: carry.session_generations,
             rotation_requests: carry.rotation_requests.into_iter().collect(),
-            active_by_session: BTreeMap::new(),
+            active_by_session,
             sidecar_by_session: BTreeSet::new(),
             applied_profile_id: carry.applied_profile_id,
             applied_profile_revision: carry.applied_profile_revision,
@@ -395,8 +465,21 @@ impl ControllerState {
             lane_tick: 0,
             event_tick: 0,
             rotation_retry_at_ms: None,
-            setup_status: BotSetupStatus::Initializing,
-            config_dirty: true,
+            dead_session_sweep_at_ms,
+            reconcile_retry_at_ms: None,
+            reconcile_attempts: carry.reconcile_attempts,
+            reconcile_rotated: carry.reconcile_rotated,
+            // A main session already serving stays usable while this execution
+            // waits for a moment to reconcile it.
+            setup_status: if carry.session_ready {
+                BotSetupStatus::Ready
+            } else {
+                BotSetupStatus::Initializing
+            },
+            // A new execution checks the main session, unless a run there crossed with
+            // it: dirty would hold that run's steering until it ends, and nothing about
+            // the session changed unless the last execution already owed a reconcile.
+            config_dirty: carry.config_dirty || !main_run_carried,
             rename_dirty: false,
             closing: false,
             closed_done: false,
@@ -405,10 +488,12 @@ impl ControllerState {
         }
     }
 
-    /// Everything a successor execution needs; the live lane state is
-    /// quiescent by the time this is taken.
+    /// Everything a successor execution needs. Every lane is parked on its run by
+    /// the time this is taken.
     pub fn carry(&self) -> BotControllerCarry {
         BotControllerCarry {
+            waiting_lanes: self.waiting_lanes(),
+            config_dirty: self.config_dirty,
             pending_deliveries: self.pending_deliveries.clone(),
             buffers: self.buffers.clone(),
             recent_deliveries: self.recent_deliveries.clone(),
@@ -431,6 +516,8 @@ impl ControllerState {
             rotation_requests: self.rotation_requests.iter().cloned().collect(),
             main_generation: self.main_generation,
             tools_revision: self.tools_revision,
+            reconcile_attempts: self.reconcile_attempts,
+            reconcile_rotated: self.reconcile_rotated,
         }
     }
 
@@ -534,6 +621,7 @@ impl ControllerState {
         }
         self.config = next;
         self.config_dirty = true;
+        self.reset_reconcile_retries();
         Ok(())
     }
 
@@ -589,13 +677,13 @@ impl ControllerState {
         !self.is_session_busy(&self.main_session_id())
     }
 
-    pub fn extra_session(&self, session_id: &str) -> Option<&ManagedSession> {
+    pub fn extra_session(&self, session_id: &str) -> Option<&ControlledSession> {
         self.extra_sessions
             .iter()
             .find(|session| session.session_id == session_id)
     }
 
-    pub fn extra_session_mut(&mut self, session_id: &str) -> Option<&mut ManagedSession> {
+    pub fn extra_session_mut(&mut self, session_id: &str) -> Option<&mut ControlledSession> {
         self.extra_sessions
             .iter_mut()
             .find(|session| session.session_id == session_id)
@@ -624,7 +712,7 @@ impl ControllerState {
 
     /// Effective idle-close duration of a routed session: the trigger's, else the
     /// bot's; `None` never closes.
-    pub fn session_close_after_ms(&self, session: &ManagedSession) -> Option<u64> {
+    pub fn session_close_after_ms(&self, session: &ControlledSession) -> Option<u64> {
         match session.close_policy {
             RoutedSessionClosePolicy::Inherit => self
                 .config
@@ -635,7 +723,7 @@ impl ControllerState {
         }
     }
 
-    pub fn session_expiry_ms(&self, session: &ManagedSession) -> Option<i64> {
+    pub fn session_expiry_ms(&self, session: &ControlledSession) -> Option<i64> {
         let close_after_ms = self.session_close_after_ms(session)?;
         Some(session.last_active_at_ms.unwrap_or(0) + close_after_ms as i64)
     }
@@ -667,13 +755,40 @@ impl ControllerState {
         }
     }
 
-    /// Forget a closed routed session and advance its base's generation.
+    /// Forget a closed routed session and advance its base's generation. A
+    /// per-event base keeps no entry: each event has its own base, so the
+    /// carried map would grow by one per closed session for the bot's whole
+    /// life. A late event for that base, such as a `bot.reply` receipt or a
+    /// redelivery past the dedupe tail, resolves to the closed session and
+    /// moves on from there, as from any session that has stopped working.
     pub fn forget_routed_session(&mut self, session_id: &str) {
         self.extra_sessions
             .retain(|session| session.session_id != session_id);
         self.session_cursors.remove(session_id);
         let base = ids::routed_session_base(session_id).to_owned();
-        self.bump_routed_generation(&base);
+        if ids::bot_session_kind(&base) == BotSessionKind::PerEvent {
+            self.session_generations.remove(&base);
+        } else {
+            self.bump_routed_generation(&base);
+        }
+    }
+
+    /// Advance past a dead session, whose log stays readable under its old id. A
+    /// per-event base gets a generation too, unlike a routed close: the delivery on
+    /// it is about to retry there. Closing that successor drops the entry.
+    pub fn roll_session_forward(&mut self, session_id: &str) {
+        self.budget_roots.insert(session_id.to_owned());
+        self.session_cursors.remove(session_id);
+        self.record_error(format!(
+            "session {session_id} stopped working, so its conversation moved to a new session"
+        ));
+        if session_id == self.main_session_id() {
+            self.rotate_main_session(true);
+        } else {
+            self.extra_sessions
+                .retain(|session| session.session_id != session_id);
+            self.bump_routed_generation(ids::routed_session_base(session_id));
+        }
     }
 
     /// The idlest routed session that is not busy: the eviction candidate
@@ -698,7 +813,33 @@ impl ControllerState {
             self.session_ready = false;
             self.config_dirty = true;
             self.setup_status = BotSetupStatus::Initializing;
+            self.reset_reconcile_retries();
         }
+    }
+
+    /// Rotate for a reconcile the session refused, once per failure streak.
+    /// Without the limit every retry would abandon another generation to a
+    /// profile that no session can take. `false` when already spent.
+    pub fn rotate_main_for_reconcile(&mut self) -> bool {
+        if self.reconcile_rotated {
+            return false;
+        }
+        self.reconcile_rotated = true;
+        self.rotate_main_session(false);
+        true
+    }
+
+    fn reset_reconcile_retries(&mut self) {
+        self.reconcile_retry_at_ms = None;
+        self.reconcile_attempts = 0;
+        self.reconcile_rotated = false;
+    }
+
+    /// Whether the loop should try the main session now.
+    pub fn reconcile_due(&self, now_ms: i64) -> bool {
+        self.config_dirty
+            && self.main_session_free()
+            && self.reconcile_retry_at_ms.is_none_or(|at| now_ms >= at)
     }
 
     pub fn mark_session_ready(&mut self, profile_revision: u64) {
@@ -709,13 +850,20 @@ impl ControllerState {
         self.config_dirty = false;
         self.last_error = None;
         self.setup_status = BotSetupStatus::Ready;
+        self.reset_reconcile_retries();
     }
 
-    pub fn mark_session_degraded(&mut self, message: String) {
+    /// The main session stays dirty, so it is tried again after a backoff.
+    /// Nothing tells a passing outage from a bad profile, and only deliveries
+    /// to the main session wait for the answer.
+    pub fn mark_session_degraded(&mut self, message: String, now_ms: i64) {
         self.last_error = Some(message);
         self.setup_status = BotSetupStatus::Degraded;
-        self.config_dirty = false;
+        self.config_dirty = true;
         self.session_ready = false;
+        self.reconcile_attempts += 1;
+        self.reconcile_retry_at_ms =
+            Some(now_ms + backoff_ms(self.reconcile_attempts, BOT_RECONCILE_RETRY_MAX_DELAY));
     }
 
     /// The profile revision to hand `ensure_session` for the main session:
@@ -809,16 +957,19 @@ impl ControllerState {
     pub fn dispatchable(&self, now_ms: i64) -> bool {
         if !self.config.enabled
             || self.close_requested()
-            || !self.session_ready
-            || self.config_dirty
             || self.pending_deliveries.is_empty()
             || self.budget_exhausted_view(now_ms)
         {
             return false;
         }
+        let mut waiting = BTreeSet::new();
         self.pending_deliveries.iter().any(|delivery| {
             let target = self.target_of(delivery);
-            if self.rotation_requests.contains(&target) {
+            if delivery.waiting(now_ms) {
+                waiting.insert(target);
+                return false;
+            }
+            if waiting.contains(&target) || self.target_held(&target) {
                 return false;
             }
             match self.active_by_session.get(&target) {
@@ -832,18 +983,32 @@ impl ControllerState {
         })
     }
 
+    /// A rotating target waits for its successor, and the main session waits
+    /// until it is ready and in line with the config. Routed sessions depend on
+    /// neither: each is ensured by its own lane.
+    fn target_held(&self, target: &str) -> bool {
+        self.rotation_requests.contains(target)
+            || ((!self.session_ready || self.config_dirty) && target == self.main_session_id())
+    }
+
     /// Hand every runnable pending delivery to a lane or a sidecar, FIFO.
-    /// The caller checks the enabled/ready/dirty preconditions; the budget
-    /// is re-checked per delivery because each lane reserves a run.
+    /// The caller checks that the bot is enabled; the budget is re-checked per
+    /// delivery because each lane reserves a run.
     pub fn dispatch(&mut self, now_ms: i64) -> Vec<DispatchAction> {
         let mut actions = Vec::new();
+        let mut waiting = BTreeSet::new();
         let mut index = 0;
         while index < self.pending_deliveries.len() {
             if self.budget_exhausted(now_ms) {
                 break;
             }
             let target = self.target_of(&self.pending_deliveries[index]);
-            if self.rotation_requests.contains(&target) {
+            if self.pending_deliveries[index].waiting(now_ms) {
+                waiting.insert(target);
+                index += 1;
+                continue;
+            }
+            if waiting.contains(&target) || self.target_held(&target) {
                 index += 1;
                 continue;
             }
@@ -871,6 +1036,7 @@ impl ControllerState {
                     terminal: None,
                     resolution: None,
                     started_at_ms: now_ms,
+                    parked: false,
                 },
             );
             actions.push(DispatchAction::Lane { delivery, target });
@@ -878,10 +1044,48 @@ impl ControllerState {
         actions
     }
 
-    /// Put a delivery back at the front of the queue (a lost start race, a
-    /// sidecar whose run finished underneath it).
-    pub fn requeue_front(&mut self, delivery: BotDelivery) {
+    /// Put a delivery back at the front of the queue, not to be dispatched
+    /// again before `not_before_ms`. The pause is what paces a sidecar beside a
+    /// run that takes no steering right now, because its release wakes the loop.
+    pub fn requeue_front(&mut self, mut delivery: BotDelivery, not_before_ms: i64) {
+        delivery.not_before_ms = Some(not_before_ms);
         self.pending_deliveries.insert(0, delivery);
+    }
+
+    /// Free the lane of a delivery whose run start failed and queue its next
+    /// attempt. The lane does not wait out the backoff: the session's other
+    /// work, the budget slot and continue-as-new are all free meanwhile.
+    /// `false`, with nothing changed, once its attempts are spent.
+    pub fn retry_delivery(&mut self, target: &str, delivery: &BotDelivery, now_ms: i64) -> bool {
+        let attempts = delivery.attempts + 1;
+        if attempts >= BOT_START_MAX_ATTEMPTS {
+            return false;
+        }
+        let mut retried = delivery.clone();
+        retried.attempts = attempts;
+        self.requeue_lane(
+            target,
+            &retried,
+            now_ms + backoff_ms(attempts, BOT_START_RETRY_MAX_DELAY),
+        );
+        true
+    }
+
+    /// Free a delivery's lane and put the delivery back, not to be dispatched
+    /// again before `not_before_ms`.
+    pub fn requeue_lane(&mut self, target: &str, delivery: &BotDelivery, not_before_ms: i64) {
+        self.active_by_session.remove(target);
+        self.requeue_front(delivery.clone(), not_before_ms);
+        self.lane_tick += 1;
+    }
+
+    /// Send a delivery that found its session dead to the session's successor, for
+    /// its one try there. Starts refused by the dead session do not count against it.
+    pub fn requeue_rolled_forward(&mut self, target: &str, delivery: &BotDelivery, now_ms: i64) {
+        let mut retried = delivery.clone();
+        retried.rolled_forward = true;
+        retried.attempts = 0;
+        self.requeue_lane(target, &retried, now_ms);
     }
 
     /// Move a lane to the session id its routed target rotated to during
@@ -897,13 +1101,25 @@ impl ControllerState {
         if let Some(lane) = self.active_by_session.get_mut(session_id) {
             lane.run_id = Some(run_id.to_owned());
         }
+        self.dead_session_sweep_at_ms
+            .get_or_insert(now_ms + BOT_DEAD_SESSION_SWEEP_INTERVAL.as_millis() as i64);
         self.roll_budget_day(now_ms);
         self.runs_today += 1;
         self.lane_tick += 1;
     }
 
-    /// Terminals are matched by the delivery's token, never by session: a
-    /// lane that rotated its session still owns its run.
+    /// A delivery keeps its token when it moves off a dead session, and the close of
+    /// that session reports any run an earlier attempt left there. So only the lane on
+    /// the session that sent a terminal can be the one it is for. A lane settles on its
+    /// session before it starts a run, so its run always reports from there.
+    pub fn lane_awaits_terminal_from(&self, session_id: &str, token: &str) -> bool {
+        self.active_by_session
+            .get(session_id)
+            .is_some_and(|lane| ids::delivery_terminal_token(&lane.delivery.id) == token)
+    }
+
+    /// Hand a lane the end of its run. Callers have checked it comes from the lane's
+    /// session.
     pub fn attach_terminal(&mut self, token: &str, terminal: LaneTerminal) -> bool {
         let mut attached = false;
         for lane in self.active_by_session.values_mut() {
@@ -916,6 +1132,70 @@ impl ControllerState {
             self.lane_tick += 1;
         }
         attached
+    }
+
+    /// The lane does nothing more until its run ends, so nothing it holds stops a
+    /// continue-as-new.
+    pub fn park_lane(&mut self, session_id: &str) {
+        if let Some(lane) = self.active_by_session.get_mut(session_id) {
+            lane.parked = true;
+        }
+    }
+
+    /// The lanes this execution inherited, or would hand on.
+    pub fn waiting_lanes(&self) -> Vec<WaitingLane> {
+        self.active_by_session
+            .values()
+            .filter_map(|lane| {
+                Some(WaitingLane {
+                    delivery: lane.delivery.clone(),
+                    session_id: lane.session_id.clone(),
+                    run_id: lane.run_id.clone()?,
+                    started_at_ms: lane.started_at_ms,
+                })
+            })
+            .collect()
+    }
+
+    /// The sessions to check now, when a sweep is due: those of lanes waiting on a
+    /// started run. A sweep that cannot finish simply happens again at the next one.
+    pub fn take_dead_session_sweep(&mut self, now_ms: i64) -> Vec<String> {
+        if self.dead_session_sweep_at_ms.is_none_or(|at| now_ms < at) {
+            return Vec::new();
+        }
+        let sessions = self.lanes_awaiting_terminal();
+        self.dead_session_sweep_at_ms = (!sessions.is_empty())
+            .then_some(now_ms + BOT_DEAD_SESSION_SWEEP_INTERVAL.as_millis() as i64);
+        sessions
+    }
+
+    fn lanes_awaiting_terminal(&self) -> Vec<String> {
+        self.active_by_session
+            .iter()
+            .filter(|(_, lane)| lane.run_id.is_some() && lane.terminal.is_none())
+            .map(|(session_id, _)| session_id.clone())
+            .collect()
+    }
+
+    /// End the wait of a lane whose session is dead. Its run may have partly
+    /// happened, so the delivery fails. `false` when a real terminal got there
+    /// first, or the lane has gone. A real terminal landing after this one wins, and
+    /// one landing after the lane finished finds nothing.
+    pub fn fail_lane_on_dead_session(&mut self, session_id: &str, message: String) -> bool {
+        let Some(lane) = self.active_by_session.get_mut(session_id) else {
+            return false;
+        };
+        let Some(run_id) = lane.run_id.clone().filter(|_| lane.terminal.is_none()) else {
+            return false;
+        };
+        lane.terminal = Some(LaneTerminal {
+            status: RunStatus::Failed,
+            run_id,
+            failure_message_ref: None,
+            dead_session: Some(message),
+        });
+        self.lane_tick += 1;
+        true
     }
 
     pub fn set_lane_resolution(&mut self, session_id: &str, resolution: LaneResolution) {
@@ -943,6 +1223,9 @@ impl ControllerState {
 
     pub fn release_lane(&mut self, session_id: &str, now_ms: i64) {
         self.active_by_session.remove(session_id);
+        if self.lanes_awaiting_terminal().is_empty() {
+            self.dead_session_sweep_at_ms = None;
+        }
         self.touch_session(session_id, now_ms);
         self.lane_tick += 1;
     }
@@ -1014,21 +1297,34 @@ impl ControllerState {
         self.close_requested()
             || !self.emission_inbox.is_empty()
             || !self.pending_invocations.is_empty()
-            || (self.config_dirty && self.main_session_free())
+            || self.reconcile_due(self.clock_ms)
             || self.lane_tick != lane_tick
             || self.event_tick != event_tick
             || self.dispatchable(self.clock_ms)
     }
 
     /// The earliest time-driven reason to wake: a buffer flush, a routed-session idle-close
-    /// expiry, a rotation retry, the UTC day boundary while budget-parked,
-    /// or the descendant refresh while a run is in flight.
+    /// expiry, a rotation or reconcile retry, a waiting delivery, the UTC day
+    /// boundary while budget-parked, the descendant refresh while a run is in
+    /// flight, or the dead-session sweep while a lane waits on a run.
     pub fn wake_deadline(&self, now_ms: i64) -> Option<i64> {
         let mut deadlines = vec![
             self.next_buffer_deadline(),
             self.next_idle_close_deadline(),
             self.rotation_retry_at_ms,
+            self.dead_session_sweep_at_ms,
+            self.reconcile_retry_at_ms
+                .filter(|_| self.config_dirty && self.main_session_free()),
         ];
+        // Only a future time: one already past is waiting on something else,
+        // and a timer for it would fire at once.
+        deadlines.push(
+            self.pending_deliveries
+                .iter()
+                .filter_map(|delivery| delivery.not_before_ms)
+                .filter(|at| *at > now_ms)
+                .min(),
+        );
         if !self.pending_deliveries.is_empty()
             && self.config.runs_per_day.is_some()
             && self.budget_exhausted_view(now_ms)
@@ -1044,15 +1340,20 @@ impl ControllerState {
         deadlines.into_iter().flatten().min()
     }
 
-    /// Continue-as-new needs a quiet controller: nothing in the inbox, no
-    /// lane, and the processed-event threshold reached (or the server's
-    /// suggestion).
-    pub fn can_continue_as_new(&self, suggested: bool, lanes_active: bool) -> bool {
+    /// Continue-as-new needs a quiet controller: nothing in the inbox, the
+    /// processed-event threshold reached (or the server's suggestion), and every
+    /// lane parked on its run, which the next execution picks up. `lanes_polled`
+    /// counts every future the loop is polling: one more than the delivery lanes is
+    /// work still in flight, such as a pushed tool or a delivery being settled.
+    pub fn can_continue_as_new(&self, suggested: bool, lanes_polled: usize) -> bool {
         self.emission_inbox.is_empty()
             && self.pending_invocations.is_empty()
-            && self.active_by_session.is_empty()
+            && self
+                .active_by_session
+                .values()
+                .all(|lane| lane.parked && lane.terminal.is_none())
             && self.sidecar_by_session.is_empty()
-            && !lanes_active
+            && lanes_polled == self.active_by_session.len()
             && !self.close_requested()
             && (self.events_processed >= BOT_CONTINUE_AS_NEW_AFTER_EVENTS || suggested)
     }
@@ -1267,7 +1568,7 @@ pub fn classify_emission(
             invocation,
             holder_workflow_id,
         } => {
-            if !is_pushed_tool(invocation.tool_id.as_str()) {
+            if !is_pushed_tool(invocation.workflow_tool_id.as_str()) {
                 return EmissionDisposition::Ignore;
             }
             EmissionDisposition::Invocation {
@@ -1305,7 +1606,7 @@ pub fn resolve_invocations_for_run<'a>(
     invocations
         .iter()
         .filter(|invocation| invocation.run_id == run_id)
-        .filter(|invocation| invocation.tool_id == BOT_EVENT_RESOLVE_TOOL_ID)
+        .filter(|invocation| invocation.workflow_tool_id == BOT_EVENT_RESOLVE_TOOL_ID)
         .collect()
 }
 
@@ -1318,23 +1619,16 @@ pub fn used_carried_tool(
 ) -> bool {
     !carried_tool_ids.is_empty()
         && invocations.iter().any(|invocation| {
-            invocation.run_id == run_id && carried_tool_ids.contains(&invocation.tool_id)
+            invocation.run_id == run_id && carried_tool_ids.contains(&invocation.workflow_tool_id)
         })
 }
 
 /// The outcome ladder of a lane that started a run.
 pub fn delivery_outcome(
-    terminal: Option<&LaneTerminal>,
+    terminal: &LaneTerminal,
     resolution: Option<&LaneResolution>,
     started_run_id: Option<&str>,
 ) -> DeliveryOutcome {
-    let Some(terminal) = terminal else {
-        return DeliveryOutcome {
-            outcome: BotEventOutcome::RunFailed,
-            summary: Some("timed out waiting for the run terminal".to_owned()),
-            run_id: started_run_id.map(str::to_owned),
-        };
-    };
     let run_id = Some(
         started_run_id
             .map(str::to_owned)
@@ -1343,7 +1637,12 @@ pub fn delivery_outcome(
     if terminal.status != RunStatus::Completed {
         return DeliveryOutcome {
             outcome: BotEventOutcome::RunFailed,
-            summary: Some(format!("run ended {}", run_status_label(terminal.status))),
+            summary: Some(
+                terminal
+                    .dead_session
+                    .clone()
+                    .unwrap_or_else(|| format!("run ended {}", run_status_label(terminal.status))),
+            ),
             run_id,
         };
     }
@@ -1363,13 +1662,20 @@ pub fn delivery_outcome(
 
 pub fn run_status_label(status: RunStatus) -> &'static str {
     match status {
-        RunStatus::Active => "active",
+        RunStatus::Running => "active",
         RunStatus::Parked => "parked",
         RunStatus::Cancelling => "cancelling",
         RunStatus::Completed => "completed",
         RunStatus::Failed => "failed",
         RunStatus::Cancelled => "cancelled",
     }
+}
+
+/// Doubling backoff from `BOT_BUSY_RETRY_DELAY`, for the `attempts`th failure.
+pub fn backoff_ms(attempts: u32, cap: Duration) -> i64 {
+    let step = BOT_BUSY_RETRY_DELAY.as_millis() as i64;
+    let doublings = attempts.saturating_sub(1).min(20);
+    (step << doublings).min(cap.as_millis() as i64)
 }
 
 /// `YYYY-MM-DD` of a UTC instant.
@@ -1479,7 +1785,7 @@ mod tests {
     fn invocation_ref(run_id: &str, tool_id: &str, args: &str) -> BotToolInvocationRef {
         BotToolInvocationRef {
             invocation_id: format!("wti:{tool_id}:{args}"),
-            tool_id: tool_id.to_owned(),
+            workflow_tool_id: tool_id.to_owned(),
             run_id: run_id.to_owned(),
             arguments_ref: args.to_owned(),
         }
@@ -1490,6 +1796,7 @@ mod tests {
             status,
             run_id: "run_7".to_owned(),
             failure_message_ref: None,
+            dead_session: None,
         }
     }
 
@@ -1517,7 +1824,7 @@ mod tests {
                 "wti:sha256:{}",
                 suffix.to_string().repeat(64)
             )),
-            tool_id: harness::WorkflowToolId::new(tool_id),
+            workflow_tool_id: harness::WorkflowToolId::new(tool_id),
             semantic_type: "lightspeed.bots.tool".to_owned(),
             schema_revision: 1,
             binding_fingerprint: "fp".to_owned(),
@@ -1843,6 +2150,123 @@ mod tests {
     }
 
     #[test]
+    fn a_main_session_that_is_not_ready_holds_only_its_own_deliveries() {
+        for hold in [
+            |state: &mut ControllerState| state.config_dirty = true,
+            |state: &mut ControllerState| state.mark_session_degraded("boom".to_owned(), NOW),
+        ] {
+            let mut state = ready(fresh());
+            state.accept_event(event("e1", 1), NOW).unwrap();
+            state
+                .accept_event(routed("e2", 2, "bot:v1:triage:k-chat-00000000"), NOW)
+                .unwrap();
+            hold(&mut state);
+            assert!(state.dispatchable(NOW));
+            let actions = state.dispatch(NOW);
+            assert_eq!(actions.len(), 1);
+            assert!(
+                matches!(&actions[0], DispatchAction::Lane { delivery, .. } if delivery.id == "e2")
+            );
+            assert_eq!(state.pending_deliveries[0].id, "e1");
+            assert!(!state.dispatchable(NOW), "e1 waits for the main session");
+
+            state.mark_session_ready(4);
+            assert_eq!(state.dispatch(NOW).len(), 1);
+        }
+    }
+
+    #[test]
+    fn a_busy_main_session_keeps_the_loop_serving() {
+        let mut state = ready(fresh());
+        state.accept_config(config()).unwrap();
+        assert!(state.reconcile_due(NOW));
+        // What the loop leaves behind after reading the session as busy.
+        let retry_at = NOW + BOT_BUSY_RETRY_DELAY.as_millis() as i64;
+        state.reconcile_retry_at_ms = Some(retry_at);
+        state.clock_ms = NOW;
+
+        let (tick, event_tick) = (state.lane_tick, state.event_tick);
+        assert!(!state.reconcile_due(NOW));
+        assert!(
+            !state.wake_ready(tick, event_tick),
+            "a parked loop must not spin on the status read"
+        );
+        assert_eq!(state.wake_deadline(NOW), Some(retry_at));
+        assert!(state.reconcile_due(retry_at));
+
+        // The top of the loop still sees these while main stays dirty.
+        state.pending_invocations.push(PendingInvocation {
+            invocation: invocation("bot:v1:triage", "lightspeed.bots.event.read.v1", 'a'),
+            holder_workflow_id: "wf".to_owned(),
+        });
+        assert!(state.wake_ready(tick, event_tick));
+        state.pending_invocations.clear();
+        let mut closing = config();
+        closing.closed = true;
+        state.accept_config(closing).unwrap();
+        assert!(state.wake_ready(tick, event_tick));
+    }
+
+    #[test]
+    fn a_degraded_main_session_retries_with_a_backoff_a_config_signal_cuts_short() {
+        let mut state = ready(fresh());
+        let mut now = NOW;
+        let mut delays = Vec::new();
+        for _ in 0..10 {
+            state.mark_session_degraded("boom".to_owned(), now);
+            assert!(state.config_dirty, "the session is still owed a reconcile");
+            assert!(!state.reconcile_due(now));
+            let retry_at = state.reconcile_retry_at_ms.unwrap();
+            assert_eq!(state.wake_deadline(now), Some(retry_at));
+            assert!(state.reconcile_due(retry_at));
+            delays.push((retry_at - now) / 1000);
+            now = retry_at;
+        }
+        assert_eq!(
+            delays,
+            [5, 10, 20, 40, 80, 160, 320, 640, 900, 900],
+            "seconds up to a quarter hour"
+        );
+
+        // The streak survives a rollover, whose successor tries at once.
+        let next = ControllerState::new(
+            BotControllerArgs {
+                config: state.config.clone(),
+                carry: Some(state.carry()),
+            },
+            now,
+        );
+        assert_eq!(next.reconcile_attempts, 10);
+        assert!(next.reconcile_due(now));
+        assert_eq!(next.setup_status, BotSetupStatus::Initializing);
+
+        state.accept_config(config()).unwrap();
+        assert!(state.reconcile_due(now), "an edit tries again at once");
+        assert_eq!(state.reconcile_attempts, 0);
+
+        state.mark_session_degraded("boom".to_owned(), now);
+        state.mark_session_ready(9);
+        assert_eq!(state.reconcile_attempts, 0);
+        assert_eq!(state.reconcile_retry_at_ms, None);
+        assert!(!state.reconcile_due(now));
+    }
+
+    #[test]
+    fn a_refused_reconcile_rotates_once_per_failure_streak() {
+        let mut state = ready(fresh());
+        assert!(state.rotate_main_for_reconcile());
+        assert_eq!(state.main_session_id(), "bot:v1:triage-g2");
+        state.mark_session_degraded("no session takes this profile".to_owned(), NOW);
+        assert!(!state.rotate_main_for_reconcile());
+        assert_eq!(state.main_session_id(), "bot:v1:triage-g2");
+
+        // A new config is a new question.
+        state.accept_config(config()).unwrap();
+        assert!(state.rotate_main_for_reconcile());
+        assert_eq!(state.main_session_id(), "bot:v1:triage-g3");
+    }
+
+    #[test]
     fn requeue_front_and_rekey_keep_lane_bookkeeping_consistent() {
         let mut state = ready(fresh());
         state
@@ -1864,9 +2288,571 @@ mod tests {
             .clone();
         state.accept_event(event("e2", 2), NOW).unwrap();
         state.release_lane("bot:v1:triage:k-x-00000000-g2", NOW);
-        state.requeue_front(delivery);
+        state.requeue_front(delivery, NOW);
         assert_eq!(state.pending_deliveries[0].id, "e1");
         assert_eq!(state.pending_deliveries[1].id, "e2");
+    }
+
+    /// A lane on `target` whose run start just failed.
+    fn lane_on(state: &mut ControllerState, target: &str) -> BotDelivery {
+        let actions = state.dispatch(NOW);
+        assert!(
+            matches!(&actions[0], DispatchAction::Lane { target: on, .. } if on == target),
+            "{actions:?}"
+        );
+        state.active_by_session[target].delivery.clone()
+    }
+
+    // A dead session and no run on it: what the lane does once `roll_forward` closed
+    // the session.
+    fn roll_lane_forward(state: &mut ControllerState, target: &str, delivery: &BotDelivery) {
+        state.roll_session_forward(target);
+        state.requeue_rolled_forward(target, delivery, NOW);
+    }
+
+    #[test]
+    fn a_dead_main_session_with_no_lane_waiting_sends_the_next_event_to_the_next_generation() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        let delivery = lane_on(&mut state, "bot:v1:triage");
+        assert!(!delivery.rolled_forward);
+
+        roll_lane_forward(&mut state, "bot:v1:triage", &delivery);
+        assert!(state.active_by_session.is_empty());
+        assert_eq!(state.main_session_id(), "bot:v1:triage-g2");
+        assert!(state.pending_deliveries[0].rolled_forward);
+        assert!(
+            state.budget_roots.contains("bot:v1:triage"),
+            "the old generation's sub-agents still count today"
+        );
+        assert!(
+            state.last_error.as_deref().unwrap().contains("moved"),
+            "an operator can see why the conversation restarted"
+        );
+
+        // Reconcile creates the successor, and only then does the delivery run there.
+        assert!(state.reconcile_due(NOW));
+        assert!(!state.dispatchable(NOW));
+        assert!(state.dispatch(NOW).is_empty());
+        state.mark_session_ready(1);
+        let actions = state.dispatch(NOW);
+        assert!(matches!(
+            &actions[0],
+            DispatchAction::Lane { delivery, target }
+                if target == "bot:v1:triage-g2" && delivery.rolled_forward
+        ));
+    }
+
+    #[test]
+    fn a_dead_routed_session_at_delivery_retries_on_its_next_generation() {
+        let mut state = ready(fresh());
+        let base = "bot:v1:triage:k-pr-42-abcdef01";
+        state.accept_event(routed("e1", 1, base), NOW).unwrap();
+        let delivery = lane_on(&mut state, base);
+        state
+            .extra_sessions
+            .push(controlled(base, RoutedSessionClosePolicy::Never, NOW));
+        state.set_cursor(base, 9);
+
+        roll_lane_forward(&mut state, base, &delivery);
+        assert!(state.extra_session(base).is_none(), "no longer tracked");
+        assert_eq!(state.cursor_for(base), 0);
+        assert_eq!(
+            state.main_session_id(),
+            "bot:v1:triage",
+            "main is untouched"
+        );
+        assert!(state.session_ready);
+
+        let actions = state.dispatch(NOW);
+        assert!(matches!(
+            &actions[0],
+            DispatchAction::Lane { delivery, target }
+                if *target == format!("{base}-g2") && delivery.rolled_forward
+        ));
+    }
+
+    #[test]
+    fn a_dead_per_event_session_has_a_generation_for_the_delivery_to_retry_on() {
+        let mut state = ready(fresh());
+        let base = "bot:v1:triage:e-0123456789ab";
+        state.accept_event(routed("e1", 1, base), NOW).unwrap();
+        let delivery = lane_on(&mut state, base);
+
+        roll_lane_forward(&mut state, base, &delivery);
+        let actions = state.dispatch(NOW);
+        let retried = format!("{base}-g2");
+        assert!(matches!(
+            &actions[0],
+            DispatchAction::Lane { target, .. } if *target == retried
+        ));
+        // Closing the successor clears the entry, so the carried map stays bounded.
+        state.forget_routed_session(&retried);
+        assert!(state.carry().session_generations.is_empty());
+    }
+
+    #[test]
+    fn a_rolled_forward_delivery_crosses_continue_as_new_with_its_one_try_spent() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        let delivery = lane_on(&mut state, "bot:v1:triage");
+        roll_lane_forward(&mut state, "bot:v1:triage", &delivery);
+
+        let next = ControllerState::new(
+            BotControllerArgs {
+                config: state.config.clone(),
+                carry: Some(state.carry()),
+            },
+            NOW + 1,
+        );
+        assert!(next.pending_deliveries[0].rolled_forward);
+        assert_eq!(next.main_generation, 2);
+    }
+
+    #[test]
+    fn a_rolled_forward_delivery_gets_its_start_attempts_back() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        let mut delivery = lane_on(&mut state, "bot:v1:triage");
+        delivery.attempts = BOT_START_MAX_ATTEMPTS - 1;
+        roll_lane_forward(&mut state, "bot:v1:triage", &delivery);
+        assert_eq!(state.pending_deliveries[0].attempts, 0);
+    }
+
+    #[test]
+    fn a_dead_sessions_terminal_does_not_reach_the_lane_on_its_successor() {
+        let mut state = ready(fresh());
+        let base = "bot:v1:triage:k-pr-42-abcdef01";
+        state.accept_event(routed("e1", 1, base), NOW).unwrap();
+        let delivery = lane_on(&mut state, base);
+        let token = ids::delivery_terminal_token(&delivery.id);
+        roll_lane_forward(&mut state, base, &delivery);
+        state.dispatch(NOW);
+
+        // Same delivery, same token: the close of the old session reports a run an
+        // earlier attempt left there.
+        let successor = format!("{base}-g2");
+        assert!(state.lane_awaits_terminal_from(&successor, &token));
+        assert!(!state.lane_awaits_terminal_from(base, &token));
+    }
+
+    fn parked_on_a_run(state: &mut ControllerState, target: &str, run_id: &str) -> BotDelivery {
+        let delivery = lane_on(state, target);
+        state.mark_lane_started(target, run_id, NOW);
+        state.park_lane(target);
+        delivery
+    }
+
+    fn after_continue_as_new(state: &ControllerState, now_ms: i64) -> ControllerState {
+        let args = BotControllerArgs {
+            config: state.config.clone(),
+            carry: Some(state.carry()),
+        };
+        let json = serde_json::to_string(&args).unwrap();
+        ControllerState::new(serde_json::from_str(&json).unwrap(), now_ms)
+    }
+
+    #[test]
+    fn a_long_run_does_not_hold_the_rollover() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        lane_on(&mut state, "bot:v1:triage");
+        assert!(
+            !state.can_continue_as_new(true, 1),
+            "a lane that has not reached its run yet has work in flight"
+        );
+        state.mark_lane_started("bot:v1:triage", "run_7", NOW);
+        assert!(
+            !state.can_continue_as_new(true, 1),
+            "a lane still sending its started receipts has work in flight"
+        );
+        state.park_lane("bot:v1:triage");
+        assert!(state.can_continue_as_new(true, 1));
+        assert!(
+            !state.can_continue_as_new(true, 2),
+            "something beside the lane is still in flight"
+        );
+
+        let token =
+            ids::delivery_terminal_token(&state.active_by_session["bot:v1:triage"].delivery.id);
+        state.attach_terminal(&token, terminal(RunStatus::Completed));
+        assert!(
+            !state.can_continue_as_new(true, 1),
+            "a lane with its terminal is about to settle"
+        );
+    }
+
+    #[test]
+    fn a_lane_parked_on_its_run_crosses_continue_as_new() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        let delivery = parked_on_a_run(&mut state, "bot:v1:triage", "run_7");
+        state.accept_event(event("e2", 2), NOW).unwrap();
+        assert_eq!(state.reserved_runs(), 1);
+
+        let later = NOW + 1;
+        let mut next = after_continue_as_new(&state, later);
+        let lane = &next.active_by_session["bot:v1:triage"];
+        assert_eq!(lane.delivery, delivery);
+        assert_eq!(lane.run_id.as_deref(), Some("run_7"));
+        assert!(lane.parked);
+        assert_eq!(lane.started_at_ms, NOW);
+        assert_eq!(next.reserved_runs(), 1, "the run is counted once");
+        assert_eq!(
+            next.dead_session_sweep_at_ms,
+            Some(later + SWEEP_MS),
+            "the sweep keeps watching it"
+        );
+        assert!(next.dispatch(later).is_empty(), "e2 still waits its turn");
+
+        // The real terminal still finds the lane in the new execution.
+        let token = ids::delivery_terminal_token(&delivery.id);
+        assert!(next.lane_awaits_terminal_from("bot:v1:triage", &token));
+        assert!(next.attach_terminal(&token, terminal(RunStatus::Completed)));
+        assert!(next.lane_has_terminal("bot:v1:triage"));
+    }
+
+    #[test]
+    fn a_run_on_main_keeps_its_steering_across_continue_as_new() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        parked_on_a_run(&mut state, "bot:v1:triage", "run_7");
+
+        let mut next = after_continue_as_new(&state, NOW + 1);
+        assert!(!next.config_dirty, "nothing about the session changed");
+        let mut steer = event("e2", 2);
+        steer.when_busy = Some(BotWhenBusy::Steer);
+        next.accept_event(steer, NOW + 1).unwrap();
+        assert!(matches!(
+            &next.dispatch(NOW + 1)[0],
+            DispatchAction::Sidecar { target, .. } if target == "bot:v1:triage"
+        ));
+
+        // A reconcile the last execution owed is still owed.
+        state.config_dirty = true;
+        assert!(after_continue_as_new(&state, NOW + 1).config_dirty);
+    }
+
+    #[test]
+    fn a_run_on_a_routed_session_leaves_the_main_check_to_the_new_execution() {
+        let mut state = ready(fresh());
+        let base = "bot:v1:triage:k-pr-42-abcdef01";
+        state.accept_event(routed("e1", 1, base), NOW).unwrap();
+        parked_on_a_run(&mut state, base, "run_7");
+        let next = after_continue_as_new(&state, NOW + 1);
+        assert!(next.config_dirty);
+        assert!(next.active_by_session.contains_key(base));
+    }
+
+    #[test]
+    fn a_dead_session_status_is_closed_missing_or_failed() {
+        use super::super::super::BotSessionStatus;
+        for dead in [
+            BotSessionStatus::Failed,
+            BotSessionStatus::Closed,
+            BotSessionStatus::Missing,
+        ] {
+            assert!(dead.is_dead(), "{dead:?}");
+        }
+        for live in [
+            BotSessionStatus::Idle,
+            BotSessionStatus::Busy { run_id: None },
+        ] {
+            assert!(!live.is_dead(), "{live:?}");
+        }
+    }
+
+    const SWEEP_MS: i64 = BOT_DEAD_SESSION_SWEEP_INTERVAL.as_millis() as i64;
+
+    #[test]
+    fn the_sweep_runs_on_its_clock_only_while_a_lane_waits_on_a_run() {
+        let mut state = ready(fresh());
+        assert_eq!(state.wake_deadline(NOW), None);
+        assert!(state.take_dead_session_sweep(NOW + SWEEP_MS).is_empty());
+
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        lane_on(&mut state, "bot:v1:triage");
+        assert_eq!(state.wake_deadline(NOW), None, "no run has started");
+
+        state.mark_lane_started("bot:v1:triage", "run_7", NOW);
+        let due = NOW + SWEEP_MS;
+        assert_eq!(state.dead_session_sweep_at_ms, Some(due));
+        assert!(state.take_dead_session_sweep(due - 1).is_empty());
+
+        // One read covers the waiting lanes, and the next is due a full interval on.
+        let base = "bot:v1:triage:k-pr-42-abcdef01";
+        state.accept_event(routed("e2", 2, base), due).unwrap();
+        state.dispatch(due);
+        let started_later = due - 1;
+        state.mark_lane_started(base, "run_8", started_later);
+        assert_eq!(state.dead_session_sweep_at_ms, Some(due), "one clock");
+        assert_eq!(
+            state.take_dead_session_sweep(due),
+            vec![
+                "bot:v1:triage".to_owned(),
+                "bot:v1:triage:k-pr-42-abcdef01".to_owned()
+            ]
+        );
+        assert_eq!(state.dead_session_sweep_at_ms, Some(due + SWEEP_MS));
+        assert!(
+            state.take_dead_session_sweep(due).is_empty(),
+            "once per due time"
+        );
+
+        // A lane that heard its terminal has nothing to check for.
+        let token = ids::delivery_terminal_token(&state.active_by_session[base].delivery.id);
+        state.attach_terminal(&token, terminal(RunStatus::Completed));
+        assert_eq!(
+            state.take_dead_session_sweep(due + SWEEP_MS),
+            vec!["bot:v1:triage".to_owned()]
+        );
+
+        // No lane left waiting: no timer holds the controller's history open.
+        state.release_lane("bot:v1:triage", due);
+        state.release_lane(base, due);
+        assert_eq!(state.dead_session_sweep_at_ms, None);
+        assert_eq!(state.wake_deadline(due), None);
+    }
+
+    #[test]
+    fn a_sweep_that_cannot_read_looks_again_at_the_next_one() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        lane_on(&mut state, "bot:v1:triage");
+        state.mark_lane_started("bot:v1:triage", "run_7", NOW);
+        let due = NOW + SWEEP_MS;
+        assert!(!state.take_dead_session_sweep(due).is_empty());
+        // The read failed, and nothing else moves.
+        assert_eq!(state.wake_deadline(due), Some(due + SWEEP_MS));
+        assert!(!state.take_dead_session_sweep(due + SWEEP_MS).is_empty());
+    }
+
+    #[test]
+    fn the_sweep_settles_a_waiting_lane_on_a_dead_session_as_failed() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        let delivery = lane_on(&mut state, "bot:v1:triage");
+        state.accept_event(event("e2", 2), NOW).unwrap();
+
+        assert!(
+            !state.fail_lane_on_dead_session("bot:v1:triage", "dead".to_owned()),
+            "no run started, so delivery time handles this one"
+        );
+        state.mark_lane_started("bot:v1:triage", "run_7", NOW);
+        let tick = state.lane_tick;
+        assert!(state.fail_lane_on_dead_session("bot:v1:triage", "it died".to_owned()));
+        assert_ne!(state.lane_tick, tick, "the lane wakes");
+        assert!(state.lane_has_terminal("bot:v1:triage"));
+
+        let lane = &state.active_by_session["bot:v1:triage"];
+        let outcome = delivery_outcome(lane.terminal.as_ref().unwrap(), None, Some("run_7"));
+        assert_eq!(outcome.outcome, BotEventOutcome::RunFailed);
+        assert_eq!(outcome.summary.as_deref(), Some("it died"));
+        assert_eq!(outcome.run_id.as_deref(), Some("run_7"));
+
+        // The controller rolls forward while the lane settles, and the next event
+        // starts on the successor without waiting for the old lane.
+        state.roll_session_forward("bot:v1:triage");
+        state.mark_session_ready(1);
+        let actions = state.dispatch(NOW);
+        assert!(matches!(
+            &actions[0],
+            DispatchAction::Lane { target, .. } if target == "bot:v1:triage-g2"
+        ));
+
+        // The real terminal, sent by the force close, finds nothing once the lane
+        // has finished.
+        let token = ids::delivery_terminal_token(&delivery.id);
+        state.release_lane("bot:v1:triage", NOW);
+        assert!(!state.lane_awaits_terminal_from("bot:v1:triage", &token));
+        assert!(!state.attach_terminal(&token, terminal(RunStatus::Cancelled)));
+    }
+
+    #[test]
+    fn the_sweep_leaves_a_lane_alone_once_its_real_terminal_landed() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        let delivery = lane_on(&mut state, "bot:v1:triage");
+        state.mark_lane_started("bot:v1:triage", "run_7", NOW);
+        let token = ids::delivery_terminal_token(&delivery.id);
+        state.attach_terminal(&token, terminal(RunStatus::Completed));
+
+        assert!(!state.fail_lane_on_dead_session("bot:v1:triage", "it died".to_owned()));
+        let lane = &state.active_by_session["bot:v1:triage"];
+        assert_eq!(lane.terminal.as_ref().unwrap().status, RunStatus::Completed);
+        assert!(!state.fail_lane_on_dead_session("bot:v1:absent", "it died".to_owned()));
+    }
+
+    #[test]
+    fn a_failed_start_frees_the_lane_and_waits_in_the_queue() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        let delivery = lane_on(&mut state, "bot:v1:triage");
+
+        let tick = state.lane_tick;
+        assert!(state.retry_delivery("bot:v1:triage", &delivery, NOW));
+        assert_ne!(state.lane_tick, tick, "the loop wakes to re-evaluate");
+        assert!(state.active_by_session.is_empty());
+        assert_eq!(state.pending_deliveries[0].attempts, 1);
+        let due = NOW + BOT_BUSY_RETRY_DELAY.as_millis() as i64;
+        assert_eq!(state.pending_deliveries[0].not_before_ms, Some(due));
+
+        // Nothing holds the rollover or the loop during the backoff.
+        state.events_processed = BOT_CONTINUE_AS_NEW_AFTER_EVENTS;
+        assert!(state.can_continue_as_new(false, 0));
+        assert_eq!(state.reserved_runs(), 0, "no budget slot stays reserved");
+        assert!(!state.dispatchable(NOW));
+        assert!(state.dispatch(NOW).is_empty());
+        assert_eq!(state.wake_deadline(NOW), Some(due));
+
+        // The wait crosses continue-as-new with the delivery.
+        let next = ControllerState::new(
+            BotControllerArgs {
+                config: state.config.clone(),
+                carry: Some(state.carry()),
+            },
+            NOW + 1,
+        );
+        assert_eq!(next.pending_deliveries, state.pending_deliveries);
+
+        assert!(state.dispatchable(due));
+        let actions = state.dispatch(due);
+        assert!(
+            matches!(&actions[0], DispatchAction::Lane { delivery, .. } if delivery.attempts == 1)
+        );
+    }
+
+    #[test]
+    fn a_waiting_delivery_holds_only_later_deliveries_to_its_target() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        let delivery = lane_on(&mut state, "bot:v1:triage");
+        assert!(state.retry_delivery("bot:v1:triage", &delivery, NOW));
+
+        state.accept_event(event("e2", 2), NOW).unwrap();
+        assert!(!state.dispatchable(NOW), "e2 keeps its place behind e1");
+        state
+            .accept_event(routed("e3", 3, "bot:v1:triage:k-other-00000000"), NOW)
+            .unwrap();
+        assert!(state.dispatchable(NOW));
+        let actions = state.dispatch(NOW);
+        assert_eq!(actions.len(), 1);
+        assert!(
+            matches!(&actions[0], DispatchAction::Lane { delivery, .. } if delivery.id == "e3")
+        );
+
+        let due = NOW + BOT_BUSY_RETRY_DELAY.as_millis() as i64;
+        let actions = state.dispatch(due);
+        assert_eq!(actions.len(), 1, "one lane per session");
+        assert!(
+            matches!(&actions[0], DispatchAction::Lane { delivery, .. } if delivery.id == "e1")
+        );
+        assert_eq!(state.pending_deliveries[0].id, "e2");
+    }
+
+    #[test]
+    fn start_retries_back_off_and_end_after_their_bound() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        let mut delivery = lane_on(&mut state, "bot:v1:triage");
+        let mut now = NOW;
+        let mut delays = Vec::new();
+        while state.retry_delivery("bot:v1:triage", &delivery, now) {
+            let due = state.pending_deliveries[0].not_before_ms.unwrap();
+            delays.push(due - now);
+            now = due;
+            let actions = state.dispatch(now);
+            let DispatchAction::Lane { delivery: next, .. } = &actions[0] else {
+                panic!("{actions:?}");
+            };
+            delivery = next.clone();
+        }
+        assert_eq!(
+            delays.iter().map(|ms| ms / 1000).collect::<Vec<_>>(),
+            [5, 10, 20, 40, 80, 160, 300, 300, 300]
+        );
+        assert_eq!(delivery.attempts + 1, BOT_START_MAX_ATTEMPTS);
+        assert!(
+            state.active_by_session.contains_key("bot:v1:triage"),
+            "the spent delivery keeps its lane for the failure to finish it"
+        );
+        assert!(state.pending_deliveries.is_empty());
+    }
+
+    #[test]
+    fn a_terminal_finds_its_delivery_only_while_a_lane_holds_it() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        let delivery = lane_on(&mut state, "bot:v1:triage");
+        let token = ids::delivery_terminal_token(&delivery.id);
+        assert!(state.lane_awaits_terminal_from("bot:v1:triage", &token));
+
+        assert!(state.retry_delivery("bot:v1:triage", &delivery, NOW));
+        assert!(
+            !state.lane_awaits_terminal_from("bot:v1:triage", &token),
+            "between attempts"
+        );
+    }
+
+    #[test]
+    fn a_session_busy_with_other_work_holds_no_lane_and_spends_no_attempt() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        let delivery = lane_on(&mut state, "bot:v1:triage");
+
+        let due = NOW + BOT_BUSY_RETRY_DELAY.as_millis() as i64;
+        state.requeue_lane("bot:v1:triage", &delivery, due);
+        assert!(
+            state.main_session_free(),
+            "a dirty config can still be tried"
+        );
+        assert_eq!(state.pending_deliveries[0].attempts, 0);
+        assert_eq!(state.reserved_runs(), 0);
+        assert!(state.dispatch(NOW).is_empty());
+        assert_eq!(state.wake_deadline(NOW), Some(due));
+        assert!(
+            state.can_continue_as_new(true, 0),
+            "the rollover does not wait for that run to end"
+        );
+        assert_eq!(state.dispatch(due).len(), 1);
+    }
+
+    #[test]
+    fn a_requeued_sidecar_is_not_handed_out_again_before_its_pause() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        state.dispatch(NOW);
+        state.mark_lane_started("bot:v1:triage", "run_1", NOW);
+        let mut steer = event("e2", 2);
+        steer.when_busy = Some(BotWhenBusy::Steer);
+        state.accept_event(steer, NOW).unwrap();
+        let actions = state.dispatch(NOW);
+        let DispatchAction::Sidecar { delivery, .. } = &actions[0] else {
+            panic!("{actions:?}");
+        };
+        let due = NOW + BOT_BUSY_RETRY_DELAY.as_millis() as i64;
+        state.requeue_front(delivery.clone(), due);
+        let lane_tick = state.lane_tick;
+        state.release_sidecar("bot:v1:triage", NOW);
+        assert!(state.lane_tick != lane_tick);
+        assert!(!state.wake_ready(state.lane_tick, state.event_tick));
+        assert!(state.dispatch(NOW).is_empty());
+        assert_eq!(state.wake_deadline(NOW), Some(due));
+        assert_eq!(state.dispatch(due).len(), 1);
+    }
+
+    #[test]
+    fn a_pause_already_past_sets_no_deadline() {
+        let mut state = ready(fresh());
+        state.accept_event(event("e1", 1), NOW).unwrap();
+        state.dispatch(NOW);
+        let delivery = {
+            state.accept_event(event("e2", 2), NOW).unwrap();
+            state.pending_deliveries.remove(0)
+        };
+        state.requeue_front(delivery, NOW - 1);
+        // e2 waits behind the lane, not behind its clock: a timer would spin.
+        assert_eq!(state.wake_deadline(NOW), None);
     }
 
     // ── Resolve correlation ─────────────────────────────────────────────
@@ -1923,15 +2909,7 @@ mod tests {
 
     #[test]
     fn outcome_ladder() {
-        let timed_out = delivery_outcome(None, None, Some("run_7"));
-        assert_eq!(timed_out.outcome, BotEventOutcome::RunFailed);
-        assert_eq!(
-            timed_out.summary.as_deref(),
-            Some("timed out waiting for the run terminal")
-        );
-        assert_eq!(timed_out.run_id.as_deref(), Some("run_7"));
-
-        let failed = delivery_outcome(Some(&terminal(RunStatus::Failed)), None, None);
+        let failed = delivery_outcome(&terminal(RunStatus::Failed), None, None);
         assert_eq!(failed.outcome, BotEventOutcome::RunFailed);
         assert_eq!(failed.summary.as_deref(), Some("run ended failed"));
         assert_eq!(
@@ -1941,7 +2919,7 @@ mod tests {
         );
 
         let resolved = delivery_outcome(
-            Some(&terminal(RunStatus::Completed)),
+            &terminal(RunStatus::Completed),
             Some(&LaneResolution {
                 outcome: BotEventOutcome::Deferred,
                 summary: Some("later".to_owned()),
@@ -1951,8 +2929,7 @@ mod tests {
         assert_eq!(resolved.outcome, BotEventOutcome::Deferred);
         assert_eq!(resolved.summary.as_deref(), Some("later"));
 
-        let unresolved =
-            delivery_outcome(Some(&terminal(RunStatus::Completed)), None, Some("run_7"));
+        let unresolved = delivery_outcome(&terminal(RunStatus::Completed), None, Some("run_7"));
         assert_eq!(unresolved.outcome, BotEventOutcome::Unresolved);
         assert_eq!(unresolved.summary, None);
     }
@@ -2064,7 +3041,7 @@ mod tests {
             .session_generations
             .insert("bot:v1:triage:k-pr-42-abcdef01".to_owned(), 2);
         state.dispatch(NOW);
-        state.extra_sessions.push(ManagedSession {
+        state.extra_sessions.push(ControlledSession {
             session_id: "bot:v1:triage:k-pr-42-abcdef01-g2".to_owned(),
             label: "pr 42".to_owned(),
             session_key: Some("pr-42".to_owned()),
@@ -2087,12 +3064,12 @@ mod tests {
 
     // ── Retention ───────────────────────────────────────────────────────
 
-    fn managed(
+    fn controlled(
         id: &str,
         close_policy: RoutedSessionClosePolicy,
         last_active: i64,
-    ) -> ManagedSession {
-        ManagedSession {
+    ) -> ControlledSession {
+        ControlledSession {
             session_id: id.to_owned(),
             label: id.to_owned(),
             session_key: None,
@@ -2107,17 +3084,17 @@ mod tests {
     fn idle_close_uses_the_session_policy_then_the_bot_default() {
         let mut state = ready(fresh());
         state.config.routed_session_close_after_ms = Some(10_000);
-        state.extra_sessions.push(managed(
+        state.extra_sessions.push(controlled(
             "bot:v1:triage:k-a-1",
             RoutedSessionClosePolicy::Inherit,
             NOW,
         ));
-        state.extra_sessions.push(managed(
+        state.extra_sessions.push(controlled(
             "bot:v1:triage:k-b-1",
             RoutedSessionClosePolicy::Never,
             NOW,
         ));
-        state.extra_sessions.push(managed(
+        state.extra_sessions.push(controlled(
             "bot:v1:triage:k-c-1",
             RoutedSessionClosePolicy::After { ms: 2_000 },
             NOW,
@@ -2167,7 +3144,7 @@ mod tests {
     fn routed_events_refresh_idle_close_and_lru_activity() {
         let mut state = ready(fresh());
         state.config.routed_session_close_after_ms = Some(10_000);
-        state.extra_sessions.push(managed(
+        state.extra_sessions.push(controlled(
             "bot:v1:triage:k-a-1",
             RoutedSessionClosePolicy::Inherit,
             NOW,
@@ -2185,7 +3162,7 @@ mod tests {
     }
 
     #[test]
-    fn routed_keys_survive_session_rotation_and_legacy_activity_payloads_load() {
+    fn routed_keys_survive_session_rotation_and_requests_load_without_optional_fields() {
         let mut state = ready(fresh());
         let route = RoutedSession {
             session_id: ids::bot_keyed_session_id(&state.config.bot_id, "telegram:12345"),
@@ -2219,11 +3196,11 @@ mod tests {
             );
             wire.as_object_mut().unwrap().remove("session_key");
             wire.as_object_mut().unwrap().remove("session_label");
-            let legacy: super::super::BotEnsureSessionRequest =
+            let minimal: super::super::BotEnsureSessionRequest =
                 serde_json::from_value(wire).unwrap();
-            assert_eq!(legacy.session_id, session_id);
-            assert_eq!(legacy.session_key, None);
-            assert_eq!(legacy.session_label, None);
+            assert_eq!(minimal.session_id, session_id);
+            assert_eq!(minimal.session_key, None);
+            assert_eq!(minimal.session_label, None);
             state.bump_routed_generation(&route.session_id);
         }
         let main = super::super::ensure_request(
@@ -2245,7 +3222,7 @@ mod tests {
         let id = ids::bot_keyed_session_id(&state.config.bot_id, "telegram:12345");
         state
             .extra_sessions
-            .push(managed(&id, RoutedSessionClosePolicy::Never, NOW));
+            .push(controlled(&id, RoutedSessionClosePolicy::Never, NOW));
         let mut route = RoutedSession {
             session_id: id.clone(),
             label: "Ops room".to_owned(),
@@ -2263,19 +3240,45 @@ mod tests {
     }
 
     #[test]
+    fn a_closed_per_event_session_leaves_no_generation_in_the_carry() {
+        let mut state = ready(fresh());
+        let per_event = "bot:v1:triage:e-0123456789ab";
+        state
+            .extra_sessions
+            .push(controlled(per_event, RoutedSessionClosePolicy::Never, NOW));
+        state.forget_routed_session(per_event);
+        assert!(state.carry().session_generations.is_empty());
+        assert_eq!(state.resolve_routed_session_id(per_event), per_event);
+
+        // A mismatch inside one delivery still moves the base, and closing
+        // that generation clears the entry too.
+        state.bump_routed_generation(per_event);
+        let rotated = state.resolve_routed_session_id(per_event);
+        assert_eq!(rotated, format!("{per_event}-g2"));
+        state.forget_routed_session(&rotated);
+        assert!(state.carry().session_generations.is_empty());
+
+        // A keyed base comes back to the same id, so it must move past the
+        // closed generation.
+        let keyed = "bot:v1:triage:k-pr-42-abcdef01";
+        state.forget_routed_session(keyed);
+        assert_eq!(state.carry().session_generations.get(keyed), Some(&2));
+    }
+
+    #[test]
     fn idlest_free_session_is_the_eviction_candidate() {
         let mut state = ready(fresh());
-        state.extra_sessions.push(managed(
+        state.extra_sessions.push(controlled(
             "bot:v1:triage:k-a-1",
             RoutedSessionClosePolicy::Inherit,
             NOW + 5,
         ));
-        state.extra_sessions.push(managed(
+        state.extra_sessions.push(controlled(
             "bot:v1:triage:k-b-1",
             RoutedSessionClosePolicy::Inherit,
             NOW + 1,
         ));
-        state.extra_sessions.push(managed(
+        state.extra_sessions.push(controlled(
             "bot:v1:triage:k-c-1",
             RoutedSessionClosePolicy::Inherit,
             NOW + 3,
@@ -2326,10 +3329,9 @@ mod tests {
         assert!(!state.session_ready);
         assert_eq!(state.setup_status, BotSetupStatus::Initializing);
 
-        state.mark_session_degraded("boom".to_owned());
+        state.mark_session_degraded("boom".to_owned(), NOW);
         assert_eq!(state.setup_status, BotSetupStatus::Degraded);
         assert_eq!(state.controller_status(NOW), BotControllerStatus::Degraded);
-        assert!(!state.config_dirty);
     }
 
     // ── Teardown ────────────────────────────────────────────────────────
@@ -2342,7 +3344,7 @@ mod tests {
         state.accept_event(coalesced("e3", 3, "k"), NOW).unwrap();
         state.dispatch(NOW);
         state.rotate_main_session(true);
-        state.extra_sessions.push(managed(
+        state.extra_sessions.push(controlled(
             "bot:v1:triage:k-a-1",
             RoutedSessionClosePolicy::Inherit,
             NOW,
@@ -2392,18 +3394,15 @@ mod tests {
         assert!(state.wake_ready(state.lane_tick, event_tick));
 
         state.config_dirty = false;
-        assert!(!state.can_continue_as_new(false, false));
+        assert!(!state.can_continue_as_new(false, 0));
         state.events_processed = BOT_CONTINUE_AS_NEW_AFTER_EVENTS;
-        assert!(state.can_continue_as_new(false, false));
-        assert!(
-            !state.can_continue_as_new(false, true),
-            "lanes still running"
-        );
+        assert!(state.can_continue_as_new(false, 0));
+        assert!(!state.can_continue_as_new(false, 1), "lanes still running");
         state.events_processed = 1;
-        assert!(state.can_continue_as_new(true, false), "server suggestion");
+        assert!(state.can_continue_as_new(true, 0), "server suggestion");
         state.config.closed = true;
         assert!(
-            !state.can_continue_as_new(true, false),
+            !state.can_continue_as_new(true, 0),
             "closing never continues as new"
         );
     }
@@ -2416,7 +3415,7 @@ mod tests {
         state
             .session_generations
             .insert("bot:v1:triage:k-a-1".to_owned(), 2);
-        state.extra_sessions.push(managed(
+        state.extra_sessions.push(controlled(
             "bot:v1:triage:k-a-1-g2",
             RoutedSessionClosePolicy::Never,
             NOW,
@@ -2442,13 +3441,13 @@ mod tests {
         let json = serde_json::to_string(&carry).unwrap();
         let decoded: BotControllerCarry = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, carry);
-        let mut legacy = serde_json::to_value(&carry).unwrap();
-        legacy["extra_sessions"][0]
+        let mut unkeyed = serde_json::to_value(&carry).unwrap();
+        unkeyed["extra_sessions"][0]
             .as_object_mut()
             .unwrap()
             .remove("session_key");
-        let legacy: BotControllerCarry = serde_json::from_value(legacy).unwrap();
-        assert_eq!(legacy.extra_sessions[0].session_key, None);
+        let unkeyed: BotControllerCarry = serde_json::from_value(unkeyed).unwrap();
+        assert_eq!(unkeyed.extra_sessions[0].session_key, None);
         let next = ControllerState::new(
             BotControllerArgs {
                 config: state.config.clone(),
@@ -2473,19 +3472,24 @@ mod tests {
         assert!(next.seen_event_ids.contains("e1"));
         assert!(next.seen_event_ids.contains("e2"));
         assert!(next.session_ready);
+        assert_eq!(
+            next.setup_status,
+            BotSetupStatus::Ready,
+            "a serving main session stays usable until its reconcile"
+        );
         assert!(next.config_dirty, "a fresh execution reconciles first");
 
         let empty: BotControllerCarry = serde_json::from_str("{}").unwrap();
         assert_eq!(empty, BotControllerCarry::default());
-        let legacy = ControllerState::new(
+        let from_empty = ControllerState::new(
             BotControllerArgs {
                 config: config(),
                 carry: Some(empty),
             },
             NOW,
         );
-        assert_eq!(legacy.main_generation, 1);
-        assert_eq!(legacy.run_day, "2025-08-30");
+        assert_eq!(from_empty.main_generation, 1);
+        assert_eq!(from_empty.run_day, "2025-08-30");
     }
 
     #[test]
@@ -2504,7 +3508,7 @@ mod tests {
     fn snapshot_reports_sessions_buffers_and_status() {
         let mut state = ready(fresh());
         state.accept_event(coalesced("e1", 1, "k"), NOW).unwrap();
-        state.extra_sessions.push(managed(
+        state.extra_sessions.push(controlled(
             "bot:v1:triage:k-a-1",
             RoutedSessionClosePolicy::Inherit,
             NOW,

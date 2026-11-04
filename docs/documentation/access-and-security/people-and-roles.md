@@ -26,7 +26,7 @@ the universe's resources.
 | **Admin** | Manage universe members, settings, and API keys. Read, control, and share every session, including private sessions; soft-delete closed sessions and set deletion retention. |
 
 Contributors can name a new session and choose its saved profile, but cannot
-author inline setup, override the chosen setup, create managed sessions, or
+author inline setup, override the chosen setup, create integrated sessions, or
 create or edit profiles. After creation, changing configuration, custom
 instructions, metadata, or the active environment requires an Operator or
 Admin. Per-message model and reasoning overrides also require an Operator or

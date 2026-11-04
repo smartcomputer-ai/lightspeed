@@ -1,11 +1,13 @@
-//! Per-call tool batch execution.
+//! Tool batch execution.
 //!
-//! Ordinary batches schedule one Temporal activity per executable call and
-//! resume the drive progressively: each terminal call result appends durably
-//! on its own, so a slow or failed call never restarts a completed sibling.
-//! Batches that need batch-level orchestration (an `await` call or admitted
-//! workflow-tool calls) still execute as one unit behind the same
-//! progressive-completion harness contract.
+//! A batch is every tool call of one model response. Ordinary calls run first,
+//! one Temporal activity per call, and resume the drive progressively: each
+//! terminal result appends durably on its own, so a slow or failed call never
+//! restarts a completed sibling, and losing a worker fails only the calls it was
+//! running. The drive then re-dispatches what is still pending. Once only `await`
+//! and workflow-tool calls remain they run in one activity, because they suspend
+//! the batch on commit and so must commit together. That activity does no slow
+//! work: workflow-tool calls only build effects, which start after the commit.
 
 use crate::workflows::WorkflowContextExt as _;
 use std::pin::Pin;
@@ -13,7 +15,7 @@ use std::task::{Context, Poll};
 
 use futures::FutureExt;
 use futures::future::poll_fn;
-use harness::{ToolCallStatus, ToolExecutionSpec, ToolInvocationResult, ToolName, ToolParallelism};
+use harness::{ToolCallStatus, ToolExecutionSpec, ToolId, ToolInvocationResult, ToolParallelism};
 use temporalio_sdk::{ActivityExecutionError, CancellableFuture};
 
 use crate::{
@@ -29,44 +31,43 @@ use super::*;
 /// stay bounded even for pathological error chains.
 const MAX_BOUNDARY_ERROR_BYTES: usize = 16 * 1024;
 
+/// Run one dispatch of a batch and commit its results. The drive plans again from
+/// the state that leaves, so nothing here hands a result back to be overwritten.
 pub(super) async fn invoke_tool_batch(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
     request: ToolInvocationBatchRequest,
-) -> anyhow::Result<CoreAgentAction> {
-    if batch_requires_unit_execution(&request) {
+) -> anyhow::Result<()> {
+    let groups = execution_groups(drive.state(), &request);
+    if groups.is_empty() {
         return invoke_tool_batch_as_unit(ctx, drive, request).await;
     }
-    for group in execution_groups(drive.state(), &request) {
+    for group in groups {
         if !control::tool_batch_still_wanted(drive.state(), request.run_id, request.batch_id) {
-            // A cancel landed while an earlier group ran; the harness has
-            // resolved the rest of the batch itself.
+            // A cancel or a park landed while an earlier group ran. The rest of
+            // the batch stays pending for the next plan to cancel or re-dispatch.
             break;
         }
         execute_call_group(ctx, drive, &request, group).await?;
     }
-    drive
-        .next_action_unbounded(workflow_time_ms(ctx))
-        .map_err(Into::into)
+    Ok(())
 }
 
 /// `await` defers the whole batch and admitted workflow-tool calls share
-/// batch-scoped emission ordering; both stay on the batch-unit activity.
-fn batch_requires_unit_execution(request: &ToolInvocationBatchRequest) -> bool {
-    request.calls.iter().any(|call| {
-        call.workflow_tool.is_some()
-            || call
-                .tool_id
-                .as_ref()
-                .is_some_and(|id| id.as_str() == "concurrency.await")
-    })
+/// batch-scoped emission ordering; both wait for the batch activity.
+fn runs_in_batch_activity(call: &harness::ToolInvocationRequest) -> bool {
+    call.workflow_tool.is_some()
+        || call
+            .tool_id
+            .as_ref()
+            .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
 }
 
 async fn invoke_tool_batch_as_unit(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
     request: ToolInvocationBatchRequest,
-) -> anyhow::Result<CoreAgentAction> {
+) -> anyhow::Result<()> {
     let run_id = request.run_id;
     let batch_id = request.batch_id;
     let activity_ctx = ctx.clone();
@@ -78,21 +79,15 @@ async fn invoke_tool_batch_as_unit(
         crate::tool_batch_activity_options(),
     );
     let outcome = match control::race_activity_with_admissions(ctx, drive, activity, |state| {
-        control::tool_batch_still_wanted(state, run_id, batch_id)
+        !control::tool_batch_abandoned(state, run_id, batch_id)
     })
     .await?
     {
         control::Raced::Completed(outcome) => outcome,
-        control::Raced::Preempted => {
-            return drive
-                .next_action_unbounded(workflow_time_ms(ctx))
-                .map_err(Into::into);
-        }
+        control::Raced::Preempted => return Ok(()),
     };
-    match outcome {
-        Ok(outcome) => drive
-            .resume_tool_batch_outcome(outcome, workflow_time_ms(ctx))
-            .map_err(Into::into),
+    let resume = match outcome {
+        Ok(outcome) => drive.resume_tool_batch_outcome(outcome, workflow_time_ms(ctx))?,
         Err(error) => {
             let status = boundary_call_status(&error);
             let error_ref = put_boundary_error_blob(ctx, &format!("{error}")).await;
@@ -101,23 +96,24 @@ async fn invoke_tool_batch_as_unit(
                 .iter()
                 .map(|call| boundary_call_result(call.call_id.clone(), status, error_ref.clone()))
                 .collect();
-            drive
-                .resume_tool_batch(
-                    harness::ToolInvocationBatchResult {
-                        run_id: request.run_id,
-                        turn_id: request.turn_id,
-                        batch_id: request.batch_id,
-                        results,
-                    },
-                    workflow_time_ms(ctx),
-                )
-                .map_err(Into::into)
+            drive.resume_tool_batch(
+                harness::ToolInvocationBatchResult {
+                    run_id: request.run_id,
+                    turn_id: request.turn_id,
+                    batch_id: request.batch_id,
+                    results,
+                },
+                workflow_time_ms(ctx),
+            )?
         }
-    }
+    };
+    drive::commit_resume(ctx, drive, resume).await
 }
 
-/// Execution order over call indices: consecutive parallel-safe calls run
-/// concurrently; an exclusive call runs alone, in original batch order.
+/// Execution order over the indices of the per-call calls: consecutive
+/// parallel-safe calls run concurrently; an exclusive call runs alone, in original
+/// batch order. Each call still sees the whole dispatch as its siblings, so a batch
+/// rule holds across calls that wait for the batch activity.
 fn execution_groups(
     state: &CoreAgentState,
     request: &ToolInvocationBatchRequest,
@@ -125,6 +121,9 @@ fn execution_groups(
     let mut groups: Vec<Vec<usize>> = Vec::new();
     let mut last_parallel_safe = false;
     for (index, call) in request.calls.iter().enumerate() {
+        if runs_in_batch_activity(call) {
+            continue;
+        }
         let parallel_safe =
             call_parallelism(state, call.tool_id.as_ref()) == ToolParallelism::ParallelSafe;
         match groups.last_mut() {
@@ -162,9 +161,8 @@ async fn first_ready_call(inflight: &mut Vec<InflightCall<'_>>) -> (usize, CallA
     .await
 }
 
-/// Cancel every in-flight call (`TryCancel`) and let the futures resolve;
-/// their results are discarded — the harness already recorded the calls as
-/// cancelled.
+/// Cancel every in-flight call (`TryCancel`) and let the futures resolve; their
+/// results are discarded, because the batch they belong to is over.
 async fn abandon_inflight_calls(inflight: Vec<InflightCall<'_>>) {
     for call in inflight {
         call.activity.as_ref().get_ref().cancel();
@@ -172,6 +170,10 @@ async fn abandon_inflight_calls(inflight: Vec<InflightCall<'_>>) {
     }
 }
 
+/// Run one group of calls and commit their results as they finish. Calls that
+/// need an approval report it before any remote I/O and stay pending; the group
+/// parks once for all of them when the window drains, so ungated siblings finish
+/// first and a run parks once per dispatch however many calls are gated.
 async fn execute_call_group(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
@@ -181,7 +183,14 @@ async fn execute_call_group(
     let activity_ctx = ctx.clone();
     let mut pending = group.into_iter();
     let mut inflight: Vec<InflightCall<'_>> = Vec::new();
+    let mut gated = Vec::new();
     loop {
+        // An admission can land in any wait below, including the readiness wait
+        // inside `resume_call`, so this runs before anything new starts.
+        if control::tool_batch_abandoned(drive.state(), request.run_id, request.batch_id) {
+            abandon_inflight_calls(inflight).await;
+            return Ok(());
+        }
         // Topped-up window: at most MAX_CONCURRENT_TOOL_CALLS_PER_BATCH
         // activities execute at once, so one model turn cannot fan out
         // unbounded concurrent work.
@@ -195,37 +204,46 @@ async fn execute_call_group(
             ));
         }
         if inflight.is_empty() {
-            return Ok(());
+            break;
         }
-        // Race the window against client admissions: a steer or a
-        // queued run is admitted and execution continues; a cancel that
-        // ends this batch abandons every in-flight call.
+        // Race the window against client admissions: a steer or a queued run is
+        // admitted and execution continues; the check above then abandons every
+        // in-flight call if a cancel ended this batch.
         let ready = {
             let wait = ctx.wait_for_state(admissions::has_admissible_admissions);
             let next = first_ready_call(&mut inflight).fuse();
             pin_mut!(wait, next);
-            select! {
+            select_biased! {
                 ready = next => Some(ready),
                 _ = wait => None,
             }
         };
-        match ready {
-            Some((index, outcome)) => {
-                resume_call(ctx, drive, request, index, outcome).await?;
+        let resumed = match ready {
+            Some((index, Ok(ToolInvokeCallActivityResult::NeedsApproval { subject }))) => {
+                gated.push(harness::RuntimeMcpApprovalRequest {
+                    call_id: request.calls[index].call_id.clone(),
+                    subject,
+                });
+                Ok(())
             }
-            None => {
-                admissions::drain_pending_admissions(ctx, drive).await?;
-                if !control::tool_batch_still_wanted(
-                    drive.state(),
-                    request.run_id,
-                    request.batch_id,
-                ) {
-                    abandon_inflight_calls(inflight).await;
-                    return Ok(());
-                }
-            }
+            Some((index, outcome)) => resume_call(ctx, drive, request, index, outcome).await,
+            None => admissions::drain_pending_admissions(ctx, drive)
+                .await
+                .map(|_| ()),
+        };
+        // A refusal here ends the run while the workflow lives on, so the siblings
+        // must not keep working for a run that is gone.
+        if let Err(error) = resumed {
+            abandon_inflight_calls(inflight).await;
+            return Err(error);
         }
     }
+    if gated.is_empty() {
+        return Ok(());
+    }
+    let park =
+        drive.request_runtime_mcp_approvals(request.batch_id, gated, workflow_time_ms(ctx))?;
+    drive::commit_resume(ctx, drive, park).await
 }
 
 fn start_call_activity<'a>(
@@ -246,14 +264,7 @@ fn call_activity<'a>(
     request: &ToolInvocationBatchRequest,
     index: usize,
 ) -> impl CancellableFuture<Output = CallActivityOutcome> + use<'a> {
-    let call = &request.calls[index];
-    // The harness materialized the native MCP routing facts on the call when
-    // it built this dispatch; the workflow only selects the execution class.
-    let execution = if call.remote_mcp.is_some() {
-        ToolExecutionSpec::new(harness::ToolExecutionClass::RemoteInteractive, false)
-    } else {
-        call_execution_spec(state, call.tool_id.as_ref())
-    };
+    let execution = call_execution_spec(state, request.calls[index].tool_id.as_ref());
     let call_request = request
         .call_request(index, execution)
         .expect("group indices come from this batch request");
@@ -273,7 +284,7 @@ fn call_activity<'a>(
 /// failure. A call that did not execute because its active environment is
 /// still provisioning waits for readiness in a dedicated heartbeated activity
 /// and is re-dispatched once. The drive then appends the durable
-/// per-call completion.
+/// per-call completion. The caller keeps approval outcomes for its one park.
 async fn resume_call(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
@@ -281,41 +292,20 @@ async fn resume_call(
     index: usize,
     outcome: Result<ToolInvokeCallActivityResult, ActivityExecutionError>,
 ) -> anyhow::Result<()> {
-    if let Ok(ToolInvokeCallActivityResult::NeedsApproval { subject }) = &outcome {
-        let action = drive.request_native_mcp_approvals(
-            request.batch_id,
-            vec![harness::NativeMcpApprovalRequest {
-                call_id: request.calls[index].call_id.clone(),
-                subject: subject.clone(),
-            }],
-            workflow_time_ms(ctx),
-        )?;
-        return match action {
-            CoreAgentAction::AppendEvents {
-                expected_head,
-                events,
-            } => drive::append_events(ctx, drive, expected_head, events)
-                .await
-                .map(|_| ()),
-            other => {
-                anyhow::bail!("native MCP approval request emitted unexpected action: {other:?}")
-            }
-        };
-    }
     let outcome = match outcome {
         Ok(ToolInvokeCallActivityResult::EnvironmentNotReady { environment_id }) => {
             match await_environment_then_redispatch(ctx, drive, request, index, environment_id)
                 .await?
             {
                 Some(outcome) => outcome,
-                // Preempted by a cancel: the harness recorded the call as
-                // cancelled; nothing to resume.
+                // Preempted by a cancel: the call stays pending until the next
+                // plan records it as cancelled, so there is nothing to resume.
                 None => return Ok(()),
             }
         }
         Ok(ToolInvokeCallActivityResult::Completed { result }) => CallOutcome::Completed(result),
         Ok(ToolInvokeCallActivityResult::NeedsApproval { .. }) => {
-            unreachable!("handled above")
+            unreachable!("execute_call_group keeps approval outcomes for its park")
         }
         Err(error) => CallOutcome::ActivityFailed(Box::new(error)),
     };
@@ -335,7 +325,10 @@ async fn resume_call(
         }
         CallOutcome::ActivityFailed(error) => {
             let status = boundary_call_status(&error);
-            let error_ref = put_boundary_error_blob(ctx, &format!("{error}")).await;
+            let execution =
+                call_execution_spec(drive.state(), request.calls[index].tool_id.as_ref());
+            let message = call_boundary_failure_text(execution, &error);
+            let error_ref = put_boundary_error_blob(ctx, &message).await;
             boundary_call_result(scheduled_call_id.clone(), status, error_ref)
         }
         CallOutcome::EnvironmentUnusable(message) => {
@@ -353,6 +346,21 @@ async fn resume_call(
             Ok(())
         }
         other => anyhow::bail!("tool call resume emitted unexpected action: {other:?}"),
+    }
+}
+
+/// A process call that fails at the boundary may have lost its worker, and a dead
+/// worker cannot stop the command it started, so the model has to look before it
+/// starts that command again.
+fn call_boundary_failure_text(
+    execution: ToolExecutionSpec,
+    error: &impl std::fmt::Display,
+) -> String {
+    match execution.class {
+        harness::ToolExecutionClass::Process => {
+            format!("{error}; the command may still be running; check before re-running it")
+        }
+        _ => error.to_string(),
     }
 }
 
@@ -380,7 +388,7 @@ async fn await_environment_then_redispatch(
     let run_id = request.run_id;
     let batch_id = request.batch_id;
     let still_wanted =
-        |state: &CoreAgentState| control::tool_batch_still_wanted(state, run_id, batch_id);
+        |state: &CoreAgentState| !control::tool_batch_abandoned(state, run_id, batch_id);
     let activity_ctx = ctx.clone();
     let readiness = activity_ctx.execute_activity(
         WorkflowActivities::await_environment_ready,
@@ -418,7 +426,7 @@ async fn await_environment_then_redispatch(
                 }
                 Ok(ToolInvokeCallActivityResult::NeedsApproval { .. }) => {
                     CallOutcome::EnvironmentUnusable(
-                        "unexpected native MCP approval after environment readiness wait"
+                        "unexpected runtime MCP approval after environment readiness wait"
                             .to_owned(),
                     )
                 }
@@ -450,15 +458,18 @@ pub(super) fn boundary_call_status(error: &ActivityExecutionError) -> ToolCallSt
     }
 }
 
-fn call_execution_spec(state: &CoreAgentState, tool_name: Option<&ToolName>) -> ToolExecutionSpec {
-    tool_name
+pub(super) fn call_execution_spec(
+    state: &CoreAgentState,
+    tool_id: Option<&ToolId>,
+) -> ToolExecutionSpec {
+    tool_id
         .and_then(|id| state.tooling.tools.get(id))
         .map(|tool| tool.execution)
         .unwrap_or_default()
 }
 
-fn call_parallelism(state: &CoreAgentState, tool_name: Option<&ToolName>) -> ToolParallelism {
-    tool_name
+fn call_parallelism(state: &CoreAgentState, tool_id: Option<&ToolId>) -> ToolParallelism {
+    tool_id
         .and_then(|id| state.tooling.tools.get(id))
         .map(|tool| tool.parallelism)
         .unwrap_or(ToolParallelism::Exclusive)
@@ -516,6 +527,7 @@ pub(super) fn boundary_call_result(
 
 #[cfg(test)]
 mod tests {
+    use harness::ToolName;
     use harness::{BlobRef, ToolCallId, ToolInvocationRequest, ToolSpec};
 
     use super::*;
@@ -524,7 +536,7 @@ mod tests {
         ToolInvocationRequest {
             builtin: None,
             call_id: ToolCallId::new(id),
-            tool_id: Some(ToolName::new(if name == "await" {
+            tool_id: Some(ToolId::new(if name == "await" {
                 "concurrency.await"
             } else {
                 name
@@ -554,13 +566,31 @@ mod tests {
         }
     }
 
+    #[test]
+    fn only_a_process_call_warns_that_its_command_may_still_be_running() {
+        let warning = "the command may still be running; check before re-running it";
+        let text =
+            |class| call_boundary_failure_text(ToolExecutionSpec::new(class, true), &"worker lost");
+        assert_eq!(
+            text(harness::ToolExecutionClass::Process),
+            format!("worker lost; {warning}")
+        );
+        for class in [
+            harness::ToolExecutionClass::Interactive,
+            harness::ToolExecutionClass::RemoteInteractive,
+            harness::ToolExecutionClass::Bulk,
+        ] {
+            assert_eq!(text(class), "worker lost");
+        }
+    }
+
     fn state_with_tools(specs: Vec<(&str, ToolParallelism)>) -> CoreAgentState {
         let mut state = CoreAgentState::default();
         for (name, parallelism) in specs {
             state.tooling.tools.insert(
-                ToolName::new(name),
+                ToolId::new(name),
                 ToolSpec {
-                    name: ToolName::new(name),
+                    id: ToolId::new(name),
                     kind: harness::ToolKind::Function(harness::FunctionToolSpec {
                         description_ref: None,
                         input_schema_ref: BlobRef::from_bytes(b"{}"),
@@ -576,16 +606,87 @@ mod tests {
         state
     }
 
+    fn workflow_call(name: &str, id: &str) -> ToolInvocationRequest {
+        let tool = ToolSpec {
+            id: ToolId::new(name),
+            kind: harness::ToolKind::Function(harness::FunctionToolSpec {
+                description_ref: None,
+                input_schema_ref: BlobRef::from_bytes(b"{}"),
+                output_schema_ref: None,
+                strict: None,
+                provider_options_ref: None,
+            }),
+            parallelism: ToolParallelism::Exclusive,
+            execution: ToolExecutionSpec::default(),
+        };
+        let definition = harness::WorkflowToolDefinition {
+            workflow_tool_id: harness::WorkflowToolId::new(name),
+            schema_revision: 1,
+            semantic_type: format!("test.{name}.v1"),
+            tool,
+        };
+        ToolInvocationRequest {
+            workflow_tool: Some(harness::WorkflowToolCallRuntime::v1(
+                harness::WorkflowToolBinding::admit(
+                    uuid::Uuid::from_u128(7),
+                    definition,
+                    harness::WorkflowToolTarget::Bound {
+                        receiver: harness::WorkflowEndpointRef {
+                            workflow_id: format!("receiver-{name}"),
+                            workflow_kind: "test.worker".to_owned(),
+                        },
+                        dispatch: harness::BoundWorkflowToolDispatch::Push,
+                    },
+                    harness::WorkflowToolCompletion::Accepted,
+                )
+                .expect("test binding"),
+                0,
+            )),
+            ..call(name, id)
+        }
+    }
+
     #[test]
-    fn await_and_workflow_tool_batches_execute_as_unit() {
-        assert!(batch_requires_unit_execution(&request_with(vec![
+    fn ordinary_calls_run_first_and_the_rest_waits_for_the_batch_activity() {
+        let state = state_with_tools(vec![
+            ("read_file", ToolParallelism::ParallelSafe),
+            ("grep", ToolParallelism::ParallelSafe),
+        ]);
+        let request = request_with(vec![
             call("read_file", "call_read"),
+            workflow_call("agent_spawn", "call_spawn"),
+            call("grep", "call_grep"),
             call("await", "call_await"),
-        ])));
-        assert!(!batch_requires_unit_execution(&request_with(vec![call(
-            "read_file",
-            "call_read"
-        )])));
+            call("write_file", "call_write"),
+        ]);
+        assert_eq!(
+            execution_groups(&state, &request),
+            vec![vec![0, 2], vec![4]]
+        );
+        // Calls run by index into the whole dispatch, so sibling rules still see
+        // the calls that wait.
+        assert_eq!(
+            request
+                .call_request(0, ToolExecutionSpec::default())
+                .expect("first call")
+                .sibling_tool_ids,
+            ["agent_spawn", "concurrency.await", "grep", "write_file"].map(ToolId::new)
+        );
+    }
+
+    #[test]
+    fn a_dispatch_of_only_await_and_workflow_tools_has_no_per_call_groups() {
+        let state = state_with_tools(Vec::new());
+        assert!(
+            execution_groups(
+                &state,
+                &request_with(vec![
+                    workflow_call("agent_spawn", "call_spawn"),
+                    call("await", "call_await"),
+                ])
+            )
+            .is_empty()
+        );
     }
 
     #[test]

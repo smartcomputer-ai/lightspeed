@@ -13,8 +13,8 @@ use serde_json::json;
 use std::{sync::atomic::Ordering, time::Duration};
 use support::live::{LIVE_TEST_LOCK, live_universe_id, require_storage_live_env};
 use temporal_workflow::{
-    AgentSessionWorkflow, CloseCodeToolScopeRequest, CodeToolCallStatus, CodeToolRejectionKind,
-    InvokeCodeToolRequest, compose_workflow_id,
+    AgentSessionWorkflow, CloseCodeToolScopeRequest, CodeToolCallOutcomeStatus,
+    CodeToolRejectionKind, InvokeCodeToolRequest, compose_workflow_id,
 };
 use temporalio_client::WorkflowStartUpdateOptions;
 
@@ -71,7 +71,7 @@ async fn code_tool_updates_execute_parallel_dependent_joined_and_submit_wait_cal
             fixture.bridge.invoke(fixture.request("sleep-b", "sleep", json!({"ms": 500})).await?, Default::default()),
         )?;
         let (first, second) = (first?, second?);
-        assert_eq!(first.status, CodeToolCallStatus::Succeeded);
+        assert_eq!(first.status, CodeToolCallOutcomeStatus::Succeeded);
         assert_eq!(first, fixture.bridge.invoke(first_request.clone(), Default::default()).await??);
         let conflict = InvokeCodeToolRequest { arguments_ref: fixture.store.put_bytes(b"{\"ms\":1}".to_vec()).await?, ..first_request };
         assert_eq!(fixture.bridge.invoke(conflict, Default::default()).await?.unwrap_err().kind, CodeToolRejectionKind::Conflict);
@@ -98,24 +98,24 @@ async fn code_tool_updates_execute_parallel_dependent_joined_and_submit_wait_cal
         };
         tokio::try_join!(joined_calls, resolve_joined)?;
         let submitted = fixture.invoke("submit", SUBMIT, json!({})).await?;
-        assert_eq!(submitted.status, CodeToolCallStatus::Succeeded);
+        assert_eq!(submitted.status, CodeToolCallOutcomeStatus::Succeeded);
         let child = fixture.invocation(SUBMIT).await?;
         let promise = child.completion_promises.as_ref().unwrap()[harness::REPLY_COMPLETION_KEY].as_str();
         let wait = fixture.invoke("await-submitted", "await", json!({"promises":[promise],"mode":"all","timeout_ms":5000}));
         let reply = async {
             support::live::wait_until("code tool submitted wait", Duration::from_secs(10), async || {
-                Ok(fixture.report().await?.calls.get("await-submitted").is_some_and(|call| call.status == CodeToolCallStatus::Waiting))
+                Ok(fixture.report().await?.calls.get("await-submitted").is_some_and(|call| call.status == CodeToolCallOutcomeStatus::Waiting))
             }).await?;
             fixture.resolve_value(SUBMIT, json!({"submitted":"done"})).await
         };
         let (waited, ()) = tokio::try_join!(wait, reply)?;
         assert_eq!(fixture.value(&waited).await?["results"][0]["status"], "resolved");
         let malformed = fixture.invoke("invalid-await", "await", json!({"promises":["promise_999999999"],"mode":"all","timeout_ms":1000})).await?;
-        assert_eq!(malformed.status, CodeToolCallStatus::Failed, "a bad promise wait fails only its code tool call");
+        assert_eq!(malformed.status, CodeToolCallOutcomeStatus::Failed, "a bad promise wait fails only its code tool call");
         let denied = InvokeCodeToolRequest { execution_id: fixture.execution_id.clone(), request_id: "guessed".to_owned(),
             binding_id: "guessed-admin-tool".to_owned(), arguments_ref: BlobRef::from_bytes(b"{}") };
         assert_eq!(fixture.bridge.invoke(denied, Default::default()).await?.unwrap_err().kind, CodeToolRejectionKind::PermissionDenied);
-        let report = fixture.bridge.close_scope(CloseCodeToolScopeRequest { execution_id: fixture.execution_id.clone(), cancel_pending: false }, Default::default()).await??;
+        let report = fixture.bridge.close_scope(CloseCodeToolScopeRequest { execution_id: fixture.execution_id.clone() }, Default::default()).await??;
         assert!(report.closed);
         assert_eq!(report.calls.len(), 8);
         assert!(report.calls.values().all(|call| call.status.is_terminal()));
@@ -155,7 +155,7 @@ async fn code_tool_failure_preserves_siblings_and_scope_cancellation_reports_out
                 .bridge
                 .invoke(failed_request.clone(), Default::default())
                 .await??;
-            assert_eq!(failed.status, CodeToolCallStatus::Failed);
+            assert_eq!(failed.status, CodeToolCallOutcomeStatus::Failed);
             Ok::<_, anyhow::Error>(())
         };
         let cleanup = async {
@@ -182,13 +182,13 @@ async fn code_tool_failure_preserves_siblings_and_scope_cancellation_reports_out
                         .await?
                         .calls
                         .get("failed-job")
-                        .is_some_and(|call| call.status == CodeToolCallStatus::Failed))
+                        .is_some_and(|call| call.status == CodeToolCallOutcomeStatus::Failed))
                 },
             )
             .await?;
             assert_eq!(
                 fixture.report().await?.calls["pending-agent"].status,
-                CodeToolCallStatus::Waiting,
+                CodeToolCallOutcomeStatus::Waiting,
                 "one rejection does not cancel a sibling"
             );
             fixture
@@ -196,7 +196,6 @@ async fn code_tool_failure_preserves_siblings_and_scope_cancellation_reports_out
                 .close_scope(
                     CloseCodeToolScopeRequest {
                         execution_id: fixture.execution_id.clone(),
-                        cancel_pending: true,
                     },
                     Default::default(),
                 )
@@ -205,9 +204,9 @@ async fn code_tool_failure_preserves_siblings_and_scope_cancellation_reports_out
         };
         tokio::try_join!(calls, cleanup)?;
         let recovered = abandoned.get_result(Default::default()).await??;
-        assert_eq!(recovered.status, CodeToolCallStatus::Cancelled);
+        assert_eq!(recovered.status, CodeToolCallOutcomeStatus::Cancelled);
         let report = fixture.report().await?;
-        assert!(report.closed && report.cancel_requested);
+        assert!(report.closed);
         assert_eq!(report.calls.len(), 2);
         assert_eq!(
             fixture
@@ -259,7 +258,7 @@ async fn forced_session_close_settles_code_tool_updates_and_completes_workflow()
             pending.get_result(Default::default()),
         )
         .await???;
-        assert_eq!(outcome.status, CodeToolCallStatus::Unavailable);
+        assert_eq!(outcome.status, CodeToolCallOutcomeStatus::Unavailable);
         assert!(outcome.error_ref.is_some());
         // Settling the last Update must wake the main loop to finish closing,
         // even when there is no further signal, activity, or timer to wake it.
@@ -271,7 +270,7 @@ async fn forced_session_close_settles_code_tool_updates_and_completes_workflow()
         let state = fixture.state().await?;
         assert_eq!(state.lifecycle.status, harness::CoreAgentStatus::Closed);
         let scope = &state.code_tools.scopes[&fixture.execution_id];
-        assert!(scope.closed && scope.cancel_requested);
+        assert!(scope.closed);
         assert!(scope.calls.values().all(|call| call.status.is_terminal()));
         assert_eq!(fixture.generations.load(Ordering::SeqCst), 1);
         Ok(())

@@ -9,14 +9,18 @@ pub struct RunStartParams {
     /// `session/runs/start` with the same submission id and the same
     /// source/config/terminal notification returns the original run instead
     /// of starting a second one; reusing a submission id with any of those
-    /// inputs changed is rejected.
+    /// inputs changed is rejected. The session recognizes it against queued and
+    /// active runs and its most recent 256 terminal runs, so a retry older than
+    /// that starts a new run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submission_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<RunStartConfig>,
-    /// Request an at-least-once terminal emission to the managed session's
-    /// immutable lifecycle controller. The destination is derived by the
-    /// gateway; callers supply only the controller's opaque dedup token.
+    /// Request a terminal emission to the session's immutable
+    /// lifecycle controller. It is delivered to a running controller, which may
+    /// hear it more than once; others reconcile through `session/runs/read`.
+    /// The destination is derived by the gateway; callers supply only the
+    /// controller's opaque dedup token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notify_on_terminal: Option<RunTerminalNotificationInput>,
 }
@@ -49,12 +53,11 @@ pub struct RunReadParams {
     pub run_id: RunId,
 }
 
-/// The complete projection of one run. Run projection is stateful across the
-/// run's events, so partial pages would silently lose cross-event state; a
-/// run whose interval exceeds the server's detail ceiling is rejected with a
-/// typed error and remains readable through `session/events/read`. Inline
-/// message and reasoning text is complete. Tool and catalog previews are bounded;
-/// their full bodies remain available through `blobs/read`.
+/// The projection of one run. A run past the server's detail limit keeps its opening
+/// events, so its input renders, and its most recent whole turns, and reports the gap
+/// in `earlierEventsOmitted`; `session/events/read` has the rest. Inline message and
+/// reasoning text is complete. Tool and catalog previews are bounded; their full bodies
+/// remain available through `blobs/read`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunReadResponse {
@@ -82,6 +85,7 @@ pub enum RunStartSource {
 pub struct RunStartConfig {
     /// Optional model override within the session's provider identity and API
     /// kind. Changing either requires a new session, even before the first run.
+    /// Any model on that route is allowed, whatever context the session retains.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -93,16 +97,15 @@ pub struct RunStartConfig {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunLimitsConfig {
+    /// Model turns this run may start, at least 1, in place of the session's `maxTurns`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tool_rounds: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunStartResponse {
-    pub run: RunView,
+    pub run: RunSummaryView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -115,7 +118,7 @@ pub struct RunCancelParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunCancelResponse {
-    pub run: RunView,
+    pub run: RunSummaryView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -146,7 +149,7 @@ pub enum ApprovalDecisionKind {
 #[serde(rename_all = "camelCase")]
 pub struct RunApprovalsDecideResponse {
     pub results: Vec<ApprovalDecisionResult>,
-    pub run: RunView,
+    pub run: RunSummaryView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -163,6 +166,9 @@ pub struct ApprovalDecisionResult {
 pub enum ApprovalDecisionStatus {
     Decided,
     Failed,
+    /// The wait for this decision expired while the session may still be holding it.
+    /// It can still apply, or lose to another decision. Read the run to learn which.
+    Pending,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -183,20 +189,29 @@ pub enum ApprovalDecisionFailureKind {
     Duplicate,
     InvalidNote,
     Rejected,
+    /// The decision's outcome could not be read, and the session may be failing.
+    Internal,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunSteerParams {
     pub session_id: SessionId,
-    /// The run to steer. Must be the session's current active run (running
-    /// or parked on an await); a finished or cancelling run is rejected so a
-    /// late steer never lands on the next run.
+    /// The run to steer. Must be the session's current active run, running or
+    /// parked; a queued, finished or cancelling run is rejected so a late steer
+    /// never lands on the next run.
     pub run_id: RunId,
     /// Steering input, same vocabulary as run input. Delivered to the model
     /// at the next turn boundary of the run; it does not interrupt the
-    /// in-flight turn or wake a parked await.
+    /// in-flight turn or wake a parked run. If the run fails before that
+    /// boundary, the input still enters context and the next run sees it as
+    /// history. Cancelling the run drops it.
     pub items: Vec<InputItem>,
+    /// Client-supplied idempotency key. Retrying with the same id and the same items
+    /// lands the steering once and returns its original id; reusing the id with other
+    /// items is rejected. The run recognizes it among its most recent steering batches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submission_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -204,5 +219,5 @@ pub struct RunSteerParams {
 pub struct RunSteerResponse {
     /// Identifier of the accepted steering batch within the session.
     pub steering_id: String,
-    pub run: RunView,
+    pub run: RunSummaryView,
 }

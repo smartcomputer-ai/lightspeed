@@ -20,7 +20,7 @@ export function FeatureGate({ feature, children }: { feature: FeatureKey; childr
   return (
     <div className="p-6">
       <EmptyState icon={PowerOff} title={`${label} are turned off in this universe`}>
-        {permissions.can("manage_access") ? (
+        {permissions.can("manageAccess") ? (
           <>
             An admin turned them off.{" "}
             <Link to={`/u/${slug}/settings/general`} className="font-medium text-foreground underline">

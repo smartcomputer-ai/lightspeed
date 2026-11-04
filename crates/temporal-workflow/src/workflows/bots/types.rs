@@ -4,13 +4,13 @@
 
 use api::{BotEventOutcome, BotId, BotTriggerId, LlmUsageView, ProfileId};
 use bots::{BotDeliveryPhase, BotEvent};
-use harness::WorkflowEndpointRef;
+use harness::{RunStatus, WorkflowEndpointRef};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 // ── Sessions ────────────────────────────────────────────────────────────────
 
-/// Create or reconcile one of the bot's managed sessions: the profile and
+/// Create or reconcile one of the bot's controlled sessions: the profile and
 /// brief applied, the `bot_*` tools (and any carried receiver-bound tools)
 /// declared, the controller recorded as lifecycle controller.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +60,10 @@ pub enum BotEnsureSessionResult {
     /// The session cannot take the profile's new config (its provider api
     /// kind is pinned for its lifetime); the controller rotates.
     ProfileUnapplicable { message: String },
+    /// The session is closed, or open with its workflow execution stopped. Nothing
+    /// on this path restarts it, so the controller moves the conversation to a
+    /// successor.
+    SessionDead { message: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,8 +88,40 @@ pub enum BotSessionStatus {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         run_id: Option<String>,
     },
+    /// The session's workflow execution is gone while the session is still
+    /// open: nothing will serve a run or end the one it holds.
+    Failed,
     Closed,
     Missing,
+}
+
+impl BotSessionStatus {
+    /// Nothing will serve a run on this session or end the one it holds, whatever
+    /// the reason. The controller moves on to the session's next generation.
+    pub fn is_dead(&self) -> bool {
+        matches!(self, Self::Failed | Self::Closed | Self::Missing)
+    }
+}
+
+/// Which of these sessions are dead.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BotReadDeadSessionsRequest {
+    pub universe_id: Uuid,
+    pub session_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BotDeadSession {
+    pub session_id: String,
+    pub status: BotSessionStatus,
+}
+
+/// Only the dead sessions: one that could not be read counts as alive until the
+/// next look.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BotReadDeadSessionsResult {
+    #[serde(default)]
+    pub dead: Vec<BotDeadSession>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,12 +156,19 @@ pub struct BotStartRunRequest {
 pub enum BotStartRunResult {
     Started {
         run_id: String,
+        /// Set when an earlier attempt's run has already ended, so no terminal
+        /// will reach the lane that retried it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        finished: Option<RunStatus>,
     },
-    /// The session refused the run (not open, busy race); the lane retries
-    /// later.
-    Rejected {
-        message: String,
-    },
+    /// Not now: the session is holding the start or refused it for a reason
+    /// that can clear. The delivery goes back to the queue with a backoff.
+    Retry { message: String },
+    /// No retry changes the answer; the delivery ends `runFailed`.
+    Refused { message: String },
+    /// The session is open but its workflow execution has stopped, and no run
+    /// started. The delivery can still go to a successor session.
+    SessionDead { message: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,7 +203,8 @@ pub struct BotCloseSessionRequest {
     pub universe_id: Uuid,
     pub session_id: String,
     /// Force-close even while busy (teardown); otherwise a busy session is
-    /// left alone and `closed` is false.
+    /// left alone and `closed` is false. A session whose workflow has stopped
+    /// closes with force either way, because nothing else can close it.
     #[serde(default)]
     pub force: bool,
 }
@@ -199,7 +243,7 @@ pub struct BotReadToolInvocationsRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BotToolInvocationRef {
     pub invocation_id: String,
-    pub tool_id: String,
+    pub workflow_tool_id: String,
     pub run_id: String,
     pub arguments_ref: String,
 }

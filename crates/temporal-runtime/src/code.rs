@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use temporal_workflow::{
     CloseCodeToolScopeRequest, CodeExecutionDescriptor, CodeExecutionLimits, CodeToolCallOutcome,
-    CodeToolCallStatus, CodeToolClient, CodeToolScopeReport, CodeToolScopeReportRequest,
-    InvokeCodeToolRequest,
+    CodeToolCallOutcomeStatus, CodeToolClient, CodeToolRejectionKind, CodeToolScopeReport,
+    CodeToolScopeReportRequest, InvokeCodeToolRequest,
 };
 use temporalio_client::Client;
 use tokio::{sync::Semaphore, time::Instant};
@@ -422,7 +422,6 @@ impl CodeRunner {
                     .close_scope(
                         CloseCodeToolScopeRequest {
                             execution_id: execution_id.to_owned(),
-                            cancel_pending: true,
                         },
                         Default::default(),
                     )
@@ -438,18 +437,23 @@ impl CodeRunner {
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 // Update replies are cached; only queries provide fresh progress.
-                latest = Some(
-                    code_tools
-                        .report(
-                            CodeToolScopeReportRequest {
-                                execution_id: execution_id.to_owned(),
-                            },
-                            Default::default(),
-                        )
-                        .await
-                        .map_err(|error| error.to_string())?
-                        .map_err(|error| error.to_string())?,
-                );
+                let report = code_tools
+                    .report(
+                        CodeToolScopeReportRequest {
+                            execution_id: execution_id.to_owned(),
+                        },
+                        Default::default(),
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                match report {
+                    Ok(scope) => latest = Some(scope),
+                    // A scope only leaves state once every call in it has an outcome.
+                    Err(error) if error.kind == CodeToolRejectionKind::UnknownScope => {
+                        return Ok(());
+                    }
+                    Err(error) => return Err(error.to_string()),
+                }
             }
         };
         let error = match tokio::time::timeout(self.cleanup_timeout, cleanup).await {
@@ -562,13 +566,13 @@ async fn materialize(
         }
         None => None,
     };
-    if outcome.status == CodeToolCallStatus::Succeeded {
+    if outcome.status == CodeToolCallOutcomeStatus::Succeeded {
         return Ok(value.unwrap_or(Value::Null));
     }
     let kind = match outcome.status {
-        CodeToolCallStatus::Failed => "tool_failed",
-        CodeToolCallStatus::Cancelled => "tool_cancelled",
-        CodeToolCallStatus::Unavailable => "tool_unavailable",
+        CodeToolCallOutcomeStatus::Failed => "tool_failed",
+        CodeToolCallOutcomeStatus::Cancelled => "tool_cancelled",
+        CodeToolCallOutcomeStatus::Unavailable => "tool_unavailable",
         _ => "invalid_output",
     };
     let message = match &outcome.error_ref {
@@ -641,7 +645,6 @@ mod tests {
         CodeToolScopeReport {
             execution_id: "code-test".into(),
             closed: false,
-            cancel_requested: false,
             bindings: [
                 ("binding-a".into(), ToolName::new("mcp.read")),
                 ("binding-b".into(), ToolName::new("timer_sleep")),
@@ -652,7 +655,7 @@ mod tests {
     }
 
     fn outcome(
-        status: CodeToolCallStatus,
+        status: CodeToolCallOutcomeStatus,
         output_ref: Option<BlobRef>,
         error_ref: Option<BlobRef>,
     ) -> CodeToolCallOutcome {
@@ -701,10 +704,18 @@ mod tests {
             .put_bytes(serde_json::to_vec(&envelope).unwrap())
             .await
             .unwrap();
-        let success = outcome(CodeToolCallStatus::Succeeded, Some(reference.clone()), None);
+        let success = outcome(
+            CodeToolCallOutcomeStatus::Succeeded,
+            Some(reference.clone()),
+            None,
+        );
         assert_eq!(materialize(&blobs, &success, 4096).await.unwrap(), envelope);
         let error_ref = blobs.put_bytes(b"request failed".to_vec()).await.unwrap();
-        let failure = outcome(CodeToolCallStatus::Failed, Some(reference), Some(error_ref));
+        let failure = outcome(
+            CodeToolCallOutcomeStatus::Failed,
+            Some(reference),
+            Some(error_ref),
+        );
         assert_eq!(
             materialize(&blobs, &failure, 4096).await.unwrap_err(),
             HostError {
@@ -719,17 +730,17 @@ mod tests {
     async fn oversized_and_invalid_json_results_fail_at_the_guest_boundary() {
         let blobs = InMemoryBlobStore::new();
         let reference = blobs.put_bytes(b"{\"value\":123}".to_vec()).await.unwrap();
-        let success = outcome(CodeToolCallStatus::Succeeded, Some(reference), None);
+        let success = outcome(CodeToolCallOutcomeStatus::Succeeded, Some(reference), None);
         assert_eq!(
             materialize(&blobs, &success, 4).await.unwrap_err().kind,
             "payload_too_large"
         );
-        assert_eq!(success.status, CodeToolCallStatus::Succeeded);
+        assert_eq!(success.status, CodeToolCallOutcomeStatus::Succeeded);
         let invalid = blobs.put_bytes(b"not json".to_vec()).await.unwrap();
         assert_eq!(
             materialize(
                 &blobs,
-                &outcome(CodeToolCallStatus::Succeeded, Some(invalid), None),
+                &outcome(CodeToolCallOutcomeStatus::Succeeded, Some(invalid), None),
                 1024
             )
             .await

@@ -25,7 +25,8 @@ pub struct RunProcessArgs {
     /// Return with a handle after this long if the process is still
     /// running. Absent waits up to the deployment ceiling.
     pub yield_ms: Option<u64>,
-    /// Kill deadline. Absent means the call never kills a running process.
+    /// Kill deadline. Absent means a command whose handle came back is never
+    /// killed by the call.
     pub timeout_ms: Option<u64>,
     pub max_output_bytes: Option<u64>,
 }

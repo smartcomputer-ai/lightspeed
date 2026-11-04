@@ -11,9 +11,9 @@ describe("bot session profile saves", () => {
       description: "shared profile",
       config: { features: { environments: { environments: [{ environmentId: "old-box", access: "read", default: true }] } } },
       metadata: { owner: "ops" },
+      retention: { deleteAfterCloseMs: 86_400_000 },
     }, {
       config: { features: { environments: { environments: [{ environmentId: "new-box", access: "jobs", default: true }] } } },
-      retention: { deleteAfterCloseMs: 86_400_000 },
     })).toEqual({
       profileId: "triage",
       revision: 4,

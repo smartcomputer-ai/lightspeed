@@ -9,7 +9,7 @@ use temporalio_sdk::activities::ActivityError;
 use crate::worker::LlmGenerateActivityRequest;
 
 use super::{
-    common::{activity_error, failed_generation_result_from_error, transient_provider_failure},
+    common::{failed_generation_result_from_error, transient_llm_failure, unrecorded_llm_failure},
     state::LlmActivityDeps,
 };
 
@@ -34,7 +34,7 @@ pub(super) async fn generate(
         Err(CoreAgentIoError::Retryable {
             message,
             retry_after,
-        }) => Err(transient_provider_failure(
+        }) => Err(transient_llm_failure(
             "LLM generation",
             attempt,
             message,
@@ -48,7 +48,7 @@ pub(super) async fn generate(
                 result.facts.duration_ms = Some(elapsed_ms(started));
                 result
             })
-            .map_err(activity_error),
+            .map_err(|error| unrecorded_llm_failure("LLM generation", attempt, error)),
     }
 }
 

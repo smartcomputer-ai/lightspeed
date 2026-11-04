@@ -2,6 +2,8 @@
 //! Only model generation is scripted; admission, JS, activities and reporting
 //! use production implementations and the local Temporal/PostgreSQL stack.
 
+#[path = "support/code_log.rs"]
+mod code_log;
 #[path = "support/code_media.rs"]
 mod code_media;
 mod support;
@@ -21,7 +23,7 @@ use harness::{
     BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentIoError,
     CoreAgentLlm, CoreAgentState, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
     LlmGenerationResult, LlmGenerationStatus, ObservedToolCall, PromiseResolution, SessionId,
-    ToolCallId, ToolName, WorkflowToolTarget,
+    ToolCallId, ToolName,
     storage::{BlobStore, ReadSessionEvents, SessionStore},
 };
 use serde_json::{Value, json};
@@ -264,7 +266,7 @@ impl Fixture {
                 })
                 .await?;
             for entry in page.entries {
-                if entry.event.kind != "lightspeed.core.tool.call_completed" {
+                if entry.event.kind != harness::event_kind::TOOL_CALL_COMPLETED {
                     continue;
                 }
                 if let harness::CoreAgentEvent::Tool(harness::ToolEvent::CallCompleted {
@@ -301,22 +303,17 @@ impl Fixture {
         }
     }
 
+    async fn log(&self) -> anyhow::Result<code_log::CodeLog> {
+        code_log::read_code_log(&self.store, &self.session_id).await
+    }
+
     async fn execution_id(&self) -> anyhow::Result<String> {
-        let state = self.state().await?;
-        let invocation = state
-            .workflow_tools
-            .start_requests
-            .values()
-            .find(|call| call.tool_id.as_str() == tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID)
-            .ok_or_else(|| anyhow::anyhow!("code tool was not started"))?;
-        let binding = &state.workflow_tools.bindings[&invocation.tool_id];
-        let WorkflowToolTarget::Start { start } = &binding.target else {
-            anyhow::bail!("code tool must start its own workflow")
-        };
-        Ok(harness::workflow_tool_execution_id(
-            &invocation.invocation_id,
-            &start.recipe_fingerprint,
-        ))
+        self.log()
+            .await?
+            .execution_ids
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("code tool was not started"))
     }
 
     async fn snapshot(&self) -> anyhow::Result<CodeExecutionSnapshot> {
@@ -392,7 +389,7 @@ impl Fixture {
                 "{name}"
             );
         }
-        let calls_before = self.state().await?.code_tools.scopes;
+        let calls_before = self.log().await?.calls_admitted;
         let attempts_before = self.probe.run_attempts.load(Ordering::SeqCst);
         WorkflowReplayer::new(
             WorkflowReplayerOptions::new()
@@ -406,7 +403,7 @@ impl Fixture {
             attempts_before
         );
         assert_eq!(
-            self.state().await?.code_tools.scopes,
+            self.log().await?.calls_admitted,
             calls_before,
             "replaying the supervisor must not redispatch any effect"
         );
@@ -502,6 +499,7 @@ where
                         code_mode: Some(feature), timers: Some(api::TimersFeature { version: api::CURRENT_FEATURE_VERSION }),
                         ..Default::default()
                     }), ..Default::default() }),
+                    integration: None,
                 }).await?;
                 let run = start_text_run(&api, &session_id, "compose the granted tools using JavaScript").await?;
                 let result = check(Fixture { client, api: api.clone(), store, session_id: session_id.clone(), run_id: run.id, generations, probe }).await;
@@ -744,11 +742,12 @@ async fn code_media_helper_accepts_existing_descriptors_and_full_references() ->
         let run = wait_for_terminal_run(&fixture.api, &fixture.session_id, &fixture.run_id).await?;
         let public = run.tool_batches.iter().flat_map(|batch| &batch.calls)
             .find(|call| call.call_id == "code-call").expect("public completed code call");
-        assert_eq!(public.attachments.len(), 4);
-        assert_eq!(public.attachments.iter().filter(|asset| asset.kind == api::ToolAttachmentKind::Media).count(), 3);
-        let download = public.attachments.iter().find(|asset| asset.kind == api::ToolAttachmentKind::File).unwrap();
-        assert_eq!(download.content_ref, BlobRef::from_bytes(&download_only).as_str());
-        assert_eq!(download.name.as_deref(), Some("download-only.pdf"));
+        assert_eq!(public.media.len(), 3);
+        let [download] = public.attachments.as_slice() else {
+            panic!("only the linked file is an attachment: {:?}", public.attachments);
+        };
+        assert_eq!(download.blob_ref, BlobRef::from_bytes(&download_only).as_str());
+        assert_eq!(download.name, "download-only.pdf");
         assert!(download.handle.starts_with("file:"));
         Ok(())
     }).await
@@ -898,7 +897,6 @@ async fn verify_selected_provider_input(
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: None,
         };
@@ -1259,7 +1257,11 @@ async fn lifecycle_receipts_retry_without_reopening_or_reexecuting_source() -> a
             assert_eq!(model["return_value"], 42);
             assert_eq!(model["output"].as_array().unwrap().len(), 1);
             assert_eq!(detail["scope"]["calls"].as_object().unwrap().len(), 1);
-            assert_eq!(fixture.state().await?.code_tools.scopes.len(), 1);
+            assert_eq!(fixture.log().await?.scopes_opened.len(), 1);
+            assert!(
+                fixture.state().await?.code_tools.scopes.is_empty(),
+                "a finished call's scope must leave reduced state"
+            );
             assert_eq!(fixture.probe.prepare_attempts.load(Ordering::SeqCst), 2);
             assert_eq!(fixture.probe.run_attempts.load(Ordering::SeqCst), 1);
             assert_eq!(fixture.probe.finalize_attempts.load(Ordering::SeqCst), 2);

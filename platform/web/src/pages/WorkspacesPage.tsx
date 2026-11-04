@@ -131,20 +131,20 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
         ) : (
           workspaceId ? (
             <DetailPrompt icon={<File className="size-10 text-muted-foreground/60" />}>
-              {permissions.can("use_resource") ? "Pick a file, or drop files and folders into this workspace." : "Pick a file."}
+              {permissions.can("useResource") ? "Pick a file, or drop files and folders into this workspace." : "Pick a file."}
             </DetailPrompt>
           ) : (
             <DetailPrompt
               icon={<FolderGit2 className="size-10 text-muted-foreground/60" />}
-              create={permissions.can("create_workspace") ? { label: "New workspace", onClick: () => setCreateOpen(true) } : undefined}
+              create={permissions.can("createWorkspace") ? { label: "New workspace", onClick: () => setCreateOpen(true) } : undefined}
             >
-              Pick a workspace{permissions.can("create_workspace") ? ", or create one" : ""}.
+              Pick a workspace{permissions.can("createWorkspace") ? ", or create one" : ""}.
             </DetailPrompt>
           )
         )}
       </section>
     </div>
-    {newFile && workspaceId && permissions.can("use_resource") && (
+    {newFile && workspaceId && permissions.can("useResource") && (
       <NewFileDialog
         key={`${workspaceId}:${newFile.parent}`}
         universeId={universe.id}
@@ -173,7 +173,7 @@ function WorkspacePane({
 }) {
   const navigate = useNavigate();
   const permissions = useActionPermissions(universeId);
-  const canCreate = permissions.can("create_workspace");
+  const canCreate = permissions.can("createWorkspace");
   const workspaces = useQuery({
     queryKey: ["workspaces", universeId],
     queryFn: () =>
@@ -319,7 +319,7 @@ function FileDetail({
 }) {
   const queryClient = useQueryClient();
   const permissions = useActionPermissions(universeId);
-  const canEditFiles = permissions.can("use_resource");
+  const canEditFiles = permissions.can("useResource");
   const tree = useQuery({
     queryKey: ["workspace-tree", universeId, workspaceId],
     queryFn: () =>

@@ -1,11 +1,11 @@
-//! Controller-facing session operations: create/reconcile a bot's managed
+//! Controller-facing session operations: create/reconcile a bot's controlled
 //! session, read status and usage, start/steer/append deliveries, close
 //! sessions and count descendants, read tool invocations and blobs.
 //!
 //! Everything goes through the universe's in-process `GatewayAgentApi` at
-//! the same boundaries the JSON-RPC methods expose (`session/managed/start`,
+//! the same boundaries the JSON-RPC methods expose (`session/start`,
 //! `session/runs/start`, `session/context/append`, ...), so a bot session is
-//! an ordinary managed session whose lifecycle controller — and the receiver
+//! an ordinary integrated session whose lifecycle controller — and the receiver
 //! of every pushed `bot_*` invocation — is the bot controller workflow.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -13,15 +13,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use api::{
     AgentApiError, AgentApiErrorKind, AgentApiService as _, AgentProfile, ContextAppendEntry,
     ContextAppendParams, ContextAppendResponse, ContextAppendStatus, EventCursor,
-    InlineAgentProfile, InputItem, ManagedSessionStartParams, ManagedSessionWorkflowToolsInput,
-    ProfileApplyParams, ProfileDocument, ProfileInstructions, ProfileSource, RunStartParams,
-    RunStartSource, RunStatus, RunSteerParams, RunTerminalNotificationInput, SessionCloseParams,
-    SessionEventKindView, SessionEventView, SessionEventsReadParams, SessionLifecycleStatus,
-    SessionListParams, SessionReadParams, SessionRenameParams, SessionStatus, SessionSummaryView,
-    SessionView, WorkflowEndpointInput, WorkflowToolDeclarationInput,
+    InlineAgentProfile, InputItem, ProfileApplyParams, ProfileDocument, ProfileInstructions,
+    ProfileSource, RunStartParams, RunStartSource, RunStatus, RunSteerParams,
+    RunTerminalNotificationInput, SessionCloseParams, SessionEventKindView, SessionEventView,
+    SessionEventsReadParams, SessionIntegrationInput, SessionLifecycleStatus, SessionListParams,
+    SessionMutationView, SessionReadParams, SessionRenameParams, SessionStartParams,
+    SessionSummaryView, SessionView, WorkflowEndpointInput, WorkflowToolDeclarationInput,
 };
 use bots::{
-    ids::appended_event_context_key,
+    ids::{appended_event_context_key, delivery_submission_id},
     tools::{
         BOT_TOOL_DESCRIPTION_NAMES, BOT_TOOL_NAMES, BOT_TOOL_SCHEMA_NAMES, BotSessionInstructions,
         bot_instructions, bot_tool_description, bot_tool_schema, bot_workflow_tool_declarations,
@@ -29,6 +29,7 @@ use bots::{
     },
     views::{delivery_input_items, steer_input_items},
 };
+use futures::StreamExt as _;
 use harness::{
     BlobRef,
     storage::{BlobStore, BlobStoreError},
@@ -38,23 +39,25 @@ use temporal_workflow::bots::*;
 use temporalio_common::error::ApplicationFailure;
 use temporalio_sdk::activities::ActivityError;
 
-use crate::gateway::GatewayAgentApi;
+use crate::gateway::{GatewayAgentApi, service::ExecutionLiveness};
 
-/// Managed-session workflow-tool declaration version bot sessions are
+/// Session integration document version bot sessions are
 /// created with (the only version the core admits).
-const MANAGED_TOOLS_VERSION: u32 = 1;
+const DECLARED_TOOLS_VERSION: u32 = 1;
 /// Page size and page bound when walking a session's sub-agent lineage.
 const DESCENDANT_PAGE_LIMIT: u32 = 200;
 const DESCENDANT_MAX_PAGES: usize = 10;
 /// Page size when pulling workflow-tool invocations from the session log.
 const EVENT_PAGE_LIMIT: u32 = 500;
+/// How many sessions one dead-session sweep reads at a time.
+const DEAD_SESSION_READ_CONCURRENCY: usize = 8;
 /// `session/context/append` accepts at most this many entries per call.
 const CONTEXT_APPEND_BATCH: usize = 64;
 
 // ── Error classification ────────────────────────────────────────────────────
 
 /// A failure no retry heals: malformed input, a missing referent.
-pub(super) fn non_retryable(message: impl std::fmt::Display) -> ActivityError {
+pub(crate) fn non_retryable(message: impl std::fmt::Display) -> ActivityError {
     ActivityError::application(ApplicationFailure::non_retryable(anyhow::anyhow!(
         "{message}"
     )))
@@ -65,18 +68,19 @@ pub(super) fn retryable(message: impl std::fmt::Display) -> ActivityError {
     ActivityError::application(ApplicationFailure::new(anyhow::anyhow!("{message}")))
 }
 
-/// Classify a core API error. Invalid requests, missing referents and
-/// refusals of the bot's own work never heal on retry: the failure is
-/// recorded at once. A rejection (a busy
+/// Classify a core API error. Invalid requests, missing referents, a stopped
+/// execution and refusals of the bot's own work never heal on retry: the
+/// failure is recorded at once. A rejection (a busy
 /// session), a conflict (a lost race), or an internal / transport failure
 /// may heal.
-pub(super) fn activity_error(context: &str, error: AgentApiError) -> ActivityError {
+pub(crate) fn activity_error(context: &str, error: AgentApiError) -> ActivityError {
     let message = format!("{context}: {error}");
     if matches!(
         error.kind,
         AgentApiErrorKind::InvalidRequest
             | AgentApiErrorKind::NotFound
             | AgentApiErrorKind::Forbidden
+            | AgentApiErrorKind::SessionExecutionStopped
     ) {
         non_retryable(message)
     } else {
@@ -85,32 +89,18 @@ pub(super) fn activity_error(context: &str, error: AgentApiError) -> ActivityErr
 }
 
 /// The session exists under another immutable tool declaration (an older
-/// `BOT_TOOLS_REVISION`, another controller): the core refuses the managed
+/// `BOT_TOOLS_REVISION`, another controller): the core refuses the declared
 /// start with a fingerprint conflict.
 fn is_declaration_mismatch(error: &AgentApiError) -> bool {
     error.kind == AgentApiErrorKind::Conflict
         && (error.message.contains("fingerprint")
-            || error
-                .message
-                .contains("managed-session controller, receiver, or tool declaration conflicts"))
+            || error.message.contains("session integration conflicts"))
 }
 
-/// The harness refused the profile's config for this session in a way no
-/// retry fixes: an invalid document, or a command rejection of the
-/// provider-compatibility kind (the rejection kind leads the message).
+/// The harness refused the profile's config for this session in a way no retry
+/// fixes. Admission classifies that refusal; a busy session stays `rejected`.
 fn is_profile_unapplicable(error: &AgentApiError) -> bool {
-    match error.kind {
-        AgentApiErrorKind::InvalidRequest => true,
-        AgentApiErrorKind::Rejected => {
-            const KIND: &str = "ProviderCompatibility";
-            error.message.starts_with(KIND)
-                && !error.message[KIND.len()..]
-                    .chars()
-                    .next()
-                    .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
-        }
-        _ => false,
-    }
+    error.kind == AgentApiErrorKind::InvalidRequest
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
@@ -169,33 +159,74 @@ pub(super) fn check_context_append(response: &ContextAppendResponse) -> Result<(
 
 /// The controller's view of a session's status.
 ///
-/// - `Idle` / `Busy` are what the projection says about an open session;
-///   `Busy` names the running run when there is one (a cancelling run still
+/// - `Idle` / `Busy` come from the session's activity while it is open; `Busy`
+///   names the run steering can land on when there is one (a cancelling run still
 ///   occupies the session but takes no steering, so it reports no id).
-/// - `NotLoaded` — a session row whose workflow has not opened it yet — reads
-///   as idle: the controller's next step (a run start) is what opens it.
-/// - `Error` reads as busy without a run: the workflow reported itself
-///   broken, so the controller waits for the next status read instead of
-///   starting work into it.
+/// - A new session, one whose workflow has not opened it yet, reads as idle: the
+///   controller's next step (a run start) is what opens it.
+/// - `Failed` is an open session whose workflow execution is gone. Waiting on it
+///   would never end, because nothing is left to finish its run.
+/// - `Closed` answers first: a closed session reads as idle activity.
 pub(super) fn session_status_from_view(session: &SessionView) -> BotSessionStatus {
-    match session.status {
-        SessionStatus::Idle | SessionStatus::NotLoaded => BotSessionStatus::Idle,
-        SessionStatus::Active => BotSessionStatus::Busy {
-            run_id: running_run(session).map(|run| run.id.clone()),
+    if session.lifecycle_status == SessionLifecycleStatus::Closed {
+        return BotSessionStatus::Closed;
+    }
+    if session.execution_failure.is_some() {
+        return BotSessionStatus::Failed;
+    }
+    match session.activity {
+        api::SessionActivity::Idle => BotSessionStatus::Idle,
+        api::SessionActivity::Working | api::SessionActivity::Waiting => BotSessionStatus::Busy {
+            run_id: steerable_run(session).map(|run| run.id.clone()),
         },
-        SessionStatus::Error => BotSessionStatus::Busy { run_id: None },
-        SessionStatus::Closed => BotSessionStatus::Closed,
     }
 }
 
-/// The run steering can land on: the session's `running` run. Read from the
-/// dedicated `active_run` fact, never the paged `runs` window — the newest
-/// page can omit the executing run behind newer queued runs.
-fn running_run(session: &SessionView) -> Option<&api::RunSummaryView> {
+/// The run steering can land on: the session's running or parked run, as the
+/// steering method itself accepts. Read from the dedicated `active_run` fact,
+/// never the paged `runs` window — the newest page can omit the executing run
+/// behind newer queued runs.
+fn steerable_run(session: &SessionView) -> Option<&api::RunSummaryView> {
     session
         .active_run
         .as_ref()
-        .filter(|run| run.status == RunStatus::Running)
+        .filter(|run| matches!(run.status, RunStatus::Running | RunStatus::Parked))
+}
+
+/// How one failed run start ends: `Ok` is the answer the lane acts on, `Err` an
+/// outage for the activity's own retries to absorb first. The submission id is
+/// the delivery's, so a retry that finds its first attempt landed gets that run
+/// back. Each attempt signals with its own correlation token.
+fn start_run_failure(error: AgentApiError) -> Result<BotStartRunResult, ActivityError> {
+    let message = error.message.clone();
+    match error.kind {
+        AgentApiErrorKind::InvalidRequest
+        | AgentApiErrorKind::NotFound
+        | AgentApiErrorKind::Forbidden
+        | AgentApiErrorKind::Unauthenticated
+        | AgentApiErrorKind::ModelDefaultUnset
+        | AgentApiErrorKind::AudioBlobTooLarge
+        | AgentApiErrorKind::ResponseTooLarge => Ok(BotStartRunResult::Refused { message }),
+        AgentApiErrorKind::SessionExecutionStopped => {
+            Ok(BotStartRunResult::SessionDead { message })
+        }
+        AgentApiErrorKind::Rejected
+        | AgentApiErrorKind::Conflict
+        | AgentApiErrorKind::EnvironmentNotReady
+        | AgentApiErrorKind::SessionBootstrapFailed
+        | AgentApiErrorKind::OperationPending => Ok(BotStartRunResult::Retry { message }),
+        AgentApiErrorKind::Internal => Err(activity_error("start run", error)),
+    }
+}
+
+/// The status of a run that has already ended.
+fn finished_status(status: RunStatus) -> Option<harness::RunStatus> {
+    match status {
+        RunStatus::Completed => Some(harness::RunStatus::Completed),
+        RunStatus::Failed => Some(harness::RunStatus::Failed),
+        RunStatus::Cancelled => Some(harness::RunStatus::Cancelled),
+        RunStatus::Queued | RunStatus::Running | RunStatus::Parked | RunStatus::Cancelling => None,
+    }
 }
 
 /// One bound-tool invocation off the session log — every bound tool, not
@@ -203,15 +234,15 @@ fn running_run(session: &SessionView) -> Option<&api::RunSummaryView> {
 /// carried tools by id.
 fn tool_invocation(event: &SessionEventView) -> Option<BotToolInvocationRef> {
     match &event.kind {
-        SessionEventKindView::WorkflowToolEmitted {
+        SessionEventKindView::WorkflowToolInvoked {
             invocation_id,
-            tool_id,
+            workflow_tool_id: tool_id,
             run_id,
             arguments_ref,
             ..
         } => Some(BotToolInvocationRef {
             invocation_id: invocation_id.clone(),
-            tool_id: tool_id.clone(),
+            workflow_tool_id: tool_id.clone(),
             run_id: run_id.clone(),
             arguments_ref: arguments_ref.clone(),
         }),
@@ -407,6 +438,35 @@ async fn read_carried_declarations(
     Ok(declarations)
 }
 
+fn bot_session_start_params(
+    request: &BotEnsureSessionRequest,
+    profile: InlineAgentProfile,
+    controller: WorkflowEndpointInput,
+    tools: Vec<WorkflowToolDeclarationInput>,
+) -> SessionStartParams {
+    SessionStartParams {
+        access: None,
+        session_id: Some(request.session_id.clone()),
+        display_name: request.display_name.clone(),
+        metadata: bot_session_metadata(&request.bot_id),
+        config: None,
+        profile: Some(ProfileSource::Inline {
+            profile: Box::new(profile),
+        }),
+        // Bot conversations deliberately do not inherit a profile's deletion
+        // schedule. Operators can write profiles while session retention is
+        // admin only, and this start runs under controller authority, which
+        // skips that check. Inheriting would let a profile edit schedule the
+        // deletion of bot conversations.
+        delete_after_close_ms: Some(None),
+        integration: Some(SessionIntegrationInput {
+            version: DECLARED_TOOLS_VERSION,
+            lifecycle_controller: Some(controller),
+            tools,
+        }),
+    }
+}
+
 pub async fn ensure_session(
     api: &GatewayAgentApi,
     request: BotEnsureSessionRequest,
@@ -453,31 +513,28 @@ pub async fn ensure_session(
     };
     let carried_tool_ids: Vec<String> = carried
         .iter()
-        .map(|declaration| declaration.definition.tool_id.clone())
+        .map(|declaration| declaration.definition.workflow_tool_id.clone())
         .collect();
     tools.extend(carried);
 
     // The display name rides on creation only: an existing session keeps
     // its label (renames are a separate, label-only operation).
-    if let Err(error) = api
-        .start_managed_session(ManagedSessionStartParams {
-            access: None,
-            session_id: Some(request.session_id.clone()),
-            display_name: request.display_name.clone(),
-            metadata: bot_session_metadata(&request.bot_id),
-            config: None,
-            profile: Some(ProfileSource::Inline {
-                profile: Box::new(resolved.clone()),
-            }),
-            delete_after_close_ms: Some(None),
-            workflow_tools: ManagedSessionWorkflowToolsInput {
-                version: MANAGED_TOOLS_VERSION,
-                lifecycle_controller: Some(controller),
-                tools,
-            },
-        })
-        .await
+    let started = api
+        .start_session(bot_session_start_params(
+            &request,
+            resolved.clone(),
+            controller,
+            tools,
+        ))
+        .await;
+    if let Some(dead) = started
+        .as_ref()
+        .ok()
+        .and_then(|outcome| closed_session_dead(&outcome.result.session))
     {
+        return Ok(dead);
+    }
+    if let Err(error) = started {
         // Declarations are immutable per session: a session created under
         // an older tool revision cannot be upgraded in place. The controller
         // rotates to a successor instead of retrying forever.
@@ -489,7 +546,13 @@ pub async fn ensure_session(
                 ),
             });
         }
-        return Err(activity_error("start managed session", error));
+        // Coming back is an operator's call, so this path never restarts it.
+        if error.kind == AgentApiErrorKind::SessionExecutionStopped {
+            return Ok(BotEnsureSessionResult::SessionDead {
+                message: error.message,
+            });
+        }
+        return Err(activity_error("start integrated session", error));
     }
 
     if request.applied_profile_revision != Some(profile.revision) {
@@ -544,6 +607,17 @@ pub async fn ensure_session(
     })
 }
 
+/// A retried start answers with the closed session it found. That is no session to
+/// run on, and applying a profile to it could only fail with no way forward, so the
+/// controller hears it as dead like one whose workflow stopped.
+fn closed_session_dead(session: &SessionMutationView) -> Option<BotEnsureSessionResult> {
+    (session.lifecycle_status == SessionLifecycleStatus::Closed).then(|| {
+        BotEnsureSessionResult::SessionDead {
+            message: format!("session {} is closed", session.id),
+        }
+    })
+}
+
 // ── Reads ───────────────────────────────────────────────────────────────────
 
 pub async fn rename_session(
@@ -567,6 +641,50 @@ pub async fn read_session_status(
         Ok(session) => Ok(session_status_from_view(&session)),
         Err(error) if error.kind == AgentApiErrorKind::NotFound => Ok(BotSessionStatus::Missing),
         Err(error) => Err(activity_error("read session", error)),
+    }
+}
+
+/// One read of every session named, for a controller checking on lanes that wait for
+/// a run's end. It reports dead sessions and nothing else. A session that cannot be
+/// read counts as alive, and the next sweep looks again.
+pub async fn read_dead_sessions(
+    api: &GatewayAgentApi,
+    request: BotReadDeadSessionsRequest,
+) -> Result<BotReadDeadSessionsResult, ActivityError> {
+    let dead = futures::stream::iter(request.session_ids)
+        .map(|session_id| async move {
+            // Run summaries say nothing here, and each one costs a blob read.
+            let read = api
+                .read_session(SessionReadParams {
+                    session_id: session_id.clone(),
+                    run_limit: Some(1),
+                })
+                .await
+                .map(|outcome| outcome.result.session);
+            if let Err(error) = &read
+                && error.kind != AgentApiErrorKind::NotFound
+            {
+                tracing::warn!(
+                    target: "temporal_runtime",
+                    session_id = %session_id,
+                    error = %error,
+                    "could not check whether a bot session is dead"
+                );
+            }
+            dead_session_status(&read).map(|status| BotDeadSession { session_id, status })
+        })
+        .buffer_unordered(DEAD_SESSION_READ_CONCURRENCY)
+        .filter_map(std::future::ready)
+        .collect()
+        .await;
+    Ok(BotReadDeadSessionsResult { dead })
+}
+
+fn dead_session_status(read: &Result<SessionView, AgentApiError>) -> Option<BotSessionStatus> {
+    match read {
+        Ok(session) => Some(session_status_from_view(session)).filter(BotSessionStatus::is_dead),
+        Err(error) if error.kind == AgentApiErrorKind::NotFound => Some(BotSessionStatus::Missing),
+        Err(_) => None,
     }
 }
 
@@ -612,19 +730,10 @@ pub async fn start_run(
         .await
     {
         Ok(response) => Ok(BotStartRunResult::Started {
+            finished: finished_status(response.result.run.status),
             run_id: response.result.run.id,
         }),
-        Err(error)
-            if matches!(
-                error.kind,
-                AgentApiErrorKind::Rejected | AgentApiErrorKind::Conflict
-            ) =>
-        {
-            Ok(BotStartRunResult::Rejected {
-                message: error.message,
-            })
-        }
-        Err(error) => Err(activity_error("start run", error)),
+        Err(error) => start_run_failure(error),
     }
 }
 
@@ -635,7 +744,7 @@ pub async fn steer_run(
     let session = read_session_view(api, &request.session_id)
         .await
         .map_err(|error| activity_error("read session", error))?;
-    let Some(active) = running_run(&session) else {
+    let Some(active) = steerable_run(&session) else {
         return Ok(BotSteerRunResult::NotRunning);
     };
     let run_id = active.id.clone();
@@ -644,6 +753,7 @@ pub async fn steer_run(
             session_id: request.session_id,
             run_id: run_id.clone(),
             items: steer_input_items(&request.events),
+            submission_id: Some(delivery_submission_id(&request.delivery_id)),
         })
         .await
     {
@@ -696,6 +806,40 @@ pub async fn append_context(
 
 // ── Close and lineage ───────────────────────────────────────────────────────
 
+/// A workflow confirmed not running can finish no work and take no close at an idle
+/// boundary. Only its log is left to close, and force is what does that. Not knowing
+/// is not confirmation.
+fn execution_confirmed_stopped(liveness: &Result<ExecutionLiveness, AgentApiError>) -> bool {
+    matches!(
+        liveness,
+        Ok(ExecutionLiveness::Terminal(_) | ExecutionLiveness::Missing)
+    )
+}
+
+/// Whether to close with force: when asked, or when the session's own workflow has
+/// stopped. A session that is merely slow to close is never forced, however many
+/// attempts it has taken, because force would cancel real work.
+async fn close_force_for(api: &GatewayAgentApi, session_id: &str, requested: bool) -> bool {
+    if requested {
+        return true;
+    }
+    let Ok(session_id) = harness::SessionId::try_new(session_id.to_owned()) else {
+        return false;
+    };
+    execution_confirmed_stopped(&api.execution_liveness(&session_id).await)
+}
+
+/// A refused close (active work, or a lost race) and one the session has taken and
+/// not finished both leave the session open for now. The caller tries again later.
+fn close_left_open(error: &AgentApiError) -> bool {
+    matches!(
+        error.kind,
+        AgentApiErrorKind::Rejected
+            | AgentApiErrorKind::Conflict
+            | AgentApiErrorKind::OperationPending
+    )
+}
+
 pub async fn close_session(
     api: &GatewayAgentApi,
     request: BotCloseSessionRequest,
@@ -712,21 +856,15 @@ pub async fn close_session(
         match api
             .close_session(SessionCloseParams {
                 session_id: child.id.clone(),
-                force,
+                force: close_force_for(api, &child.id, force).await,
             })
             .await
         {
             Ok(_) => descendants_closed += 1,
             // Gone already: nothing left to close under this id.
             Err(error) if error.kind == AgentApiErrorKind::NotFound => {}
-            // Active work (non-force) or a lost race: leave the tree alone
-            // and let the sweep try again later.
-            Err(error)
-                if matches!(
-                    error.kind,
-                    AgentApiErrorKind::Rejected | AgentApiErrorKind::Conflict
-                ) =>
-            {
+            // Leave the tree alone and let the sweep try again later.
+            Err(error) if close_left_open(&error) => {
                 return Ok(BotCloseSessionResult {
                     closed: false,
                     descendants_closed,
@@ -751,7 +889,7 @@ pub async fn close_session(
     let closed = match api
         .close_session(SessionCloseParams {
             session_id: request.session_id.clone(),
-            force,
+            force: close_force_for(api, &request.session_id, force).await,
         })
         .await
     {
@@ -761,14 +899,7 @@ pub async fn close_session(
         // No such session: there is nothing to close, and reporting it open
         // would only make the caller retry a close that can never land.
         Err(error) if error.kind == AgentApiErrorKind::NotFound => true,
-        Err(error)
-            if matches!(
-                error.kind,
-                AgentApiErrorKind::Rejected | AgentApiErrorKind::Conflict
-            ) =>
-        {
-            false
-        }
+        Err(error) if close_left_open(&error) => false,
         Err(error) => return Err(activity_error("close session", error)),
     };
     Ok(BotCloseSessionResult {
@@ -853,7 +984,21 @@ mod tests {
         WorkflowToolSpecInput, WorkflowToolTargetInput,
     };
 
-    fn session_view(status: SessionStatus, runs: Vec<api::RunSummaryView>) -> SessionView {
+    /// An open or new session at rest, or closed.
+    fn session_view(
+        lifecycle_status: SessionLifecycleStatus,
+        runs: Vec<api::RunSummaryView>,
+    ) -> SessionView {
+        let activity = if runs.iter().any(|run| {
+            matches!(
+                run.status,
+                RunStatus::Running | RunStatus::Parked | RunStatus::Cancelling
+            )
+        }) {
+            api::SessionActivity::Working
+        } else {
+            api::SessionActivity::Idle
+        };
         // Mirror the projector: the executing run is surfaced as the
         // dedicated `active_run` fact, independent of the page window.
         let active_run = runs
@@ -861,6 +1006,7 @@ mod tests {
             .find(|run| matches!(run.status, RunStatus::Running | RunStatus::Parked))
             .cloned();
         SessionView {
+            execution_failure: None,
             access: api::ResourceAccessSummary {
                 visibility: api::Visibility::Universe,
                 created_by: Some(api::Attribution::Local),
@@ -868,9 +1014,9 @@ mod tests {
             metadata: Default::default(),
             id: "bot:v1:triage".to_owned(),
             display_name: None,
-            status,
-            activity: api::SessionActivity::Idle,
-            managed: true,
+            lifecycle_status,
+            activity,
+            lifecycle_controlled: true,
             config_revision: 1,
             config: None,
             created_at_ms: 0,
@@ -886,7 +1032,7 @@ mod tests {
             active_context: Default::default(),
             active_tools: Default::default(),
             active_environment_id: None,
-            management: None,
+            integration: None,
             origin: None,
         }
     }
@@ -897,22 +1043,23 @@ mod tests {
             status,
             accepted_at_ms: 0,
             started_at_ms: None,
-            completed_at_ms: None,
+            finished_at_ms: None,
             source: RunSummarySourceView::Input {
-                content_ref: None,
+                blob_ref: None,
                 preview: None,
                 preview_truncated: false,
             },
             usage: None,
             pending_approvals: Vec::new(),
+            failure: None,
         }
     }
 
     fn declaration(name: &str, tool_id: &str) -> WorkflowToolDeclarationInput {
         WorkflowToolDeclarationInput {
             definition: WorkflowToolDefinitionInput {
-                tool_id: tool_id.to_owned(),
-                revision: 1,
+                workflow_tool_id: tool_id.to_owned(),
+                schema_revision: 1,
                 semantic_type: tool_id.to_owned(),
                 tool: WorkflowToolSpecInput {
                     name: name.to_owned(),
@@ -940,17 +1087,17 @@ mod tests {
     #[test]
     fn status_mapping_is_explicit() {
         assert_eq!(
-            session_status_from_view(&session_view(SessionStatus::Idle, Vec::new())),
+            session_status_from_view(&session_view(SessionLifecycleStatus::Open, Vec::new())),
             BotSessionStatus::Idle
         );
         assert_eq!(
-            session_status_from_view(&session_view(SessionStatus::NotLoaded, Vec::new())),
+            session_status_from_view(&session_view(SessionLifecycleStatus::New, Vec::new())),
             BotSessionStatus::Idle,
             "an unopened session is idle: the run start opens it"
         );
         assert_eq!(
             session_status_from_view(&session_view(
-                SessionStatus::Active,
+                SessionLifecycleStatus::Open,
                 vec![
                     run_view("run_1", RunStatus::Completed),
                     run_view("run_2", RunStatus::Running),
@@ -962,55 +1109,254 @@ mod tests {
         );
         assert_eq!(
             session_status_from_view(&session_view(
-                SessionStatus::Active,
+                SessionLifecycleStatus::Open,
                 vec![run_view("run_3", RunStatus::Cancelling)]
             )),
             BotSessionStatus::Busy { run_id: None },
             "a cancelling run occupies the session but takes no steering"
         );
         assert_eq!(
-            session_status_from_view(&session_view(SessionStatus::Error, Vec::new())),
-            BotSessionStatus::Busy { run_id: None }
+            session_status_from_view(&session_view(
+                SessionLifecycleStatus::Open,
+                vec![run_view("run_4", RunStatus::Parked)]
+            )),
+            BotSessionStatus::Busy {
+                run_id: Some("run_4".to_owned())
+            },
+            "a parked run takes steering, as the steering method accepts it"
+        );
+        let mut waiting = session_view(
+            SessionLifecycleStatus::Open,
+            vec![run_view("run_6", RunStatus::Parked)],
+        );
+        waiting.activity = api::SessionActivity::Waiting;
+        assert_eq!(
+            session_status_from_view(&waiting),
+            BotSessionStatus::Busy {
+                run_id: Some("run_6".to_owned())
+            },
+            "a run waiting on an approval is as busy as a working one"
         );
         assert_eq!(
-            session_status_from_view(&session_view(SessionStatus::Closed, Vec::new())),
+            session_status_from_view(&session_view(SessionLifecycleStatus::Closed, Vec::new())),
             BotSessionStatus::Closed
         );
     }
 
     #[test]
-    fn profile_unapplicable_is_invalid_or_provider_compatibility() {
-        assert!(is_profile_unapplicable(&AgentApiError::invalid_request(
-            "bad document"
-        )));
-        assert!(is_profile_unapplicable(&AgentApiError::rejected(
-            "ProviderCompatibility: model x needs anthropic_messages"
-        )));
+    fn a_dead_execution_fails_the_session_however_its_log_reads() {
+        let dead = |status, runs| {
+            let mut session = session_view(status, runs);
+            session.execution_failure = Some(api::SessionExecutionFailureView::Terminated);
+            session
+        };
+        assert_eq!(
+            session_status_from_view(&dead(SessionLifecycleStatus::Open, Vec::new())),
+            BotSessionStatus::Failed
+        );
+        assert_eq!(
+            session_status_from_view(&dead(
+                SessionLifecycleStatus::Open,
+                vec![run_view("run_5", RunStatus::Running)]
+            )),
+            BotSessionStatus::Failed
+        );
+        assert_eq!(
+            session_status_from_view(&dead(SessionLifecycleStatus::Closed, Vec::new())),
+            BotSessionStatus::Closed,
+            "a closed session answers from its lifecycle"
+        );
+    }
+
+    #[test]
+    fn a_failed_start_is_refused_retried_or_left_to_the_activity_by_kind() {
+        let refused = [
+            AgentApiError::invalid_request("document \"a.csv\" is not valid UTF-8"),
+            AgentApiError::not_found("gone"),
+            AgentApiError::forbidden(),
+        ];
+        for error in refused {
+            let message = error.message.clone();
+            assert_eq!(
+                start_run_failure(error).unwrap(),
+                BotStartRunResult::Refused { message }
+            );
+        }
+        let retried = [
+            AgentApiError::new(AgentApiErrorKind::OperationPending, "held"),
+            AgentApiError::rejected("no run may start yet"),
+            AgentApiError::conflict("configuration changed during tool preparation"),
+        ];
+        for error in retried {
+            let message = error.message.clone();
+            assert_eq!(
+                start_run_failure(error).unwrap(),
+                BotStartRunResult::Retry { message }
+            );
+        }
+        let outage = start_run_failure(AgentApiError::internal("store")).unwrap_err();
+        assert!(!is_non_retryable(&outage));
+    }
+
+    #[test]
+    fn ensuring_a_closed_session_reports_it_dead() {
+        let view = |lifecycle_status| SessionMutationView {
+            id: "bot:v1:triage:e-0123456789ab".to_owned(),
+            lifecycle_status,
+            activity: api::SessionActivity::Idle,
+            head_cursor: None,
+            config_revision: 1,
+            context_revision: 1,
+        };
+        assert_eq!(
+            closed_session_dead(&view(SessionLifecycleStatus::Closed)),
+            Some(BotEnsureSessionResult::SessionDead {
+                message: "session bot:v1:triage:e-0123456789ab is closed".to_owned()
+            })
+        );
+        for open in [SessionLifecycleStatus::Open, SessionLifecycleStatus::New] {
+            assert_eq!(closed_session_dead(&view(open)), None, "{open:?}");
+        }
+    }
+
+    #[test]
+    fn a_start_on_a_stopped_execution_reports_the_session_dead_with_its_message() {
+        let error = AgentApiError::session_execution_stopped("its workflow has stopped");
+        assert_eq!(
+            start_run_failure(error).unwrap(),
+            BotStartRunResult::SessionDead {
+                message: "its workflow has stopped".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn the_sweep_reports_dead_sessions_and_nothing_else() {
+        let read = |status| Ok(session_view(status, Vec::new()));
+        assert_eq!(
+            dead_session_status(&read(SessionLifecycleStatus::Open)),
+            None
+        );
+        assert_eq!(
+            dead_session_status(&Ok(session_view(
+                SessionLifecycleStatus::Open,
+                vec![run_view("run_1", RunStatus::Running)]
+            ))),
+            None,
+            "a live session is left to finish, however long it takes"
+        );
+        let mut stopped = session_view(SessionLifecycleStatus::Open, Vec::new());
+        stopped.execution_failure = Some(api::SessionExecutionFailureView::Failed);
+        assert_eq!(
+            dead_session_status(&Ok(stopped)),
+            Some(BotSessionStatus::Failed)
+        );
+        assert_eq!(
+            dead_session_status(&read(SessionLifecycleStatus::Closed)),
+            Some(BotSessionStatus::Closed)
+        );
+        assert_eq!(
+            dead_session_status(&Err(AgentApiError::not_found("gone"))),
+            Some(BotSessionStatus::Missing),
+            "the row may no longer exist"
+        );
+        assert_eq!(
+            dead_session_status(&Err(AgentApiError::internal("store"))),
+            None,
+            "an unread session counts as alive until the next sweep"
+        );
+    }
+
+    #[test]
+    fn only_a_workflow_confirmed_stopped_escalates_a_close_to_force() {
+        use temporalio_client::WorkflowExecutionStatus as Status;
+        for stopped in [
+            Status::Failed,
+            Status::Terminated,
+            Status::Completed,
+            Status::Canceled,
+            Status::TimedOut,
+        ] {
+            assert!(
+                execution_confirmed_stopped(&Ok(ExecutionLiveness::from_status(stopped))),
+                "{stopped:?}"
+            );
+        }
+        assert!(execution_confirmed_stopped(&Ok(ExecutionLiveness::Missing)));
+        for running in [Status::Running, Status::ContinuedAsNew] {
+            assert!(
+                !execution_confirmed_stopped(&Ok(ExecutionLiveness::from_status(running))),
+                "{running:?}"
+            );
+        }
+        assert!(
+            !execution_confirmed_stopped(&Err(AgentApiError::internal("temporal is down"))),
+            "not knowing is not confirmation"
+        );
+    }
+
+    #[test]
+    fn a_close_the_session_has_not_finished_is_tried_again_later() {
+        for open in [
+            AgentApiError::rejected("active work"),
+            AgentApiError::conflict("lost a race"),
+            AgentApiError::operation_pending("has not closed yet"),
+        ] {
+            assert!(close_left_open(&open), "{open}");
+        }
+        assert!(!close_left_open(&AgentApiError::internal("store")));
+        assert!(!close_left_open(&AgentApiError::not_found("gone")));
+    }
+
+    #[test]
+    fn a_retried_start_reports_a_run_that_already_ended() {
+        assert_eq!(finished_status(RunStatus::Running), None);
+        assert_eq!(finished_status(RunStatus::Parked), None);
+        assert_eq!(
+            finished_status(RunStatus::Failed),
+            Some(harness::RunStatus::Failed)
+        );
+    }
+
+    #[test]
+    fn profile_unapplicable_follows_the_rejection_kind_and_not_its_text() {
+        use harness::{CommandRejection, CommandRejectionKind};
+        let classified = |kind| {
+            is_profile_unapplicable(&temporal_workflow::command_rejection_to_api_error(
+                &CommandRejection::new(kind, "tool_choice references missing active tool x"),
+            ))
+        };
+        assert!(classified(CommandRejectionKind::Invalid));
+        assert!(classified(CommandRejectionKind::ProviderCompatibility));
+        assert!(!classified(CommandRejectionKind::ActiveWork));
+        assert!(!classified(CommandRejectionKind::RevisionConflict));
         assert!(!is_profile_unapplicable(&AgentApiError::rejected(
-            "ActiveWork: session config can only change while no run is active"
-        )));
-        assert!(!is_profile_unapplicable(&AgentApiError::rejected(
-            "ProviderCompatibilityX: not the kind"
-        )));
-        assert!(!is_profile_unapplicable(&AgentApiError::conflict(
-            "ProviderCompatibility: wrong kind of error"
+            "ProviderCompatibility: a message cannot change the classification"
         )));
     }
 
     #[test]
     fn declaration_mismatch_is_a_fingerprint_conflict() {
         assert!(is_declaration_mismatch(&AgentApiError::conflict(
-            "managed-session controller, receiver, or tool declaration conflicts with durable creation state"
+            "session integration conflicts with durable creation state: its controller, a receiver or a tool differs"
         )));
         assert!(is_declaration_mismatch(&AgentApiError::conflict(
             "creation fingerprint differs"
         )));
         assert!(!is_declaration_mismatch(&AgentApiError::conflict(
-            "existing standalone session cannot be reopened as a managed session"
+            "existing session has no integration and cannot gain one"
         )));
         assert!(!is_declaration_mismatch(&AgentApiError::rejected(
             "fingerprint"
         )));
+    }
+
+    #[test]
+    fn a_steered_delivery_keeps_a_valid_submission_id_whatever_its_event_id() {
+        // A manual event id takes any bytes, and a delivery of one event keeps it.
+        for delivery_id in ["has spaces/and:slashes", &"x".repeat(200)] {
+            assert!(harness::SubmissionId::try_new(delivery_submission_id(delivery_id)).is_ok());
+        }
     }
 
     fn is_non_retryable(error: &ActivityError) -> bool {
@@ -1111,15 +1457,15 @@ mod tests {
     }
 
     #[test]
-    fn tool_invocations_come_from_emitted_events_only() {
-        let emitted = SessionEventView {
+    fn tool_invocations_come_from_invoked_events_only() {
+        let invoked = SessionEventView {
             cursor: EventCursor { seq: 7 },
             session_id: "bot:v1:triage".to_owned(),
             observed_at_ms: 0,
             joins: EventJoinsView::default(),
-            kind: SessionEventKindView::WorkflowToolEmitted {
+            kind: SessionEventKindView::WorkflowToolInvoked {
                 invocation_id: "inv_1".to_owned(),
-                tool_id: "lightspeed.bots.event.resolve.v1".to_owned(),
+                workflow_tool_id: "lightspeed.bots.event.resolve.v1".to_owned(),
                 semantic_type: "lightspeed.bots.event.resolve.v1".to_owned(),
                 schema_revision: 12,
                 binding_fingerprint: "fp".to_owned(),
@@ -1132,17 +1478,17 @@ mod tests {
             },
         };
         assert_eq!(
-            tool_invocation(&emitted),
+            tool_invocation(&invoked),
             Some(BotToolInvocationRef {
                 invocation_id: "inv_1".to_owned(),
-                tool_id: "lightspeed.bots.event.resolve.v1".to_owned(),
+                workflow_tool_id: "lightspeed.bots.event.resolve.v1".to_owned(),
                 run_id: "run_4".to_owned(),
                 arguments_ref: "sha256:aa".to_owned(),
             })
         );
         let other = SessionEventView {
             kind: SessionEventKindView::SessionOpened { model: None },
-            ..emitted
+            ..invoked
         };
         assert_eq!(tool_invocation(&other), None);
     }
@@ -1159,20 +1505,64 @@ mod tests {
     }
 
     #[test]
+    fn a_bot_session_keeps_its_tree_whatever_deletion_schedule_its_profile_sets() {
+        let profile = InlineAgentProfile {
+            display_name: None,
+            description: None,
+            document: ProfileDocument {
+                metadata: Default::default(),
+                retention: Some(api::ProfileSessionRetention {
+                    delete_after_close_ms: 86_400_000,
+                }),
+                config: None,
+                instructions: None,
+            },
+        };
+        let request = BotEnsureSessionRequest {
+            universe_id: uuid::Uuid::from_u128(3),
+            bot_id: bots::BotId::new("triage"),
+            session_id: "bot:v1:triage".to_owned(),
+            session_key: None,
+            session_label: None,
+            display_name: None,
+            profile_id: api::ProfileId::new("triager"),
+            brief: None,
+            self_config: false,
+            emit: false,
+            applied_profile_revision: None,
+            controller: harness::WorkflowEndpointRef {
+                workflow_id: "u/bot-triage".to_owned(),
+                workflow_kind: "BotControllerWorkflow".to_owned(),
+            },
+            tools_ref: None,
+        };
+        let controller = WorkflowEndpointInput {
+            workflow_id: "u/bot-triage".to_owned(),
+            workflow_kind: "BotControllerWorkflow".to_owned(),
+        };
+        let params = bot_session_start_params(&request, profile, controller, Vec::new());
+        assert_eq!(
+            params.delete_after_close_ms,
+            Some(None),
+            "an explicit null beats the profile default"
+        );
+    }
+
+    #[test]
     fn pinned_provider_route_comes_from_the_session_config() {
-        let mut session = session_view(SessionStatus::Idle, Vec::new());
+        let mut session = session_view(SessionLifecycleStatus::Open, Vec::new());
         assert_eq!(pinned_provider_route(&session), None);
         session.config = Some(api::SessionConfig {
             model: Some(api::ModelConfig {
                 provider_id: "anthropic".to_owned(),
-                api_kind: "anthropic_messages".to_owned(),
+                api_kind: "anthropic:messages".to_owned(),
                 model: "claude-opus-5".to_owned(),
             }),
             ..Default::default()
         });
         assert_eq!(
             pinned_provider_route(&session),
-            Some(("anthropic", "anthropic_messages"))
+            Some(("anthropic", "anthropic:messages"))
         );
     }
 }

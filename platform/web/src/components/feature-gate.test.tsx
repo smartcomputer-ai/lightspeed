@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/permissions", async (original) => ({
   ...await original<typeof import("@/lib/permissions")>(),
-  useActionPermissions: () => ({ can: (action: string) => action !== "manage_access" || mocks.admin, isLoading: false }),
+  useActionPermissions: () => ({ can: (action: string) => action !== "manageAccess" || mocks.admin, isLoading: false }),
 }));
 vi.mock("@/lib/universes", async (original) => {
   const universe = () => ({

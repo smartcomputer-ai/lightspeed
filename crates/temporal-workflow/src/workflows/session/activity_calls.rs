@@ -96,7 +96,7 @@ pub(super) async fn call_context_compact(
                     .runs
                     .active
                     .as_ref()
-                    .is_some_and(|run| run.run_id == id && run.status == RunStatus::Active)
+                    .is_some_and(|run| run.run_id == id && run.status == RunStatus::Running)
             })
     })
     .await?;
@@ -253,6 +253,32 @@ async fn put_llm_boundary_error_blob(
     .unwrap_or_else(|_| harness::llm_runtime_boundary_failure_ref())
 }
 
+/// Store a harness refusal's text for the failed work that reports it. The failure
+/// is recorded even when this write is not; a store that is really gone stops the
+/// workflow at the append that follows.
+pub(super) async fn put_refusal_blob(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    message: &str,
+) -> BlobRef {
+    let mut bytes = message.as_bytes();
+    if bytes.len() > MAX_LLM_BOUNDARY_ERROR_BYTES {
+        let mut end = MAX_LLM_BOUNDARY_ERROR_BYTES;
+        while !message.is_char_boundary(end) {
+            end -= 1;
+        }
+        bytes = &bytes[..end];
+    }
+    ctx.execute_activity(
+        WorkflowActivities::put_blob,
+        PutBlobRequest {
+            bytes: bytes.to_vec(),
+        },
+        crate::boundary_error_blob_activity_options(),
+    )
+    .await
+    .unwrap_or_else(|_| harness::run_internal_failure_ref())
+}
+
 pub(super) async fn call_tool_prepare_promise_controls(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     request: harness::PromiseControlArgumentRequest,
@@ -342,6 +368,36 @@ mod tests {
                 },
             )),
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_activity_failure_reports_the_workers_words() {
+        let error = activity_error(activity_failure(
+            RetryState::NonRetryableFailure,
+            application_failure("anything"),
+        ));
+        assert_eq!(errors::activity_failure_message(&error), "anything failure");
+    }
+
+    #[test]
+    fn only_the_typed_failure_reaches_the_drive_as_a_data_rejection() {
+        let rejected = errors::append_failure(&activity_error(activity_failure(
+            RetryState::NonRetryableFailure,
+            application_failure(crate::SESSION_DATA_REJECTED_ERROR_TYPE),
+        )));
+        assert!(rejected.is::<errors::StoreDataRejection>());
+        assert_eq!(rejected.to_string(), "session_data_rejected failure");
+
+        for failure in [
+            application_failure("ExpectedHeadMismatch"),
+            timeout_failure(TimeoutType::StartToClose, None),
+        ] {
+            let fatal = errors::append_failure(&activity_error(activity_failure(
+                RetryState::NonRetryableFailure,
+                failure,
+            )));
+            assert!(!fatal.is::<errors::StoreDataRejection>(), "{fatal}");
         }
     }
 

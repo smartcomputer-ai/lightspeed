@@ -119,7 +119,7 @@ export function setupRoutes(ctx: AppContext) {
         return c.json({ error: error.message }, 501);
       }
       if (error instanceof LightspeedRpcError) {
-        const status = error.kind === "conflict" ? 409 : error.kind === "not_found" ? 404 : 502;
+        const status = error.kind === "conflict" ? 409 : error.kind === "notFound" ? 404 : 502;
         return c.json({ error: `engine error: ${error.message}` }, status);
       }
       return c.json({ error: safeErrorMessage(error) }, 502);
@@ -402,7 +402,7 @@ export async function ensureMcpServer(
     serverUrl: mcpUrl,
     defaultServerLabel: "configurator",
     description: "Configure and operate this Lightspeed universe through its generated API.",
-    execution: "native",
+    execution: "runtime",
     exposure: "search",
     approval: "never",
     allowPrivateNetwork,
@@ -484,7 +484,7 @@ async function readProfile(client: LightspeedClient, profileId: string) {
 }
 
 function isNotFound(error: unknown): boolean {
-  return error instanceof LightspeedRpcError && error.kind === "not_found";
+  return error instanceof LightspeedRpcError && error.kind === "notFound";
 }
 
 async function persistState(

@@ -16,13 +16,13 @@ pub const METHOD_INITIALIZE: &str = "initialize";
 // ── Sessions: lifecycle ─────────────────────────────────────────────────────
 
 pub const METHOD_SESSION_START: &str = "session/start";
-pub const METHOD_SESSION_MANAGED_START: &str = "session/managed/start";
 pub const METHOD_SESSION_READ: &str = "session/read";
 pub const METHOD_SESSION_LIST: &str = "session/list";
 pub const METHOD_SESSION_CONFIG_PUT: &str = "session/config/put";
 pub const METHOD_SESSION_RENAME: &str = "session/rename";
 pub const METHOD_SESSION_METADATA_PUT: &str = "session/metadata/put";
 pub const METHOD_SESSION_RETENTION_PUT: &str = "session/retention/put";
+pub const METHOD_SESSION_RESTART: &str = "session/restart";
 pub const METHOD_SESSION_CLOSE: &str = "session/close";
 pub const METHOD_SESSION_DELETE: &str = "session/delete";
 pub const METHOD_SESSION_SHARE: &str = "session/share";
@@ -177,7 +177,6 @@ pub const METHOD_CHANNELS_CONVERSATIONS_READ: &str = "channels/conversations/rea
 // ── Notifications ───────────────────────────────────────────────────────────
 
 pub const NOTIFY_SESSION_STARTED: &str = "session/started";
-pub const NOTIFY_SESSION_STATUS_CHANGED: &str = "session/status/changed";
 pub const NOTIFY_SESSION_EVENT: &str = "session/event";
 pub const NOTIFY_SESSION_RUNS_STARTED: &str = "session/runs/started";
 pub const NOTIFY_SESSION_RUNS_COMPLETED: &str = "session/runs/completed";

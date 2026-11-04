@@ -1,8 +1,8 @@
 //! Code-owned definitions resolved from admitted logical identities.
 
 use harness::{
-    BuiltinToolSpec, ProviderApiKind, ToolExecutionSpec, ToolKind, ToolName, ToolParallelism,
-    ToolSpec,
+    BuiltinToolSpec, ProviderApiKind, ToolExecutionSpec, ToolId, ToolKind, ToolName,
+    ToolParallelism, ToolSpec,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -75,7 +75,7 @@ pub fn register(
     execution: ToolExecutionSpec,
 ) -> ToolSpec {
     ToolSpec {
-        name: ToolName::new(id),
+        id: ToolId::new(id),
         kind: ToolKind::Builtin(BuiltinToolSpec {
             settings: serde_json::to_value(settings).expect("built-in settings are serializable"),
         }),
@@ -85,7 +85,7 @@ pub fn register(
 }
 
 pub fn resolve(
-    id: &ToolName,
+    id: &ToolId,
     spec: &BuiltinToolSpec,
     target: &ToolTarget,
 ) -> ToolResult<Vec<ResolvedBuiltin>> {
@@ -180,7 +180,7 @@ pub fn resolve(
         "code.execute" => crate::code::code_execute_tool_definition()?,
         "subagent.run" => subagent_tool_definition(SubagentToolKind::Run)?,
         "subagent.spawn" => subagent_tool_definition(SubagentToolKind::Spawn)?,
-        "mcp.find_tools" => FunctionDefinition::new(
+        harness::MCP_FIND_TOOLS_TOOL_ID => FunctionDefinition::new(
             "mcp_find_tools",
             format!(
                 "Browse, search, or load full definitions for live MCP tools. Browse with no query or names; search with query (tool names, descriptions, and argument names are indexed); load full definitions with server plus up to five names. Browse and search are byte-paged and may truncate oversized hits; use server plus names when a hit asks for its full definition. Available servers: {}",
@@ -197,7 +197,7 @@ pub fn resolve(
                 "additionalProperties": false
             }),
         ),
-        "mcp.call" => FunctionDefinition::new(
+        harness::MCP_CALL_TOOL_ID => FunctionDefinition::new(
             "mcp_call",
             format!(
                 "Call a tool found on a live MCP server. Available servers: {}",
@@ -237,7 +237,7 @@ pub fn resolve(
     }])
 }
 
-fn settings_from_spec(id: &ToolName, spec: &BuiltinToolSpec) -> ToolResult<BuiltinSettings> {
+fn settings_from_spec(id: &ToolId, spec: &BuiltinToolSpec) -> ToolResult<BuiltinSettings> {
     if spec.settings.is_null() {
         Ok(BuiltinSettings::default())
     } else {
@@ -251,7 +251,7 @@ fn settings_from_spec(id: &ToolName, spec: &BuiltinToolSpec) -> ToolResult<Built
 /// provider responses must still resolve identities against the advertised
 /// catalog; execution must not make historical names available to new calls.
 pub(crate) fn resolve_call_binding(
-    id: &ToolName,
+    id: &ToolId,
     spec: &BuiltinToolSpec,
     target: &ToolTarget,
     exposed_name: &ToolName,
@@ -298,7 +298,7 @@ pub(crate) fn resolve_call_binding(
     })
 }
 
-fn unknown(id: &ToolName) -> ToolError {
+fn unknown(id: &ToolId) -> ToolError {
     ToolError::UnsupportedCapability {
         message: format!("unknown built-in tool {id}"),
     }
@@ -336,7 +336,7 @@ mod tests {
                 ("env.edit_file", "edit_file"),
                 ("vfs.edit_file", "vfs_edit_file"),
             ] {
-                let id = ToolName::new(id);
+                let id = ToolId::new(id);
                 let name = ToolName::new(name);
                 assert!(resolve(&id, &spec, &target).unwrap().is_empty());
                 let binding = resolve_call_binding(&id, &spec, &target, &name).unwrap();
@@ -363,7 +363,7 @@ mod tests {
             ("env.apply_patch", "apply_patch"),
             ("vfs.apply_patch", "vfs_apply_patch"),
         ] {
-            let id = ToolName::new(id);
+            let id = ToolId::new(id);
             let name = ToolName::new(name);
             let binding = resolve_call_binding(&id, &spec, &target, &name).unwrap();
             assert_eq!(binding.logical_id, id.as_str());
@@ -384,7 +384,7 @@ mod tests {
             ("env.edit_file", "apply_patch"),
         ] {
             assert!(matches!(
-                resolve_call_binding(&ToolName::new(id), &spec, &target, &ToolName::new(name)),
+                resolve_call_binding(&ToolId::new(id), &spec, &target, &ToolName::new(name)),
                 Err(ToolError::UnsupportedCapability { .. })
             ));
         }
@@ -401,7 +401,7 @@ mod tests {
         ] {
             assert!(matches!(
                 resolve_call_binding(
-                    &ToolName::new("env.run_process"),
+                    &ToolId::new("env.run_process"),
                     &BuiltinToolSpec { settings },
                     &target,
                     &ToolName::new("run_process")
@@ -420,25 +420,21 @@ mod tests {
         assert!(
             registered
                 .tools
-                .contains_key(&ToolName::new("env.run_process"))
+                .contains_key(&ToolId::new("env.run_process"))
         );
         assert!(
             !registered
                 .tools
-                .contains_key(&ToolName::new("env.continue_process"))
+                .contains_key(&ToolId::new("env.continue_process"))
         );
-        assert!(
-            !registered
-                .tools
-                .contains_key(&ToolName::new("exec_command"))
-        );
+        assert!(!registered.tools.contains_key(&ToolId::new("exec_command")));
         for tool in registered.tools.values() {
             let ToolKind::Builtin(spec) = &tool.kind else {
                 panic!("code-owned registration");
             };
             assert_eq!(
                 spec.settings,
-                if tool.name.as_str() == "env.run_process" {
+                if tool.id.as_str() == "env.run_process" {
                     json!({"one_shot": true})
                 } else {
                     json!({})

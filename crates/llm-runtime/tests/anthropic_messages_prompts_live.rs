@@ -247,6 +247,7 @@ async fn anthropic_messages_live_uses_vfs_prompt_instructions() {
                     }],
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(64),
         })
@@ -255,7 +256,7 @@ async fn anthropic_messages_live_uses_vfs_prompt_instructions() {
 
     assert_eq!(outcome.quiescence, RunnerQuiescence::Idle);
     assert_eq!(
-        outcome.state.runs.completed[0].status,
+        outcome.state.runs.finished[0].status,
         RunStatus::Completed,
         "{}",
         run_failure_text(blobs.as_ref(), &outcome.state).await
@@ -293,7 +294,6 @@ fn session_config(
         },
         limits: Default::default(),
         context: ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: None,
             compaction: None,
         },
@@ -310,15 +310,12 @@ fn session_config(
 
 fn run_config() -> RunConfig {
     RunConfig {
-        input_limit_tokens: None,
-        max_turns: Some(2),
+        max_turns: None,
         reasoning_effort: None,
         parallel_tool_use: None,
         processing_tier: None,
-        max_tool_rounds: None,
         model_override: None,
         max_output_tokens: None,
-        provider_params: None,
         tool_choice: None,
     }
 }
@@ -346,7 +343,7 @@ async fn assistant_text(blobs: &dyn BlobStore, entries: &[harness::CoreAgentEntr
 }
 
 async fn run_failure_text(blobs: &dyn BlobStore, state: &harness::CoreAgentState) -> String {
-    let Some(run) = state.runs.completed.first() else {
+    let Some(run) = state.runs.finished.first() else {
         return "run did not complete".to_owned();
     };
     let Some(failure) = run.failure.as_ref() else {

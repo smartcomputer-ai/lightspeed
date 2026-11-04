@@ -185,17 +185,6 @@ impl TranscriptState {
                 };
                 self.activity = label.map(|label| RunCell::new("activity", label));
             }
-            ChatEvent::GapObserved {
-                requested_from,
-                retained_from,
-            } => {
-                self.replace_or_push_committed(Box::new(NoticeCell::new(
-                    "journal-gap",
-                    format!(
-                        "journal gap  requested #{requested_from}, retained from #{retained_from}; refreshed snapshot"
-                    ),
-                )));
-            }
             ChatEvent::Reconnecting { from, reason } => {
                 self.replace_or_push_committed(Box::new(NoticeCell::new(
                     "journal-reconnecting",
@@ -854,7 +843,6 @@ mod tests {
         let mut state = TranscriptState::default();
         state.apply_chat_event(ChatEvent::SessionSelected(ChatSessionSummary {
             session_id: "c4c49a6a-9426-4153-b817-856f7248aaa2".into(),
-            status: None,
             lifecycle: None,
             updated_at_ns: None,
             run_count: 11,
@@ -868,33 +856,27 @@ mod tests {
     }
 
     #[test]
-    fn reconnect_and_gap_notices_use_stable_cells() {
+    fn reconnect_notice_uses_a_stable_cell() {
         let mut state = TranscriptState::default();
         state.apply_chat_event(ChatEvent::Reconnecting {
             from: 12,
             reason: "stream closed".into(),
         });
-        state.apply_chat_event(ChatEvent::GapObserved {
-            requested_from: 9,
-            retained_from: 20,
-        });
-        state.apply_chat_event(ChatEvent::GapObserved {
-            requested_from: 10,
-            retained_from: 21,
+        state.apply_chat_event(ChatEvent::Reconnecting {
+            from: 13,
+            reason: "stream closed again".into(),
         });
 
-        assert_eq!(state.cells.len(), 2);
+        assert_eq!(state.cells.len(), 1);
         assert_eq!(state.cells[0].id(), "journal-reconnecting");
-        assert_eq!(state.cells[1].id(), "journal-gap");
         let history = state
             .reflow_history_lines(80)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(history.contains("journal reconnecting from #12: stream closed"));
-        assert!(history.contains("journal gap  requested #10, retained from #21"));
-        assert!(!history.contains("requested #9"));
+        assert!(history.contains("journal reconnecting from #13: stream closed again"));
+        assert!(!history.contains("from #12"));
     }
 
     #[test]

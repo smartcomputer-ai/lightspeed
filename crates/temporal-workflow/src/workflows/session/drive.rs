@@ -3,8 +3,8 @@ use super::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DriveOutcome {
     Idle,
-    /// History rollover is due, but a transport queue must be drained by the
-    /// outer workflow loop before continuation can safely occur.
+    /// The outer workflow loop has work it will really await right now. The drive
+    /// has not reached Idle, so the outer loop comes back to it afterwards.
     YieldForWorkflowWork,
     ContinueAsNew,
 }
@@ -34,13 +34,14 @@ pub(super) async fn admit_and_append_command(
     correlation_token: Option<String>,
 ) -> anyhow::Result<CommandAdmissionResult> {
     let submission_id = command_submission_id(&command);
+    let reissued = reissued_from_state(&command);
     if environment_prompt_publication_is_obsolete(drive.state(), &command)
         || environment_catalog_publication_is_obsolete(drive.state(), &command)
         || environment_attachment_catalog_publication_is_obsolete(drive.state(), &command)
         || vfs_skill_catalog_publication_is_obsolete(drive.state(), &command)
     {
         let rejection = harness::CommandRejection::new(
-            harness::CommandRejectionKind::ActiveWork,
+            harness::CommandRejectionKind::Conflict,
             "context observation no longer matches the configured source",
         );
         return Ok(CommandAdmissionResult::Rejected(AgentAdmissionFailure {
@@ -65,52 +66,198 @@ pub(super) async fn admit_and_append_command(
                 rejection: Some(rejection),
             }));
         }
-        Err(error) => return Err(anyhow::anyhow!("{error}")),
+        // The reducer refused what admission proposed, and nothing was appended.
+        // This command is the only thing wrong with the session, so it is the
+        // only thing that fails.
+        Err(
+            CoreAgentDriveError::Domain(error)
+            | CoreAgentDriveError::Command(CommandError::Domain(error)),
+        ) if !reissued => {
+            let rejection = harness::CommandRejection::new(
+                harness::CommandRejectionKind::Internal,
+                error.to_string(),
+            );
+            observability::log_admission_refused(ctx, &rejection.message);
+            return Ok(CommandAdmissionResult::Rejected(AgentAdmissionFailure {
+                preparation_error: None,
+                submission_id,
+                correlation_token,
+                kind: AgentAdmissionFailureKind::RejectedCommand,
+                message: rejection.to_string(),
+                rejection: Some(rejection),
+            }));
+        }
+        Err(error) => return Err(error.into()),
     };
     match action {
         CoreAgentAction::AppendEvents {
             expected_head,
             events,
-        } => {
-            append_events(ctx, drive, expected_head, events).await?;
-            Ok(CommandAdmissionResult::Accepted)
-        }
+        } => match append_events(ctx, drive, expected_head, events).await {
+            Ok(_) => Ok(CommandAdmissionResult::Accepted),
+            // The store refused what this command carries, and nothing was written.
+            // Whoever sent it can hear about it, and any run going on is not at fault.
+            Err(error) if !reissued && error.is::<errors::StoreDataRejection>() => {
+                let rejection = harness::CommandRejection::new(
+                    harness::CommandRejectionKind::Internal,
+                    error.to_string(),
+                );
+                observability::log_admission_refused(ctx, &rejection.message);
+                Ok(CommandAdmissionResult::Rejected(AgentAdmissionFailure {
+                    preparation_error: None,
+                    submission_id,
+                    correlation_token,
+                    kind: AgentAdmissionFailureKind::RejectedCommand,
+                    message: rejection.to_string(),
+                    rejection: Some(rejection),
+                }))
+            }
+            Err(error) => Err(error),
+        },
         CoreAgentAction::Idle | CoreAgentAction::Closed => Ok(CommandAdmissionResult::Accepted),
         other => anyhow::bail!("command admission emitted unexpected action: {other:?}"),
     }
 }
 
+/// The workflow issues these itself from durable state, with no caller to tell.
+/// Failing only the command would repeat a deterministic reducer refusal forever,
+/// so the refusal takes the drive's failure path instead. For `FailRun`, which is
+/// that path, a refusal ends the workflow.
+pub(super) fn reissued_from_state(command: &CoreAgentCommand) -> bool {
+    matches!(
+        command,
+        CoreAgentCommand::UnparkToolBatch(_)
+            | CoreAgentCommand::ForceCancelRun { .. }
+            | CoreAgentCommand::FailRun { .. }
+    )
+}
+
 pub(super) fn command_submission_id(command: &CoreAgentCommand) -> Option<SubmissionId> {
     match command {
         CoreAgentCommand::RequestRun(request) => request.submission_id.clone(),
+        CoreAgentCommand::RequestRunSteering { submission_id, .. } => Some(submission_id.clone()),
         _ => None,
     }
 }
 
-pub(super) async fn process_pending_tool_batch_resumes(
+pub(super) async fn process_pending_tool_batch_unparks(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     args: &AgentSessionArgs,
 ) -> anyhow::Result<DriveOutcome> {
-    let resumes = ctx.state_mut(|state| std::mem::take(&mut state.pending_tool_batch_resumes));
-    if resumes.is_empty() {
+    let unparks = ctx.state_mut(|state| std::mem::take(&mut state.pending_tool_batch_unparks));
+    if unparks.is_empty() {
         return Ok(DriveOutcome::Idle);
     }
     let mut drive = drive_from_state(ctx)?;
-    for resume in resumes {
-        let command = CoreAgentCommand::ResumeToolBatch(resume.command);
+    for unpark in unparks {
+        let command = CoreAgentCommand::UnparkToolBatch(unpark.command);
         match admit_and_append_command(ctx, &mut drive, command, None).await? {
             CommandAdmissionResult::Accepted => {}
             CommandAdmissionResult::Rejected(failure) => {
-                // A rejected resume must never fail the session loop: that
-                // turns one bad batch result into a permanently wedged
-                // workflow (the 2026-07-06 incident shape). Record it and
-                // continue; if the run is now stuck in `cancelling`, the
-                // watchdog forces it terminal.
+                // Only a claim that events overtook is rejected, and the satisfied
+                // await claims again from the state they left. An unpark that cannot
+                // pass on any attempt returns an error above and fails the run.
                 record_admission_failure(ctx, failure);
             }
         }
     }
     drive_until_idle(ctx, args, &mut drive).await
+}
+
+/// The words to fail the work with when `error` is a refusal of a step on the drive
+/// path, by the harness or by the store of the events it proposed. Neither moved the
+/// state, and they are the only errors that say something about the work rather than
+/// about getting it stored. Everything left in an `anyhow::Error` from a store outage,
+/// a lost head or a log that will not load stays fatal.
+pub(super) fn work_refusal_message(error: &anyhow::Error) -> Option<&str> {
+    if let Some(error) = error.downcast_ref::<CoreAgentDriveError>() {
+        return error.refusal_message();
+    }
+    if let Some(error) = error.downcast_ref::<errors::StoreDataRejection>() {
+        return Some(&error.message);
+    }
+    error
+        .downcast_ref::<harness::DomainError>()
+        .map(harness::DomainError::message)
+}
+
+/// Carry on from what a drive step returned. A refusal fails only the work it was
+/// about, then the drive continues, so each pass ends a run or a compaction and the
+/// next queued run gets its turn. Nothing else is absorbed.
+pub(super) async fn drive_past_refusals(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    args: &AgentSessionArgs,
+    mut result: anyhow::Result<DriveOutcome>,
+) -> anyhow::Result<DriveOutcome> {
+    loop {
+        let error = match result {
+            Ok(outcome) => return Ok(outcome),
+            Err(error) => error,
+        };
+        let mut drive = fail_refused_work(ctx, error).await?;
+        result = drive_until_idle(ctx, args, &mut drive).await;
+    }
+}
+
+/// Fail the active run with the refusal's text, or the compaction when no run is
+/// there to fail. A refused append is simply dropped, and the failure starts from the
+/// state as it was. Anything else with nothing to attach to stays fatal, and so does a
+/// refusal of this very append.
+async fn fail_refused_work(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    error: anyhow::Error,
+) -> anyhow::Result<CoreAgentDrive> {
+    let Some(message) = work_refusal_message(&error).map(ToOwned::to_owned) else {
+        return Err(error);
+    };
+    let mut drive = drive_from_state(ctx)?;
+    let run_id = drive.state().runs.active.as_ref().map(|run| run.run_id);
+    if run_id.is_none() && !drive.state().context.compaction.is_pending() {
+        return Err(error);
+    }
+    observability::log_step_refused(ctx, &message);
+    let message_ref = activity_calls::put_refusal_blob(ctx, &message).await;
+    if let Some(run_id) = run_id {
+        let command = CoreAgentCommand::FailRun {
+            run_id,
+            message_ref,
+        };
+        match admit_and_append_command(ctx, &mut drive, command, None)
+            .await
+            .map_err(|error| anyhow::anyhow!("failing the refused run: {error}"))?
+        {
+            CommandAdmissionResult::Accepted => {}
+            CommandAdmissionResult::Rejected(failure) => {
+                anyhow::bail!("failing the refused run: {}", failure.message)
+            }
+        }
+        record_warning(ctx, format!("run {run_id} failed: {message}"));
+    } else {
+        let action = drive
+            .resume_context_compaction(
+                harness::ContextCompactionResult {
+                    usage: None,
+                    calls: 0,
+                    session_id: drive.session_id().clone(),
+                    context_revision: drive.state().context.revision,
+                    status: harness::ContextCompactionStatus::Failed,
+                    failure_ref: Some(message_ref),
+                    context_entries: Vec::new(),
+                },
+                workflow_time_ms(ctx),
+            )
+            .map_err(|error| anyhow::anyhow!("failing the refused compaction: {error}"))?;
+        let CoreAgentAction::AppendEvents {
+            expected_head,
+            events,
+        } = action
+        else {
+            anyhow::bail!("failing the refused compaction appended nothing: {action:?}");
+        };
+        append_events(ctx, &mut drive, expected_head, events).await?;
+        record_warning(ctx, format!("context compaction failed: {message}"));
+    }
+    Ok(drive)
 }
 
 pub(super) async fn drive_until_idle(
@@ -130,10 +277,11 @@ pub(super) async fn drive_until_idle(
         if preparation::publish_pending_tools(ctx, drive).await? {
             action = drive.next_action_unbounded(workflow_time_ms(ctx))?;
         }
-        // Client admissions (cancel, steer, queue, context edits) land
-        // at every action boundary against the live drive, and the plan is
-        // recomputed so a cancel stops the next turn/batch from starting and
-        // a steer is part of the next request.
+        // Client admissions (cancel, steer, queue, context edits) land at every
+        // action boundary against the live drive, and the plan is recomputed so a
+        // cancel stops the next turn/batch from starting and a steer is part of the
+        // next request. `action` only ever holds a plan here, because each arm
+        // commits what its activity returned, so replanning discards no result.
         if admissions::drain_pending_admissions(ctx, drive).await? {
             action = drive.next_action_unbounded(workflow_time_ms(ctx))?;
         }
@@ -143,30 +291,22 @@ pub(super) async fn drive_until_idle(
                 events,
             } => {
                 append_events(ctx, drive, expected_head, events).await?;
-                if let Some(outcome) = history_boundary_outcome(ctx, args) {
-                    return Ok(outcome);
-                }
-                action = drive.next_action_unbounded(workflow_time_ms(ctx))?;
             }
             CoreAgentAction::GenerateLlm { request } => {
-                action = match call_llm_generate(ctx, drive, request).await? {
-                    control::Raced::Completed(result) => {
-                        drive.resume_generation(result, workflow_time_ms(ctx))?
-                    }
-                    control::Raced::Preempted => {
-                        drive.next_action_unbounded(workflow_time_ms(ctx))?
-                    }
-                };
+                if let control::Raced::Completed(result) =
+                    call_llm_generate(ctx, drive, request).await?
+                {
+                    let resume = drive.resume_generation(result, workflow_time_ms(ctx))?;
+                    commit_resume(ctx, drive, resume).await?;
+                }
             }
             CoreAgentAction::CompactContext { request } => {
-                action = match call_context_compact(ctx, drive, request).await? {
-                    control::Raced::Completed(result) => {
-                        drive.resume_context_compaction(result, workflow_time_ms(ctx))?
-                    }
-                    control::Raced::Preempted => {
-                        drive.next_action_unbounded(workflow_time_ms(ctx))?
-                    }
-                };
+                if let control::Raced::Completed(result) =
+                    call_context_compact(ctx, drive, request).await?
+                {
+                    let resume = drive.resume_context_compaction(result, workflow_time_ms(ctx))?;
+                    commit_resume(ctx, drive, resume).await?;
+                }
             }
             CoreAgentAction::InvokeTools { request } => {
                 let request = match request.promise_control_argument_request() {
@@ -177,21 +317,61 @@ pub(super) async fn drive_until_idle(
                     }
                     None => request,
                 };
-                action = tool_batches::invoke_tool_batch(ctx, drive, request).await?;
+                tool_batches::invoke_tool_batch(ctx, drive, request).await?;
             }
             CoreAgentAction::Idle | CoreAgentAction::Closed => {
-                if args.auto_reject_approvals && auto_reject_pending_approvals(ctx, drive).await? {
-                    action = drive.next_action_unbounded(workflow_time_ms(ctx))?;
-                    continue;
+                if !args.auto_reject_approvals || !auto_reject_pending_approvals(ctx, drive).await?
+                {
+                    maybe_close_on_terminal(ctx, args, drive).await?;
+                    return Ok(DriveOutcome::Idle);
                 }
-                maybe_close_on_terminal(ctx, args, drive).await?;
-                return Ok(DriveOutcome::Idle);
             }
             CoreAgentAction::StepLimitReached => {
                 anyhow::bail!("unbounded hosted drive unexpectedly reached a step limit");
             }
         }
+        if let Some(outcome) = drive_boundary_after_commit(ctx, args) {
+            return Ok(outcome);
+        }
+        action = drive.next_action_unbounded(workflow_time_ms(ctx))?;
     }
+}
+
+/// Store the append a resume returned, the only copy of an activity's result.
+/// A resume that proposes nothing has nothing to keep, and the next plan decides.
+pub(super) async fn commit_resume(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    drive: &mut CoreAgentDrive,
+    resume: CoreAgentAction,
+) -> anyhow::Result<()> {
+    if let CoreAgentAction::AppendEvents {
+        expected_head,
+        events,
+    } = resume
+    {
+        append_events(ctx, drive, expected_head, events).await?;
+    }
+    Ok(())
+}
+
+/// What the drive does after each arm's commit, before it plans again: roll over if
+/// that is due, or hand over to the outer loop so transport work goes out now. A
+/// spawned job or sub-agent starts before the next generation instead of when the
+/// run next parks. Only a commit or a pre-empting admission gets here, so a yield
+/// always follows real progress.
+fn drive_boundary_after_commit(
+    ctx: &WorkflowContext<AgentSessionWorkflow>,
+    args: &AgentSessionArgs,
+) -> Option<DriveOutcome> {
+    let now_ms = workflow_time_ms(ctx);
+    ctx.state_mut(|state| {
+        state.execution_has_rollover_checkpoint = true;
+        wait_loop::forget_ended_rollover_blockers(state, now_ms);
+    });
+    history_boundary_outcome(ctx, args).or_else(|| {
+        ctx.state(|state| wait_loop::transport_work_due(state, now_ms))
+            .then_some(DriveOutcome::YieldForWorkflowWork)
+    })
 }
 
 async fn auto_reject_pending_approvals(
@@ -216,33 +396,18 @@ async fn auto_reject_pending_approvals(
     }
     for approval in pending {
         let response = match &approval.continuation {
-            harness::ApprovalContinuation::OpenAiMcp {
+            harness::ApprovalContinuation::ProviderMcp {
                 provider_request_id,
             } => {
-                let response = serde_json::json!({
-                    "type": "mcp_approval_response",
-                    "approval_request_id": provider_request_id,
-                    "approve": false,
-                });
-                let content_ref =
-                    put_detached_followup_blob(ctx, serde_json::to_vec(&response)?).await?;
-                Some(ContextEntryInput {
-                    kind: ContextEntryKind::McpApprovalResponse {
-                        approval_request_id: provider_request_id.clone(),
-                        approve: false,
-                    },
-                    content: harness::ContentRef {
-                        content_ref,
-                        media_type: Some("application/json".to_owned()),
-                        provider_kind: Some("openai.responses.mcp_approval_response".to_owned()),
-                    },
-                    preview: Some("MCP tool call auto-rejected in unattended session".to_owned()),
-                    origin: None,
-                    provenance_ref: None,
-                    token_estimate: None,
-                })
+                let (bytes, entry) = crate::provider_mcp_approval_response(
+                    provider_request_id,
+                    false,
+                    "MCP tool call auto-rejected in unattended session",
+                );
+                put_detached_followup_blob(ctx, bytes).await?;
+                Some(entry)
             }
-            harness::ApprovalContinuation::NativeMcp { .. } => None,
+            harness::ApprovalContinuation::RuntimeMcp { .. } => None,
         };
         match admit_and_append_command(
             ctx,
@@ -272,32 +437,31 @@ fn history_boundary_outcome(
     ctx: &WorkflowContext<AgentSessionWorkflow>,
     args: &AgentSessionArgs,
 ) -> Option<DriveOutcome> {
-    if !ctx.patched(wait_loop::ACTIVE_RUN_ROLLOVER_PATCH) {
-        // Old executions did not branch here. The patch marker keeps replay
-        // deterministic; once execution reaches new history, the SDK records
-        // the marker and active-run rollover becomes eligible.
-        return None;
-    }
-    // Pending preparation may need the current turn to finish before it can
-    // publish. Let the driver reach that boundary instead of yielding forever.
-    if ctx.state(|state| state.run_preparation.is_some() || !state.pending_toolsets.is_empty()) {
-        return None;
-    }
+    let now_ms = workflow_time_ms(ctx);
     history_boundary_outcome_for(
         wait_loop::history_rollover_due(ctx, args),
         ctx.all_handlers_finished() && ctx.state(wait_loop::workflow_state_allows_continue_as_new),
+        ctx.state(|state| wait_loop::outer_loop_can_clear_now(state, now_ms)),
     )
 }
 
+/// A blocked rollover yields only to an outer loop that will really await
+/// something. Workflow time is frozen within an activation, so yielding to one that
+/// has nothing to await returns straight here and never gives the poll back: the
+/// process stops polling every role until it is killed. Every other blocker needs
+/// the drive or the clock, so the drive carries on and asks again at its next commit.
 pub(super) fn history_boundary_outcome_for(
     rollover_due: bool,
     continuation_safe: bool,
+    outer_loop_can_clear: bool,
 ) -> Option<DriveOutcome> {
-    rollover_due.then_some(if continuation_safe {
-        DriveOutcome::ContinueAsNew
-    } else {
-        DriveOutcome::YieldForWorkflowWork
-    })
+    if !rollover_due {
+        return None;
+    }
+    if continuation_safe {
+        return Some(DriveOutcome::ContinueAsNew);
+    }
+    outer_loop_can_clear.then_some(DriveOutcome::YieldForWorkflowWork)
 }
 
 async fn maybe_close_on_terminal(
@@ -327,7 +491,7 @@ async fn maybe_close_on_terminal(
 pub(super) fn should_close_on_terminal(args: &AgentSessionArgs, state: &CoreAgentState) -> bool {
     args.close_on_terminal
         && state.lifecycle.status == CoreAgentStatus::Open
-        && !state.runs.completed.is_empty()
+        && !state.runs.finished.is_empty()
         && state.runs.active.is_none()
         && state.runs.queued.is_empty()
         && !state.context.compaction.is_pending()
@@ -357,21 +521,27 @@ pub(super) async fn append_events(
             activity_options(),
         )
         .await
+        .map_err(|error| errors::append_failure(&error))?;
+    // These events are durable now, so nothing from here is a refusal that a failed
+    // run could answer. The errors stay untyped to keep them fatal.
+    let entries = drive
+        .resume_appended(appended.entries)
         .map_err(|error| anyhow::anyhow!("{error}"))?;
-    let entries = drive.resume_appended(appended.entries)?;
-    ctx.state_mut(|state| -> anyhow::Result<()> {
-        apply_entries(&mut state.core_state, &entries, &mut state.run_submissions)?;
-        state.queue_emissions_for_entries(&entries)?;
-        state.queue_promise_cancellations_for_entries(&entries);
-        state.head = appended.head;
-        state.execution_has_rollover_checkpoint = true;
-        state.last_error = None;
-        if state.core_state.lifecycle.status == CoreAgentStatus::Closed {
-            preparation::abandon_pending_run(state);
-            state.pending_toolsets.clear();
-        }
-        Ok(())
-    })?;
+    let followups = ctx
+        .state_mut(|state| -> anyhow::Result<Vec<DetachedPromiseFollowup>> {
+            let mut followups = Vec::new();
+            for entry in &entries {
+                followups.extend(apply_appended_entry(state, entry)?);
+            }
+            state.queue_emissions_for_entries(&entries)?;
+            state.execution_has_rollover_checkpoint = true;
+            if state.core_state.lifecycle.status == CoreAgentStatus::Closed {
+                preparation::abandon_pending_run(state);
+                state.pending_toolsets.clear();
+            }
+            Ok(followups)
+        })
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
     // Invalidation uses only recorded source identity. It performs no discovery,
     // including when selection changed in a tool result during an active run.
     if let Some(command) = invalid_environment_prompt_command(drive.state()) {
@@ -386,57 +556,63 @@ pub(super) async fn append_events(
     if let Some(command) = invalid_vfs_skill_catalog_command(drive.state()) {
         Box::pin(append_command(ctx, drive, command)).await?;
     }
-    queue_detached_promise_followups(ctx, &entries).await?;
+    queue_detached_promise_followups(ctx, followups).await?;
     Ok(entries)
 }
 
-#[derive(Clone, Debug)]
-struct DetachedPromiseFollowup {
-    promise_id: harness::PromiseId,
-    status: &'static str,
-    content_ref: Option<BlobRef>,
+/// Apply one appended entry and read what its promise event means right away, before
+/// the next entry of the append applies. That one can be a batch completion, which
+/// prunes the records read here.
+pub(super) fn apply_appended_entry(
+    state: &mut AgentSessionWorkflow,
+    entry: &CoreAgentEntry,
+) -> anyhow::Result<Option<DetachedPromiseFollowup>> {
+    harness::apply_event(&mut state.core_state, entry)
+        .map_err(|error| anyhow::anyhow!("apply session entry: {error}"))?;
+    state.queue_execution_cancel_for_entry(entry);
+    state.queue_promise_cancellation_for_entry(entry);
+    Ok(detached_promise_followup_for_entry(state, entry))
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct DetachedPromiseFollowup {
+    promise_id: harness::PromiseId,
+    result: AwaitPromiseResult,
+}
+
+/// A detached promise settling on an idle session wakes it with an ordinary run. The
+/// payload is prepared as an `await` of that promise would prepare it, so one promise
+/// has one projection: images become media entries and bytes that are not text stay
+/// out of the context. File attachments stay out too, as a run input has no field for
+/// them and the result still names them.
 async fn queue_detached_promise_followups(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
-    entries: &[CoreAgentEntry],
+    followups: Vec<DetachedPromiseFollowup>,
 ) -> anyhow::Result<()> {
-    let followups = ctx.state(|state| {
-        if state.core_state.lifecycle.status != CoreAgentStatus::Open {
-            return Vec::new();
-        }
-        entries
-            .iter()
-            .filter_map(|entry| detached_promise_followup_for_entry(state, entry))
-            .collect::<Vec<_>>()
-    });
-
+    if ctx.state(|state| state.core_state.lifecycle.status != CoreAgentStatus::Open) {
+        return Ok(());
+    }
     for followup in followups {
+        let materialized = ctx
+            .execute_activity(
+                WorkflowActivities::materialize_await_result,
+                AwaitMaterializationRequest {
+                    outcome: AwaitOutcome::Terminal,
+                    results: vec![followup.result.clone()],
+                },
+                activity_options(),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
         let summary_ref = put_detached_followup_blob(
             ctx,
             detached_promise_followup_summary(&followup).into_bytes(),
         )
         .await?;
-        let mut input = vec![workflow_user_message_input(
-            summary_ref,
-            Some(format!(
-                "Detached promise {} {}",
-                followup.promise_id, followup.status
-            )),
-        )];
-        if let Some(content_ref) = followup.content_ref {
-            input.push(workflow_user_message_input(
-                content_ref,
-                Some(format!(
-                    "Detached promise {} {} content",
-                    followup.promise_id, followup.status
-                )),
-            ));
-        }
+        let input = detached_promise_followup_input(&followup, summary_ref, materialized);
+        // The submission id is derived from the promise, so a replayed follow-up
+        // is a no-op.
         let submission_id = detached_promise_submission_id(&followup.promise_id);
-        // A detached promise settling on an idle session wakes it with an
-        // ordinary run; the submission id is derived from the promise so a
-        // replayed follow-up is a no-op.
         ctx.state_mut(|state| {
             state.queue_admission(AgentAdmission {
                 command: CoreAgentCommand::RequestRun(harness::RunRequestCommand {
@@ -445,6 +621,7 @@ async fn queue_detached_promise_followups(
                     submission_id: Some(submission_id),
                     source: harness::RunRequestSource::Input { input },
                     run_config: harness::RunConfig::default(),
+                    input_limit_tokens: None,
                 }),
                 correlation_token: None,
             });
@@ -457,16 +634,12 @@ fn detached_promise_followup_for_entry(
     state: &AgentSessionWorkflow,
     entry: &CoreAgentEntry,
 ) -> Option<DetachedPromiseFollowup> {
-    let (promise_id, status, content_ref) = match &entry.event {
-        CoreAgentEvent::Promise(harness::PromiseEvent::Resolved {
-            promise_id,
-            payload_ref,
-        }) => (promise_id, "resolved", payload_ref.clone()),
-        CoreAgentEvent::Promise(harness::PromiseEvent::Failed {
-            promise_id,
-            error_ref,
-        }) => (promise_id, "failed", error_ref.clone()),
-        _ => return None,
+    let CoreAgentEvent::Promise(
+        harness::PromiseEvent::Resolved { promise_id, .. }
+        | harness::PromiseEvent::Failed { promise_id, .. },
+    ) = &entry.event
+    else {
+        return None;
     };
     let promise = state.core_state.promises.promises.get(promise_id)?;
     if promise.scope != harness::PromiseScope::Session || !promise.status.is_terminal() {
@@ -484,22 +657,32 @@ fn detached_promise_followup_for_entry(
     }
     Some(DetachedPromiseFollowup {
         promise_id: promise_id.clone(),
-        status,
-        content_ref,
+        result: awaits::promise_result(promise_id, &state.core_state),
     })
 }
 
 fn detached_promise_followup_summary(followup: &DetachedPromiseFollowup) -> String {
-    match followup.content_ref.as_ref() {
-        Some(_) => format!(
-            "Detached promise {} {}. The promise content is attached as the next user message.",
-            followup.promise_id, followup.status
-        ),
-        None => format!(
-            "Detached promise {} {} without attached content.",
-            followup.promise_id, followup.status
-        ),
-    }
+    format!(
+        "Detached promise {} {}. Its result is attached as the next user message.",
+        followup.promise_id, followup.result.status
+    )
+}
+
+fn detached_promise_followup_input(
+    followup: &DetachedPromiseFollowup,
+    summary_ref: BlobRef,
+    materialized: AwaitMaterializationResult,
+) -> Vec<ContextEntryInput> {
+    let label = format!(
+        "Detached promise {} {}",
+        followup.promise_id, followup.result.status
+    );
+    let mut input = vec![
+        workflow_user_message_input(summary_ref, Some(label.clone())),
+        workflow_user_message_input(materialized.result_ref, Some(format!("{label} content"))),
+    ];
+    input.extend(materialized.additional_context);
+    input
 }
 
 async fn put_detached_followup_blob(
@@ -547,35 +730,12 @@ fn workflow_user_message_input(content_ref: BlobRef, preview: Option<String>) ->
 pub(super) fn drive_from_state(
     ctx: &WorkflowContext<AgentSessionWorkflow>,
 ) -> anyhow::Result<CoreAgentDrive> {
-    let (session_id, core_state, head) = ctx.state(|state| {
-        (
-            state.session_id.clone(),
-            state.core_state.clone(),
-            state.head.clone(),
-        )
-    });
+    let (session_id, core_state) =
+        ctx.state(|state| (state.session_id.clone(), state.core_state.clone()));
     let Some(session_id) = session_id else {
         anyhow::bail!("missing initialized agent session id");
     };
-    Ok(CoreAgentDrive::from_replayed(session_id, core_state, head))
-}
-
-fn apply_entries(
-    state: &mut CoreAgentState,
-    entries: &[CoreAgentEntry],
-    run_submissions: &mut BTreeMap<u64, Option<SubmissionId>>,
-) -> anyhow::Result<()> {
-    let mut reduced = crate::ReducedSession {
-        core_state: std::mem::take(state),
-        run_submissions: std::mem::take(run_submissions),
-        replayed_event_count: 0,
-    };
-    for entry in entries {
-        crate::accumulate_session_entry(&mut reduced, entry)?;
-    }
-    *state = reduced.core_state;
-    *run_submissions = reduced.run_submissions;
-    Ok(())
+    Ok(CoreAgentDrive::from_replayed(session_id, core_state))
 }
 
 fn vfs_skill_discovery_enabled(state: &CoreAgentState) -> bool {
@@ -694,7 +854,7 @@ fn environment_attachment_catalog_matches(state: &CoreAgentState, origin: Option
 }
 
 /// The directory belongs to the attachment feature, independently of selection.
-/// Legacy selection-bound directories are removed until the next refresh.
+/// It is removed when that feature is off, until the next refresh.
 pub(super) fn invalid_environment_attachment_catalog_command(
     state: &CoreAgentState,
 ) -> Option<CoreAgentCommand> {
@@ -780,6 +940,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_refusals_of_the_work_count_as_refusals() {
+        let domain = harness::DomainError::InvariantViolation("the reason".to_owned());
+        for error in [
+            anyhow::Error::from(domain.clone()),
+            CoreAgentDriveError::Domain(domain.clone()).into(),
+            CoreAgentDriveError::Command(CommandError::Domain(domain.clone())).into(),
+            CoreAgentDriveError::Planning(harness::PlanningError::Domain(domain.clone())).into(),
+            anyhow::Error::new(errors::StoreDataRejection {
+                message: "the reason".to_owned(),
+            }),
+        ] {
+            assert_eq!(work_refusal_message(&error), Some("the reason"));
+        }
+        let rejected_again = errors::StoreDataRejection {
+            message: "the reason".to_owned(),
+        };
+        for error in [
+            anyhow::anyhow!("activity failed: expected head mismatch"),
+            // How a rejection of failing the run itself comes back: fatal.
+            anyhow::anyhow!("failing the refused run: {rejected_again}"),
+            // What the drive leaves behind once events are durable.
+            anyhow::anyhow!("{domain}"),
+            CoreAgentDriveError::Command(CommandError::Rejected(harness::CommandRejection::new(
+                harness::CommandRejectionKind::ActiveWork,
+                "busy",
+            )))
+            .into(),
+            CoreAgentDriveError::Codec(harness::CodecError::Unsupported {
+                kind: "lightspeed.core.unknown".to_owned(),
+                version: 1,
+            })
+            .into(),
+        ] {
+            assert_eq!(work_refusal_message(&error), None, "{error}");
+        }
+    }
+
+    #[test]
+    fn a_refusal_of_fail_run_does_not_become_a_rejected_command() {
+        assert!(reissued_from_state(&CoreAgentCommand::FailRun {
+            run_id: harness::RunId::new(1),
+            message_ref: BlobRef::from_bytes(b"the reason"),
+        }));
+    }
+
+    #[test]
     fn detached_session_promise_resolution_produces_followup_candidate() {
         let promise_id = harness::PromiseId::new("promise_1");
         let payload_ref = BlobRef::from_bytes(b"child output");
@@ -795,7 +1001,7 @@ mod tests {
                 status: harness::PromiseStatus::Resolved,
                 payload_ref: Some(payload_ref.clone()),
                 error_ref: None,
-                deadline_ms: None,
+                deadline_at_ms: None,
             },
         );
         let entry = CoreAgentEntry {
@@ -814,7 +1020,39 @@ mod tests {
             detached_promise_followup_for_entry(&workflow, &entry).expect("followup candidate");
 
         assert_eq!(followup.promise_id, promise_id);
-        assert_eq!(followup.status, "resolved");
-        assert_eq!(followup.content_ref, Some(payload_ref));
+        assert_eq!(followup.result.status, "resolved");
+        assert_eq!(followup.result.payload_ref, Some(payload_ref));
+
+        // The run reads the summary, then the prepared result, then what the payload
+        // supplied beside it. The raw payload itself never becomes a message.
+        let summary_ref = BlobRef::from_bytes(b"summary");
+        let result_ref = BlobRef::from_bytes(b"result");
+        let media =
+            harness::media::MediaDescriptor::new(BlobRef::from_bytes(b"image"), "image/png", None)
+                .expect("media")
+                .context_entry();
+        let input = detached_promise_followup_input(
+            &followup,
+            summary_ref.clone(),
+            AwaitMaterializationResult {
+                result_ref: result_ref.clone(),
+                additional_context: vec![media.clone()],
+                attachments: Vec::new(),
+            },
+        );
+        let refs = input
+            .iter()
+            .map(|entry| &entry.content.content_ref)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            refs,
+            [&summary_ref, &result_ref, &media.content.content_ref]
+        );
+        assert!(input[..2].iter().all(|entry| matches!(
+            entry.kind,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::User
+            }
+        )));
     }
 }

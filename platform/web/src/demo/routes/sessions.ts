@@ -79,19 +79,19 @@ export function sessionRoutes(store: DemoStore): Hono {
     const limit = Math.min(intQuery(c, "limit", 50), 200);
     const offset = intQuery(c, "cursor", 0);
     const closed = booleanQuery(c.req.query("closed"));
-    const managed = booleanQuery(c.req.query("managed"));
+    const lifecycleControlled = booleanQuery(c.req.query("lifecycleControlled"));
     const subagent = booleanQuery(c.req.query("subagent"));
     const parent = c.req.query("parent") || null;
     const metadata = metadataQueryFilter(c.req.queries("metadata"));
     const all = [...universe.sessions.values()]
       .filter((record) => !parent || record.view.origin?.parentSessionId === parent)
-      .filter((record) => closed === undefined || (record.view.status === "closed") === closed)
+      .filter((record) => closed === undefined || (record.view.lifecycleStatus === "closed") === closed)
       .filter((record) => subagent === undefined || Boolean(record.view.origin) === subagent)
-      // Managed work follows its root, as the core list does.
+      // Lifecycle-controlled work follows its root, as the core list does.
       .filter((record) => {
-        if (managed === undefined) return true;
+        if (lifecycleControlled === undefined) return true;
         const root = universe.sessions.get(record.view.origin?.rootSessionId ?? record.view.id) ?? record;
-        return root.view.managed === managed;
+        return root.view.lifecycleControlled === lifecycleControlled;
       })
       .filter((record) =>
         Object.entries(metadata).every(([key, value]) => value
@@ -124,7 +124,7 @@ export function sessionRoutes(store: DemoStore): Hono {
     const profile = resolveProfile(universe, body.profile);
     if (!profile) return notFound(c, "not found in engine");
     const config = sessionConfig(profile.config, universe.modelDefaults.agentRun);
-    if (!config) return c.json({ error: "No default agent model is selected. Choose a model in Models.", kind: "model_default_unset", modelDefaultSlot: "agentRun" }, 400);
+    if (!config) return c.json({ error: "No default agent model is selected. Choose a model in Models.", kind: "modelDefaultUnset", modelDefaultSlot: "agentRun" }, 400);
     const sessionId = store.nextId("session");
     const resolved = resolveEnvironment(universe, profile);
     if ("error" in resolved) return conflict(c, `engine conflict: ${resolved.error}`);
@@ -229,21 +229,28 @@ export function sessionRoutes(store: DemoStore): Hono {
     return c.json(session.view);
   });
 
+  /// Nothing in the demo has an execution to lose, so it is always running.
+  app.post("/:id/sessions/:sessionId/restart", (c) => {
+    const found = lookup(c);
+    if (!found) return notFound(c, "not found in engine");
+    return c.json(found.session.view);
+  });
+
   app.delete("/:id/sessions/:sessionId", (c) => {
     const found = lookup(c);
     if (!found) return notFound(c, "not found in engine");
     if (!canDeleteSession(store.currentUser.role === "admin" ? "admin" : found.universe.universe.role, found.session.view.access.visibility === "universe")) return c.json({ error: "not permitted to delete this session" }, 403);
     const { universe, session } = found;
-    if (session.view.status !== "closed") {
+    if (session.view.lifecycleStatus !== "closed") {
       return conflict(c, "engine conflict: only closed sessions can be deleted");
     }
     const descendants = retentionDescendants(universe, session.view.id);
     const cascade = c.req.query("cascade") === "true";
     if (descendants.length > 0 && !cascade) {
-      return conflict(c, "engine conflict: session has forks or delegated children; enable cascade");
+      return conflict(c, "engine conflict: session has delegated children; enable cascade");
     }
     const selected = cascade ? [session, ...descendants] : [session];
-    if (selected.some((candidate) => candidate.view.status !== "closed")) {
+    if (selected.some((candidate) => candidate.view.lifecycleStatus !== "closed")) {
       return conflict(c, "engine conflict: every session in the subtree must be closed");
     }
     const role = store.currentUser.role === "admin" ? "admin" : universe.universe.role;
@@ -292,7 +299,6 @@ export function sessionRoutes(store: DemoStore): Hono {
         nextCursor: lower > 0 ? { seq: lower + 1 } : null,
         complete: lower === 0,
         headCursor: { seq: head },
-        gap: null,
       });
     }
     return c.json(await waitForEvents(found.session, after, Math.min(limit, 500), Math.min(waitMs, 30_000), c.req.raw.signal));
@@ -337,12 +343,12 @@ export function sessionRoutes(store: DemoStore): Hono {
       .filter((entry) => entry.kind.type === "instructions")
       .map((entry) => ({
         key: entry.key ?? null,
-        contentRef: entry.content.contentRef,
+        blobRef: entry.content.blobRef,
         preview: entry.preview ?? null,
       }));
     const custom = active.find((entry) => entry.key === PROFILE_INSTRUCTIONS_KEY);
     return c.json({
-      text: custom ? store.readText(custom.contentRef) : null,
+      text: custom ? store.readText(custom.blobRef) : null,
       contextRevision: session.activeContext.revision,
       active,
     });
@@ -367,7 +373,7 @@ export function sessionRoutes(store: DemoStore): Hono {
     const found = lookup(c);
     if (!found) return notFound(c, "not found in engine");
     const { universe, session } = found;
-    if (session.view.status !== "idle") {
+    if (session.view.lifecycleStatus === "closed" || session.view.activity !== "idle") {
       return conflict(c, "engine conflict: environment activation requires an idle session");
     }
     if (!grantsEnvironments(session.view.config ?? {})) {
@@ -391,7 +397,7 @@ export function sessionRoutes(store: DemoStore): Hono {
     const found = lookup(c);
     if (!found) return notFound(c, "not found in engine");
     const { session } = found;
-    if (session.view.status !== "idle") {
+    if (session.view.lifecycleStatus === "closed" || session.view.activity !== "idle") {
       return conflict(c, "engine conflict: environment deactivation requires an idle session");
     }
     session.view.activeEnvironmentId = null;
@@ -427,7 +433,7 @@ export function sessionRoutes(store: DemoStore): Hono {
     const { universe, session } = found;
     const body = sessionMessageSchema.safeParse(await readBody(c));
     if (!body.success) return badRequest(c, body.error.issues[0]?.message ?? "Invalid message");
-    if (session.view.status === "closed") return conflict(c, "engine conflict: session is closed");
+    if (session.view.lifecycleStatus === "closed") return conflict(c, "engine conflict: session is closed");
     const missing = missingAttachment(body.data.attachments);
     if (missing) return badRequest(c, `blob ${missing} was not found`);
     // The runtime keeps provider identity and API kind fixed per session.

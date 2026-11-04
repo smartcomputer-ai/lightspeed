@@ -44,7 +44,7 @@ pub fn authorize_controller(
         return false;
     }
     let controls = target.resource == context.actor
-        || matches!((&context.actor, &target.bot), (ResourceRef::Bot(bot), Some(managed)) if bot == managed)
+        || matches!((&context.actor, &target.bot), (ResourceRef::Bot(bot), Some(controlled)) if bot == controlled)
         || matches!((&context.actor, &target.parent), (ResourceRef::Session(actor), Some(parent)) if actor == parent);
     match action {
         Read | CreateSession | UseResource => true,

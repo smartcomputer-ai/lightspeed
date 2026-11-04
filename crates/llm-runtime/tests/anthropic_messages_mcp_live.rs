@@ -9,11 +9,14 @@ use std::{collections::BTreeMap, sync::Arc};
 use harness::{
     ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
     CoreAgentEvent, ModelSelection, ProviderApiKind, RemoteMcpApprovalPolicy, RemoteMcpToolSpec,
-    RunConfig, RunStatus, SessionConfig, SessionId, ToolKind, ToolName, ToolParallelism, ToolSpec,
+    RunConfig, RunStatus, SessionConfig, SessionId, ToolId, ToolKind, ToolParallelism, ToolSpec,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use llm_clients::anthropic::messages::{ANTHROPIC_MCP_BETA, Client};
-use llm_runtime::{AnthropicMessagesLlmAdapter, LlmAdapterRegistry, LlmRuntime};
+use llm_runtime::{
+    AnthropicMessagesLlmAdapter, LlmAdapterRegistry, LlmRuntime, McpInventoryError,
+    McpInventoryResolver, RuntimeMcpTool, secrets::AbsentSecretResolver,
+};
 use serde_json::Value;
 use test_support::{DriveCommand, RunnerQuiescence, RunnerStores, SessionRunner};
 
@@ -25,6 +28,24 @@ use support::retrying_anthropic_messages_client;
 
 const MCP_TEST_SERVER_URL: &str = "https://mcpplaygroundonline.com/mcp-stateless-server";
 const MCP_TEST_TOOL: &str = "which_protocol_era";
+
+/// Points the provider-hosted tool at the public test server, standing in for a
+/// server's live record.
+struct PlaygroundServer;
+
+#[async_trait::async_trait]
+impl McpInventoryResolver for PlaygroundServer {
+    async fn list_tools(
+        &self,
+        _spec: &RemoteMcpToolSpec,
+    ) -> Result<Vec<RuntimeMcpTool>, McpInventoryError> {
+        Ok(Vec::new())
+    }
+
+    async fn server_url(&self, _server_id: &str) -> Result<Option<String>, McpInventoryError> {
+        Ok(Some(MCP_TEST_SERVER_URL.to_owned()))
+    }
+}
 
 fn live_client() -> Client {
     let mut config = support::anthropic_messages_live_config();
@@ -63,7 +84,9 @@ async fn anthropic_messages_live_core_session_uses_public_remote_mcp() {
                     retrying_anthropic_messages_client(live_client()),
                     blobs.clone(),
                 )
-                .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error),
+                .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
+                .with_mcp_inventory_resolver(Arc::new(PlaygroundServer))
+                .with_secret_resolver(Arc::new(AbsentSecretResolver)),
             ),
         ),
     ));
@@ -130,6 +153,7 @@ async fn anthropic_messages_live_core_session_uses_public_remote_mcp() {
                     }],
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(32),
         })
@@ -138,7 +162,7 @@ async fn anthropic_messages_live_core_session_uses_public_remote_mcp() {
 
     assert_eq!(outcome.quiescence, RunnerQuiescence::Idle);
     assert_eq!(
-        outcome.state.runs.completed[0].status,
+        outcome.state.runs.finished[0].status,
         RunStatus::Completed,
         "{}",
         run_failure_text(blobs.as_ref(), &outcome.state).await
@@ -185,28 +209,24 @@ fn protocol_era(items: &[Value]) -> Option<&'static str> {
         .find(|era| items.iter().any(|item| item.to_string().contains(era)))
 }
 
-fn remote_mcp_tools() -> BTreeMap<ToolName, ToolSpec> {
+fn remote_mcp_tools() -> BTreeMap<ToolId, ToolSpec> {
     let tool = ToolSpec {
-        name: ToolName::new("mcp_playground"),
+        id: ToolId::new("mcp_playground"),
         execution: Default::default(),
         kind: ToolKind::RemoteMcp(RemoteMcpToolSpec {
             server_id: "playground".to_string(),
             record_revision: 1,
             server_label: "playground".to_string(),
-            server_url: MCP_TEST_SERVER_URL.to_string(),
             description_ref: None,
             allowed_tools: Some(vec![MCP_TEST_TOOL.to_string()]),
             execution: harness::RemoteMcpExecution::Provider,
             exposure: harness::RemoteMcpExposure::Inject,
             approval: RemoteMcpApprovalPolicy::Never,
             defer_loading: Some(true),
-            auth_ref: None,
-            auth_required: false,
-            allow_private_network: false,
         }),
         parallelism: ToolParallelism::ParallelSafe,
     };
-    BTreeMap::from([(tool.name.clone(), tool)])
+    BTreeMap::from([(tool.id.clone(), tool)])
 }
 
 fn session_config(model: ModelSelection) -> SessionConfig {
@@ -221,7 +241,6 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         },
         limits: Default::default(),
         context: ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: None,
             compaction: None,
         },
@@ -231,15 +250,12 @@ fn session_config(model: ModelSelection) -> SessionConfig {
 
 fn run_config() -> RunConfig {
     RunConfig {
-        input_limit_tokens: None,
-        max_turns: Some(2),
+        max_turns: None,
         reasoning_effort: None,
         parallel_tool_use: None,
         processing_tier: None,
-        max_tool_rounds: Some(1),
         model_override: None,
         max_output_tokens: None,
-        provider_params: None,
         tool_choice: None,
     }
 }
@@ -279,8 +295,8 @@ async fn mcp_context_items(
                 if matches!(
                     item.content.provider_kind.as_deref(),
                     Some(
-                        harness::ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND
-                            | harness::ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND
+                        llm_clients::content::ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND
+                            | llm_clients::content::ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND
                     )
                 ) {
                     let bytes = blobs
@@ -308,8 +324,8 @@ async fn tool_search_context_items(
                 if matches!(
                     item.content.provider_kind.as_deref(),
                     Some(
-                        harness::ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND
-                            | harness::ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND
+                        llm_clients::content::ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND
+                            | llm_clients::content::ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND
                     )
                 ) {
                     let bytes = blobs
@@ -325,7 +341,7 @@ async fn tool_search_context_items(
 }
 
 async fn run_failure_text(blobs: &dyn BlobStore, state: &harness::CoreAgentState) -> String {
-    let Some(run) = state.runs.completed.first() else {
+    let Some(run) = state.runs.finished.first() else {
         return "run did not complete".to_owned();
     };
     let Some(failure) = run.failure.as_ref() else {

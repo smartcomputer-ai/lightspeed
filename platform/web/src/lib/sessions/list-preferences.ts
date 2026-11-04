@@ -3,7 +3,7 @@ export interface SessionListPreferences {
   showSubagents: boolean;
   /// Managed work (bots' conversations, workflow-driven sessions) has its
   /// manager's page; the list shows it only when asked.
-  showManagedSessions: boolean;
+  showControlledSessions: boolean;
   showSessionIds: boolean;
   metadataKeys: string[];
 }
@@ -11,7 +11,7 @@ export interface SessionListPreferences {
 export const DEFAULT_SESSION_LIST_PREFERENCES: SessionListPreferences = {
   showClosed: true,
   showSubagents: true,
-  showManagedSessions: false,
+  showControlledSessions: false,
   showSessionIds: false,
   metadataKeys: [],
 };
@@ -22,12 +22,12 @@ export const DEFAULT_SESSION_LIST_PREFERENCES: SessionListPreferences = {
  * one; only metadata filters are.
  */
 export function hiddenSessionsNote(
-  preferences: Pick<SessionListPreferences, "showClosed" | "showSubagents" | "showManagedSessions">,
+  preferences: Pick<SessionListPreferences, "showClosed" | "showSubagents" | "showControlledSessions">,
 ): string | null {
   const hidden = [
     !preferences.showClosed && "closed",
     !preferences.showSubagents && "sub-agent",
-    !preferences.showManagedSessions && "managed",
+    !preferences.showControlledSessions && "managed",
   ].filter((kind): kind is string => Boolean(kind));
   const last = hidden.pop();
   if (!last) return null;
@@ -66,9 +66,9 @@ export function readSessionListPreferences(
       showSubagents: typeof record.showSubagents === "boolean"
         ? record.showSubagents
         : DEFAULT_SESSION_LIST_PREFERENCES.showSubagents,
-      showManagedSessions: typeof record.showManagedSessions === "boolean"
-        ? record.showManagedSessions
-        : DEFAULT_SESSION_LIST_PREFERENCES.showManagedSessions,
+      showControlledSessions: typeof record.showControlledSessions === "boolean"
+        ? record.showControlledSessions
+        : DEFAULT_SESSION_LIST_PREFERENCES.showControlledSessions,
       showSessionIds: typeof record.showSessionIds === "boolean"
         ? record.showSessionIds
         : DEFAULT_SESSION_LIST_PREFERENCES.showSessionIds,

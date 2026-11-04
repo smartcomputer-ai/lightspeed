@@ -3,10 +3,12 @@ use std::sync::Arc;
 use harness::{
     BlobRef, CompactionPolicy, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
     ContextMessageRole, ContextSnapshot, LlmFinish, LlmGenerationRequest, LlmGenerationStatus,
-    LlmRequest, ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
-    OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND, OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
-    ProviderApiKind, ProviderParams, RunId, SessionId, ToolChoice, TurnId,
+    LlmRequest, ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ProviderApiKind,
+    ProviderParams, RunId, SessionId, ToolChoice, TurnId,
     storage::{BlobStore, InMemoryBlobStore},
+};
+use llm_clients::content::{
+    OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND, OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
 };
 use llm_runtime::{
     LlmGenerationAdapter, OpenAiResponsesLlmAdapter, OpenAiResponsesParams,
@@ -105,7 +107,6 @@ async fn openai_responses_live_fast_mode_reports_effective_service_tier() {
             reasoning_effort: Some("none".to_owned()),
             parallel_tool_use: None,
             processing_tier: Some(harness::ModelProcessingTier::Fast),
-            provider_response_id: None,
             compaction: None,
             params: Some(openai_params(&OpenAiResponsesParams {
                 store: Some(false),
@@ -229,7 +230,6 @@ async fn openai_responses_live_adapter_describes_image_input() {
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: Some(openai_params(&OpenAiResponsesParams {
                 store: Some(false),
@@ -386,7 +386,6 @@ async fn openai_responses_live_adapter_reads_pdf_document_input() {
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: Some(openai_params(&OpenAiResponsesParams {
                 store: Some(false),
@@ -481,7 +480,6 @@ async fn openai_responses_live_adapter_generates_result() {
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: Some(openai_params(&OpenAiResponsesParams {
                 store: Some(false),
@@ -609,7 +607,6 @@ async fn openai_responses_live_adapter_captures_provider_triggered_compaction() 
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: Some(CompactionPolicy::ProviderTriggered {
                 compact_threshold_tokens: Some(2000),
             }),
@@ -711,7 +708,7 @@ async fn openai_responses_live_adapter_captures_web_search_call_and_citations() 
                 token_estimate: None,
             },
             tools: vec![harness::ToolSpec {
-                name: harness::ToolName::new("web_search"),
+                id: harness::ToolId::new("web_search"),
                 kind: harness::ToolKind::ProviderNative(harness::ProviderNativeToolSpec {
                     api_kind: ProviderApiKind::OpenAiResponses,
                     native_tool_ref: blobs
@@ -728,7 +725,6 @@ async fn openai_responses_live_adapter_captures_web_search_call_and_citations() 
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: Some(openai_params(&OpenAiResponsesParams {
                 include: vec![OPENAI_RESPONSES_WEB_SEARCH_SOURCES_INCLUDE.to_string()],
@@ -891,7 +887,6 @@ async fn openai_responses_live_adapter_captures_web_search_call_and_citations() 
                 reasoning_effort: None,
                 parallel_tool_use: None,
                 processing_tier: None,
-                provider_response_id: None,
                 compaction: None,
                 params: Some(openai_params(&OpenAiResponsesParams {
                     store: Some(false),
@@ -969,7 +964,6 @@ async fn openai_responses_live_adapter_sees_tool_media() {
                 reasoning_effort: None,
                 parallel_tool_use: Some(false),
                 processing_tier: None,
-                provider_response_id: None,
                 compaction: None,
                 params: Some(openai_params(&OpenAiResponsesParams {
                     store: Some(false),
@@ -1074,7 +1068,6 @@ fn media_request(
             reasoning_effort: reasoning_effort.map(str::to_owned),
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: Some(openai_params(&OpenAiResponsesParams {
                 store: Some(false),

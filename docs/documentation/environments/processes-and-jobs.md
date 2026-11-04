@@ -134,14 +134,17 @@ reaches the foreground job, as Ctrl+C would. A kill terminates the process
 group. Inspect the resulting state afterward: an exit reports either a code
 or the name of the signal that ended the command.
 
-**Stop run** cancels agent work but is not a guarantee that every remote
-operating-system process has stopped. A command can outlive a canceled tool
-call or a disconnected client. Ordinary commands can also exit while leaving
-child services alive. Check and stop those processes explicitly, or close a
-disposable environment when its entire machine is no longer needed.
+**Stop run** terminates a command that has not yet returned a handle: its process
+group gets a termination signal and then a kill after the grace period. A command
+that already yielded a handle keeps running until it is stopped or the environment
+closes. If a worker dies, its command may keep running, and the failed call says so.
+Ordinary commands can also exit while leaving child services alive. Check and stop
+those processes explicitly, or close a disposable environment when its entire machine
+is no longer needed.
 
-Process operations are not automatically safe to retry. After an uncertain
-connection failure, inspect the machine or existing handle before asking the
+Process operations are not automatically safe to retry. If the connection drops during
+a wait, the call returns the handle with a note instead of failing, so continue with
+that handle. After any other uncertain failure, inspect the machine before asking the
 agent to execute the same side-effecting command again.
 
 ## Submit jobs with dependencies
@@ -296,7 +299,7 @@ first receives a termination signal and is killed after a grace period unless
 `force` is set; it reports `cancelRequestedAtMs` and stays `running` until it
 ends, so continue reading until terminal.
 
-A standalone call can return `environment_not_ready` during provisioning,
+A standalone call can return `environmentNotReady` during provisioning,
 while a powered-down machine wakes, or while a registered daemon
 reconnects. Wait and retry with the same creation identity. Exact types and
 methods are in the [API reference](../../../crates/api/contract/api-reference.md).

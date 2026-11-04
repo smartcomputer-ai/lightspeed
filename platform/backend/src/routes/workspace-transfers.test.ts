@@ -145,7 +145,7 @@ beforeEach(() => {
               error: {
                 code: -32004,
                 message: "workspace not found",
-                data: { kind: "not_found" },
+                data: { kind: "notFound" },
               },
             });
           workspaceDeleted = true;

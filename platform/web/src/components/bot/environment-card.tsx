@@ -32,7 +32,7 @@ export function BotEnvironmentCard({
   environmentId: string;
 }) {
   const permissions = useActionPermissions(universeId);
-  const manage = permissions.can("configure_resource");
+  const manage = permissions.can("configureResource");
   const queryClient = useQueryClient();
   const environments = useQuery({ ...openEnvironmentsQuery(universeId), refetchInterval: 15_000 });
   const templates = useQuery(environmentTemplatesQuery(universeId));

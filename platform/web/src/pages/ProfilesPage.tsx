@@ -64,7 +64,7 @@ import { ListPane } from "@/components/list-pane";
 export function ProfilesPage(_props: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const { profileId } = useParams<{ profileId: string }>();
-  const canCreate = useActionPermissions(universe?.id).can("create_profile");
+  const canCreate = useActionPermissions(universe?.id).can("createProfile");
   const [, setCreateOpen] = useCreateParam("profile");
 
   if (isLoading) {
@@ -120,7 +120,7 @@ function ProfilePane({
     queryFn: () => api<ProfileSummary[]>("GET", `/api/v1/universes/${universeId}/profiles`),
   });
   const permissions = useActionPermissions(universeId);
-  const canCreate = permissions.can("create_profile");
+  const canCreate = permissions.can("createProfile");
   const [createOpen, setCreateOpen] = useCreateParam("profile");
 
   return (
@@ -161,7 +161,7 @@ function ProfilePane({
                   <span className="truncate font-medium">
                     {profile.displayName ?? profile.profileId}
                   </span>
-                  {!permissions.can("manage_profile") && (
+                  {!permissions.can("manageProfile") && (
                     <span className="shrink-0 text-xs text-muted-foreground">Read only</span>
                   )}
                   <span className="ml-auto shrink-0 text-xs text-muted-foreground">
@@ -199,7 +199,7 @@ function ProfileEditor({
   profileId: string;
 }) {
   const permissions = useActionPermissions(universeId);
-  const manage = permissions.can("manage_profile");
+  const manage = permissions.can("manageProfile");
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const doc = useQuery({
@@ -637,7 +637,7 @@ function NewProfileDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const permissions = useActionPermissions(universeId);
-  const canCreate = permissions.can("create_profile");
+  const canCreate = permissions.can("createProfile");
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [displayName, setDisplayName] = useState("");

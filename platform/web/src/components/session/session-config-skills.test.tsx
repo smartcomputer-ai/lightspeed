@@ -241,7 +241,7 @@ it("summarizes existing overrides while collapsed and preserves them on expansio
 });
 
 it("hides sub-agent limits by default and preserves overrides while collapsed", async () => {
-  await setup({ features: { subagents: { agents: ["reviewer"], maxDepth: 3, maxDescendants: 24 } } });
+  await setup({ features: { subagents: { agents: ["reviewer"], maxDepth: 3, maxConcurrent: 24 } } });
   expect(container.textContent).toContain("Agents");
   expect(container.textContent).toContain("2 custom limits");
   expect(container.querySelector('input[type="number"]')).toBeNull();
@@ -249,12 +249,12 @@ it("hides sub-agent limits by default and preserves overrides while collapsed", 
   const before = JSON.stringify(current);
   await act(async () => button.click());
   expect(button.getAttribute("aria-expanded")).toBe("true");
-  expect(container.querySelectorAll('input[type="number"]')).toHaveLength(4);
+  expect(container.querySelectorAll('input[type="number"]')).toHaveLength(3);
   expect(JSON.stringify(current)).toBe(before);
   await input("Max depth", "4");
   expect(current).toHaveProperty("features.subagents.maxDepth", 4);
-  await input("Max descendants", "");
-  expect(current).not.toHaveProperty("features.subagents.maxDescendants");
+  await input("Max concurrent", "");
+  expect(current).not.toHaveProperty("features.subagents.maxConcurrent");
   await act(async () => button.click());
   expect(container.querySelector('input[type="number"]')).toBeNull();
   expect(current).toHaveProperty("features.subagents.maxDepth", 4);

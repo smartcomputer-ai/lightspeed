@@ -26,14 +26,14 @@ const inbound: ChannelInbound = {
 describe("inbound admission", () => {
   it("maps every core decision to the reply the host sends itself", () => {
     expect(pairingReplyFor("paired")).toBe(PAIRING_CONFIRMED_REPLY);
-    expect(pairingReplyFor("pairing_required")).toBe(PAIRING_REQUIRED_REPLY);
-    expect(pairingReplyFor("pairing_pending")).toBeNull();
+    expect(pairingReplyFor("pairingRequired")).toBe(PAIRING_REQUIRED_REPLY);
+    expect(pairingReplyFor("pairingPending")).toBeNull();
     expect(pairingReplyFor("bound")).toBeNull();
     expect(pairingReplyFor("unbound")).toBeNull();
   });
 
   it("calls channels/inbound/admit with the account's universe and answers per decision", async () => {
-    const decisions: ChannelInboundDecision[] = ["bound", "paired", "pairing_required", "pairing_pending", "unbound"];
+    const decisions: ChannelInboundDecision[] = ["bound", "paired", "pairingRequired", "pairingPending", "unbound"];
     const rpc = fakeRpc((method) => {
       expect(method).toBe("channels/inbound/admit");
       return { decision: decisions.shift() };
@@ -51,10 +51,10 @@ describe("inbound admission", () => {
     await expect(gate.admit(inbound)).resolves.toEqual({ outcome: "bound", reply: null });
     await expect(gate.admit(inbound)).resolves.toEqual({ outcome: "paired", reply: PAIRING_CONFIRMED_REPLY });
     await expect(gate.admit(inbound)).resolves.toEqual({
-      outcome: "pairing_required",
+      outcome: "pairingRequired",
       reply: PAIRING_REQUIRED_REPLY,
     });
-    await expect(gate.admit(inbound)).resolves.toEqual({ outcome: "pairing_pending", reply: null });
+    await expect(gate.admit(inbound)).resolves.toEqual({ outcome: "pairingPending", reply: null });
     await expect(gate.admit(inbound)).resolves.toEqual({ outcome: "unbound", reply: null });
 
     expect(rpc.calls).toHaveLength(5);
@@ -78,10 +78,10 @@ describe("inbound admission", () => {
       log: { warn: vi.fn(), error: vi.fn() },
     });
     await expect(gate.admit(inbound)).resolves.toMatchObject({ outcome: "bound" });
-    await expect(gate.admit(inbound)).resolves.toEqual({ outcome: "rate_limited", reply: null });
+    await expect(gate.admit(inbound)).resolves.toEqual({ outcome: "rateLimited", reply: null });
     await expect(gate.admit({ ...inbound, senderId: "8" })).resolves.toMatchObject({ outcome: "bound" });
     expect(rpc.calls).toHaveLength(2);
-    expect(metrics.inboundTotal("rate_limited")).toBe(1);
+    expect(metrics.inboundTotal("rateLimited")).toBe(1);
   });
 
   it("counts a core failure and stays silent instead of throwing into the provider loop", async () => {

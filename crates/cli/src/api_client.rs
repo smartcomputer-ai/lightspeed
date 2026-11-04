@@ -118,7 +118,8 @@ impl HttpAgentApi {
                         SessionStartResponse {
                             session: api::SessionMutationView {
                                 id: outcome.result.session.id,
-                                status: outcome.result.session.status,
+                                lifecycle_status: outcome.result.session.lifecycle_status,
+                                activity: outcome.result.session.activity,
                                 head_cursor: None,
                                 config_revision: outcome.result.session.config_revision,
                                 context_revision: outcome.result.session.active_context.revision,
@@ -216,6 +217,13 @@ impl HttpAgentApi {
     ) -> Result<AgentApiOutcome<api::SessionRetentionPutResponse>, AgentApiError> {
         self.request(api::METHOD_SESSION_RETENTION_PUT, params)
             .await
+    }
+
+    pub(crate) async fn restart_session(
+        &self,
+        params: api::SessionRestartParams,
+    ) -> Result<AgentApiOutcome<api::SessionRestartResponse>, AgentApiError> {
+        self.request(api::METHOD_SESSION_RESTART, params).await
     }
 
     pub(crate) async fn close_session(
@@ -704,6 +712,7 @@ fn agent_error_from_json_rpc(error: api::JsonRpcError) -> AgentApiError {
         -32004 => AgentApiErrorKind::NotFound,
         -32009 => AgentApiErrorKind::Conflict,
         -32010 => AgentApiErrorKind::Rejected,
+        -32015 => AgentApiErrorKind::OperationPending,
         _ => AgentApiErrorKind::Internal,
     };
     AgentApiError::new(kind, error.message)

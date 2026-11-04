@@ -10,9 +10,11 @@ use harness::{BlobRef, ContextEntry, ContextEntryKind, storage::BlobStore};
 
 use crate::error::LlmAdapterResult;
 
-/// Line prepended to a catalog that supersedes an earlier version.
+/// Line prepended to a catalog that supersedes an earlier version. It makes no
+/// claim about where that version is: compaction and the per-key cap can both
+/// remove it while this entry keeps its `supersedes` id.
 pub(crate) const CATALOG_UPDATE_HEADER: &str =
-    "Updated catalog — this version supersedes the earlier one above; use this one.";
+    "Updated catalog — this version supersedes any earlier version of this catalog; use this one.";
 
 /// Wrap a rendered catalog body with the update header when the entry
 /// supersedes an earlier version. The body of a non-superseding entry is

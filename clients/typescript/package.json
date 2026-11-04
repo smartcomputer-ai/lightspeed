@@ -4,6 +4,16 @@
   "private": false,
   "type": "module",
   "description": "TypeScript SDK for the Lightspeed API and workflow integrations.",
+  "license": "Apache-2.0",
+  "homepage": "https://ls.bot/docs/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/smartcomputer-ai/lightspeed.git",
+    "directory": "clients/typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/smartcomputer-ai/lightspeed/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -15,6 +25,10 @@
       "types": "./dist/workflow.d.ts",
       "default": "./dist/workflow.js"
     },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    },
     "./schema/api.schema.json": "./schema/api.schema.json",
     "./schema/workflow.schema.json": "./schema/workflow.schema.json",
     "./schema/workflow.json": "./schema/workflow.json",
@@ -24,6 +38,7 @@
     "dist",
     "examples",
     "src",
+    "LICENSE",
     "README.md",
     "release.json",
     "schema"
@@ -38,7 +53,7 @@
     "prepare": "npm run build",
     "generate": "node scripts/generate.mjs",
     "check:generated": "npm run generate && git diff --exit-code -- src/generated schema",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p examples/run-inspector/tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "check": "npm run check:generated && npm run typecheck && npm run test && npm run build"

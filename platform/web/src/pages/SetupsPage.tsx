@@ -39,11 +39,11 @@ export function SetupsPage({ admin: _admin }: { admin: boolean }) {
   if (isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !permissions.can("configure_resource")) {
+  if (!universe || !permissions.can("configureResource")) {
     return <UniverseNotFound slug={slug} />;
   }
 
-  return <SetupList universeId={universe.id} installable={permissions.can("manage_access")} />;
+  return <SetupList universeId={universe.id} installable={permissions.can("manageAccess")} />;
 }
 
 /// Operators see the templates; installing one takes an Admin.

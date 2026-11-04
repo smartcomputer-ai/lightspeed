@@ -31,26 +31,17 @@ impl GatewayAgentApi {
         &self,
         session_id: &SessionId,
         expected: Option<&harness::EnvironmentId>,
-        baseline_failures: usize,
+        correlation_token: &str,
     ) -> Result<(), AgentApiError> {
         let started = Instant::now();
         loop {
             if started.elapsed() > self.operation_timeout {
-                return Err(AgentApiError::internal(format!(
-                    "timed out waiting for active environment update: {session_id}"
+                return Err(AgentApiError::operation_pending(format!(
+                    "active environment has not changed yet and can still change: {session_id}"
                 )));
             }
             if let Some(status) = self.query_status_optional(session_id).await? {
-                if status.admission_failures.len() > baseline_failures
-                    && let Some(failure) = status.admission_failures.last()
-                {
-                    return Err(map_admission_failure_to_api_error(failure));
-                }
-                if let Some(error) = status.last_error {
-                    return Err(AgentApiError::internal(format!(
-                        "agent workflow reported error: {error}"
-                    )));
-                }
+                check_command_status(&status, correlation_token)?;
             }
             let loaded = self.load_session_state(session_id).await?;
             if loaded.state.environment.active_environment_id.as_ref() == expected {
@@ -63,7 +54,7 @@ impl GatewayAgentApi {
 
 /// One API mapping for resolver failures everywhere the gateway resolves an
 /// environment on a caller's behalf. `NotReady` and `Unreachable` are typed
-/// `environment_not_ready` so a wait is distinguishable from rejection: the
+/// `environmentNotReady` so a wait is distinguishable from rejection: the
 /// environment is provisioning, waking on its data route, its daemon is
 /// reconnecting, or the dial failed without a typed refusal, and the
 /// caller's correct move is retry-with-backoff, not failure.

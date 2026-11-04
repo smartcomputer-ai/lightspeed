@@ -73,7 +73,12 @@ reasoning text the provider exposed.
 
 Each adapter rebuilds requests according to its provider's format and allowed
 fields. Keeping native material does not make histories interchangeable across
-API kinds. A session's API kind is fixed; start a new session to change it.
+API kinds. A session's provider and API kind are fixed; start a new session to change
+them. Within that route any model is allowed, and retained reasoning and native
+compaction state are sent as they are. Whether the new model makes use of them is
+the provider's call. If a provider refuses a combination, the run fails as
+`requestRejected` with the provider's message, and the session stays open so the
+user can switch back.
 
 Durable model selection contains the provider ID, API kind, and model name.
 The endpoint, authentication, and transport headers are resolved outside the
@@ -106,10 +111,14 @@ explains the source locations and how to configure discovery.
 
 Once the refreshed inputs are admitted, the turn freezes the context revision
 it uses. Instructions are ordered first by key; other entries follow their
-recorded positions. The adapter reads the referenced bytes, builds the native
-request, and sends it with the effective model and tool catalog. New steering
-can be admitted while that call is in flight, but it applies at a later turn
-boundary rather than changing a request already sent.
+recorded positions, except that a tool group renders together: each result follows
+its call, and anything that arrived inside the group, such as a note or a result's
+media, goes behind its last result. The log keeps arrival order, so the transcript
+can differ from the request in that case. The adapter reads the referenced bytes,
+builds the native request, and sends it with the effective model and tool catalog.
+New steering can be admitted while that call is in flight, but it applies at a later
+turn boundary, after any open tool batch, rather than changing a request already
+sent.
 
 For the release editor, editing workspace instructions can change a later
 request. It cannot change the request already sent to the model. Reading a
@@ -150,10 +159,11 @@ stale, with API warnings, while leaving its rendered paths unchanged. Matching
 requires the same environment and configured discovery scope; changed roots,
 working directory, access, or a revoked attachment invalidate that fallback.
 
-Active context retains at most five superseded versions per catalog;
-compaction clears them. Instructions and other ordinary keyed entries replace
-their earlier version, so editing those can change the beginning of the next
-request.
+Active context retains at most five superseded versions per catalog. They follow
+conversation retention, so compaction removes only those inside the prefix it covers.
+Instructions and other ordinary keyed entries replace their earlier version, so
+editing instructions can change the beginning of the next request. A replaced
+non-instruction entry goes last under a new ID.
 
 Tool definitions also keep a stable order. Reordering an otherwise identical
 set of tools can change the prefix the provider sees.
@@ -183,24 +193,51 @@ Automatic policy and an individual compaction operation are separate:
 | `providerTriggered` | Supported OpenAI Responses and Anthropic Messages routes compact inside generation. Chat Completions rejects this mode. |
 | `disabled` | No automatic compaction or context-limit recovery. Explicit API compaction remains available. |
 
-Historical events with an omitted policy retain their original disabled
-behavior on replay. Replacing that session's configuration with the policy
-omitted adopts the new default; an explicit Disabled setting stays disabled.
+An explicit `compactThresholdTokens` controls the proactive trigger. Otherwise it uses
+80% of known usable input capacity. `context.inputLimitTokens` can supply an explicit
+capacity for the document's model; without one, the capacity the provider reports for
+the run's model is resolved when each run is prepared. A failed lookup leaves that run
+on error-driven recovery, without inventing a numeric limit. Request occupancy and the
+effective model's capacity are recorded facts for the deterministic harness;
+cumulative billed tokens are not window occupancy.
 
-For standalone policy, an explicit `compactThresholdTokens` controls the
-proactive trigger. Otherwise it uses 80% of known usable input capacity.
-`context.inputLimitTokens` can supply an explicit capacity; without one, the
-runtime uses reported capacity where available. Unknown capacity leaves
-error-driven recovery available without inventing a numeric limit. Request
-occupancy and the effective model's capacity are recorded facts for the
-deterministic harness; cumulative billed tokens are not window occupancy.
+Proactive compaction works for a run. It fires at a safe boundary of an active run,
+including the start of a new run before its input is written, and never on an idle
+session. So a session nobody returns to pays nothing, and a user's next message can
+wait behind a compaction.
+
+Two more rules keep long sessions loadable, because every generation's activity input
+and reduced state carry metadata for each active entry, whatever the token count:
+
+- At 1,500 active entries compaction fires on every enabled policy. That includes
+  `providerTriggered`, which runs a standalone compaction here.
+- At 2,000 active entries a run does not go on with no compaction tried. It gets one
+  attempt, which covers the whole settled window, and fails as `contextFailure` if the
+  count stays over. A session on `disabled` fails each run at its next turn boundary
+  from that point. The way out is to enable compaction or call
+  `session/context/compact`. A run stopped before its first turn has its input only in
+  the log, so the next run's model does not see it. The limit exists because reduced
+  state crosses the size a session can load near 3,000 entries.
+
+A failed proactive attempt backs off: either trigger waits for about 10% growth past
+the point that failed, and any success clears that. Overflow recovery and manual
+compaction are not held back.
 
 When an enabled session reaches a typed provider context-length failure, the
 harness can compact and resume the same run using already-recorded tool
 results. Recovery is bounded to two attempts per consecutive overflow
 sequence. Authentication failures and unrelated request rejections do not
 trigger this path. If protected input cannot fit, or recovery cannot produce
-a usable replacement, the run fails with the source context retained.
+a usable replacement, the run fails with the source context retained. When the
+smallest chunk still overflows, the failure names the largest entry and its rough
+size, so a user can replace it by ID with
+[context repair](../using-lightspeed/cli.md#repair-rejected-context) or start a new
+session.
+
+Where a limit is known, run start and steering refuse a single text entry that could
+never fit, with `invalidRequest`, rather than admit a message that fails every run
+after it. The check counts 4 bytes per token, so it is an estimate, and it does not
+cover images, PDFs, or `session/context/append`.
 
 `session/context/compact` requests one standalone operation in any mode,
 including Disabled, without changing automatic policy. Active work queues it
@@ -223,9 +260,7 @@ an output budget; native operations do not guarantee that output size.
 
 A retained Anthropic on-demand signed block requires subsequent compactions
 to use standalone execution, even if the requested policy was provider
-triggered. The effective strategy reflects that transition. Retained signed,
-encrypted, or reasoning state can also restrict otherwise permitted model
-changes within a session's pinned provider route.
+triggered. The effective strategy reflects that transition.
 
 Instructions and current catalogs survive compaction. The harness protects
 unconsumed input and unanswered tool exchanges, and normally keeps the two
@@ -233,7 +268,9 @@ newest settled exchanges with their preceding user input while compacting an
 older prefix. Manual compaction without an older prefix and repeated overflow
 recovery can cover more settled history. Skill reads and superseded catalogs
 follow conversation retention. The adapter processes bounded chunks, but only
-the complete validated replacement changes active context.
+the complete validated replacement changes active context. Its size estimates only
+choose where to cut: a chunk with no smaller cut goes to the provider, and the
+provider's typed overflow decides.
 
 Session settings and the API's active-context projection report effective
 mode, threshold source, queued or pending work, and recovery attempts. See
@@ -299,8 +336,8 @@ Immutability makes content reusable, but it also raises a practical question:
 when can storage reclaim it? Lightspeed answers through durable holders and
 explicit parent-to-child edges.
 
-Appending session events records their canonical content references as session
-roots in the same database transaction. Missing referenced blobs reject the
+Appending session events records the references held in their typed fields as
+session roots in the same database transaction. Missing referenced blobs reject the
 append, and constraints protect references attached concurrently with cleanup.
 Bot events, reducer checkpoints, and VFS records also retain the content they
 own.
@@ -332,9 +369,18 @@ The transcript shows what happened by reading and projecting a range of
 historical events. It can page through old work while live updates continue
 from the current session head.
 
-`session/read` asks for current execution state. It uses a reducer checkpoint
-and the authoritative event tail, falling back to full replay when a checkpoint
-is unusable. Incomplete required history fails explicitly in both paths.
+`session/read` answers from the store and needs no worker. It uses a reducer
+checkpoint and the authoritative event tail, falling back to full replay when a
+checkpoint is unusable. Incomplete required history fails explicitly in both paths.
+For a session that is not closed it also asks Temporal whether the execution is
+running, and reports `executionFailure` if not. If Temporal cannot answer, the read
+logs a warning and reports stored state, so a session can read as healthy during an
+outage.
+
+Run summaries come from reduced state for the last 256 finished runs and from the
+log for older ones. `session/runs/read` projects one run from its events. A run past
+the server's detail limit keeps its opening and its latest whole turns and sets
+`earlierEventsOmitted`; `session/events/read` serves the rest.
 
 Detailed run reads also retain a terminal output descriptor independently of
 active context. A completed native message can still supply its full projected

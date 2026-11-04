@@ -16,8 +16,10 @@ pub enum LlmAdapterError {
     #[error("missing context entry {entry_id}")]
     MissingContextEntry { entry_id: ContextEntryId },
 
+    /// `transient` marks a store that may recover, as opposed to a blob that is
+    /// not there.
     #[error("blob store failure: {message}")]
-    BlobStore { message: String },
+    BlobStore { message: String, transient: bool },
 
     #[error("blob {blob_ref} is not valid UTF-8: {message}")]
     InvalidUtf8 { blob_ref: BlobRef, message: String },
@@ -25,8 +27,23 @@ pub enum LlmAdapterError {
     #[error("invalid JSON in blob {blob_ref}: {message}")]
     InvalidJson { blob_ref: BlobRef, message: String },
 
+    /// A request this runtime could not build for the provider.
     #[error("invalid provider request: {message}")]
     InvalidProviderRequest { message: String },
+
+    /// A response the provider sent that could not be read, such as a tool
+    /// name or call id outside the harness grammar. The generation was already
+    /// served, so an adapter ends it as a failed result with its usage intact.
+    #[error("invalid provider response: {message}")]
+    InvalidProviderResponse { message: String },
+
+    /// The provider's safety classifier declined the request. Terminal, and
+    /// named so the failure shows the category instead of a malformed response.
+    #[error("provider refused the request (category: {category}): {explanation}")]
+    ProviderRefused {
+        category: String,
+        explanation: String,
+    },
 
     #[error("model {model} does not support {feature}: {message}")]
     UnsupportedModelFeature {
@@ -38,11 +55,15 @@ pub enum LlmAdapterError {
     #[error("failed to resolve auth secret for tool {tool}: {message}")]
     SecretResolution { tool: String, message: String },
 
-    #[error("failed to resolve native MCP inventory for {server}: {message}")]
-    McpInventory { server: String, message: String },
+    #[error("failed to resolve runtime MCP inventory for {server}: {message}")]
+    McpInventory {
+        server: String,
+        message: String,
+        transient: bool,
+    },
 
     #[error("failed to resolve provider API key: {message}")]
-    ProviderKeyResolution { message: String },
+    ProviderKeyResolution { message: String, transient: bool },
 
     /// A provider client call failed. The typed client error is retained so
     /// the runtime can preserve its retry disposition instead of flattening
@@ -57,6 +78,7 @@ pub enum LlmAdapterError {
 impl From<harness::storage::BlobStoreError> for LlmAdapterError {
     fn from(error: harness::storage::BlobStoreError) -> Self {
         Self::BlobStore {
+            transient: matches!(error, harness::storage::BlobStoreError::Store { .. }),
             message: error.to_string(),
         }
     }

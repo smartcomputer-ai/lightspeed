@@ -6,43 +6,64 @@
 use crate::workflows::WorkflowContextExt as _;
 use api::{BotEventOutcome, BotRecentDeliverySnapshot, LlmUsageView};
 use bots::{BotDeliveryPhase, RoutedSession, ids};
-use futures::{FutureExt, pin_mut, select};
 use harness::{BlobRef, EmissionEnvelope, PromiseResolution, REPLY_COMPLETION_KEY};
 
 use super::super::{
-    BOT_BUSY_RETRY_DELAY, BOT_EVENT_TERMINAL_TIMEOUT, BOT_EXTRA_SESSION_CAP, BotActivities,
-    BotAppendContextRequest, BotEnsureSessionResult, BotExecuteToolRequest, BotExecuteToolResult,
+    BOT_BUSY_RETRY_DELAY, BOT_EXTRA_SESSION_CAP, BotActivities, BotAppendContextRequest,
+    BotEnsureSessionResult, BotExecuteToolRequest, BotExecuteToolResult,
     BotPublishDirectoryRequest, BotReadRunUsageRequest, BotRecordOutcomesRequest,
     BotSendBotReceiptsRequest, BotSendDeliveryReceiptsRequest, BotSessionRequest, BotSessionStatus,
     BotStartRunRequest, BotStartRunResult, BotSteerRunRequest, BotSteerRunResult,
+    bot_start_run_activity_options,
 };
 use super::state::{
-    BotDelivery, DeliveryOutcome, ManagedSession, PendingInvocation, delivery_outcome,
+    BotDelivery, ControlledSession, DeliveryOutcome, LaneTerminal, PendingInvocation, WaitingLane,
+    delivery_outcome,
 };
-use super::{Ctx, activity, close_session, ensure_request, now_ms, wait_until_session_idle};
+use super::{Ctx, activity, close_session, ensure_request, now_ms, reconcile_run, roll_forward};
 use crate::AgentSessionWorkflow;
 
 // ── Delivery lane ───────────────────────────────────────────────────────────
 
-/// Run one delivery on its session. Any failure ends the delivery
-/// `run_failed` with the failure text; the lane never fails the workflow.
+/// Run one delivery on its session. A failure ends the delivery `runFailed`
+/// with the failure text, apart from a run start that may still succeed, which
+/// goes back to the queue for a bounded number of attempts. A session busy with
+/// other work sends the delivery back too, with no limit, and a dead one sends it
+/// to the session's successor, once. The lane never fails the workflow.
 pub(super) async fn run_delivery(ctx: Ctx, delivery: BotDelivery, target: String) {
     let mut target = target;
     if let Err(message) = run_delivery_inner(&ctx, &delivery, &mut target).await {
-        ctx.state_mut(|state| state.record_error(message.clone()));
-        finish_delivery(
-            &ctx,
-            &target,
-            &delivery,
-            DeliveryOutcome {
-                outcome: BotEventOutcome::RunFailed,
-                summary: Some(message),
-                run_id: None,
-            },
-            None,
-        )
-        .await;
+        fail_delivery(&ctx, &target, &delivery, message).await;
     }
+}
+
+/// Pick up a run the previous controller execution was waiting on.
+pub(super) async fn resume_run_wait(ctx: Ctx, lane: WaitingLane) {
+    let WaitingLane {
+        delivery,
+        session_id,
+        run_id,
+        ..
+    } = lane;
+    if let Err(message) = wait_for_run_end(&ctx, &delivery, &session_id, &run_id).await {
+        fail_delivery(&ctx, &session_id, &delivery, message).await;
+    }
+}
+
+async fn fail_delivery(ctx: &Ctx, target: &str, delivery: &BotDelivery, message: String) {
+    ctx.state_mut(|state| state.record_error(message.clone()));
+    finish_delivery(
+        ctx,
+        target,
+        delivery,
+        DeliveryOutcome {
+            outcome: BotEventOutcome::RunFailed,
+            summary: Some(message),
+            run_id: None,
+        },
+        None,
+    )
+    .await;
 }
 
 async fn run_delivery_inner(
@@ -61,7 +82,16 @@ async fn run_delivery_inner(
 
     if let Some(session) = &delivery.session {
         match ensure_routed_session(ctx, session, target, first_event.tools_ref.clone()).await {
-            None => {
+            RoutedSessionEnsured::Dead {
+                session_id,
+                message,
+            } => {
+                ctx.state_mut(|state| state.rekey_lane(target, &session_id));
+                *target = session_id;
+                let dead = BotSessionStatus::Failed;
+                return retry_on_successor(ctx, delivery, target, &dead, message).await;
+            }
+            RoutedSessionEnsured::Failed => {
                 let reason = ctx
                     .state(|state| state.last_error.clone())
                     .unwrap_or_else(|| "unknown".to_owned());
@@ -79,115 +109,119 @@ async fn run_delivery_inner(
                 .await;
                 return Ok(());
             }
-            Some(ensured) if ensured != *target => {
+            RoutedSessionEnsured::Ready(ensured) if ensured != *target => {
                 // The routed session rotated during ensure; move the lane
                 // to the successor id so terminals and busy checks find it.
                 ctx.state_mut(|state| state.rekey_lane(target, &ensured));
                 *target = ensured;
             }
-            Some(_) => {}
+            RoutedSessionEnsured::Ready(_) => {}
         }
     }
 
-    if ctx.state(|state| state.config.emit) {
-        // An emitting bot reads the directory before it decides. A failed
-        // put costs a stale directory, never the delivery.
-        let bot_id = ctx.state(|state| state.config.bot_id.clone());
-        if let Err(message) = activity(
+    if delivery.when_busy == api::BotWhenBusy::Append {
+        publish_directory(ctx, target).await;
+        let appended = activity(
             ctx,
-            BotActivities::publish_directory,
-            BotPublishDirectoryRequest {
+            BotActivities::append_context,
+            BotAppendContextRequest {
                 universe_id,
-                bot_id,
                 session_id: target.clone(),
+                delivery_id: delivery.id.clone(),
+                events: delivery.events.clone(),
             },
         )
-        .await
-        {
-            ctx.state_mut(|state| state.record_error(message));
+        .await;
+        if let Err(message) = appended {
+            // Appending needs no status read on the way in, so this is where a
+            // dead session shows itself on this path.
+            return match read_session_status(ctx, target).await {
+                Ok(status) if status.is_dead() => {
+                    retry_on_successor(ctx, delivery, target, &status, message).await
+                }
+                _ => Err(message),
+            };
         }
+        finish_delivery(
+            ctx,
+            target,
+            delivery,
+            DeliveryOutcome {
+                outcome: BotEventOutcome::Appended,
+                summary: None,
+                run_id: None,
+            },
+            None,
+        )
+        .await;
+        return Ok(());
     }
 
-    match delivery.when_busy {
-        api::BotWhenBusy::Append => {
-            activity(
-                ctx,
-                BotActivities::append_context,
-                BotAppendContextRequest {
-                    universe_id,
-                    session_id: target.clone(),
-                    delivery_id: delivery.id.clone(),
-                    events: delivery.events.clone(),
-                },
-            )
-            .await?;
+    let busy = match read_session_status(ctx, target).await? {
+        BotSessionStatus::Idle => false,
+        BotSessionStatus::Busy { .. } => true,
+        dead => {
+            let message = dead_session_message(target, &dead);
+            return retry_on_successor(ctx, delivery, target, &dead, message).await;
+        }
+    };
+    if busy && delivery.when_busy != api::BotWhenBusy::Steer {
+        look_again_later(ctx, target, delivery);
+        return Ok(());
+    }
+    publish_directory(ctx, target).await;
+    if busy {
+        // A busy session takes the events as steering.
+        if let BotSteerRunResult::Steered { run_id } = steer_run(ctx, delivery, target).await? {
             finish_delivery(
                 ctx,
                 target,
                 delivery,
                 DeliveryOutcome {
-                    outcome: BotEventOutcome::Appended,
+                    outcome: BotEventOutcome::Steered,
                     summary: None,
-                    run_id: None,
+                    run_id: Some(run_id),
                 },
                 None,
             )
             .await;
-            return Ok(());
+        } else {
+            look_again_later(ctx, target, delivery);
         }
-        api::BotWhenBusy::Steer => {
-            // A busy session takes the events as steering; a run that
-            // finished under us falls through to an ordinary run.
-            let status = read_session_status(ctx, target).await?;
-            if !matches!(status, BotSessionStatus::Idle)
-                && let BotSteerRunResult::Steered { run_id } =
-                    steer_run(ctx, delivery, target).await?
-            {
-                finish_delivery(
-                    ctx,
-                    target,
-                    delivery,
-                    DeliveryOutcome {
-                        outcome: BotEventOutcome::Steered,
-                        summary: None,
-                        run_id: Some(run_id),
-                    },
-                    None,
-                )
-                .await;
-                return Ok(());
-            }
-        }
-        api::BotWhenBusy::Queue => {}
+        return Ok(());
     }
 
-    wait_until_session_idle(ctx, target).await?;
-    let started = activity(
-        ctx,
-        BotActivities::start_run,
-        BotStartRunRequest {
-            universe_id,
-            session_id: target.clone(),
-            delivery_id: delivery.id.clone(),
-            events: delivery.events.clone(),
-            submission_id: ids::delivery_submission_id(&delivery.id),
-            terminal_token: ids::delivery_terminal_token(&delivery.id),
-        },
+    let terminal_token = ids::delivery_terminal_token(&delivery.id);
+    let started = crate::workflows::fail_task_if_undecodable(
+        ctx.execute_activity(
+            BotActivities::start_run,
+            BotStartRunRequest {
+                universe_id,
+                session_id: target.clone(),
+                delivery_id: delivery.id.clone(),
+                events: delivery.events.clone(),
+                submission_id: ids::delivery_submission_id(&delivery.id),
+                terminal_token: terminal_token.clone(),
+            },
+            bot_start_run_activity_options(),
+        )
+        .await,
     )
-    .await;
-    let run_id = match started {
-        Ok(BotStartRunResult::Started { run_id }) => run_id,
-        Ok(BotStartRunResult::Rejected { message }) | Err(message) => {
-            // A direct run can win the narrow read/start race. Hold the
-            // lane through a short delay, then requeue at the front.
+    .map_err(|error| error.to_string());
+    let (run_id, finished) = match started {
+        Ok(BotStartRunResult::Started { run_id, finished }) => (run_id, finished),
+        Ok(BotStartRunResult::Refused { message }) => return Err(message),
+        Ok(BotStartRunResult::SessionDead { message }) => {
+            let dead = BotSessionStatus::Failed;
+            return retry_on_successor(ctx, delivery, target, &dead, message).await;
+        }
+        // An activity that spent its own attempts is an outage, not an answer.
+        Ok(BotStartRunResult::Retry { message }) | Err(message) => {
+            let now = now_ms(ctx);
+            if !ctx.state_mut(|state| state.retry_delivery(target, delivery, now)) {
+                return Err(message);
+            }
             ctx.state_mut(|state| state.record_error(message));
-            ctx.timer_with_manual_cancellation(BOT_BUSY_RETRY_DELAY)
-                .await;
-            ctx.state_mut(|state| {
-                state.active_by_session.remove(target.as_str());
-                state.requeue_front(delivery.clone());
-                state.lane_tick += 1;
-            });
             return Ok(());
         }
     };
@@ -204,27 +238,47 @@ async fn run_delivery_inner(
     )
     .await;
 
-    {
-        let session_id = target.clone();
-        let wait = ctx.wait_for_state(move |state| state.lane_has_terminal(&session_id));
-        let timeout = ctx
-            .timer_with_manual_cancellation(BOT_EVENT_TERMINAL_TIMEOUT)
-            .fuse();
-        pin_mut!(wait, timeout);
-        select! {
-            _ = wait => {}
-            _ = timeout => {}
-        }
+    if let Some(status) = finished {
+        // An earlier attempt's run ended while no lane held this delivery, so
+        // its terminal left the log unread and found nothing to attach to.
+        reconcile_run(ctx, &run_id, target).await;
+        ctx.state_mut(|state| {
+            state.attach_terminal(
+                &terminal_token,
+                LaneTerminal {
+                    status,
+                    run_id: run_id.clone(),
+                    failure_message_ref: None,
+                    dead_session: None,
+                },
+            )
+        });
     }
 
-    let (terminal, resolution) = ctx.state(|state| {
-        state
-            .active_by_session
-            .get(target.as_str())
-            .map(|lane| (lane.terminal.clone(), lane.resolution.clone()))
-            .unwrap_or((None, None))
-    });
-    let outcome = delivery_outcome(terminal.as_ref(), resolution.as_ref(), Some(&run_id));
+    wait_for_run_end(ctx, delivery, target, &run_id).await
+}
+
+/// Runs may take as long as they take. A terminal ends this wait, and so does the
+/// dead-session sweep, for a session that can no longer send one. The wait holds
+/// nothing, so a continue-as-new can happen under it and start it again.
+async fn wait_for_run_end(
+    ctx: &Ctx,
+    delivery: &BotDelivery,
+    target: &str,
+    run_id: &str,
+) -> Result<(), String> {
+    ctx.state_mut(|state| state.park_lane(target));
+    let session_id = target.to_owned();
+    ctx.wait_for_state(move |state| state.lane_has_terminal(&session_id))
+        .await;
+
+    let Some((terminal, resolution)) = ctx.state(|state| {
+        let lane = state.active_by_session.get(target)?;
+        Some((lane.terminal.clone()?, lane.resolution.clone()))
+    }) else {
+        return Err(format!("the lane on session {target} lost its run's end"));
+    };
+    let outcome = delivery_outcome(&terminal, resolution.as_ref(), Some(run_id));
     let usage = match (&outcome.run_id, outcome.outcome) {
         (Some(run_id), outcome) if outcome != BotEventOutcome::RunFailed => {
             read_run_usage(ctx, target, run_id).await
@@ -233,6 +287,75 @@ async fn run_delivery_inner(
     };
     finish_delivery(ctx, target, delivery, outcome, usage).await;
     Ok(())
+}
+
+pub(super) fn dead_session_message(session_id: &str, status: &BotSessionStatus) -> String {
+    match status {
+        BotSessionStatus::Failed => {
+            format!("session {session_id} has failed: its workflow is no longer running")
+        }
+        BotSessionStatus::Closed => format!("session {session_id} is closed"),
+        BotSessionStatus::Missing => format!("session {session_id} is missing"),
+        BotSessionStatus::Idle | BotSessionStatus::Busy { .. } => {
+            format!("session {session_id} is unavailable")
+        }
+    }
+}
+
+/// The session is dead and no run started on it, so nothing has happened yet that
+/// the next generation would repeat. Without this every later event would fail
+/// the same way, forever. A delivery that already moved once, or a session that could
+/// not be left behind, ends `runFailed`, and the next event gets its own try.
+async fn retry_on_successor(
+    ctx: &Ctx,
+    delivery: &BotDelivery,
+    target: &str,
+    status: &BotSessionStatus,
+    message: String,
+) -> Result<(), String> {
+    if delivery.rolled_forward || !roll_forward(ctx, target, status).await {
+        return Err(message);
+    }
+    let now = now_ms(ctx);
+    ctx.state_mut(|state| state.requeue_rolled_forward(target, delivery, now));
+    Ok(())
+}
+
+/// The session is running other work, such as an operator's direct run. The
+/// delivery waits in the queue, because a lane polling here would hold the
+/// rollover for as long as that run lasts, until the server terminates the
+/// controller at its history limit.
+fn look_again_later(ctx: &Ctx, target: &str, delivery: &BotDelivery) {
+    let not_before_ms = now_ms(ctx) + BOT_BUSY_RETRY_DELAY.as_millis() as i64;
+    ctx.state_mut(|state| state.requeue_lane(target, delivery, not_before_ms));
+}
+
+/// An emitting bot reads the directory before it decides. A failed put costs a
+/// stale directory, never the delivery.
+async fn publish_directory(ctx: &Ctx, session_id: &str) {
+    let (emit, universe_id, bot_id) = ctx.state(|state| {
+        (
+            state.config.emit,
+            state.config.universe_id,
+            state.config.bot_id.clone(),
+        )
+    });
+    if !emit {
+        return;
+    }
+    if let Err(message) = activity(
+        ctx,
+        BotActivities::publish_directory,
+        BotPublishDirectoryRequest {
+            universe_id,
+            bot_id,
+            session_id: session_id.to_owned(),
+        },
+    )
+    .await
+    {
+        ctx.state_mut(|state| state.record_error(message));
+    }
 }
 
 /// Best effort: the cached share is observability, never a reason to fail
@@ -253,7 +376,10 @@ async fn read_run_usage(ctx: &Ctx, session_id: &str, run_id: &str) -> Option<Llm
     .and_then(|result| result.usage)
 }
 
-async fn read_session_status(ctx: &Ctx, session_id: &str) -> Result<BotSessionStatus, String> {
+pub(super) async fn read_session_status(
+    ctx: &Ctx,
+    session_id: &str,
+) -> Result<BotSessionStatus, String> {
     let universe_id = ctx.state(|state| state.config.universe_id);
     activity(
         ctx,
@@ -285,26 +411,35 @@ async fn steer_run(
     .await
 }
 
-/// Create a routed (perKey / perEvent) session on first use, returning the
-/// session id actually ensured. A declaration mismatch — the session
-/// pre-exists under an older toolset, e.g. after a controller restart
-/// without carry — rotates the key to its next generation and retries
-/// once, mirroring the main session's rotation, instead of wedging the
-/// delivery. `None` means the session could not be created; the reason is
-/// in `last_error`.
+/// What ensuring a routed session came to.
+enum RoutedSessionEnsured {
+    /// The session id actually ensured.
+    Ready(String),
+    /// This session id exists, but its workflow execution has stopped.
+    Dead { session_id: String, message: String },
+    /// It could not be created; the reason is in `last_error`.
+    Failed,
+}
+
+/// Create a routed (perKey / perEvent) session on first use. A declaration
+/// mismatch — the session pre-exists under an older toolset, e.g. a per-event
+/// id delivered again after a release — rotates the key to its next generation
+/// and retries once, mirroring the main session's rotation, instead of wedging
+/// the delivery. A session already known returns at once with no liveness check;
+/// the status read and the run start after this are what find one dead.
 async fn ensure_routed_session(
     ctx: &Ctx,
     session: &RoutedSession,
     resolved_id: &str,
     tools_ref: Option<String>,
-) -> Option<String> {
+) -> RoutedSessionEnsured {
     let mut session_id = resolved_id.to_owned();
     for attempt in 0..2 {
         let observed_at_ms = now_ms(ctx);
         let known = ctx
             .state_mut(|state| state.observe_routed_session(&session_id, session, observed_at_ms));
         if known {
-            return Some(session_id);
+            return RoutedSessionEnsured::Ready(session_id);
         }
         let request = ctx.state(|state| {
             ensure_request(
@@ -326,7 +461,7 @@ async fn ensure_routed_session(
                 let now = now_ms(ctx);
                 let kind = ids::bot_session_kind(&session_id);
                 ctx.state_mut(|state| {
-                    state.extra_sessions.push(ManagedSession {
+                    state.extra_sessions.push(ControlledSession {
                         session_id: session_id.clone(),
                         label: session.label.clone(),
                         session_key: session.session_key.clone(),
@@ -337,7 +472,7 @@ async fn ensure_routed_session(
                     });
                 });
                 enforce_extra_session_cap(ctx, &session_id).await;
-                return Some(session_id);
+                return RoutedSessionEnsured::Ready(session_id);
             }
             Ok(
                 BotEnsureSessionResult::DeclarationMismatch { message }
@@ -352,15 +487,21 @@ async fn ensure_routed_session(
                     continue;
                 }
                 ctx.state_mut(|state| state.record_error(message));
-                return None;
+                return RoutedSessionEnsured::Failed;
+            }
+            Ok(BotEnsureSessionResult::SessionDead { message }) => {
+                return RoutedSessionEnsured::Dead {
+                    session_id,
+                    message,
+                };
             }
             Err(message) => {
                 ctx.state_mut(|state| state.record_error(message));
-                return None;
+                return RoutedSessionEnsured::Failed;
             }
         }
     }
-    None
+    RoutedSessionEnsured::Failed
 }
 
 /// A session evicted from the tracked set would otherwise escape the
@@ -438,18 +579,26 @@ async fn run_busy_sidecar_inner(
         }));
     }
     let status = read_session_status(ctx, target).await?;
-    if !matches!(status, BotSessionStatus::Idle)
-        && let BotSteerRunResult::Steered { run_id } = steer_run(ctx, delivery, target).await?
-    {
-        return Ok(Some(DeliveryOutcome {
-            outcome: BotEventOutcome::Steered,
-            summary: None,
-            run_id: Some(run_id),
-        }));
+    match status {
+        BotSessionStatus::Failed | BotSessionStatus::Missing => {
+            return Err(dead_session_message(target, &status));
+        }
+        BotSessionStatus::Busy { .. } => {
+            if let BotSteerRunResult::Steered { run_id } = steer_run(ctx, delivery, target).await? {
+                return Ok(Some(DeliveryOutcome {
+                    outcome: BotEventOutcome::Steered,
+                    summary: None,
+                    run_id: Some(run_id),
+                }));
+            }
+        }
+        BotSessionStatus::Idle | BotSessionStatus::Closed => {}
     }
-    // The tracked run finished (or has not started) under us. Preserve the
-    // delivery for an ordinary lane attempt once the session is available.
-    ctx.state_mut(|state| state.requeue_front(delivery.clone()));
+    // The tracked run finished (or takes no steering right now) under us.
+    // Preserve the delivery for another try, or for an ordinary lane once the
+    // session is available.
+    let not_before_ms = now_ms(ctx) + BOT_BUSY_RETRY_DELAY.as_millis() as i64;
+    ctx.state_mut(|state| state.requeue_front(delivery.clone(), not_before_ms));
     Ok(None)
 }
 
@@ -618,7 +767,7 @@ pub(super) async fn handle_invocation(ctx: Ctx, pending: PendingInvocation) {
         ctx.state_mut(|state| {
             state.record_error(format!(
                 "pushed invocation {} of {} carries no reply promise",
-                invocation.invocation_id, invocation.tool_id
+                invocation.invocation_id, invocation.workflow_tool_id
             ))
         });
         return;
@@ -632,7 +781,7 @@ pub(super) async fn handle_invocation(ctx: Ctx, pending: PendingInvocation) {
                 bot_id: state.config.bot_id.clone(),
                 session_id: invocation.session_id.as_str().to_owned(),
                 invocation_id: invocation.invocation_id.as_str().to_owned(),
-                tool_id: invocation.tool_id.as_str().to_owned(),
+                tool_id: invocation.workflow_tool_id.as_str().to_owned(),
                 arguments_ref: invocation.arguments_ref.as_str().to_owned(),
                 controller: state.controller_summary(invocation.session_id.as_str(), now),
             },
@@ -661,7 +810,7 @@ pub(super) async fn handle_invocation(ctx: Ctx, pending: PendingInvocation) {
         .external_workflow(holder_workflow_id.clone(), None)
         .signal(
             AgentSessionWorkflow::deliver_emission,
-            envelope,
+            crate::workflows::emission_signal_input(&envelope),
             crate::workflows::signal_options(),
         )
         .await;

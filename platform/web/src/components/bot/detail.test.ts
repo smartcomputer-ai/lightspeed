@@ -26,7 +26,7 @@ const own = (id: string, activity: SessionSummaryView["activity"]): SessionSumma
   access: { visibility: "universe" },
   activity,
   lifecycleStatus: "open",
-  managed: true,
+  lifecycleControlled: true,
   createdAtMs: 0,
   updatedAtMs: 0,
   retention: { rootSessionId: id },
@@ -52,7 +52,7 @@ const subagent = (
   access: { visibility: "universe" },
   activity: "idle",
   lifecycleStatus: "open",
-  managed: true,
+  lifecycleControlled: true,
   createdAtMs: 0,
   updatedAtMs,
   retention: { rootSessionId: "bot:v1:triage" },
@@ -64,7 +64,7 @@ const subagent = (
     depth: 1,
     invocationId: "inv-1",
     agent: { profileId: "reviewer", revision: 1 },
-    limits: { maxDepth: 1, maxDescendants: 4, maxConcurrent: 1, deadlineMs: 60_000 },
+    limits: { maxDepth: 1, maxConcurrent: 1, runTimeoutMs: 60_000 },
   },
 });
 

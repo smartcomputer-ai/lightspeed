@@ -8,9 +8,10 @@ exposed.
 The product guide, [Configurator MCP](../../docs/documentation/integrating-and-extending/configurator-mcp.md),
 covers client setup, deployment authentication, and the management workflow.
 
-`tool-filter.json` contains the exact universe methods omitted from generation.
-The default surface excludes managed-session creation, environment jobs,
-environment registration keys, and the redundant Lightspeed handshake.
+`tool-filter.json` contains the exact universe methods and params omitted from
+generation. The default surface excludes the `integration` param of `session/start`,
+environment jobs, environment registration keys, and the redundant Lightspeed
+handshake.
 Edit that file and run `npm run generate` to tune the advertised surface.
 Each request then lists only the tools whose method group the caller's key
 holds, as reported by the runtime's `initialize` response; other tools are

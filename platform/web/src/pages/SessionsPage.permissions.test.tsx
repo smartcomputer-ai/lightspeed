@@ -31,7 +31,7 @@ let defaults: ModelDefaults;
 const sessions = [
   { id: "own", access: { visibility: "restricted", createdBy: { kind: "actor", id: "user" } } },
   { id: "other", access: { visibility: "universe", createdBy: { kind: "actor", id: "someone" } } },
-].map((session) => ({ ...session, displayName: session.id, lifecycleStatus: "open", managed: false, createdAtMs: 0, updatedAtMs: 0, retention: { rootSessionId: session.id } }));
+].map((session) => ({ ...session, displayName: session.id, lifecycleStatus: "open", lifecycleControlled: false, createdAtMs: 0, updatedAtMs: 0, retention: { rootSessionId: session.id } }));
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -75,7 +75,7 @@ it("keeps the session list readable without showing create or bulk controls to a
 it("leaves managed work to its manager unless asked", async () => {
   await show();
   const listed = mocks.api.mock.calls.map(([, path]) => String(path)).find((path) => path.includes("/sessions?"));
-  expect(listed).toContain("managed=false");
+  expect(listed).toContain("lifecycleControlled=false");
 });
 it("marks shared work in the list and leaves private work unmarked", async () => {
   await show();
@@ -150,7 +150,7 @@ it("offers operators bulk close for their own and shared sessions", async () => 
 it("offers operators bulk deletion only for closed shared sessions, including managed history", async () => {
   mocks.role = "operator";
   mocks.api.mockImplementation(async (_method: string, path: string) => {
-    if (path.includes("/sessions?")) return { sessions: sessions.map((session) => ({ ...session, lifecycleStatus: "closed", managed: true })) };
+    if (path.includes("/sessions?")) return { sessions: sessions.map((session) => ({ ...session, lifecycleStatus: "closed", lifecycleControlled: true })) };
     return [];
   });
   await show();

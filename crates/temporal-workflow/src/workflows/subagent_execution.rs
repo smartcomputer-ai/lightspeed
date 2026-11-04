@@ -3,22 +3,55 @@
 //! it creates the child session from the pinned profile, waits for the
 //! child's run terminal, resolves the parent's `reply` promise with the
 //! result envelope, and closes the child. Cancellation from any direction
-//! closes the child. To the parent this is indistinguishable from an
+//! closes the child. A child's run has no time limit unless its grant sets one;
+//! a periodic liveness check is what ends the wait on a child whose session
+//! workflow stopped. To the parent this is indistinguishable from an
 //! environment job; the session workflow carries no sub-agent code.
 
 use crate::workflows::WorkflowContextExt as _;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
-use futures::{FutureExt, pin_mut, select};
+use futures::{FutureExt, pin_mut, select_biased};
+use temporalio_common::data_converters::RawValue;
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult};
+use temporalio_sdk::{
+    ContinueAsNewOptions, SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult,
+};
 
 use crate::{
-    AgentSessionWorkflow, SubagentChildRef, SubagentCloseActivityRequest, SubagentExecutionPhase,
-    SubagentExecutionSnapshot, SubagentPrepareActivityRequest, SubagentPrepareActivityResult,
-    SubagentResolveActivityRequest, SubagentTerminal, WorkflowActivities,
-    WorkflowToolRecoveryResult, WorkflowToolStartArgs, activity_options,
+    AgentSessionWorkflow, SubagentChildRef, SubagentCloseActivityRequest, SubagentExecutionInput,
+    SubagentExecutionPhase, SubagentExecutionResume, SubagentExecutionSnapshot,
+    SubagentLivenessActivityRequest, SubagentLivenessActivityResult,
+    SubagentPrepareActivityRequest, SubagentPrepareActivityResult, SubagentResolveActivityRequest,
+    SubagentTerminal, WorkflowActivities, WorkflowToolRecoveryResult,
+    recovery_poll_activity_options, subagent_activity_options,
 };
+
+/// The child session of one execution. Derived from the execution id so a retried
+/// prepare finds its own reservation, and so the workflow can release that
+/// reservation when prepare never reports back.
+pub fn subagent_child_session_id(execution_id: &str) -> harness::SessionId {
+    harness::SessionId::new(format!("agent_{}", execution_digest_suffix(execution_id)))
+}
+
+/// The child run's submission, derived the same way so a retried start is one run.
+pub fn subagent_submission_id(execution_id: &str) -> harness::SubmissionId {
+    harness::SubmissionId::new(format!(
+        "subagent_run_{}",
+        execution_digest_suffix(execution_id)
+    ))
+}
+
+fn execution_digest_suffix(execution_id: &str) -> String {
+    let digest = harness::BlobRef::from_bytes(execution_id.as_bytes());
+    digest
+        .as_str()
+        .strip_prefix("sha256:")
+        .unwrap_or(digest.as_str())
+        .chars()
+        .take(32)
+        .collect()
+}
 
 #[workflow]
 #[derive(Default)]
@@ -33,6 +66,10 @@ pub struct SubagentExecutionWorkflow {
     pending_terminal: Option<SubagentTerminal>,
     holder_cancelled: bool,
     nudged: bool,
+    /// What arrived before `run` set the identity it is matched against. A
+    /// rollover makes this real: a terminal signalled just after one lands in the
+    /// new run's first activation, ahead of `run`, and must not be lost.
+    early_emissions: Vec<harness::EmissionEnvelope>,
 }
 
 #[workflow_methods]
@@ -40,8 +77,20 @@ impl SubagentExecutionWorkflow {
     #[run(name = "SubagentExecutionWorkflow")]
     pub async fn run(
         ctx: &mut WorkflowContext<Self>,
-        start: WorkflowToolStartArgs,
+        input: SubagentExecutionInput,
     ) -> WorkflowResult<()> {
+        let (start, resumed) = match input {
+            SubagentExecutionInput::Start(start) => (start, None),
+            SubagentExecutionInput::Resume(resume) => {
+                let SubagentExecutionResume {
+                    start,
+                    child,
+                    deadline_at_ms,
+                    wait,
+                } = resume;
+                (start, Some((child, deadline_at_ms, wait)))
+            }
+        };
         if ctx.workflow_id() != start.execution_id
             || start.universe_id != start.invocation.session_universe_id
         {
@@ -68,63 +117,149 @@ impl SubagentExecutionWorkflow {
             state.invocation_id = Some(start.invocation.invocation_id.clone());
             state.universe_id = Some(start.universe_id);
             state.snapshot.phase = SubagentExecutionPhase::Preparing;
+            if let Some((child, ..)) = &resumed {
+                state.snapshot.child = Some(child.clone());
+                state.snapshot.phase = SubagentExecutionPhase::Running;
+            }
+            for envelope in std::mem::take(&mut state.early_emissions) {
+                state.apply_emission(envelope);
+            }
         });
 
         // A. prepare: validate the pinned grant, reserve the tree slot,
-        // create the child from the pinned profile, start its run.
-        let prepared = ctx
-            .execute_activity(
-                WorkflowActivities::subagent_prepare,
-                SubagentPrepareActivityRequest {
-                    start: start.clone(),
-                },
-                activity_options(),
-            )
-            .await
-            .map_err(|error| {
-                temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                    "subagent prepare failed: {error}"
-                ))
-            })?;
-        let (child, deadline_ms) = match prepared {
-            SubagentPrepareActivityResult::Prepared { child, deadline_ms } => (child, deadline_ms),
-            SubagentPrepareActivityResult::Rejected { error_ref } => {
-                let resolution = harness::PromiseResolution::Failed {
-                    error_ref: Some(error_ref),
+        // create the child from the pinned profile, start its run. A rollover
+        // has done all of this already.
+        let (child, deadline_at_ms, wait_policy) = match resumed {
+            Some(resumed) => resumed,
+            None => {
+                let prepared = ctx
+                    .execute_activity(
+                        WorkflowActivities::subagent_prepare,
+                        SubagentPrepareActivityRequest {
+                            start: start.clone(),
+                        },
+                        subagent_activity_options(),
+                    )
+                    .await;
+                let prepared = match prepared {
+                    Ok(prepared) => prepared,
+                    // Failing here frees the parent through its recovery poll, which
+                    // reads this message. Whatever prepare reserved or opened before
+                    // it failed must not outlive it.
+                    Err(error) => {
+                        let child = subagent_child_session_id(&start.execution_id);
+                        close_child(ctx, start.universe_id, child.as_str()).await;
+                        return Err(execution_failure("prepare", &error));
+                    }
                 };
-                ctx.state_mut(|state| {
-                    state.snapshot.phase = SubagentExecutionPhase::Resolved;
-                    state.snapshot.resolution = Some(resolution.clone());
-                });
-                emit_resolution(ctx, start.universe_id, &reply_promise_id, resolution).await;
-                return Ok(());
+                match prepared {
+                    SubagentPrepareActivityResult::Prepared {
+                        child,
+                        run_timeout_ms,
+                        wait,
+                    } => {
+                        let deadline_at_ms = deadline_at_ms(workflow_now_ms(ctx), run_timeout_ms);
+                        ctx.state_mut(|state| {
+                            state.snapshot.child = Some(child.clone());
+                            state.snapshot.phase = SubagentExecutionPhase::Running;
+                        });
+                        (child, deadline_at_ms, wait)
+                    }
+                    SubagentPrepareActivityResult::Rejected { error_ref } => {
+                        let resolution = harness::PromiseResolution::Failed {
+                            error_ref: Some(error_ref),
+                        };
+                        ctx.state_mut(|state| {
+                            state.snapshot.phase = SubagentExecutionPhase::Resolved;
+                            state.snapshot.resolution = Some(resolution.clone());
+                        });
+                        emit_resolution(ctx, start.universe_id, &reply_promise_id, resolution)
+                            .await;
+                        return Ok(());
+                    }
+                }
             }
         };
-        ctx.state_mut(|state| {
-            state.snapshot.child = Some(child.clone());
-            state.snapshot.phase = SubagentExecutionPhase::Running;
-        });
 
         // B. wait: the child's run terminal, the holder's cancellation, the
-        // grant deadline, or Temporal cancellation of this execution.
-        let outcome = loop {
-            if let Some(terminal) = ctx.state_mut(|state| state.pending_terminal.take()) {
-                break WaitOutcome::Terminal(terminal);
+        // grant deadline if there is one, the child's session stopping, or
+        // Temporal cancellation of this execution. The deadline's one timer
+        // outlives every pass through the loop, so nothing that wakes the loop
+        // moves it.
+        let outcome = {
+            let ctx = &*ctx;
+            let deadline = async {
+                match deadline_at_ms {
+                    Some(at_ms) => {
+                        let remaining = deadline_remaining(at_ms, workflow_now_ms(ctx));
+                        let _ = ctx.timer_with_manual_cancellation(remaining).await;
+                    }
+                    None => futures::future::pending::<()>().await,
+                }
             }
-            if ctx.state(|state| state.holder_cancelled) {
-                break WaitOutcome::HolderCancelled;
-            }
-            ctx.state_mut(|state| state.nudged = false);
-            let wait = ctx.wait_for_state(|state| state.nudged);
-            let deadline = ctx
-                .timer_with_manual_cancellation(Duration::from_millis(deadline_ms.max(1)))
-                .fuse();
+            .fuse();
             let cancelled = ctx.cancelled().fuse();
-            pin_mut!(wait, deadline, cancelled);
-            select! {
-                _ = wait => continue,
-                _ = deadline => break WaitOutcome::Terminal(SubagentTerminal::Deadline),
-                _ = cancelled => break WaitOutcome::Cancelled,
+            pin_mut!(deadline, cancelled);
+            loop {
+                if let Some(terminal) = ctx.state_mut(|state| state.pending_terminal.take()) {
+                    break WaitOutcome::Terminal(terminal);
+                }
+                if ctx.state(|state| state.holder_cancelled) {
+                    break WaitOutcome::HolderCancelled;
+                }
+                if ctx.continue_as_new_suggested()
+                    || ctx.history_length() >= wait_policy.continue_as_new_history_threshold
+                {
+                    ctx.continue_as_new(
+                        SubagentExecutionInput::Resume(SubagentExecutionResume {
+                            start: start.clone(),
+                            child: child.clone(),
+                            deadline_at_ms,
+                            wait: wait_policy,
+                        }),
+                        ContinueAsNewOptions::default(),
+                    )?;
+                }
+                ctx.state_mut(|state| state.nudged = false);
+                let wait = ctx.wait_for_state(|state| state.nudged);
+                let liveness = async {
+                    let _ = ctx
+                        .timer_with_manual_cancellation(Duration::from_millis(
+                            wait_policy.liveness_check_interval_ms.max(1),
+                        ))
+                        .await;
+                    ctx.execute_activity(
+                        WorkflowActivities::subagent_liveness,
+                        SubagentLivenessActivityRequest {
+                            universe_id: start.universe_id,
+                            session_id: child.session_id.clone(),
+                        },
+                        recovery_poll_activity_options(),
+                    )
+                    .await
+                }
+                .fuse();
+                pin_mut!(wait, liveness);
+                // A child that finished as the deadline fired keeps its output, and a
+                // cancel beats the deadline it landed with.
+                select_biased! {
+                    _ = wait => continue,
+                    _ = cancelled => break WaitOutcome::Cancelled,
+                    _ = deadline => break WaitOutcome::Terminal(SubagentTerminal::Deadline),
+                    checked = liveness => match checked {
+                        Ok(SubagentLivenessActivityResult::Stopped { reason }) => {
+                            // A terminal that beat the check is the better answer.
+                            let terminal = ctx.state_mut(|state| state.pending_terminal.take());
+                            break WaitOutcome::Terminal(terminal.unwrap_or(
+                                SubagentTerminal::SessionStopped { reason },
+                            ));
+                        }
+                        Ok(SubagentLivenessActivityResult::Running) => continue,
+                        // A store or Temporal blip says nothing about the child, so
+                        // it never fails the delegation; the next check asks again.
+                        Err(_) => continue,
+                    },
+                }
             }
         };
 
@@ -132,7 +267,7 @@ impl SubagentExecutionWorkflow {
             WaitOutcome::Terminal(terminal) => {
                 // C. resolve: build the envelope, close the child, tell the
                 // holder.
-                let resolution = ctx
+                let resolved = ctx
                     .execute_activity(
                         WorkflowActivities::subagent_resolve,
                         SubagentResolveActivityRequest {
@@ -140,30 +275,36 @@ impl SubagentExecutionWorkflow {
                             child: child.clone(),
                             terminal,
                         },
-                        activity_options(),
+                        subagent_activity_options(),
                     )
-                    .await
-                    .map_err(|error| {
-                        temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                            "subagent resolve failed: {error}"
-                        ))
-                    })?;
+                    .await;
+                let resolution = match resolved {
+                    Ok(resolution) => resolution,
+                    Err(error) => {
+                        close_child(ctx, start.universe_id, &child.session_id).await;
+                        return Err(execution_failure("resolve", &error));
+                    }
+                };
                 ctx.state_mut(|state| {
                     state.snapshot.phase = SubagentExecutionPhase::Resolved;
                     state.snapshot.resolution = Some(resolution.clone());
                 });
                 emit_resolution(ctx, start.universe_id, &reply_promise_id, resolution).await;
+                // Resolve's own close gets one try, so that it cannot hold up the
+                // answer. A child it could not close would keep its delegation slot
+                // for good, so this one retries, and finds nothing to do otherwise.
+                close_child(ctx, start.universe_id, &child.session_id).await;
                 Ok(())
             }
             WaitOutcome::HolderCancelled => {
                 // The parent already marked the promise cancelled; only the
                 // child needs closing.
-                close_child(ctx, start.universe_id, &child).await;
+                close_child(ctx, start.universe_id, &child.session_id).await;
                 ctx.state_mut(|state| state.snapshot.phase = SubagentExecutionPhase::Cancelled);
                 Ok(())
             }
             WaitOutcome::Cancelled => {
-                close_child(ctx, start.universe_id, &child).await;
+                close_child(ctx, start.universe_id, &child.session_id).await;
                 ctx.state_mut(|state| state.snapshot.phase = SubagentExecutionPhase::Cancelled);
                 Err(temporalio_sdk::WorkflowTermination::cancelled())
             }
@@ -173,11 +314,30 @@ impl SubagentExecutionWorkflow {
     /// The child's `run_terminal` (its notify intent names this execution
     /// as holder) and the holder's `invocation_cancellation`.
     #[signal(name = "deliver_emission")]
-    pub fn deliver_emission(
-        &mut self,
-        _ctx: &mut SyncWorkflowContext<Self>,
-        envelope: harness::EmissionEnvelope,
-    ) {
+    pub fn deliver_emission(&mut self, ctx: &mut SyncWorkflowContext<Self>, emission: RawValue) {
+        let Ok(envelope) = crate::workflows::receive_emission(ctx, &emission) else {
+            return;
+        };
+        if self.reply_promise_id.is_none() {
+            self.early_emissions.push(envelope);
+            return;
+        }
+        self.apply_emission(envelope);
+    }
+
+    #[query(name = "snapshot")]
+    pub fn snapshot(&self, _ctx: &WorkflowContextView) -> SubagentExecutionSnapshot {
+        self.snapshot.clone()
+    }
+
+    #[query(name = "workflow_tool_recovery")]
+    pub fn workflow_tool_recovery(&self, _ctx: &WorkflowContextView) -> WorkflowToolRecoveryResult {
+        recovery_result(&self.snapshot)
+    }
+}
+
+impl SubagentExecutionWorkflow {
+    fn apply_emission(&mut self, envelope: harness::EmissionEnvelope) {
         let identity = SignalIdentity {
             reply_promise_id: self.reply_promise_id.as_ref(),
             holder_workflow_id: self.holder_workflow_id.as_deref(),
@@ -196,16 +356,23 @@ impl SubagentExecutionWorkflow {
             Some(SignalEffect::Terminal(_)) | None => {}
         }
     }
+}
 
-    #[query(name = "snapshot")]
-    pub fn snapshot(&self, _ctx: &WorkflowContextView) -> SubagentExecutionSnapshot {
-        self.snapshot.clone()
-    }
+/// The instant a set grant deadline falls on, fixed once when the wait begins.
+fn deadline_at_ms(now_ms: u64, run_timeout_ms: Option<u64>) -> Option<u64> {
+    run_timeout_ms.map(|timeout_ms| now_ms.saturating_add(timeout_ms.max(1)))
+}
 
-    #[query(name = "workflow_tool_recovery")]
-    pub fn workflow_tool_recovery(&self, _ctx: &WorkflowContextView) -> WorkflowToolRecoveryResult {
-        recovery_result(&self.snapshot)
-    }
+/// What is left of a deadline at `now_ms`; one already past fires at once.
+fn deadline_remaining(deadline_at_ms: u64, now_ms: u64) -> Duration {
+    Duration::from_millis(deadline_at_ms.saturating_sub(now_ms).max(1))
+}
+
+fn workflow_now_ms(ctx: &WorkflowContext<SubagentExecutionWorkflow>) -> u64 {
+    ctx.workflow_time()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 /// What the signal handler matches incoming emissions against. Everything
@@ -301,6 +468,17 @@ enum WaitOutcome {
     Cancelled,
 }
 
+/// An activity failure's own text only says that the task failed, and the parent
+/// reads what is written here.
+fn execution_failure(
+    step: &str,
+    error: &temporalio_sdk::ActivityExecutionError,
+) -> temporalio_sdk::WorkflowTermination {
+    let message = crate::workflows::session::activity_failure_message(error);
+    temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!("sub-agent {step} failed: {message}"))
+        .into()
+}
+
 async fn emit_resolution(
     ctx: &mut WorkflowContext<SubagentExecutionWorkflow>,
     universe_id: uuid::Uuid,
@@ -321,25 +499,27 @@ async fn emit_resolution(
         .external_workflow(holder, None)
         .signal(
             AgentSessionWorkflow::deliver_emission,
-            envelope,
+            crate::workflows::emission_signal_input(&envelope),
             crate::workflows::signal_options(),
         )
         .await;
 }
 
+/// Best effort: the activity logs a close it could not finish, and nothing here
+/// can do better with that.
 async fn close_child(
     ctx: &mut WorkflowContext<SubagentExecutionWorkflow>,
     universe_id: uuid::Uuid,
-    child: &SubagentChildRef,
+    session_id: &str,
 ) {
     let _ = ctx
         .execute_activity(
             WorkflowActivities::subagent_close,
             SubagentCloseActivityRequest {
                 universe_id,
-                session_id: child.session_id.clone(),
+                session_id: session_id.to_owned(),
             },
-            activity_options(),
+            subagent_activity_options(),
         )
         .await;
 }
@@ -536,6 +716,75 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn a_set_deadline_is_one_instant_that_later_wakeups_only_count_down_to() {
+        assert_eq!(deadline_at_ms(1_000, None), None);
+        let at = deadline_at_ms(1_000, Some(5_000)).expect("a set timeout has an instant");
+        assert_eq!(at, 6_000);
+        assert_eq!(deadline_remaining(at, 1_000), Duration::from_millis(5_000));
+        assert_eq!(deadline_remaining(at, 4_000), Duration::from_millis(2_000));
+        assert_eq!(deadline_remaining(at, 6_000), Duration::from_millis(1));
+        assert_eq!(deadline_remaining(at, 60_000), Duration::from_millis(1));
+    }
+
+    #[test]
+    fn the_plain_start_arguments_still_decode_and_a_rollover_decodes_as_itself() {
+        let start = crate::WorkflowToolStartArgs {
+            universe_id: UNIVERSE,
+            holder_workflow_id: holder_workflow_id(),
+            execution_id: "wte:one".to_owned(),
+            invocation: harness::WorkflowToolInvocation {
+                invocation_id: invocation_id(),
+                workflow_tool_id: harness::WorkflowToolId::new("agent_run"),
+                semantic_type: "agent_run".to_owned(),
+                schema_revision: 1,
+                binding_fingerprint: "fingerprint".to_owned(),
+                session_universe_id: UNIVERSE,
+                session_id: parent(),
+                run_id: RunId::new(1),
+                turn_id: harness::TurnId::new(1),
+                tool_batch_id: harness::ToolBatchId::new(1),
+                tool_call_id: harness::ToolCallId::new("call"),
+                arguments_ref: BlobRef::from_bytes(b"{}"),
+                execution_context_ref: None,
+                completion_promises: None,
+            },
+        };
+        let plain = serde_json::to_value(&start).expect("encode start");
+        assert_eq!(
+            serde_json::from_value::<SubagentExecutionInput>(plain).expect("decode start"),
+            SubagentExecutionInput::Start(start.clone())
+        );
+        let resume = SubagentExecutionInput::Resume(SubagentExecutionResume {
+            start,
+            child: child(),
+            deadline_at_ms: Some(9),
+            wait: crate::SubagentWaitPolicy::default(),
+        });
+        let encoded = serde_json::to_value(&resume).expect("encode resume");
+        assert_eq!(
+            serde_json::from_value::<SubagentExecutionInput>(encoded).expect("decode resume"),
+            resume
+        );
+    }
+
+    #[test]
+    fn an_emission_held_until_the_identity_is_set_is_still_applied() {
+        let mut workflow = SubagentExecutionWorkflow {
+            reply_promise_id: Some(reply_promise()),
+            holder_workflow_id: Some(holder_workflow_id()),
+            invocation_id: Some(invocation_id()),
+            ..Default::default()
+        };
+        workflow.snapshot.child = Some(child());
+        workflow.apply_emission(run_terminal("agent_child", 1, reply_promise().as_str()));
+        assert!(workflow.nudged);
+        assert!(matches!(
+            workflow.pending_terminal,
+            Some(SubagentTerminal::Run { .. })
+        ));
     }
 
     #[test]

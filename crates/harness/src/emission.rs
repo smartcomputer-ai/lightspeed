@@ -151,7 +151,8 @@ pub enum EmissionIdError {
 #[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum EmissionProducer {
     /// A session-log-backed emission. `log_seq` is the exact sequence of the
-    /// event that produced the fact.
+    /// event that produced the fact, or the log's head for an invocation sent
+    /// again after a restart. `emission_id` identifies a repeat, not this.
     Session {
         universe_id: Uuid,
         session_id: SessionId,
@@ -177,9 +178,6 @@ impl EmissionProducer {
 }
 
 /// Closed internal vocabulary carried by the shared delivery signal.
-///
-/// Workflow-tool invocation bodies join this enum when the durable tool
-/// contracts land. This first slice folds the two existing transports.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 #[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
@@ -204,10 +202,10 @@ pub enum EmissionBody {
         /// substrate adapter; the harness treats it as opaque.
         holder_workflow_id: String,
     },
-    /// Best-effort notice to a bound receiver that the session already
-    /// resolved one keyed completion promise as cancelled. The receiver may
-    /// stop the domain work behind that key; a later reply is ignored
-    /// because the promise is terminal.
+    /// Best-effort notice to a bound receiver that the session stopped waiting
+    /// for one keyed completion promise: it is already cancelled, or failed at
+    /// its hard deadline. The receiver may stop the domain work behind that
+    /// key; a later reply is ignored because the promise is terminal.
     InvocationCancellation {
         invocation_id: WorkflowToolInvocationId,
         completion_key: String,

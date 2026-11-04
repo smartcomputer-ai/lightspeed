@@ -17,12 +17,12 @@ const origin: SessionOrigin = {
   kind: "subagent", parentSessionId: "parent", parentRunId: "parent-run",
   rootSessionId: "parent", depth: 1, invocationId: "invocation",
   agent: { profileId: "reviewer", revision: 1 },
-  limits: { maxDepth: 4, maxDescendants: 20, maxConcurrent: 5, deadlineMs: 60_000 },
+  limits: { maxDepth: 4, maxConcurrent: 5, runTimeoutMs: 60_000 },
 };
 function child(id = "child", lifecycleStatus: SessionSummary["lifecycleStatus"] = "open"): SessionSummary {
   return {
     id, displayName: `Reviewer ${id}`, lifecycleStatus, createdAtMs: 1, updatedAtMs: 1,
-    managed: false, retention: { rootSessionId: id }, access: { visibility: "universe" }, activity: "idle",
+    lifecycleControlled: false, retention: { rootSessionId: id }, access: { visibility: "universe" }, activity: "idle",
   };
 }
 

@@ -19,5 +19,5 @@ tools = { path = "../tools" }
 [dev-dependencies]
 api-projection = { path = "../api-projection" }
 test-support = { path = "../test-support" }
-tokio = { version = "1", features = ["macros", "rt"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt"] }
 vfs = { path = "../vfs" }

@@ -39,25 +39,27 @@ Suppose the release editor asks to read both `changes.md` and an existing
 `release-notes.md`. The generation result records the two admitted calls. The
 core can then request tool execution without knowing how the VFS loads a file.
 
-For ordinary tool batches, the hosted workflow schedules one activity per
-call. Consecutive calls marked `ParallelSafe` can run together, with a current
-window of up to eight in flight. An `Exclusive` call runs alone in batch order.
-Reads can therefore overlap, while an edit or process operation takes its own
-exclusive position.
+The hosted workflow schedules one activity per call. Consecutive calls marked
+`ParallelSafe` can run together, with a current window of up to eight in flight. An
+`Exclusive` call runs alone in batch order. Reads can therefore overlap, while an
+edit or process operation takes its own exclusive position.
 
 Each terminal call result is committed independently. If one read completes
 and another is slow or retried, the first result is already durable; progress
-does not require repeating the completed read. When the batch has the results
-needed for continuation, the agent can plan its next model turn.
+does not require repeating the completed read. Losing a worker fails only the calls
+it held. When the batch has the results needed for continuation, the agent can plan
+its next model turn.
 
 This policy orders work within a batch. It is not a transaction over a shared
 workspace or machine. Another session may still operate on the same resource,
 so revision checks and the resource's own concurrency rules remain relevant.
 
-Batches containing `await` or workflow-backed calls use a batch activity
-because their suspension and emission ordering is shared. That activity can
-return a durable suspension rather than remain occupied until all outside
-work finishes. The session workflow then owns the wait.
+`await` and workflow-backed calls are the exception. They run together in one batch
+activity after the batch's other calls, because their waiting and invocation order
+is shared. That activity can return a durable suspension rather than remain occupied
+until all outside work finishes. The session workflow then owns the wait. So a batch
+holding a `sleep` and an `agent_spawn` takes both paths, and it stays one logical
+batch to the model.
 
 Web and MCP tools make the execution boundary particularly visible. Hosted
 web search and Anthropic web fetch run inside the model provider's turn;
@@ -76,10 +78,15 @@ a result that has not arrived yet. Both can park a run, but they represent
 different facts and resume for different reasons.
 
 The current approval system represents MCP tool-call approvals. An approval
-records its subject, arguments reference, and native or provider continuation.
+records its subject, arguments reference, and runtime or provider continuation.
 It belongs to the run and accepts a single decision. The run resumes once its
 pending approval set has decisions; cancellation closes pending approvals.
 This is not a universal human-approval layer around every built-in tool.
+
+A gated call does not interrupt its siblings. The calls in flight beside it finish
+and commit, and the run then parks once for every call waiting on a decision. Calls
+later in the batch, including `agent_spawn` or anything in the batch activity, wait
+for the decision.
 
 A durable promise records an outstanding result in session state. It is
 different from an in-memory future: its identity, ownership, scope, deadline,
@@ -189,12 +196,12 @@ as described in
 A session can have one lifecycle controller. When present, the controller
 receives run-terminal notifications and owns the surrounding session lifecycle. The
 same session can have several tool receivers, because providing an operation
-does not require owning the whole conversation.
+does not require owning the whole conversation. Merely admitting workflow-tool
+bindings does not impose a lifecycle controller.
 
-That distinction has a concrete consequence for branching. A lifecycle-managed
-session is nonbranchable and noncloneable at the core boundary: copying it
-would create another conversation with ambiguous controller ownership.
-Merely admitting workflow-tool bindings does not impose lifecycle management.
+A terminal notification goes to a running controller, which may hear it more than
+once. Force close sends it too. A controller that was not running does not hear it
+later, and reconciles through `session/runs/read`.
 
 ### Bots own their sessions
 
@@ -209,6 +216,11 @@ The controller decides how it should reach the release-editor session. The
 session handles the model conversation; the controller remains responsible
 for what should happen to later events and when that session should be rotated.
 This is why a bot's lifetime is not just the duration of one active run.
+
+A run may take as long as it needs, and the controller does not time it out. If the
+target session's workflow stops or the session closes, the controller moves that
+conversation to a next generation with no earlier context. An event whose run had not
+started is retried there once. An event whose run was under way ends as `runFailed`.
 
 ### Channel conversations own chat delivery
 
@@ -236,14 +248,15 @@ A sub-agent is another session, supervised by a delegation workflow.
 parent can await later. The execution validates the admitted profile and grant,
 reserves capacity in the delegation tree, creates the child, and starts its
 run. It then receives the child's terminal result, resolves the parent's
-promise, and closes the child. Cancellation and deadline paths also close it.
+promise, and closes the child. Cancellation, a run timeout when one is set, and a
+child whose session workflow stopped also close it.
 
 The child receives its brief and its own profile. It does not automatically
 inherit the parent's transcript or every capability. Workspace sharing and
 environment inheritance require the relevant attachments; an `inherit`
 environment attachment is resolved against the parent's active machine
 captured at admission and stored on the child as a concrete id. Root-scoped limits
-constrain depth, total descendants, concurrent open descendants, and deadlines.
+constrain depth, concurrent open descendants, and deadlines.
 These policies live around normal session execution; the harness does not
 need a delegation-specific transport.
 

@@ -1,6 +1,8 @@
 {
+  "excludeParams": {
+    "session/start": ["integration"]
+  },
   "excludeMethods": [
-    "session/managed/start",
     "environments/jobs/create",
     "environments/jobs/read",
     "environments/jobs/cancel",

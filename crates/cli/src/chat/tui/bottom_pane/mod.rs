@@ -294,9 +294,6 @@ impl BottomPaneState {
                 self.current_session_id = Some(session_id.clone());
                 self.settings = Some(settings.clone());
             }
-            ChatEvent::GapObserved { .. } => {
-                self.status = "journal gap; refreshed".into();
-            }
             ChatEvent::Reconnecting { from, .. } => {
                 self.status = format!("reconnecting journal #{from}");
             }
@@ -631,16 +628,6 @@ mod tests {
             pane.status_line()
                 .to_string()
                 .contains("reconnecting journal #42")
-        );
-
-        pane.apply_chat_event(&ChatEvent::GapObserved {
-            requested_from: 40,
-            retained_from: 45,
-        });
-        assert!(
-            pane.status_line()
-                .to_string()
-                .contains("journal gap; refreshed")
         );
     }
 

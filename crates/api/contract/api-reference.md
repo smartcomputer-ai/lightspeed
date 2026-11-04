@@ -40,35 +40,22 @@ Returns protocol version, server identity, credential scope and allowed groups b
 
 ### `session/start`
 
-**Create or reopen a session**
+**Start a session**
 
-Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.
+Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.
 
-- Access: `{"kind":"universe","action":"create_session"}`
+- Access: `{"kind":"universe","action":"createSession"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
 - Params: `SessionStartParams`
 - Result: `AgentApiOutcome<SessionStartResponse>`
 
-### `session/managed/start`
-
-**Create or reopen a managed session**
-
-Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.
-
-- Access: `{"kind":"universe","action":"create_session"}`
-- Group: `session`
-- Role: `contributor`
-- Target: `sessionId`
-- Params: `ManagedSessionStartParams`
-- Result: `AgentApiOutcome<SessionStartResponse>`
-
 ### `session/read`
 
 **Read a session**
 
-Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
+Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `session`
@@ -81,7 +68,7 @@ Returns current state plus a bounded newest-first run-summary page. Follow nextR
 
 **List sessions**
 
-Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.
+Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by filters such as visibleTo, which keeps sessions whose root is shared with the universe or was created by that actor. An unknown parameter is refused. Pages may shift while sessions are changing.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `session`
@@ -94,9 +81,9 @@ Returns a cursor-paginated summary list ordered by most recent update, optionall
 
 **Replace session configuration**
 
-Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.
+Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.
 
-- Access: `{"kind":"universe","action":"configure_session"}`
+- Access: `{"kind":"universe","action":"configureSession"}`
 - Group: `session`
 - Role: `operator`
 - Target: `sessionId`
@@ -109,7 +96,7 @@ Replaces the complete sparse config while the session is idle. Use the current c
 
 Sets the display name, or clears it when displayName is omitted.
 
-- Access: `{"kind":"universe","action":"control_session"}`
+- Access: `{"kind":"universe","action":"controlSession"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
@@ -122,7 +109,7 @@ Sets the display name, or clears it when displayName is omitted.
 
 Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.
 
-- Access: `{"kind":"universe","action":"configure_session"}`
+- Access: `{"kind":"universe","action":"configureSession"}`
 - Group: `session`
 - Role: `operator`
 - Target: `sessionId`
@@ -133,22 +120,35 @@ Replaces the complete descriptive key/value map (bounded like session/start); an
 
 **Replace session retention**
 
-Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
+Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
 
-- Access: `{"kind":"universe","action":"set_session_retention"}`
+- Access: `{"kind":"universe","action":"setSessionRetention"}`
 - Group: `session/delete`
 - Role: `admin`
 - Target: `sessionId`
 - Params: `SessionRetentionPutParams`
 - Result: `AgentApiOutcome<SessionRetentionPutResponse>`
 
+### `session/restart`
+
+**Restart a stopped session**
+
+Starts a new workflow execution for an open session whose last one stopped, from its log. A run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards. A running session is left alone. Refused for a closed session and for one with no run history.
+
+- Access: `{"kind":"universe","action":"configureSession"}`
+- Group: `session`
+- Role: `operator`
+- Target: `sessionId`
+- Params: `SessionRestartParams`
+- Result: `AgentApiOutcome<SessionRestartResponse>`
+
 ### `session/close`
 
 **Close a session**
 
-Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
+Closes an idle session and detaches its environment bindings. Without force, active work of any kind, including a pending detached promise, rejects the call. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
 
-- Access: `{"kind":"universe","action":"close_session"}`
+- Access: `{"kind":"universe","action":"closeSession"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
@@ -159,9 +159,9 @@ Closes an idle session and detaches its environment bindings. Force mode cancels
 
 **Delete closed sessions**
 
-Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.
+Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.
 
-- Access: `{"kind":"universe","action":"delete_session"}`
+- Access: `{"kind":"universe","action":"deleteSession"}`
 - Group: `session/delete`
 - Role: `operator`
 - Target: `sessionId`
@@ -174,7 +174,7 @@ Permanently deletes a closed retention-tree leaf, or its closed history-fork and
 
 Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.
 
-- Access: `{"kind":"universe","action":"share_session"}`
+- Access: `{"kind":"universe","action":"shareSession"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
@@ -198,9 +198,9 @@ Returns chronological events. Forward (default) follows after and supports long-
 
 **Append keyed session context**
 
-Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.
+Admits a batch of keyed context entries with per-entry results. The same content under a key is a no-op. Different content replaces the earlier entry, which leaves active context, and goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry without discarding successful entries.
 
-- Access: `{"kind":"universe","action":"control_session"}`
+- Access: `{"kind":"universe","action":"controlSession"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
@@ -213,7 +213,7 @@ Admits a batch of context entries with per-entry results. Stable keys make same-
 
 Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.
 
-- Access: `{"kind":"universe","action":"control_session"}`
+- Access: `{"kind":"universe","action":"controlSession"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
@@ -226,7 +226,7 @@ Removes active entries by stable key with per-key results. Missing keys are idem
 
 Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.
 
-- Access: `{"kind":"universe","action":"control_session"}`
+- Access: `{"kind":"universe","action":"controlSession"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
@@ -237,9 +237,9 @@ Replaces active tool results and user messages in place by entry id, with per-en
 
 **Compact session context**
 
-Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.
+Performs one standalone compaction in any automatic mode, including Disabled, and waits for its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves the context unchanged and fails the call with its reason. A wait that runs out fails with operationPending while it can still complete; session events report the outcome.
 
-- Access: `{"kind":"universe","action":"control_session"}`
+- Access: `{"kind":"universe","action":"controlSession"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
@@ -250,9 +250,9 @@ Performs one standalone compaction in any automatic mode, including Disabled, an
 
 **Start an agent run**
 
-Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.
+Returns once the run is accepted — queued behind an active run, or running — not when it finishes. A compacting session holds the request; if the wait runs out the call fails with operationPending and the submission id, and the run still starts later. Retrying with that id cannot start a second run. Follow session events or reread the session.
 
-- Access: `{"kind":"universe","action":"control_session"}`
+- Access: `{"kind":"universe","action":"controlSession"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
@@ -263,7 +263,7 @@ Accepts input or existing context keys and returns once the run is accepted — 
 
 **List session runs**
 
-Returns a newest-first keyset page of bounded run summaries projected from current reducer state.
+Returns a newest-first keyset page of bounded run summaries, from current state for recent runs and from the session's log for older ones.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `session`
@@ -276,7 +276,7 @@ Returns a newest-first keyset page of bounded run summaries projected from curre
 
 **Read one session run**
 
-Reads and projects one run from its bounded event interval, paged by event sequence.
+Projects one run from its events. A run past the server's detail limit keeps its opening and its most recent turns and sets earlierEventsOmitted; session/events/read has the rest.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `session`
@@ -289,9 +289,9 @@ Reads and projects one run from its bounded event interval, paged by event seque
 
 **Cancel a run**
 
-Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.
+Requests cancellation of the named queued or active run and returns its summary; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.
 
-- Access: `{"kind":"universe","action":"stop_session"}`
+- Access: `{"kind":"universe","action":"stopSession"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
@@ -302,9 +302,9 @@ Requests cancellation of the named queued or active run and returns its current 
 
 **Decide pending run approvals**
 
-Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.
+Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision. A decision whose wait runs out reports status pending and can still apply.
 
-- Access: `{"kind":"universe","action":"control_session"}`
+- Access: `{"kind":"universe","action":"controlSession"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
@@ -315,9 +315,9 @@ Approves or rejects pending MCP tool calls on the named active run. Valid decisi
 
 **Steer the active run**
 
-Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.
+Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. A parked run holds it without waking. Rejected for queued, cancelling, or finished runs. Supply submissionId so a retry lands once; a wait that runs out fails with operationPending and the steering can still land.
 
-- Access: `{"kind":"universe","action":"control_session"}`
+- Access: `{"kind":"universe","action":"controlSession"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
@@ -343,7 +343,7 @@ Returns separate VFS and environment catalogs with source, reference, availabili
 
 Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.
 
-- Access: `{"kind":"universe","action":"configure_session"}`
+- Access: `{"kind":"universe","action":"configureSession"}`
 - Group: `session`
 - Role: `operator`
 - Target: `sessionId`
@@ -356,7 +356,7 @@ Applies a named or inline profile's config, instructions, and environment setup 
 
 Selects an attached, live universe environment for environment-targeted tools while the session is idle.
 
-- Access: `{"kind":"universe","action":"configure_session"}`
+- Access: `{"kind":"universe","action":"configureSession"}`
 - Group: `session`
 - Role: `operator`
 - Target: `sessionId`
@@ -369,7 +369,7 @@ Selects an attached, live universe environment for environment-targeted tools wh
 
 Clears active environment selection without changing or closing the universe environment.
 
-- Access: `{"kind":"universe","action":"configure_session"}`
+- Access: `{"kind":"universe","action":"configureSession"}`
 - Group: `session`
 - Role: `operator`
 - Target: `sessionId`
@@ -382,7 +382,7 @@ Clears active environment selection without changing or closing the universe env
 
 Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -395,7 +395,7 @@ Maps an environment variable name to an existing grant/provider/direct-secret ha
 
 Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -408,7 +408,7 @@ Returns variable names and credential source handles for a universe environment;
 
 Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -421,7 +421,7 @@ Removes one variable-to-credential mapping without deleting the underlying grant
 
 Creates a provisioned environment, attributed to the caller, from a template of a provider enabled for the universe. Idempotent per requestId: same inputs, same environment; others conflict. Provisioning until the target's first envd handshake, then open; idle overrides the template default.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -447,7 +447,7 @@ Returns one environment: its source, lifecycle state, derived display status, st
 
 Replaces the display name and caller metadata of an environment of any kind. Refused for a closed environment.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -473,7 +473,7 @@ Lists the universe environments in id order, one page at a time, optionally filt
 
 Closes an environment; idempotent. A provisioned environment moves to closing while Lightspeed asks its provider to remove the target, retrying until it is gone, then closed. External and registered environments close at once, and a connected registered daemon is told its environment closed.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -486,7 +486,7 @@ Closes an environment; idempotent. A provisioned environment moves to closing wh
 
 Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -499,7 +499,7 @@ Creates an open environment backed by a Lightspeed-reachable envd endpoint, attr
 
 Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -512,7 +512,7 @@ Synchronously ensures or removes public ingress of an open provisioned environme
 
 Synchronously moves an open provisioned environment's target to running, paused, suspended, or stopped via its provider and records the observation; the provider may also change power on idle. Rejected without provider power control or when the template lacks the state; an internal error, safe to retry, when the provider is unreachable or times out.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -575,9 +575,9 @@ Returns one template, read live from a bound provider's controller.
 
 **Create environment jobs**
 
-Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environment_not_ready while it wakes or reconnects; retry with backoff.
+Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environmentNotReady while it wakes or reconnects; retry with backoff.
 
-- Access: `{"kind":"universe","action":"use_resource"}`
+- Access: `{"kind":"universe","action":"useResource"}`
 - Group: `environments`
 - Role: `contributor`
 - Target: `none`
@@ -603,7 +603,7 @@ Reads selected job handles with bounded output from a byte offset or the output 
 
 Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.
 
-- Access: `{"kind":"universe","action":"use_resource"}`
+- Access: `{"kind":"universe","action":"useResource"}`
 - Group: `environments`
 - Role: `contributor`
 - Target: `none`
@@ -616,7 +616,7 @@ Requests cancellation for selected jobs, optionally including dependents. Force 
 
 Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode (immutable), active limit, disconnect grace, offline close-after, and expiry are the key's policy. Treat the secret like a cluster-join credential.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -629,7 +629,7 @@ Creates a reusable universe-scoped key that lets outbound envd daemons register 
 
 Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -642,7 +642,7 @@ Returns the key's display prefix, policy, status, and derived environment counts
 
 Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -655,7 +655,7 @@ Lists this universe's registration keys with policy, status, and derived counts.
 
 Replaces a key's editable policy: display name, active limit, disconnect grace, offline close-after, and expiry; an omitted field is unset. The identity mode is immutable. The active limit and expiry apply to later admissions; a changed disconnect grace or offline close-after applies at the next sweep to environments whose daemon is away.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -668,7 +668,7 @@ Replaces a key's editable policy: display name, active limit, disconnect grace, 
 
 Replaces the key's secret and display prefix and retires the old secret at once. The key keeps its id, group, policy, and the environments it admitted; daemons already registered are unaffected because they never present the key again. Returns the new secret once. Refused for a revoked key.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -681,7 +681,7 @@ Replaces the key's secret and display prefix and retires the old secret at once.
 
 Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
 - Role: `operator`
 - Target: `none`
@@ -694,7 +694,7 @@ Stops the key from admitting new daemon identities; already registered daemons k
 
 Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created.
 
-- Access: `{"kind":"universe","action":"use_resource"}`
+- Access: `{"kind":"universe","action":"useResource"}`
 - Group: `transcriptions`
 - Role: `contributor`
 - Target: `none`
@@ -720,7 +720,7 @@ Read status and transcript text. An asserted actor may only read their own draft
 
 Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.
 
-- Access: `{"kind":"universe","action":"use_resource"}`
+- Access: `{"kind":"universe","action":"useResource"}`
 - Group: `transcriptions`
 - Role: `contributor`
 - Target: `none`
@@ -746,7 +746,7 @@ Returns the revision and independent agentRun and speechToText selections. Revis
 
 Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `models`
 - Role: `operator`
 - Target: `none`
@@ -772,7 +772,7 @@ Queries supported providers directly, with a brief process-local burst cache, an
 
 Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.
 
-- Access: `{"kind":"universe","action":"create_profile"}`
+- Access: `{"kind":"universe","action":"createProfile"}`
 - Group: `profiles`
 - Role: `operator`
 - Target: `none`
@@ -811,7 +811,7 @@ Returns lightweight summaries of universe-scoped reusable profiles.
 
 Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.
 
-- Access: `{"kind":"universe","action":"manage_profile"}`
+- Access: `{"kind":"universe","action":"manageProfile"}`
 - Group: `profiles`
 - Role: `operator`
 - Target: `none`
@@ -824,7 +824,7 @@ Stores the complete profile document. Use expectedRevision from profiles/read wh
 
 Deletes the catalog document; sessions previously created or configured from it retain their materialized state.
 
-- Access: `{"kind":"universe","action":"manage_profile"}`
+- Access: `{"kind":"universe","action":"manageProfile"}`
 - Group: `profiles`
 - Role: `operator`
 - Target: `none`
@@ -837,7 +837,7 @@ Deletes the catalog document; sessions previously created or configured from it 
 
 Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.
 
-- Access: `{"kind":"universe","action":"use_resource"}`
+- Access: `{"kind":"universe","action":"useResource"}`
 - Group: `blobs/put`
 - Role: `contributor`
 - Target: `none`
@@ -876,7 +876,7 @@ Checks a batch of content references without returning blob bodies, preserving r
 
 Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.
 
-- Access: `{"kind":"universe","action":"use_resource"}`
+- Access: `{"kind":"universe","action":"useResource"}`
 - Group: `vfs`
 - Role: `contributor`
 - Target: `none`
@@ -902,7 +902,7 @@ Returns an immutable snapshot manifest and aggregate file/byte counts; file bodi
 
 Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.
 
-- Access: `{"kind":"universe","action":"create_workspace"}`
+- Access: `{"kind":"universe","action":"createWorkspace"}`
 - Group: `vfs`
 - Role: `operator`
 - Target: `none`
@@ -941,7 +941,7 @@ Lists the mutable universe workspaces with head snapshots, sizes, and revisions.
 
 Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.
 
-- Access: `{"kind":"universe","action":"use_resource"}`
+- Access: `{"kind":"universe","action":"useResource"}`
 - Group: `vfs`
 - Role: `contributor`
 - Target: `none`
@@ -954,7 +954,7 @@ Moves the workspace head to an existing snapshot, which requires use of the work
 
 Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `vfs`
 - Role: `operator`
 - Target: `none`
@@ -965,9 +965,9 @@ Deletes the mutable workspace record; immutable snapshots and blobs remain conte
 
 **Create or replace an MCP server record**
 
-Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.
+Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `mcp`
 - Role: `operator`
 - Target: `none`
@@ -980,7 +980,7 @@ Stores the complete catalog document with its optional auth-grant credential. A 
 
 Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `mcp`
 - Role: `operator`
 - Target: `none`
@@ -993,7 +993,7 @@ Looks for standards-based OAuth protected-resource metadata without creating a s
 
 Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `mcp`
 - Role: `operator`
 - Target: `none`
@@ -1032,7 +1032,7 @@ Lists the universe catalog entries, optionally filtered by lifecycle/configurati
 
 Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `mcp`
 - Role: `operator`
 - Target: `none`
@@ -1045,7 +1045,7 @@ Deletes the catalog document. Existing session configs that reference it are not
 
 Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
@@ -1103,7 +1103,7 @@ Lists non-secret grant metadata for the universe, optionally filtered by status.
 
 Marks the grant unusable by token consumers while retaining non-secret audit metadata.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
@@ -1116,7 +1116,7 @@ Marks the grant unusable by token consumers while retaining non-secret audit met
 
 Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
@@ -1155,7 +1155,7 @@ Lists non-secret OAuth client registrations in the universe.
 
 Deletes the client registration and its stored client secret; grants already created from it remain separate records.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
@@ -1168,7 +1168,7 @@ Deletes the client registration and its stored client secret; grants already cre
 
 Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
@@ -1181,7 +1181,7 @@ Creates a short-lived PKCE flow carrying the immutable grant exposure choice and
 
 Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
@@ -1194,7 +1194,7 @@ Polls a flow's pending/completed/failed/expired state and returns the resulting 
 
 Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
@@ -1233,7 +1233,7 @@ Lists non-secret model/GitHub provider registrations for the universe.
 
 Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
@@ -1246,7 +1246,7 @@ Deletes the provider registration and its directly stored credential; separately
 
 Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
@@ -1259,7 +1259,7 @@ Uses the registered GitHub App provider credential to query accessible installat
 
 Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
@@ -1272,7 +1272,7 @@ Creates or refreshes a universe auth grant for one accessible installation. The 
 
 Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.
 
-- Access: `{"kind":"universe","action":"create_bot"}`
+- Access: `{"kind":"universe","action":"createBot"}`
 - Group: `bots`
 - Role: `operator`
 - Target: `none`
@@ -1285,7 +1285,7 @@ Creates the bot record, optionally with its triggers, and starts its controller.
 
 Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.
 
-- Access: `{"kind":"universe","action":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manageBot"}`
 - Group: `bots`
 - Role: `operator`
 - Target: `none`
@@ -1324,7 +1324,7 @@ Returns the roster: every bot with its trigger count, pending event count, and l
 
 Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.
 
-- Access: `{"kind":"universe","action":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manageBot"}`
 - Group: `bots`
 - Role: `operator`
 - Target: `none`
@@ -1337,7 +1337,7 @@ Terminal and idempotent: disables every trigger, drops schedules, and tells the 
 
 Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.
 
-- Access: `{"kind":"universe","action":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manageBot"}`
 - Group: `bots`
 - Role: `operator`
 - Target: `none`
@@ -1363,7 +1363,7 @@ Queries the controller workflow for its live snapshot (sessions, buffers, active
 
 Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.
 
-- Access: `{"kind":"universe","action":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manageBot"}`
 - Group: `bots`
 - Role: `operator`
 - Target: `none`
@@ -1376,7 +1376,7 @@ Asks the controller to close one of the bot's sessions at its next idle boundary
 
 Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.
 
-- Access: `{"kind":"universe","action":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manageBot"}`
 - Group: `bots`
 - Role: `operator`
 - Target: `none`
@@ -1415,7 +1415,7 @@ Returns every trigger of the bot ordered by id, secrets included for bot-managem
 
 Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.
 
-- Access: `{"kind":"universe","action":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manageBot"}`
 - Group: `bots`
 - Role: `operator`
 - Target: `none`
@@ -1428,7 +1428,7 @@ Drops the trigger's Temporal Schedule and pairings, then the record; stored even
 
 Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.
 
-- Access: `{"kind":"universe","action":"invoke_bot"}`
+- Access: `{"kind":"universe","action":"invokeBot"}`
 - Group: `bots`
 - Role: `contributor`
 - Target: `none`
@@ -1441,7 +1441,7 @@ Stores an operator-authored event for the bot's main session and wakes the contr
 
 Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.
 
-- Access: `{"kind":"universe","action":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manageBot"}`
 - Group: `bots`
 - Role: `operator`
 - Target: `none`
@@ -1480,7 +1480,7 @@ Returns the event row and its full stored envelope document.
 
 Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.
 
-- Access: `{"kind":"universe","action":"manage_bot"}`
+- Access: `{"kind":"universe","action":"manageBot"}`
 - Group: `bots`
 - Role: `operator`
 - Target: `none`
@@ -1493,7 +1493,7 @@ Evaluates a filter against one payload or a sample of recent stored events, repo
 
 Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `channels`
 - Role: `operator`
 - Target: `none`
@@ -1506,7 +1506,7 @@ Registers a provider account (Telegram, WhatsApp) for this universe. The credent
 
 Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `channels`
 - Role: `operator`
 - Target: `none`
@@ -1545,7 +1545,7 @@ Lists this universe's provider accounts, optionally by provider.
 
 Removes the account and its pairings; chat triggers that reference it stop serving conversations.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `channels`
 - Role: `operator`
 - Target: `none`
@@ -1590,7 +1590,7 @@ Lists conversations paired to chat triggers, optionally by account or bot.
 
 Removes one pairing; the conversation must present the pairing code again to reconnect.
 
-- Access: `{"kind":"universe","action":"configure_resource"}`
+- Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `channels`
 - Role: `operator`
 - Target: `none`
@@ -1773,7 +1773,7 @@ Revokes the key with this display prefix; revoking a revoked key keeps its first
 
 **Put an environment provider**
 
-Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalid_request, unreachable is accepted. The provider never calls Lightspeed.
+Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`

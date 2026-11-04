@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::session::SessionPosition;
 use crate::{
-    CoreAgentEvent, CorrelationId, RunId, SubmissionId, ToolBatchId, ToolCallId, TurnId,
+    CoreAgentEvent, RunId, SubmissionId, ToolBatchId, ToolCallId, TurnId,
     session::SessionEntry as GenericSessionEntry,
 };
 
@@ -13,7 +13,6 @@ pub struct CoreAgentJoins {
     pub tool_batch_id: Option<ToolBatchId>,
     pub tool_call_id: Option<ToolCallId>,
     pub submission_id: Option<SubmissionId>,
-    pub correlation_id: Option<CorrelationId>,
 }
 
 pub type CoreAgentEntry = GenericSessionEntry<CoreAgentEvent, CoreAgentJoins>;

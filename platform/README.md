@@ -152,7 +152,7 @@ a route makes for a member goes through one client
   method manifest by `node platform/scripts/generate-method-roles.mjs`, and
   `npm run check` fails when it is stale;
 - limits contributor creation to ordinary sessions with universe defaults or a
-  named profile, without setup overrides; managed creation and run configuration
+  named profile, without setup overrides; integrated creation and run configuration
   overrides require an operator;
 - for a method that names a session, unless the member is an admin, requires the
   session to be shared with the universe or created by the member; sharing
@@ -171,7 +171,7 @@ Only platform admins can permanently delete soft-deleted session history,
 through the audited Platform purge route. See the
 [session lifecycle guide](../docs/documentation/using-lightspeed/sessions-and-runs.md#close-and-retain-a-session).
 
-`configure_session` is separate from `control_session`: configuration, profile
+`configureSession` is separate from `controlSession`: configuration, profile
 application, metadata, and active-environment changes require an operator,
 while ordinary run controls remain available to contributors. Profile creation
 and editing also require an operator. Readers use the same expandable

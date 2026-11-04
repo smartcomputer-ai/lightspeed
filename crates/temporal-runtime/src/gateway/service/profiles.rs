@@ -1,6 +1,7 @@
 use super::api_config::harness_session_config_from_api;
 use super::*;
 use ::profiles::{ProfileError, ProfileSourceExt, ProfileStore};
+use temporal_workflow::SessionProfileInstructions;
 
 pub(super) fn merge_profile_start_metadata(
     profile_metadata: Option<&BTreeMap<String, String>>,
@@ -178,7 +179,11 @@ impl GatewayAgentApi {
             .flatten();
         Ok(temporal_workflow::SessionProfileIntent {
             config,
-            instructions: profile.instructions.clone(),
+            instructions: profile
+                .instructions
+                .clone()
+                .map(session_instructions_from_api)
+                .transpose()?,
             environment,
         })
     }
@@ -218,6 +223,19 @@ pub(super) fn map_profile_error(error: ProfileError) -> AgentApiError {
         ProfileError::InvalidInput { message } => AgentApiError::invalid_request(message),
         ProfileError::Store { message } => AgentApiError::internal(message),
     }
+}
+
+/// The edge where a profile's text ref becomes a ref: a value that is not one is
+/// the caller's mistake, refused before anything holds it.
+fn session_instructions_from_api(
+    instructions: ProfileInstructions,
+) -> Result<SessionProfileInstructions, AgentApiError> {
+    Ok(match instructions {
+        ProfileInstructions::Text { text } => SessionProfileInstructions::Text { text },
+        ProfileInstructions::TextRef { blob_ref } => SessionProfileInstructions::TextRef {
+            blob_ref: parse_blob_ref(&blob_ref)?,
+        },
+    })
 }
 
 #[cfg(test)]

@@ -14,8 +14,11 @@ use harness::{
 
 use crate::fs::{
     CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError, FsPath, FsResult,
-    ReadDirectoryEntry, RemoveOptions,
+    FsVersion, ReadDirectoryEntry, RemoveOptions, RenameOptions, VersionedRead, WriteOptions,
 };
+
+/// Attempts at one head update before a busy workspace is reported as a conflict.
+const HEAD_UPDATE_ATTEMPTS: usize = 8;
 
 #[derive(Clone)]
 pub struct VfsSnapshotFileSystem {
@@ -122,11 +125,13 @@ impl VfsWorkspaceFileSystem {
         Ok((record, manifest))
     }
 
+    /// Publish `manifest` over `current`. `false` means another commit moved
+    /// the head first and nothing was published.
     async fn commit_head(
         &self,
         current: ::vfs::VfsWorkspaceRecord,
         manifest: ::vfs::VfsSnapshotManifest,
-    ) -> FsResult<()> {
+    ) -> FsResult<bool> {
         let result = ::vfs::commit_snapshot_manifest(
             self.blobs.as_ref(),
             self.blob_graph.as_deref(),
@@ -134,7 +139,7 @@ impl VfsWorkspaceFileSystem {
         )
         .await
         .map_err(|error| map_vfs_error(error, &FsPath::root()))?;
-        let updated = self
+        let updated = match self
             .workspace_store
             .compare_and_set_head(::vfs::CompareAndSetVfsWorkspaceHead {
                 workspace_id: current.workspace_id,
@@ -145,30 +150,99 @@ impl VfsWorkspaceFileSystem {
                 updated_at_ms: now_ms()?,
             })
             .await
-            .map_err(map_vfs_catalog_error)?;
+        {
+            Ok(updated) => updated,
+            Err(::vfs::VfsCatalogError::RevisionConflict { .. }) => return Ok(false),
+            Err(error) => return Err(map_vfs_catalog_error(error)),
+        };
         self.effects.record(vfs_workspace_commit_effect(&updated));
-        Ok(())
+        Ok(true)
     }
 
+    /// Apply `update` to the head and publish the result. The head's
+    /// compare-and-set covers the whole workspace, so a commit anywhere in the
+    /// window re-runs `update` on the new head instead of failing it, and
+    /// `update` judges its preconditions afresh each time.
     async fn update_head<F>(&self, request_path: &FsPath, update: F) -> FsResult<()>
     where
-        F: FnOnce(&mut ::vfs::VfsSnapshotManifest) -> Result<(), ::vfs::VfsError>,
+        F: Fn(&mut ::vfs::VfsSnapshotManifest) -> FsResult<()>,
     {
-        let (record, mut manifest) = self.read_head().await?;
-        update(&mut manifest).map_err(|error| map_vfs_error(error, request_path))?;
-        self.commit_head(record, manifest).await
+        for _ in 0..HEAD_UPDATE_ATTEMPTS {
+            let (record, mut manifest) = self.read_head().await?;
+            update(&mut manifest)?;
+            if self.commit_head(record, manifest).await? {
+                return Ok(());
+            }
+        }
+        Err(FsError::Conflict {
+            path: request_path.clone(),
+        })
     }
 
-    async fn update_head_async<F, Fut>(&self, request_path: &FsPath, update: F) -> FsResult<()>
-    where
-        F: FnOnce(::vfs::VfsSnapshotManifest) -> Fut,
-        Fut: std::future::Future<Output = Result<::vfs::VfsSnapshotManifest, ::vfs::VfsError>>,
-    {
-        let (record, manifest) = self.read_head().await?;
-        let manifest = update(manifest)
-            .await
-            .map_err(|error| map_vfs_error(error, request_path))?;
-        self.commit_head(record, manifest).await
+    /// Put `file` at `path` exactly as it is: contents, mode and media type.
+    async fn place_file(
+        &self,
+        path: &FsPath,
+        file: &::vfs::VfsFile,
+        options: RenameOptions,
+    ) -> FsResult<()> {
+        let vfs_path = fs_path_to_vfs_path(path)?;
+        self.update_head(path, |manifest| {
+            place_manifest_file(manifest, &vfs_path, path, file, options)
+        })
+        .await
+    }
+}
+
+fn manifest_file<'a>(
+    manifest: &'a ::vfs::VfsSnapshotManifest,
+    path: &::vfs::VfsPath,
+) -> Option<&'a ::vfs::VfsFile> {
+    match ::vfs::lookup_snapshot_path(manifest, path) {
+        Ok(::vfs::VfsNode::File(file)) => Some(file),
+        _ => None,
+    }
+}
+
+/// Write a file's new contents. An overwrite changes the contents and leaves the
+/// mode alone; the caller decides the media type.
+fn write_keeping_mode(
+    manifest: &mut ::vfs::VfsSnapshotManifest,
+    path: &::vfs::VfsPath,
+    blob_ref: BlobRef,
+    size_bytes: u64,
+    media_type: Option<String>,
+) -> Result<(), ::vfs::VfsError> {
+    let executable = manifest_file(manifest, path).is_some_and(|file| file.executable);
+    ::vfs::write_manifest_file_ref(manifest, path, blob_ref, size_bytes, media_type, executable)
+}
+
+fn place_manifest_file(
+    manifest: &mut ::vfs::VfsSnapshotManifest,
+    path: &::vfs::VfsPath,
+    request_path: &FsPath,
+    file: &::vfs::VfsFile,
+    options: RenameOptions,
+) -> FsResult<()> {
+    if !options.overwrite && ::vfs::lookup_snapshot_path(manifest, path).is_ok() {
+        return Err(FsError::AlreadyExists {
+            path: request_path.clone(),
+        });
+    }
+    ::vfs::write_manifest_file_ref(
+        manifest,
+        path,
+        file.blob_ref.clone(),
+        file.size_bytes,
+        file.media_type.clone(),
+        file.executable,
+    )
+    .map_err(|error| map_vfs_error(error, request_path))
+}
+
+fn only_files_move(path: &FsPath) -> FsError {
+    FsError::Unsupported {
+        message: format!("{path} is not a file; only files can be moved"),
     }
 }
 
@@ -379,9 +453,18 @@ impl crate::fs::VfsCaptureTarget for WorkspaceCaptureTarget {
         let mut manifest = self.manifest.clone();
         ::vfs::replace_manifest_entry(&mut manifest, &fs_path_to_vfs_path(&self.path)?, entry)
             .map_err(|e| map_vfs_error(e, &self.path))?;
-        self.filesystem
+        // Capture keeps its one revision check: it never merges with a concurrent edit.
+        if self
+            .filesystem
             .commit_head(self.current.clone(), manifest)
-            .await
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(FsError::Conflict {
+                path: self.path.clone(),
+            })
+        }
     }
 }
 
@@ -464,14 +547,14 @@ impl FileSystem for VfsWorkspaceFileSystem {
     ) -> FsResult<()> {
         let vfs_path = fs_path_to_vfs_path(path)?;
         self.update_head(path, |manifest| {
-            ::vfs::write_manifest_file_ref(
+            write_keeping_mode(
                 manifest,
                 &vfs_path,
                 content.content_ref.clone(),
                 content.byte_len,
                 content.media_type.clone(),
-                false,
             )
+            .map_err(|error| map_vfs_error(error, path))
         })
         .await
     }
@@ -521,22 +604,46 @@ impl FileSystem for VfsWorkspaceFileSystem {
             .map_err(|error| map_vfs_error(error, path))
     }
 
-    async fn write_file(&self, path: &FsPath, contents: Vec<u8>) -> FsResult<()> {
+    async fn read_file_versioned(&self, path: &FsPath) -> FsResult<VersionedRead> {
         let vfs_path = fs_path_to_vfs_path(path)?;
-        self.update_head_async(path, |mut manifest| {
-            let blobs = Arc::clone(&self.blobs);
-            async move {
-                ::vfs::write_manifest_file(
-                    blobs.as_ref(),
-                    &mut manifest,
-                    &vfs_path,
-                    contents,
-                    None,
-                    false,
-                )
-                .await?;
-                Ok(manifest)
+        let (_record, manifest) = self.read_head().await?;
+        let bytes = ::vfs::read_snapshot_file(self.blobs.as_ref(), &manifest, &vfs_path)
+            .await
+            .map_err(|error| map_vfs_error(error, path))?;
+        Ok(VersionedRead {
+            bytes,
+            version: manifest_file(&manifest, &vfs_path)
+                .map(|file| FsVersion::new(file.blob_ref.as_str())),
+        })
+    }
+
+    async fn write_file(&self, path: &FsPath, contents: Vec<u8>) -> FsResult<()> {
+        self.write_file_with(path, contents, WriteOptions::default())
+            .await
+    }
+
+    async fn write_file_with(
+        &self,
+        path: &FsPath,
+        contents: Vec<u8>,
+        options: WriteOptions,
+    ) -> FsResult<()> {
+        let vfs_path = fs_path_to_vfs_path(path)?;
+        let size_bytes = contents.len() as u64;
+        let blob_ref = self
+            .blobs
+            .put_bytes(contents)
+            .await
+            .map_err(|error| map_vfs_error(error.into(), path))?;
+        self.update_head(path, |manifest| {
+            if let Some(if_match) = &options.if_match
+                && manifest_file(manifest, &vfs_path)
+                    .is_none_or(|file| file.blob_ref.as_str() != if_match.as_str())
+            {
+                return Err(FsError::Conflict { path: path.clone() });
             }
+            write_keeping_mode(manifest, &vfs_path, blob_ref.clone(), size_bytes, None)
+                .map_err(|error| map_vfs_error(error, path))
         })
         .await
     }
@@ -549,6 +656,7 @@ impl FileSystem for VfsWorkspaceFileSystem {
         let vfs_path = fs_path_to_vfs_path(path)?;
         self.update_head(path, |manifest| {
             ::vfs::create_manifest_directory(manifest, &vfs_path, options.recursive)
+                .map_err(|error| map_vfs_error(error, path))
         })
         .await
     }
@@ -588,6 +696,33 @@ impl FileSystem for VfsWorkspaceFileSystem {
         let vfs_path = fs_path_to_vfs_path(path)?;
         self.update_head(path, |manifest| {
             ::vfs::remove_manifest_path(manifest, &vfs_path, options.recursive, options.force)
+                .map_err(|error| map_vfs_error(error, path))
+        })
+        .await
+    }
+
+    /// One commit: the source's entry moves unchanged, so its contents, mode and
+    /// media type all arrive and no reader sees both or neither.
+    async fn rename(
+        &self,
+        source_path: &FsPath,
+        destination_path: &FsPath,
+        options: RenameOptions,
+    ) -> FsResult<()> {
+        let source = fs_path_to_vfs_path(source_path)?;
+        let destination = fs_path_to_vfs_path(destination_path)?;
+        self.update_head(destination_path, |manifest| {
+            let file = match ::vfs::lookup_snapshot_path(manifest, &source) {
+                Ok(::vfs::VfsNode::File(file)) => file.clone(),
+                Ok(::vfs::VfsNode::Directory(_)) => return Err(only_files_move(source_path)),
+                Err(error) => return Err(map_vfs_error(error, source_path)),
+            };
+            place_manifest_file(manifest, &destination, destination_path, &file, options)?;
+            if source != destination {
+                ::vfs::remove_manifest_path(manifest, &source, false, false)
+                    .map_err(|error| map_vfs_error(error, source_path))?;
+            }
+            Ok(())
         })
         .await
     }
@@ -664,12 +799,38 @@ impl FileSystem for AttachedVfsFileSystem {
         Err(FsError::NotFound { path: path.clone() })
     }
 
+    async fn read_file_versioned(&self, path: &FsPath) -> FsResult<VersionedRead> {
+        if let Some(resolved) = self.route_attachment(path)? {
+            let fs = self
+                .file_system_for_attachment(&resolved.attachment, path)
+                .await?;
+            return fs.read_file_versioned(&resolved.inner_path).await;
+        }
+        if self.synthetic_metadata(path)?.is_some() {
+            return Err(FsError::InvalidInput {
+                message: format!("path is not a file: {path}"),
+            });
+        }
+        Err(FsError::NotFound { path: path.clone() })
+    }
+
     async fn write_file(&self, path: &FsPath, contents: Vec<u8>) -> FsResult<()> {
+        self.write_file_with(path, contents, WriteOptions::default())
+            .await
+    }
+
+    async fn write_file_with(
+        &self,
+        path: &FsPath,
+        contents: Vec<u8>,
+        options: WriteOptions,
+    ) -> FsResult<()> {
         let Some(resolved) = self.route_attachment(path)? else {
             return Err(FsError::PermissionDenied { path: path.clone() });
         };
         let fs = self.writable_workspace_for_attachment(&resolved.attachment, path)?;
-        fs.write_file(&resolved.inner_path, contents).await
+        fs.write_file_with(&resolved.inner_path, contents, options)
+            .await
     }
 
     async fn create_directory(
@@ -724,6 +885,44 @@ impl FileSystem for AttachedVfsFileSystem {
         };
         let fs = self.writable_workspace_for_attachment(&resolved.attachment, path)?;
         fs.remove(&resolved.inner_path, options).await
+    }
+
+    /// Within one workspace this is that workspace's single-commit move. Across
+    /// workspaces it takes two commits, destination first, so a failure between
+    /// them leaves both files and loses neither.
+    async fn rename(
+        &self,
+        source_path: &FsPath,
+        destination_path: &FsPath,
+        options: RenameOptions,
+    ) -> FsResult<()> {
+        let Some(source) = self.route_attachment(source_path)? else {
+            return Err(FsError::PermissionDenied {
+                path: source_path.clone(),
+            });
+        };
+        let Some(destination) = self.route_attachment(destination_path)? else {
+            return Err(FsError::PermissionDenied {
+                path: destination_path.clone(),
+            });
+        };
+        let source_fs = self.writable_workspace_for_attachment(&source.attachment, source_path)?;
+        let destination_fs =
+            self.writable_workspace_for_attachment(&destination.attachment, destination_path)?;
+        if source_fs.workspace_id == destination_fs.workspace_id {
+            return source_fs
+                .rename(&source.inner_path, &destination.inner_path, options)
+                .await;
+        }
+        let ::vfs::VfsEntry::File(file) = source_fs.export_vfs(&source.inner_path).await? else {
+            return Err(only_files_move(source_path));
+        };
+        destination_fs
+            .place_file(&destination.inner_path, &file, options)
+            .await?;
+        source_fs
+            .remove(&source.inner_path, RemoveOptions::file())
+            .await
     }
 
     fn drain_tool_effects(&self) -> Vec<ToolEffect> {
@@ -883,12 +1082,9 @@ fn vfs_workspace_commit_effect(record: &::vfs::VfsWorkspaceRecord) -> ToolEffect
                 "workspace_id".to_owned(),
                 record.workspace_id.as_str().to_owned(),
             ),
-            (
-                "snapshot_ref".to_owned(),
-                record.head_snapshot_ref.as_str().to_owned(),
-            ),
             ("revision".to_owned(), record.revision.to_string()),
         ]),
+        refs: BTreeMap::from([("snapshot_ref".to_owned(), record.head_snapshot_ref.clone())]),
     }
 }
 
@@ -954,23 +1150,24 @@ fn map_vfs_catalog_error(error: ::vfs::VfsCatalogError) -> FsError {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use ::vfs::VfsWorkspaceStore;
     use async_trait::async_trait;
     use harness::{
-        CoreAgentTools, RunId, SessionId, ToolBatchId, ToolCallId, ToolCallStatus,
+        CoreAgentTools, RunId, SessionId, ToolBatchId, ToolCallId, ToolCallStatus, ToolId,
         ToolInvocationBatchRequest, ToolInvocationRequest, ToolName, TurnId,
         storage::{BlobStore, InMemoryBlobStore},
     };
     use tokio::sync::Mutex;
 
     use super::*;
+    use crate::fs::FsToolContext;
     use crate::fs::tools::{
         ApplyPatchArgs, EditFileArgs, GlobArgs, GrepArgs, ListDirArgs, ReadFileArgs, WriteFileArgs,
         invoke_apply_patch, invoke_edit_file, invoke_glob, invoke_grep, invoke_list_dir,
         invoke_read_file, invoke_write_file,
     };
-    use crate::fs::{FsToolContext, RenameOptions};
     use crate::runtime::InlineToolRuntime;
     use crate::runtime::ToolTarget;
     use crate::toolset::{ToolsetConfig, register_toolset};
@@ -978,14 +1175,17 @@ mod tests {
     #[derive(Debug, Default)]
     struct TestWorkspaceStore {
         records: Mutex<BTreeMap<::vfs::VfsWorkspaceId, ::vfs::VfsWorkspaceRecord>>,
-        force_revision_conflict: bool,
+        forced_revision_conflicts: AtomicUsize,
+        /// The head another writer publishes during the next forced conflict.
+        rival_head: Mutex<Option<::vfs::VfsWorkspaceRecord>>,
     }
 
     impl TestWorkspaceStore {
-        fn with_forced_revision_conflict() -> Self {
+        /// Answer the next `count` head updates with a revision conflict.
+        fn with_forced_revision_conflicts(count: usize) -> Self {
             Self {
-                records: Mutex::new(BTreeMap::new()),
-                force_revision_conflict: true,
+                forced_revision_conflicts: AtomicUsize::new(count),
+                ..Self::default()
             }
         }
     }
@@ -1052,11 +1252,23 @@ mod tests {
             let revision_conflict = request
                 .expected_revision
                 .is_some_and(|expected_revision| record.revision != expected_revision);
-            if self.force_revision_conflict || revision_conflict {
+            let forced = self
+                .forced_revision_conflicts
+                .load(Ordering::Relaxed)
+                .checked_sub(1)
+                .inspect(|left| {
+                    self.forced_revision_conflicts
+                        .store(*left, Ordering::Relaxed)
+                })
+                .is_some();
+            if forced && let Some(rival) = self.rival_head.lock().await.take() {
+                *record = rival;
+            }
+            if forced || revision_conflict {
                 return Err(::vfs::VfsCatalogError::RevisionConflict {
                     workspace_id: request.workspace_id,
                     expected_revision: request.expected_revision.unwrap_or(record.revision),
-                    actual_revision: record.revision + u64::from(self.force_revision_conflict),
+                    actual_revision: record.revision + u64::from(forced),
                 });
             }
             if let Some(display_name) = request.display_name {
@@ -1891,21 +2103,395 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn vfs_workspace_file_system_reports_revision_conflicts() {
-        let store = Arc::new(TestWorkspaceStore::with_forced_revision_conflict());
+    async fn a_busy_workspace_retries_a_head_update_and_then_reports_a_conflict() {
+        let store = Arc::new(TestWorkspaceStore::with_forced_revision_conflicts(
+            HEAD_UPDATE_ATTEMPTS - 1,
+        ));
         let (_blobs, fs, _workspace_id, _base_snapshot_ref) = test_workspace_fs(
-            store,
+            store.clone(),
             vec![::vfs::InlineFile::new("README.md", b"base\n".to_vec()).unwrap()],
         )
         .await;
+        let readme = FsPath::new("/README.md").unwrap();
 
-        let error = fs
-            .write_file(&FsPath::new("/README.md").unwrap(), b"updated\n".to_vec())
+        fs.write_file(&readme, b"updated\n".to_vec())
             .await
-            .expect_err("write should conflict");
-        assert!(
-            matches!(error, FsError::Failed { message } if message.contains("vfs_workspace_revision_conflict"))
-        );
+            .expect("the last attempt lands");
+        assert_eq!(fs.read_file_text(&readme).await.unwrap(), "updated\n");
+
+        store
+            .forced_revision_conflicts
+            .store(HEAD_UPDATE_ATTEMPTS, Ordering::Relaxed);
+        assert!(matches!(
+            fs.write_file(&readme, b"never\n".to_vec()).await,
+            Err(FsError::Conflict { path }) if path == readme
+        ));
+        assert_eq!(fs.read_file_text(&readme).await.unwrap(), "updated\n");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_versioned_write_conflicts_only_with_a_change_to_its_own_file() {
+        let store = Arc::new(TestWorkspaceStore::default());
+        let (blobs, fs, workspace_id, _) = test_workspace_fs(
+            store.clone(),
+            vec![
+                ::vfs::InlineFile::new("notes.md", b"one\n".to_vec()).unwrap(),
+                ::vfs::InlineFile::new("other.md", b"other\n".to_vec()).unwrap(),
+            ],
+        )
+        .await;
+        let other_session = VfsWorkspaceFileSystem::new(blobs, store, workspace_id);
+        let notes = FsPath::new("/notes.md").unwrap();
+        let other = FsPath::new("/other.md").unwrap();
+
+        // A commit to another file moves the head but not this file's version.
+        let read = fs.read_file_versioned(&notes).await.unwrap();
+        let version = read.version.expect("a workspace file has a version");
+        other_session
+            .write_file(&other, b"elsewhere\n".to_vec())
+            .await
+            .unwrap();
+        fs.write_file_with(
+            &notes,
+            b"mine\n".to_vec(),
+            WriteOptions {
+                if_match: Some(version.clone()),
+            },
+        )
+        .await
+        .expect("a commit to another file does not conflict");
+        assert_eq!(fs.read_file_text(&other).await.unwrap(), "elsewhere\n");
+
+        // The version read before that write no longer matches.
+        assert!(matches!(
+            other_session
+                .write_file_with(
+                    &notes,
+                    b"lost\n".to_vec(),
+                    WriteOptions {
+                        if_match: Some(version.clone()),
+                    },
+                )
+                .await,
+            Err(FsError::Conflict { path }) if path == notes
+        ));
+        assert_eq!(fs.read_file_text(&notes).await.unwrap(), "mine\n");
+
+        // Removing the file is a change to it as well.
+        fs.remove(&notes, RemoveOptions::file()).await.unwrap();
+        assert!(matches!(
+            fs.write_file_with(
+                &notes,
+                b"lost\n".to_vec(),
+                WriteOptions {
+                    if_match: Some(version),
+                },
+            )
+            .await,
+            Err(FsError::Conflict { .. })
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_versioned_write_rechecks_after_losing_the_head_race() {
+        let store = Arc::new(TestWorkspaceStore::with_forced_revision_conflicts(1));
+        let (_blobs, fs, _, _) = test_workspace_fs(
+            store,
+            vec![::vfs::InlineFile::new("notes.md", b"one\n".to_vec()).unwrap()],
+        )
+        .await;
+        let notes = FsPath::new("/notes.md").unwrap();
+        let read = fs.read_file_versioned(&notes).await.unwrap();
+        fs.write_file_with(
+            &notes,
+            b"two\n".to_vec(),
+            WriteOptions {
+                if_match: read.version,
+            },
+        )
+        .await
+        .expect("the file did not change, so the retry lands");
+        assert_eq!(fs.read_file_text(&notes).await.unwrap(), "two\n");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_file_changed_while_a_versioned_write_lost_the_head_race_is_a_conflict() {
+        let store = Arc::new(TestWorkspaceStore::default());
+        let (blobs, fs, workspace_id, _) = test_workspace_fs(
+            store.clone(),
+            vec![::vfs::InlineFile::new("notes.md", b"one\n".to_vec()).unwrap()],
+        )
+        .await;
+        let notes = FsPath::new("/notes.md").unwrap();
+        let read = fs.read_file_versioned(&notes).await.unwrap();
+
+        // Make the other writer's commit, then rewind so it lands inside the window
+        // between this write's first check and its compare-and-set.
+        let before_rival = store.read_workspace(&workspace_id).await.unwrap();
+        VfsWorkspaceFileSystem::new(blobs, store.clone(), workspace_id.clone())
+            .write_file(&notes, b"theirs\n".to_vec())
+            .await
+            .unwrap();
+        let rival = store.read_workspace(&workspace_id).await.unwrap();
+        store
+            .records
+            .lock()
+            .await
+            .insert(workspace_id.clone(), before_rival);
+        *store.rival_head.lock().await = Some(rival);
+        store.forced_revision_conflicts.store(1, Ordering::Relaxed);
+
+        assert!(matches!(
+            fs.write_file_with(
+                &notes,
+                b"mine\n".to_vec(),
+                WriteOptions {
+                    if_match: read.version,
+                },
+            )
+            .await,
+            Err(FsError::Conflict { path }) if path == notes
+        ));
+        assert_eq!(fs.read_file_text(&notes).await.unwrap(), "theirs\n");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn edits_and_moves_keep_a_files_executable_flag() {
+        let store = Arc::new(TestWorkspaceStore::default());
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let snapshot = ::vfs::create_inline_snapshot(
+            blobs.as_ref(),
+            None,
+            ::vfs::CreateInlineSnapshotRequest::new(vec![
+                ::vfs::InlineFile::new("run.sh", b"#!/bin/sh\necho one\n".to_vec())
+                    .unwrap()
+                    .executable(true),
+                ::vfs::InlineFile::new("plain.txt", b"plain\n".to_vec()).unwrap(),
+            ]),
+        )
+        .await
+        .unwrap();
+        let workspace_id = create_test_workspace(
+            store.as_ref(),
+            "workspace_executable",
+            snapshot.snapshot_ref,
+        )
+        .await;
+        let fs = VfsWorkspaceFileSystem::new(blobs.clone(), store, workspace_id);
+        let ctx = FsToolContext::new(Arc::new(fs.clone()), blobs.clone());
+        let executable = async |path: &str| {
+            let ::vfs::VfsEntry::File(file) =
+                fs.export_vfs(&FsPath::new(path).unwrap()).await.unwrap()
+            else {
+                panic!("expected a file at {path}");
+            };
+            file.executable
+        };
+        let script = FsPath::new("/run.sh").unwrap();
+
+        invoke_edit_file(
+            &ctx,
+            EditFileArgs {
+                path: script.clone(),
+                old_string: "one".to_owned(),
+                new_string: "two".to_owned(),
+                replace_all: false,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(executable("/run.sh").await, "edit_file");
+
+        fs.write_file(&script, b"#!/bin/sh\necho three\n".to_vec())
+            .await
+            .unwrap();
+        assert!(executable("/run.sh").await, "write_file");
+
+        let content_ref = blobs.put_bytes(b"#!/bin/sh\n".to_vec()).await.unwrap();
+        fs.write_file_ref(
+            &script,
+            &crate::content::ContentDescriptor {
+                content_ref,
+                byte_len: 10,
+                media_type: None,
+                name: None,
+                handle: None,
+                source: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(executable("/run.sh").await, "write_file_ref");
+
+        invoke_apply_patch(
+            &ctx,
+            ApplyPatchArgs {
+                patch: "*** Begin Patch\n*** Update File: /run.sh\n@@\n #!/bin/sh\n+echo patched\n*** End Patch".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(executable("/run.sh").await, "apply_patch update");
+
+        invoke_apply_patch(
+            &ctx,
+            ApplyPatchArgs {
+                patch: "*** Begin Patch\n*** Update File: /run.sh\n*** Move to: /bin/run.sh\n@@\n #!/bin/sh\n+echo moved\n*** End Patch".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(executable("/bin/run.sh").await, "apply_patch move");
+
+        // A move brings the source's flag, whatever the destination had.
+        fs.rename(
+            &FsPath::new("/plain.txt").unwrap(),
+            &FsPath::new("/bin/run.sh").unwrap(),
+            RenameOptions { overwrite: true },
+        )
+        .await
+        .unwrap();
+        assert!(!executable("/bin/run.sh").await, "rename over a script");
+
+        // A new file starts plain.
+        fs.write_file(&FsPath::new("/new.sh").unwrap(), b"new\n".to_vec())
+            .await
+            .unwrap();
+        assert!(!executable("/new.sh").await, "new file");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_workspace_move_is_one_commit_and_refuses_what_it_cannot_do() {
+        let store = Arc::new(TestWorkspaceStore::default());
+        let (_blobs, fs, _, _) = test_workspace_fs(
+            store,
+            vec![
+                ::vfs::InlineFile::new("a.txt", b"a\n".to_vec()).unwrap(),
+                ::vfs::InlineFile::new("b.txt", b"b\n".to_vec()).unwrap(),
+                ::vfs::InlineFile::new("dir/inner.txt", b"inner\n".to_vec()).unwrap(),
+            ],
+        )
+        .await;
+        let a = FsPath::new("/a.txt").unwrap();
+        let b = FsPath::new("/b.txt").unwrap();
+        let dir = FsPath::new("/dir").unwrap();
+        let before = fs.read_head().await.unwrap().0.revision;
+
+        assert!(matches!(
+            fs.rename(&a, &b, RenameOptions::default()).await,
+            Err(FsError::AlreadyExists { path }) if path == b
+        ));
+        assert!(matches!(
+            fs.rename(&a, &dir, RenameOptions { overwrite: true }).await,
+            Err(FsError::InvalidInput { .. })
+        ));
+        assert!(matches!(
+            fs.rename(
+                &dir,
+                &FsPath::new("/moved").unwrap(),
+                RenameOptions::default()
+            )
+            .await,
+            Err(FsError::Unsupported { .. })
+        ));
+        assert!(matches!(
+            fs.rename(
+                &FsPath::new("/missing").unwrap(),
+                &b,
+                RenameOptions { overwrite: true }
+            )
+            .await,
+            Err(FsError::NotFound { .. })
+        ));
+        assert_eq!(fs.read_head().await.unwrap().0.revision, before);
+
+        fs.rename(&a, &a, RenameOptions { overwrite: true })
+            .await
+            .unwrap();
+        assert_eq!(fs.read_file_text(&a).await.unwrap(), "a\n");
+
+        let before = fs.read_head().await.unwrap().0.revision;
+        fs.rename(&a, &b, RenameOptions { overwrite: true })
+            .await
+            .unwrap();
+        assert_eq!(fs.read_head().await.unwrap().0.revision, before + 1);
+        assert_eq!(fs.read_file_text(&b).await.unwrap(), "a\n");
+        assert!(matches!(
+            fs.read_file(&a).await,
+            Err(FsError::NotFound { .. })
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_move_between_attached_workspaces_keeps_the_flag() {
+        let store = Arc::new(TestWorkspaceStore::default());
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let source = create_test_snapshot(
+            blobs.as_ref(),
+            vec![
+                ::vfs::InlineFile::new("run.sh", b"#!/bin/sh\n".to_vec())
+                    .unwrap()
+                    .executable(true),
+            ],
+        )
+        .await;
+        let destination = create_test_snapshot(blobs.as_ref(), Vec::new()).await;
+        let source_id =
+            create_test_workspace(store.as_ref(), "workspace_source", source.snapshot_ref).await;
+        let destination_id = create_test_workspace(
+            store.as_ref(),
+            "workspace_destination",
+            destination.snapshot_ref,
+        )
+        .await;
+        let attach = async |path: &str, id: &::vfs::VfsWorkspaceId| {
+            resolved_attachment(
+                path,
+                ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableWorkspace {
+                    workspace: store.read_workspace(id).await.unwrap(),
+                },
+                harness::WorkspaceAccess::Edit,
+            )
+        };
+        let fs = AttachedVfsFileSystem::new(
+            blobs,
+            store.clone(),
+            vec![
+                attach("/source", &source_id).await,
+                attach("/destination", &destination_id).await,
+            ],
+        )
+        .unwrap();
+        let from = FsPath::new("/source/run.sh").unwrap();
+        let to = FsPath::new("/destination/run.sh").unwrap();
+
+        fs.rename(&from, &to, RenameOptions::default())
+            .await
+            .unwrap();
+
+        let ::vfs::VfsEntry::File(file) = fs.export_vfs(&to).await.unwrap() else {
+            panic!("expected a file");
+        };
+        assert!(file.executable);
+        assert!(matches!(
+            fs.read_file(&from).await,
+            Err(FsError::NotFound { .. })
+        ));
+
+        // A versioned write through the attachment still honours its version.
+        let read = fs.read_file_versioned(&to).await.unwrap();
+        fs.write_file(&to, b"changed\n".to_vec()).await.unwrap();
+        assert!(matches!(
+            fs.write_file_with(
+                &to,
+                b"lost\n".to_vec(),
+                WriteOptions {
+                    if_match: read.version,
+                },
+            )
+            .await,
+            Err(FsError::Conflict { .. })
+        ));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1930,8 +2516,8 @@ mod tests {
             Some(workspace_id.as_str())
         );
         assert_eq!(
-            effects[0].data.get("snapshot_ref").map(String::as_str),
-            Some(record.head_snapshot_ref.as_str())
+            effects[0].refs.get("snapshot_ref"),
+            Some(&record.head_snapshot_ref)
         );
         assert_eq!(
             effects[0].data.get("revision").map(String::as_str),
@@ -1971,7 +2557,7 @@ mod tests {
                 workspace_attachments: Vec::new(),
                 calls: vec![ToolInvocationRequest {
                     builtin: Some(harness::BuiltinToolCallRuntime {
-                        spec: match &toolset.tools[&ToolName::new("vfs.write_file")].kind {
+                        spec: match &toolset.tools[&ToolId::new("vfs.write_file")].kind {
                             harness::ToolKind::Builtin(spec) => spec.clone(),
                             _ => panic!("built-in spec"),
                         },
@@ -1982,7 +2568,7 @@ mod tests {
                         },
                     }),
                     call_id: ToolCallId::new("call_1"),
-                    tool_id: Some(ToolName::new("vfs.write_file")),
+                    tool_id: Some(ToolId::new("vfs.write_file")),
                     tool_name: ToolName::new("vfs_write_file"),
                     arguments_ref: args_ref,
                     workflow_tool: None,
@@ -2013,16 +2599,71 @@ mod tests {
             Some(workspace_id.as_str())
         );
         assert_eq!(
-            result.effects[0]
-                .data
-                .get("snapshot_ref")
-                .map(String::as_str),
-            Some(record.head_snapshot_ref.as_str())
+            result.effects[0].refs.get("snapshot_ref"),
+            Some(&record.head_snapshot_ref)
         );
         assert_eq!(
             result.effects[0].data.get("revision").map(String::as_str),
             Some("1")
         );
+
+        // A tool edit moves the head with no snapshot row, so the log holds the older
+        // heads through this effect. The in-memory store's append runs the cross-check
+        // that fails when a ref sits in a plain string.
+        let completed = harness::CoreAgentEvent::Tool(harness::ToolEvent::CallCompleted {
+            run_id: harness::RunId::new(1),
+            turn_id: harness::TurnId::new(1),
+            batch_id: harness::ToolBatchId::new(1),
+            result: harness::ToolCallResult {
+                call_id: result.call_id.clone(),
+                status: result.status,
+                output_ref: None,
+                model_visible_context_entries: Vec::new(),
+                error_ref: None,
+                effects: result.effects.clone(),
+                attachments: Vec::new(),
+                duration_ms: None,
+                output_bytes: None,
+                truncated: false,
+            },
+        });
+        let event = harness::CoreAgentCodec
+            .encode_event(&completed)
+            .expect("encode completion");
+        assert!(
+            harness::storage::event_blob_roots(&event)
+                .expect("roots")
+                .contains(&record.head_snapshot_ref)
+        );
+        let sessions = harness::storage::InMemorySessionStore::new();
+        let session_id = harness::SessionId::new("vfs-commit");
+        harness::storage::SessionStore::create_session(
+            &sessions,
+            harness::storage::CreateSession {
+                metadata: Default::default(),
+                session_id: session_id.clone(),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            },
+        )
+        .await
+        .expect("create session");
+        harness::storage::SessionStore::append(
+            &sessions,
+            harness::storage::AppendSessionEvents {
+                session_id,
+                expected_head: None,
+                events: vec![harness::storage::UncommittedStoredEvent {
+                    observed_at_ms: 2,
+                    joins: Default::default(),
+                    event,
+                }],
+            },
+        )
+        .await
+        .expect("the commit effect's ref is typed");
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2303,6 +2944,42 @@ mod tests {
             .await,
             Err(FsError::PermissionDenied { .. })
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_patch_moving_into_a_read_only_attachment_reports_the_updated_source() {
+        let (blobs, _store, fs, _workspace_id) = test_attached_fs().await;
+        let source = FsPath::new("/workspace/draft.md").unwrap();
+        fs.write_file(&source, b"draft\n".to_vec()).await.unwrap();
+        let ctx = FsToolContext::new(Arc::new(fs.clone()), blobs);
+
+        // Metadata cannot show a read-only target, so this one surfaces at commit.
+        let error = invoke_apply_patch(
+            &ctx,
+            ApplyPatchArgs {
+                patch: "*** Begin Patch\n*** Update File: /workspace/draft.md\n*** Move to: /skills/rust/draft.md\n@@\n-draft\n+final\n*** End Patch".to_owned(),
+            },
+        )
+        .await
+        .expect_err("the destination is read-only");
+
+        let crate::error::ToolError::PatchPartiallyApplied {
+            applied,
+            failed_path,
+            not_applied,
+            source: cause,
+        } = error
+        else {
+            panic!("expected a partial failure");
+        };
+        assert_eq!(applied.modified, vec![source.clone()]);
+        assert_eq!(failed_path, FsPath::new("/skills/rust/draft.md").unwrap());
+        assert_eq!(
+            not_applied,
+            vec!["move /workspace/draft.md to /skills/rust/draft.md"]
+        );
+        assert!(matches!(cause, FsError::PermissionDenied { .. }));
+        assert_eq!(fs.read_file_text(&source).await.unwrap(), "final\n");
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -233,7 +233,7 @@ If running several hosts, give them nonoverlapping account selections. See
 
 ### MCP and Configurator
 
-An agent's native MCP connection is a stored universe resource. To reach a
+An agent's runtime MCP connection is a stored universe resource. To reach a
 private endpoint, both the server record's `allowPrivateNetwork` and the
 deployment's `LIGHTSPEED_MCP_PRIVATE_NETWORKS` must permit it. OAuth metadata
 and token requests have a separate private-network setting. Permitting OAuth

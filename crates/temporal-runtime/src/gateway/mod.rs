@@ -19,7 +19,7 @@ pub use service::{
     ReconcileFailureLog,
 };
 pub use temporal_workflow::{
-    AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind, AgentCompletedRunSummary,
+    AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind, AgentFinishedRunSummary,
     AgentSessionArgs, AgentSessionStatus, AgentSessionWorkflow, DEFAULT_TASK_QUEUE,
     DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal, default_session_config,
 };

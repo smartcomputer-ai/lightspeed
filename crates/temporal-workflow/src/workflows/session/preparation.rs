@@ -134,7 +134,7 @@ pub(super) fn known_submission(state: &CoreAgentState, command: &CoreAgentComman
             .any(|run| run.submission_id.as_ref() == Some(id))
         || state
             .runs
-            .completed
+            .finished
             .iter()
             .any(|run| run.submission_id.as_ref() == Some(id))
 }
@@ -176,10 +176,10 @@ pub(super) fn preparation_matches(
         };
         source
             .system_binding_ids
-            .insert(binding.definition.tool_id.clone());
+            .insert(binding.definition.workflow_tool_id.clone());
         source
             .bindings
-            .insert(binding.definition.tool_id.clone(), binding);
+            .insert(binding.definition.workflow_tool_id.clone(), binding);
     }
     source.matches(state)
 }
@@ -189,9 +189,9 @@ pub(super) async fn publish_tools(
     drive: &mut CoreAgentDrive,
     prepared: SessionToolsetPreparation,
 ) -> Result<(), AgentApiError> {
-    if admissions::turn_in_flight(drive.state()) {
+    if harness::tools_frozen(drive.state()) {
         return Err(AgentApiError::conflict(
-            "cannot publish tools during an in-flight turn",
+            "cannot publish tools during a turn or its tool batch",
         ));
     }
     let universe_id = ctx
@@ -225,6 +225,11 @@ pub(super) async fn publish_tools(
         )
         .await?;
     }
+    if let Some(command) =
+        crate::session_mcp_catalog_command(drive.state(), prepared.mcp_catalog.as_ref())
+    {
+        apply(ctx, drive, command).await?;
+    }
     Ok(())
 }
 
@@ -238,7 +243,7 @@ pub(super) async fn publish_pending_tools(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
 ) -> anyhow::Result<bool> {
-    if admissions::turn_in_flight(drive.state()) {
+    if harness::tools_frozen(drive.state()) {
         return Ok(false);
     }
     let pending = ctx.state_mut(|state| std::mem::take(&mut state.pending_toolsets));
@@ -283,22 +288,7 @@ pub(super) async fn apply(
         .map_err(|e| AgentApiError::internal(e.to_string()))?
     {
         CommandAdmissionResult::Accepted => Ok(()),
-        CommandAdmissionResult::Rejected(failure) => Err(admission_error(failure)),
-    }
-}
-
-fn admission_error(failure: AgentAdmissionFailure) -> AgentApiError {
-    if let Some(error) = failure.preparation_error {
-        return error;
-    }
-    if failure
-        .rejection
-        .as_ref()
-        .is_some_and(|rejection| rejection.kind == harness::CommandRejectionKind::RevisionConflict)
-    {
-        AgentApiError::conflict(failure.message)
-    } else {
-        AgentApiError::rejected(failure.message)
+        CommandAdmissionResult::Rejected(failure) => Err(failure.api_error()),
     }
 }
 
@@ -343,10 +333,25 @@ pub(super) async fn execute_operation(
         Ok(request) => request,
         Err(error) => return Ok(Err(error)),
     };
-    // Storage confirms exact-batch retries after a lost response. A commit
-    // failure is not evidence of rejection: propagate it without a receipt.
-    drive::append_events(ctx, drive, request.expected_head, request.events).await?;
-    Ok(Ok(summary))
+    let appended = drive::append_events(ctx, drive, request.expected_head, request.events).await;
+    operation_commit_outcome(appended, summary)
+}
+
+/// Storage confirms exact-batch retries after a lost response. A commit failure is
+/// not evidence of rejection: propagate it without a receipt. A data rejection is that
+/// evidence. Nothing was written and the caller's own configuration is what the store
+/// refused, so the caller hears it and the session stays as it was.
+fn operation_commit_outcome<T>(
+    appended: anyhow::Result<T>,
+    summary: ProfileApplySummary,
+) -> anyhow::Result<Result<ProfileApplySummary, AgentApiError>> {
+    match appended {
+        Ok(_) => Ok(Ok(summary)),
+        Err(error) if error.is::<errors::StoreDataRejection>() => {
+            Ok(Err(AgentApiError::internal(error.to_string())))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 async fn prepare_operation(
@@ -444,6 +449,7 @@ async fn configure(
         crate::SessionToolsetRequest {
             source: source.clone(),
             validate_configuration: true,
+            input_capacity_model: None,
         },
         activity_options(),
     );
@@ -625,7 +631,7 @@ pub(super) async fn prepare_initial_session(
 /// concurrent preparation loop so the workflow's public handle remains Send.
 #[derive(Clone)]
 pub(super) struct PendingRunPreparation {
-    admission: AgentAdmission,
+    pub(super) admission: AgentAdmission,
     source: SessionToolsetSource,
 }
 
@@ -641,6 +647,34 @@ pub(super) fn begin_run_preparation(
     });
 }
 
+/// The model whose reported capacity a run needs. A limit the document declares for
+/// its own model stands, so there is nothing to look up for it.
+fn input_capacity_model(
+    config: &harness::SessionConfig,
+    command: &CoreAgentCommand,
+) -> Option<harness::ModelSelection> {
+    let CoreAgentCommand::RequestRun(request) = command else {
+        return None;
+    };
+    let model = request
+        .run_config
+        .model_override
+        .as_ref()
+        .unwrap_or(&config.model);
+    (model != &config.model || config.context.input_limit_tokens.is_none()).then(|| model.clone())
+}
+
+/// Every new run passes through preparation, whoever asked for it, so this is where
+/// each one picks up the capacity resolved for it.
+pub(super) fn take_input_capacity(
+    command: &mut CoreAgentCommand,
+    prepared: &SessionToolsetPreparation,
+) {
+    if let CoreAgentCommand::RequestRun(request) = command {
+        request.input_limit_tokens = prepared.input_limit_tokens;
+    }
+}
+
 /// Poll policy reads alongside the session driver, including while its model
 /// or tool activity is in flight. Only the driver publishes the observation.
 pub(super) async fn run_preparation_loop(ctx: WorkflowContext<AgentSessionWorkflow>) {
@@ -648,11 +682,14 @@ pub(super) async fn run_preparation_loop(ctx: WorkflowContext<AgentSessionWorkfl
         ctx.wait_for_state(|state| state.run_preparation.is_some())
             .await;
         let pending = ctx.state(|state| state.run_preparation.clone()).unwrap();
+        let input_capacity_model =
+            input_capacity_model(&pending.source.config, &pending.admission.command);
         let activity = ctx.execute_activity(
             WorkflowActivities::prepare_session_toolset,
             crate::SessionToolsetRequest {
                 source: pending.source,
                 validate_configuration: false,
+                input_capacity_model,
             },
             activity_options(),
         );
@@ -686,7 +723,7 @@ pub(super) fn admission_can_pass_preparation(admission: &SessionAdmission) -> bo
 
 pub(super) fn abandon_pending_run(state: &mut AgentSessionWorkflow) {
     if let Some(pending) = state.run_preparation.take() {
-        state.admission_failures.push(failure(
+        state.record_admission_failure(failure(
             &pending.admission.command,
             pending.admission.correlation_token,
             AgentApiError::rejected("session closed during tool preparation"),
@@ -698,14 +735,33 @@ pub(super) fn abandon_pending_run(state: &mut AgentSessionWorkflow) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_store_rejection_of_an_operation_answers_its_caller_and_leaves_the_session_alive() {
+        let summary = ProfileApplySummary::default();
+        let rejected = operation_commit_outcome::<()>(
+            Err(anyhow::Error::new(errors::StoreDataRejection {
+                message: "the reason".to_owned(),
+            })),
+            summary.clone(),
+        )
+        .expect("not fatal")
+        .expect_err("the caller hears it");
+        assert_eq!(rejected.kind, api::AgentApiErrorKind::Internal);
+        assert_eq!(rejected.message, "the reason");
+
+        operation_commit_outcome::<()>(Err(anyhow::anyhow!("outage")), summary.clone())
+            .expect_err("no receipt for what may have committed");
+        assert_eq!(
+            operation_commit_outcome(Ok(()), summary.clone()).unwrap(),
+            Ok(summary)
+        );
+    }
+
     /// A live session opened with the default configuration, whose admission
     /// materialized the default compaction policy.
     fn opened_live() -> CoreAgentDrive {
-        let empty = CoreAgentDrive::from_replayed(
-            SessionId::new("config-changed"),
-            CoreAgentState::new(),
-            None,
-        );
+        let empty =
+            CoreAgentDrive::from_replayed(SessionId::new("config-changed"), CoreAgentState::new());
         let mut opening = PreparationCandidate::new(&empty);
         opening
             .push(
@@ -720,8 +776,7 @@ mod tests {
             )
             .unwrap();
         let state = opening.state().clone();
-        let head = state.reduced_to.clone();
-        CoreAgentDrive::from_replayed(empty.session_id().clone(), state, head)
+        CoreAgentDrive::from_replayed(empty.session_id().clone(), state)
     }
 
     #[test]
@@ -775,12 +830,64 @@ mod tests {
                     submission_id: Some(SubmissionId::new("prepared")),
                     source: harness::RunRequestSource::Input { input: Vec::new() },
                     run_config: crate::default_run_config(),
+                    input_limit_tokens: None,
                     notify_on_terminal: Vec::new(),
                 }),
                 correlation_token: Some("receipt".into()),
             },
             source: SessionToolsetSource::from_state(&state).unwrap(),
         }
+    }
+
+    #[test]
+    fn a_run_asks_for_the_capacity_of_its_own_model_unless_the_document_declares_one() {
+        let pending = pending();
+        let session_model = pending.source.config.model.clone();
+        let other = harness::ModelSelection {
+            model: "gpt-other".into(),
+            ..session_model.clone()
+        };
+        let mut command = pending.admission.command.clone();
+        let mut config = pending.source.config.clone();
+        assert_eq!(
+            input_capacity_model(&config, &command),
+            Some(session_model.clone())
+        );
+
+        config.context.input_limit_tokens = Some(100_000);
+        assert_eq!(input_capacity_model(&config, &command), None);
+
+        let CoreAgentCommand::RequestRun(request) = &mut command else {
+            unreachable!()
+        };
+        request.run_config.model_override = Some(other.clone());
+        assert_eq!(input_capacity_model(&config, &command), Some(other));
+
+        assert_eq!(
+            input_capacity_model(&config, &CoreAgentCommand::CompactContext),
+            None
+        );
+    }
+
+    /// The same step serves every source of a run. A detached promise's follow-up is
+    /// built in the workflow and gets its capacity here, as a client's run does.
+    #[test]
+    fn prepared_capacity_lands_on_the_run_it_was_resolved_for() {
+        let pending = pending();
+        let prepared = SessionToolsetPreparation {
+            source: pending.source,
+            declarations: Vec::new(),
+            tools: Default::default(),
+            input_limit_tokens: Some(200_000),
+            mcp_catalog: None,
+        };
+        let mut command = pending.admission.command;
+        take_input_capacity(&mut command, &prepared);
+        let CoreAgentCommand::RequestRun(request) = &command else {
+            unreachable!()
+        };
+        assert_eq!(request.input_limit_tokens, Some(200_000));
+        assert_eq!(request.run_config, crate::default_run_config());
     }
 
     #[test]
@@ -808,6 +915,13 @@ mod tests {
         assert!(!wait_loop::workflow_state_has_immediate_work(&state));
         assert!(!wait_loop::workflow_state_allows_continue_as_new(&state));
         assert_eq!(state.status_snapshot().pending_admissions, 2);
+        assert!(
+            state
+                .status_snapshot()
+                .pending_submission_ids
+                .contains(&SubmissionId::new("prepared")),
+            "a run under preparation has not been admitted yet"
+        );
         state.queue_admission(AgentAdmission {
             command: CoreAgentCommand::CancelRun {
                 requested_by: None,
@@ -832,7 +946,7 @@ mod tests {
         assert_eq!(failure.submission_id, Some(SubmissionId::new("prepared")));
         assert_eq!(failure.correlation_token.as_deref(), Some("receipt"));
         assert!(failure.preparation_error.is_some());
-        assert!(state.last_error.is_none());
+        assert!(state.fatal_error.is_none());
         abandon_pending_run(&mut state);
         assert_eq!(state.admission_failures.len(), 1);
     }
@@ -846,8 +960,9 @@ mod tests {
         state.core_state.context.compaction.phase =
             harness::ContextCompactionPhase::Pending(harness::ContextCompactionPlan {
                 run_id: None,
-                covered_entry_ids: vec![harness::ContextItemId::new(1)],
+                covered_entry_ids: vec![harness::ContextEntryId::new(1)],
                 trigger: harness::ContextCompactionTrigger::Manual,
+                estimated_tokens: None,
             });
         assert!(!wait_loop::workflow_state_needs_core_drive_for_state(
             &state

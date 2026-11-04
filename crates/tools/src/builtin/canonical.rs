@@ -63,7 +63,7 @@ Start with `*** Begin Patch` and finish with `*** End Patch`. Between them, use 
 - `*** Delete File: path`: no content lines follow.
 - `*** Update File: path`: start each change with `@@` (no numeric line ranges). Prefix unchanged context lines with a space, removed lines with `-`, and added lines with `+`. Include enough context to locate the change uniquely.
 - To move an updated file, put `*** Move to: new_path` immediately after its Update File line.
-Read existing content before editing. Do not include Markdown fences or standard diff headers in the patch.
+Read existing content before editing. Do not include Markdown fences or standard diff headers in the patch. Nothing changes if a hunk does not apply.
 Example patch text:
 *** Begin Patch
 *** Update File: src/example.py

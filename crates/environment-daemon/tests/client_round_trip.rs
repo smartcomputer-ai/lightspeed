@@ -20,8 +20,14 @@ use environment_daemon::{
     server,
 };
 use environment_protocol::{
-    data::transfer::{TransferOnExisting, TransferPhase},
+    data::{
+        exec::{ExecState, ReturnOn, StoppedBy},
+        process::{ProcessSignal, ReadProcessParams, TerminateProcessParams},
+        transfer::{TransferOnExisting, TransferPhase},
+    },
+    error::ProtocolErrorKind,
     handshake::ImplementationInfo,
+    ids::ProcessId,
     jsonrpc::Response,
     paths::EnvironmentPath,
 };
@@ -30,6 +36,9 @@ use serde_json::json;
 use tools::{
     builtin::{
         BuiltinTool, BuiltinToolContext, BuiltinToolOperation as Op, BuiltinToolSurface as Surface,
+    },
+    environment::process::{
+        ContinueProcessRequest, ProcessExecutor, ProcessRequest, ProcessStatus,
     },
     environment_protocol::{RemoteEnvironmentConnection, conformance},
     transfer,
@@ -47,12 +56,24 @@ fn daemon_config(root: &Path, state_dir: PathBuf) -> DaemonConfig {
     }
 }
 
+async fn connect(runtime: &DaemonRuntime) -> DataClient {
+    let (client_io, server_io) = tokio::io::duplex(1 << 20);
+    tokio::spawn(server::serve_stream(runtime.clone(), server_io));
+    let options =
+        ConnectOptions::new(ImplementationInfo::new("envd-round-trip-test").expect("name"));
+    let (client, _) = DataClient::connect_initialized_over(client_io, options)
+        .await
+        .expect("initialized");
+    client
+}
+
 /// A daemon over a fresh root, its state dir beside the root, and an
 /// initialized client connected to it through the real connection loop.
 struct Daemon {
     _temp: tempfile::TempDir,
     base: PathBuf,
     root: PathBuf,
+    runtime: DaemonRuntime,
     client: DataClient,
 }
 
@@ -64,17 +85,12 @@ impl Daemon {
         std::fs::create_dir_all(&root).expect("root");
         let runtime =
             DaemonRuntime::new(daemon_config(&root, base.join("state"))).expect("runtime");
-        let (client_io, server_io) = tokio::io::duplex(1 << 20);
-        tokio::spawn(server::serve_stream(runtime, server_io));
-        let options =
-            ConnectOptions::new(ImplementationInfo::new("envd-round-trip-test").expect("name"));
-        let (client, _) = DataClient::connect_initialized_over(client_io, options)
-            .await
-            .expect("initialized");
+        let client = connect(&runtime).await;
         Self {
             _temp: temp,
             base,
             root,
+            runtime,
             client,
         }
     }
@@ -494,4 +510,130 @@ async fn skill_discovery_reads_installer_layouts_per_root() {
         "{:?}",
         broken.warnings
     );
+}
+
+/// Read a process by id until it exits. A start that has not landed yet answers
+/// `notFound`, so that is retried too.
+async fn read_until_exited(
+    client: &DataClient,
+    process_id: &ProcessId,
+) -> environment_protocol::data::process::ReadProcessResponse {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{process_id} did not exit"
+        );
+        let read = client
+            .read_process(&ReadProcessParams {
+                process_id: process_id.clone(),
+                after: None,
+                tail_bytes: None,
+                ack: None,
+                max_bytes: 4096,
+                wait_ms: 250,
+                return_on: ReturnOn::Exit,
+            })
+            .await;
+        match read {
+            Ok(response) if response.state == ExecState::Exited => return response,
+            Ok(_) => {}
+            Err(error) if error.protocol_kind() == Some(ProtocolErrorKind::NotFound) => {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            Err(error) => panic!("read failed: {error}"),
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dropping_a_run_process_call_terminates_only_a_command_with_no_handle() {
+    let daemon = Daemon::start().await;
+    let executor = RemoteEnvironmentConnection::new(daemon.client.clone())
+        .process_executor()
+        .expect("process capability");
+    let run = |yield_ms| ProcessRequest {
+        yield_ms,
+        ..ProcessRequest::argv(["sleep", "60"])
+    };
+
+    // A handle reached the caller, so this one is the caller's to stop. It also
+    // shows this executor's id sequence, which is the only way to name the next
+    // command: the handle of a dropped call never comes back.
+    let yielded = executor.run_process(run(Some(0))).await.expect("yielded");
+    let handle = yielded.handle.expect("still running");
+    let (prefix, sequence) = handle.as_str().rsplit_once('-').expect("sequenced id");
+    let sequence: u64 = sequence.parse().expect("sequence");
+    let next_id = |offset: u64| {
+        ProcessId::new(format!("{prefix}-{}", sequence + offset)).expect("process id")
+    };
+
+    // Dropped during the first wait, once the start has landed.
+    let mut waiting = Box::pin(executor.run_process(run(None)));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(200), &mut waiting)
+            .await
+            .is_err()
+    );
+    drop(waiting);
+    let stopped = read_until_exited(&daemon.client, &next_id(1)).await;
+    assert_eq!(stopped.stopped_by, Some(StoppedBy::Terminate));
+
+    // Dropped after one poll, with its start possibly still in flight.
+    let mut starting = Box::pin(executor.run_process(run(None)));
+    assert!(
+        tokio::time::timeout(std::time::Duration::ZERO, &mut starting)
+            .await
+            .is_err()
+    );
+    drop(starting);
+    let stopped = read_until_exited(&daemon.client, &next_id(2)).await;
+    assert_eq!(stopped.stopped_by, Some(StoppedBy::Terminate));
+
+    let survivor = daemon
+        .client
+        .terminate_process(&TerminateProcessParams {
+            process_id: ProcessId::new(handle.as_str()).expect("process id"),
+            signal: ProcessSignal::Kill,
+        })
+        .await
+        .expect("terminate");
+    assert!(survivor.running, "a command with a handle keeps running");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_connection_lost_during_the_first_wait_leaves_a_handle_another_connection_can_use() {
+    let daemon = Daemon::start().await;
+    let doomed = connect(&daemon.runtime).await;
+    let executor = RemoteEnvironmentConnection::new(doomed.clone())
+        .process_executor()
+        .expect("process capability");
+    let go = daemon.root.join("go");
+    let script = format!(
+        "echo before; while [ ! -e '{}' ]; do sleep 0.05; done; echo after",
+        go.display()
+    );
+
+    let (output, _) = tokio::join!(
+        executor.run_process(ProcessRequest::argv(["sh", "-c", script.as_str()])),
+        async {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            doomed.close().await
+        }
+    );
+    let output = output.expect("a lost connection is not a failed command");
+    assert_eq!(output.status, ProcessStatus::Running);
+    assert!(output.pid.is_some());
+    assert!(output.failure.is_some());
+    let handle = output.handle.expect("the handle comes back");
+
+    std::fs::write(&go, b"").expect("release the command");
+    let finished = RemoteEnvironmentConnection::new(daemon.client.clone())
+        .process_executor()
+        .expect("process capability")
+        .continue_process(ContinueProcessRequest::wait(handle, None))
+        .await
+        .expect("the handle works on another connection");
+    assert_eq!(finished.status, ProcessStatus::Succeeded);
+    assert_eq!(finished.stdout.text_lossy(), "before\nafter\n");
 }

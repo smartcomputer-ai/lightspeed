@@ -186,8 +186,8 @@ pub fn channel_workflow_tool_declarations(
                   description_name: &str,
                   reply_schema: &str| WorkflowToolDeclarationInput {
         definition: WorkflowToolDefinitionInput {
-            tool_id: tool_id.to_owned(),
-            revision: CHANNEL_TOOLS_REVISION,
+            workflow_tool_id: tool_id.to_owned(),
+            schema_revision: CHANNEL_TOOLS_REVISION,
             semantic_type: semantic_type.to_owned(),
             tool: WorkflowToolSpecInput {
                 name: name.to_owned(),
@@ -201,7 +201,7 @@ pub fn channel_workflow_tool_declarations(
         },
         completion: WorkflowToolCompletionInput::Joined {
             reply_schema_ref: Some(schema(reply_schema)),
-            deadline_after_ms: CHANNEL_TOOL_DEADLINE_MS,
+            deadline_after_ms: Some(CHANNEL_TOOL_DEADLINE_MS),
         },
     };
 
@@ -232,8 +232,8 @@ pub fn channel_workflow_tool_declarations(
         ),
         WorkflowToolDeclarationInput {
             definition: WorkflowToolDefinitionInput {
-                tool_id: CHANNEL_NOOP_TOOL_ID.to_owned(),
-                revision: CHANNEL_TOOLS_REVISION,
+                workflow_tool_id: CHANNEL_NOOP_TOOL_ID.to_owned(),
+                schema_revision: CHANNEL_TOOLS_REVISION,
                 semantic_type: "channels.message.noop.v1".to_owned(),
                 tool: WorkflowToolSpecInput {
                     name: "message_noop".to_owned(),
@@ -348,12 +348,12 @@ mod tests {
         assert_eq!(
             tools
                 .iter()
-                .map(|tool| tool.definition.tool_id.as_str())
+                .map(|tool| tool.definition.workflow_tool_id.as_str())
                 .collect::<Vec<_>>(),
             CHANNEL_TOOL_IDS
         );
         for tool in &tools {
-            assert_eq!(tool.definition.revision, CHANNEL_TOOLS_REVISION);
+            assert_eq!(tool.definition.schema_revision, CHANNEL_TOOLS_REVISION);
             assert_eq!(
                 tool.definition.tool.parallelism,
                 ToolParallelismView::Exclusive
@@ -375,7 +375,7 @@ mod tests {
             else {
                 panic!("delivery tools are joined");
             };
-            assert_eq!(*deadline_after_ms, CHANNEL_TOOL_DEADLINE_MS);
+            assert_eq!(*deadline_after_ms, Some(CHANNEL_TOOL_DEADLINE_MS));
         }
         let reply_ref = |tool: &WorkflowToolDeclarationInput| match &tool.completion {
             WorkflowToolCompletionInput::Joined {

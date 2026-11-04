@@ -25,11 +25,9 @@ development override table and the separate production component variables.
 - Temporal on `http://localhost:7233`
 - Temporal UI on `http://localhost:8233`
 
-The local Temporal namespace is created with the Channels visibility search
-attributes (`LightspeedUniverseId`, `LightspeedChannelProvider`,
-`LightspeedChannelAccountId`, `LightspeedBotTriggerId`, and `LightspeedBotId`).
-Conversation workflows attach these indexes when they start so the Temporal UI
-and operational tooling can locate them without reading workflow state.
+The local Temporal namespace is registered with the search attributes
+`LightspeedUniverseId`, `LightspeedChannelProvider`, `LightspeedChannelAccountId`,
+`LightspeedBotTriggerId`, and `LightspeedBotId`. No workflow attaches them at present.
 
 ## Unified supervisor
 

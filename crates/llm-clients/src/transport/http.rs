@@ -220,6 +220,38 @@ impl HttpClient {
         self.default_headers.insert(name, value);
         self
     }
+
+    /// The transport failure for one failed exchange, the same for every
+    /// provider client. See [`transport_error`].
+    pub fn transport_error(&self, err: reqwest::Error) -> LlmApiError {
+        transport_error(err, self.config.request_timeout)
+    }
+}
+
+/// Classifies a failed exchange with the provider. A timeout, a failed connect
+/// and a failed send may succeed on a resend. So may a failed body read:
+/// reqwest reports a connection reset or a truncated body after the headers as
+/// a decode error, not a body error. What stays terminal is a request reqwest
+/// refused to build or follow, which would fail the same way again.
+fn transport_error(err: reqwest::Error, request_timeout: Duration) -> LlmApiError {
+    let retryable = err.is_timeout() || err.is_connect() || err.is_request() || err.is_decode();
+    let message = if err.is_timeout() {
+        format!(
+            "request timed out after {}: {err}",
+            format_duration(request_timeout)
+        )
+    } else {
+        err.to_string()
+    };
+    TransportError::new(message, retryable).into()
+}
+
+fn format_duration(duration: Duration) -> String {
+    if duration.subsec_nanos() == 0 {
+        format!("{}s", duration.as_secs())
+    } else {
+        format!("{duration:?}")
+    }
 }
 
 pub fn normalize_base_url(base_url: &str) -> Result<Url, LlmApiError> {
@@ -258,6 +290,20 @@ pub fn join_url(base_url: &Url, path: &str) -> Result<Url, LlmApiError> {
 mod tests {
     use super::*;
     use reqwest::header::HeaderValue;
+
+    #[test]
+    fn a_request_reqwest_refuses_to_build_is_terminal() {
+        let client = reqwest::Client::new();
+        let err = client.get("not a url").build().expect_err("invalid URL");
+        let error = transport_error(err, Duration::from_secs(1));
+        assert!(matches!(error, LlmApiError::Transport(_)));
+        assert!(!error.retryable());
+    }
+
+    #[test]
+    fn timeout_duration_formats_as_seconds() {
+        assert_eq!(format_duration(Duration::from_secs(300)), "300s");
+    }
 
     #[test]
     fn normalize_base_url_requires_http_scheme() {

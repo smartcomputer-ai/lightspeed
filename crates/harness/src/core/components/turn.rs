@@ -65,7 +65,7 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
     if let Some(turn_id) = active_run.active_turn_id {
         return decide_active_turn_progress(state, active_run, turn_id);
     }
-    if active_run.status != RunStatus::Active {
+    if active_run.status != RunStatus::Running {
         return Ok(Vec::new());
     }
     if crate::core::components::run::latest_turn_is_terminal_run_outcome(state, active_run)? {
@@ -126,7 +126,7 @@ fn decide_active_turn_progress(
 
     match turn.status {
         TurnStatus::Started => {
-            if active_run.status != RunStatus::Active {
+            if active_run.status != RunStatus::Running {
                 return Ok(Vec::new());
             }
             let request =
@@ -149,7 +149,7 @@ fn decide_active_turn_progress(
             )])
         }
         TurnStatus::Planned => {
-            if active_run.status != RunStatus::Active {
+            if active_run.status != RunStatus::Running {
                 return Ok(Vec::new());
             }
             if turn.planned_request.is_none() {
@@ -218,7 +218,6 @@ pub enum TurnOutcome {
         output: Option<crate::ContentRef>,
     },
     ToolCallsQueued,
-    ContextUpdateRequired,
     ContextLimit {
         failure_ref: Option<BlobRef>,
     },
@@ -309,9 +308,9 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             }
             {
                 let active_run = crate::core::components::run::active_run_mut(state, *run_id)?;
-                if active_run.status != RunStatus::Active {
+                if active_run.status != RunStatus::Running {
                     return Err(DomainError::InvariantViolation(
-                        "turns can only start for active runs".into(),
+                        "turns can only start for running runs".into(),
                     ));
                 }
                 if active_run.active_turn_id.is_some() {
@@ -319,6 +318,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                         "cannot start turn while another turn is active".into(),
                     ));
                 }
+                active_run.turn_count = active_run.turn_count.saturating_add(1);
                 active_run.turns.insert(
                     *turn_id,
                     TurnState {
@@ -483,29 +483,17 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     "turn completion requires settled generation".into(),
                 ));
             }
-            let Some(status) = turn.generation_status.as_ref() else {
-                return Err(DomainError::InvariantViolation(
-                    "settled generation is missing status".into(),
-                ));
-            };
-            let Some(facts) = turn.facts.as_ref() else {
-                return Err(DomainError::InvariantViolation(
-                    "settled generation is missing facts".into(),
-                ));
-            };
-            validate_outcome_for_generation(status, facts, outcome)?;
-
             turn.outcome = Some(outcome.clone());
             turn.status = match outcome {
                 TurnOutcome::FinalOutput { .. }
                 | TurnOutcome::ToolCallsQueued
-                | TurnOutcome::ContextUpdateRequired
                 | TurnOutcome::ContextLimit { .. }
                 | TurnOutcome::ApprovalsRequested => TurnStatus::Completed,
                 TurnOutcome::Failed { .. } | TurnOutcome::Rejected { .. } => TurnStatus::Failed,
                 TurnOutcome::Cancelled => TurnStatus::Cancelled,
             };
             active_run.active_turn_id = None;
+            crate::core::components::run::prune_settled_run_records(active_run);
             Ok(())
         }
         Event::Cancelled { turn_id, run_id } => {
@@ -583,45 +571,4 @@ fn active_turn_mut(
     active_run.turns.get_mut(&turn_id).ok_or_else(|| {
         DomainError::InvariantViolation(format!("active turn {} is missing", turn_id))
     })
-}
-
-fn validate_outcome_for_generation(
-    status: &LlmGenerationStatus,
-    facts: &LlmGenerationFacts,
-    outcome: &TurnOutcome,
-) -> Result<(), DomainError> {
-    let valid = match status {
-        LlmGenerationStatus::Cancelled => matches!(outcome, TurnOutcome::Cancelled),
-        LlmGenerationStatus::Failed => matches!(outcome, TurnOutcome::Failed { .. }),
-        LlmGenerationStatus::Rejected if facts.finish == LlmFinish::ContextLimit => matches!(
-            outcome,
-            TurnOutcome::ContextUpdateRequired | TurnOutcome::ContextLimit { .. }
-        ),
-        LlmGenerationStatus::Rejected => matches!(outcome, TurnOutcome::Rejected { .. }),
-        LlmGenerationStatus::Succeeded => match facts.finish {
-            LlmFinish::ToolCalls => matches!(outcome, TurnOutcome::ToolCallsQueued),
-            LlmFinish::ContextLimit => matches!(
-                outcome,
-                TurnOutcome::ContextUpdateRequired | TurnOutcome::ContextLimit { .. }
-            ),
-            LlmFinish::Cancelled => matches!(outcome, TurnOutcome::Cancelled),
-            LlmFinish::Failed | LlmFinish::ContentFilter | LlmFinish::Length => {
-                matches!(outcome, TurnOutcome::Failed { .. })
-            }
-            LlmFinish::Stop | LlmFinish::Unknown => {
-                if facts.approval_requests.is_empty() {
-                    matches!(outcome, TurnOutcome::FinalOutput { .. })
-                } else {
-                    matches!(outcome, TurnOutcome::ApprovalsRequested)
-                }
-            }
-        },
-    };
-    if valid {
-        Ok(())
-    } else {
-        Err(DomainError::InvariantViolation(
-            "turn completion outcome does not match generation result".into(),
-        ))
-    }
 }

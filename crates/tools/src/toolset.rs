@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use harness::{ProviderApiKind, ToolName, ToolSpec, WorkflowToolBinding};
+use harness::{ProviderApiKind, ToolId, ToolSpec, WorkflowToolBinding};
 
 use crate::{
     builtin::{BuiltinTool, BuiltinToolDomain, BuiltinToolOperation, BuiltinToolSurface},
@@ -360,7 +360,7 @@ impl EnvironmentToolsetConfig {
 /// Admitted logical registrations. Provider presentation is resolved per turn.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RegisteredToolset {
-    pub tools: BTreeMap<ToolName, ToolSpec>,
+    pub tools: BTreeMap<ToolId, ToolSpec>,
 }
 
 /// Explicit-Promise workflow tools create model-owned completion promises, so their
@@ -389,15 +389,15 @@ pub fn register_workflow_tools<'a>(
             .map_err(|error| ToolError::InvalidRequest {
                 message: format!(
                     "invalid workflow tool {} binding: {error}",
-                    binding.definition.tool_id
+                    binding.definition.workflow_tool_id
                 ),
             })?;
-        let tool_name = binding.definition.tool.name.clone();
+        let tool_name = binding.definition.tool.id.clone();
         if toolset.tools.contains_key(&tool_name) {
             return Err(ToolError::InvalidRequest {
                 message: format!(
                     "workflow tool {} tool name {} collides with another effective tool",
-                    binding.definition.tool_id, tool_name
+                    binding.definition.workflow_tool_id, tool_name
                 ),
             });
         }
@@ -412,7 +412,7 @@ pub fn register_toolset(config: &ToolsetConfig) -> ToolResult<RegisteredToolset>
     use harness::{ToolExecutionClass, ToolExecutionSpec, ToolParallelism};
     let mut tools = BTreeMap::new();
     let mut add = |tool: ToolSpec| -> ToolResult<()> {
-        let name = tool.name.clone();
+        let name = tool.id.clone();
         if tools.insert(name.clone(), tool).is_some() {
             return Err(ToolError::InvalidRequest {
                 message: format!("duplicate tool registration {name}"),
@@ -501,9 +501,9 @@ pub fn register_toolset(config: &ToolsetConfig) -> ToolResult<RegisteredToolset>
     }
     if config.concurrency.enabled_or_timer() || config.builtin.environment.jobs_enabled() {
         for id in [
-            "concurrency.await",
-            "concurrency.cancel",
-            "concurrency.detach",
+            harness::AWAIT_TOOL_ID,
+            harness::CANCEL_TOOL_ID,
+            harness::DETACH_TOOL_ID,
         ] {
             add(register(
                 id,
@@ -514,7 +514,7 @@ pub fn register_toolset(config: &ToolsetConfig) -> ToolResult<RegisteredToolset>
         }
         if config.concurrency.timer {
             add(register(
-                "concurrency.sleep",
+                harness::SLEEP_TOOL_ID,
                 BuiltinSettings::default(),
                 ToolParallelism::Exclusive,
                 ToolExecutionSpec::default(),
@@ -526,6 +526,7 @@ pub fn register_toolset(config: &ToolsetConfig) -> ToolResult<RegisteredToolset>
 
 #[cfg(test)]
 mod tests {
+    use harness::ToolName;
     use serde_json::{Value, json};
 
     use super::*;
@@ -552,7 +553,7 @@ mod tests {
             let harness::ToolKind::Builtin(spec) = &tool.kind else {
                 panic!("built-in registration");
             };
-            for resolved in crate::definitions::resolve(&tool.name, spec, target)? {
+            for resolved in crate::definitions::resolve(&tool.id, spec, target)? {
                 assert!(tools.insert(resolved.name.clone(), resolved).is_none());
             }
         }

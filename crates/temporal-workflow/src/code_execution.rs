@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use harness::{BlobRef, BlobRefError};
+use harness::BlobRef;
 use serde::{Deserialize, Serialize};
 
 /// The stable workflow type used by the ordinary start-on-call tool recipe.
@@ -128,14 +128,6 @@ impl CodeExecutionDescriptor {
         ) {
             return Err(CodeExecutionValidationError::InvalidSessionWorkflowId);
         }
-        for (field, reference) in [
-            ("source_ref", &self.source_ref),
-            ("catalog_ref", &self.catalog_ref),
-        ] {
-            BlobRef::parse(reference.as_str()).map_err(|source| {
-                CodeExecutionValidationError::InvalidBlobReference { field, source }
-            })?;
-        }
         self.limits.validate()
     }
 }
@@ -216,17 +208,8 @@ impl CodeExecutionLimits {
 pub enum CodeExecutionValidationError {
     EmptyExecutionId,
     InvalidSessionWorkflowId,
-    InvalidBlobReference {
-        field: &'static str,
-        source: BlobRefError,
-    },
-    ZeroLimit {
-        field: &'static str,
-    },
-    OutstandingCallsExceedTotal {
-        outstanding: u32,
-        total: u32,
-    },
+    ZeroLimit { field: &'static str },
+    OutstandingCallsExceedTotal { outstanding: u32, total: u32 },
 }
 
 impl fmt::Display for CodeExecutionValidationError {
@@ -236,7 +219,6 @@ impl fmt::Display for CodeExecutionValidationError {
             Self::InvalidSessionWorkflowId => {
                 formatter.write_str("session_workflow_id must identify a parent session")
             }
-            Self::InvalidBlobReference { field, source } => write!(formatter, "{field}: {source}"),
             Self::ZeroLimit { field } => write!(formatter, "{field} must be greater than zero"),
             Self::OutstandingCallsExceedTotal { outstanding, total } => write!(
                 formatter,
@@ -246,14 +228,7 @@ impl fmt::Display for CodeExecutionValidationError {
     }
 }
 
-impl std::error::Error for CodeExecutionValidationError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::InvalidBlobReference { source, .. } => Some(source),
-            _ => None,
-        }
-    }
-}
+impl std::error::Error for CodeExecutionValidationError {}
 
 #[cfg(test)]
 mod tests {
@@ -336,21 +311,11 @@ mod tests {
     }
 
     #[test]
-    fn validation_rejects_malformed_cas_refs_accepted_by_blob_deserialization() {
+    fn a_descriptor_with_a_malformed_cas_ref_does_not_decode() {
         for field in ["source_ref", "catalog_ref"] {
             let mut value = serde_json::to_value(descriptor()).expect("serialize descriptor");
             value[field] = json!("sha256:not-a-digest");
-            let decoded: CodeExecutionDescriptor =
-                serde_json::from_value(value).expect("blob deserialization is structural");
-            assert_eq!(
-                decoded.validate(),
-                Err(CodeExecutionValidationError::InvalidBlobReference {
-                    field,
-                    source: BlobRefError::InvalidFormat {
-                        value: "sha256:not-a-digest".to_owned()
-                    },
-                }),
-            );
+            assert!(serde_json::from_value::<CodeExecutionDescriptor>(value).is_err());
         }
     }
 

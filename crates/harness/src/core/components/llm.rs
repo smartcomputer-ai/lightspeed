@@ -29,12 +29,11 @@ pub struct ModelSelection {
     pub model: String,
 }
 
-/// Opaque provider request parameters.
+/// Opaque provider request parameters for one adapter call.
 ///
-/// The reducer and planners never read into `body`; it is carried through the
-/// session log verbatim and parsed only by the runtime adapter that
-/// materializes the wire request. Validation against the adapter's schema
-/// happens at the admission boundary, before the params enter the log.
+/// Durable session state never holds these. The reducer and planners leave
+/// `LlmRequest::params` empty; only code calling an adapter directly sets it,
+/// and the adapter parses `body` when it materializes the wire request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderParams {
     pub api_kind: ProviderApiKind,
@@ -52,19 +51,11 @@ impl ProviderParams {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProviderCompatibility {
-    pub api_kind: ProviderApiKind,
-    pub model: String,
-    pub native_context_family: String,
-}
-
 /// Transient generation intent planned by the core.
 ///
 /// This is rebuilt from reduced state when a generation action is emitted; it is
-/// not stored in the durable turn log or reduced turn state. Provider-specific
-/// request settings travel opaquely in `params`; runtime adapters materialize
-/// the provider-native wire request from this intent.
+/// not stored in the durable turn log or reduced turn state. Runtime adapters
+/// materialize the provider-native wire request from this intent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LlmRequest {
     pub model: ModelSelection,
@@ -90,11 +81,6 @@ pub struct LlmRequest {
     /// Neutral provider processing class inherited from the session/profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processing_tier: Option<crate::ModelProcessingTier>,
-    /// Provider continuity token (e.g. OpenAI Responses `previous_response_id`)
-    /// threaded from prior generation facts. Currently always `None`; adapters
-    /// must tolerate absence.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_response_id: Option<String>,
     /// Session compaction policy at planning time, so adapters can lower
     /// provider-managed compaction (e.g. OpenAI `context_management`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,8 +91,8 @@ pub struct LlmRequest {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeModePresentation {
-    pub allowed_tools: BTreeSet<crate::ToolName>,
-    pub workflow_results: BTreeMap<crate::ToolName, WorkflowToolResultContract>,
+    pub allowed_tools: BTreeSet<crate::ToolId>,
+    pub workflow_results: BTreeMap<crate::ToolId, WorkflowToolResultContract>,
 }
 
 /// Completion semantics without workflow destinations, recipes, or authority.
@@ -133,8 +119,7 @@ pub struct ContextCompactionRequest {
 
 /// Deterministic compaction intent planned by the core.
 ///
-/// Like [`LlmRequest`], provider-specific settings stay opaque in `params`;
-/// adapters that do not support standalone compaction must fail the request.
+/// Adapters that do not support standalone compaction must fail the request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextCompactionTask {
     pub model: ModelSelection,
@@ -148,8 +133,6 @@ pub struct ContextCompactionTask {
     pub tools: Vec<ToolSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_limit_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub params: Option<ProviderParams>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,17 +168,7 @@ pub(crate) fn build_llm_request(
     let context =
         crate::core::components::context::planned_context_snapshot(state, model.api_kind.clone())?;
     let tools = active_tools(state, &model.api_kind)?;
-    validate_tool_choice(&tools, generation.tool_choice.as_ref())?;
-    let params = active_run.run_config.provider_params.clone();
-    if let Some(params) = params.as_ref()
-        && params.api_kind != model.api_kind
-    {
-        return Err(DomainError::ProviderCompatibility(format!(
-            "provider params api kind {:?} do not match model api kind {:?}",
-            params.api_kind, model.api_kind
-        ))
-        .into());
-    }
+    crate::validate_tool_choice_for_tools(&state.tooling.tools, generation.tool_choice.as_ref())?;
     let compaction = config.context.compaction.clone();
     let code_mode = code_mode_presentation(state, &tools);
     let request_fingerprint = request_fingerprint(
@@ -203,7 +176,6 @@ pub(crate) fn build_llm_request(
         &context,
         &tools,
         &generation,
-        params.as_ref(),
         active_run.run_id,
         turn_id,
     )?;
@@ -229,9 +201,8 @@ pub(crate) fn build_llm_request(
         reasoning_effort: generation.reasoning_effort,
         parallel_tool_use: generation.parallel_tool_use,
         processing_tier: generation.processing_tier,
-        provider_response_id: None,
         compaction,
-        params,
+        params: None,
     })
 }
 
@@ -251,14 +222,14 @@ fn code_mode_presentation(
         if feature
             .allowed_tools
             .as_ref()
-            .is_none_or(|allowed| allowed.iter().any(|id| id == tool.name.as_str()))
+            .is_none_or(|allowed| allowed.iter().any(|id| id == tool.id.as_str()))
         {
-            presentation.allowed_tools.insert(tool.name.clone());
+            presentation.allowed_tools.insert(tool.id.clone());
         }
-        if let Some(binding) = state.workflow_tools.binding_for_tool_name(&tool.name) {
+        if let Some(binding) = state.workflow_tools.binding_for_tool_id(&tool.id) {
             presentation
                 .workflow_results
-                .insert(tool.name.clone(), binding.into());
+                .insert(tool.id.clone(), binding.into());
         }
     }
     Some(presentation)
@@ -345,11 +316,6 @@ pub(crate) fn build_context_compaction_task(
         entries: crate::core::components::context::context_entries_by_id(state, &ids)?,
         token_estimate: None,
     };
-    let params = state
-        .runs
-        .active
-        .as_ref()
-        .and_then(|run| run.run_config.provider_params.clone());
     let tools = active_tools(state, &model.api_kind)?;
     context.token_estimate =
         crate::core::components::context::combined_token_estimate(&context.entries);
@@ -358,7 +324,6 @@ pub(crate) fn build_context_compaction_task(
         &model,
         &context,
         target_tokens,
-        params.as_ref(),
         &tools,
         input_limit_tokens,
     )?;
@@ -370,7 +335,6 @@ pub(crate) fn build_context_compaction_task(
         covered_entry_ids,
         tools,
         input_limit_tokens,
-        params,
     })
 }
 
@@ -395,53 +359,37 @@ fn active_tools(
     state: &CoreAgentState,
     api_kind: &ProviderApiKind,
 ) -> Result<Vec<ToolSpec>, PlanningError> {
-    let mut tools = Vec::with_capacity(state.tooling.tools.len());
-    for tool in state.tooling.tools.values() {
-        match &tool.kind {
-            ToolKind::ProviderNative(native) => {
-                if native.api_kind != *api_kind {
-                    return Err(DomainError::ProviderCompatibility(format!(
-                        "provider-native tool {} api kind {:?} does not match request api kind {:?}",
-                        tool.name, native.api_kind, api_kind
-                    ))
-                    .into());
-                }
-            }
-            ToolKind::RemoteMcp(remote) => {
-                if remote.execution == crate::RemoteMcpExecution::Provider
-                    && !remote_mcp_supported_by_provider(api_kind)
-                {
-                    return Err(DomainError::ProviderCompatibility(format!(
-                        "provider-executed MCP tool {} is not supported by request api kind {:?}; switch the server record to native execution or register a native twin",
-                        tool.name, api_kind,
-                    ))
-                    .into());
-                }
-            }
-            ToolKind::Builtin(_) | ToolKind::Function(_) => {}
-        }
-        tools.push(tool.clone());
-    }
-
-    Ok(tools)
+    validate_tools_for_api_kind(state.tooling.tools.values(), api_kind)?;
+    Ok(state.tooling.tools.values().cloned().collect())
 }
 
-fn validate_tool_choice(
-    tools: &[ToolSpec],
-    tool_choice: Option<&ToolChoice>,
-) -> Result<(), PlanningError> {
-    let Some(ToolChoice::Specific { tool_name }) = tool_choice else {
-        return Ok(());
-    };
-    if tools.iter().any(|tool| &tool.name == tool_name) {
-        Ok(())
-    } else {
-        Err(DomainError::InvariantViolation(format!(
-            "tool_choice references missing active tool {}",
-            tool_name
-        ))
-        .into())
+/// Whether requests of this API kind can carry these tools. Hosts check this while
+/// preparing a toolset, so the caller hears it before a run depends on it.
+pub fn validate_tools_for_api_kind<'a>(
+    tools: impl IntoIterator<Item = &'a ToolSpec>,
+    api_kind: &ProviderApiKind,
+) -> Result<(), DomainError> {
+    for tool in tools {
+        match &tool.kind {
+            ToolKind::ProviderNative(native) if native.api_kind != *api_kind => {
+                return Err(DomainError::ProviderCompatibility(format!(
+                    "provider-native tool {} api kind {:?} does not match request api kind {:?}",
+                    tool.id, native.api_kind, api_kind
+                )));
+            }
+            ToolKind::RemoteMcp(remote)
+                if remote.execution == crate::RemoteMcpExecution::Provider
+                    && !remote_mcp_supported_by_provider(api_kind) =>
+            {
+                return Err(DomainError::ProviderCompatibility(format!(
+                    "provider-executed MCP tool {} is not supported by request api kind {:?}; switch the server record to runtime execution or register a runtime twin",
+                    tool.id, api_kind,
+                )));
+            }
+            _ => {}
+        }
     }
+    Ok(())
 }
 
 fn remote_mcp_supported_by_provider(api_kind: &ProviderApiKind) -> bool {
@@ -456,11 +404,10 @@ fn request_fingerprint(
     context: &ContextSnapshot,
     tools: &[ToolSpec],
     generation: &GenerationConfig,
-    params: Option<&ProviderParams>,
     run_id: RunId,
     turn_id: TurnId,
 ) -> Result<String, PlanningError> {
-    let encoded = serde_json::to_vec(&(model, context, tools, generation, params, run_id, turn_id))
+    let encoded = serde_json::to_vec(&(model, context, tools, generation, run_id, turn_id))
         .map_err(|error| {
             PlanningError::Rejected(format!("failed to fingerprint request: {error}"))
         })?;
@@ -471,10 +418,8 @@ fn request_fingerprint(
     ))
 }
 
-/// Fingerprints are digests of request inputs, not stored blobs. They carry a
-/// prefix that keeps them from looking like a `sha256:` blob ref, because the
-/// session store derives collection roots from every ref-shaped string in an
-/// appended event and rejects refs whose blob does not exist.
+/// Fingerprints are digests of request inputs, not stored blobs, and the prefix
+/// says so to anyone reading a log.
 pub const LLM_REQUEST_FINGERPRINT_PREFIX: &str = "llm:sha256:";
 pub const LLM_COMPACTION_FINGERPRINT_PREFIX: &str = "compaction:sha256:";
 
@@ -491,23 +436,26 @@ pub fn llm_runtime_boundary_failure_ref() -> crate::BlobRef {
     crate::BlobRef::from_bytes(LLM_RUNTIME_BOUNDARY_FAILURE_CONTENT.as_bytes())
 }
 
+/// Failure content for a turn whose response claimed tool calls it did not
+/// deliver in usable form: none at all, or the same id twice. Like
+/// [`LLM_RUNTIME_BOUNDARY_FAILURE_CONTENT`], every runtime must guarantee the
+/// matching blob exists via [`crate::storage::ensure_harness_blobs`].
+pub const UNUSABLE_TOOL_CALLS_FAILURE_CONTENT: &str =
+    "the model response claimed tool calls but did not contain a usable set of them\n";
+
+pub fn unusable_tool_calls_failure_ref() -> crate::BlobRef {
+    crate::BlobRef::from_bytes(UNUSABLE_TOOL_CALLS_FAILURE_CONTENT.as_bytes())
+}
+
 fn compaction_request_fingerprint(
     model: &ModelSelection,
     context: &ContextSnapshot,
     target_tokens: Option<u32>,
-    params: Option<&ProviderParams>,
     tools: &[ToolSpec],
     input_limit_tokens: Option<u32>,
 ) -> Result<String, PlanningError> {
-    let encoded = serde_json::to_vec(&(
-        model,
-        context,
-        target_tokens,
-        params,
-        tools,
-        input_limit_tokens,
-    ))
-    .map_err(|error| {
+    let encoded = serde_json::to_vec(&(model, context, target_tokens, tools, input_limit_tokens))
+        .map_err(|error| {
         PlanningError::Rejected(format!("failed to fingerprint compaction request: {error}"))
     })?;
     let digest = Sha256::digest(encoded);
@@ -542,7 +490,7 @@ mod tests {
             },
         });
         let tool = ToolSpec {
-            name: crate::ToolName::new("env.job_run"),
+            id: crate::ToolId::new("env.job_run"),
             kind: ToolKind::Builtin(crate::BuiltinToolSpec {
                 settings: serde_json::json!({}),
             }),
@@ -553,44 +501,44 @@ mod tests {
         let binding = crate::WorkflowToolBinding::admit(
             uuid::Uuid::nil(),
             crate::WorkflowToolDefinition {
-                tool_id: crate::WorkflowToolId::new("job"),
-                revision: 1,
+                workflow_tool_id: crate::WorkflowToolId::new("job"),
+                schema_revision: 1,
                 semantic_type: "test.job.v1".into(),
                 tool: tool.clone(),
             },
             crate::WorkflowToolTarget::Start {
                 start: crate::WorkflowStartRef {
                     recipe_format: 1,
-                    revision: 1,
+                    recipe_revision: 1,
                     recipe_ref: crate::BlobRef::from_bytes(b"private recipe"),
                     recipe_fingerprint: "private-recipe-fingerprint".into(),
                 },
             },
             crate::WorkflowToolCompletion::Joined {
                 reply_schema_ref: Some(schema_ref.clone()),
-                deadline_after_ms: 1000,
+                deadline_after_ms: Some(1000),
             },
         )
         .unwrap();
         state
             .workflow_tools
             .bindings
-            .insert(binding.definition.tool_id.clone(), binding);
+            .insert(binding.definition.workflow_tool_id.clone(), binding);
         let presentation = code_mode_presentation(&state, std::slice::from_ref(&tool)).unwrap();
         assert!(presentation.allowed_tools.is_empty());
         assert_eq!(
-            presentation.workflow_results[&tool.name],
+            presentation.workflow_results[&tool.id],
             WorkflowToolResultContract {
                 completion: crate::WorkflowToolCompletion::Joined {
                     reply_schema_ref: Some(schema_ref),
-                    deadline_after_ms: 1000
+                    deadline_after_ms: Some(1000)
                 },
                 starts_workflow: true,
             }
         );
         let encoded = serde_json::to_value(&presentation).unwrap();
         assert!(
-            encoded["workflow_results"][tool.name.as_str()]
+            encoded["workflow_results"][tool.id.as_str()]
                 .get("target")
                 .is_none()
         );
@@ -609,7 +557,6 @@ mod tests {
             processing_tier: Some(crate::ModelProcessingTier::Standard),
         };
         let run_config = RunConfig {
-            input_limit_tokens: None,
             max_output_tokens: Some(2048),
             tool_choice: Some(ToolChoice::RequiredAny),
             parallel_tool_use: Some(false),
@@ -647,11 +594,11 @@ mod tests {
     #[test]
     fn provider_native_tool_rejects_mismatched_request_api_kind() {
         let mut state = CoreAgentState::new();
-        let tool_name = crate::ToolName::new("web_search");
+        let tool_id = crate::ToolId::new("web_search");
         state.tooling.tools.insert(
-            tool_name.clone(),
+            tool_id.clone(),
             ToolSpec {
-                name: tool_name.clone(),
+                id: tool_id.clone(),
                 execution: Default::default(),
                 kind: ToolKind::ProviderNative(crate::ProviderNativeToolSpec {
                     api_kind: ProviderApiKind::OpenAiResponses,
@@ -675,27 +622,20 @@ mod tests {
         assert!(message.contains("AnthropicMessages"));
     }
 
-    fn remote_mcp_tool(auth_ref_id: &str) -> ToolSpec {
+    fn remote_mcp_tool(server_id: &str) -> ToolSpec {
         ToolSpec {
-            name: crate::ToolName::new("mcp_echo"),
+            id: crate::ToolId::new("mcp_echo"),
             execution: Default::default(),
             kind: ToolKind::RemoteMcp(crate::RemoteMcpToolSpec {
-                server_id: auth_ref_id.to_owned(),
+                server_id: server_id.to_owned(),
                 record_revision: 1,
                 server_label: "echo".to_owned(),
-                server_url: "https://echo.example.com/mcp".to_owned(),
                 description_ref: None,
                 allowed_tools: Some(vec!["hello".to_owned()]),
                 execution: crate::RemoteMcpExecution::Provider,
                 exposure: crate::RemoteMcpExposure::Inject,
                 approval: crate::RemoteMcpApprovalPolicy::Never,
                 defer_loading: Some(true),
-                auth_ref: Some(crate::SecretRef {
-                    namespace: "mcp_server".to_owned(),
-                    id: auth_ref_id.to_owned(),
-                }),
-                auth_required: true,
-                allow_private_network: false,
             }),
             parallelism: crate::ToolParallelism::ParallelSafe,
         }
@@ -704,7 +644,7 @@ mod tests {
     fn state_with_remote_mcp_tool() -> CoreAgentState {
         let mut state = CoreAgentState::new();
         let tool = remote_mcp_tool("mcpgrant_123");
-        let tool_name = tool.name.clone();
+        let tool_name = tool.id.clone();
         state.tooling.tools.insert(tool_name, tool);
         state
     }
@@ -740,68 +680,21 @@ mod tests {
     }
 
     #[test]
-    fn native_mcp_tool_selection_accepts_openai_completions() {
+    fn runtime_mcp_tool_selection_accepts_openai_completions() {
         let mut state = state_with_remote_mcp_tool();
         let ToolKind::RemoteMcp(spec) = &mut state
             .tooling
             .tools
-            .get_mut(&crate::ToolName::new("mcp_echo"))
+            .get_mut(&crate::ToolId::new("mcp_echo"))
             .expect("remote MCP tool")
             .kind
         else {
             unreachable!("fixture is remote MCP")
         };
-        spec.execution = crate::RemoteMcpExecution::Native;
+        spec.execution = crate::RemoteMcpExecution::Runtime;
 
         let tools = active_tools(&state, &ProviderApiKind::OpenAiCompletions)
-            .expect("native MCP should work on OpenAI-compatible completions");
+            .expect("runtime MCP should work on OpenAI-compatible completions");
         assert_eq!(tools.len(), 1);
-    }
-
-    #[test]
-    fn remote_mcp_server_credential_ref_participates_in_request_fingerprint() {
-        let model = ModelSelection {
-            api_kind: ProviderApiKind::OpenAiResponses,
-            provider_id: "openai".to_owned(),
-            model: "gpt-test".to_owned(),
-        };
-        let context = ContextSnapshot {
-            api_kind: ProviderApiKind::OpenAiResponses,
-            context_revision: 7,
-            entries: Vec::new(),
-            token_estimate: None,
-        };
-
-        let first_tools = vec![remote_mcp_tool("crm_work")];
-        let second_tools = vec![remote_mcp_tool("crm_personal")];
-
-        let encoded = serde_json::to_string(&first_tools).expect("serialize tools");
-        assert!(encoded.contains("mcp_server"));
-        assert!(encoded.contains("crm_work"));
-        assert!(!encoded.contains("runtime-token"));
-
-        let generation = GenerationConfig::default();
-        let first_fingerprint = request_fingerprint(
-            &model,
-            &context,
-            &first_tools,
-            &generation,
-            None,
-            RunId::new(1),
-            TurnId::new(1),
-        )
-        .expect("fingerprint first request");
-        let second_fingerprint = request_fingerprint(
-            &model,
-            &context,
-            &second_tools,
-            &generation,
-            None,
-            RunId::new(1),
-            TurnId::new(1),
-        )
-        .expect("fingerprint second request");
-
-        assert_ne!(first_fingerprint, second_fingerprint);
     }
 }

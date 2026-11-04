@@ -211,6 +211,57 @@ impl PgStore {
         Ok(page)
     }
 
+    /// Where the last pass stopped in this universe; `None` starts at the oldest row.
+    pub async fn load_sweep_cursor(&self) -> Result<Option<CasSweepCursor>, CasSweepError> {
+        let row = sqlx::query(
+            "SELECT touched_at_ms, digest FROM cas_sweep_cursors WHERE universe_id = $1",
+        )
+        .bind(self.config.universe_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| blob_sql_error("load sweep cursor", error))?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let touched: i64 = row
+            .try_get("touched_at_ms")
+            .map_err(|error| blob_sql_error("decode sweep cursor", error))?;
+        let digest: String = row
+            .try_get("digest")
+            .map_err(|error| blob_sql_error("decode sweep cursor", error))?;
+        Ok(Some(CasSweepCursor {
+            touched_at_ms: i64_to_u64(touched, "sweep cursor")
+                .map_err(|message| BlobStoreError::Store { message })?,
+            blob_ref: blob_ref_from_digest(digest)?,
+        }))
+    }
+
+    /// Record where this pass stopped. `None` means the walk reached the end, and
+    /// the next pass starts over from the oldest row.
+    pub async fn save_sweep_cursor(
+        &self,
+        cursor: Option<&CasSweepCursor>,
+    ) -> Result<(), CasSweepError> {
+        let query = match cursor {
+            Some(cursor) => sqlx::query(
+                "INSERT INTO cas_sweep_cursors (universe_id, touched_at_ms, digest)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (universe_id) DO UPDATE
+                 SET touched_at_ms = EXCLUDED.touched_at_ms, digest = EXCLUDED.digest",
+            )
+            .bind(self.config.universe_id)
+            .bind(cutoff_to_i64(cursor.touched_at_ms)?)
+            .bind(sha256_hex(&cursor.blob_ref)?),
+            None => sqlx::query("DELETE FROM cas_sweep_cursors WHERE universe_id = $1")
+                .bind(self.config.universe_id),
+        };
+        query
+            .execute(&self.pool)
+            .await
+            .map_err(|error| blob_sql_error("save sweep cursor", error))?;
+        Ok(())
+    }
+
     /// Delete the catalog rows of `candidates` that are still dead and still
     /// older than `cutoff_ms` at deletion time. Returns what was deleted so
     /// the caller can remove the objects and account for the bytes.
@@ -279,14 +330,16 @@ fn candidate_from_row(row: &sqlx::postgres::PgRow) -> Result<CasSweepCandidate, 
         .try_get("object_key")
         .map_err(|error| blob_sql_error("decode sweep object key", error))?;
     Ok(CasSweepCandidate {
-        blob_ref: BlobRef::parse(format!("sha256:{digest}")).map_err(|error| {
-            BlobStoreError::Store {
-                message: format!("decode sweep blob ref: {error}"),
-            }
-        })?,
+        blob_ref: blob_ref_from_digest(digest)?,
         byte_len: i64_to_u64(byte_len, "sweep byte length")
             .map_err(|message| BlobStoreError::Store { message })?,
         object_key,
+    })
+}
+
+fn blob_ref_from_digest(digest: String) -> Result<BlobRef, BlobStoreError> {
+    BlobRef::parse(format!("sha256:{digest}")).map_err(|error| BlobStoreError::Store {
+        message: format!("decode sweep blob ref: {error}"),
     })
 }
 

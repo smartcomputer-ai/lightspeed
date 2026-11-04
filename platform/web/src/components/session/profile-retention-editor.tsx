@@ -69,7 +69,7 @@ export function ProfileRetentionEditor({
         }}
       />
       <FieldDescription>
-        Starts when the root session closes and deletes its retained forks and sub-agents too. Leave blank to keep them.
+        Starts when the root session closes and deletes its retained sub-agents too. Leave blank to keep them.
       </FieldDescription>
       {parsed.error && <p className="text-xs text-destructive">{parsed.error}</p>}
     </Field>

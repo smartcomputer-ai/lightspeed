@@ -140,7 +140,7 @@ mod tests {
     fn missing_default_error_identifies_its_slot() {
         let error = AgentApiError::model_default_unset(ModelDefaultSlot::AgentRun);
         let json = serde_json::to_value(&error).unwrap();
-        assert_eq!(json["kind"], "model_default_unset");
+        assert_eq!(json["kind"], "modelDefaultUnset");
         assert_eq!(json["modelDefaultSlot"], "agentRun");
         assert_eq!(
             serde_json::from_value::<AgentApiError>(json).unwrap(),

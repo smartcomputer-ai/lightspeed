@@ -65,22 +65,38 @@ impl Attachment {
         }
     }
 
-    pub fn blob_refs(&self) -> Vec<BlobRef> {
-        let mut refs = vec![self.content_ref().clone()];
-        if let Self::File(file) = self
-            && let Some(source) = &file.source
-            && let Ok(reference) = BlobRef::parse(source.id.clone())
-        {
-            refs.push(reference);
-        }
-        refs
-    }
-
     /// File links are metadata; only admitted media adds native model input.
     pub fn context_entry(&self) -> Option<ContextEntryInput> {
         match self {
             Self::Media(media) => Some(media.context_entry()),
             Self::File(_) => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_malformed_content_ref_fails_decode_instead_of_panicking_validation() {
+        for content_ref in [
+            "short",
+            "sha256:\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}",
+        ] {
+            let attachment = serde_json::json!({
+                "kind": "file",
+                "data": { "handle": "file:x", "content_ref": content_ref, "name": "n" },
+            });
+            assert!(serde_json::from_value::<Attachment>(attachment).is_err());
+        }
+    }
+
+    #[test]
+    fn a_decoded_file_attachment_validates_its_handle() {
+        let file = FileAttachment::new(BlobRef::from_bytes(b"file"), "n".into(), None);
+        let decoded: FileAttachment =
+            serde_json::from_value(serde_json::to_value(&file).unwrap()).unwrap();
+        assert!(decoded.is_valid());
     }
 }

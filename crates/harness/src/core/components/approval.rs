@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ApprovalId, BlobRef, ContextEntryInput, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins,
-    CoreAgentState, CoreAgentStatus, DomainError, RunId, RunStatus, ToolCallId,
+    CoreAgentState, CoreAgentStatus, DomainError, RunId, RunStatus, ToolBatchId, ToolCallId,
 };
 
 pub const MAX_APPROVAL_NOTE_BYTES: usize = 2_000;
@@ -14,6 +14,12 @@ pub enum ApprovalEvent {
         approval: ApprovalRequested,
     },
     RunParked {
+        run_id: RunId,
+    },
+    /// The run is off its approval park: no approval remains and no batch holds
+    /// it parked. Its next step may be a call that is already started, so this
+    /// is the only record that the wait ended.
+    RunUnparked {
         run_id: RunId,
     },
     Decided {
@@ -53,8 +59,15 @@ pub enum ApprovalSubject {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum ApprovalContinuation {
-    OpenAiMcp { provider_request_id: String },
-    NativeMcp { call_id: ToolCallId },
+    ProviderMcp {
+        provider_request_id: String,
+    },
+    /// Provider call ids are unique only within a batch, so the batch is part
+    /// of what a decision answers: a later call reusing the id asks again.
+    RuntimeMcp {
+        batch_id: ToolBatchId,
+        call_id: ToolCallId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,11 +136,11 @@ pub fn plan_approval_next(
     let Some(run) = state.runs.active.as_ref() else {
         return Ok(Vec::new());
     };
-    if run.status != RunStatus::Active
+    if run.status != RunStatus::Running
         || run.active_turn_id.is_some()
         || run.active_tool_batch_id.is_some()
         || run.pending_approvals().next().is_none()
-        || has_unstarted_tool_calls(run)
+        || crate::core::components::run::has_unstarted_tool_call_turn(run)
     {
         return Ok(Vec::new());
     }
@@ -140,22 +153,42 @@ pub fn plan_approval_next(
     )])
 }
 
-fn has_unstarted_tool_calls(run: &crate::ActiveRun) -> bool {
-    run.turns.iter().any(|(turn_id, turn)| {
-        turn.outcome == Some(crate::TurnOutcome::ToolCallsQueued)
-            && turn
-                .facts
-                .as_ref()
-                .is_some_and(|facts| !facts.tool_calls.is_empty())
-            && !run
-                .tool_batches
-                .values()
-                .any(|batch| batch.turn_id == *turn_id)
-            && !run
-                .completed_tool_batches
-                .values()
-                .any(|batch| batch.turn_id == *turn_id)
+/// `Approval::Cancelled` for each approval the run still waits on. They need the
+/// run active, so a path ending the run puts them before its terminal event.
+pub(crate) fn pending_approval_cancellations(
+    run: &crate::ActiveRun,
+) -> impl Iterator<Item = CoreAgentEventProposal> + '_ {
+    run.pending_approvals().map(|record| {
+        CoreAgentEventProposal::new(
+            CoreAgentJoins {
+                run_id: Some(run.run_id),
+                ..CoreAgentJoins::default()
+            },
+            CoreAgentEvent::Approval(ApprovalEvent::Cancelled {
+                approval_id: record.request.approval_id.clone(),
+                run_id: run.run_id,
+            }),
+        )
     })
+}
+
+/// A decided approval has already reached what it answers: its response context, or
+/// the call of a batch that has since closed. Only a batch still open may yet read a
+/// runtime decision. A repeated decision after this finds nothing to decide.
+pub(crate) fn prune_terminal_approvals(run: &mut crate::ActiveRun) {
+    let crate::ActiveRun {
+        approvals,
+        tool_batches,
+        ..
+    } = run;
+    approvals.retain(|_, record| {
+        !record.status.is_terminal()
+            || matches!(
+                &record.request.continuation,
+                ApprovalContinuation::RuntimeMcp { batch_id, .. }
+                    if tool_batches.contains_key(batch_id)
+            )
+    });
 }
 
 pub(crate) fn apply_approval_event(
@@ -181,7 +214,7 @@ pub(crate) fn apply_approval_event(
             let run = state.runs.active.as_mut().ok_or_else(|| {
                 DomainError::InvariantViolation("approval request requires an active run".into())
             })?;
-            if run.run_id != approval.run_id || run.status != RunStatus::Active {
+            if run.run_id != approval.run_id || run.status != RunStatus::Running {
                 return Err(DomainError::InvariantViolation(
                     "approval request does not match the active run".into(),
                 ));
@@ -215,22 +248,32 @@ pub(crate) fn apply_approval_event(
                     "run cannot park without pending approvals".into(),
                 ));
             }
-            let native_batch_approval = run.active_tool_batch_id.is_some()
+            let runtime_batch_approval = run.active_tool_batch_id.is_some()
                 && run.pending_approvals().all(|record| {
                     matches!(
                         record.request.continuation,
-                        ApprovalContinuation::NativeMcp { .. }
+                        ApprovalContinuation::RuntimeMcp { .. }
                     )
                 });
-            if run.status != RunStatus::Active
+            if run.status != RunStatus::Running
                 || run.active_turn_id.is_some()
-                || (run.active_tool_batch_id.is_some() && !native_batch_approval)
+                || (run.active_tool_batch_id.is_some() && !runtime_batch_approval)
             {
                 return Err(DomainError::InvariantViolation(
                     "approval parking requires an idle active run".into(),
                 ));
             }
             run.status = RunStatus::Parked;
+            Ok(())
+        }
+        ApprovalEvent::RunUnparked { run_id } => {
+            let run = crate::core::components::run::active_run_mut(state, *run_id)?;
+            if run.status != RunStatus::Parked {
+                return Err(DomainError::InvariantViolation(
+                    "only a parked run can unpark".into(),
+                ));
+            }
+            run.status = RunStatus::Running;
             Ok(())
         }
         ApprovalEvent::Decided {
@@ -240,7 +283,6 @@ pub(crate) fn apply_approval_event(
             note,
             decided_by,
         } => {
-            validate_note(note.as_deref())?;
             let run = crate::core::components::run::active_run_mut(state, *run_id)?;
             let record = run.approvals.get_mut(approval_id).ok_or_else(|| {
                 DomainError::InvariantViolation(format!("unknown approval {approval_id}"))
@@ -256,9 +298,6 @@ pub(crate) fn apply_approval_event(
             };
             record.note = note.clone();
             record.decided_by = decided_by.clone();
-            if run.pending_approvals().next().is_none() && run.status == RunStatus::Parked {
-                run.status = RunStatus::Active;
-            }
             Ok(())
         }
         ApprovalEvent::Cancelled {
@@ -309,12 +348,13 @@ mod tests {
         state.runs.active = Some(crate::ActiveRun {
             context_recovery: Default::default(),
             run_id: RunId::new(1),
-            status: RunStatus::Active,
+            status: RunStatus::Running,
             submission_id: None,
             source: crate::RunSource::Input { input: Vec::new() },
             input_entry_ids: Vec::new(),
             input_consumed_by_turn_id: None,
             run_config: crate::RunConfig::default(),
+            input_limit_tokens: None,
             config_revision: 0,
             first_seq: crate::EventSeq::new(1),
             accepted_at_ms: 1,
@@ -322,14 +362,14 @@ mod tests {
             usage: None,
             steering: Vec::new(),
             turns: BTreeMap::new(),
+            turn_count: 0,
+            entry_guard_attempted: false,
             active_turn_id: None,
             active_tool_batch_id: None,
             approvals: BTreeMap::new(),
             parked_tool_batch: None,
             tool_batches: BTreeMap::new(),
             completed_tool_batches: BTreeMap::new(),
-            output: None,
-            failure: None,
             notify_on_terminal: Vec::new(),
         });
         state
@@ -345,14 +385,14 @@ mod tests {
                 tool_name: "send".to_owned(),
                 arguments_ref: BlobRef::from_bytes(format!("{{\"n\":{number}}}").as_bytes()),
             },
-            continuation: ApprovalContinuation::OpenAiMcp {
+            continuation: ApprovalContinuation::ProviderMcp {
                 provider_request_id: provider_request_id.to_owned(),
             },
         }
     }
 
     #[test]
-    fn approvals_are_run_owned_single_use_and_unpark_only_as_a_set() {
+    fn approvals_are_run_owned_and_single_use_and_a_decision_does_not_unpark() {
         let mut state = active_state();
         for approval in [request(1, "mcpr_1"), request(2, "mcpr_2")] {
             apply_approval_event(&mut state, &ApprovalEvent::Requested { approval }, 7)
@@ -388,7 +428,17 @@ mod tests {
         apply_approval_event(&mut state, &decide(2, ApprovalDecision::Rejected), 11)
             .expect("last decision");
         let run = state.runs.active.as_ref().expect("active run");
-        assert_eq!(run.status, RunStatus::Active);
+        assert_eq!(run.status, RunStatus::Parked);
+        apply_approval_event(
+            &mut state,
+            &ApprovalEvent::RunUnparked {
+                run_id: RunId::new(1),
+            },
+            12,
+        )
+        .expect("unpark");
+        let run = state.runs.active.as_ref().expect("active run");
+        assert_eq!(run.status, RunStatus::Running);
         assert_eq!(run.approvals.len(), 2);
         assert_eq!(state.id_cursors.last_approval_id, 2);
     }

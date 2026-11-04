@@ -728,13 +728,13 @@ export function pausedLabel(reason: BotTriggerDisabledReason | null | undefined)
   switch (reason) {
     case "breaker":
       return "paused by breaker";
-    case "poll_failed":
+    case "pollFailed":
       return "paused: poll failed";
-    case "one_shot":
+    case "oneShot":
       return "paused: one-shot fired";
     case "operator":
       return "paused by operator";
-    case "bot_closed":
+    case "botClosed":
       return "bot closed";
     default:
       return "paused";
@@ -742,7 +742,7 @@ export function pausedLabel(reason: BotTriggerDisabledReason | null | undefined)
 }
 
 export function pausedVariant(reason: BotTriggerDisabledReason | null | undefined): "destructive" | "outline" {
-  return reason === "breaker" || reason === "poll_failed" ? "destructive" : "outline";
+  return reason === "breaker" || reason === "pollFailed" ? "destructive" : "outline";
 }
 
 export function TriggersSection({

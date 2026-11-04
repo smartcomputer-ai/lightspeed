@@ -37,7 +37,7 @@ import {
   github,
   hex,
   inboxTrigger,
-  managedSession,
+  controlledSession,
   mcpServer,
   member,
   modelDiscovery,
@@ -300,9 +300,9 @@ function lineageChild(session: SessionRecord): SessionSummaryView {
     displayName: view.displayName ?? null,
     createdAtMs: view.createdAtMs,
     updatedAtMs: view.updatedAtMs,
-    lifecycleStatus: view.status === "closed" ? "closed" : "open",
+    lifecycleStatus: view.lifecycleStatus === "closed" ? "closed" : "open",
     retention: view.retention,
-    managed: view.managed,
+    lifecycleControlled: view.lifecycleControlled,
     origin: view.origin ?? null,
   };
 }
@@ -311,7 +311,7 @@ function lineageChild(session: SessionRecord): SessionSummaryView {
 // Profiles
 // ---------------------------------------------------------------------------
 
-const SUBAGENT_LIMITS = { maxDepth: 2, maxDescendants: 6, maxConcurrent: 2, deadlineMs: 20 * MINUTE_MS };
+const SUBAGENT_LIMITS = { maxDepth: 2, maxConcurrent: 2, runTimeoutMs: 20 * MINUTE_MS };
 
 const INTAKE_INSTRUCTIONS = [
   "You turn Linear issues that are ready to build into specs the planner can split into tasks.",
@@ -395,7 +395,7 @@ const link = (workspaceId: string, access: "read" | "edit") => ({
 const INTAKE_CONFIG: Record<string, unknown> = {
   model: SONNET,
   generation: { reasoningEffort: "medium", maxOutputTokens: 12_000 },
-  limits: { maxTurns: 12, maxToolRounds: 20 },
+  limits: { maxTurns: 12 },
   features: {
     mcp: { servers: [{ serverId: "linear" }] },
     vfs: { workspaces: [link(WORKSPACE.specs, "edit"), link(WORKSPACE.web, "read")] },
@@ -405,7 +405,7 @@ const INTAKE_CONFIG: Record<string, unknown> = {
 const PLANNER_CONFIG: Record<string, unknown> = {
   model: OPUS,
   generation: { reasoningEffort: "high", maxOutputTokens: 16_000 },
-  limits: { maxTurns: 12, maxToolRounds: 24 },
+  limits: { maxTurns: 12 },
   features: {
     vfs: { workspaces: [link(WORKSPACE.specs, "edit"), link(WORKSPACE.web, "read")] },
   },
@@ -414,7 +414,7 @@ const PLANNER_CONFIG: Record<string, unknown> = {
 const IMPLEMENTER_CONFIG: Record<string, unknown> = {
   model: OPUS,
   generation: { reasoningEffort: "high", maxOutputTokens: 32_000 },
-  limits: { maxTurns: 40, maxToolRounds: 120 },
+  limits: { maxTurns: 40 },
   features: {
     environments: { environments: [{ environmentId: ENV.taskC, default: true, access: "jobs" }] },
     mcp: { servers: [{ serverId: "github" }] },
@@ -426,7 +426,6 @@ const IMPLEMENTER_CONFIG: Record<string, unknown> = {
 const EXPLORER_CONFIG: Record<string, unknown> = {
   model: OPUS,
   generation: { reasoningEffort: "medium" },
-  limits: { maxToolRounds: 60 },
   features: {
     environments: { environments: [{ inherit: true, default: true, access: "exec" }] },
     web: { fetch: {}, search: { allowedDomains: ["docs.github.com", "nodejs.org", "developer.mozilla.org", "hono.dev", "vitest.dev"] } },
@@ -436,7 +435,6 @@ const EXPLORER_CONFIG: Record<string, unknown> = {
 const TEST_WRITER_CONFIG: Record<string, unknown> = {
   model: SONNET,
   generation: { reasoningEffort: "medium", maxOutputTokens: 16_000 },
-  limits: { maxToolRounds: 40 },
   features: {
     environments: { environments: [{ inherit: true, default: true, access: "exec" }] },
     subagents: { agents: [{ profileId: PROFILE.explorer }], ...SUBAGENT_LIMITS },
@@ -446,11 +444,11 @@ const TEST_WRITER_CONFIG: Record<string, unknown> = {
 const REVIEWER_CONFIG: Record<string, unknown> = {
   model: OPUS,
   generation: { reasoningEffort: "high", maxOutputTokens: 16_000 },
-  limits: { maxTurns: 24, maxToolRounds: 40 },
+  limits: { maxTurns: 24 },
   features: {
     environments: { environments: [{ environmentId: ENV.ci, default: true, access: "exec" }] },
     mcp: { servers: [{ serverId: "github" }] },
-    subagents: { agents: [{ profileId: PROFILE.explorer }], maxDepth: 1, maxDescendants: 4, maxConcurrent: 2, deadlineMs: 15 * MINUTE_MS },
+    subagents: { agents: [{ profileId: PROFILE.explorer }], maxDepth: 1, maxConcurrent: 2, runTimeoutMs: 15 * MINUTE_MS },
     web: { fetch: {} },
   },
 };
@@ -469,7 +467,7 @@ const SCRIBE_CONFIG: Record<string, unknown> = {
 const CI_CONFIG: Record<string, unknown> = {
   model: GPT_MINI,
   generation: { reasoningEffort: "low", maxOutputTokens: 6_000 },
-  limits: { maxTurns: 6, maxToolRounds: 12 },
+  limits: { maxTurns: 6 },
   features: {
     mcp: { servers: [{ serverId: "github" }] },
   },
@@ -1035,7 +1033,7 @@ Humans merge. Nothing in the pipeline pushes to main.
 
 - A task thread with no PR after an hour: open the implementer's thread; a
   provisioning failure shows as the run waiting on \`await_environment_ready\`.
-- A \`run_failed\` on pr-reviewer is usually a provider error; replay the event from
+- A \`runFailed\` on pr-reviewer is usually a provider error; replay the event from
   the Activity tab once the provider recovers.
 - Linear returning 401 stops intake commenting but not the pipeline; the open
   question lands in the spec instead. Reconnect Linear on the MCP servers page.
@@ -2038,7 +2036,7 @@ function seedIntake(store: DemoStore, universe: UniverseState): void {
     ),
   ];
 
-  const main = managedSession(store, universe, {
+  const main = controlledSession(store, universe, {
     id: SESSION.intakeMain,
     botId: BOT.intake,
     displayName: "Intake",
@@ -2053,7 +2051,7 @@ function seedIntake(store: DemoStore, universe: UniverseState): void {
     ago(31 * DAY_MS) + 30_000,
     "I'm Intake: when a Linear issue gets the ready-for-build label I read it, write the spec into /specs, and hand it to planner. I wake on the Linear webhook, on planner's and pr-reviewer's replies, and on Monday mornings for the backlog; I have the Linear tools and read-write access to the specs workspace. One gap: the acme-web link is read-only, which is right, but I have no environment — fine for specs, say so if you ever want me to run anything.",
   );
-  const thread1418 = managedSession(store, universe, {
+  const thread1418 = controlledSession(store, universe, {
     id: SESSION.intake1418,
     botId: BOT.intake,
     displayName: "Intake · LIN-1418",
@@ -2061,7 +2059,7 @@ function seedIntake(store: DemoStore, universe: UniverseState): void {
     tools: [...BOT_TOOLS, EMIT_TOOL],
     createdAtMs: at(5, 10, 14),
   });
-  const thread1421 = managedSession(store, universe, {
+  const thread1421 = controlledSession(store, universe, {
     id: SESSION.intake1421,
     botId: BOT.intake,
     displayName: `Intake · ${ISSUE}`,
@@ -2358,7 +2356,7 @@ function seedPlanner(store: DemoStore, universe: UniverseState): void {
       },
     ),
   ];
-  const main = managedSession(store, universe, {
+  const main = controlledSession(store, universe, {
     id: SESSION.plannerMain,
     botId: BOT.planner,
     displayName: "Planner",
@@ -2758,7 +2756,7 @@ function seedImplementer(store: DemoStore, universe: UniverseState): void {
     }),
   ];
   const profileTools = [...BOT_TOOLS, EMIT_TOOL];
-  const main = managedSession(store, universe, {
+  const main = controlledSession(store, universe, {
     id: SESSION.implMain,
     botId: BOT.implementer,
     displayName: "Implementer",
@@ -2774,7 +2772,7 @@ function seedImplementer(store: DemoStore, universe: UniverseState): void {
     "I'm Implementer: every task.ready from planner becomes its own thread with a fresh Incus sandbox (dev-small-v1, acme-web on main, closed when the thread closes) where I build the task, hand exploration to repo-explorer and tests to test-writer, and open the PR. I wake only on my inbox — planner's tasks, ci-watch's failures, pr-reviewer's replies — routed by task id, and a failure arriving while I work is steered into the run. GitHub App access covers PRs and job logs; nothing missing.",
   );
   const thread = (id: string, task: Task, environmentId: string, createdAtMs: number): SessionRecord =>
-    managedSession(store, universe, { id, botId: BOT.implementer, displayName: `Implementer · ${task.id}`, profile: IMPLEMENTER_PROFILE, tools: profileTools, createdAtMs, environmentId });
+    controlledSession(store, universe, { id, botId: BOT.implementer, displayName: `Implementer · ${task.id}`, profile: IMPLEMENTER_PROFILE, tools: profileTools, createdAtMs, environmentId });
   const taskA = thread(SESSION.taskA, TASK.a, ENV.taskA, p(2.1));
   taskA.view.config = {
     ...taskA.view.config,
@@ -2874,7 +2872,7 @@ function seedImplementer(store: DemoStore, universe: UniverseState): void {
     receipt(log, {
       from: BOT.reviewer,
       askedSeq: SEQ.reviewerPr493,
-      status: "run_failed",
+      status: "runFailed",
       summary: "llm provider error: anthropic returned 529 overloaded_error (4 attempts over 96 s)",
       at: p(20.6),
       hops: 4,
@@ -3351,7 +3349,7 @@ function seedPrReviewer(store: DemoStore, universe: UniverseState): void {
     ),
   ];
   const tools = [...BOT_TOOLS, EMIT_TOOL];
-  const main = managedSession(store, universe, {
+  const main = controlledSession(store, universe, {
     id: SESSION.reviewerMain,
     botId: BOT.reviewer,
     displayName: "PR Reviewer",
@@ -3368,7 +3366,7 @@ function seedPrReviewer(store: DemoStore, universe: UniverseState): void {
     "I'm PR Reviewer for acme/acme-web: I review pull requests as they open and change, run the affected tests in the shared CI runner, and post one review with a clear verdict. I wake on the GitHub webhook (opened, synchronize), on implementer's and ci-watch's events, and weekday mornings for a triage; I have the GitHub App tools, the CI runner environment, and repo-explorer as a sub-agent. All present.",
   );
   const thread = (id: string, task: Task, createdAtMs: number): SessionRecord =>
-    managedSession(store, universe, { id, botId: BOT.reviewer, displayName: `PR Reviewer · #${task.pr}`, profile: REVIEWER_PROFILE, tools, createdAtMs, environmentId: ENV.ci });
+    controlledSession(store, universe, { id, botId: BOT.reviewer, displayName: `PR Reviewer · #${task.pr}`, profile: REVIEWER_PROFILE, tools, createdAtMs, environmentId: ENV.ci });
   const PR486: Task = { id: "ci-cache", title: "restore npm cache", branch: "marco/ci-cache", pr: 486, prTitle: "ci: restore npm cache in ci.yml", head: "f08b2e5" };
   const pr486 = thread(SESSION.pr486, PR486, at(3, 10, 5));
   const pr491 = thread(SESSION.pr491, TASK.a, p(3.4));
@@ -3465,7 +3463,7 @@ function seedPrReviewer(store: DemoStore, universe: UniverseState): void {
     SEQ.reviewerSync492,
   );
   const e10 = expectSeq(
-    prOpened(log, TASK.c, p(20), ref(pr493, TASK.c), "run_failed", "llm provider error: anthropic returned 529 overloaded_error (4 attempts over 96 s)", span(20, 20.6)),
+    prOpened(log, TASK.c, p(20), ref(pr493, TASK.c), "runFailed", "llm provider error: anthropic returned 529 overloaded_error (4 attempts over 96 s)", span(20, 20.6)),
     SEQ.reviewerPr493,
   );
   const e11 = pullRequestEvent(
@@ -3750,7 +3748,7 @@ function seedCiWatch(store: DemoStore, universe: UniverseState): void {
     ),
     inboxTrigger(BOT.ci, [BOT.implementer, BOT.reviewer], { route: { policy: "bot" }, deliver: { whenBusy: "queue" }, createdAtMs: ago(20 * DAY_MS) }),
   ];
-  const main = managedSession(store, universe, { id: SESSION.ciMain, botId: BOT.ci, displayName: "CI Watch", profile: CI_PROFILE, tools: [...BOT_TOOLS, EMIT_TOOL], createdAtMs: ago(20 * DAY_MS) });
+  const main = controlledSession(store, universe, { id: SESSION.ciMain, botId: BOT.ci, displayName: "CI Watch", profile: CI_PROFILE, tools: [...BOT_TOOLS, EMIT_TOOL], createdAtMs: ago(20 * DAY_MS) });
   introduce(
     store,
     universe,
@@ -4029,7 +4027,7 @@ function seedReleaseScribe(store: DemoStore, universe: UniverseState): void {
     ),
     inboxTrigger(BOT.scribe, undefined, { route: { policy: "bot" }, deliver: { whenBusy: "queue" }, createdAtMs: ago(30 * DAY_MS) }),
   ];
-  const main = managedSession(store, universe, { id: SESSION.scribeMain, botId: BOT.scribe, displayName: "Release Scribe", profile: SCRIBE_PROFILE, tools: BOT_TOOLS, createdAtMs: ago(30 * DAY_MS) });
+  const main = controlledSession(store, universe, { id: SESSION.scribeMain, botId: BOT.scribe, displayName: "Release Scribe", profile: SCRIBE_PROFILE, tools: BOT_TOOLS, createdAtMs: ago(30 * DAY_MS) });
   introduce(
     store,
     universe,

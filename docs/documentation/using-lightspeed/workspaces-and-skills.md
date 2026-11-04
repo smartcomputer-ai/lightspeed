@@ -324,11 +324,17 @@ a file is currently reachable.
 
 ## Update files and handle concurrent edits
 
-Live workspace operations resolve the current workspace revision. Writes
-check that revision before committing a replacement. If another writer has
-changed it, the write can fail with a conflict; Lightspeed does not merge
-competing edits automatically. Reload the current file, compare the changes,
-and make the intended edit against the new revision.
+Live workspace operations resolve the current workspace revision. An edit fails
+with a conflict if the file it read has changed since. Commits to other files in the
+workspace do not interfere. Lightspeed does not merge competing edits automatically.
+Reload the current file, compare the changes, and make the intended edit against the
+new contents. Edits and moves keep a file's executable flag.
+
+`apply_patch` plans the whole patch first, so nothing changes if a hunk does not apply.
+Its writes are not one transaction: if a file changes after planning, or a destination
+refuses the write, the result lists what was applied and what was not. A move between
+two attached workspaces writes the destination first, so a failure between the two
+steps leaves both files.
 
 Prompt sources and skill catalogs refresh while idle, before the next task
 starts. File reads use the current live contents even when the catalog has

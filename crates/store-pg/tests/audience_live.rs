@@ -3,12 +3,11 @@ use std::{panic::AssertUnwindSafe, str::FromStr};
 
 use api::{Attribution, ResourceRef, Visibility};
 use futures_util::FutureExt as _;
-use harness::StoredEvent;
 use harness::storage::{
     AppendSessionEvents, CreateSession, ListSessions, SessionActivity, SessionOrigin,
     SessionOriginKind, SessionStore as _, UncommittedStoredEvent,
 };
-use harness::{SessionId, SubagentLimits};
+use harness::{CoreAgentCodec, CoreAgentEvent, SessionId, SubagentLimits};
 use sqlx::{
     Executor as _,
     postgres::{PgConnectOptions, PgPoolOptions},
@@ -227,13 +226,15 @@ async fn exercise(pool: &sqlx::PgPool) {
         vec!["bob-shared", "bot:v1:helper:main"]
     );
 
-    // Managed work can be left out of a list or listed alone, and trees
+    // Lifecycle-controlled work can be left out of a list or listed alone, and trees
     // listed by their roots; sub-agents follow their root either way.
     create(&sessions, "bot-child", Some("bot:v1:helper:main")).await;
-    sqlx::query("UPDATE sessions SET managed = true WHERE session_id = 'bot:v1:helper:main'")
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE sessions SET lifecycle_controlled = true WHERE session_id = 'bot:v1:helper:main'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
     let lineage = |request: ListSessions| {
         let sessions = sessions.clone();
         async move { listed_where(&sessions, AccessFilter::default(), request).await }
@@ -241,7 +242,7 @@ async fn exercise(pool: &sqlx::PgPool) {
     let ids = |ids: &[&str]| ids.iter().map(|id| SessionId::new(*id)).collect::<Vec<_>>();
     assert_eq!(
         lineage(ListSessions {
-            managed: Some(false),
+            lifecycle_controlled: Some(false),
             ..Default::default()
         })
         .await,
@@ -249,7 +250,7 @@ async fn exercise(pool: &sqlx::PgPool) {
     );
     assert_eq!(
         lineage(ListSessions {
-            managed: Some(true),
+            lifecycle_controlled: Some(true),
             ..Default::default()
         })
         .await,
@@ -321,6 +322,9 @@ async fn exercise(pool: &sqlx::PgPool) {
     .unwrap();
 
     // The row keeps what a session is doing now, for lists.
+    harness::storage::BlobStore::put_bytes(&sessions, b"{}".to_vec())
+        .await
+        .expect("store the approval's arguments");
     let append = |kinds: &'static [&'static str]| {
         let sessions = sessions.clone();
         async move {
@@ -335,7 +339,9 @@ async fn exercise(pool: &sqlx::PgPool) {
                         .map(|kind| UncommittedStoredEvent {
                             observed_at_ms: 5,
                             joins: Default::default(),
-                            event: StoredEvent::new(*kind, 1, serde_json::json!({})),
+                            event: CoreAgentCodec
+                                .encode_event(&activity_event(kind))
+                                .expect("encode event"),
                         })
                         .collect(),
                 })
@@ -345,21 +351,21 @@ async fn exercise(pool: &sqlx::PgPool) {
         }
     };
     assert_eq!(
-        append(&["lightspeed.core.run.started"]).await,
+        append(&[harness::event_kind::RUN_STARTED]).await,
         SessionActivity::Working
     );
     assert_eq!(
         append(&[
-            "lightspeed.core.approval.requested",
-            "lightspeed.core.approval.run_parked"
+            harness::event_kind::APPROVAL_REQUESTED,
+            harness::event_kind::APPROVAL_RUN_PARKED
         ])
         .await,
         SessionActivity::Waiting
     );
     assert_eq!(
         append(&[
-            "lightspeed.core.approval.decided",
-            "lightspeed.core.run.completed"
+            harness::event_kind::APPROVAL_DECIDED,
+            harness::event_kind::RUN_COMPLETED
         ])
         .await,
         SessionActivity::Idle
@@ -392,4 +398,42 @@ async fn exercise(pool: &sqlx::PgPool) {
             .unwrap()
             .is_none()
     );
+}
+
+fn activity_event(kind: &str) -> CoreAgentEvent {
+    use harness::{ApprovalEvent, RunEvent, RunId, event_kind};
+    let run_id = RunId::new(1);
+    match kind {
+        event_kind::RUN_STARTED => CoreAgentEvent::Run(RunEvent::Started { run_id }),
+        event_kind::RUN_COMPLETED => CoreAgentEvent::Run(RunEvent::Completed {
+            run_id,
+            output: None,
+        }),
+        event_kind::APPROVAL_REQUESTED => CoreAgentEvent::Approval(ApprovalEvent::Requested {
+            approval: harness::ApprovalRequested {
+                approval_id: harness::ApprovalId::new("approval_1"),
+                run_id,
+                subject: harness::ApprovalSubject::McpToolCall {
+                    server_id: "server".to_owned(),
+                    server_label: "server".to_owned(),
+                    tool_name: "tool".to_owned(),
+                    arguments_ref: harness::BlobRef::from_bytes(b"{}"),
+                },
+                continuation: harness::ApprovalContinuation::ProviderMcp {
+                    provider_request_id: "request".to_owned(),
+                },
+            },
+        }),
+        event_kind::APPROVAL_RUN_PARKED => {
+            CoreAgentEvent::Approval(ApprovalEvent::RunParked { run_id })
+        }
+        event_kind::APPROVAL_DECIDED => CoreAgentEvent::Approval(ApprovalEvent::Decided {
+            approval_id: harness::ApprovalId::new("approval_1"),
+            run_id,
+            decision: harness::ApprovalDecision::Approved,
+            note: None,
+            decided_by: None,
+        }),
+        other => panic!("no fixture for event kind {other}"),
+    }
 }

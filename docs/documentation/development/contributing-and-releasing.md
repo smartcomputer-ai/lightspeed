@@ -112,7 +112,10 @@ fails, the command restores the edited files. Run `npm ci` and `cargo fetch
 --locked` first if dependencies are not cached locally.
 
 Write `release/notes/v<version>.md`, including breaking changes and the supported
-upgrade procedure. Review the diff and merge the preparation branch through CI.
+upgrade procedure. Run `scripts/release/workflow-compat.sh <previous-tag>` and say what
+it printed. `breaking` means the notes tell operators to
+[drain and start on a new Temporal namespace](../deployment/upgrades-and-recovery.md#decide-whether-the-release-breaks-open-work),
+and list any stored format the release does not convert. Review the diff and merge the preparation branch through CI.
 The command does not commit, tag, publish, change compatibility revisions, or
 generate release notes automatically.
 

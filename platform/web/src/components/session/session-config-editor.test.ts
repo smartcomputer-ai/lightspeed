@@ -289,12 +289,12 @@ describe("environment feature config", () => {
 
   it("keeps Model run controls collapsed when optional settings already exist", () => {
     const html = renderToString(createElement(SessionConfigEditor, {
-      value: { generation: { parallelToolUse: true, reasoningEffort: "high" }, limits: { maxTurns: 4, maxToolRounds: 8 } },
+      value: { generation: { parallelToolUse: true, reasoningEffort: "high" }, limits: { maxTurns: 4 } },
       onChange: () => {},
     }));
 
     expect(html).toContain('aria-label="Customize model run controls"');
-    expect(html).toContain("1 generation setting · 2 run limits");
+    expect(html).toContain("1 generation setting · 1 run limit");
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain("Run limits");
   });
@@ -356,14 +356,32 @@ describe("sub-agent feature config", () => {
         subagents: {
           agents: [{ profileId: "primary" }],
           maxDepth: 3,
-          maxDescendants: 24,
           maxConcurrent: 6,
-          deadlineMs: 7_200_000,
+          runTimeoutMs: 7_200_000,
         },
       },
     };
 
     expect(normalizeSessionConfig(normalizeSessionConfig(config))).toEqual(config);
+  });
+
+  it("leaves a blank run timeout out, which means no time limit", () => {
+    for (const runTimeoutMs of [undefined, "", null, 0]) {
+      expect(normalizeSessionConfig({
+        features: {
+          subagents: {
+            agents: [{ profileId: "primary" }],
+            runTimeoutMs,
+          },
+        },
+      })).toEqual({
+        features: {
+          subagents: {
+            agents: [{ profileId: "primary" }],
+          },
+        },
+      });
+    }
   });
 
   it("converts profile ids selected by the editor to the API shape", () => {

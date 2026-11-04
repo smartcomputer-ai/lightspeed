@@ -12,26 +12,29 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use harness::{
-    ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND,
+    ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, CompactionPolicy, ContextCompactionRequest,
+    ContextCompactionResult, ContextCompactionStatus, ContextCompactionTask, ContextEntry,
+    ContextEntryInput, ContextEntryKind, ContextMessageRole, LlmFinish, LlmGenerationFacts,
+    LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, LlmRequest, LlmUsage,
+    ObservedToolCall, ProviderApiKind, ProviderNativeToolExecution, RemoteMcpApprovalPolicy,
+    RemoteMcpExecution, RemoteMcpExposure, RemoteMcpToolSpec, TokenEstimate, TokenEstimateQuality,
+    ToolCallId, ToolId, ToolKind, ToolName, ToolSpec, storage::BlobStore,
+};
+use llm_clients::content::{
+    ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND,
-    CompactionPolicy, ContextCompactionRequest, ContextCompactionResult, ContextCompactionStatus,
-    ContextCompactionTask, ContextEntry, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
-    LlmRequest, LlmUsage, ObservedToolCall, ProviderApiKind, ProviderNativeToolExecution,
-    RemoteMcpApprovalPolicy, RemoteMcpExecution, RemoteMcpExposure, RemoteMcpToolSpec,
-    TokenEstimate, TokenEstimateQuality, ToolCallId, ToolChoice, ToolKind, ToolName, ToolSpec,
-    storage::BlobStore,
 };
 use llm_clients::{ApiResponse, anthropic::messages as am};
 use serde_json::{Value, json};
 
+use crate::tool_catalog::LoweredToolChoice;
 use crate::{
     blob_io::{put_json, put_text, read_json, read_text},
     error::{LlmAdapterError, LlmAdapterResult},
     executor::{LlmCompactionAdapter, LlmGenerationAdapter},
-    mcp::{McpInventoryResolver, UnconfiguredMcpInventoryResolver, injected_native_tools},
+    mcp::{McpInventoryResolver, UnconfiguredMcpInventoryResolver, injected_runtime_tools},
     params::{
         ThinkingPrefixMismatch, anthropic_messages_params, anthropic_thinking_from_effort,
         anthropic_thinks_by_default, default_anthropic_block_binding,
@@ -39,12 +42,10 @@ use crate::{
     },
     provider_keys::{ModelProviderResolver, NoStoredModelProviders, resolve_model_provider},
     result::{
-        LlmGenerationExecution, RequestPositions, debug_dump_request, log_request_rejection,
-        partial_output_entries, store_debug_dumps, truncation_failure_text,
+        LlmGenerationExecution, RequestPositions, debug_dump_request, fail_on_invalid_response,
+        log_request_rejection, partial_output_entries, store_debug_dumps, truncation_failure_text,
     },
-    secrets::{
-        REDACTED_SECRET_PLACEHOLDER, SecretResolveError, SecretResolver, UnconfiguredSecretResolver,
-    },
+    secrets::{REDACTED_SECRET_PLACEHOLDER, SecretResolver, UnconfiguredSecretResolver},
 };
 
 const PROVIDER_KIND_TOOL_USE: &str = "anthropic.messages.tool_use";
@@ -246,8 +247,8 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
         let provider =
             resolve_model_provider(self.provider_keys.as_ref(), &request.request.model).await?;
         let mut request_dumps = Vec::new();
-        let mut responses = Vec::new();
-        loop {
+        let mut responses: Vec<ApiResponse<am::Message>> = Vec::new();
+        let continued = loop {
             if let Some(dump) = debug_dump_request(self.debug_dumps, &redacted_request)? {
                 request_dumps.push(dump);
             }
@@ -269,25 +270,41 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
             };
             log_input_transformations(&request, &response.raw_json);
             let paused = response.parsed.stop_reason == Some(am::StopReason::PauseTurn);
-            if paused && responses.len() >= MAX_PAUSE_TURN_CONTINUATIONS {
-                return Err(LlmAdapterError::InvalidProviderRequest {
+            let continuation = if !paused {
+                Ok(None)
+            } else if responses.len() >= MAX_PAUSE_TURN_CONTINUATIONS {
+                Err(LlmAdapterError::InvalidProviderResponse {
                     message: format!(
-                        "Anthropic server-tool turn exceeded {} pause_turn continuations",
-                        MAX_PAUSE_TURN_CONTINUATIONS
+                        "Anthropic server-tool turn exceeded {MAX_PAUSE_TURN_CONTINUATIONS} \
+                         pause_turn continuations"
                     ),
-                });
-            }
-            if paused {
-                let paused_message = paused_assistant_message(&response.raw_json)?;
-                send_request.messages.push(paused_message.clone());
-                redacted_request.messages.push(paused_message);
-            }
+                })
+            } else {
+                paused_assistant_message(&response.raw_json).map(Some)
+            };
             responses.push(response);
-            if !paused {
-                break;
+            match continuation {
+                Ok(Some(paused_message)) => {
+                    send_request.messages.push(paused_message.clone());
+                    redacted_request.messages.push(paused_message);
+                }
+                Ok(None) => break Ok(()),
+                Err(error) => break Err(error),
             }
+        };
+        let parsed = match continued {
+            Ok(()) => result_from_responses(self.blobs.as_ref(), &request, &responses).await,
+            Err(error) => Err(error),
+        };
+        let mut usage = None;
+        for response in &responses {
+            let part = response.parsed.usage.as_ref().map(llm_usage);
+            merge_llm_usage(&mut usage, part.as_ref());
         }
-        let mut result = result_from_responses(self.blobs.as_ref(), &request, &responses).await?;
+        let response_id = responses.last().map_or("", |last| last.parsed.id.as_str());
+        let mut result =
+            fail_on_invalid_response(parsed, self.blobs.as_ref(), &request, response_id, usage)
+                .await?;
         catalog.normalize(&mut result);
         let request_dump = match request_dumps.len() {
             0 => None,
@@ -350,7 +367,7 @@ fn paused_assistant_message(raw_response: &Value) -> LlmAdapterResult<am::Messag
     let blocks = raw_response
         .get("content")
         .and_then(Value::as_array)
-        .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+        .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
             message: "Anthropic pause_turn response is missing a content array".to_owned(),
         })?
         .iter()
@@ -478,9 +495,9 @@ async fn materialize_request_with_catalog(
         });
     }
     let mut params = anthropic_messages_params(request.params.as_ref())?;
-    // Materialize the intent reasoning effort into provider params. Explicit
-    // per-run provider params win: derived values never overwrite fields the
-    // params body already sets.
+    // Materialize the intent reasoning effort into provider params. Params set
+    // directly on the request win: derived values never overwrite fields the
+    // body sets.
     if let Some(effort) = request.reasoning_effort.as_deref() {
         let derived = anthropic_thinking_from_effort(effort, &request.model.model)?;
         if params.thinking.is_none() && params.output_config.is_none() {
@@ -496,13 +513,6 @@ async fn materialize_request_with_catalog(
         // invalidates the thinking produced after it; the binding policy
         // decides whether the session continues without that reasoning.
         default_anthropic_block_binding(thinking, thinking_prefix_mismatch);
-    }
-    if request.provider_response_id.is_some() {
-        return Err(LlmAdapterError::InvalidProviderRequest {
-            message: "Anthropic Messages has no provider response continuation; \
-                      provider_response_id must be empty"
-                .to_owned(),
-        });
     }
     let signed_compaction = has_signed_compaction(blobs, &request.context.entries).await?;
     if params.extra.contains_key("context_management") || params.extra.contains_key("compaction") {
@@ -614,9 +624,8 @@ async fn materialize_compact_request_with_binding(
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: Some(CompactionPolicy::Disabled),
-            params: task.params.clone(),
+            params: None,
         };
         let mut native = materialize_create_request_with_inventory(
             blobs,
@@ -1016,10 +1025,7 @@ async fn materialize_block(
                     ],
                 ));
             }
-            if let Some(document) = crate::blob_io::document_entry(
-                entry.content.media_type.as_deref(),
-                entry.preview.as_deref(),
-            ) {
+            if let Some(document) = crate::blob_io::document_entry(entry) {
                 let blocks = if document.is_pdf {
                     let data = media.pdf_base64(blobs, entry).await?;
                     vec![
@@ -1078,7 +1084,7 @@ async fn materialize_block(
         }
         ContextEntryKind::McpApprovalResponse { .. } => {
             Err(LlmAdapterError::InvalidProviderRequest {
-                message: "Anthropic provider-hosted MCP does not support approval responses; use native MCP execution or an OpenAI Responses model".to_owned(),
+                message: "Anthropic provider-hosted MCP does not support approval responses; use runtime MCP execution or an OpenAI Responses model".to_owned(),
             })
         }
     }
@@ -1093,7 +1099,7 @@ async fn materialize_tools(
     let mut mcp_toolsets = Vec::new();
     let mut mcp_servers = Vec::new();
     let mut has_deferred_mcp = false;
-    let mut native_mcp_tool_count = 0usize;
+    let mut runtime_mcp_tool_count = 0usize;
     for tool in &catalog.tools {
         match &tool.kind {
             crate::tool_catalog::ResolvedToolKind::Function(function) => {
@@ -1136,30 +1142,36 @@ async fn materialize_tools(
             crate::tool_catalog::ResolvedToolKind::RemoteMcp(remote_mcp) => {
                 match (remote_mcp.execution, remote_mcp.exposure) {
                     (RemoteMcpExecution::Provider, _) => {
-                        let (server, toolset) = materialize_remote_mcp_server(tool, remote_mcp)?;
+                        let Some(server_url) =
+                            crate::mcp::provider_hosted_server_url(inventory, remote_mcp).await?
+                        else {
+                            continue;
+                        };
+                        let (server, toolset) =
+                            materialize_remote_mcp_server(tool, remote_mcp, &server_url)?;
                         has_deferred_mcp |= remote_mcp.defer_loading == Some(true);
                         mcp_servers.push(server);
                         mcp_toolsets.push(toolset);
                     }
-                    (RemoteMcpExecution::Native, RemoteMcpExposure::Search) => {}
-                    (RemoteMcpExecution::Native, RemoteMcpExposure::Inject) => {
-                        let native = injected_native_tools(
+                    (RemoteMcpExecution::Runtime, RemoteMcpExposure::Search) => {}
+                    (RemoteMcpExecution::Runtime, RemoteMcpExposure::Inject) => {
+                        let runtime_tools = injected_runtime_tools(
                             inventory,
                             remote_mcp,
                             &tool.name,
-                            &mut native_mcp_tool_count,
+                            &mut runtime_mcp_tool_count,
                         )
                         .await?;
-                        for (name, native_tool) in native {
+                        for (name, runtime_tool) in runtime_tools {
                             catalog
                                 .names
                                 .insert(ToolName::new(name.clone()), Some(tool.id.clone()))?;
                             let description =
-                                catalog.native_mcp_description(&tool.id, &name, &native_tool);
+                                catalog.runtime_mcp_description(&tool.id, &name, &runtime_tool);
                             materialized.push(am::Tool::Custom(am::ToolDefinition {
                                 name,
                                 description,
-                                input_schema: native_tool.input_schema,
+                                input_schema: runtime_tool.input_schema,
                                 cache_control: None,
                                 extra: Default::default(),
                             }));
@@ -1186,6 +1198,7 @@ async fn materialize_tools(
 fn materialize_remote_mcp_server(
     tool: &crate::tool_catalog::ResolvedTool,
     remote_mcp: &RemoteMcpToolSpec,
+    server_url: &str,
 ) -> LlmAdapterResult<(Value, Value)> {
     // Materialized requests never contain auth values; `inject_remote_mcp_auth`
     // adds `authorization_token` to the send request immediately before
@@ -1201,7 +1214,7 @@ fn materialize_remote_mcp_server(
 
     let server = json!({
         "type": "url",
-        "url": remote_mcp.server_url,
+        "url": server_url,
         "name": remote_mcp.server_label,
     });
 
@@ -1276,8 +1289,7 @@ async fn inject_remote_mcp_auth(
         .iter()
         .filter_map(|tool| match &tool.kind {
             ToolKind::RemoteMcp(remote_mcp)
-                if remote_mcp.execution == RemoteMcpExecution::Provider
-                    && remote_mcp.auth_ref.is_some() =>
+                if remote_mcp.execution == RemoteMcpExecution::Provider =>
             {
                 Some((tool, remote_mcp))
             }
@@ -1292,21 +1304,19 @@ async fn inject_remote_mcp_auth(
     let mut send_request = materialized.clone();
     let mut redacted_request = materialized;
     for (tool, remote_mcp) in auth_specs {
-        let auth_ref = remote_mcp.auth_ref.as_ref().expect("auth_ref present");
-        let token = match secrets
-            .resolve(auth_ref, Some(remote_mcp.server_url.as_str()))
+        // A server left out of the request has no entry and needs no credential.
+        let Some(server_url) = remote_mcp_server_url(&send_request, &remote_mcp.server_label)
+        else {
+            continue;
+        };
+        let token = crate::secrets::resolve_mcp_bearer(secrets, &remote_mcp.server_id, &server_url)
             .await
-        {
-            Ok(token) => token,
-            Err(SecretResolveError::CredentialAbsent { .. }) if !remote_mcp.auth_required => {
-                continue;
-            }
-            Err(error) => {
-                return Err(LlmAdapterError::SecretResolution {
-                    tool: tool.name.to_string(),
-                    message: error.to_string(),
-                });
-            }
+            .map_err(|error| LlmAdapterError::SecretResolution {
+                tool: tool.id.to_string(),
+                message: error.to_string(),
+            })?;
+        let Some(token) = token else {
+            continue;
         };
         set_remote_mcp_authorization_token(
             &mut send_request,
@@ -1322,6 +1332,18 @@ async fn inject_remote_mcp_auth(
         )?;
     }
     Ok((send_request, redacted_request))
+}
+
+fn remote_mcp_server_url(request: &am::CreateMessageRequest, server_label: &str) -> Option<String> {
+    request
+        .mcp_servers
+        .as_ref()?
+        .as_array()?
+        .iter()
+        .find(|server| server.get("name").and_then(Value::as_str) == Some(server_label))?
+        .get("url")?
+        .as_str()
+        .map(str::to_owned)
 }
 
 fn set_remote_mcp_authorization_token(
@@ -1342,7 +1364,7 @@ fn set_remote_mcp_authorization_token(
         return Err(LlmAdapterError::InvalidProviderRequest {
             message: format!(
                 "materialized request is missing MCP server entry for {} (server name {server_label})",
-                tool.name
+                tool.id
             ),
         });
     };
@@ -1357,21 +1379,21 @@ fn set_remote_mcp_authorization_token(
 /// tool-use switch on `tool_choice`, so an intent with `parallel_tool_use`
 /// but no explicit tool choice lowers to `auto` with the flag set.
 fn anthropic_tool_choice(
-    choice: Option<&ToolChoice>,
+    choice: Option<&LoweredToolChoice>,
     parallel_tool_use: Option<bool>,
 ) -> Option<am::ToolChoice> {
     let choice = match (choice, parallel_tool_use) {
         (Some(choice), _) => choice,
-        (None, Some(_)) => &ToolChoice::Auto,
+        (None, Some(_)) => &LoweredToolChoice::Auto,
         (None, None) => return None,
     };
     let mut materialized = match choice {
-        ToolChoice::Auto => am::ToolChoice::auto(),
-        ToolChoice::None => am::ToolChoice::none(),
-        ToolChoice::RequiredAny => am::ToolChoice::any(),
-        ToolChoice::Specific { tool_name } => am::ToolChoice::tool(tool_name.as_str()),
+        LoweredToolChoice::Auto => am::ToolChoice::auto(),
+        LoweredToolChoice::None => am::ToolChoice::none(),
+        LoweredToolChoice::RequiredAny => am::ToolChoice::any(),
+        LoweredToolChoice::Specific { wire_name } => am::ToolChoice::tool(wire_name.as_str()),
     };
-    if !matches!(choice, ToolChoice::None) {
+    if !matches!(choice, LoweredToolChoice::None) {
         materialized.disable_parallel_tool_use = parallel_tool_use.map(|parallel| !parallel);
     }
     Some(materialized)
@@ -1547,7 +1569,7 @@ async fn result_from_responses(
             }
         }
     }
-    combined.ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+    combined.ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
         message: "Anthropic generation produced no responses".to_owned(),
     })
 }
@@ -1650,6 +1672,17 @@ async fn result_from_compact_response_with_strategy(
             message: "compaction input exceeds the model context window".into(),
         });
     }
+    if response.parsed.stop_reason == Some(am::StopReason::Refusal) {
+        let details = response.parsed.stop_details.as_ref();
+        return Err(LlmAdapterError::ProviderRefused {
+            category: details
+                .and_then(|details| details.category.clone())
+                .unwrap_or_else(|| "unspecified".to_owned()),
+            explanation: details
+                .and_then(|details| details.explanation.clone())
+                .unwrap_or_else(|| "no explanation provided".to_owned()),
+        });
+    }
     if native {
         if response.raw_json["stop_reason"] == "model_context_window_exceeded"
             || response.raw_json["stop_reason"] == "model_context_window"
@@ -1659,7 +1692,7 @@ async fn result_from_compact_response_with_strategy(
             });
         }
         if response.raw_json["stop_reason"] != "compaction" {
-            return Err(LlmAdapterError::InvalidProviderRequest {
+            return Err(LlmAdapterError::InvalidProviderResponse {
                 message: format!(
                     "Anthropic compaction did not finish: {:?}",
                     response.parsed.stop_reason
@@ -1667,7 +1700,7 @@ async fn result_from_compact_response_with_strategy(
             });
         }
         let blocks = response.raw_json["content"].as_array().ok_or_else(|| {
-            LlmAdapterError::InvalidProviderRequest {
+            LlmAdapterError::InvalidProviderResponse {
                 message: "compaction response has no content".into(),
             }
         })?;
@@ -1678,7 +1711,7 @@ async fn result_from_compact_response_with_strategy(
                 .is_none_or(|s| s.trim().is_empty())
             || blocks[0]["signature"].as_str().is_none_or(str::is_empty)
         {
-            return Err(LlmAdapterError::InvalidProviderRequest {
+            return Err(LlmAdapterError::InvalidProviderResponse {
                 message: "compaction response has no valid signed block".into(),
             });
         }
@@ -1707,7 +1740,7 @@ async fn result_from_compact_response_with_strategy(
         response.parsed.stop_reason,
         Some(am::StopReason::EndTurn | am::StopReason::StopSequence)
     ) {
-        return Err(LlmAdapterError::InvalidProviderRequest {
+        return Err(LlmAdapterError::InvalidProviderResponse {
             message: "summary did not complete normally".into(),
         });
     }
@@ -1721,7 +1754,7 @@ async fn result_from_compact_response_with_strategy(
             .map(|block| block.r#type.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        return Err(LlmAdapterError::InvalidProviderRequest {
+        return Err(LlmAdapterError::InvalidProviderResponse {
             message: format!(
                 "Anthropic Messages compaction response {} did not include summary text \
                  (stop_reason: {:?}, stop_details: {:?}, blocks: [{block_types}], \
@@ -1761,7 +1794,7 @@ async fn result_from_compact_response_with_strategy(
                 media_type: Some(MEDIA_TYPE_TEXT.to_owned()),
                 provider_kind: Some(ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND.to_owned()),
             },
-            preview: Some(summary.to_owned()),
+            preview: Some(summary.chars().take(256).collect()),
             origin: None,
             provenance_ref: None,
             token_estimate: None,
@@ -1781,7 +1814,7 @@ fn raw_content_block(
     {
         return Ok(raw_block.clone());
     }
-    serde_json::to_value(block).map_err(|error| LlmAdapterError::InvalidProviderRequest {
+    serde_json::to_value(block).map_err(|error| LlmAdapterError::InvalidProviderResponse {
         message: format!("failed to encode Anthropic content block: {error}"),
     })
 }
@@ -1823,18 +1856,18 @@ async fn tool_use_context(
 ) -> LlmAdapterResult<(ContextEntryInput, ObservedToolCall)> {
     let call_id = block.id.clone().unwrap_or_else(|| format!("toolu_{index}"));
     let call_id = ToolCallId::try_new(call_id.clone()).map_err(|error| {
-        LlmAdapterError::InvalidProviderRequest {
+        LlmAdapterError::InvalidProviderResponse {
             message: format!("invalid Anthropic tool call id {call_id:?}: {error}"),
         }
     })?;
     let name = block
         .name
         .as_deref()
-        .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+        .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
             message: "Anthropic tool_use block is missing name".to_owned(),
         })?;
     let tool_name = ToolName::try_new(name.to_owned()).map_err(|error| {
-        LlmAdapterError::InvalidProviderRequest {
+        LlmAdapterError::InvalidProviderResponse {
             message: format!("invalid Anthropic tool name {name:?}: {error}"),
         }
     })?;
@@ -1859,7 +1892,7 @@ async fn tool_use_context(
     };
     let tool_call = ObservedToolCall {
         call_id,
-        tool_id: Some(tool_name.clone()),
+        tool_id: Some(ToolId::new(tool_name.as_str())),
         tool_name,
         provider_kind: Some(PROVIDER_KIND_TOOL_USE.to_owned()),
         arguments_ref,
@@ -2063,6 +2096,7 @@ async fn has_signed_compaction(
 
 #[cfg(test)]
 mod tests {
+    use harness::ToolChoice;
     use std::collections::{BTreeMap, VecDeque};
     use std::sync::{Arc, Mutex};
 
@@ -2076,6 +2110,20 @@ mod tests {
 
     use super::*;
 
+    /// Materialize with every MCP server resolving to `https://<id>.example.com/mcp`.
+    async fn materialize_create_request(
+        blobs: &dyn BlobStore,
+        request: &LlmRequest,
+    ) -> LlmAdapterResult<am::CreateMessageRequest> {
+        materialize_create_request_with_inventory(
+            blobs,
+            &StaticMcpInventory,
+            request,
+            ThinkingPrefixMismatch::default(),
+        )
+        .await
+    }
+
     struct StaticMcpInventory;
 
     #[async_trait]
@@ -2083,8 +2131,8 @@ mod tests {
         async fn list_tools(
             &self,
             _spec: &RemoteMcpToolSpec,
-        ) -> Result<Vec<crate::NativeMcpTool>, crate::McpInventoryError> {
-            Ok(vec![crate::NativeMcpTool {
+        ) -> Result<Vec<crate::RuntimeMcpTool>, crate::McpInventoryError> {
+            Ok(vec![crate::RuntimeMcpTool {
                 remote_name: "read".to_owned(),
                 description: Some("Read".to_owned()),
                 input_schema: json!({"type": "object"}),
@@ -2094,6 +2142,13 @@ mod tests {
                 annotations: None,
             }])
         }
+
+        async fn server_url(
+            &self,
+            server_id: &str,
+        ) -> Result<Option<String>, crate::McpInventoryError> {
+            Ok(Some(format!("https://{server_id}.example.com/mcp")))
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2101,21 +2156,17 @@ mod tests {
         let blobs = InMemoryBlobStore::new();
         let mut request = intent_request(Vec::new());
         request.tools = vec![ToolSpec {
-            name: ToolName::new("mcp_schema"),
+            id: ToolId::new("mcp_schema"),
             kind: ToolKind::RemoteMcp(harness::RemoteMcpToolSpec {
                 server_id: "schema".into(),
                 record_revision: 1,
                 server_label: "schema".into(),
-                server_url: "https://example.com/mcp".into(),
                 description_ref: None,
                 allowed_tools: None,
-                execution: RemoteMcpExecution::Native,
+                execution: RemoteMcpExecution::Runtime,
                 exposure: RemoteMcpExposure::Inject,
                 approval: harness::RemoteMcpApprovalPolicy::Never,
                 defer_loading: None,
-                auth_ref: None,
-                auth_required: false,
-                allow_private_network: false,
             }),
             execution: Default::default(),
             parallelism: ToolParallelism::ParallelSafe,
@@ -2134,7 +2185,7 @@ mod tests {
         for allowed in [true, false] {
             request.code_mode = Some(harness::CodeModePresentation {
                 allowed_tools: if allowed {
-                    [ToolName::new("mcp_schema")].into_iter().collect()
+                    [ToolId::new("mcp_schema")].into_iter().collect()
                 } else {
                     Default::default()
                 },
@@ -2176,7 +2227,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn native_mcp_lowers_to_anthropic_custom_function_tools() {
+    async fn runtime_mcp_lowers_to_anthropic_custom_function_tools() {
         let blobs = InMemoryBlobStore::new();
         let (tools, servers) = materialize_tools(
             &StaticMcpInventory,
@@ -2185,21 +2236,17 @@ mod tests {
                 &blobs,
                 &tools::runtime::ToolTarget::api_kind(ProviderApiKind::AnthropicMessages),
                 &[ToolSpec {
-                    name: ToolName::try_new("mcp_docs").expect("name"),
+                    id: ToolId::try_new("mcp_docs").expect("name"),
                     kind: ToolKind::RemoteMcp(RemoteMcpToolSpec {
                         server_id: "docs".to_owned(),
                         record_revision: 1,
                         server_label: "docs".to_owned(),
-                        server_url: "https://example.com/mcp".to_owned(),
                         description_ref: None,
                         allowed_tools: None,
-                        execution: RemoteMcpExecution::Native,
+                        execution: RemoteMcpExecution::Runtime,
                         exposure: RemoteMcpExposure::Inject,
                         approval: RemoteMcpApprovalPolicy::Never,
                         defer_loading: None,
-                        auth_ref: None,
-                        auth_required: false,
-                        allow_private_network: false,
                     }),
                     execution: Default::default(),
                     parallelism: ToolParallelism::ParallelSafe,
@@ -2209,7 +2256,7 @@ mod tests {
             .expect("catalog"),
         )
         .await
-        .expect("materialize native MCP");
+        .expect("materialize runtime MCP");
         assert!(servers.is_empty());
         let value = serde_json::to_value(tools).expect("tools json");
         assert_eq!(value[0]["name"], "mcp_docs__read");
@@ -2347,7 +2394,6 @@ mod tests {
                         token_estimate: None,
                     },
                     target_tokens: Some(128),
-                    params: None,
                     tools: vec![],
                     input_limit_tokens: None,
                     covered_entry_ids: vec![],
@@ -2367,6 +2413,58 @@ mod tests {
             "Keep ABC-123"
         );
         assert_eq!(api.seen.lock().unwrap()[0].model, "claude-opus-5-5");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_summary_entry_previews_only_the_start_of_its_text() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let summary = "é".repeat(2_000);
+        let api = fake_api(json!({
+            "id": "summary",
+            "type": "message",
+            "role": "assistant",
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": summary}],
+        }));
+        let adapter =
+            AnthropicMessagesLlmAdapter::new(Arc::new(SummaryOnlyMessagesApi(api)), blobs.clone());
+        let result = LlmCompactionAdapter::compact_context(
+            &adapter,
+            ContextCompactionRequest {
+                session_id: SessionId::new("preview"),
+                request: ContextCompactionTask {
+                    model: ModelSelection {
+                        model: "claude-opus-5-5".into(),
+                        ..model()
+                    },
+                    request_fingerprint: "preview".into(),
+                    context: ContextSnapshot {
+                        api_kind: ProviderApiKind::AnthropicMessages,
+                        context_revision: 4,
+                        entries: vec![user_entry(1, text_blob(&blobs, "Remember").await)],
+                        token_estimate: None,
+                    },
+                    target_tokens: Some(128),
+                    tools: vec![],
+                    input_limit_tokens: None,
+                    covered_entry_ids: vec![],
+                },
+            },
+        )
+        .await
+        .unwrap();
+        let entry = &result.context_entries[0];
+        assert_eq!(
+            entry.preview.as_deref().map(|text| text.chars().count()),
+            Some(256)
+        );
+        assert_eq!(
+            read_text(blobs.as_ref(), &entry.content.content_ref)
+                .await
+                .unwrap(),
+            summary,
+            "the blob holds the whole summary"
+        );
     }
 
     fn fake_api(raw_json: Value) -> Arc<FakeAnthropicMessagesApi> {
@@ -2437,7 +2535,6 @@ mod tests {
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: None,
         }
@@ -2737,7 +2834,7 @@ mod tests {
         };
         let mut request = intent_request(vec![instructions_item, user_entry(2, input_ref)]);
         request.tools = vec![ToolSpec {
-            name: ToolName::new("read_file"),
+            id: ToolId::new("read_file"),
             execution: Default::default(),
             kind: ToolKind::Function(FunctionToolSpec {
                 description_ref: Some(description_ref),
@@ -2749,7 +2846,7 @@ mod tests {
             parallelism: ToolParallelism::ParallelSafe,
         }];
         request.tool_choice = Some(ToolChoice::Specific {
-            tool_name: ToolName::new("read_file"),
+            tool_id: ToolId::new("read_file"),
         });
         request.parallel_tool_use = Some(false);
         request.output_limit = Some(2048);
@@ -3033,22 +3130,18 @@ mod tests {
         let blobs = InMemoryBlobStore::new();
         let mut request = intent_request(Vec::new());
         request.tools = vec![ToolSpec {
-            name: ToolName::new("mcp_echo"),
+            id: ToolId::new("mcp_echo"),
             execution: Default::default(),
             kind: ToolKind::RemoteMcp(RemoteMcpToolSpec {
                 server_id: "echo".to_string(),
                 record_revision: 1,
                 server_label: "echo".to_string(),
-                server_url: "https://echo.example.com/mcp".to_string(),
                 description_ref: None,
                 allowed_tools: Some(vec!["echo".to_string()]),
                 execution: RemoteMcpExecution::Provider,
                 exposure: RemoteMcpExposure::Inject,
                 approval: RemoteMcpApprovalPolicy::Never,
                 defer_loading: None,
-                auth_ref: None,
-                auth_required: false,
-                allow_private_network: false,
             }),
             parallelism: ToolParallelism::ParallelSafe,
         }];
@@ -3087,13 +3180,12 @@ mod tests {
         defer_loading: Option<bool>,
     ) -> ToolSpec {
         ToolSpec {
-            name: ToolName::try_new(format!("mcp_{server_id}")).expect("tool name"),
+            id: ToolId::try_new(format!("mcp_{server_id}")).expect("tool name"),
             execution: Default::default(),
             kind: ToolKind::RemoteMcp(RemoteMcpToolSpec {
                 server_id: server_id.to_owned(),
                 record_revision: 1,
                 server_label: server_id.to_owned(),
-                server_url: format!("https://{server_id}.example.com/mcp"),
                 description_ref: None,
                 allowed_tools: allowed_tools
                     .map(|tools| tools.into_iter().map(ToOwned::to_owned).collect::<Vec<_>>()),
@@ -3101,9 +3193,6 @@ mod tests {
                 exposure: RemoteMcpExposure::Inject,
                 approval: RemoteMcpApprovalPolicy::Never,
                 defer_loading,
-                auth_ref: None,
-                auth_required: false,
-                allow_private_network: false,
             }),
             parallelism: ToolParallelism::ParallelSafe,
         }
@@ -3233,25 +3322,18 @@ mod tests {
 
     fn auth_remote_mcp_tool() -> ToolSpec {
         ToolSpec {
-            name: ToolName::new("mcp_echo"),
+            id: ToolId::new("mcp_echo"),
             execution: Default::default(),
             kind: ToolKind::RemoteMcp(RemoteMcpToolSpec {
                 server_id: "echo".to_string(),
                 record_revision: 1,
                 server_label: "echo".to_string(),
-                server_url: "https://echo.example.com/mcp".to_string(),
                 description_ref: None,
                 allowed_tools: None,
                 execution: RemoteMcpExecution::Provider,
                 exposure: RemoteMcpExposure::Inject,
                 approval: RemoteMcpApprovalPolicy::Never,
                 defer_loading: None,
-                auth_ref: Some(harness::SecretRef {
-                    namespace: "mcp_server".to_string(),
-                    id: "echo".to_string(),
-                }),
-                auth_required: true,
-                allow_private_network: false,
             }),
             parallelism: ToolParallelism::ParallelSafe,
         }
@@ -3271,15 +3353,6 @@ mod tests {
         }
     }
 
-    fn optional_unbound_mcp_generation_request() -> LlmGenerationRequest {
-        let mut request = mcp_auth_generation_request();
-        let ToolKind::RemoteMcp(spec) = &mut request.request.tools[0].kind else {
-            panic!("expected remote MCP tool");
-        };
-        spec.auth_required = false;
-        request
-    }
-
     fn completed_text_response_json() -> Value {
         json!({
             "id": "msg_1",
@@ -3292,8 +3365,42 @@ mod tests {
         })
     }
 
+    /// A server whose record is gone or switched off answers `None`.
+    struct NoUsableRecord;
+
+    #[async_trait]
+    impl McpInventoryResolver for NoUsableRecord {
+        async fn list_tools(
+            &self,
+            _spec: &RemoteMcpToolSpec,
+        ) -> Result<Vec<crate::RuntimeMcpTool>, crate::McpInventoryError> {
+            Ok(Vec::new())
+        }
+
+        async fn server_url(&self, _: &str) -> Result<Option<String>, crate::McpInventoryError> {
+            Ok(None)
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
-    async fn materialize_create_request_omits_authorization_token_for_remote_mcp_auth_ref() {
+    async fn generate_leaves_out_a_provider_hosted_server_with_no_usable_record() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api(completed_text_response_json());
+        let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs)
+            .with_mcp_inventory_resolver(Arc::new(NoUsableRecord));
+
+        LlmGenerationAdapter::generate(&adapter, mcp_auth_generation_request())
+            .await
+            .expect("the turn runs without the server");
+
+        let sent = api.seen.lock().expect("lock").clone();
+        let sent_json = serde_json::to_value(&sent[0]).expect("sent json");
+        assert!(sent_json.get("mcp_servers").is_none(), "{sent_json}");
+        assert!(sent_json.get("tools").is_none(), "{sent_json}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_omits_authorization_token_for_remote_mcp() {
         let blobs = InMemoryBlobStore::new();
         let mut request = intent_request(Vec::new());
         request.tools = vec![auth_remote_mcp_tool()];
@@ -3323,7 +3430,8 @@ mod tests {
                     "echo",
                     "token-xyz",
                 ),
-            ));
+            ))
+            .with_mcp_inventory_resolver(Arc::new(StaticMcpInventory));
 
         let mut generation_request = mcp_auth_generation_request();
         let ToolKind::RemoteMcp(remote_mcp) = &mut generation_request.request.tools[0].kind else {
@@ -3433,13 +3541,14 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn generate_omits_optional_unbound_remote_mcp_authorization() {
+    async fn generate_omits_authorization_for_a_server_with_no_credential() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let api = fake_api(completed_text_response_json());
         let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs)
-            .with_secret_resolver(Arc::new(crate::secrets::AbsentSecretResolver));
+            .with_secret_resolver(Arc::new(crate::secrets::AbsentSecretResolver))
+            .with_mcp_inventory_resolver(Arc::new(StaticMcpInventory));
 
-        LlmGenerationAdapter::generate(&adapter, optional_unbound_mcp_generation_request())
+        LlmGenerationAdapter::generate(&adapter, mcp_auth_generation_request())
             .await
             .expect("optional unbound MCP auth should be omitted");
 
@@ -3453,30 +3562,31 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn generate_does_not_treat_a_missing_optional_mcp_server_as_unbound() {
+    async fn generate_does_not_treat_a_missing_credential_resource_as_absent() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let api = fake_api(completed_text_response_json());
         let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs)
-            .with_secret_resolver(Arc::new(crate::secrets::StaticSecretResolver::new()));
+            .with_secret_resolver(Arc::new(crate::secrets::StaticSecretResolver::new()))
+            .with_mcp_inventory_resolver(Arc::new(StaticMcpInventory));
 
-        let error =
-            LlmGenerationAdapter::generate(&adapter, optional_unbound_mcp_generation_request())
-                .await
-                .expect_err("missing optional MCP server must not silently downgrade");
+        let error = LlmGenerationAdapter::generate(&adapter, mcp_auth_generation_request())
+            .await
+            .expect_err("missing optional MCP server must not silently downgrade");
 
         assert!(matches!(error, LlmAdapterError::SecretResolution { .. }));
         assert!(api.seen.lock().expect("lock").is_empty());
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn generate_fails_before_provider_io_when_auth_ref_cannot_be_resolved() {
+    async fn generate_fails_before_provider_io_when_the_credential_cannot_be_resolved() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let api = fake_api(completed_text_response_json());
-        let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs.clone());
+        let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs.clone())
+            .with_mcp_inventory_resolver(Arc::new(StaticMcpInventory));
 
         let error = LlmGenerationAdapter::generate(&adapter, mcp_auth_generation_request())
             .await
-            .expect_err("unresolvable auth ref must fail generation");
+            .expect_err("an unresolvable credential must fail generation");
 
         assert!(matches!(error, LlmAdapterError::SecretResolution { .. }));
         assert!(
@@ -3651,16 +3761,6 @@ mod tests {
     async fn materialize_create_request_rejects_unsupported_intents() {
         let blobs = InMemoryBlobStore::new();
 
-        let mut continuation = intent_request(Vec::new());
-        continuation.provider_response_id = Some("msg_prev".to_string());
-        let error = materialize_create_request(&blobs, &continuation)
-            .await
-            .expect_err("continuation must fail");
-        assert!(matches!(
-            error,
-            LlmAdapterError::InvalidProviderRequest { .. }
-        ));
-
         let mut oversized_thinking = intent_request(Vec::new());
         oversized_thinking.output_limit = Some(1024);
         oversized_thinking.params = Some(anthropic_params(&AnthropicMessagesParams {
@@ -3682,22 +3782,18 @@ mod tests {
 
         let mut mcp_approval = intent_request(Vec::new());
         mcp_approval.tools = vec![ToolSpec {
-            name: ToolName::new("mcp_echo"),
+            id: ToolId::new("mcp_echo"),
             execution: Default::default(),
             kind: ToolKind::RemoteMcp(RemoteMcpToolSpec {
                 server_id: "echo".to_string(),
                 record_revision: 1,
                 server_label: "echo".to_string(),
-                server_url: "https://echo.example.com/mcp".to_string(),
                 description_ref: None,
                 allowed_tools: None,
                 execution: RemoteMcpExecution::Provider,
                 exposure: RemoteMcpExposure::Inject,
                 approval: RemoteMcpApprovalPolicy::Always,
                 defer_loading: None,
-                auth_ref: None,
-                auth_required: false,
-                allow_private_network: false,
             }),
             parallelism: ToolParallelism::ParallelSafe,
         }];
@@ -3784,7 +3880,7 @@ mod tests {
         assert_eq!(result.facts.tool_calls.len(), 1);
         assert_eq!(
             result.facts.tool_calls[0].tool_id,
-            Some(ToolName::new("env.read_file"))
+            Some(ToolId::new("env.read_file"))
         );
         assert_eq!(
             result.facts.tool_calls[0].tool_name,
@@ -4450,7 +4546,6 @@ mod tests {
             covered_entry_ids: vec![],
             target_tokens: None,
             input_limit_tokens: None,
-            params: None,
         };
         let compact = materialize_compact_request(&blobs, &task).await.unwrap();
         let normal = materialize_create_request(&blobs, &generation)
@@ -4563,7 +4658,6 @@ mod tests {
                     token_estimate: None,
                 },
                 target_tokens: Some(128),
-                params: None,
             },
         };
 
@@ -4978,7 +5072,7 @@ mod tests {
             supersedes: None,
         };
         let tool = |name: &str| ToolSpec {
-            name: ToolName::new(name),
+            id: ToolId::new(name),
             execution: Default::default(),
             kind: ToolKind::Function(FunctionToolSpec {
                 description_ref: None,
@@ -5365,7 +5459,6 @@ mod tests {
                 token_estimate: None,
             },
             target_tokens: None,
-            params: None,
         };
 
         let native = materialize_compact_request(&blobs, &task("claude-opus-5-5"))

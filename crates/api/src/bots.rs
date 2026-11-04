@@ -1,9 +1,9 @@
-//! Bots: durable event routers that own managed sessions in the core runtime.
+//! Bots: durable event routers that own controlled sessions in the core runtime.
 //!
 //! A bot is a universe record (brief, profile, budgets, capability grants)
 //! plus triggers (schedule, webhook, poll, inbox, chat). Every event goes
 //! through one admission pipeline into the bot's controller workflow, which
-//! owns the bot's managed sessions. These are the wire shapes; the domain
+//! owns the bot's controlled sessions. These are the wire shapes; the domain
 //! crate `bots` adds records, validation, and the pure pipeline logic.
 
 use super::*;
@@ -635,7 +635,7 @@ pub struct BotTriggerInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum BotTriggerDisabledReason {
     /// The flood breaker tripped.
     Breaker,
@@ -713,7 +713,7 @@ pub struct BotEventMedia {
 /// `ignored`, `blocked`) or the system's when no decision was possible.
 /// `archived` rows were stored for the record and never delivered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum BotEventOutcome {
     Handled,
     Deferred,
@@ -734,7 +734,7 @@ impl BotEventOutcome {
             Self::Ignored => "ignored",
             Self::Blocked => "blocked",
             Self::Unresolved => "unresolved",
-            Self::RunFailed => "run_failed",
+            Self::RunFailed => "runFailed",
             Self::Steered => "steered",
             Self::Appended => "appended",
             Self::Archived => "archived",
@@ -888,7 +888,7 @@ pub struct BotEventInput {
 // ── Controller state ────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum BotControllerStatus {
     #[default]
     Initializing,
@@ -901,7 +901,7 @@ pub enum BotControllerStatus {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum BotSetupStatus {
     #[default]
     Initializing,

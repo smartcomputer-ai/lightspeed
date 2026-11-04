@@ -431,7 +431,7 @@ export function universeRoutes(ctx: AppContext) {
       } catch (error) {
         // Already gone engine-side (or never materialized) — the platform
         // rows still need to go.
-        if (!(error instanceof LightspeedRpcError) || error.kind !== "not_found") {
+        if (!(error instanceof LightspeedRpcError) || error.kind !== "notFound") {
           throw error;
         }
       }

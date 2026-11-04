@@ -3,9 +3,7 @@
 //! API reference:
 //! - <https://developers.openai.com/api/reference/resources/chat/subresources/completions>
 
-use crate::error::{
-    ConfigurationError, DecodeError, LlmApiError, ProviderHttpError, StreamError, TransportError,
-};
+use crate::error::{ConfigurationError, DecodeError, LlmApiError, ProviderHttpError, StreamError};
 use crate::transport::http::{join_url, normalize_base_url};
 use crate::transport::{
     ApiResponse, ApiStreamEvent, EndpointOverride, HeaderSnapshot, HttpClient, HttpClientConfig,
@@ -187,11 +185,14 @@ impl Client {
             .json(&request)
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
-        let body = response.text().await.map_err(map_reqwest_error)?;
+        let body = response
+            .text()
+            .await
+            .map_err(|err| self.http.transport_error(err))?;
         if !status.is_success() {
             return Err(parse_provider_http_error(status, headers, body).into());
         }
@@ -237,10 +238,16 @@ impl Client {
         if let Some(auth) = auth {
             request_builder = request_builder.header(AUTHORIZATION, auth);
         }
-        let response = request_builder.send().await.map_err(map_reqwest_error)?;
+        let response = request_builder
+            .send()
+            .await
+            .map_err(|err| self.http.transport_error(err))?;
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
-        let body = response.text().await.map_err(map_reqwest_error)?;
+        let body = response
+            .text()
+            .await
+            .map_err(|err| self.http.transport_error(err))?;
         parse_json_response(status, headers, body, "OpenAI model list")
     }
 
@@ -264,12 +271,15 @@ impl Client {
             .json(&request)
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
         if !status.is_success() {
-            let body = response.text().await.map_err(map_reqwest_error)?;
+            let body = response
+                .text()
+                .await
+                .map_err(|err| self.http.transport_error(err))?;
             return Err(parse_provider_http_error(status, headers, body).into());
         }
 
@@ -790,10 +800,6 @@ pub fn parse_sse_event(
         )
     })?;
     Ok(Some(ApiStreamEvent::new(parsed, sse, Some(raw_json))))
-}
-
-fn map_reqwest_error(err: reqwest::Error) -> LlmApiError {
-    TransportError::new(err.to_string(), err.is_connect() || err.is_request()).into()
 }
 
 fn bearer_auth_value(value: &str) -> Result<HeaderValue, LlmApiError> {

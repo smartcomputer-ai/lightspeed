@@ -99,9 +99,10 @@ pub(super) async fn invoke(
         Err(error)
     } else {
         let wanted = origin.clone();
+        // A call that is gone left state with its scope, and will not come back.
         ctx.wait_for_state(move |state| {
             harness::code_tool_call(&state.core_state, &wanted)
-                .is_some_and(|call| call.status.is_terminal())
+                .is_none_or(|call| call.status.is_terminal())
         })
         .await;
         ctx.state(|state| {
@@ -123,9 +124,28 @@ pub(super) async fn close(
     let admitted = await_admission(ctx, ticket).await;
     ctx.state_mut(|state| state.code_tools.waiters -= 1);
     admitted?;
-    ctx.state(|state| report(state, &execution_id))
+    ctx.state(|state| closed_report(state, &execution_id))
 }
 
+/// A scope leaves state with its parent invocation, and a runner can still be cleaning
+/// up after that. To its close, a scope that is gone is closed with nothing outstanding.
+pub(super) fn closed_report(
+    state: &AgentSessionWorkflow,
+    execution_id: &str,
+) -> crate::CodeToolScopeResult {
+    report(state, execution_id).or_else(|_| {
+        Ok(crate::CodeToolScopeReport {
+            execution_id: execution_id.to_owned(),
+            closed: true,
+            bindings: BTreeMap::new(),
+            calls: BTreeMap::new(),
+        })
+    })
+}
+
+/// A scope that is gone and one never opened look the same here, and a runner that
+/// lost its prepare receipt opens and closes the scope on hearing this, so that a
+/// delayed prepare cannot open it later.
 pub(super) fn report(
     state: &AgentSessionWorkflow,
     execution_id: &str,
@@ -148,10 +168,11 @@ pub(super) async fn process_pending(
     for (origin, outcome) in completions {
         if ctx.state(|state| {
             harness::code_tool_call(&state.core_state, &origin)
-                .is_some_and(|call| call.status.is_terminal())
+                .is_none_or(|call| !matches!(call.status, CodeToolCallStatus::Pending))
         }) {
-            // Forced run termination records an unavailable outcome. A late
-            // activity reply cannot resurrect the run or reapply its effects.
+            // Only a pending call takes a result. Forced run termination records
+            // an unavailable outcome, its scope may have left state since, and a
+            // late activity reply cannot resurrect the run or reapply its effects.
             ctx.state_mut(|state| {
                 state.code_tools.inflight.remove(&key(&origin));
             });
@@ -207,11 +228,26 @@ pub(super) async fn process_pending(
                 }
             }
             Request::Close(request) => {
+                if !ctx.is_replaying()
+                    && ctx.state(|state| {
+                        !state
+                            .core_state
+                            .code_tools
+                            .scopes
+                            .contains_key(&request.execution_id)
+                    })
+                {
+                    tracing::info!(
+                        target: "temporal_workflow",
+                        event = "code_tool_scope_late_close",
+                        execution_id = request.execution_id.as_str(),
+                        "close for a code tool scope already pruned"
+                    );
+                }
                 apply(
                     ctx,
                     CoreAgentCommand::CloseCodeToolScope {
                         execution_id: request.execution_id,
-                        cancel: request.cancel_pending,
                     },
                 )
                 .await?
@@ -228,21 +264,13 @@ pub(super) async fn process_pending(
             .scopes
             .values()
             .filter(|scope| {
-                !scope.cancel_requested
-                    && !harness::code_tool_scope_is_live(&state.core_state, &scope.spec)
+                !scope.closed && !harness::code_tool_scope_is_live(&state.core_state, &scope.spec)
             })
             .map(|scope| scope.spec.execution_id.clone())
             .collect::<Vec<_>>()
     });
     for execution_id in expired {
-        apply_internal(
-            ctx,
-            CoreAgentCommand::CloseCodeToolScope {
-                execution_id,
-                cancel: true,
-            },
-        )
-        .await?;
+        apply_internal(ctx, CoreAgentCommand::CloseCodeToolScope { execution_id }).await?;
     }
     reconcile_waits(ctx).await
 }
@@ -413,7 +441,7 @@ async fn admit_open(
                 state
                     .core_state
                     .workflow_tools
-                    .emissions
+                    .bound_invocations
                     .get(&request.parent_invocation_id)
             })
             .and_then(|parent| {
@@ -421,7 +449,7 @@ async fn admit_open(
                     .core_state
                     .workflow_tools
                     .bindings
-                    .get(&parent.tool_id)
+                    .get(&parent.workflow_tool_id)
             })
             .ok_or_else(|| {
                 rejected(
@@ -431,7 +459,7 @@ async fn admit_open(
             })?;
         let tools = select_code_tools(
             &state.core_state.tooling.tools,
-            &parent.definition.tool.name,
+            &parent.definition.tool.id,
             request.allowed_tools.as_ref(),
         )?;
         Ok::<_, CodeToolRejection>((
@@ -443,19 +471,31 @@ async fn admit_open(
         Ok(value) => value,
         Err(error) => return Ok(Err(error)),
     };
-    let bindings = match ctx
-        .execute_activity(
-            WorkflowActivities::code_tool_prepare_scope,
-            prepared,
-            crate::activity_options(),
-        )
-        .await
-    {
-        Ok(result) => result.bindings,
+    // This can reach network servers from the session's one loop, so control
+    // admissions keep landing behind it. A cancel that does makes the parent stale,
+    // and admission refuses the scope below.
+    let mut drive = drive_from_state(ctx)?;
+    let activity_ctx = ctx.clone();
+    let activity = activity_ctx.execute_activity(
+        WorkflowActivities::code_tool_prepare_scope,
+        prepared,
+        crate::code_tool_prepare_scope_activity_options(),
+    );
+    let bindings = match preparation::await_activity(ctx, &mut drive, activity).await {
+        Ok(Ok(result)) => result.bindings,
+        Ok(Err(error)) => {
+            return Ok(Err(rejected(
+                Rejection::Unavailable,
+                format!(
+                    "prepare code tool bindings: {}",
+                    errors::activity_failure_message(&error)
+                ),
+            )));
+        }
         Err(error) => {
             return Ok(Err(rejected(
                 Rejection::Unavailable,
-                format!("prepare code tool bindings: {error}"),
+                format!("prepare code tool bindings: {}", error.message),
             )));
         }
     };
@@ -493,9 +533,9 @@ async fn admit_open(
 }
 
 fn select_code_tools(
-    tools: &BTreeMap<harness::ToolName, harness::ToolSpec>,
-    parent: &harness::ToolName,
-    allowed: Option<&BTreeSet<harness::ToolName>>,
+    tools: &BTreeMap<harness::ToolId, harness::ToolSpec>,
+    parent: &harness::ToolId,
+    allowed: Option<&BTreeSet<harness::ToolId>>,
 ) -> Result<Vec<harness::ToolSpec>, CodeToolRejection> {
     match allowed {
         Some(allowed) => allowed
@@ -503,7 +543,7 @@ fn select_code_tools(
             .map(|id| {
                 tools
                     .get(id)
-                    .filter(|tool| &tool.name != parent)
+                    .filter(|tool| &tool.id != parent)
                     .cloned()
                     .ok_or_else(|| {
                         rejected(
@@ -515,7 +555,7 @@ fn select_code_tools(
             .collect(),
         None => Ok(tools
             .values()
-            .filter(|tool| &tool.name != parent && tool.invokes_client_effect())
+            .filter(|tool| &tool.id != parent && tool.invokes_client_effect())
             .cloned()
             .collect()),
     }
@@ -550,11 +590,7 @@ async fn reconcile_waits(ctx: &mut WorkflowContext<AgentSessionWorkflow>) -> any
                     .execute_activity(
                         WorkflowActivities::materialize_await_result,
                         crate::AwaitMaterializationRequest {
-                            outcome: match wake {
-                                harness::WakeReason::Cancelled => crate::AwaitOutcome::Cancelled,
-                                harness::WakeReason::Timeout => crate::AwaitOutcome::Timeout,
-                                harness::WakeReason::Terminal => crate::AwaitOutcome::Terminal,
-                            },
+                            outcome: wake,
                             results,
                         },
                         crate::activity_options(),
@@ -587,7 +623,7 @@ async fn reconcile_waits(ctx: &mut WorkflowContext<AgentSessionWorkflow>) -> any
                     harness::code_tool_joined_result(
                         &state.core_state,
                         &origin,
-                        wake != harness::WakeReason::Terminal,
+                        wake != harness::AwaitOutcome::Terminal,
                     )
                 })?;
                 result.attachments = supplements
@@ -614,8 +650,7 @@ pub(super) fn has_immediate_work(state: &AgentSessionWorkflow) -> bool {
     !state.code_tools.pending.is_empty()
         || !state.code_tools.completions.is_empty()
         || state.core_state.code_tools.scopes.values().any(|scope| {
-            (!scope.cancel_requested
-                && !harness::code_tool_scope_is_live(&state.core_state, &scope.spec))
+            (!scope.closed && !harness::code_tool_scope_is_live(&state.core_state, &scope.spec))
                 || scope.calls.values().any(|call| {
                     matches!(call.status, CodeToolCallStatus::Waiting { .. })
                         && harness::code_tool_wake(&state.core_state, &call.spec.origin, 0)
@@ -645,7 +680,7 @@ pub(super) fn is_quiescent(state: &AgentSessionWorkflow) -> bool {
         && state.code_tools.inflight.is_empty()
 }
 
-pub(super) fn blocks_parent_resume(state: &AgentSessionWorkflow) -> bool {
+pub(super) fn blocks_parent_unpark(state: &AgentSessionWorkflow) -> bool {
     state
         .core_state
         .code_tools
@@ -743,7 +778,7 @@ fn scope_cancelled(state: &AgentSessionWorkflow, origin: &CodeToolOrigin) -> boo
         .code_tools
         .scopes
         .get(&origin.execution_id)
-        .is_some_and(|scope| scope.cancel_requested)
+        .is_some_and(|scope| scope.closed)
 }
 fn queue_completion(
     ctx: &WorkflowContext<AgentSessionWorkflow>,
@@ -813,21 +848,10 @@ pub(super) async fn run_dispatch_loop(
                 }
             };
             let execution = ctx.state(|state| {
-                let call = &batch.calls[0];
-                if call.remote_mcp.is_some() {
-                    harness::ToolExecutionSpec::new(
-                        harness::ToolExecutionClass::RemoteInteractive,
-                        false,
-                    )
-                } else {
-                    state
-                        .core_state
-                        .tooling
-                        .tools
-                        .get(call.tool_id.as_ref().expect("admitted tool"))
-                        .map(|tool| tool.execution)
-                        .unwrap_or_default()
-                }
+                tool_batches::call_execution_spec(
+                    &state.core_state,
+                    batch.calls[0].tool_id.as_ref(),
+                )
             });
             let request = batch
                 .call_request(0, execution)
@@ -1009,17 +1033,17 @@ mod tests {
     #[test]
     fn implicit_code_tool_catalog_excludes_the_parent_and_explicit_empty_grants_nothing() {
         let state = dispatcher_state();
-        let parent = harness::ToolName::new("z-first");
+        let parent = harness::ToolId::new("z-first");
         let tools = &state.core_state.tooling.tools;
         let selected = select_code_tools(tools, &parent, None).unwrap();
         assert_eq!(selected.len(), 2);
-        assert!(selected.iter().all(|tool| tool.name != parent));
+        assert!(selected.iter().all(|tool| tool.id != parent));
         assert!(
             select_code_tools(tools, &parent, Some(&BTreeSet::new()))
                 .unwrap()
                 .is_empty()
         );
-        for forbidden in [parent.clone(), harness::ToolName::new("not-granted")] {
+        for forbidden in [parent.clone(), harness::ToolId::new("not-granted")] {
             let error = select_code_tools(tools, &parent, Some(&[forbidden].into())).unwrap_err();
             assert_eq!(error.kind, Rejection::PermissionDenied);
         }
@@ -1035,11 +1059,11 @@ mod tests {
             ("a-second", 33, ToolParallelism::Exclusive),
             ("b-third", 65, ToolParallelism::ParallelSafe),
         ] {
-            let tool_id = harness::ToolName::new(request_id);
+            let tool_id = harness::ToolId::new(request_id);
             state.core_state.tooling.tools.insert(
                 tool_id.clone(),
                 harness::ToolSpec {
-                    name: tool_id.clone(),
+                    id: tool_id.clone(),
                     kind: harness::ToolKind::Builtin(Default::default()),
                     parallelism,
                     execution: Default::default(),
@@ -1049,7 +1073,7 @@ mod tests {
                 request_id.to_owned(),
                 harness::CodeToolBinding {
                     tool_id: tool_id.clone(),
-                    tool_name: tool_id.clone(),
+                    tool_name: tool_id.as_wire_name(),
                 },
             );
             let origin = CodeToolOrigin {
@@ -1064,7 +1088,7 @@ mod tests {
                         origin,
                         binding_id: request_id.into(),
                         tool_id: tool_id.clone(),
-                        tool_name: tool_id,
+                        tool_name: tool_id.as_wire_name(),
                         arguments_ref: BlobRef::from_bytes(b"{}"),
                     },
                     promise_id_base: base,
@@ -1087,7 +1111,6 @@ mod tests {
                     max_in_flight: 3,
                 },
                 closed: false,
-                cancel_requested: false,
                 calls,
             },
         );
@@ -1171,7 +1194,7 @@ mod tests {
     #[test]
     fn active_transport_and_unsettled_calls_block_rollover_and_parent_resume() {
         let mut state = dispatcher_state();
-        assert!(blocks_parent_resume(&state));
+        assert!(blocks_parent_unpark(&state));
         state.code_tools.waiters = 1;
         assert!(!is_quiescent(&state));
         state.code_tools.waiters = 0;

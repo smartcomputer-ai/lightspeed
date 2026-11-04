@@ -33,8 +33,8 @@ use environment_protocol::{
             StartJobsParams, StartJobsResponse,
         },
         process::{
-            ReadProcessParams, ReadProcessResponse, StartProcessParams, TerminateProcessParams,
-            WriteProcessParams,
+            ReadProcessParams, ReadProcessResponse, StartProcessParams, StartProcessResponse,
+            TerminateProcessParams, WriteProcessParams,
         },
         transfer::{
             AppendTransferInventoryParams, BeginTransferParams, ListTransferMissingParams,
@@ -48,6 +48,7 @@ use environment_protocol::{
     paths::EnvironmentPath,
 };
 use harness::storage::BlobStore;
+use tokio::task::JoinHandle;
 
 use crate::{
     environment::{
@@ -76,6 +77,11 @@ const DEFAULT_PTY_SIZE: PtySize = PtySize { rows: 24, cols: 80 };
 /// How long input that the process does not read yet is retried before the
 /// write gives up.
 const INPUT_RETRY_WINDOW: Duration = Duration::from_secs(10);
+/// How long stopping an abandoned command may wait for its start and terminate.
+const ABANDONED_PROCESS_CLEANUP_WINDOW: Duration = Duration::from_secs(30);
+/// Why a running result came back early. It tells a model with no continue tool
+/// to look before starting the command again.
+const WAIT_INTERRUPTED_NOTE: &str = "the wait was interrupted by a lost connection; the command may still be running; check before re-running it";
 
 static NEXT_PROCESS_EXECUTOR_ID: AtomicU64 = AtomicU64::new(1);
 static PROCESS_ID_NONCE: LazyLock<String> = LazyLock::new(|| {
@@ -688,38 +694,79 @@ impl ProcessExecutor for RemoteProcessExecutor {
             });
         }
         let process_id = self.next_process_id();
-        self.client
-            .start_process(&StartProcessParams {
-                process_id: process_id.clone(),
-                command: CommandSpec {
-                    argv: request.argv,
-                    cwd: request
-                        .cwd
-                        .as_ref()
-                        .map(process_environment_path)
-                        .transpose()?,
-                    env: request.env,
-                    secret_env: request.secret_env,
-                    input: match request.stdin {
-                        Some(stdin) => ExecInput::Bytes {
-                            data: ByteChunk::from(stdin),
-                        },
-                        None => ExecInput::None {},
+        let params = StartProcessParams {
+            process_id: process_id.clone(),
+            command: CommandSpec {
+                argv: request.argv,
+                cwd: request
+                    .cwd
+                    .as_ref()
+                    .map(process_environment_path)
+                    .transpose()?,
+                env: request.env,
+                secret_env: request.secret_env,
+                input: match request.stdin {
+                    Some(stdin) => ExecInput::Bytes {
+                        data: ByteChunk::from(stdin),
                     },
-                    timeout_ms: request.timeout_ms,
+                    None => ExecInput::None {},
                 },
-                pty: request.tty.then_some(DEFAULT_PTY_SIZE),
-            })
-            .await
-            .map_err(map_process_error)?;
+                timeout_ms: request.timeout_ms,
+            },
+            pty: request.tty.then_some(DEFAULT_PTY_SIZE),
+        };
+        // A start cannot be taken back once sent, and a terminate overtaking it
+        // finds nothing. It runs on its own so an abandoned call can wait for it.
+        let client = self.client.clone();
+        let start = tokio::spawn(async move { client.start_process(&params).await });
+        let mut guard = AbandonedProcessGuard {
+            client: self.client.clone(),
+            process_id: process_id.clone(),
+            start: Some(start),
+            armed: true,
+            runtime: tokio::runtime::Handle::current(),
+        };
+        let started = match guard.started().await {
+            Ok(started) => started,
+            Err(error) => {
+                guard.disarm();
+                return Err(error);
+            }
+        };
         let handle = ProcessHandle::new(process_id.as_str());
-        self.read_output(
-            &handle,
-            &process_id,
-            request.yield_ms,
-            request.max_output_bytes,
-        )
-        .await
+        let mut pages = Vec::new();
+        let read = self
+            .read_output(
+                &handle,
+                &process_id,
+                request.yield_ms,
+                request.max_output_bytes,
+                &mut pages,
+            )
+            .await;
+        match read {
+            Ok(output) => {
+                guard.disarm();
+                Ok(output)
+            }
+            // The daemon keeps running the command and a new connection can read
+            // it, so the handle goes back with what this wait already consumed.
+            Err(ClientError::Closed { .. } | ClientError::Transport(_)) => {
+                guard.disarm();
+                Ok(interrupted_output(
+                    &handle,
+                    started.pid,
+                    output_budget(request.max_output_bytes),
+                    pages,
+                ))
+            }
+            // The caller closes the connection after this, so a spawned terminate
+            // would come too late.
+            Err(error) => {
+                guard.terminate().await;
+                Err(map_handle_error(error, &handle))
+            }
+        }
     }
 
     async fn continue_process(
@@ -758,8 +805,94 @@ impl ProcessExecutor for RemoteProcessExecutor {
             &process_id,
             request.wait_ms,
             request.max_output_bytes,
+            &mut Vec::new(),
         )
         .await
+        .map_err(|error| map_handle_error(error, &handle))
+    }
+}
+
+/// Stops a command whose handle never reached the model, since nothing else ever
+/// could: there is no way to list processes, and the daemon only stops a group on a
+/// timeout or a terminate. Armed from before the start until the call returns an
+/// exit or a handle. A command whose handle went back keeps running, as decided.
+struct AbandonedProcessGuard {
+    client: DataClient,
+    process_id: ProcessId,
+    /// The start until it has answered.
+    start: Option<JoinHandle<Result<StartProcessResponse, ClientError>>>,
+    armed: bool,
+    /// Where the terminate runs; a drop may happen outside a runtime context.
+    runtime: tokio::runtime::Handle,
+}
+
+impl AbandonedProcessGuard {
+    async fn started(&mut self) -> ProcessExecResult<StartProcessResponse> {
+        let start = self.start.as_mut().expect("a start is awaited once");
+        let answer = start.await;
+        self.start = None;
+        match answer {
+            Ok(answer) => answer.map_err(map_process_error),
+            Err(error) => Err(ProcessError::Failed {
+                message: format!("process start did not finish: {error}"),
+            }),
+        }
+    }
+
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+
+    async fn terminate(mut self) {
+        self.armed = false;
+        terminate_abandoned(
+            self.client.clone(),
+            self.process_id.clone(),
+            self.start.take(),
+        )
+        .await;
+    }
+}
+
+impl Drop for AbandonedProcessGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.runtime.spawn(terminate_abandoned(
+                self.client.clone(),
+                self.process_id.clone(),
+                self.start.take(),
+            ));
+        }
+    }
+}
+
+/// Best effort, on a connection that may be going away: a command this cannot reach
+/// runs on until it exits, as it would have without the attempt.
+async fn terminate_abandoned(
+    client: DataClient,
+    process_id: ProcessId,
+    start: Option<JoinHandle<Result<StartProcessResponse, ClientError>>>,
+) {
+    let abort_start = start.as_ref().map(JoinHandle::abort_handle);
+    let stop = async {
+        if let Some(start) = start
+            && !matches!(start.await, Ok(Ok(_)))
+        {
+            return;
+        }
+        let _ = client
+            .terminate_process(&TerminateProcessParams {
+                process_id,
+                signal: environment_protocol::data::process::ProcessSignal::Terminate,
+            })
+            .await;
+    };
+    if tokio::time::timeout(ABANDONED_PROCESS_CLEANUP_WINDOW, stop)
+        .await
+        .is_err()
+        && let Some(abort_start) = abort_start
+    {
+        abort_start.abort();
     }
 }
 
@@ -818,19 +951,18 @@ impl RemoteProcessExecutor {
     /// Read until the process exits and its output settles, or until
     /// `wait_ms` elapses. A finished command whose output exceeds the budget
     /// shows its head and tail with the omitted count in between; a running
-    /// one keeps the rest behind the daemon cursor for the next call.
+    /// one keeps the rest behind the daemon cursor for the next call. After a
+    /// failed read `pages` still holds what the cursor already moved past.
     async fn read_output(
         &self,
         handle: &ProcessHandle,
         process_id: &ProcessId,
         wait_ms: Option<u64>,
         max_output_bytes: Option<u64>,
-    ) -> ProcessExecResult<ProcessOutput> {
-        let budget = max_output_bytes
-            .unwrap_or(DEFAULT_PROCESS_OUTPUT_BYTES)
-            .max(1);
+        pages: &mut Vec<OutputPage>,
+    ) -> Result<ProcessOutput, ClientError> {
+        let budget = output_budget(max_output_bytes);
         let deadline = wait_ms.map(|wait| Instant::now() + Duration::from_millis(wait));
-        let mut pages = Vec::new();
         let mut collected = 0u64;
         let mut settled = false;
         let last = loop {
@@ -844,18 +976,16 @@ impl RemoteProcessExecutor {
             }
             .min(self.max_wait_ms);
             let response = self
-                .read_page(
-                    handle,
-                    ReadProcessParams {
-                        process_id: process_id.clone(),
-                        after: None,
-                        tail_bytes: None,
-                        ack: None,
-                        max_bytes: (budget - collected).min(self.max_read_bytes),
-                        wait_ms: wait,
-                        return_on: ReturnOn::Exit,
-                    },
-                )
+                .client
+                .read_process(&ReadProcessParams {
+                    process_id: process_id.clone(),
+                    after: None,
+                    tail_bytes: None,
+                    ack: None,
+                    max_bytes: (budget - collected).min(self.max_read_bytes),
+                    wait_ms: wait,
+                    return_on: ReturnOn::Exit,
+                })
                 .await?;
             settled = response.state == ExecState::Exited;
             collected += page_bytes(&response.output);
@@ -867,18 +997,16 @@ impl RemoteProcessExecutor {
                 ExecState::Exited if collected >= budget => {
                     let tail_bytes = budget / 2;
                     let tail = self
-                        .read_page(
-                            handle,
-                            ReadProcessParams {
-                                process_id: process_id.clone(),
-                                after: None,
-                                tail_bytes: Some(tail_bytes),
-                                ack: None,
-                                max_bytes: tail_bytes.min(self.max_read_bytes),
-                                wait_ms: 0,
-                                return_on: ReturnOn::AnyOutput,
-                            },
-                        )
+                        .client
+                        .read_process(&ReadProcessParams {
+                            process_id: process_id.clone(),
+                            after: None,
+                            tail_bytes: Some(tail_bytes),
+                            ack: None,
+                            max_bytes: tail_bytes.min(self.max_read_bytes),
+                            wait_ms: 0,
+                            return_on: ReturnOn::AnyOutput,
+                        })
                         .await?;
                     pages.push(tail.output.clone());
                     break tail;
@@ -889,18 +1017,41 @@ impl RemoteProcessExecutor {
                 ExecState::Running => continue,
             }
         };
-        Ok(output_from_read(handle, budget, pages, last))
+        Ok(output_from_read(
+            handle,
+            budget,
+            std::mem::take(pages),
+            last,
+        ))
     }
+}
 
-    async fn read_page(
-        &self,
-        handle: &ProcessHandle,
-        params: ReadProcessParams,
-    ) -> ProcessExecResult<ReadProcessResponse> {
-        self.client
-            .read_process(&params)
-            .await
-            .map_err(|error| map_handle_error(error, handle))
+fn output_budget(max_output_bytes: Option<u64>) -> u64 {
+    max_output_bytes
+        .unwrap_or(DEFAULT_PROCESS_OUTPUT_BYTES)
+        .max(1)
+}
+
+/// A first wait cut short by the connection. The command has not been seen to end,
+/// and the pages are all that will ever show the output the cursor moved past.
+fn interrupted_output(
+    handle: &ProcessHandle,
+    pid: u32,
+    budget: u64,
+    pages: Vec<OutputPage>,
+) -> ProcessOutput {
+    let shown = ShownOutput::from_pages(merge_pages(pages), None).trim_to(budget);
+    let (stdout, stderr) = split_output(&shown);
+    ProcessOutput {
+        status: ProcessStatus::Running,
+        handle: Some(handle.clone()),
+        pid: Some(pid),
+        exit_code: None,
+        failure: Some(WAIT_INTERRUPTED_NOTE.to_owned()),
+        stdout,
+        stderr,
+        omitted_bytes: shown.omitted_bytes(),
+        leftover_processes: Vec::new(),
     }
 }
 
@@ -1440,6 +1591,237 @@ mod tests {
         assert_eq!(sent[2].0, "process/write");
         assert_eq!(sent[2].1["closeInput"], true);
         assert_eq!(sent[3].0, "process/read");
+    }
+
+    /// Every request a scripted connection has seen, as method and params.
+    type SeenRequests = Arc<Mutex<Vec<(String, Value)>>>;
+
+    /// Answers with the next scripted result, which may be a failure of the
+    /// connection itself, and holds `process/start` until `release_start` fires.
+    fn over_a_failing_connection(
+        replies: impl IntoIterator<Item = Result<Value, ClientError>>,
+        release_start: Arc<tokio::sync::Semaphore>,
+    ) -> (DataClient, SeenRequests) {
+        let replies = Arc::new(Mutex::new(replies.into_iter().collect::<VecDeque<_>>()));
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let seen = requests.clone();
+        let client = DataClient::in_process(initialize(all()), move |request: Request| {
+            let replies = replies.clone();
+            let seen = seen.clone();
+            let release_start = release_start.clone();
+            Box::pin(async move {
+                seen.lock()
+                    .unwrap()
+                    .push((request.method.clone(), request.params.clone()));
+                if request.method == "process/start" {
+                    release_start.acquire().await.unwrap().forget();
+                }
+                let reply = replies
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .unwrap_or_else(|| panic!("unscripted request {}", request.method));
+                reply.map(|value| Response::success(request.id, &value))
+            })
+        });
+        (client, requests)
+    }
+
+    fn released() -> Arc<tokio::sync::Semaphore> {
+        Arc::new(tokio::sync::Semaphore::new(1))
+    }
+
+    fn methods(requests: &Mutex<Vec<(String, Value)>>) -> Vec<String> {
+        requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(method, _)| method.clone())
+            .collect()
+    }
+
+    /// Spawned cleanup runs when the test yields; give it long enough to finish.
+    async fn let_spawned_work_finish() {
+        for _ in 0..32 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_lost_connection_during_the_first_wait_returns_the_handle_and_the_pages_read() {
+        for lost in [
+            ClientError::Closed {
+                code: None,
+                reason: None,
+            },
+            ClientError::Transport("connection reset".to_owned()),
+        ] {
+            let (client, requests) = over_a_failing_connection(
+                [
+                    Ok(json!({"pid": 77})),
+                    Ok(read_response(
+                        json!([{"offset": 0, "stream": "stdout", "data": "b2sK"}]),
+                        "running",
+                        3,
+                        3,
+                    )),
+                    Err(lost),
+                ],
+                released(),
+            );
+            let process = RemoteEnvironmentConnection::new(client)
+                .process_executor()
+                .unwrap();
+
+            let output = process
+                .run_process(ProcessRequest::argv(["./deploy.sh"]))
+                .await
+                .expect("a lost connection is not a failed command");
+            let_spawned_work_finish().await;
+
+            assert_eq!(output.status, ProcessStatus::Running);
+            assert_eq!(output.pid, Some(77), "from the start response");
+            assert_eq!(
+                output.stdout.bytes, b"ok\n",
+                "the daemon will not resend it"
+            );
+            assert_eq!(output.exit_code, None);
+            assert_eq!(output.failure.as_deref(), Some(WAIT_INTERRUPTED_NOTE));
+            let process_id = requests.lock().unwrap()[0].1["processId"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            assert_eq!(output.handle, Some(ProcessHandle::new(process_id)));
+            assert_eq!(
+                methods(&requests),
+                vec!["process/start", "process/read", "process/read"],
+                "a command with a handle is not terminated"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_read_refused_by_the_daemon_stops_the_command_before_returning() {
+        let (client, requests) = over_a_failing_connection(
+            [
+                Ok(json!({"pid": 77})),
+                Err(ClientError::Protocol(ProtocolError::internal(
+                    "read failed",
+                ))),
+                Ok(json!({"running": true})),
+            ],
+            released(),
+        );
+        let process = RemoteEnvironmentConnection::new(client)
+            .process_executor()
+            .unwrap();
+
+        let error = process
+            .run_process(ProcessRequest::argv(["./deploy.sh"]))
+            .await
+            .expect_err("a refused read is a failure");
+
+        assert!(matches!(error, ProcessError::Failed { .. }));
+        // Checked with no yield: the caller closes the connection right after.
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3, "{requests:?}");
+        assert_eq!(requests[2].0, "process/terminate");
+        assert_eq!(requests[2].1["signal"], "terminate");
+        assert_eq!(requests[2].1["processId"], requests[0].1["processId"]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_failed_start_and_a_finished_command_send_no_terminate() {
+        let (client, requests) = over_a_failing_connection(
+            [Err(ClientError::Protocol(ProtocolError::internal(
+                "spawn failed",
+            )))],
+            released(),
+        );
+        let process = RemoteEnvironmentConnection::new(client)
+            .process_executor()
+            .unwrap();
+        process
+            .run_process(ProcessRequest::argv(["./deploy.sh"]))
+            .await
+            .expect_err("the start failed");
+        let_spawned_work_finish().await;
+        assert_eq!(methods(&requests), vec!["process/start"]);
+
+        let (client, requests) = over_a_failing_connection(
+            [
+                Ok(json!({"pid": 77})),
+                Ok(read_response(json!([]), "exited", 0, 0)),
+            ],
+            released(),
+        );
+        let process = RemoteEnvironmentConnection::new(client)
+            .process_executor()
+            .unwrap();
+        process
+            .run_process(ProcessRequest::argv(["true"]))
+            .await
+            .unwrap();
+        let_spawned_work_finish().await;
+        assert_eq!(methods(&requests), vec!["process/start", "process/read"]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_call_dropped_during_its_start_terminates_only_after_the_start_answers() {
+        let release_start = Arc::new(tokio::sync::Semaphore::new(0));
+        let (client, requests) = over_a_failing_connection(
+            [Ok(json!({"pid": 77})), Ok(json!({"running": true}))],
+            release_start.clone(),
+        );
+        let process = RemoteEnvironmentConnection::new(client)
+            .process_executor()
+            .unwrap();
+        let mut call = Box::pin(process.run_process(ProcessRequest::argv(["./deploy.sh"])));
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(5), &mut call)
+                .await
+                .is_err()
+        );
+        drop(call);
+        let_spawned_work_finish().await;
+        assert_eq!(
+            methods(&requests),
+            vec!["process/start"],
+            "a terminate that overtakes the start would find nothing"
+        );
+
+        release_start.add_permits(1);
+        let_spawned_work_finish().await;
+        assert_eq!(
+            methods(&requests),
+            vec!["process/start", "process/terminate"]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_call_dropped_after_a_failed_start_has_nothing_to_terminate() {
+        let release_start = Arc::new(tokio::sync::Semaphore::new(0));
+        let (client, requests) = over_a_failing_connection(
+            [Err(ClientError::Protocol(ProtocolError::internal(
+                "spawn failed",
+            )))],
+            release_start.clone(),
+        );
+        let process = RemoteEnvironmentConnection::new(client)
+            .process_executor()
+            .unwrap();
+        let mut call = Box::pin(process.run_process(ProcessRequest::argv(["./deploy.sh"])));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(5), &mut call)
+                .await
+                .is_err()
+        );
+        drop(call);
+
+        release_start.add_permits(1);
+        let_spawned_work_finish().await;
+        assert_eq!(methods(&requests), vec!["process/start"]);
     }
 
     #[tokio::test(flavor = "current_thread")]

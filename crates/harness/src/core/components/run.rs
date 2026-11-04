@@ -2,12 +2,13 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::core::components::context::{EntryGuard, entry_guard};
 use crate::{
-    ActiveToolBatch, ApprovalId, ApprovalRecord, ApprovalStatus, BlobRef, CompletedToolBatch,
-    ContextEntryId, ContextEntryInput, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins,
-    CoreAgentState, CoreAgentStatus, DomainError, EventSeq, LlmUsage, PlanningError, PromiseId,
-    RunConfig, RunId, SteeringId, SubmissionId, ToolBatchId, ToolCallId, TurnId, TurnOutcome,
-    TurnState, TurnStatus,
+    ActiveToolBatch, ApprovalId, ApprovalRecord, ApprovalStatus, AwaitOutcome, BlobRef,
+    CompletedToolBatch, ContextEntryId, ContextEntryInput, CoreAgentEvent, CoreAgentEventProposal,
+    CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError, EventSeq, LlmFinish, LlmUsage,
+    PlanningError, PromiseId, RunConfig, RunId, SteeringId, SubmissionId, ToolBatchId, ToolCallId,
+    TurnId, TurnOutcome, TurnState, TurnStatus,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +23,7 @@ pub enum Event {
     SteeringAccepted {
         run_id: RunId,
         steering_id: SteeringId,
+        submission_id: SubmissionId,
         input: Vec<ContextEntryInput>,
         /// Who asked, as the API boundary attributed the request.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -47,7 +49,8 @@ pub enum Event {
     /// Forced terminal transition for a wedged run: unlike `Cancelled`, this
     /// applies from any non-terminal status and does not require open turns
     /// or tool batches to be drained first. Emitted by watchdog/force-close
-    /// recovery paths, never by normal planning.
+    /// recovery paths, never by normal planning. The watchdog's admission answers
+    /// open tool calls in the same append, because the session lives on.
     ForceCancelled {
         run_id: RunId,
     },
@@ -67,6 +70,9 @@ pub struct AcceptedRun {
     pub submission_id: Option<SubmissionId>,
     pub source: RunSource,
     pub run_config: RunConfig,
+    /// As on [`AcceptedRunEvent`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
     pub config_revision: u64,
     /// Durable event-log position and wall-clock time of acceptance. These
     /// metadata facts let current-state readers page runs without replaying
@@ -80,6 +86,7 @@ pub struct AcceptedRun {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteeringBatch {
     pub steering_id: SteeringId,
+    pub submission_id: SubmissionId,
     pub input: Vec<ContextEntryInput>,
     pub entry_ids: Vec<ContextEntryId>,
     pub consumed_by_turn_id: Option<TurnId>,
@@ -96,6 +103,9 @@ pub struct ActiveRun {
     pub input_entry_ids: Vec<ContextEntryId>,
     pub input_consumed_by_turn_id: Option<TurnId>,
     pub run_config: RunConfig,
+    /// As on [`AcceptedRunEvent`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
     pub config_revision: u64,
     pub first_seq: EventSeq,
     pub accepted_at_ms: u64,
@@ -106,19 +116,25 @@ pub struct ActiveRun {
     pub usage: Option<LlmUsage>,
     pub steering: Vec<SteeringBatch>,
     pub turns: BTreeMap<TurnId, TurnState>,
+    /// Turns this run has started. Counted apart from `turns`, which may lose
+    /// settled records, because a turn limit has to see every one of them.
+    #[serde(default)]
+    pub turn_count: u32,
+    /// This run has made its one compaction attempt at the structural entry limit,
+    /// and has not been back under that limit since.
+    #[serde(default)]
+    pub entry_guard_attempted: bool,
     pub active_turn_id: Option<TurnId>,
     pub active_tool_batch_id: Option<ToolBatchId>,
-    /// Single-use approval records owned by this run. They disappear from
-    /// materialized state with the active run; their immutable audit trail
-    /// remains in the session event log.
+    /// Single-use approval records owned by this run. A decided one leaves
+    /// materialized state at the next turn or batch boundary, and the rest with the
+    /// active run; their immutable audit trail remains in the session event log.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub approvals: BTreeMap<ApprovalId, ApprovalRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parked_tool_batch: Option<ParkedToolBatch>,
     pub tool_batches: BTreeMap<ToolBatchId, ActiveToolBatch>,
     pub completed_tool_batches: BTreeMap<ToolBatchId, CompletedToolBatch>,
-    pub output: Option<crate::ContentRef>,
-    pub failure: Option<RunFailure>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notify_on_terminal: Vec<RunTerminalNotifyIntent>,
 }
@@ -127,7 +143,7 @@ pub struct ActiveRun {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextRecoveryState {
     pub attempts: u32,
-    pub recovered_turn_id: Option<TurnId>,
+    pub recovery_attempted_turn_id: Option<TurnId>,
 }
 
 impl ActiveRun {
@@ -136,13 +152,20 @@ impl ActiveRun {
             .values()
             .filter(|record| record.status == ApprovalStatus::Pending)
     }
+
+    /// The retained steering batch accepted under this submission id.
+    pub fn steering_for_submission(&self, submission_id: &SubmissionId) -> Option<&SteeringBatch> {
+        self.steering
+            .iter()
+            .find(|steering| steering.submission_id == *submission_id)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum RunStatus {
-    Active,
+    Running,
     Parked,
     Cancelling,
     Completed,
@@ -157,9 +180,8 @@ pub struct RunRecord {
     pub submission_id: Option<SubmissionId>,
     /// Digest of the accepted submission payload, kept after the full input is
     /// dropped so duplicate submissions can still be checked for equality
-    /// against completed runs.
-    #[serde(default)]
-    pub submission_digest: Option<u64>,
+    /// against finished runs.
+    pub submission_digest: u64,
     /// Accepted source retained as scalar metadata and CAS references only;
     /// resolved content never enters reducer state.
     pub source: RunSource,
@@ -168,7 +190,7 @@ pub struct RunRecord {
     pub accepted_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at_ms: Option<u64>,
-    pub completed_at_ms: u64,
+    pub finished_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<LlmUsage>,
     pub output: Option<crate::ContentRef>,
@@ -228,26 +250,18 @@ pub struct JoinedWorkflowCall {
     pub promise_id: PromiseId,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WakeReason {
-    Cancelled,
-    Timeout,
-    Terminal,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResumeToolBatchCommand {
+pub struct UnparkToolBatchCommand {
     pub run_id: RunId,
     pub batch_id: ToolBatchId,
-    pub claim: WakeReason,
+    pub claim: AwaitOutcome,
     pub claim_observed_at_ms: u64,
-    pub output: ToolBatchResumeOutput,
+    pub output: ToolBatchUnparkOutput,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
-pub enum ToolBatchResumeOutput {
+pub enum ToolBatchUnparkOutput {
     AwaitTool {
         result_ref: BlobRef,
         /// Context the awaited results supply beyond the combined result
@@ -292,6 +306,12 @@ pub struct AcceptedRunEvent {
     pub submission_id: Option<SubmissionId>,
     pub source: RunSource,
     pub run_config: RunConfig,
+    /// The input capacity the provider reported for this run's model when the run
+    /// was prepared. A fact about the run rather than a request from its caller, so it
+    /// sits beside `run_config` and out of submission identity. Absent when nothing was
+    /// reported or the session declares a limit for that model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
     pub config_revision: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notify_on_terminal: Vec<RunTerminalNotifyIntent>,
@@ -305,6 +325,10 @@ pub struct RunRequestCommand {
     pub submission_id: Option<SubmissionId>,
     pub source: RunRequestSource,
     pub run_config: RunConfig,
+    /// As on [`AcceptedRunEvent`]. Run preparation sets this, so a retried submission
+    /// that finds a different answer from the provider is still the same submission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
     /// Cross-session notify-intents recorded at admission: on this run's
     /// terminal event, signal each holder workflow with its token (the
     /// holder-side promise id). The edge event is the subscription.
@@ -315,10 +339,9 @@ pub struct RunRequestCommand {
     pub requested_by: Option<crate::Attribution>,
 }
 
-/// One log-backed notify-intent attached to a run. Replaces the former
-/// `subscribe_run` machinery: recorded by the event that creates the edge
-/// (spawn admission), rebuilt with the run at bootstrap, including after the
-/// observed session's own continue-as-new.
+/// One log-backed notify-intent attached to a run: recorded by the event that
+/// creates the edge (spawn admission), rebuilt with the run at bootstrap,
+/// including after the observed session's own continue-as-new.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunTerminalNotifyIntent {
     pub holder_workflow_id: String,
@@ -363,35 +386,124 @@ impl RunSource {
             }
         }
     }
-
-    pub fn matches_message_input(&self, requested: &[ContextEntryInput]) -> bool {
-        match self {
-            Self::Input { input } => input == requested,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunFailureKind {
+    /// The context no longer fits the model, or holds too many entries to keep
+    /// running, and compaction did not bring it down.
+    ContextFailure,
+    /// The provider or the path to it failed the generation.
     ModelFailure,
     /// The provider rejected the request as invalid or too large. The
     /// failure message is the provider's own text.
     RequestRejected,
-    ToolFailure,
-    ContextFailure,
+    /// The provider cut the generation off at its output cap.
+    OutputTruncated,
+    /// The provider refused the generation or filtered its content.
+    ContentFiltered,
+    /// The run needed another turn and its turn limit allowed none.
     LimitExceeded,
-    Cancelled,
+    /// The harness refused a step of this run because of what the session holds.
+    /// The message is the refusal's own text. One run was lost to it, so this
+    /// usually means a harness bug or a configuration only the run could reveal.
     Internal,
 }
 
 pub type RunEvent = Event;
 
+/// Failure message of a run the harness refused when its real message could not
+/// be stored. Every runtime must guarantee the matching blob exists via
+/// [`crate::storage::ensure_harness_blobs`].
+pub const RUN_INTERNAL_FAILURE_CONTENT: &str =
+    "the run failed on an internal error and its message could not be recorded\n";
+
+pub fn run_internal_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(RUN_INTERNAL_FAILURE_CONTENT.as_bytes())
+}
+
+/// Failure message of a run stopped by its turn limit. Every runtime must
+/// guarantee the matching blob exists via [`crate::storage::ensure_harness_blobs`].
+pub const TURN_LIMIT_FAILURE_CONTENT: &str =
+    "the run used every turn its maxTurns limit allows before the model finished\n";
+
+pub fn turn_limit_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(TURN_LIMIT_FAILURE_CONTENT.as_bytes())
+}
+
+/// Failure message of a run whose context would not fit when no message came with
+/// the overflow: compaction was disabled, had nothing left to remove, or ran out of
+/// attempts or failed.
+pub const CONTEXT_LIMIT_FAILURE_CONTENT: &str =
+    "the context is larger than the model accepts and compaction did not make it fit\n";
+
+pub fn context_limit_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(CONTEXT_LIMIT_FAILURE_CONTENT.as_bytes())
+}
+
+/// Failure message of a run stopped at the structural limit on active entries.
+pub const ENTRY_GUARD_FAILURE_CONTENT: &str = "the session holds too many context entries to keep running and compaction did not bring them down; enable compaction or run it for this session\n";
+
+pub fn entry_guard_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(ENTRY_GUARD_FAILURE_CONTENT.as_bytes())
+}
+
+/// Failure message of a generation the provider cancelled while nobody had asked
+/// for that. A cancel someone asked for ends the run as cancelled, not failed.
+pub const PROVIDER_CANCELLED_FAILURE_CONTENT: &str =
+    "the provider cancelled the generation before it finished\n";
+
+pub fn provider_cancelled_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(PROVIDER_CANCELLED_FAILURE_CONTENT.as_bytes())
+}
+
+/// Failure message of a truncated generation whose result carried none.
+pub const OUTPUT_TRUNCATED_FAILURE_CONTENT: &str =
+    "the provider cut the response off at its output limit\n";
+
+pub fn output_truncated_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(OUTPUT_TRUNCATED_FAILURE_CONTENT.as_bytes())
+}
+
+/// Failure message of a filtered generation whose result carried none.
+pub const CONTENT_FILTERED_FAILURE_CONTENT: &str =
+    "the provider refused the request or filtered the response\n";
+
+pub fn content_filtered_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(CONTENT_FILTERED_FAILURE_CONTENT.as_bytes())
+}
+
+/// Terminal run records state keeps. Older ones are read back from the log, and a
+/// retried submission is only recognized against these.
+pub const MAX_RETAINED_TERMINAL_RUNS: usize = 256;
+
+/// Steering batches an active run keeps. A batch that has not reached a turn stays
+/// whatever its age.
+pub const MAX_RETAINED_STEERING_BATCHES: usize = 64;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RunQueueState {
+#[serde(default)]
+pub struct RunsState {
     pub active: Option<ActiveRun>,
     pub queued: Vec<AcceptedRun>,
-    pub completed: Vec<RunRecord>,
+    /// Most recently terminal last. Run ids need not be in order: a queued run can
+    /// be cancelled while an older one is still active.
+    pub finished: Vec<RunRecord>,
+    /// The highest run id dropped from `finished`, so readers know the log holds
+    /// runs that state no longer does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pruned_through: Option<RunId>,
+}
+
+impl RunsState {
+    /// The run reached a terminal state and only the log still holds it.
+    pub fn is_pruned(&self, run_id: RunId) -> bool {
+        self.pruned_through.is_some_and(|through| run_id <= through)
+            && !self.finished.iter().any(|run| run.run_id == run_id)
+            && !self.queued.iter().any(|run| run.run_id == run_id)
+            && self.active.as_ref().is_none_or(|run| run.run_id != run_id)
+    }
 }
 
 pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {
@@ -426,10 +538,28 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
                     }),
                 )]);
             }
-            if active_run.status == RunStatus::Active
+            if active_run.status == RunStatus::Running
                 && let Some(proposal) = terminal_run_proposal(state, active_run)?
             {
                 return Ok(vec![proposal]);
+            }
+            // Accepted steering gets written down first, as for any failing run.
+            if entry_guard(state, active_run) == EntryGuard::FailRun
+                && !has_unmaterialized_steering(active_run)
+            {
+                return Ok(vec![CoreAgentEventProposal::new(
+                    CoreAgentJoins {
+                        run_id: Some(active_run.run_id),
+                        ..CoreAgentJoins::default()
+                    },
+                    CoreAgentEvent::Run(Event::Failed {
+                        run_id: active_run.run_id,
+                        failure: RunFailure {
+                            kind: RunFailureKind::ContextFailure,
+                            message_ref: Some(entry_guard_failure_ref()),
+                        },
+                    }),
+                )]);
             }
         }
         return Ok(Vec::new());
@@ -451,15 +581,58 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
     Ok(vec![CoreAgentEventProposal::new(joins, kind)])
 }
 
+/// The run has started every turn it may: its own limit if it set one, otherwise
+/// the session's. With neither set a run is unbounded.
+pub(crate) fn turn_limit_reached(state: &CoreAgentState, active_run: &ActiveRun) -> bool {
+    active_run
+        .run_config
+        .max_turns
+        .or_else(|| {
+            state
+                .lifecycle
+                .config
+                .as_ref()
+                .and_then(|config| config.limits.max_turns)
+        })
+        .is_some_and(|limit| active_run.turn_count >= limit)
+}
+
+/// The failure of a run that needs another turn and has none left. A completed
+/// tool-call turn whose batch has not started is left to the tooling planner, so
+/// every call has its result before the run ends.
+fn turn_limit_failure(state: &CoreAgentState, active_run: &ActiveRun) -> Option<CoreAgentEvent> {
+    (turn_limit_reached(state, active_run) && !has_unstarted_tool_call_turn(active_run)).then(
+        || {
+            CoreAgentEvent::Run(Event::Failed {
+                run_id: active_run.run_id,
+                failure: RunFailure {
+                    kind: RunFailureKind::LimitExceeded,
+                    message_ref: Some(turn_limit_failure_ref()),
+                },
+            })
+        },
+    )
+}
+
 /// Steering the model has not seen yet: a batch no turn has consumed. A
 /// final-output turn does not end a run while such steering exists — the
 /// run gets one more turn that carries it, so "steer" never silently does
-/// nothing on a single-turn answer.
+/// nothing on a single-turn answer. With no turn left the run fails at its limit
+/// instead, and the steering reaches the next run.
 pub(crate) fn has_unconsumed_steering(active_run: &ActiveRun) -> bool {
     active_run
         .steering
         .iter()
         .any(|steering| steering.consumed_by_turn_id.is_none())
+}
+
+/// Steering accepted but not yet in context. Unlike [`has_unconsumed_steering`],
+/// this is about the record and not the model: entries in context survive the run.
+pub(crate) fn has_unmaterialized_steering(active_run: &ActiveRun) -> bool {
+    active_run
+        .steering
+        .iter()
+        .any(|steering| steering.entry_ids.len() < steering.input.len())
 }
 
 fn terminal_run_proposal(
@@ -470,37 +643,30 @@ fn terminal_run_proposal(
         return Ok(None);
     };
     let kind = match (&turn.status, turn.outcome.as_ref()) {
-        (
-            TurnStatus::Completed,
-            Some(TurnOutcome::ContextUpdateRequired | TurnOutcome::ContextLimit { .. }),
-        ) if !state.context.compaction.is_pending()
-            && active_run.context_recovery.recovered_turn_id != Some(turn.turn_id)
-            && (state.lifecycle.config.as_ref().is_none_or(|config| {
-                matches!(
-                    config.context.compaction,
-                    None | Some(crate::CompactionPolicy::Disabled)
-                )
-            }) || active_run.context_recovery.attempts
-                >= crate::core::components::context::MAX_CONTEXT_RECOVERY_ATTEMPTS
-                || crate::core::components::context::standalone_prefix_ids(state).is_empty()) =>
+        (TurnStatus::Completed, Some(TurnOutcome::ContextLimit { failure_ref }))
+            if !state.context.compaction.is_pending()
+                && active_run.context_recovery.recovery_attempted_turn_id != Some(turn.turn_id)
+                && (state.lifecycle.config.as_ref().is_none_or(|config| {
+                    !crate::core::components::context::compaction_enabled(config)
+                }) || active_run.context_recovery.attempts
+                    >= crate::core::components::context::MAX_CONTEXT_RECOVERY_ATTEMPTS
+                    || crate::core::components::context::standalone_prefix_ids(state)
+                        .is_empty()) =>
         {
             Some(CoreAgentEvent::Run(Event::Failed {
                 run_id: active_run.run_id,
                 failure: RunFailure {
                     kind: RunFailureKind::ContextFailure,
-                    message_ref: match &turn.outcome {
-                        Some(TurnOutcome::ContextLimit { failure_ref }) => failure_ref
-                            .clone()
-                            .or_else(|| Some(crate::llm_runtime_boundary_failure_ref())),
-                        _ => Some(crate::llm_runtime_boundary_failure_ref()),
-                    },
+                    message_ref: failure_ref
+                        .clone()
+                        .or_else(|| Some(context_limit_failure_ref())),
                 },
             }))
         }
         (TurnStatus::Completed, Some(TurnOutcome::FinalOutput { .. }))
             if has_unconsumed_steering(active_run) =>
         {
-            None
+            turn_limit_failure(state, active_run)
         }
         (TurnStatus::Completed, Some(TurnOutcome::FinalOutput { output })) => {
             Some(CoreAgentEvent::Run(Event::Completed {
@@ -509,11 +675,27 @@ fn terminal_run_proposal(
             }))
         }
         (TurnStatus::Failed, Some(TurnOutcome::Failed { failure_ref })) => {
+            // The finish names the cause whichever status the adapter reported it with.
+            let finish = turn.facts.as_ref().map(|facts| &facts.finish);
+            let (kind, fallback) = match finish {
+                Some(LlmFinish::Length) => (
+                    RunFailureKind::OutputTruncated,
+                    output_truncated_failure_ref(),
+                ),
+                Some(LlmFinish::ContentFilter) => (
+                    RunFailureKind::ContentFiltered,
+                    content_filtered_failure_ref(),
+                ),
+                _ => (
+                    RunFailureKind::ModelFailure,
+                    crate::llm_runtime_boundary_failure_ref(),
+                ),
+            };
             Some(CoreAgentEvent::Run(Event::Failed {
                 run_id: active_run.run_id,
                 failure: RunFailure {
-                    kind: RunFailureKind::ModelFailure,
-                    message_ref: failure_ref.clone(),
+                    kind,
+                    message_ref: Some(failure_ref.clone().unwrap_or(fallback)),
                 },
             }))
         }
@@ -522,16 +704,21 @@ fn terminal_run_proposal(
                 run_id: active_run.run_id,
                 failure: RunFailure {
                     kind: RunFailureKind::RequestRejected,
-                    message_ref: failure_ref.clone(),
+                    message_ref: failure_ref
+                        .clone()
+                        .or_else(|| Some(crate::llm_runtime_boundary_failure_ref())),
                 },
             }))
         }
+        // Only an active run gets here: a run being cancelled ends as cancelled
+        // before this planner looks. So nobody asked for this, and run status alone
+        // keeps saying whether someone cancelled.
         (TurnStatus::Cancelled, Some(TurnOutcome::Cancelled)) => {
             Some(CoreAgentEvent::Run(Event::Failed {
                 run_id: active_run.run_id,
                 failure: RunFailure {
-                    kind: RunFailureKind::Cancelled,
-                    message_ref: None,
+                    kind: RunFailureKind::ModelFailure,
+                    message_ref: Some(provider_cancelled_failure_ref()),
                 },
             }))
         }
@@ -539,16 +726,14 @@ fn terminal_run_proposal(
             TurnStatus::Completed,
             Some(
                 TurnOutcome::ToolCallsQueued
-                | TurnOutcome::ContextUpdateRequired
                 | TurnOutcome::ContextLimit { .. }
                 | TurnOutcome::ApprovalsRequested,
             ),
-        ) => None,
+        ) => turn_limit_failure(state, active_run),
         (
             TurnStatus::Failed | TurnStatus::Cancelled,
             Some(
                 TurnOutcome::ToolCallsQueued
-                | TurnOutcome::ContextUpdateRequired
                 | TurnOutcome::ContextLimit { .. }
                 | TurnOutcome::ApprovalsRequested,
             ),
@@ -584,6 +769,16 @@ fn terminal_run_proposal(
         _ => None,
     };
 
+    // The API acknowledged this steering, so a failing run writes it down first and
+    // the next run sees it as history. The context planner runs next and no turn
+    // starts in between. Only a cancelled run drops it, which never comes through
+    // here: the caller asked for this to stop.
+    if matches!(&kind, Some(CoreAgentEvent::Run(Event::Failed { .. })))
+        && has_unmaterialized_steering(active_run)
+    {
+        return Ok(None);
+    }
+
     Ok(kind.map(|kind| {
         CoreAgentEventProposal::new(
             CoreAgentJoins {
@@ -597,24 +792,30 @@ fn terminal_run_proposal(
 }
 
 /// True when a completed tool-call turn has no tool batch yet (active or
-/// completed); the tooling planner owns the next step for that run.
-fn has_unstarted_tool_call_turn(active_run: &ActiveRun) -> bool {
-    active_run.turns.iter().any(|(turn_id, turn)| {
-        turn.status == TurnStatus::Completed
-            && turn.outcome == Some(TurnOutcome::ToolCallsQueued)
-            && turn
-                .facts
-                .as_ref()
-                .is_some_and(|facts| !facts.tool_calls.is_empty())
-            && !active_run
-                .tool_batches
-                .values()
-                .any(|batch| batch.turn_id == *turn_id)
-            && !active_run
-                .completed_tool_batches
-                .values()
-                .any(|batch| batch.turn_id == *turn_id)
-    })
+/// completed); the tooling planner owns the next step for that run. No later turn
+/// can start until that batch exists, so only the latest turn can be in this state.
+pub(crate) fn has_unstarted_tool_call_turn(active_run: &ActiveRun) -> bool {
+    active_run
+        .turns
+        .iter()
+        .next_back()
+        .is_some_and(|(turn_id, turn)| {
+            turn.status == TurnStatus::Completed
+                && turn.outcome == Some(TurnOutcome::ToolCallsQueued)
+                && turn
+                    .facts
+                    .as_ref()
+                    .is_some_and(|facts| !facts.tool_calls.is_empty())
+                && !active_run
+                    .tool_batches
+                    .values()
+                    .any(|batch| batch.turn_id == *turn_id)
+                && !active_run
+                    .completed_tool_batches
+                    .values()
+                    .next_back()
+                    .is_some_and(|batch| batch.turn_id == *turn_id)
+        })
 }
 
 pub(crate) fn latest_turn_is_terminal_run_outcome(
@@ -637,6 +838,7 @@ pub(crate) fn apply_event(
                 submission_id,
                 source,
                 run_config,
+                input_limit_tokens,
                 config_revision,
                 notify_on_terminal,
                 requested_by: _,
@@ -668,6 +870,7 @@ pub(crate) fn apply_event(
                 submission_id: submission_id.clone(),
                 source: source.clone(),
                 run_config: run_config.clone(),
+                input_limit_tokens: *input_limit_tokens,
                 config_revision: *config_revision,
                 first_seq: seq,
                 accepted_at_ms: observed_at_ms,
@@ -703,13 +906,14 @@ pub(crate) fn apply_event(
             state.runs.active = Some(ActiveRun {
                 context_recovery: Default::default(),
                 run_id: *run_id,
-                status: RunStatus::Active,
+                status: RunStatus::Running,
                 submission_id: queued.submission_id,
                 source: queued.source,
                 notify_on_terminal: queued.notify_on_terminal,
                 input_entry_ids: Vec::new(),
                 input_consumed_by_turn_id: None,
                 run_config: queued.run_config,
+                input_limit_tokens: queued.input_limit_tokens,
                 config_revision: queued.config_revision,
                 first_seq: queued.first_seq,
                 accepted_at_ms: queued.accepted_at_ms,
@@ -717,20 +921,21 @@ pub(crate) fn apply_event(
                 usage: None,
                 steering: Vec::new(),
                 turns: BTreeMap::new(),
+                turn_count: 0,
+                entry_guard_attempted: false,
                 active_turn_id: None,
                 active_tool_batch_id: None,
                 approvals: BTreeMap::new(),
                 parked_tool_batch: None,
                 tool_batches: BTreeMap::new(),
                 completed_tool_batches: BTreeMap::new(),
-                output: None,
-                failure: None,
             });
             Ok(())
         }
         Event::SteeringAccepted {
             run_id,
             steering_id,
+            submission_id,
             input,
             ..
         } => {
@@ -748,13 +953,14 @@ pub(crate) fn apply_event(
                 )));
             }
             let active_run = active_run_mut(state, *run_id)?;
-            if !matches!(active_run.status, RunStatus::Active | RunStatus::Parked) {
+            if !matches!(active_run.status, RunStatus::Running | RunStatus::Parked) {
                 return Err(DomainError::InvariantViolation(
                     "steering can only be added to active or parked runs".into(),
                 ));
             }
             active_run.steering.push(SteeringBatch {
                 steering_id: *steering_id,
+                submission_id: submission_id.clone(),
                 input: input.clone(),
                 entry_ids: Vec::new(),
                 consumed_by_turn_id: None,
@@ -764,7 +970,7 @@ pub(crate) fn apply_event(
         }
         Event::CancellationRequested { run_id, .. } => {
             let active_run = active_run_mut(state, *run_id)?;
-            if !matches!(active_run.status, RunStatus::Active | RunStatus::Parked) {
+            if !matches!(active_run.status, RunStatus::Running | RunStatus::Parked) {
                 return Err(DomainError::InvariantViolation(
                     "only active or parked runs can request cancellation".into(),
                 ));
@@ -820,7 +1026,7 @@ pub(crate) fn apply_event(
             };
             if !matches!(
                 active_run.status,
-                RunStatus::Active | RunStatus::Parked | RunStatus::Cancelling
+                RunStatus::Running | RunStatus::Parked | RunStatus::Cancelling
             ) {
                 return Err(DomainError::InvariantViolation(
                     "only non-terminal runs can be force-cancelled".into(),
@@ -849,11 +1055,12 @@ pub(crate) fn apply_event(
                 )));
             };
             let queued = state.runs.queued.remove(position);
-            let submission_digest = queued
-                .submission_id
-                .as_ref()
-                .map(|_| submission_digest_for_accepted_run(&queued));
-            state.runs.completed.push(RunRecord {
+            let submission_digest = request_run_submission_digest(
+                &source_request_equivalent(&queued.source),
+                &queued.run_config,
+                &queued.notify_on_terminal,
+            );
+            state.runs.finished.push(RunRecord {
                 run_id: queued.run_id,
                 status: RunStatus::Cancelled,
                 submission_id: queued.submission_id,
@@ -863,14 +1070,131 @@ pub(crate) fn apply_event(
                 terminal_seq: seq,
                 accepted_at_ms: queued.accepted_at_ms,
                 started_at_ms: None,
-                completed_at_ms: observed_at_ms,
+                finished_at_ms: observed_at_ms,
                 usage: None,
                 output: None,
                 failure: None,
                 notify_on_terminal: queued.notify_on_terminal,
             });
+            prune_terminal_run_records(&mut state.runs);
             Ok(())
         }
+    }
+}
+
+/// Reduced state must not grow with the length of a run or a session, because the
+/// whole of it crosses every continue-as-new. These records are bookkeeping and no
+/// request is built from them, so dropping them changes nothing the model sees. The
+/// log still holds all of it. A turn and its completed batch go together: a tool-call
+/// turn with no batch reads as not yet started.
+pub(crate) fn prune_settled_run_records(run: &mut ActiveRun) {
+    let ActiveRun {
+        turns,
+        tool_batches,
+        completed_tool_batches,
+        ..
+    } = run;
+    let latest = turns.keys().next_back().copied();
+    turns.retain(|turn_id, _| {
+        Some(*turn_id) == latest || tool_batches.values().any(|batch| batch.turn_id == *turn_id)
+    });
+    completed_tool_batches.retain(|_, batch| turns.contains_key(&batch.turn_id));
+
+    crate::core::components::approval::prune_terminal_approvals(run);
+
+    let mut droppable = run
+        .steering
+        .len()
+        .saturating_sub(MAX_RETAINED_STEERING_BATCHES);
+    run.steering.retain(|steering| {
+        let oldest = droppable > 0;
+        droppable = droppable.saturating_sub(1);
+        !oldest || steering.consumed_by_turn_id.is_none()
+    });
+}
+
+/// The session-wide half of pruning, at batch completion and run terminal: no batch
+/// is open at either, and a promise's own terminal event is never one of them.
+pub(crate) fn prune_finished_work(state: &mut CoreAgentState) {
+    crate::core::components::workflow_tool::prune_finished_invocations(state);
+    crate::core::components::promise::prune_terminal_promises(state);
+}
+
+fn prune_terminal_run_records(runs: &mut RunsState) {
+    let excess = runs
+        .finished
+        .len()
+        .saturating_sub(MAX_RETAINED_TERMINAL_RUNS);
+    runs.pruned_through = runs
+        .finished
+        .drain(..excess)
+        .map(|run| run.run_id)
+        .chain(runs.pruned_through)
+        .max();
+}
+
+/// Rebuild a pruned run's terminal record from its entries in the log, as its
+/// accepted, started and terminal events recorded it. `None` for a run that has no
+/// terminal event. Usage was never on those events, so it stays absent here and
+/// [`accumulate_run_usage`] totals it from a whole run.
+pub fn run_record_from_entries(entries: &[crate::CoreAgentEntry]) -> Option<RunRecord> {
+    let mut accepted = None;
+    let mut started_at_ms = None;
+    let mut terminal = None;
+    for entry in entries {
+        let CoreAgentEvent::Run(event) = &entry.event else {
+            continue;
+        };
+        let outcome = match event {
+            Event::Accepted(event) => {
+                accepted = Some((event, entry.position.seq, entry.observed_at_ms));
+                continue;
+            }
+            Event::Started { .. } => {
+                started_at_ms = Some(entry.observed_at_ms);
+                continue;
+            }
+            Event::SteeringAccepted { .. } | Event::CancellationRequested { .. } => continue,
+            Event::Completed { output, .. } => (RunStatus::Completed, output.clone(), None),
+            Event::Failed { failure, .. } => (RunStatus::Failed, None, Some(failure.clone())),
+            Event::Cancelled { .. }
+            | Event::ForceCancelled { .. }
+            | Event::QueuedCancelled { .. } => (RunStatus::Cancelled, None, None),
+        };
+        terminal = Some((outcome, entry.position.seq, entry.observed_at_ms));
+    }
+    let (accepted, first_seq, accepted_at_ms) = accepted?;
+    let ((status, output, failure), terminal_seq, finished_at_ms) = terminal?;
+    Some(RunRecord {
+        run_id: accepted.run_id,
+        status,
+        submission_id: accepted.submission_id.clone(),
+        submission_digest: request_run_submission_digest(
+            &source_request_equivalent(&accepted.source),
+            &accepted.run_config,
+            &accepted.notify_on_terminal,
+        ),
+        source: compact_terminal_source(accepted.source.clone()),
+        first_seq,
+        terminal_seq,
+        accepted_at_ms,
+        started_at_ms,
+        finished_at_ms,
+        usage: None,
+        output,
+        failure,
+        notify_on_terminal: accepted.notify_on_terminal.clone(),
+    })
+}
+
+/// Add what this log entry reports to a run's generation total, for a reader that does
+/// not keep the entries. A compaction during the run counted towards the run's usage in
+/// state, but its events carry no run join, so this total leaves it out.
+pub fn accumulate_run_usage(total: &mut Option<LlmUsage>, entry: &crate::CoreAgentEntry) {
+    if let CoreAgentEvent::Turn(crate::TurnEvent::GenerationCompleted { facts, .. }) = &entry.event
+        && let Some(usage) = &facts.usage
+    {
+        crate::core::components::turn::accumulate_usage(total, usage);
     }
 }
 
@@ -927,24 +1251,22 @@ pub(crate) fn match_existing_run_submission(
             },
         );
     }
-    if let Some(completed) = state
+    if let Some(finished) = state
         .runs
-        .completed
+        .finished
         .iter()
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
-        // Completed runs keep only a digest of their accepted source/config.
-        // A record without a digest cannot be compared and is treated as a
-        // retry, which is the safe behavior for retried clients.
-        return Some(match completed.submission_digest {
-            Some(digest)
-                if digest
-                    != request_run_submission_digest(source, run_config, notify_on_terminal) =>
+        // Finished runs keep only a digest of their accepted source/config.
+        return Some(
+            if finished.submission_digest
+                == request_run_submission_digest(source, run_config, notify_on_terminal)
             {
+                SubmissionMatch::Identical
+            } else {
                 SubmissionMatch::Different
-            }
-            _ => SubmissionMatch::Identical,
-        });
+            },
+        );
     }
     None
 }
@@ -970,14 +1292,6 @@ fn submission_digest_json<T: Serialize>(payload: &T) -> u64 {
         hash = hash.wrapping_mul(FNV_PRIME);
     }
     hash
-}
-
-fn submission_digest_for_accepted_run(run: &AcceptedRun) -> u64 {
-    request_run_submission_digest(
-        &source_request_equivalent(&run.source),
-        &run.run_config,
-        &run.notify_on_terminal,
-    )
 }
 
 pub(crate) fn source_request_equivalent(source: &RunSource) -> RunRequestSource {
@@ -1027,7 +1341,7 @@ fn finish_active_run(
     output: Option<crate::ContentRef>,
     failure: Option<RunFailure>,
     terminal_seq: EventSeq,
-    completed_at_ms: u64,
+    finished_at_ms: u64,
 ) -> Result<(), DomainError> {
     let Some(active_run) = state.runs.active.as_ref() else {
         return Err(DomainError::InvariantViolation("no active run".into()));
@@ -1044,20 +1358,12 @@ fn finish_active_run(
         .active
         .take()
         .expect("active run checked before take");
-    let submission_digest = active_run.submission_id.as_ref().map(|_| {
-        let accepted = AcceptedRun {
-            run_id: active_run.run_id,
-            submission_id: active_run.submission_id.clone(),
-            source: active_run.source.clone(),
-            run_config: active_run.run_config.clone(),
-            config_revision: active_run.config_revision,
-            first_seq: active_run.first_seq,
-            accepted_at_ms: active_run.accepted_at_ms,
-            notify_on_terminal: active_run.notify_on_terminal.clone(),
-        };
-        submission_digest_for_accepted_run(&accepted)
-    });
-    state.runs.completed.push(RunRecord {
+    let submission_digest = request_run_submission_digest(
+        &source_request_equivalent(&active_run.source),
+        &active_run.run_config,
+        &active_run.notify_on_terminal,
+    );
+    state.runs.finished.push(RunRecord {
         run_id: active_run.run_id,
         status,
         submission_id: active_run.submission_id,
@@ -1067,19 +1373,24 @@ fn finish_active_run(
         terminal_seq,
         accepted_at_ms: active_run.accepted_at_ms,
         started_at_ms: active_run.started_at_ms,
-        completed_at_ms,
+        finished_at_ms,
         usage: active_run.usage,
         output,
         failure,
         notify_on_terminal: active_run.notify_on_terminal,
     });
+    prune_terminal_run_records(&mut state.runs);
+    prune_finished_work(state);
     Ok(())
 }
 
 fn compact_terminal_source(mut source: RunSource) -> RunSource {
     let RunSource::Input { input } = &mut source;
     for entry in input {
-        entry.preview = None;
+        // A media entry's preview is small and is the only name its record has.
+        if !crate::media::is_media_content(&entry.content) {
+            entry.preview = None;
+        }
     }
     source
 }

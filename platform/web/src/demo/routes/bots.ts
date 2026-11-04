@@ -1,4 +1,4 @@
-/// Bots: durable event routers over managed sessions, with a small in-page
+/// Bots: durable event routers over controlled sessions, with a small in-page
 /// controller standing in for the Temporal one. The routes mirror the
 /// platform backend's passthroughs to the core `bots/*` API: the
 /// same paths, envelopes, and status codes, over the core wire shapes.
@@ -73,7 +73,7 @@ class BotConfigError extends Error {
 }
 
 function configErrorResponse(c: Context, error: unknown): Response {
-  if (error instanceof BotConfigError) return c.json({ error: error.message, ...(error.modelDefaultSlot ? { kind: "model_default_unset", modelDefaultSlot: error.modelDefaultSlot } : {}) }, error.status);
+  if (error instanceof BotConfigError) return c.json({ error: error.message, ...(error.modelDefaultSlot ? { kind: "modelDefaultUnset", modelDefaultSlot: error.modelDefaultSlot } : {}) }, error.status);
   throw error;
 }
 
@@ -159,7 +159,7 @@ function listItemOf(universe: UniverseState, record: BotRecord): BotListItem {
 }
 
 // ---------------------------------------------------------------------------
-// Managed sessions
+// Controlled sessions
 // ---------------------------------------------------------------------------
 
 function profileInstructions(profile: ProfileDocument | undefined): string | null {
@@ -168,7 +168,7 @@ function profileInstructions(profile: ProfileDocument | undefined): string | nul
   return instructions?.type === "text" && typeof text === "string" ? text : null;
 }
 
-/// A session the bot's controller owns: managed, lifecycle-bound to the
+/// A session the bot's controller owns: controlled, lifecycle-bound to the
 /// controller, configured from the bot's profile.
 function botSessionConfig(universe: UniverseState, bot: BotView): Record<string, unknown> {
   const config = asRecord(universe.profiles.get(bot.profileId)?.config) ?? {};
@@ -181,8 +181,8 @@ function botSession(store: DemoStore, universe: UniverseState, bot: BotView, lab
   const profile = universe.profiles.get(bot.profileId);
   return newSession(store, universe, {
     displayName: `${bot.botId} · ${label}`,
-    managed: true,
-    management: {
+    lifecycleControlled: true,
+    integration: {
       version: 1,
       lifecycleController: { workflowId: `bot:v1:${bot.botId}`, workflowKind: "bot_controller_v1" },
       tools: [],
@@ -222,7 +222,7 @@ function initialState(
 
 interface Target {
   session: SessionRecord;
-  managed: BotSessionSnapshot;
+  controlled: BotSessionSnapshot;
 }
 
 /// Routing key → session id per bot; a keyed session survives rotation
@@ -244,10 +244,10 @@ function sessionsOf(state: BotControllerSnapshot): BotSessionSnapshot[] {
 
 function openSession(universe: UniverseState, sessionId: string | null | undefined): SessionRecord | null {
   const session = sessionId ? universe.sessions.get(sessionId) : undefined;
-  return session && session.view.status !== "closed" ? session : null;
+  return session && session.view.lifecycleStatus !== "closed" ? session : null;
 }
 
-function addManaged(
+function addControlled(
   store: DemoStore,
   universe: UniverseState,
   record: BotRecord,
@@ -255,34 +255,34 @@ function addManaged(
   kind: BotSessionSnapshot["kind"],
 ): Target {
   const session = botSession(store, universe, record.bot, label);
-  const managed: BotSessionSnapshot = {
+  const controlled: BotSessionSnapshot = {
     sessionId: session.view.id,
     label,
     kind,
     busy: false,
     generation: 1,
   };
-  sessionsOf(record.state).push(managed);
-  return { session, managed };
+  sessionsOf(record.state).push(controlled);
+  return { session, controlled };
 }
 
 /// The main session, re-created when it is gone (a closed fixture session).
 function mainSession(store: DemoStore, universe: UniverseState, record: BotRecord): Target {
   const state = record.state;
   const existing = openSession(universe, state.mainSessionId);
-  const managed = sessionsOf(state).find((entry) => entry.kind === "main");
-  if (existing && managed) return { session: existing, managed };
+  const controlled = sessionsOf(state).find((entry) => entry.kind === "main");
+  if (existing && controlled) return { session: existing, controlled };
   const session = botSession(store, universe, record.bot, "main");
   const entry: BotSessionSnapshot = {
     sessionId: session.view.id,
     label: "main",
     kind: "main",
     busy: false,
-    generation: (managed?.generation ?? 0) + 1,
+    generation: (controlled?.generation ?? 0) + 1,
   };
   state.mainSessionId = session.view.id;
   state.sessions = [entry, ...sessionsOf(state).filter((item) => item.kind !== "main")];
-  return { session, managed: entry };
+  return { session, controlled: entry };
 }
 
 function routeKey(
@@ -331,18 +331,18 @@ function resolveTarget(
   const state = record.state;
   const reused = openSession(universe, input.session?.sessionId);
   if (reused && input.session) {
-    let managed = sessionsOf(state).find((entry) => entry.sessionId === reused.view.id);
-    if (!managed) {
-      managed = {
+    let controlled = sessionsOf(state).find((entry) => entry.sessionId === reused.view.id);
+    if (!controlled) {
+      controlled = {
         sessionId: reused.view.id,
         label: input.session.label,
         kind: "perKey",
         busy: false,
         generation: 1,
       };
-      sessionsOf(state).push(managed);
+      sessionsOf(state).push(controlled);
     }
-    return { session: reused, managed };
+    return { session: reused, controlled };
   }
   const trigger = input.trigger;
   let route: BotTriggerRoute | null = trigger?.route ?? null;
@@ -350,16 +350,16 @@ function resolveTarget(
   if (trigger?.kind === "chat" && (route === null || route.policy === "bot")) route = { policy: "perKey", key: null };
   if (route === null || route.policy === "bot") return mainSession(store, universe, record);
   if (route.policy === "perEvent") {
-    return addManaged(store, universe, record, `event ${input.eventId.slice(0, 24)}`, "perEvent");
+    return addControlled(store, universe, record, `event ${input.eventId.slice(0, 24)}`, "perEvent");
   }
   const { key, label } = routeKey(trigger, route, input.payload);
   const map = keyedMap(record);
   const existing = openSession(universe, map.get(key));
-  const managed = existing
+  const controlled = existing
     ? sessionsOf(state).find((entry) => entry.sessionId === existing.view.id)
     : undefined;
-  if (existing && managed) return { session: existing, managed };
-  const target = addManaged(store, universe, record, label, "perKey");
+  if (existing && controlled) return { session: existing, controlled };
+  const target = addControlled(store, universe, record, label, "perKey");
   map.set(key, target.session.view.id);
   return target;
 }
@@ -476,9 +476,9 @@ export function admitBotEvent(
     receivedAtMs: Date.now(),
     documentRef: input.documentRef ?? store.putText(JSON.stringify(document, null, 2)),
     session:
-      target.managed.kind === "main"
+      target.controlled.kind === "main"
         ? null
-        : { sessionId: target.session.view.id, label: target.managed.label },
+        : { sessionId: target.session.view.id, label: target.controlled.label },
     senderBotId: input.senderBotId ?? null,
     hops: input.hops ?? 0,
     inReplyTo: input.inReplyTo ?? null,
@@ -587,7 +587,7 @@ function deliver(
   const state = record.state;
   const session = target.session;
   const deliveryId = store.nextId("delivery");
-  target.managed.lastActiveAtMs = Date.now();
+  target.controlled.lastActiveAtMs = Date.now();
   const active = activeRun(session);
   if (active && whenBusy === "steer") {
     const steered = steerRun(store, session, active.id, prompt, EVENT_ORIGIN);
@@ -626,12 +626,12 @@ function deliver(
   };
   state.activeDeliveries = [...(state.activeDeliveries ?? []), delivery];
   state.pendingDeliveries = (state.pendingDeliveries ?? 0) + 1;
-  state.controllerStatus = "delivering_event";
+  state.controllerStatus = "deliveringEvent";
   setTimeout(() => {
     state.pendingDeliveries = Math.max(0, (state.pendingDeliveries ?? 0) - 1);
     // Archived while waiting (bot closed, session rotated).
     if (event.outcome !== null && event.outcome !== undefined) return;
-    if (session.view.status === "closed") {
+    if (session.view.lifecycleStatus === "closed") {
       removeDelivery(state, deliveryId);
       resolveEvent(record, event, "archived", "session closed before delivery", null, {
         deliveryId,
@@ -641,7 +641,7 @@ function deliver(
     }
     const run = startRun(store, universe, session, { text: prompt, origin: EVENT_ORIGIN });
     delivery.runId = run.id;
-    state.controllerStatus = "delivering_event";
+    state.controllerStatus = "deliveringEvent";
     watchRun(session, run, (finished) => {
       removeDelivery(state, deliveryId);
       if (finished.status === "completed") {
@@ -655,7 +655,7 @@ function deliver(
           usageFor(session, prompt),
         );
       } else {
-        resolveEvent(record, event, "run_failed", `run ${finished.status}`, finished.id, {
+        resolveEvent(record, event, "runFailed", `run ${finished.status}`, finished.id, {
           deliveryId,
           sessionId: session.view.id,
         });
@@ -685,7 +685,7 @@ function abandonDeliveries(record: BotRecord, sessionId: string, detail: string)
 // ---------------------------------------------------------------------------
 
 /// Terminal close: the row first (admission refuses from here on), every
-/// trigger paused as `bot_closed`, pending events archived, every session
+/// trigger paused as `botClosed`, pending events archived, every session
 /// force-closed and recorded.
 function closeBot(universe: UniverseState, record: BotRecord): void {
   const { bot, state } = record;
@@ -698,7 +698,7 @@ function closeBot(universe: UniverseState, record: BotRecord): void {
   for (const trigger of record.triggers.values()) {
     if (trigger.enabled === false) continue;
     trigger.enabled = false;
-    trigger.disabledReason = "bot_closed";
+    trigger.disabledReason = "botClosed";
     trigger.disabledAtMs = at;
     trigger.updatedAtMs = at;
   }
@@ -712,8 +712,8 @@ function closeBot(universe: UniverseState, record: BotRecord): void {
   state.pendingDeliveries = 0;
   state.buffers = [];
   const closed: string[] = [];
-  for (const managed of sessionsOf(state)) {
-    const session = universe.sessions.get(managed.sessionId);
+  for (const controlled of sessionsOf(state)) {
+    const session = universe.sessions.get(controlled.sessionId);
     if (!session) continue;
     closeSession(session, true);
     closed.push(session.view.id);
@@ -724,36 +724,36 @@ function closeBot(universe: UniverseState, record: BotRecord): void {
   state.controllerStatus = "closed";
 }
 
-/// Operator reset of one managed session: the old one closes, a fresh one
+/// Operator reset of one controlled session: the old one closes, a fresh one
 /// takes its place under the same label (and routing key), a generation up.
 function rotateSession(
   store: DemoStore,
   universe: UniverseState,
   record: BotRecord,
-  managed: BotSessionSnapshot,
+  controlled: BotSessionSnapshot,
   config: Record<string, unknown>,
 ): void {
   const state = record.state;
-  const old = universe.sessions.get(managed.sessionId);
+  const old = universe.sessions.get(controlled.sessionId);
   if (old) {
     abandonDeliveries(record, old.view.id, "session rotated");
     closeSession(old, true);
   }
-  const fresh = botSession(store, universe, record.bot, managed.label, config);
+  const fresh = botSession(store, universe, record.bot, controlled.label, config);
   const entry: BotSessionSnapshot = {
     sessionId: fresh.view.id,
-    label: managed.label,
-    kind: managed.kind,
+    label: controlled.label,
+    kind: controlled.kind,
     busy: false,
-    generation: managed.generation + 1,
+    generation: controlled.generation + 1,
   };
   const sessions = sessionsOf(state);
-  const index = sessions.indexOf(managed);
+  const index = sessions.indexOf(controlled);
   if (index >= 0) sessions[index] = entry;
   else sessions.push(entry);
-  if (state.mainSessionId === managed.sessionId) state.mainSessionId = fresh.view.id;
+  if (state.mainSessionId === controlled.sessionId) state.mainSessionId = fresh.view.id;
   const map = keyedMap(record);
-  for (const [key, sessionId] of map) if (sessionId === managed.sessionId) map.set(key, fresh.view.id);
+  for (const [key, sessionId] of map) if (sessionId === controlled.sessionId) map.set(key, fresh.view.id);
 }
 
 // ---------------------------------------------------------------------------
@@ -1144,11 +1144,11 @@ export function botRoutes(store: DemoStore): Hono {
     if (!found) return notFound(c);
     const { universe, record } = found;
     const sessionId = c.req.param("sessionId") ?? "";
-    const managed = sessionsOf(record.state).find((entry) => entry.sessionId === sessionId);
-    if (!managed) return c.json({ error: "session is not managed by this bot" }, 404);
+    const controlled = sessionsOf(record.state).find((entry) => entry.sessionId === sessionId);
+    if (!controlled) return c.json({ error: "session is not controlled by this bot" }, 404);
     if (record.bot.closedAtMs != null) return conflict(c, "bot is closed");
     const config = botSessionConfig(universe, record.bot);
-    setTimeout(() => rotateSession(store, universe, record, managed, config), ROTATE_DELAY_MS);
+    setTimeout(() => rotateSession(store, universe, record, controlled, config), ROTATE_DELAY_MS);
     return c.json({ accepted: true });
   });
 

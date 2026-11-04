@@ -29,7 +29,7 @@ export function transcriptionRoutes(store: DemoStore) {
     const request = JSON.stringify(body.data);
     const existing = [...jobs.values()].find((job) => job.universeId === universe.universe.id && job.key === body.data.idempotencyKey && job.view.createdBy.kind === "actor" && job.view.createdBy.id === store.currentUser.id);
     if (existing) return existing.request === request ? c.json(existing.view) : conflict(c, "Transcription key already used with different audio");
-    if (!universe.modelDefaults.speechToText) return c.json({ error: "Set a speech-to-text default in Models.", kind: "model_default_unset", modelDefaultSlot: "speechToText" }, 400);
+    if (!universe.modelDefaults.speechToText) return c.json({ error: "Set a speech-to-text default in Models.", kind: "modelDefaultUnset", modelDefaultSlot: "speechToText" }, 400);
     if (!store.blobs.has(body.data.audio.blobRef)) return badRequest(c, "Audio blob is missing");
     const transcriptionId = `transcription_${crypto.randomUUID()}`;
     const view: TranscriptionView = { transcriptionId, createdBy: { kind: "actor", id: store.currentUser.id }, audio: body.data.audio,

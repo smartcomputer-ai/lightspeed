@@ -53,7 +53,7 @@ export function ApiKeysPage({ admin: _admin }: { admin: boolean }) {
   if (isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !permissions.can("manage_access")) {
+  if (!universe || !permissions.can("manageAccess")) {
     return <UniverseNotFound slug={slug} />;
   }
 

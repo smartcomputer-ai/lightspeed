@@ -130,8 +130,44 @@ pub fn retrying_openai_responses_client(client: Client) -> Arc<dyn OpenAiRespons
     Arc::new(RetryingOpenAiResponsesClient { client })
 }
 
+/// For suites that drive the harness runner, which builds its own requests:
+/// asks OpenAI to keep nothing and answer without streaming.
+#[allow(dead_code)]
+pub fn unstored_openai_responses_client(client: Client) -> Arc<dyn OpenAiResponsesApi> {
+    Arc::new(UnstoredOpenAiResponsesClient {
+        inner: RetryingOpenAiResponsesClient { client },
+    })
+}
+
 struct RetryingOpenAiResponsesClient {
     client: Client,
+}
+
+struct UnstoredOpenAiResponsesClient {
+    inner: RetryingOpenAiResponsesClient,
+}
+
+#[async_trait]
+impl OpenAiResponsesApi for UnstoredOpenAiResponsesClient {
+    async fn create(
+        &self,
+        mut request: CreateResponseRequest,
+        auth: Option<llm_clients::RequestAuth<'_>>,
+        endpoint: Option<&llm_clients::EndpointOverride>,
+    ) -> Result<ApiResponse<Response>, LlmApiError> {
+        request.store = Some(false);
+        request.stream = Some(false);
+        self.inner.create(request, auth, endpoint).await
+    }
+
+    async fn compact(
+        &self,
+        request: CompactResponseRequest,
+        auth: Option<llm_clients::RequestAuth<'_>>,
+        endpoint: Option<&llm_clients::EndpointOverride>,
+    ) -> Result<ApiResponse<CompactResponse>, LlmApiError> {
+        self.inner.compact(request, auth, endpoint).await
+    }
 }
 
 #[async_trait]

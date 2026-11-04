@@ -19,7 +19,8 @@ pub(crate) async fn read(args: ReadArgs) -> Result<()> {
         false,
         &serde_json::json!({
             "sessionId": session.id, "displayName": session.display_name,
-            "status":session.status, "activeRun":session.active_run.as_ref().map(|run| &run.id),
+            "lifecycleStatus":session.lifecycle_status, "activity":session.activity,
+            "executionFailure":session.execution_failure, "activeRun":session.active_run.as_ref().map(|run| &run.id),
             "activeEnvironment":session.active_environment_id, "configRevision":session.config_revision,
             "metadata":session.metadata, "config":session.config,
         }),

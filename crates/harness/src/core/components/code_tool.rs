@@ -7,14 +7,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AwaitMode, AwaitSpec, BlobRef, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins,
-    CoreAgentState, DomainError, PromiseEvent, PromiseOwnership, PromiseStatus, RunStatus,
-    SessionId, ToolBatchSuspension, ToolCallId, ToolCallStatus, ToolInvocationBatchRequest,
-    ToolInvocationBatchResult, ToolInvocationResult, ToolName, WakeReason, WorkflowToolCompletion,
+    AwaitMode, AwaitOutcome, AwaitSpec, BlobRef, CoreAgentEvent, CoreAgentEventProposal,
+    CoreAgentJoins, CoreAgentState, DomainError, PromiseEvent, PromiseOwnership, PromiseStatus,
+    RunStatus, SessionId, ToolBatchSuspension, ToolCallId, ToolCallStatus, ToolId,
+    ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult, ToolName,
     WorkflowToolInvocation, WorkflowToolInvocationId,
 };
 
-pub const MAX_CODE_TOOL_SCOPES_PER_RUN: usize = 32;
 pub const MAX_CODE_TOOL_CALLS_PER_SCOPE: u32 = 1024;
 pub const MAX_CODE_TOOL_IN_FLIGHT: u32 = 64;
 pub const CODE_TOOL_PROMISE_SLOTS: u64 = crate::MAX_COMPLETION_PROMISES as u64;
@@ -47,7 +46,6 @@ pub(crate) fn interrupt_code_tools_for_run(state: &mut CoreAgentState, run_id: c
             .get_mut(&id)
             .expect("scope was collected above");
         scope.closed = true;
-        scope.cancel_requested = true;
         for call in scope
             .calls
             .values_mut()
@@ -74,7 +72,7 @@ pub(crate) fn interrupt_code_tools_for_run(state: &mut CoreAgentState, run_id: c
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeToolBinding {
-    pub tool_id: ToolName,
+    pub tool_id: ToolId,
     pub tool_name: ToolName,
 }
 
@@ -97,7 +95,7 @@ pub struct CodeToolOrigin {
 pub struct CodeToolCallSpec {
     pub origin: CodeToolOrigin,
     pub binding_id: String,
-    pub tool_id: ToolName,
+    pub tool_id: ToolId,
     pub tool_name: ToolName,
     pub arguments_ref: BlobRef,
 }
@@ -113,7 +111,6 @@ pub struct CodeToolCall {
 /// Durable code tool outcome. Effect carriers are admitted as their own domain
 /// events, and model-context projections do not belong to a code tool caller.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "CodeToolCallResultWire")]
 pub struct CodeToolCallResult {
     pub call_id: ToolCallId,
     pub status: ToolCallStatus,
@@ -127,20 +124,10 @@ pub struct CodeToolCallResult {
     pub output_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
-    // Plain hexadecimal, not a BlobRef: the original activity result need not
-    // be stored. Include every field so changed effects cannot pass as retries.
-    invocation_result_digest: String,
-}
-
-impl CodeToolCallResult {
-    fn matches_invocation_result(&self, result: &ToolInvocationResult) -> bool {
-        self.invocation_result_digest == invocation_result_digest(result)
-    }
 }
 
 impl From<ToolInvocationResult> for CodeToolCallResult {
     fn from(result: ToolInvocationResult) -> Self {
-        let invocation_result_digest = invocation_result_digest(&result);
         Self {
             call_id: result.call_id,
             status: result.status,
@@ -150,42 +137,7 @@ impl From<ToolInvocationResult> for CodeToolCallResult {
             duration_ms: result.duration_ms,
             output_bytes: result.output_bytes,
             truncated: result.truncated,
-            invocation_result_digest,
         }
-    }
-}
-
-fn invocation_result_digest(result: &ToolInvocationResult) -> String {
-    let bytes = serde_json::to_vec(result).expect("tool invocation results are serializable");
-    hex::encode(Sha256::digest(bytes))
-}
-
-/// Read earlier code tool event/snapshot records before discarding their full
-/// context and effects. Compact records already carry the original digest.
-#[derive(Deserialize)]
-struct CodeToolCallResultWire {
-    #[serde(default)]
-    invocation_result_digest: Option<String>,
-    #[serde(flatten)]
-    result: ToolInvocationResult,
-}
-
-impl TryFrom<CodeToolCallResultWire> for CodeToolCallResult {
-    type Error = &'static str;
-
-    fn try_from(wire: CodeToolCallResultWire) -> Result<Self, Self::Error> {
-        let mut result = Self::from(wire.result);
-        if let Some(digest) = wire.invocation_result_digest {
-            if digest.len() != 64
-                || !digest
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            {
-                return Err("invalid code tool invocation result digest");
-            }
-            result.invocation_result_digest = digest;
-        }
-        Ok(result)
     }
 }
 
@@ -208,11 +160,11 @@ pub struct CodeToolScope {
     pub toolset_revision: u64,
     pub spec: CodeToolScopeSpec,
     pub closed: bool,
-    pub cancel_requested: bool,
     pub calls: BTreeMap<String, CodeToolCall>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CodeToolState {
     pub scopes: BTreeMap<String, CodeToolScope>,
 }
@@ -237,7 +189,6 @@ pub enum CodeToolEvent {
     },
     ScopeClosed {
         execution_id: String,
-        cancel: bool,
     },
 }
 
@@ -264,7 +215,7 @@ pub fn code_tool_parent<'a>(
 ) -> Result<&'a WorkflowToolInvocation, DomainError> {
     state
         .workflow_tools
-        .emissions
+        .bound_invocations
         .get(&scope.parent_invocation_id)
         .or_else(|| {
             state
@@ -314,7 +265,8 @@ fn validate_live_parent(
         .active
         .as_ref()
         .ok_or_else(|| invalid("code tool calls require an active run"))?;
-    if run.run_id != parent.run_id || !matches!(run.status, RunStatus::Active | RunStatus::Parked) {
+    if run.run_id != parent.run_id || !matches!(run.status, RunStatus::Running | RunStatus::Parked)
+    {
         return Err(invalid("code tool parent run is not accepting calls"));
     }
     let parked = run
@@ -340,9 +292,29 @@ fn validate_live_parent(
     Ok(())
 }
 
+/// What a recorded scope must be true of: a live parent that owns no other scope.
+/// Limits and grants are admission policy, in `validate_scope`.
+fn validate_recorded_scope(
+    state: &CoreAgentState,
+    scope: &CodeToolScopeSpec,
+) -> Result<(), DomainError> {
+    validate_live_parent(state, scope)?;
+    if state
+        .code_tools
+        .scopes
+        .values()
+        .any(|existing| existing.spec.parent_invocation_id == scope.parent_invocation_id)
+    {
+        return Err(invalid(
+            "parent workflow invocation already owns a code tool scope",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_scope(state: &CoreAgentState, scope: &CodeToolScopeSpec) -> Result<(), DomainError> {
     validate_id("execution_id", &scope.execution_id)?;
-    validate_live_parent(state, scope)?;
+    validate_recorded_scope(state, scope)?;
     if scope.max_calls == 0
         || scope.max_calls > MAX_CODE_TOOL_CALLS_PER_SCOPE
         || scope.max_in_flight == 0
@@ -358,7 +330,7 @@ fn validate_scope(state: &CoreAgentState, scope: &CodeToolScopeSpec) -> Result<(
     let parent_tool = state
         .workflow_tools
         .bindings
-        .get(&parent.tool_id)
+        .get(&parent.workflow_tool_id)
         .ok_or_else(|| invalid("code tool parent binding is missing"))?;
     for (binding_id, binding) in &scope.bindings {
         validate_id("binding_id", binding_id)?;
@@ -368,39 +340,22 @@ fn validate_scope(state: &CoreAgentState, scope: &CodeToolScopeSpec) -> Result<(
             .tools
             .get(tool_id)
             .ok_or_else(|| invalid(format!("code tool {tool_id} is not granted")))?;
-        if !tool.invokes_client_effect() || tool_id == &parent_tool.definition.tool.name {
+        if !tool.invokes_client_effect() || tool_id == &parent_tool.definition.tool.id {
             return Err(invalid(format!(
                 "tool {tool_id} is not available for code tool execution"
             )));
         }
     }
-    let count = state
-        .code_tools
-        .scopes
-        .values()
-        .filter(|existing| {
-            code_tool_parent(state, &existing.spec)
-                .is_ok_and(|existing| existing.run_id == parent.run_id)
-        })
-        .count();
-    if count >= MAX_CODE_TOOL_SCOPES_PER_RUN {
-        return Err(invalid("code tool scope count exceeds the per-run limit"));
-    }
-    if state
-        .code_tools
-        .scopes
-        .values()
-        .any(|existing| existing.spec.parent_invocation_id == scope.parent_invocation_id)
-    {
-        return Err(invalid(
-            "parent workflow invocation already owns a code tool scope",
-        ));
-    }
     Ok(())
 }
 
-fn validate_call(state: &CoreAgentState, call: &CodeToolCallSpec) -> Result<(), DomainError> {
-    validate_id("request_id", &call.origin.request_id)?;
+/// What a recorded call must be true of: an open scope on the toolset it was
+/// admitted against, and a binding that scope granted. Budgets and whether the
+/// tool may run from code are admission policy, in `validate_call`.
+fn validate_recorded_call<'a>(
+    state: &'a CoreAgentState,
+    call: &CodeToolCallSpec,
+) -> Result<&'a CodeToolScope, DomainError> {
     let scope = state
         .code_tools
         .scopes
@@ -422,11 +377,20 @@ fn validate_call(state: &CoreAgentState, call: &CodeToolCallSpec) -> Result<(), 
         .is_some_and(|binding| {
             binding.tool_id == call.tool_id && binding.tool_name == call.tool_name
         })
-        || !state
-            .tooling
-            .tools
-            .get(&call.tool_id)
-            .is_some_and(|tool| tool.invokes_client_effect())
+    {
+        return Err(invalid("code tool is outside the execution grant"));
+    }
+    Ok(scope)
+}
+
+fn validate_call(state: &CoreAgentState, call: &CodeToolCallSpec) -> Result<(), DomainError> {
+    validate_id("request_id", &call.origin.request_id)?;
+    let scope = validate_recorded_call(state, call)?;
+    if !state
+        .tooling
+        .tools
+        .get(&call.tool_id)
+        .is_some_and(|tool| tool.invokes_client_effect())
     {
         return Err(invalid("code tool is outside the execution grant"));
     }
@@ -442,33 +406,6 @@ fn validate_call(state: &CoreAgentState, call: &CodeToolCallSpec) -> Result<(), 
     {
         return Err(invalid("code tool execution exceeded its in-flight limit"));
     }
-    if let Some(binding) = state.workflow_tools.binding_for_tool_name(&call.tool_id) {
-        let parent = code_tool_parent(state, &scope.spec)?;
-        let pending = state
-            .code_tools
-            .scopes
-            .values()
-            .filter(|scope| {
-                code_tool_parent(state, &scope.spec)
-                    .is_ok_and(|owner| owner.run_id == parent.run_id)
-            })
-            .flat_map(|scope| scope.calls.values())
-            .filter(|other| {
-                other.spec.tool_id == call.tool_id
-                    && matches!(other.status, CodeToolCallStatus::Pending)
-            })
-            .count();
-        if state
-            .workflow_tools
-            .emission_count(parent.run_id, &binding.definition.tool_id) as usize
-            + pending
-            >= crate::MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN as usize
-        {
-            return Err(invalid(
-                "workflow tool invoked from code exhausted its emission budget",
-            ));
-        }
-    }
     let call_id = code_tool_call_id(&call.origin);
     if state.runs.active.as_ref().is_some_and(|run| {
         run.tool_batches
@@ -482,19 +419,30 @@ fn validate_call(state: &CoreAgentState, call: &CodeToolCallSpec) -> Result<(), 
     Ok(())
 }
 
+/// A scope belongs to the batch of the tool call that opened it. A reader of the log
+/// has no other way to attribute a scope that made no calls.
+fn scope_joins(
+    state: &CoreAgentState,
+    scope: &CodeToolScopeSpec,
+) -> Result<CoreAgentJoins, DomainError> {
+    let parent = code_tool_parent(state, scope)?;
+    Ok(CoreAgentJoins {
+        run_id: Some(parent.run_id),
+        turn_id: Some(parent.turn_id),
+        tool_batch_id: Some(parent.tool_batch_id),
+        ..Default::default()
+    })
+}
+
 fn joins(state: &CoreAgentState, origin: &CodeToolOrigin) -> Result<CoreAgentJoins, DomainError> {
     let scope = state
         .code_tools
         .scopes
         .get(&origin.execution_id)
         .ok_or_else(|| invalid("unknown code tool execution scope"))?;
-    let parent = code_tool_parent(state, &scope.spec)?;
     Ok(CoreAgentJoins {
-        run_id: Some(parent.run_id),
-        turn_id: Some(parent.turn_id),
-        tool_batch_id: Some(parent.tool_batch_id),
         tool_call_id: Some(code_tool_call_id(origin)),
-        ..Default::default()
+        ..scope_joins(state, &scope.spec)?
     })
 }
 
@@ -513,7 +461,7 @@ pub fn open_code_tool_scope_proposals(
     }
     validate_scope(state, &scope)?;
     Ok(vec![CoreAgentEventProposal::new(
-        CoreAgentJoins::default(),
+        scope_joins(state, &scope)?,
         CoreAgentEvent::CodeTool(CodeToolEvent::ScopeOpened { scope }),
     )])
 }
@@ -556,63 +504,8 @@ pub fn complete_code_tool_call_proposals(
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
     let call =
         code_tool_call(state, &origin).ok_or_else(|| invalid("unknown code tool request"))?;
-    validate_result(call, &result)?;
-    // A joined preparation outcome records a wait, not its acknowledgement.
-    // Redelivery of that same admitted effect is still idempotent, including
-    // after the reply has completed the call.
-    if !matches!(call.status, CodeToolCallStatus::Pending)
-        && result.status == ToolCallStatus::Succeeded
-        && result.effects.len() == 1
-        && state
-            .workflow_tools
-            .binding_for_tool_name(&call.spec.tool_id)
-            .is_some_and(|binding| {
-                matches!(binding.completion, WorkflowToolCompletion::Joined { .. })
-            })
-        && let Some(invocation) =
-            super::workflow_tool::invocation_from_emit_effect(&result.effects[0])?
-        && invocation.tool_call_id == call.call_id
-        && state
-            .workflow_tools
-            .emissions
-            .get(&invocation.invocation_id)
-            .or_else(|| {
-                state
-                    .workflow_tools
-                    .start_requests
-                    .get(&invocation.invocation_id)
-            })
-            == Some(&invocation)
-    {
-        let deadline =
-            super::workflow_tool::completion_deadline_from_emit_effect(&result.effects[0])?;
-        if invocation
-            .completion_promises
-            .as_ref()
-            .is_some_and(|promises| {
-                promises.values().all(|id| {
-                    state
-                        .promises
-                        .promises
-                        .get(id)
-                        .is_some_and(|promise| promise.deadline_ms == deadline)
-                })
-            })
-        {
-            return Ok(Vec::new());
-        }
-    }
-    if let CodeToolCallStatus::Completed { result: existing } = &call.status {
-        return if existing.matches_invocation_result(&result) {
-            Ok(Vec::new())
-        } else {
-            Err(invalid(
-                "code tool completion conflicts with the recorded outcome",
-            ))
-        };
-    }
     if !matches!(call.status, CodeToolCallStatus::Pending) {
-        return Err(invalid("code tool request is already waiting"));
+        return Err(invalid("code tool request is not pending"));
     }
     validate_result(call, &result)?;
     let scope = &state.code_tools.scopes[&origin.execution_id];
@@ -673,7 +566,8 @@ pub fn defer_code_tool_call_proposals(
         ));
     }
     let parent = code_tool_parent(state, &state.code_tools.scopes[&origin.execution_id].spec)?;
-    crate::core::drive::validate_await_spec_for_active_run(state, parent.run_id, &spec)?;
+    crate::core::drive::validate_await_spec_for_active_run(state, parent.run_id, &spec)
+        .map_err(|_| invalid(crate::AWAIT_REJECTED_CONTENT.trim_end()))?;
     let suspension = ToolBatchSuspension::AwaitTool {
         call_id: call.call_id.clone(),
         spec,
@@ -701,21 +595,21 @@ pub fn code_tool_wake(
     state: &CoreAgentState,
     origin: &CodeToolOrigin,
     now_ms: u64,
-) -> Option<WakeReason> {
+) -> Option<AwaitOutcome> {
     let scope = state.code_tools.scopes.get(&origin.execution_id)?;
     let call = scope.calls.get(&origin.request_id)?;
     let CodeToolCallStatus::Waiting { suspension } = &call.status else {
         return None;
     };
-    if scope.cancel_requested || validate_live_parent(state, &scope.spec).is_err() {
-        return Some(WakeReason::Cancelled);
+    if scope.closed || validate_live_parent(state, &scope.spec).is_err() {
+        return Some(AwaitOutcome::Cancelled);
     }
     let spec = suspension.spec();
     if spec
         .deadline_at_ms
         .is_some_and(|deadline| deadline <= now_ms)
     {
-        return Some(WakeReason::Timeout);
+        return Some(AwaitOutcome::Timeout);
     }
     let terminal = spec
         .promise_ids
@@ -729,8 +623,8 @@ pub fn code_tool_wake(
         })
         .count();
     match spec.mode {
-        AwaitMode::All if terminal == spec.promise_ids.len() => Some(WakeReason::Terminal),
-        AwaitMode::Any if terminal > 0 => Some(WakeReason::Terminal),
+        AwaitMode::All if terminal == spec.promise_ids.len() => Some(AwaitOutcome::Terminal),
+        AwaitMode::Any if terminal > 0 => Some(AwaitOutcome::Terminal),
         _ => None,
     }
 }
@@ -755,30 +649,13 @@ pub fn code_tool_joined_result(
         .promises
         .get(&calls[0].promise_id)
         .ok_or_else(|| invalid("code tool joined promise is missing"))?;
-    let (status, output_ref, error_ref) = match promise.status {
-        PromiseStatus::Resolved => (ToolCallStatus::Succeeded, promise.payload_ref.clone(), None),
-        PromiseStatus::Failed => (
-            ToolCallStatus::Failed,
-            None,
-            Some(
-                promise
-                    .error_ref
-                    .clone()
-                    .unwrap_or_else(crate::unavailable_tool_result_ref),
-            ),
-        ),
-        PromiseStatus::Cancelled => (
-            ToolCallStatus::Cancelled,
-            None,
-            Some(crate::cancelled_tool_result_ref()),
-        ),
-        PromiseStatus::Pending if cancel_pending => (
-            ToolCallStatus::Cancelled,
-            None,
-            Some(crate::cancelled_tool_result_ref()),
-        ),
-        PromiseStatus::Pending => return Err(invalid("code tool joined promise is still pending")),
-    };
+    let crate::core::components::promise::JoinedCallOutcome {
+        status,
+        output_ref,
+        error_ref,
+        ..
+    } = crate::core::components::promise::joined_call_outcome(promise, cancel_pending)
+        .ok_or_else(|| invalid("code tool joined promise is still pending"))?;
     Ok(ToolInvocationResult {
         call_id: call.call_id.clone(),
         status,
@@ -802,12 +679,8 @@ pub fn resume_code_tool_call_proposals(
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
     let call =
         code_tool_call(state, &origin).ok_or_else(|| invalid("unknown code tool request"))?;
-    if let CodeToolCallStatus::Completed { result: existing } = &call.status {
-        return if existing.matches_invocation_result(&result) {
-            Ok(Vec::new())
-        } else {
-            Err(invalid("code tool resume conflicts with recorded result"))
-        };
+    if call.status.is_terminal() {
+        return Err(invalid("code tool request already completed"));
     }
     validate_result(call, &result)?;
     let wake = code_tool_wake(state, &origin, claim_observed_at_ms);
@@ -822,7 +695,11 @@ pub fn resume_code_tool_call_proposals(
         suspension: ToolBatchSuspension::JoinedWorkflowCalls { calls, .. },
     } = &call.status
     {
-        let promise = &state.promises.promises[&calls[0].promise_id];
+        let promise = state
+            .promises
+            .promises
+            .get(&calls[0].promise_id)
+            .ok_or_else(|| invalid("code tool joined promise is missing"))?;
         let expected_status = match promise.status {
             PromiseStatus::Resolved => ToolCallStatus::Succeeded,
             PromiseStatus::Failed => ToolCallStatus::Failed,
@@ -842,7 +719,7 @@ pub fn resume_code_tool_call_proposals(
         // so the receiver/owned workflow is cancelled as well as the waiter.
         // Already terminal replies remain authoritative; model-owned submitted
         // promises belong to separate acknowledged calls and are untouched.
-        if matches!(wake, Some(WakeReason::Cancelled | WakeReason::Timeout)) {
+        if matches!(wake, Some(AwaitOutcome::Cancelled | AwaitOutcome::Timeout)) {
             for joined in calls {
                 if state
                     .promises
@@ -876,46 +753,40 @@ pub fn resume_code_tool_call_proposals(
 pub fn close_code_tool_scope_proposals(
     state: &CoreAgentState,
     execution_id: String,
-    cancel: bool,
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
-    let scope = state
-        .code_tools
-        .scopes
-        .get(&execution_id)
-        .ok_or_else(|| invalid("unknown code tool execution scope"))?;
-    if scope.closed && (!cancel || scope.cancel_requested) {
+    // A runner can close after its parent has finished and the scope with it.
+    let Some(scope) = state.code_tools.scopes.get(&execution_id) else {
+        return Ok(Vec::new());
+    };
+    if scope.closed {
         return Ok(Vec::new());
     }
+    // Attribution must never stop a scope from closing.
     let mut proposals = vec![CoreAgentEventProposal::new(
-        CoreAgentJoins::default(),
-        CoreAgentEvent::CodeTool(CodeToolEvent::ScopeClosed {
-            execution_id,
-            cancel,
-        }),
+        scope_joins(state, &scope.spec).unwrap_or_default(),
+        CoreAgentEvent::CodeTool(CodeToolEvent::ScopeClosed { execution_id }),
     )];
-    if cancel {
-        for call in scope.calls.values() {
-            if let CodeToolCallStatus::Waiting {
-                suspension: ToolBatchSuspension::JoinedWorkflowCalls { calls, .. },
-            } = &call.status
-            {
-                for joined in calls {
-                    if state
-                        .promises
-                        .promises
-                        .get(&joined.promise_id)
-                        .is_some_and(|promise| {
-                            promise.status == PromiseStatus::Pending
-                                && promise.ownership == PromiseOwnership::Runtime
-                        })
-                    {
-                        proposals.push(CoreAgentEventProposal::new(
-                            joins(state, &call.spec.origin)?,
-                            CoreAgentEvent::Promise(PromiseEvent::Cancelled {
-                                promise_id: joined.promise_id.clone(),
-                            }),
-                        ));
-                    }
+    for call in scope.calls.values() {
+        if let CodeToolCallStatus::Waiting {
+            suspension: ToolBatchSuspension::JoinedWorkflowCalls { calls, .. },
+        } = &call.status
+        {
+            for joined in calls {
+                if state
+                    .promises
+                    .promises
+                    .get(&joined.promise_id)
+                    .is_some_and(|promise| {
+                        promise.status == PromiseStatus::Pending
+                            && promise.ownership == PromiseOwnership::Runtime
+                    })
+                {
+                    proposals.push(CoreAgentEventProposal::new(
+                        joins(state, &call.spec.origin)?,
+                        CoreAgentEvent::Promise(PromiseEvent::Cancelled {
+                            promise_id: joined.promise_id.clone(),
+                        }),
+                    ));
                 }
             }
         }
@@ -940,8 +811,8 @@ pub fn code_tool_request(
         return Err(invalid("code tool request is not pending"));
     }
     let scope = &state.code_tools.scopes[execution_id];
-    if scope.cancel_requested {
-        return Err(invalid("code tool scope is cancelling"));
+    if scope.closed {
+        return Err(invalid("code tool scope is closed"));
     }
     validate_live_parent(state, &scope.spec)?;
     if scope.toolset_revision != state.tooling.revision {
@@ -993,28 +864,15 @@ pub(crate) fn apply_code_tool_event(
             if state.code_tools.scopes.contains_key(&scope.execution_id) {
                 return Err(invalid("duplicate code tool scope event"));
             }
-            validate_scope(state, scope)?;
-            // Retain closed outcomes for the current run, and drop prior-run
-            // scope indexes. The immutable log remains the outcome archive.
-            let run_id = code_tool_parent(state, scope)?.run_id;
-            let retain: BTreeSet<_> = state
-                .code_tools
-                .scopes
-                .iter()
-                .filter(|(_, existing)| {
-                    code_tool_parent(state, &existing.spec)
-                        .is_ok_and(|parent| parent.run_id == run_id)
-                })
-                .map(|(id, _)| id.clone())
-                .collect();
-            state.code_tools.scopes.retain(|id, _| retain.contains(id));
+            validate_recorded_scope(state, scope)?;
+            // A scope leaves state with its parent invocation. The immutable log
+            // remains the outcome archive.
             state.code_tools.scopes.insert(
                 scope.execution_id.clone(),
                 CodeToolScope {
                     toolset_revision: state.tooling.revision,
                     spec: scope.clone(),
                     closed: false,
-                    cancel_requested: false,
                     calls: BTreeMap::new(),
                 },
             );
@@ -1023,7 +881,7 @@ pub(crate) fn apply_code_tool_event(
             call,
             promise_id_base,
         } => {
-            validate_call(state, call)?;
+            validate_recorded_call(state, call)?;
             if code_tool_call(state, &call.origin).is_some() {
                 return Err(invalid("duplicate code tool admission event"));
             }
@@ -1082,7 +940,13 @@ pub(crate) fn apply_code_tool_event(
                     if call_id != &call.call_id {
                         return Err(invalid("code tool await call id mismatch"));
                     }
-                    defer_code_tool_call_proposals(state, origin.clone(), spec.clone())?;
+                    if spec
+                        .promise_ids
+                        .iter()
+                        .any(|id| !state.promises.promises.contains_key(id))
+                    {
+                        return Err(invalid("code tool await references an unknown promise"));
+                    }
                 }
                 ToolBatchSuspension::JoinedWorkflowCalls { calls, spec } => {
                     if calls.len() != 1
@@ -1094,50 +958,13 @@ pub(crate) fn apply_code_tool_event(
                             "code tool joined suspension does not match its call",
                         ));
                     }
-                    let binding = state
-                        .workflow_tools
-                        .binding_for_tool_name(&call.spec.tool_id)
-                        .ok_or_else(|| invalid("code tool joined binding is missing"))?;
-                    if !matches!(binding.completion, WorkflowToolCompletion::Joined { .. }) {
-                        return Err(invalid("code tool suspension requires joined completion"));
-                    }
                     let promise = state
                         .promises
                         .promises
                         .get(&calls[0].promise_id)
                         .ok_or_else(|| invalid("code tool completion promise is missing"))?;
-                    let parent = code_tool_parent(
-                        state,
-                        &state.code_tools.scopes[&origin.execution_id].spec,
-                    )?;
-                    let expected_invocation_id = WorkflowToolInvocationId::for_call(
-                        binding.session_universe_id,
-                        &parent.session_id,
-                        parent.run_id,
-                        parent.turn_id,
-                        parent.tool_batch_id,
-                        &call.call_id,
-                        &binding.binding_fingerprint,
-                    );
-                    if calls[0].invocation_id != expected_invocation_id
-                        || promise.ownership != PromiseOwnership::Runtime
-                        || promise.scope
-                            != (crate::PromiseScope::Run {
-                                run_id: parent.run_id,
-                            })
-                        || promise.status != PromiseStatus::Pending
-                        || promise.deadline_ms.is_none_or(|deadline| deadline == 0)
-                        || !matches!(&promise.source, crate::PromiseSource::Workflow { invocation_id, completion_key, .. }
-                            if invocation_id == expected_invocation_id.as_str() && completion_key == crate::REPLY_COMPLETION_KEY)
-                        || calls[0]
-                            .promise_id
-                            .number()
-                            .checked_sub(call.promise_id_base)
-                            .is_none_or(|offset| offset >= CODE_TOOL_PROMISE_SLOTS)
-                    {
-                        return Err(invalid(
-                            "code tool joined promise does not match its admitted invocation",
-                        ));
+                    if promise.status != PromiseStatus::Pending {
+                        return Err(invalid("code tool completion promise is already terminal"));
                     }
                 }
             }
@@ -1153,17 +980,13 @@ pub(crate) fn apply_code_tool_event(
                 suspension: suspension.clone(),
             };
         }
-        CodeToolEvent::ScopeClosed {
-            execution_id,
-            cancel,
-        } => {
-            let scope = state
+        CodeToolEvent::ScopeClosed { execution_id } => {
+            state
                 .code_tools
                 .scopes
                 .get_mut(execution_id)
-                .ok_or_else(|| invalid("unknown code tool execution scope"))?;
-            scope.closed = true;
-            scope.cancel_requested |= cancel;
+                .ok_or_else(|| invalid("unknown code tool execution scope"))?
+                .closed = true;
         }
     }
     Ok(())

@@ -77,6 +77,7 @@ async fn run_llm_timeout_live_client(
         config: None,
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
     let handle = live_workflow_handle(&client, &session_id)?;

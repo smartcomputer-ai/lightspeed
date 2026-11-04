@@ -17,12 +17,12 @@ pub enum AwaitOutcome {
 
 /// Stable identifier for a promise: a session-scoped counter rendered as
 /// `promise_<n>`, the same convention as `run_<n>`, so the model copies a
-/// short handle rather than a digest. The harness hands every tool batch a
-/// base one past the session cursor (`ToolInvocationBatchRequest::
-/// promise_id_base`); the executor numbers the promises it creates from
-/// that base, and the reducer accepts a creation only at or above the
-/// batch's base and never twice. Producer correlation lives on
-/// `PromiseSource`, not in the id.
+/// short handle rather than a digest. The harness hands every dispatch of a
+/// tool batch a base above the session cursor (`ToolInvocationBatchRequest::
+/// promise_id_base`); the executor numbers the promises it creates from that
+/// base. Proposal building accepts a creation only at or above the batch's
+/// base, and neither it nor the reducer accepts one twice. Producer correlation
+/// lives on `PromiseSource`, not in the id.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct PromiseId(String);
@@ -203,13 +203,23 @@ pub struct Promise {
     /// Failure detail (CAS ref); set only when `status == Failed`.
     pub error_ref: Option<BlobRef>,
     /// Harness-owned hard deadline, independent of any await.
-    pub deadline_ms: Option<u64>,
+    pub deadline_at_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PromiseComponentState {
     pub promises: BTreeMap<PromiseId, Promise>,
+    /// The terminal promises in `promises`, oldest settled first. Pruning follows this
+    /// order and not the ids, so a promise that was pending for a long time can still
+    /// be awaited once it has settled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub settled: Vec<PromiseId>,
 }
+
+/// Terminal promises state keeps, the most recently settled ones. An older id reads as
+/// unknown, which `await` reports and a late resolution ignores.
+pub const MAX_RETAINED_TERMINAL_PROMISES: usize = 256;
 
 impl PromiseComponentState {
     pub fn pending(&self) -> impl Iterator<Item = &Promise> {
@@ -274,15 +284,6 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     promise.promise_id
                 )));
             }
-            if promise.ownership == PromiseOwnership::Runtime
-                && (!matches!(promise.source, PromiseSource::Workflow { .. })
-                    || !matches!(promise.scope, PromiseScope::Run { .. }))
-            {
-                return Err(DomainError::InvariantViolation(format!(
-                    "runtime-owned promise {} must be a run-scoped workflow completion",
-                    promise.promise_id
-                )));
-            }
             if let PromiseScope::Run { run_id } = promise.scope {
                 let owned_by_active = state
                     .runs
@@ -313,6 +314,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             let promise = pending_promise_mut(state, promise_id)?;
             promise.status = PromiseStatus::Resolved;
             promise.payload_ref = payload_ref.clone();
+            state.promises.settled.push(promise_id.clone());
             Ok(())
         }
         Event::Failed {
@@ -322,25 +324,90 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             let promise = pending_promise_mut(state, promise_id)?;
             promise.status = PromiseStatus::Failed;
             promise.error_ref = error_ref.clone();
+            state.promises.settled.push(promise_id.clone());
             Ok(())
         }
         Event::Cancelled { promise_id } => {
             let promise = pending_promise_mut(state, promise_id)?;
             promise.status = PromiseStatus::Cancelled;
+            state.promises.settled.push(promise_id.clone());
             Ok(())
         }
         Event::Detached { promise_id } => {
             let promise = pending_promise_mut(state, promise_id)?;
-            if promise.ownership != PromiseOwnership::Model {
-                return Err(DomainError::InvariantViolation(format!(
-                    "runtime-owned promise {} cannot be detached",
-                    promise_id
-                )));
-            }
             promise.scope = PromiseScope::Session;
             Ok(())
         }
     }
+}
+
+/// Only ever runs with no batch open, so nothing a batch waits on can go. Pending
+/// promises always stay, and the id cursor is unaffected.
+pub(crate) fn prune_terminal_promises(state: &mut CoreAgentState) {
+    let PromiseComponentState { promises, settled } = &mut state.promises;
+    let excess = settled.len().saturating_sub(MAX_RETAINED_TERMINAL_PROMISES);
+    for promise_id in settled.drain(..excess) {
+        promises.remove(&promise_id);
+    }
+}
+
+/// A resolution or cancel can name a promise state has since pruned. Ids are never
+/// reused, so an id the cursor has passed is that case and not a mistake.
+pub(crate) fn promise_was_pruned(state: &CoreAgentState, promise_id: &PromiseId) -> bool {
+    promise_id.number() <= state.id_cursors.last_promise_id
+        && !state.promises.promises.contains_key(promise_id)
+}
+
+/// What one terminal joined promise means for the call parked on it, for the
+/// model batch and for a code tool call alike.
+pub(crate) struct JoinedCallOutcome {
+    pub status: crate::ToolCallStatus,
+    pub output_ref: Option<BlobRef>,
+    pub error_ref: Option<BlobRef>,
+    /// What the model reads as the tool result.
+    pub content_ref: BlobRef,
+}
+
+/// `None` for a promise still pending that nothing is cancelling. With
+/// `cancel_pending` the holder is ending the wait itself, so a cancelled promise
+/// says nothing about its receiver.
+pub(crate) fn joined_call_outcome(
+    promise: &Promise,
+    cancel_pending: bool,
+) -> Option<JoinedCallOutcome> {
+    use crate::ToolCallStatus;
+    let failed = |status, error_ref: BlobRef| JoinedCallOutcome {
+        status,
+        output_ref: None,
+        error_ref: Some(error_ref.clone()),
+        content_ref: error_ref,
+    };
+    Some(match promise.status {
+        PromiseStatus::Resolved => JoinedCallOutcome {
+            status: ToolCallStatus::Succeeded,
+            output_ref: promise.payload_ref.clone(),
+            error_ref: None,
+            content_ref: promise
+                .payload_ref
+                .clone()
+                .unwrap_or_else(crate::empty_success_ref),
+        },
+        PromiseStatus::Failed => failed(
+            ToolCallStatus::Failed,
+            promise
+                .error_ref
+                .clone()
+                .unwrap_or_else(crate::failed_without_detail_ref),
+        ),
+        PromiseStatus::Cancelled if !cancel_pending => {
+            failed(ToolCallStatus::Cancelled, crate::receiver_cancelled_ref())
+        }
+        PromiseStatus::Cancelled | PromiseStatus::Pending if cancel_pending => failed(
+            ToolCallStatus::Cancelled,
+            crate::cancelled_tool_result_ref(),
+        ),
+        PromiseStatus::Cancelled | PromiseStatus::Pending => return None,
+    })
 }
 
 fn pending_promise_mut<'state>(
@@ -371,7 +438,7 @@ pub const PROMISE_DETACH_EFFECT_KIND: &str = "lightspeed.core.promise.detach";
 pub const PROMISE_EFFECT_ID: &str = "promise_id";
 pub const PROMISE_EFFECT_SOURCE: &str = "source";
 pub const PROMISE_EFFECT_FIRE_AT_MS: &str = "fire_at_ms";
-pub const PROMISE_EFFECT_DEADLINE_MS: &str = "deadline_ms";
+pub const PROMISE_EFFECT_DEADLINE_AT_MS: &str = "deadline_at_ms";
 pub const PROMISE_EFFECT_SOURCE_TIMER: &str = "timer";
 pub const PROMISE_EFFECT_SOURCE_WORKFLOW: &str = "workflow";
 pub const PROMISE_EFFECT_PRODUCER_WORKFLOW_ID: &str = "producer_workflow_id";
@@ -383,7 +450,7 @@ pub const PROMISE_EFFECT_COMPLETION_KEY: &str = "completion_key";
 pub fn promise_create_effect(
     promise_id: &PromiseId,
     source: &PromiseSource,
-    deadline_ms: Option<u64>,
+    deadline_at_ms: Option<u64>,
 ) -> crate::ToolEffect {
     let mut data = BTreeMap::new();
     data.insert(PROMISE_EFFECT_ID.to_owned(), promise_id.as_str().to_owned());
@@ -423,15 +490,16 @@ pub fn promise_create_effect(
             );
         }
     }
-    if let Some(deadline_ms) = deadline_ms {
+    if let Some(deadline_at_ms) = deadline_at_ms {
         data.insert(
-            PROMISE_EFFECT_DEADLINE_MS.to_owned(),
-            deadline_ms.to_string(),
+            PROMISE_EFFECT_DEADLINE_AT_MS.to_owned(),
+            deadline_at_ms.to_string(),
         );
     }
     crate::ToolEffect {
         kind: PROMISE_CREATE_EFFECT_KIND.to_owned(),
         data,
+        refs: BTreeMap::new(),
     }
 }
 
@@ -444,6 +512,7 @@ pub fn promise_cancel_effect(promise_id: &PromiseId) -> crate::ToolEffect {
     crate::ToolEffect {
         kind: PROMISE_CANCEL_EFFECT_KIND.to_owned(),
         data,
+        refs: BTreeMap::new(),
     }
 }
 
@@ -456,6 +525,7 @@ pub fn promise_detach_effect(promise_id: &PromiseId) -> crate::ToolEffect {
     crate::ToolEffect {
         kind: PROMISE_DETACH_EFFECT_KIND.to_owned(),
         data,
+        refs: BTreeMap::new(),
     }
 }
 
@@ -503,10 +573,10 @@ pub(crate) fn promise_from_create_effect(
             )));
         }
     };
-    let deadline_ms = effect
+    let deadline_at_ms = effect
         .data
-        .get(PROMISE_EFFECT_DEADLINE_MS)
-        .map(|value| parse_u64(PROMISE_EFFECT_DEADLINE_MS, value.clone()))
+        .get(PROMISE_EFFECT_DEADLINE_AT_MS)
+        .map(|value| parse_u64(PROMISE_EFFECT_DEADLINE_AT_MS, value.clone()))
         .transpose()?;
     Ok(Some(Promise {
         promise_id,
@@ -516,7 +586,7 @@ pub(crate) fn promise_from_create_effect(
         status: PromiseStatus::Pending,
         payload_ref: None,
         error_ref: None,
-        deadline_ms,
+        deadline_at_ms,
     }))
 }
 

@@ -14,7 +14,7 @@ describe("TranscriptEntryView", () => {
         entries: [{
           id: "native-compaction", kind: { type: "providerOpaque" },
           content: {
-            contentRef: "sha256:compaction", mediaType: "application/json",
+            blobRef: "sha256:compaction", mime: "application/json",
             providerKind,
           },
           text: '{"encrypted_content":"hidden-encrypted-payload"}',
@@ -41,7 +41,7 @@ describe("TranscriptEntryView", () => {
       cursor: { seq: 1 }, observedAtMs: 1, joins: {}, sessionId: "session-test",
       kind: { type: "contextEntriesApplied", baseRevision: 0, revision: 1,
         entries: [{ id: "replacement", kind: { type: "message", role: "user" },
-          content: { contentRef: "sha256:summary" }, text: "Internal replacement summary",
+          content: { blobRef: "sha256:summary" }, text: "Internal replacement summary",
           source: { type: "runtime", label: "standalone_compaction_prefix" },
         }],
       },
@@ -66,14 +66,15 @@ describe("TranscriptEntryView", () => {
       cursor: { seq }, observedAtMs: seq, joins: {}, sessionId: "session-test", kind,
     });
     let state = emptyTranscript();
-    for (const [index, trigger] of (["manualQueued", "manual"] as const).entries()) {
-      state = applyEvents(state, [event(index + 1, {
-        type: "contextCompactionRequested", baseRevision: index, revision: index + 1, trigger,
-      })]);
+    for (const [index, kind] of ([
+      { type: "contextCompactionQueued", baseRevision: 0 },
+      { type: "contextCompactionRequested", baseRevision: 1, revision: 2, trigger: "manual" },
+    ] as const).entries()) {
+      state = applyEvents(state, [event(index + 1, kind)]);
       expect(state.entries).toHaveLength(1);
       expect(state.entries[0]?.key).toBe("evt-1");
       const html = renderToString(createElement(TranscriptEntryView, { entry: state.entries[0]! }));
-      expect(html).toContain(trigger === "manualQueued" ? "context compaction queued" : "compacting context");
+      expect(html).toContain(kind.type === "contextCompactionQueued" ? "context compaction queued" : "compacting context");
       expect(html).toContain('role="status"');
       expect(html).toContain("animate-spin");
     }

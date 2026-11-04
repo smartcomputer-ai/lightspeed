@@ -10,6 +10,7 @@ use super::types::*;
 pub const ACTIVITY_BOT_ENSURE_SESSION: &str = "BotActivities::ensure_session";
 pub const ACTIVITY_BOT_RENAME_SESSION: &str = "BotActivities::rename_session";
 pub const ACTIVITY_BOT_READ_SESSION_STATUS: &str = "BotActivities::read_session_status";
+pub const ACTIVITY_BOT_READ_DEAD_SESSIONS: &str = "BotActivities::read_dead_sessions";
 pub const ACTIVITY_BOT_READ_RUN_USAGE: &str = "BotActivities::read_run_usage";
 pub const ACTIVITY_BOT_START_RUN: &str = "BotActivities::start_run";
 pub const ACTIVITY_BOT_STEER_RUN: &str = "BotActivities::steer_run";
@@ -31,7 +32,7 @@ pub struct BotActivities;
 
 #[activities]
 impl BotActivities {
-    /// Create or reconcile a managed session of the bot (profile, brief,
+    /// Create or reconcile a controlled session of the bot (profile, brief,
     /// `bot_*` tools, carried tools, lifecycle controller).
     #[activity(name = ACTIVITY_BOT_ENSURE_SESSION)]
     pub async fn ensure_session(
@@ -54,6 +55,16 @@ impl BotActivities {
         _ctx: ActivityContext,
         _request: BotSessionRequest,
     ) -> Result<BotSessionStatus, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    /// Read many sessions at once and report the dead ones, so a controller with
+    /// lanes waiting on started runs needs one call per sweep and none per lane.
+    #[activity(name = ACTIVITY_BOT_READ_DEAD_SESSIONS)]
+    pub async fn read_dead_sessions(
+        _ctx: ActivityContext,
+        _request: BotReadDeadSessionsRequest,
+    ) -> Result<BotReadDeadSessionsResult, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 

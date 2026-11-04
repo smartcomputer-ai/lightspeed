@@ -107,7 +107,7 @@ describe("step rows", () => {
 
   it("names a batch from its rows and counts its failures", () => {
     const reads = [1, 2, 3].map((index) => call({
-      callId: `c${index}`, display: { group: "explore", verb: "Read", target: `/w/${index}.ts` }, startedAtMs: 100, completedAtMs: 100 + index * 100,
+      callId: `c${index}`, display: { group: "explore", verb: "Read", target: `/w/${index}.ts` }, startedAtMs: 100, finishedAtMs: 100 + index * 100,
     }));
     const html = render(group(reads));
     expect(text(html)).toContain("Read 3 files 0.3s");

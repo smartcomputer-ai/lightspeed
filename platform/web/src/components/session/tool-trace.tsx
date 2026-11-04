@@ -235,7 +235,7 @@ export function ToolGroupTrace({
   const groups = new Set(group.calls.map((call) => call.display?.group ?? "other"));
   const single = groups.size === 1 ? [...groups][0] : undefined;
   const started = group.calls.map((call) => call.startedAtMs).filter((value): value is number => value !== undefined);
-  const finished = group.calls.map((call) => call.completedAtMs).filter((value): value is number => value !== undefined);
+  const finished = group.calls.map((call) => call.finishedAtMs).filter((value): value is number => value !== undefined);
   const durationMs = !active && started.length > 0 && finished.length === group.calls.length
     ? Math.max(0, Math.max(...finished) - Math.min(...started)) : undefined;
 

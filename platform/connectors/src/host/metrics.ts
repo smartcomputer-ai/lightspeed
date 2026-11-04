@@ -2,15 +2,15 @@ import type { ChannelInboundDecision } from "@lightspeed-ai/sdk";
 import type { ConnectorHostHealth } from "./health.js";
 import type { AccountHealth } from "./lifecycle.js";
 
-export type ConnectorInboundOutcome = ChannelInboundDecision | "rate_limited" | "failed";
+export type ConnectorInboundOutcome = ChannelInboundDecision | "rateLimited" | "failed";
 
 const OUTCOMES: readonly ConnectorInboundOutcome[] = [
   "bound",
   "paired",
-  "pairing_required",
-  "pairing_pending",
+  "pairingRequired",
+  "pairingPending",
   "unbound",
-  "rate_limited",
+  "rateLimited",
   "failed",
 ];
 

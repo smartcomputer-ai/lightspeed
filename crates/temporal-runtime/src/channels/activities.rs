@@ -193,7 +193,7 @@ pub async fn chat_tool_declarations(
         tools_ref: tools_ref.to_string(),
         tool_ids: declarations
             .iter()
-            .map(|declaration| declaration.definition.tool_id.clone())
+            .map(|declaration| declaration.definition.workflow_tool_id.clone())
             .collect(),
     })
 }
@@ -1085,7 +1085,7 @@ mod tests {
         json!({
             "id": format!("{role}-{}", text.len()),
             "kind": { "type": "message", "role": role },
-            "content": { "contentRef": "sha256:x", "mediaType": "text/plain", "providerKind": null },
+            "content": { "blobRef": "sha256:x", "mime": "text/plain", "providerKind": null },
             "text": text,
         })
     }
@@ -1094,7 +1094,7 @@ mod tests {
         json!({
             "id": format!("call-{call_id}"),
             "kind": { "type": "toolCall", "callId": call_id, "name": name },
-            "content": { "contentRef": "sha256:x", "mediaType": "text/plain", "providerKind": null },
+            "content": { "blobRef": "sha256:x", "mime": "text/plain", "providerKind": null },
         })
     }
 
@@ -1102,7 +1102,7 @@ mod tests {
         json!({
             "id": format!("result-{call_id}"),
             "kind": { "type": "toolResult", "callId": call_id, "isError": is_error },
-            "content": { "contentRef": "sha256:x", "mediaType": "text/plain", "providerKind": null },
+            "content": { "blobRef": "sha256:x", "mime": "text/plain", "providerKind": null },
         })
     }
 
@@ -1387,8 +1387,8 @@ mod tests {
         let full_text = "long reply ".repeat(1_000);
         let mut entry = message_entry("assistant", &full_text);
         entry["content"] = json!({
-            "contentRef": "sha256:unavailable-native-payload",
-            "mediaType": "application/json",
+            "blobRef": "sha256:unavailable-native-payload",
+            "mime": "application/json",
             "providerKind": "anthropic.messages.text_blocks"
         });
         let run = run(json!([entry]), json!([]));

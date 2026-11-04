@@ -242,7 +242,7 @@ export function ModelApiKeyDetails({
   onChanged: () => void;
   onRemoved: () => void;
 }) {
-  const writable = useActionPermissions(universeId).can("configure_resource");
+  const writable = useActionPermissions(universeId).can("configureResource");
   const [replacing, setReplacing] = useState(false);
   const remove = useMutation({
     mutationFn: () =>
@@ -559,7 +559,7 @@ export function OpenAiCompatibleDetails({
   onChanged: () => void;
   onRemoved: () => void;
 }) {
-  const writable = useActionPermissions(universeId).can("configure_resource");
+  const writable = useActionPermissions(universeId).can("configureResource");
   const [editing, setEditing] = useState(false);
   const remove = useMutation({
     mutationFn: () =>

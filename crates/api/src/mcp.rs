@@ -133,12 +133,17 @@ pub enum RemoteMcpApprovalPolicy {
     Always,
 }
 
+/// Who connects to the server and runs its tools. `runtime`, the default, means
+/// Lightspeed does: each call runs once, under the approval policy, and is recorded.
+/// With `provider` the model provider does, so the endpoint must be publicly reachable
+/// and tools run at least once: a retried generation re-sends the request, so a tool
+/// can run again with its side effects, and the transcript shows at most one run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum RemoteMcpExecution {
-    #[default]
     Provider,
-    Native,
+    #[default]
+    Runtime,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

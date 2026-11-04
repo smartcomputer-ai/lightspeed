@@ -139,6 +139,7 @@ pub(crate) async fn resolve_model_provider(
     )
     .await
     .map_err(|error| LlmAdapterError::ProviderKeyResolution {
+        transient: matches!(error, ProviderKeyError::Backend { .. }),
         message: error.to_string(),
     })
 }

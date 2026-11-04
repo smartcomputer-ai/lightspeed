@@ -1,10 +1,15 @@
 import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import type { SessionActivity } from "@lightspeed-ai/sdk";
-import type { BotControllerSnapshot, BotControllerStatus, BotView } from "@/api";
+import type { BotControllerSnapshot, BotControllerStatus, BotEventOutcome, BotView } from "@/api";
 import { cn } from "@/lib/utils";
 
 export type BotTone = "live" | "waiting" | "idle" | "paused" | "attention" | "closed";
+
+/** An event's outcome as a person reads it. */
+export function outcomeLabel(outcome: BotEventOutcome): string {
+  return outcome === "runFailed" ? "run failed" : outcome;
+}
 
 /**
  * One status word for the header and the roster, in the person's language:
@@ -27,14 +32,14 @@ export function botStatus(
   switch (controller.controllerStatus) {
     case "initializing":
       return { label: "Starting", tone: "idle" };
-    case "delivering_event": {
+    case "deliveringEvent": {
       const count = (controller.activeDeliveries ?? []).reduce(
         (sum, delivery) => sum + delivery.seqs.length,
         0,
       );
       return { label: count > 1 ? `Working on ${count} events` : "Working", tone: "live" };
     }
-    case "budget_exhausted":
+    case "budgetExhausted":
       return { label: `Out of budget until ${utcMidnightLabel()}`, tone: "attention" };
     case "degraded":
       return { label: "Needs attention", tone: "attention" };
@@ -74,10 +79,10 @@ export function StatusDot({ tone, className }: { tone: BotTone; className?: stri
 export function BotStatusBadge({ status }: { status?: BotControllerStatus }) {
   if (!status) return <Badge variant="outline">starting</Badge>;
   if (status === "degraded") return <Badge variant="destructive">needs attention</Badge>;
-  if (status === "budget_exhausted") return <Badge variant="destructive">out of budget</Badge>;
+  if (status === "budgetExhausted") return <Badge variant="destructive">out of budget</Badge>;
   if (status === "idle") return <Badge variant="secondary">idle</Badge>;
-  if (status === "delivering_event") return <Badge variant="secondary">working</Badge>;
-  return <Badge variant="outline">{status.replaceAll("_", " ")}</Badge>;
+  if (status === "deliveringEvent") return <Badge variant="secondary">working</Badge>;
+  return <Badge variant="outline">{status}</Badge>;
 }
 
 /** A titled block of the bot workspace. */

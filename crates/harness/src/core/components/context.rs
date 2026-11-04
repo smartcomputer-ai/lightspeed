@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BlobRef, CompactionPolicy, ContextEntryKey, ContextItemId, CoreAgentEvent,
+    BlobRef, CompactionPolicy, ContextEntryId, ContextEntryKey, CoreAgentEvent,
     CoreAgentEventProposal, CoreAgentJoins, CoreAgentState, CoreAgentStatus, DomainError,
     PlanningError, ProviderApiKind, RunId, RunSource, RunStatus, SteeringId, ToolBatchId,
     ToolCallId, ToolName, TurnId,
@@ -19,26 +19,7 @@ const INSTRUCTIONS_KEY_PREFIX: &str = "instructions.";
 pub const SUPERSEDED_CATALOG_CAP: usize = 5;
 pub const OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND: &str = "openai.responses.compaction";
 pub const OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND: &str = "openai.completions.compaction";
-pub const OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND: &str = "openai.responses.web_search_call";
-/// Exact OpenAI Responses assistant message, including text and annotations.
-pub const OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND: &str = "openai.responses.message";
-pub const OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND: &str = "openai.responses.mcp_list_tools";
-pub const OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND: &str = "openai.responses.mcp_call";
-pub const OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND: &str =
-    "openai.responses.mcp_approval_request";
 pub const ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND: &str = "anthropic.messages.compaction";
-pub const ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND: &str =
-    "anthropic.messages.server_tool_use";
-pub const ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND: &str =
-    "anthropic.messages.server_tool_result";
-/// Exact consecutive Anthropic text blocks of one assistant message, including
-/// citation metadata required for replay.
-pub const ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND: &str = "anthropic.messages.text_blocks";
-pub const ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND: &str = "anthropic.messages.mcp_tool_use";
-pub const ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND: &str =
-    "anthropic.messages.mcp_tool_result";
-
-pub type ContextEntryId = ContextItemId;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -72,14 +53,6 @@ pub enum Event {
         key_prefix: ContextEntryKey,
         entries: Vec<ContextEntry>,
     },
-    /// Replaces the full active context state for explicit prune or policy
-    /// rewrites. Replacement entries must be active entries from the current
-    /// state; new materialization uses `EntriesApplied`.
-    StateReplaced {
-        base_revision: u64,
-        entries: Vec<ContextEntry>,
-        reason: ContextRewriteReason,
-    },
     /// Replaces active entries in place, by id. Each replacement keeps the
     /// entry's id, position, key, source, and kind (so tool-call pairing
     /// holds); the replaced content stays in the event log.
@@ -109,6 +82,7 @@ pub enum Event {
 pub type ContextEvent = Event;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ContextState {
     /// Monotonic active-context revision used to guard rewrites and turn snapshots.
     pub revision: u64,
@@ -144,8 +118,40 @@ pub struct ContextCompactionState {
     pub phase: ContextCompactionPhase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_finished_revision: Option<u64>,
+    /// How the most recent manual compaction ended.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_manual_finished_revision: Option<u64>,
+    pub last_manual_outcome: Option<ManualCompactionOutcome>,
+    /// Where the last failed proactive attempt left off, until one succeeds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_floor: Option<CompactionFailureFloor>,
+}
+
+/// A manual compaction has a caller waiting on it, and a failed one leaves the
+/// context as it was. So the outcome is kept, not only the fact that it finished.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManualCompactionOutcome {
+    pub revision: u64,
+    pub status: ContextCompactionStatus,
+    /// Absent when no attempt reached a failure of its own, as when the run a
+    /// compaction belonged to was cancelled first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_ref: Option<crate::BlobRef>,
+}
+
+/// Proactive compaction that failed is not tried again until the context has grown
+/// past this by about a tenth. Without it, a compaction that keeps failing is paid
+/// for at every boundary.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactionFailureFloor {
+    /// The token estimate the failed attempt fired on, when there was one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u32>,
+    /// Active entries when the attempt failed.
+    pub entries: usize,
+}
+
+fn grown_past_floor(value: u64, floor: u64) -> bool {
+    value >= floor.saturating_add(floor / 10)
 }
 
 impl ContextCompactionState {
@@ -203,15 +209,6 @@ impl ContextSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextRemovalReason {
-    Pruned,
-    ProviderCompacted,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ContextRewriteReason {
-    Pruned,
-    PolicyChanged,
     ProviderCompacted,
 }
 
@@ -230,7 +227,22 @@ pub struct ContextCompactionPlan {
     pub run_id: Option<RunId>,
     pub covered_entry_ids: Vec<ContextEntryId>,
     pub trigger: ContextCompactionTrigger,
+    /// The token estimate a proactive request fired on. A failure keeps it as its
+    /// floor, because the request itself moves the revision the estimate depends on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimated_tokens: Option<u32>,
 }
+
+/// Active entries at which compaction runs whatever the tokens say. Every generation's
+/// activity input and reduced state carry all entry metadata, so entries have a cost of
+/// their own that token compaction does not control: a tool-heavy session on a large
+/// window could otherwise reach the bootstrap budget long before its threshold.
+pub const ENTRY_COUNT_COMPACTION_TRIGGER: usize = 1_500;
+/// Active entries past which a run does not go on with no compaction tried. Reduced
+/// state crosses the bootstrap budget near 3,000 entries, and a session over that
+/// budget can no longer load. This is reached only with compaction disabled or failing:
+/// a run that cannot bring the count down fails while the session can still be saved.
+pub const ENTRY_GUARD_LIMIT: usize = 2_000;
 
 pub const STANDALONE_COMPACTION_SOURCE: &str = "standalone_compaction_prefix";
 pub const MAX_CONTEXT_RECOVERY_ATTEMPTS: u32 = 2;
@@ -263,7 +275,11 @@ pub struct ContextEntry {
     pub source: ContextEntrySource,
     /// Immutable payload reference and encoding, also used for run outputs.
     pub content: crate::ContentRef,
-    /// Short display text for projections and logs; not authoritative model input.
+    /// Short display text for projections and logs; not authoritative model
+    /// input. One exception: media entries carry the `[kind: name]` form from
+    /// `media_preview` and gateway admission. Its name reaches the model, and
+    /// its `[document` prefix marks a text document on a user message with no
+    /// provider kind, so adapters read it when lowering.
     pub preview: Option<String>,
     /// Immutable artifact recording this entry's origin or construction.
     pub provenance_ref: Option<BlobRef>,
@@ -341,6 +357,19 @@ pub enum ContextEntryKind {
         approval_request_id: String,
         approve: bool,
     },
+}
+
+impl ContextEntryKind {
+    /// Whether `session/context/replace` can swap this entry's content by id.
+    pub fn is_replaceable(&self) -> bool {
+        matches!(
+            self,
+            Self::ToolResult { .. }
+                | Self::Message {
+                    role: ContextMessageRole::User
+                }
+        )
+    }
 }
 
 /// Catalog kinds supersede on keyed replacement instead of removing the
@@ -440,18 +469,71 @@ pub(crate) fn planned_context_entry_ids(state: &CoreAgentState) -> Vec<ContextEn
         }
     }
 
-    // Everything else, catalogs included, renders at its entry position.
+    // Everything else, catalogs included, renders at its entry position, unless
+    // that position is inside a tool group.
     // Catalogs are first published before the first run, so a fresh session
     // still sees them right after the instructions; a refreshed catalog
     // lands at the tail and supersedes the earlier version, which stays in
     // place so the rendered prefix does not move.
-    for entry in &state.context.entries {
-        if seen.insert(entry.entry_id) {
-            entry_ids.push(entry.entry_id);
-        }
-    }
+    entry_ids.extend(tool_groups_adjacent(
+        state
+            .context
+            .entries
+            .iter()
+            .filter(|entry| !seen.contains(&entry.entry_id)),
+    ));
 
     entry_ids
+}
+
+/// Arrival order, except that nothing separates a tool call from its result:
+/// providers want the answer right behind the call, and the log records what
+/// really happened. A client or bot can append while a batch runs, and a media
+/// entry can follow one result of several. Such an entry renders behind the
+/// group's last result. The calling turn's own output stays where it is, since
+/// a provider may need its reasoning between the calls.
+///
+/// Every request renders through here, so the order holds wherever it reaches a
+/// provider, and it depends on the entries alone, so it does not move once sent.
+/// A later turn's output closes a group that was never answered, which keeps an
+/// orphaned call from holding back the rest of the session.
+fn tool_groups_adjacent<'a>(
+    entries: impl Iterator<Item = &'a ContextEntry>,
+) -> Vec<ContextEntryId> {
+    let mut rendered = Vec::new();
+    let mut held = Vec::new();
+    let mut unanswered = BTreeSet::new();
+    let mut calling_turn = None;
+    for entry in entries {
+        let output_turn = match entry.source {
+            ContextEntrySource::AssistantOutput { run_id, turn_id }
+            | ContextEntrySource::Reasoning { run_id, turn_id } => Some((run_id, turn_id)),
+            _ => None,
+        };
+        if output_turn.is_some() && output_turn != calling_turn {
+            rendered.append(&mut held);
+            unanswered.clear();
+            calling_turn = output_turn;
+        }
+        let in_group = match &entry.kind {
+            ContextEntryKind::ToolCall { call_id, .. } => {
+                unanswered.insert(call_id);
+                true
+            }
+            ContextEntryKind::ToolResult { call_id, .. } => unanswered.remove(call_id),
+            _ => output_turn.is_some(),
+        };
+        if in_group || unanswered.is_empty() {
+            rendered.push(entry.entry_id);
+        } else {
+            held.push(entry.entry_id);
+        }
+        if unanswered.is_empty() {
+            rendered.append(&mut held);
+        }
+    }
+    rendered.append(&mut held);
+    rendered
 }
 
 pub(crate) fn context_entries_by_id(
@@ -534,16 +616,14 @@ pub(crate) fn standalone_prefix_ids(state: &CoreAgentState) -> Vec<ContextEntryI
             .as_ref()
             .and_then(|run| run.turns.values().next_back())
             .is_some_and(|turn| {
-                recovery.and_then(|recovery| recovery.recovered_turn_id) != Some(turn.turn_id)
-                    && matches!(
-                        turn.outcome,
-                        Some(
-                            crate::TurnOutcome::ContextLimit { .. }
-                                | crate::TurnOutcome::ContextUpdateRequired
-                        )
-                    )
+                recovery.and_then(|recovery| recovery.recovery_attempted_turn_id)
+                    != Some(turn.turn_id)
+                    && matches!(turn.outcome, Some(crate::TurnOutcome::ContextLimit { .. }))
             });
-    let cut = if retry_overflow {
+    // At the entry guard the tail may be what holds the count up, and a run stopped
+    // there starts no turn that would roll it out. Only the whole window can clear it.
+    let at_entry_guard = state.context.entries.len() >= ENTRY_GUARD_LIMIT;
+    let cut = if retry_overflow || at_entry_guard {
         ids.len()
     } else {
         boundaries
@@ -561,7 +641,10 @@ pub(crate) fn standalone_prefix_ids(state: &CoreAgentState) -> Vec<ContextEntryI
         .collect()
 }
 
-/// Capacity of the effective generation/compaction model, with no provider I/O.
+/// Capacity of the effective generation/compaction model, with no provider I/O. A
+/// run reads what was resolved for it, then the limit the document declares for its
+/// own model. An idle session has no run to ask, so manual compaction reads what the
+/// last generation recorded for its model.
 pub fn compaction_input_limit_tokens(state: &CoreAgentState) -> Option<u32> {
     let config = state.lifecycle.config.as_ref()?;
     let run = state.runs.active.as_ref();
@@ -574,26 +657,17 @@ pub fn compaction_input_limit_tokens(state: &CoreAgentState) -> Option<u32> {
         })
         .or(state.context.last_generation_model())
         .unwrap_or(&config.model);
-    let matches_config = model == &config.model;
-    matches_config
-        .then_some(config.context.input_limit_tokens)
-        .flatten()
-        .or_else(|| run.and_then(|run| run.run_config.input_limit_tokens))
+    run.and_then(|run| run.input_limit_tokens)
         .or_else(|| {
-            (run.is_none() && state.context.last_generation_model() == Some(model))
-                .then_some(
-                    state
-                        .context
-                        .last_generation
-                        .as_ref()
-                        .and_then(|generation| generation.input_limit_tokens),
-                )
+            (model == &config.model)
+                .then_some(config.context.input_limit_tokens)
                 .flatten()
         })
         .or_else(|| {
-            matches_config
-                .then_some(config.context.reported_input_limit_tokens)
+            run.is_none()
+                .then_some(state.context.last_generation.as_ref())
                 .flatten()
+                .and_then(|generation| generation.input_limit_tokens)
         })
 }
 
@@ -601,9 +675,10 @@ pub(crate) fn compaction_safe_boundary(state: &CoreAgentState) -> bool {
     !state.context.compaction.is_pending()
         && !has_active_nonterminal_tool_batch(state)
         && state.runs.active.as_ref().is_none_or(|run| {
-            run.status == RunStatus::Active
+            run.status == RunStatus::Running
                 && run.active_turn_id.is_none()
                 && run.active_tool_batch_id.is_none()
+                && !crate::core::components::run::has_unstarted_tool_call_turn(run)
         })
 }
 
@@ -647,8 +722,11 @@ fn mark_context_entries_consumed_by_turn(
         active_run.input_consumed_by_turn_id = Some(turn_id);
     }
 
+    // A batch admitted after the turn started has no entries yet, and an empty
+    // containment test would mark it consumed before any request carried it.
     for steering in &mut active_run.steering {
         if steering.consumed_by_turn_id.is_none()
+            && steering.entry_ids.len() == steering.input.len()
             && steering
                 .entry_ids
                 .iter()
@@ -661,7 +739,9 @@ fn mark_context_entries_consumed_by_turn(
     Ok(())
 }
 
-pub(crate) fn combined_token_estimate(entries: &[ContextEntry]) -> Option<TokenEstimate> {
+pub(crate) fn combined_token_estimate<'a>(
+    entries: impl IntoIterator<Item = &'a ContextEntry>,
+) -> Option<TokenEstimate> {
     let mut tokens = 0u32;
     let mut quality = TokenEstimateQuality::Exact;
     for entry in entries {
@@ -689,7 +769,21 @@ pub(crate) fn context_entries_from_inputs(
         ContextEntryInput,
     )>,
 ) -> Result<Vec<ContextEntry>, DomainError> {
-    let mut next_entry_id = state.id_cursors.last_context_item_id;
+    context_entries_after(state, state.id_cursors.last_context_entry_id, inputs)
+}
+
+/// As [`context_entries_from_inputs`], numbering after entries proposed earlier in
+/// the same append.
+fn context_entries_after(
+    state: &CoreAgentState,
+    last_entry_id: u64,
+    inputs: Vec<(
+        Option<ContextEntryKey>,
+        ContextEntrySource,
+        ContextEntryInput,
+    )>,
+) -> Result<Vec<ContextEntry>, DomainError> {
+    let mut next_entry_id = last_entry_id;
     inputs
         .into_iter()
         .map(|(key, source, entry)| {
@@ -910,32 +1004,28 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
                     .runs
                     .active
                     .as_ref()
-                    .is_none_or(|run| run.run_id != run_id || run.status != RunStatus::Active)
+                    .is_none_or(|run| run.run_id != run_id || run.status != RunStatus::Running)
             })
     {
-        return Ok(vec![CoreAgentEventProposal::new(
-            CoreAgentJoins::default(),
-            CoreAgentEvent::Context(Event::CompactionFinished {
-                base_revision: state.context.revision,
-                status: ContextCompactionStatus::Failed,
-                failure_ref: None,
-                usage: None,
-                calls: 0,
-            }),
-        )]);
+        return Ok(vec![compaction_abandoned_proposal(state)]);
+    }
+    // A pending compaction is frozen at its revision. A run that has just started has
+    // input waiting, and writing it now would orphan the request.
+    if state.context.compaction.is_pending() {
+        return Ok(Vec::new());
     }
     if let Some(proposal) = provider_compacted_prune_proposal(state)? {
         return Ok(vec![proposal]);
     }
 
-    if let Some(proposal) = high_watermark_compaction_proposal(state)? {
+    if let Some(proposal) = next_compaction_proposal(state) {
         return Ok(vec![proposal]);
     }
 
     let Some(active_run) = state.runs.active.as_ref() else {
         return Ok(Vec::new());
     };
-    if active_run.status != RunStatus::Active {
+    if active_run.status != RunStatus::Running {
         return Ok(Vec::new());
     }
 
@@ -948,10 +1038,13 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
         )]);
     }
 
-    // Steering materializes at turn boundaries only: an in-flight turn's
-    // request is frozen at its planned context revision and the hosted
-    // runtime re-derives it from state, so context must not move under it.
-    if active_run.active_turn_id.is_some() {
+    // Steering materializes between turns only: an in-flight turn's request is
+    // frozen at its planned context revision and the hosted runtime re-derives
+    // it from state, so context must not move under it. An open batch owes its
+    // results first, so a steer lands behind them in the log as well as in the
+    // request. Tooling plans ahead of this, so a finished tool-call turn already
+    // has its batch here.
+    if active_run.active_turn_id.is_some() || active_run.active_tool_batch_id.is_some() {
         return Ok(Vec::new());
     }
     let steering_entries = missing_steering_entries(state)?;
@@ -968,69 +1061,154 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
 
 pub(crate) fn manual_compaction_requested_proposal(
     state: &CoreAgentState,
-) -> Result<CoreAgentEventProposal, DomainError> {
-    validate_standalone_compaction_can_start(state)?;
+) -> CoreAgentEventProposal {
     if !compaction_safe_boundary(state) {
-        return Ok(CoreAgentEventProposal::new(
+        return CoreAgentEventProposal::new(
             CoreAgentJoins::default(),
             CoreAgentEvent::Context(Event::CompactionQueued {
                 base_revision: state.context.revision,
             }),
-        ));
+        );
     }
-    Ok(compaction_requested_proposal(
-        state,
-        ContextCompactionTrigger::Manual,
-    ))
+    compaction_requested_proposal(state, ContextCompactionTrigger::Manual, None)
 }
 
-fn high_watermark_compaction_proposal(
-    state: &CoreAgentState,
-) -> Result<Option<CoreAgentEventProposal>, DomainError> {
+/// Whether the planner may compact on its own. A manual request needs no policy.
+pub(crate) fn compaction_enabled(config: &crate::SessionConfig) -> bool {
+    !matches!(
+        config.context.compaction,
+        None | Some(CompactionPolicy::Disabled)
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EntryGuard {
+    Clear,
+    /// One attempt for this run, whatever the failure floor says: the floor must not
+    /// hold off the only cure, and each new run trying afresh is what lets a temporary
+    /// outage heal with nobody at the controls.
+    Compact,
+    FailRun,
+}
+
+/// What this turn boundary owes [`ENTRY_GUARD_LIMIT`].
+pub(crate) fn entry_guard(state: &CoreAgentState, run: &crate::ActiveRun) -> EntryGuard {
+    if state.context.entries.len() < ENTRY_GUARD_LIMIT || !compaction_safe_boundary(state) {
+        return EntryGuard::Clear;
+    }
+    if !run.entry_guard_attempted
+        && state
+            .lifecycle
+            .config
+            .as_ref()
+            .is_some_and(compaction_enabled)
+        && !standalone_prefix_ids(state).is_empty()
+    {
+        return EntryGuard::Compact;
+    }
+    EntryGuard::FailRun
+}
+
+/// The compaction this boundary calls for: a queued manual request, overflow
+/// recovery, or the high watermark. Only the last is subject to the failure floor.
+fn next_compaction_proposal(state: &CoreAgentState) -> Option<CoreAgentEventProposal> {
     if !compaction_safe_boundary(state) {
-        return Ok(None);
+        return None;
     }
     if state.context.compaction.is_queued() {
-        return Ok(Some(compaction_requested_proposal(
+        // Edits landing after the request was queued can leave nothing to cover.
+        // The caller is still waiting, so it gets an answer.
+        if standalone_prefix_ids(state).is_empty() {
+            return Some(compaction_abandoned_proposal(state));
+        }
+        return Some(compaction_requested_proposal(
             state,
             ContextCompactionTrigger::Manual,
-        )));
+            None,
+        ));
     }
-    let Some(config) = state.lifecycle.config.as_ref() else {
-        return Ok(None);
-    };
+    let config = state.lifecycle.config.as_ref()?;
     let recovery = state.runs.active.as_ref().map(|run| &run.context_recovery);
     let latest = state
         .runs
         .active
         .as_ref()
         .and_then(|run| run.turns.values().next_back());
-    let overflow = latest.is_some_and(|turn| {
+    // A failed or provider-cancelled turn only waits for its steering to be written
+    // down before the run ends. It needs no room, and with the provider down a
+    // compaction would hold that failure back for its whole retry budget. A run out
+    // of turns is the same: nothing will use the room.
+    if latest.is_some_and(|turn| {
         matches!(
-            turn.outcome,
-            Some(
-                crate::TurnOutcome::ContextUpdateRequired | crate::TurnOutcome::ContextLimit { .. }
-            )
-        ) && recovery.and_then(|recovery| recovery.recovered_turn_id) != Some(turn.turn_id)
+            turn.status,
+            crate::TurnStatus::Failed | crate::TurnStatus::Cancelled
+        )
+    }) || state
+        .runs
+        .active
+        .as_ref()
+        .is_some_and(|run| crate::core::components::run::turn_limit_reached(state, run))
+    {
+        return None;
+    }
+    let overflow = latest.is_some_and(|turn| {
+        matches!(turn.outcome, Some(crate::TurnOutcome::ContextLimit { .. }))
+            && recovery.and_then(|recovery| recovery.recovery_attempted_turn_id)
+                != Some(turn.turn_id)
     });
-    let enabled = !matches!(
-        config.context.compaction,
-        None | Some(CompactionPolicy::Disabled)
-    );
     if overflow {
-        if enabled
+        if compaction_enabled(config)
             && recovery.is_none_or(|recovery| recovery.attempts < MAX_CONTEXT_RECOVERY_ATTEMPTS)
             && !standalone_prefix_ids(state).is_empty()
         {
-            return Ok(Some(compaction_requested_proposal(
+            return Some(compaction_requested_proposal(
                 state,
                 ContextCompactionTrigger::ContextLimit,
-            )));
+                None,
+            ));
         }
-        return Ok(None);
+        return None;
     }
-    if !enabled {
-        return Ok(None);
+    high_watermark_compaction_proposal(state, config)
+}
+
+/// Proactive compaction: enough context that it is worth making room before the
+/// provider has to refuse a request.
+fn high_watermark_compaction_proposal(
+    state: &CoreAgentState,
+    config: &crate::SessionConfig,
+) -> Option<CoreAgentEventProposal> {
+    if !compaction_enabled(config) {
+        return None;
+    }
+    // Room is worth paying for only when a run will use it, so a run ending over the
+    // watermark compacts when the next one starts, before its input arrives. Run
+    // terminals flush after the drive settles, so compacting here would hold a
+    // sub-agent's parent or a bot lane behind a summary nobody may read. A queued run
+    // starts before this planner looks, so an active run is the only case.
+    let run = state.runs.active.as_ref()?;
+    match entry_guard(state, run) {
+        EntryGuard::Compact => {
+            return Some(compaction_requested_proposal(
+                state,
+                ContextCompactionTrigger::HighWatermark,
+                high_watermark_token_estimate(state),
+            ));
+        }
+        EntryGuard::FailRun => return None,
+        EntryGuard::Clear => {}
+    }
+    // Nothing has moved since the last attempt, so another would see the same context.
+    if state.context.compaction.last_finished_revision == Some(state.context.revision) {
+        return None;
+    }
+    // Every enabled policy gets this: a provider's own compaction bounds tokens only.
+    if entry_count_calls_for_compaction(state) {
+        return Some(compaction_requested_proposal(
+            state,
+            ContextCompactionTrigger::HighWatermark,
+            high_watermark_token_estimate(state),
+        ));
     }
     if !matches!(
         config.context.compaction,
@@ -1040,11 +1218,7 @@ fn high_watermark_compaction_proposal(
             && matches!(entry.kind, ContextEntryKind::ProviderOpaque)
             && is_standalone_prefix(entry)
     }) {
-        return Ok(None);
-    }
-    // Avoid re-compacting unchanged context after a failed proactive operation.
-    if state.context.compaction.last_finished_revision == Some(state.context.revision) {
-        return Ok(None);
+        return None;
     }
     let threshold = match config.context.compaction {
         Some(
@@ -1058,51 +1232,95 @@ fn high_watermark_compaction_proposal(
         ) => compact_threshold_tokens,
         _ => None,
     }
-    .or_else(|| compaction_input_limit_tokens(state).map(|limit| limit.saturating_mul(4) / 5));
-    let Some(threshold) = threshold else {
-        return Ok(None);
-    };
-    let estimate = combined_token_estimate(&state.context.entries)
+    .or_else(|| compaction_input_limit_tokens(state).map(|limit| limit.saturating_mul(4) / 5))?;
+    let tokens = high_watermark_token_estimate(state)?;
+    let floor = state.context.compaction.failure_floor.as_ref();
+    if tokens < threshold
+        || floor
+            .and_then(|floor| floor.tokens)
+            .is_some_and(|floor| !grown_past_floor(tokens.into(), floor.into()))
+        || standalone_prefix_ids(state).is_empty()
+    {
+        return None;
+    }
+    Some(compaction_requested_proposal(
+        state,
+        ContextCompactionTrigger::HighWatermark,
+        Some(tokens),
+    ))
+}
+
+/// The count is at the trigger, past the floor of any failed attempt, and a summary in
+/// place of the prefix would get it back under. Without the last check, a retained tail
+/// that large would re-summarize the summary at every boundary.
+fn entry_count_calls_for_compaction(state: &CoreAgentState) -> bool {
+    let entries = state.context.entries.len();
+    entries >= ENTRY_COUNT_COMPACTION_TRIGGER
+        && state
+            .context
+            .compaction
+            .failure_floor
+            .as_ref()
+            .is_none_or(|floor| grown_past_floor(entries as u64, floor.entries as u64))
+        && entries - standalone_prefix_ids(state).len() + 1 < ENTRY_COUNT_COMPACTION_TRIGGER
+}
+
+/// The best token count there is for the context as it stands.
+fn high_watermark_token_estimate(state: &CoreAgentState) -> Option<u32> {
+    combined_token_estimate(&state.context.entries)
         .or_else(|| {
             combined_token_estimate(
-                &state
+                state
                     .context
                     .entries
                     .iter()
-                    .filter(|e| is_compactable_entry(state, e))
-                    .cloned()
-                    .collect::<Vec<_>>(),
+                    .filter(|entry| is_compactable_entry(state, entry)),
             )
         })
-        .map(|e| e.tokens)
+        .map(|estimate| estimate.tokens)
         .or_else(|| state.context.observed_tokens())
         .or_else(|| {
-            latest
-                .and_then(|turn| turn.facts.as_ref())
-                .and_then(|facts| {
-                    facts.context_token_estimate.as_ref().map(|e| {
-                        e.tokens.saturating_add(
-                            facts
-                                .usage
-                                .as_ref()
-                                .and_then(|u| u.output_tokens)
-                                .unwrap_or(0),
-                        )
-                    })
-                })
-        });
-    if estimate.is_none_or(|tokens| tokens < threshold) || standalone_prefix_ids(state).is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(compaction_requested_proposal(
-        state,
-        ContextCompactionTrigger::HighWatermark,
-    )))
+            // Tool results move the revision, so between turns the last generation's
+            // count is the only one there is. A compaction that finished after that
+            // turn was planned has made it out of date.
+            let turn = state.runs.active.as_ref()?.turns.values().next_back()?;
+            let finished = state.context.compaction.last_finished_revision;
+            if turn.planned_request.as_ref().is_some_and(|planned| {
+                finished.is_some_and(|finished| finished > planned.context_revision)
+            }) {
+                return None;
+            }
+            let facts = turn.facts.as_ref()?;
+            facts.context_token_estimate.as_ref().map(|estimate| {
+                estimate.tokens.saturating_add(
+                    facts
+                        .usage
+                        .as_ref()
+                        .and_then(|usage| usage.output_tokens)
+                        .unwrap_or(0),
+                )
+            })
+        })
+}
+
+/// Ends a pending or queued compaction that no longer has anything to do.
+pub(crate) fn compaction_abandoned_proposal(state: &CoreAgentState) -> CoreAgentEventProposal {
+    CoreAgentEventProposal::new(
+        CoreAgentJoins::default(),
+        CoreAgentEvent::Context(Event::CompactionFinished {
+            base_revision: state.context.revision,
+            status: ContextCompactionStatus::Failed,
+            failure_ref: None,
+            usage: None,
+            calls: 0,
+        }),
+    )
 }
 
 fn compaction_requested_proposal(
     state: &CoreAgentState,
     trigger: ContextCompactionTrigger,
+    estimated_tokens: Option<u32>,
 ) -> CoreAgentEventProposal {
     CoreAgentEventProposal::new(
         CoreAgentJoins::default(),
@@ -1113,31 +1331,10 @@ fn compaction_requested_proposal(
                 run_id: state.runs.active.as_ref().map(|run| run.run_id),
                 covered_entry_ids: standalone_prefix_ids(state),
                 trigger,
+                estimated_tokens,
             },
         }),
     )
-}
-
-pub(crate) fn validate_standalone_compaction_can_start(
-    state: &CoreAgentState,
-) -> Result<(), DomainError> {
-    let Some(config) = state.lifecycle.config.as_ref() else {
-        return Err(DomainError::InvariantViolation(
-            "open session is missing config".to_owned(),
-        ));
-    };
-    let _ = config;
-    if state.context.compaction.is_pending() || state.context.compaction.is_queued() {
-        return Err(DomainError::InvariantViolation(
-            "context compaction is already pending".to_owned(),
-        ));
-    }
-    if standalone_prefix_ids(state).is_empty() {
-        return Err(DomainError::InvariantViolation(
-            "no older compactable context is available".to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 fn missing_run_input_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>, DomainError> {
@@ -1171,7 +1368,16 @@ fn missing_run_input_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>
     )
 }
 
-fn missing_steering_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>, DomainError> {
+pub(crate) fn missing_steering_entries(
+    state: &CoreAgentState,
+) -> Result<Vec<ContextEntry>, DomainError> {
+    missing_steering_entries_after(state, state.id_cursors.last_context_entry_id)
+}
+
+pub(crate) fn missing_steering_entries_after(
+    state: &CoreAgentState,
+    last_entry_id: u64,
+) -> Result<Vec<ContextEntry>, DomainError> {
     let Some(active_run) = state.runs.active.as_ref() else {
         return Ok(Vec::new());
     };
@@ -1199,7 +1405,7 @@ fn missing_steering_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>,
         }
     }
 
-    context_entries_from_inputs(state, inputs)
+    context_entries_after(state, last_entry_id, inputs)
 }
 
 fn input_index(index: usize) -> Result<u32, DomainError> {
@@ -1350,7 +1556,7 @@ pub fn current_catalog_inputs(
         .collect()
 }
 
-fn entries_applied_proposal(
+pub(crate) fn entries_applied_proposal(
     state: &CoreAgentState,
     run_id: RunId,
     entries: Vec<ContextEntry>,
@@ -1381,11 +1587,10 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
         Event::EntriesRemoved {
             base_revision,
             entry_ids,
-            reason,
+            reason: _,
         } => {
             validate_base_revision(state, *base_revision)?;
-            validate_removal_reason(reason)?;
-            validate_entries_removable(state, entry_ids, reason)?;
+            validate_entries_removable(state, entry_ids)?;
             remove_context_entries(state, entry_ids)?;
             bump_context_revision(state)?;
             Ok(())
@@ -1417,16 +1622,6 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             bump_context_revision(state)?;
             Ok(())
         }
-        Event::StateReplaced {
-            base_revision,
-            entries,
-            reason,
-        } => {
-            validate_base_revision(state, *base_revision)?;
-            replace_context_state(state, entries, reason)?;
-            bump_context_revision(state)?;
-            Ok(())
-        }
         Event::EntriesReplaced {
             base_revision,
             entries,
@@ -1445,7 +1640,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                         entry.entry_id
                     )));
                 }
-                validate_entry_replacement(state, entry)?;
+                validate_recorded_entry_replacement(state, entry)?;
             }
             for entry in entries {
                 let active = state
@@ -1468,25 +1663,35 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             if !compaction_safe_boundary(state)
                 || plan.trigger != *trigger
                 || plan.run_id != state.runs.active.as_ref().map(|run| run.run_id)
-                || plan.covered_entry_ids != standalone_prefix_ids(state)
                 || plan.covered_entry_ids.is_empty()
             {
                 return Err(DomainError::InvariantViolation(
-                    "invalid compaction prefix or execution boundary".into(),
+                    "invalid compaction plan or execution boundary".into(),
                 ));
+            }
+            // A recorded plan is a fact: which entries it covers is the planner's
+            // decision, and the planner may change. It only has to name entries
+            // that exist and that compaction is allowed to rewrite.
+            for entry_id in &plan.covered_entry_ids {
+                if entry_by_id(state, *entry_id).is_none() {
+                    return Err(DomainError::InvariantViolation(format!(
+                        "compaction plan covers unknown context entry {entry_id}"
+                    )));
+                }
+                validate_entry_is_not_unconsumed_active_run_input(state, *entry_id)?;
             }
             if let Some(run) = state.runs.active.as_mut()
                 && let Some(turn) = run.turns.values().next_back()
-                && matches!(
-                    turn.outcome,
-                    Some(
-                        crate::TurnOutcome::ContextLimit { .. }
-                            | crate::TurnOutcome::ContextUpdateRequired
-                    )
-                )
+                && matches!(turn.outcome, Some(crate::TurnOutcome::ContextLimit { .. }))
             {
                 run.context_recovery.attempts += 1;
-                run.context_recovery.recovered_turn_id = Some(turn.turn_id);
+                run.context_recovery.recovery_attempted_turn_id = Some(turn.turn_id);
+            }
+            if *trigger == ContextCompactionTrigger::HighWatermark
+                && state.context.entries.len() >= ENTRY_GUARD_LIMIT
+                && let Some(run) = state.runs.active.as_mut()
+            {
+                run.entry_guard_attempted = true;
             }
             state.context.compaction.phase = ContextCompactionPhase::Pending(plan.clone());
             bump_context_revision(state)?;
@@ -1515,7 +1720,8 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     "successful context compaction cannot include a failure ref".to_owned(),
                 ));
             }
-            if !state.context.compaction.is_pending() {
+            let queued = state.context.compaction.is_queued();
+            if !state.context.compaction.is_pending() && !queued {
                 return Err(DomainError::InvariantViolation(
                     "context compaction finished without a pending request".to_owned(),
                 ));
@@ -1525,17 +1731,58 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             {
                 crate::core::components::turn::accumulate_usage(&mut run.usage, usage);
             }
-            let manual = state
-                .context
-                .compaction
-                .pending_plan()
-                .is_some_and(|plan| plan.trigger == ContextCompactionTrigger::Manual);
+            let manual = queued
+                || state
+                    .context
+                    .compaction
+                    .pending_plan()
+                    .is_some_and(|plan| plan.trigger == ContextCompactionTrigger::Manual);
+            match status {
+                ContextCompactionStatus::Succeeded => {
+                    state.context.compaction.failure_floor = None;
+                    // A long run that gets back under may need the guard again later.
+                    // One that stays over has no use for another attempt.
+                    if state.context.entries.len() < ENTRY_GUARD_LIMIT
+                        && let Some(run) = state.runs.active.as_mut()
+                    {
+                        run.entry_guard_attempted = false;
+                    }
+                }
+                // A plan whose run has ended was abandoned, which says nothing about
+                // whether compaction works.
+                ContextCompactionStatus::Failed => {
+                    let attempting_run = state
+                        .runs
+                        .active
+                        .as_ref()
+                        .filter(|run| run.status == RunStatus::Running)
+                        .map(|run| run.run_id);
+                    if let Some(floor) = state
+                        .context
+                        .compaction
+                        .pending_plan()
+                        .filter(|plan| {
+                            plan.trigger == ContextCompactionTrigger::HighWatermark
+                                && plan.run_id == attempting_run
+                        })
+                        .map(|plan| CompactionFailureFloor {
+                            tokens: plan.estimated_tokens,
+                            entries: state.context.entries.len(),
+                        })
+                    {
+                        state.context.compaction.failure_floor = Some(floor);
+                    }
+                }
+            }
             state.context.compaction.phase = ContextCompactionPhase::Idle;
             bump_context_revision(state)?;
             state.context.compaction.last_finished_revision = Some(state.context.revision);
             if manual {
-                state.context.compaction.last_manual_finished_revision =
-                    Some(state.context.revision);
+                state.context.compaction.last_manual_outcome = Some(ManualCompactionOutcome {
+                    revision: state.context.revision,
+                    status: *status,
+                    failure_ref: failure_ref.clone(),
+                });
             }
             Ok(())
         }
@@ -1574,7 +1821,7 @@ fn apply_entries_applied(
     for entry in entries {
         let expected_entry_id = state
             .id_cursors
-            .last_context_item_id
+            .last_context_entry_id
             .checked_add(1)
             .ok_or_else(|| {
                 DomainError::InvariantViolation("context entry id cursor exhausted".into())
@@ -1616,7 +1863,7 @@ fn apply_entries_applied(
         }
 
         state.context.entries.push(entry.clone());
-        state.id_cursors.last_context_item_id = entry.entry_id.as_u64();
+        state.id_cursors.last_context_entry_id = entry.entry_id.as_u64();
 
         if let Some(key) = entry.key.as_ref()
             && entry.supersedes.is_some()
@@ -1711,8 +1958,6 @@ fn validate_key_prefix_replacement_entries(
                 entry.entry_id
             )));
         }
-        let input = context_entry_input_from_active(entry);
-        validate_external_context_edit_entry(key, &input)?;
     }
     Ok(())
 }
@@ -1858,31 +2103,34 @@ pub fn validate_entry_replacement(
     state: &CoreAgentState,
     entry: &ContextEntry,
 ) -> Result<(), DomainError> {
+    validate_recorded_entry_replacement(state, entry)?;
     let entry_id = entry.entry_id;
-    let Some(active) = entry_by_id(state, entry_id) else {
-        return Err(DomainError::InvariantViolation(format!(
-            "cannot replace unknown context entry {entry_id}"
-        )));
-    };
+    let active = entry_by_id(state, entry_id).expect("validated active entry");
     let catalog_metadata_only = is_supersedable_catalog_kind(&active.kind)
         && active.content == entry.content
         && active.supersedes == entry.supersedes
         && active.key.as_ref().is_some_and(|key| {
             current_key_entry(state, key).is_some_and(|current| current.entry_id == entry_id)
         });
-    let replaceable = catalog_metadata_only
-        || matches!(
-            active.kind,
-            ContextEntryKind::ToolResult { .. }
-                | ContextEntryKind::Message {
-                    role: ContextMessageRole::User
-                }
-        );
-    if !replaceable {
+    if !catalog_metadata_only && !active.kind.is_replaceable() {
         return Err(DomainError::InvariantViolation(format!(
             "context entry {entry_id} cannot be replaced: only tool results, user messages, and current catalog metadata can"
         )));
     }
+    Ok(())
+}
+
+/// What any replacement must keep true, whichever kinds admission allows.
+fn validate_recorded_entry_replacement(
+    state: &CoreAgentState,
+    entry: &ContextEntry,
+) -> Result<(), DomainError> {
+    let entry_id = entry.entry_id;
+    let Some(active) = entry_by_id(state, entry_id) else {
+        return Err(DomainError::InvariantViolation(format!(
+            "cannot replace unknown context entry {entry_id}"
+        )));
+    };
     if entry.kind != active.kind || entry.key != active.key || entry.source != active.source {
         return Err(DomainError::InvariantViolation(format!(
             "replacement of context entry {entry_id} must keep its kind, key, and source"
@@ -1891,16 +2139,9 @@ pub fn validate_entry_replacement(
     validate_entry_is_not_unconsumed_active_run_input(state, entry_id)
 }
 
-fn validate_removal_reason(reason: &ContextRemovalReason) -> Result<(), DomainError> {
-    match reason {
-        ContextRemovalReason::Pruned | ContextRemovalReason::ProviderCompacted => Ok(()),
-    }
-}
-
 fn validate_entries_removable(
     state: &CoreAgentState,
     entry_ids: &[ContextEntryId],
-    _reason: &ContextRemovalReason,
 ) -> Result<(), DomainError> {
     for entry_id in entry_ids {
         validate_entry_is_not_unconsumed_active_run_input(state, *entry_id)?;
@@ -2047,118 +2288,223 @@ fn context_entry_input_from_active(entry: &ContextEntry) -> ContextEntryInput {
     }
 }
 
-fn replace_context_state(
-    state: &mut CoreAgentState,
-    entries: &[ContextEntry],
-    reason: &ContextRewriteReason,
-) -> Result<(), DomainError> {
-    validate_rewrite_reason(state, reason)?;
-    validate_replacement_entries(state, entries)?;
-    validate_rewrite_preserves_unconsumed_entries(state, entries)?;
-
-    if let Some(last) = entries.last() {
-        state.id_cursors.last_context_item_id = last
-            .entry_id
-            .as_u64()
-            .max(state.id_cursors.last_context_item_id);
-    }
-    state.context.entries = entries.to_vec();
-    Ok(())
-}
-
-fn validate_rewrite_preserves_unconsumed_entries(
-    state: &CoreAgentState,
-    replacement_entries: &[ContextEntry],
-) -> Result<(), DomainError> {
-    let replacement_ids = replacement_entries
-        .iter()
-        .map(|entry| entry.entry_id)
-        .collect::<BTreeSet<_>>();
-    for entry in &state.context.entries {
-        if !replacement_ids.contains(&entry.entry_id) {
-            validate_entry_is_not_unconsumed_active_run_input(state, entry.entry_id)?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_rewrite_reason(
-    _state: &CoreAgentState,
-    reason: &ContextRewriteReason,
-) -> Result<(), DomainError> {
-    match reason {
-        ContextRewriteReason::Pruned
-        | ContextRewriteReason::PolicyChanged
-        | ContextRewriteReason::ProviderCompacted => Ok(()),
-    }
-}
-
-fn validate_replacement_entries(
-    state: &CoreAgentState,
-    entries: &[ContextEntry],
-) -> Result<(), DomainError> {
-    let mut seen_ids = BTreeSet::new();
-    let mut seen_keys = BTreeSet::new();
-    let mut previous_entry_id = None;
-
-    for entry in entries {
-        if !seen_ids.insert(entry.entry_id) {
-            return Err(DomainError::InvariantViolation(format!(
-                "duplicate replacement context entry id {}",
-                entry.entry_id
-            )));
-        }
-        if let Some(previous_entry_id) = previous_entry_id
-            && entry.entry_id <= previous_entry_id
-        {
-            return Err(DomainError::InvariantViolation(format!(
-                "replacement context entry id {} must be greater than previous entry id {}",
-                entry.entry_id, previous_entry_id
-            )));
-        }
-        previous_entry_id = Some(entry.entry_id);
-
-        // Superseded catalog versions legitimately share their key.
-        if let Some(key) = entry.key.as_ref()
-            && !is_supersedable_catalog_kind(&entry.kind)
-            && !seen_keys.insert(key.clone())
-        {
-            return Err(DomainError::InvariantViolation(format!(
-                "duplicate replacement context key {}",
-                key
-            )));
-        }
-
-        match entry_by_id(state, entry.entry_id) {
-            Some(existing) if existing != entry => {
-                return Err(DomainError::InvariantViolation(format!(
-                    "replacement context entry {} changes existing entry payload",
-                    entry.entry_id
-                )));
-            }
-            Some(_) => {}
-            None => {
-                return Err(DomainError::InvariantViolation(format!(
-                    "replacement context entry {} is not an active entry",
-                    entry.entry_id
-                )));
-            }
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rendered_entry(id: u64, kind: ContextEntryKind, source: ContextEntrySource) -> ContextEntry {
+        ContextEntry {
+            origin: None,
+            entry_id: ContextEntryId::new(id),
+            key: None,
+            kind,
+            source,
+            content: crate::ContentRef {
+                content_ref: BlobRef::from_bytes(b"entry"),
+                media_type: None,
+                provider_kind: None,
+            },
+            preview: None,
+            provenance_ref: None,
+            token_estimate: None,
+            supersedes: None,
+        }
+    }
+
+    fn output_source(turn: u64) -> ContextEntrySource {
+        ContextEntrySource::AssistantOutput {
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(turn),
+        }
+    }
+
+    fn call(id: u64, call_id: &str, turn: u64) -> ContextEntry {
+        rendered_entry(
+            id,
+            ContextEntryKind::ToolCall {
+                call_id: crate::ToolCallId::new(call_id),
+                name: crate::ToolName::new("tool"),
+            },
+            output_source(turn),
+        )
+    }
+
+    fn result(id: u64, call_id: &str, turn: u64) -> ContextEntry {
+        rendered_entry(
+            id,
+            ContextEntryKind::ToolResult {
+                call_id: crate::ToolCallId::new(call_id),
+                is_error: false,
+            },
+            ContextEntrySource::Tool {
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(turn),
+                batch_id: None,
+            },
+        )
+    }
+
+    fn user_note(id: u64) -> ContextEntry {
+        rendered_entry(
+            id,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            ContextEntrySource::Runtime {
+                label: "note".to_owned(),
+            },
+        )
+    }
+
+    fn media(id: u64, turn: u64) -> ContextEntry {
+        ContextEntry {
+            source: ContextEntrySource::Tool {
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(turn),
+                batch_id: None,
+            },
+            ..user_note(id)
+        }
+    }
+
+    fn reasoning(id: u64, turn: u64) -> ContextEntry {
+        rendered_entry(
+            id,
+            ContextEntryKind::ReasoningState,
+            ContextEntrySource::Reasoning {
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(turn),
+            },
+        )
+    }
+
+    fn answer(id: u64, turn: u64) -> ContextEntry {
+        rendered_entry(
+            id,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::Assistant,
+            },
+            output_source(turn),
+        )
+    }
+
+    fn render_order(entries: Vec<ContextEntry>) -> Vec<u64> {
+        tool_groups_adjacent(entries.iter())
+            .into_iter()
+            .map(|id| id.as_u64())
+            .collect()
+    }
+
+    #[test]
+    fn a_session_with_nothing_interleaved_renders_in_arrival_order() {
+        assert_eq!(
+            render_order(vec![
+                user_note(1),
+                reasoning(2, 1),
+                call(3, "a", 1),
+                call(4, "b", 1),
+                result(5, "a", 1),
+                result(6, "b", 1),
+                media(7, 1),
+                answer(8, 2),
+            ]),
+            [1, 2, 3, 4, 5, 6, 7, 8]
+        );
+    }
+
+    #[test]
+    fn entries_arriving_inside_a_group_render_behind_its_last_result() {
+        assert_eq!(
+            render_order(vec![
+                call(1, "a", 1),
+                call(2, "b", 1),
+                user_note(3),
+                result(4, "a", 1),
+                media(5, 1),
+                user_note(6),
+                result(7, "b", 1),
+                media(8, 1),
+                answer(9, 2),
+            ]),
+            [1, 2, 4, 7, 3, 5, 6, 8, 9]
+        );
+    }
+
+    #[test]
+    fn the_calling_turns_output_stays_between_its_calls() {
+        assert_eq!(
+            render_order(vec![
+                reasoning(1, 1),
+                call(2, "a", 1),
+                reasoning(3, 1),
+                call(4, "b", 1),
+                answer(5, 1),
+                user_note(6),
+                result(7, "b", 1),
+                result(8, "a", 1),
+            ]),
+            [1, 2, 3, 4, 5, 7, 8, 6]
+        );
+    }
+
+    #[test]
+    fn a_later_turn_closes_a_group_that_was_never_answered() {
+        // The later turn's request already carried the note at its position.
+        assert_eq!(
+            render_order(vec![
+                call(1, "gone", 1),
+                user_note(2),
+                answer(3, 2),
+                call(4, "a", 3),
+                user_note(5),
+                result(6, "a", 3),
+            ]),
+            [1, 2, 3, 4, 6, 5]
+        );
+    }
+
+    #[test]
+    fn a_call_never_answered_at_the_tail_keeps_arrival_order() {
+        assert_eq!(
+            render_order(vec![call(1, "a", 1), user_note(2), user_note(3)]),
+            [1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn a_result_answering_no_open_call_is_an_ordinary_entry() {
+        assert_eq!(
+            render_order(vec![
+                result(1, "compacted", 1),
+                call(2, "a", 2),
+                result(3, "compacted", 1),
+                result(4, "a", 2),
+            ]),
+            [1, 2, 4, 3]
+        );
+    }
+
+    #[test]
+    fn a_provider_reusing_a_call_id_in_a_later_turn_gets_a_new_group() {
+        assert_eq!(
+            render_order(vec![
+                call(1, "call_0", 1),
+                result(2, "call_0", 1),
+                call(3, "call_0", 2),
+                user_note(4),
+                result(5, "call_0", 2),
+            ]),
+            [1, 2, 3, 5, 4]
+        );
+    }
 
     #[test]
     fn compaction_requests_and_pending_snapshots_require_a_plan() {
         let plan = ContextCompactionPlan {
             run_id: None,
-            covered_entry_ids: vec![ContextItemId::new(1)],
+            covered_entry_ids: vec![ContextEntryId::new(1)],
             trigger: ContextCompactionTrigger::Manual,
+            estimated_tokens: None,
         };
         let event = Event::CompactionRequested {
             base_revision: 0,

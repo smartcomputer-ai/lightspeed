@@ -11,13 +11,11 @@ use temporal_workflow::bots::*;
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
-use crate::{gateway::GatewayAgentApi, universe::UniverseRuntime};
-
-fn authority_error(error: impl std::fmt::Display) -> ActivityError {
-    ActivityError::application(temporalio_common::error::ApplicationFailure::non_retryable(
-        anyhow::anyhow!("{error}"),
-    ))
-}
+use crate::{
+    bots::sessions::{activity_error, non_retryable},
+    gateway::GatewayAgentApi,
+    universe::UniverseRuntime,
+};
 
 pub struct BotWorkerActivities {
     universes: WorkerUniverses,
@@ -57,11 +55,13 @@ impl BotWorkerActivities {
             .info()
             .workflow_id
             .as_deref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?;
+            .ok_or_else(|| non_retryable("missing controller workflow identity"))?;
+        // A denied identity stays denied, but a failed store read says nothing
+        // about it, so that one goes through the activity's retries.
         let authority = api
             .bot_activity_authority(workflow_id, bot)
             .await
-            .map_err(authority_error)?;
+            .map_err(|error| activity_error("check controller authority", error))?;
         Ok((api, authority))
     }
 }
@@ -108,6 +108,20 @@ impl BotWorkerActivities {
         crate::gateway::service::authorization::with_controller_authority(
             authority,
             crate::bots::sessions::read_session_status(&api, request),
+        )
+        .await
+    }
+
+    #[activity(name = ACTIVITY_BOT_READ_DEAD_SESSIONS)]
+    pub async fn read_dead_sessions(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: BotReadDeadSessionsRequest,
+    ) -> Result<BotReadDeadSessionsResult, ActivityError> {
+        let (api, authority) = self.controller(&_ctx, request.universe_id, None).await?;
+        crate::gateway::service::authorization::with_controller_authority(
+            authority,
+            crate::bots::sessions::read_dead_sessions(&api, request),
         )
         .await
     }
@@ -362,6 +376,10 @@ mod tests {
         assert_eq!(
             BotWorkerActivities::ensure_session.name(),
             BotActivities::ensure_session.name()
+        );
+        assert_eq!(
+            BotWorkerActivities::read_dead_sessions.name(),
+            BotActivities::read_dead_sessions.name()
         );
         assert_eq!(
             BotWorkerActivities::start_run.name(),

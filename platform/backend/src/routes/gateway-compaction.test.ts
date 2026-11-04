@@ -19,7 +19,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
     const rpc = JSON.parse(String(init.body));
     requests.push(rpc);
-    const session = { id: "session", status: "idle", access: { visibility: "restricted", createdBy: { kind: "actor", id: access.owner } } };
+    const session = { id: "session", lifecycleStatus: "open", activity: "idle", access: { visibility: "restricted", createdBy: { kind: "actor", id: access.owner } } };
     return Response.json({ id: rpc.id, result: { result: { session }, notifications: [] } });
   }));
 });
