@@ -610,14 +610,14 @@ fn approval_policy_to_str(value: McpApprovalPolicy) -> &'static str {
 fn execution_to_str(value: McpExecution) -> &'static str {
     match value {
         McpExecution::Provider => "provider",
-        McpExecution::Native => "native",
+        McpExecution::Runtime => "runtime",
     }
 }
 
 fn execution_from_str(value: &str) -> Result<McpExecution, McpRegistryError> {
     match value {
         "provider" => Ok(McpExecution::Provider),
-        "native" => Ok(McpExecution::Native),
+        "runtime" => Ok(McpExecution::Runtime),
         other => Err(McpRegistryError::Store {
             message: format!("unsupported MCP execution mode '{other}'"),
         }),
@@ -693,5 +693,22 @@ fn mcp_store_error(action: &str, error: crate::PgStoreError) -> McpRegistryError
 fn mcp_sql_error(action: &str, error: sqlx::Error) -> McpRegistryError {
     McpRegistryError::Store {
         message: format!("{action}: {error}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MIGRATION: &str = include_str!("../migrations/014_runtime_and_lifecycle_vocabulary.sql");
+
+    #[test]
+    fn stored_execution_values_round_trip_and_pass_the_check() {
+        for execution in [McpExecution::Provider, McpExecution::Runtime] {
+            let stored = execution_to_str(execution);
+            assert_eq!(execution_from_str(stored).unwrap(), execution);
+            assert!(MIGRATION.contains(&format!("'{stored}'")), "{stored}");
+        }
+        assert!(execution_from_str("native").is_err());
     }
 }

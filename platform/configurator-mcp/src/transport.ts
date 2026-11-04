@@ -204,9 +204,9 @@ function httpStatus(error: unknown): number {
         return 403;
       case "rejected":
         return 409;
-      case "not_found":
+      case "notFound":
         return 404;
-      case "invalid_request":
+      case "invalidRequest":
         return 400;
       default:
         return 502;

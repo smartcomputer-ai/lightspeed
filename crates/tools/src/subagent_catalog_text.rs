@@ -35,12 +35,15 @@ pub(crate) fn subagent_catalog_text(catalog: &SubagentCatalogSnapshot) -> String
             );
         }
     }
+    let child_time_limit = match catalog.limits.run_timeout_ms {
+        Some(run_timeout_ms) => format!("{} s per child", run_timeout_ms / 1_000),
+        None => "no time limit per child".to_owned(),
+    };
     text.push_str(&format!(
-        "\nLimits for this session\'s tree: depth {}, {} descendants in total, {} running at once, {} s per child.",
+        "\nLimits for this session\'s tree: depth {}, {} descendants in total, {} running at once, {child_time_limit}.",
         catalog.limits.max_depth,
         catalog.limits.max_descendants,
         catalog.limits.max_concurrent,
-        catalog.limits.deadline_ms / 1_000,
     ));
     text
 }
@@ -74,10 +77,23 @@ mod tests {
         assert!(text.contains("Reviews a PR for correctness."));
         assert!(text.contains("currently missing"));
         assert!(text.contains("depth 2, 16 descendants"));
+        assert!(text.contains("no time limit per child"));
+        assert!(!text.contains(" s per child"));
         assert!(text.contains(AGENT_RUN_TOOL_NAME));
         let mut changed = catalog.clone();
         changed.agents[0].revision = Some(99);
         changed.agents.reverse();
         assert_eq!(subagent_catalog_text(&changed), text);
+
+        let limited = SubagentCatalogSnapshot::new(
+            catalog.agents.clone(),
+            harness::SubagentLimits {
+                run_timeout_ms: Some(90_000),
+                ..harness::SubagentLimits::default()
+            },
+        );
+        let limited = subagent_catalog_text(&limited);
+        assert!(limited.contains("90 s per child"));
+        assert!(!limited.contains("no time limit"));
     }
 }

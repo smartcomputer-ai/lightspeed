@@ -92,9 +92,8 @@ pub enum AuthBrokerError {
 pub trait AuthTokenBroker: Send + Sync {
     /// Resolve a current bearer token for `grant_id`, enforcing grant status,
     /// expiry, and audience, renewing (refreshing/minting) when needed. Fails
-    /// with a typed error; never returns a silent absence. Optional-auth-absent
-    /// is a link-policy concern expressed by omitting `auth_ref` upstream, not
-    /// by the broker.
+    /// with a typed error; never returns a silent absence. Whether a credential
+    /// may be absent is decided from the server record before the broker is asked.
     async fn bearer_token(
         &self,
         grant_id: &AuthGrantId,

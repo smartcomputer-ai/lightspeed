@@ -61,7 +61,10 @@ Recovery can therefore distinguish the work requested from the work completed.
 Return to the release editor. The user asks it to read `changes.md` and prepare
 release notes. The gateway validates and materializes the input, then sends an
 admission to the session workflow. `session/runs/start` returns when the run is
-accepted; it does not wait for the release notes to be finished.
+accepted; it does not wait for the release notes to be finished. A session busy
+compacting holds the request. If the wait runs out, the call answers
+`operationPending` with the submission ID. The run still starts later, and retrying
+with that ID cannot start a second one.
 
 The accepted request joins the session's queue. When the active slot is
 available, the planner starts that run and assembles the next model turn from
@@ -104,6 +107,25 @@ finishes after session closure and the draining of its pending deliveries.
 [Tools and controller workflows](tools-and-controller-workflows.md) explains
 how outstanding work is represented by durable promises.
 
+## Failures end the run, not the session
+
+A run fails with a kind and the real message: `contextFailure`, `modelFailure`,
+`requestRejected`, `outputTruncated`, `contentFiltered`, `limitExceeded`, or
+`internal`. The session stays open and the next queued run starts, so one bad run
+does not take the conversation with it. This also covers a refusal by the harness
+and an event the store rejects. Those are bugs rather than user errors, so they fail
+that run as `internal`, carry the refusal's text and log at error level, and the
+workflow keeps running.
+
+A failing run closes any tool group it left open, so the next request is well formed,
+and steering the run had not delivered reaches the next run. Only a requested
+cancellation drops steering.
+
+`limits.maxTurns` is enforced only when set. It counts turns started, including
+recovery and steering turns, and a run that needs another turn past it fails as
+`limitExceeded` once its tool calls have results. With no limit a run can take as
+many turns as it needs.
+
 ## There are two histories
 
 Lightspeed runs an event-sourced agent inside a durable workflow. Each layer
@@ -142,13 +164,28 @@ replays the events committed since it was taken. If the checkpoint cannot be
 used, it falls back to the event log. A missing checkpoint slows recovery;
 missing authoritative events prevent it.
 
-The activity returns reduced state, its head, and the run-submission index to
-the workflow. It does not send the entire event history through the activity
-result. The same distinction lets a transcript reader load a bounded event
-range without reconstructing the full execution state first.
+The activity returns reduced state to the workflow. It does not send the entire
+event history through the activity result. The same distinction lets a transcript
+reader load a bounded event range without reconstructing the full execution state
+first.
 
 The [checkpoint loader](../../../crates/temporal-runtime/src/checkpoint.rs)
 validates checkpoints and checks that the required history is complete.
+
+## Keep reduced state bounded
+
+Reduced state crosses into every new execution, so it cannot grow with the length of
+a run if agents are to run for thousands of turns. At each turn and batch completion
+a run keeps its latest turn and any turn with an open batch, and decided approvals
+leave. A session keeps the last 256 finished run records and the last 256 settled
+promises, and a run keeps its last 64 steering batches. Older runs are read back from
+the log, which is the authority for all of it.
+
+The windows have visible edges. A submission retried more than 256 runs later starts
+a new run. Steering retried past 64 batches lands twice. An `await` on a promise that
+has left the window is refused as no longer retained, and a second decision on an
+approval that has left answers `notFound`. Run summaries read from the log carry no
+usage figure.
 
 ## Continue with a new Temporal execution
 
@@ -175,18 +212,28 @@ Rollover limits the growth of Temporal history. Context compaction, payload
 storage, and retention address other kinds of growth, as described in
 [Context and storage](context-and-storage.md).
 
+An execution can also stop for good while the log says the session is open: an
+operator terminated it, the store refused something it could not recover from, or
+its Temporal data is gone. Reads keep working and report `executionFailure`, and new
+runs are refused. `session/restart` starts a new execution from the log, and fails an
+interrupted run rather than repeat its work. A parked run keeps waiting. See
+[Restart a stopped session](../deployment/upgrades-and-recovery.md#restart-a-stopped-session).
+
 ## Accept control while work is in flight
 
 The session workflow listens for admissions while generation and tool activities
-run. New queued work, cancellation, steering, approval decisions, and promise
-facts can be recorded without waiting for a slow model call to return.
+run. New queued work, cancellation, steering, and approval decisions can be recorded
+without waiting for a slow model call to return. A promise resolution pushed by
+another workflow can wait out the current activity, because it is checked and
+committed on the workflow's outer pass.
 
 That responsiveness does not mean the request already sent to the provider
 can be edited. A turn uses frozen context and configuration revisions.
 Steering admitted during generation is materialized at a subsequent turn
 boundary. Mutations that would invalidate the in-flight generation wait for
-the appropriate boundary. Standalone compaction temporarily holds admissions
-until the compaction operation finishes.
+the appropriate boundary. Standalone compaction holds admissions until it finishes,
+except cancellation and force-cancellation. Cancelling the run that owns the
+compaction abandons it; a session-level compaction continues.
 
 Cancellation changes the authoritative run state and requests cancellation
 of its executing activities or owned work. Obsolete results cannot turn the
@@ -210,15 +257,23 @@ of appending duplicates. A conflicting append remains an error.
 Client submissions have a similar boundary. Reusing a `submission_id` with the
 same submission resolves to the accepted run. Reusing it with different input,
 configuration, or notification intent is rejected. The identifier makes the
-retry recognizable; it is not a request to create another run.
+retry recognizable; it is not a request to create another run. Steering takes a
+`submissionId` in the same way. An API wait that runs out answers `operationPending`
+rather than a failure, because the command can still land.
 
 External effects need their own policy. Read-only or explicitly retry-safe
 tools receive bounded retries. Other calls, including process operations, use
 one attempt. Completed tool siblings have their results committed
 independently, so retrying unfinished work does not require re-executing those
-completed calls. Provider generation and compaction have bounded handling for
-transient failures; exhausted retries become visible failures rather than an
-endless model call.
+completed calls.
+
+Provider generation and compaction retry transient failures within a bound, of 15
+attempts in 21 minutes, then fail the run with the real message rather than wait on
+an endless model call. A connection failure, a timeout, or a response body cut off
+partway counts as transient on every provider client, as does a recoverable store
+failure in the adapter. The provider may already have served a request that is sent
+again, so a retry can bill a second generation and can run a provider-hosted MCP call
+twice.
 
 Deterministic replay and external exactly-once execution are different claims.
 If a remote service performed an operation but its response was lost, the

@@ -4,7 +4,9 @@
 use std::time::Duration;
 
 use futures::{FutureExt, select_biased};
-use temporalio_common::protos::temporal::api::common::v1::RetryPolicy;
+use temporalio_common::{
+    data_converters::RawValue, protos::temporal::api::common::v1::RetryPolicy,
+};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityCancellationType, ActivityCloseTimeouts, ActivityOptions, CancellableFuture,
@@ -156,7 +158,7 @@ impl CodeExecutionWorkflow {
             .external_workflow(start.holder_workflow_id, None)
             .signal(
                 AgentSessionWorkflow::deliver_emission,
-                envelope,
+                crate::workflows::emission_signal_input(&envelope),
                 crate::workflows::signal_options(),
             )
             .await;
@@ -168,11 +170,10 @@ impl CodeExecutionWorkflow {
     }
 
     #[signal(name = "deliver_emission")]
-    pub fn deliver_emission(
-        &mut self,
-        _ctx: &mut SyncWorkflowContext<Self>,
-        envelope: harness::EmissionEnvelope,
-    ) {
+    pub fn deliver_emission(&mut self, ctx: &mut SyncWorkflowContext<Self>, emission: RawValue) {
+        let Ok(envelope) = crate::workflows::receive_emission(ctx, &emission) else {
+            return;
+        };
         if self
             .start
             .as_ref()
@@ -432,7 +433,7 @@ mod tests {
                     "wti:sha256:{}",
                     "a".repeat(64)
                 )),
-                tool_id: harness::WorkflowToolId::new("lightspeed.code.execute.v1"),
+                workflow_tool_id: harness::WorkflowToolId::new("lightspeed.code.execute.v1"),
                 semantic_type: "lightspeed.code.execute.v1".to_owned(),
                 schema_revision: 1,
                 binding_fingerprint: "binding:code".to_owned(),

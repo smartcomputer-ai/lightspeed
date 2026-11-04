@@ -36,3 +36,48 @@ impl Default for ToolLimits {
         }
     }
 }
+
+/// Model-visible text after the projection budget, with the accounting
+/// facts the completion event carries: how much the tool produced and
+/// whether the budget cut it.
+pub struct ProjectedText {
+    pub bytes: Vec<u8>,
+    pub output_bytes: u64,
+    pub truncated: bool,
+}
+
+/// Cut model-visible text to `max_bytes` on a UTF-8 boundary, marking the cut.
+pub fn projected(mut bytes: Vec<u8>, max_bytes: u64) -> ProjectedText {
+    let output_bytes = bytes.len() as u64;
+    let truncated = output_bytes > max_bytes;
+    if truncated {
+        bytes.truncate(max_bytes as usize);
+        while std::str::from_utf8(&bytes).is_err() {
+            bytes.pop();
+        }
+        bytes.extend_from_slice(b"\n[truncated]");
+    }
+    ProjectedText {
+        bytes,
+        output_bytes,
+        truncated,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn projection_cuts_on_a_character_boundary_and_keeps_the_true_size() {
+        let whole = projected("héllo".as_bytes().to_vec(), 6);
+        assert_eq!(whole.bytes, "héllo".as_bytes());
+        assert_eq!(whole.output_bytes, 6);
+        assert!(!whole.truncated);
+
+        let cut = projected("héllo".as_bytes().to_vec(), 2);
+        assert_eq!(cut.bytes, b"h\n[truncated]");
+        assert_eq!(cut.output_bytes, 6);
+        assert!(cut.truncated);
+    }
+}

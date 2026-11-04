@@ -35,7 +35,7 @@ const OPENAI_SELECTABLE_MAX_AGE_MS: i64 = 548 * 24 * 60 * 60 * 1_000;
 
 /// The model-discovery route set. This remains code-local deliberately: provider
 /// discovery is direct, not a registry or persisted catalog.
-pub(super) struct ModelDiscoveryService {
+pub(crate) struct ModelDiscoveryService {
     openai: Arc<openai::Client>,
     anthropic: Arc<anthropic::Client>,
     provider_keys: Arc<dyn ModelProviderResolver>,
@@ -159,7 +159,7 @@ impl ModelDiscoveryService {
     }
 
     /// Resolve reported capacity only; discovery failures leave the limit unknown.
-    pub(super) async fn input_limit(&self, model: &ModelSelection) -> Option<u32> {
+    pub(crate) async fn input_limit(&self, model: &ModelSelection) -> Option<u32> {
         if model.provider_id != ANTHROPIC_PROVIDER_ID
             || model.api_kind != ProviderApiKind::AnthropicMessages
         {

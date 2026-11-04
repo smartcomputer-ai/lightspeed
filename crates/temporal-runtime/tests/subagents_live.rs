@@ -7,8 +7,8 @@ use std::{env, future::Future, sync::Arc, time::Duration};
 use api::{
     AgentApiService, AgentProfileInput, ContextEntryKindView, InputItem, ProfileCreateParams,
     ProfileDeleteParams, ProfileDocument, ProfileId, ProfileInstructions, ProfileReadParams,
-    ProfileSource, RunStartParams, RunStartSource, SessionConfig, SessionEventsReadParams,
-    SessionReadParams, SessionStartParams,
+    ProfileSource, RunStartParams, RunStartSource, SessionCloseParams, SessionConfig,
+    SessionEventsReadParams, SessionReadParams, SessionStartParams,
 };
 use api_projection::model_to_api;
 use async_trait::async_trait;
@@ -16,7 +16,7 @@ use harness::{
     ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentIoError, CoreAgentLlm,
     CoreAgentTools, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
     LlmGenerationStatus, ModelSelection, ObservedToolCall, SessionId, ToolCallId, ToolName,
-    storage::{BlobStore, SessionStore},
+    storage::{BlobStore, CreateSession, SessionStore},
 };
 use support::live::{
     LIVE_TEST_LOCK, final_assistant_text, live_workflow_handle, require_storage_live_env,
@@ -29,7 +29,8 @@ use temporal_runtime::{
     worker::{ActivityState, SessionTools, WorkerActivities, sessions_worker, worker_runtime},
 };
 use temporal_workflow::{
-    AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal,
+    AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, SubagentWaitPolicy,
+    connect_temporal,
 };
 use temporalio_client::{Client, WorkflowQueryOptions};
 use tools::{
@@ -139,10 +140,97 @@ async fn temporal_live_agent_run_deadline_fails_the_reply_and_closes_the_child()
     let _ = dotenvy::dotenv();
     require_storage_live_env()?;
 
-    // The grant's `deadlineMs` is enforced inside the execution: a child
+    // The grant's `runTimeoutMs` is enforced inside the execution: a child
     // that outlives it is closed and the parent's joined call fails with a
     // `deadline` envelope.
     run_with_scripted_subagent_live_worker(run_agent_run_deadline_live_client).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_stopped_child_session_fails_the_delegation_and_closes_the_child()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    // With no time limit set, the liveness check is all that frees the parent of a
+    // child whose session workflow was terminated.
+    run_with_subagent_wait_policy(
+        SubagentWaitPolicy {
+            liveness_check_interval_ms: 500,
+            ..SubagentWaitPolicy::default()
+        },
+        run_stopped_child_live_client,
+    )
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_set_deadline_holds_across_liveness_checks_and_rollovers()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    // Checks every 500 ms and rollovers would push a restarted 5 s timer past the
+    // child's 12 s for good, so the deadline firing at all shows it did not move.
+    run_with_subagent_wait_policy(
+        FAST_ROLLOVER_POLICY,
+        run_deadline_across_rollovers_live_client,
+    )
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_child_result_reaches_the_parent_after_rollovers() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    run_with_subagent_wait_policy(
+        FAST_ROLLOVER_POLICY,
+        run_result_across_rollovers_live_client,
+    )
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_force_close_discards_a_session_that_never_opened() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    // A row with no log and no workflow, as a delegation leaves when its child
+    // fails before it opens, cannot be closed and blocks its tree's deletion.
+    run_with_scripted_subagent_live_worker(
+        |_client, session_id, api, _blobs, sessions, _model| async move {
+            sessions
+                .create_session(CreateSession {
+                    metadata: Default::default(),
+                    session_id: session_id.clone(),
+                    display_name: None,
+                    origin: None,
+                    delete_after_close_ms: None,
+                    created_at_ms: 1,
+                })
+                .await?;
+            let error = api
+                .close_session(SessionCloseParams {
+                    session_id: session_id.as_str().to_owned(),
+                    force: true,
+                })
+                .await
+                .expect_err("the session is gone once discarded");
+            assert_eq!(error.kind, api::AgentApiErrorKind::NotFound);
+            assert_eq!(sessions.load_session(&session_id).await?, None);
+            Ok(())
+        },
+    )
+    .await
 }
 
 #[derive(Clone)]
@@ -272,7 +360,8 @@ impl SubagentScriptedLlm {
                     content_ref: output_ref,
                     media_type: Some("application/json".to_owned()),
                     provider_kind: Some(
-                        harness::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND.to_owned(),
+                        llm_clients::content::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND
+                            .to_owned(),
                     ),
                 },
                 preview: Some("subagent scripted final".to_owned()),
@@ -545,7 +634,31 @@ impl CoreAgentLlm for SubagentScriptedLlm {
     }
 }
 
+/// Checks often and rolls over after a check or two.
+const FAST_ROLLOVER_POLICY: SubagentWaitPolicy = SubagentWaitPolicy {
+    liveness_check_interval_ms: 500,
+    continue_as_new_history_threshold: 20,
+};
+
 async fn run_with_scripted_subagent_live_worker<F, Fut>(run_client: F) -> anyhow::Result<()>
+where
+    F: FnOnce(
+        Client,
+        SessionId,
+        Arc<GatewayAgentApi>,
+        Arc<dyn BlobStore>,
+        Arc<dyn SessionStore>,
+        ModelSelection,
+    ) -> Fut,
+    Fut: Future<Output = anyhow::Result<()>>,
+{
+    run_with_subagent_wait_policy(SubagentWaitPolicy::default(), run_client).await
+}
+
+async fn run_with_subagent_wait_policy<F, Fut>(
+    wait: SubagentWaitPolicy,
+    run_client: F,
+) -> anyhow::Result<()>
 where
     F: FnOnce(
         Client,
@@ -584,7 +697,8 @@ where
         ActivityState::from_pg_store(store.clone(), llm, tools)
             .with_hosted_tools(hosted)
             .with_workflow_tool_executions(client.clone())
-            .with_subagent_runtime(Arc::new(AgentApiSubagentRuntime::new(api.clone()))),
+            .with_subagent_runtime(Arc::new(AgentApiSubagentRuntime::new(api.clone())))
+            .with_subagent_wait_policy(wait),
     );
     let mut worker = sessions_worker(&runtime, client.clone(), task_queue.clone(), activities)?;
     let shutdown_worker = worker.shutdown_handle();
@@ -636,13 +750,13 @@ fn io_error(error: impl std::fmt::Display) -> CoreAgentIoError {
 
 /// `features.subagents` granting exactly one agent profile.
 fn subagents_features(profile_id: &ProfileId, max_descendants: u32) -> api::FeaturesConfig {
-    subagents_features_with_deadline(profile_id, max_descendants, 120_000)
+    subagents_features_with_deadline(profile_id, max_descendants, None)
 }
 
 fn subagents_features_with_deadline(
     profile_id: &ProfileId,
     max_descendants: u32,
-    deadline_ms: u64,
+    run_timeout_ms: Option<u64>,
 ) -> api::FeaturesConfig {
     api::FeaturesConfig {
         subagents: Some(api::SubagentsFeature {
@@ -653,7 +767,7 @@ fn subagents_features_with_deadline(
             max_depth: 2,
             max_descendants,
             max_concurrent: 4,
-            deadline_ms,
+            run_timeout_ms,
         }),
         ..api::FeaturesConfig::default()
     }
@@ -841,7 +955,11 @@ async fn run_agent_run_media_live_client(
     .await?;
 
     let parent_run = wait_for_terminal_run(api.as_ref(), &session_id, &run_id).await?;
-    assert_eq!(parent_run.status, api::RunStatus::Completed);
+    assert_eq!(
+        parent_run.status,
+        api::RunStatus::Completed,
+        "parent run: {parent_run:?}"
+    );
     let parent_output = final_assistant_text(&parent_run).expect("parent assistant output");
     assert!(
         parent_output.contains(&format!("\"handle\":\"{handle}\"")),
@@ -966,9 +1084,8 @@ async fn run_file_attachment_live_client(
         .expect("receiving tool call");
     assert_eq!(call.attachments.len(), 1, "only the linked report travels");
     let attachment = &call.attachments[0];
-    assert_eq!(attachment.kind, api::ToolAttachmentKind::File);
     assert_eq!(attachment.handle, reference.handle);
-    assert_eq!(attachment.content_ref, reference.content_ref.as_str());
+    assert_eq!(attachment.blob_ref, reference.content_ref.as_str());
     let source = attachment
         .source
         .as_ref()
@@ -1032,7 +1149,11 @@ async fn run_agent_run_inline_live_client(
     .await?;
 
     let parent_run = wait_for_terminal_run(api.as_ref(), &session_id, &run_id).await?;
-    assert_eq!(parent_run.status, api::RunStatus::Completed);
+    assert_eq!(
+        parent_run.status,
+        api::RunStatus::Completed,
+        "parent run: {parent_run:?}"
+    );
     let parent_output = final_assistant_text(&parent_run).expect("parent assistant output");
     assert!(
         parent_output.contains("\"status\":\"completed\"")
@@ -1061,10 +1182,10 @@ async fn run_agent_run_inline_live_client(
             _ => None,
         })
         .expect("completed run must retain its native output descriptor");
-    assert_eq!(output.media_type.as_deref(), Some("application/json"));
+    assert_eq!(output.mime.as_deref(), Some("application/json"));
     assert_eq!(
         output.provider_kind.as_deref(),
-        Some(harness::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND)
+        Some(llm_clients::content::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND)
     );
     assert_eq!(parent_run.output.as_ref(), Some(&output));
     assert_eq!(parent_run.output_text.as_deref(), Some(parent_output));
@@ -1101,7 +1222,10 @@ async fn run_agent_run_inline_live_client(
     assert_eq!(child_origin.parent_session_id, session_id.as_str());
     assert_eq!(child_origin.parent_run_id, run_id);
     assert_eq!(child_origin.agent.profile_id, profile_id);
-    assert_eq!(child_view.status, api::SessionStatus::Closed);
+    assert_eq!(
+        child_view.lifecycle_status,
+        api::SessionLifecycleStatus::Closed
+    );
     let listed = api
         .list_sessions(api::SessionListParams {
             limit: None,
@@ -1164,7 +1288,11 @@ async fn run_agent_run_fan_out_live_client(
     .await?;
 
     let parent_run = wait_for_terminal_run(api.as_ref(), &session_id, &run_id).await?;
-    assert_eq!(parent_run.status, api::RunStatus::Completed);
+    assert_eq!(
+        parent_run.status,
+        api::RunStatus::Completed,
+        "parent run: {parent_run:?}"
+    );
     let parent_output = final_assistant_text(&parent_run).expect("parent assistant output");
     for index in 0..3 {
         assert!(
@@ -1224,7 +1352,11 @@ async fn run_agent_run_limit_live_client(
     .await?;
 
     let parent_run = wait_for_terminal_run(api.as_ref(), &session_id, &run_id).await?;
-    assert_eq!(parent_run.status, api::RunStatus::Completed);
+    assert_eq!(
+        parent_run.status,
+        api::RunStatus::Completed,
+        "parent run: {parent_run:?}"
+    );
     let agent_calls = parent_run
         .tool_batches
         .iter()
@@ -1268,13 +1400,17 @@ async fn run_agent_run_deadline_live_client(
         api.as_ref(),
         &session_id,
         &model,
-        subagents_features_with_deadline(&profile_id, 16, 3_000),
+        subagents_features_with_deadline(&profile_id, 16, Some(3_000)),
         &format!("AGENT_RUN_SLOW {profile_id}"),
     )
     .await?;
 
     let parent_run = wait_for_terminal_run(api.as_ref(), &session_id, &run_id).await?;
-    assert_eq!(parent_run.status, api::RunStatus::Completed);
+    assert_eq!(
+        parent_run.status,
+        api::RunStatus::Completed,
+        "parent run: {parent_run:?}"
+    );
     let agent_calls = parent_run
         .tool_batches
         .iter()
@@ -1298,6 +1434,181 @@ async fn run_agent_run_deadline_live_client(
     let children = wait_for_children_closed(&sessions, &session_id, 1).await?;
     assert_eq!(children[0].display_name.as_deref(), Some("slow child"));
 
+    let mut all = vec![session_id];
+    all.extend(children.iter().map(|child| child.session_id.clone()));
+    cleanup_subagent_test(&client, api.as_ref(), profile_id, &all).await;
+    Ok(())
+}
+
+async fn run_stopped_child_live_client(
+    client: Client,
+    session_id: SessionId,
+    api: Arc<GatewayAgentApi>,
+    _blobs: Arc<dyn BlobStore>,
+    sessions: Arc<dyn SessionStore>,
+    model: ModelSelection,
+) -> anyhow::Result<()> {
+    let profile_id = create_child_profile(api.as_ref()).await?;
+    let run_id = start_subagent_parent(
+        api.as_ref(),
+        &session_id,
+        &model,
+        &profile_id,
+        16,
+        &format!("AGENT_RUN_SLOW {profile_id}"),
+    )
+    .await?;
+
+    // Stop the child once it is running its brief. Stopped any sooner, the delegation
+    // is still being prepared, and that step has its own failure path.
+    let mut child_id = None;
+    wait_until(
+        "the child's run to start",
+        Duration::from_secs(30),
+        async || {
+            let Some(child) = list_children(&sessions, &session_id).await?.pop() else {
+                return Ok(false);
+            };
+            let started = api
+                .read_session(SessionReadParams {
+                    session_id: child.session_id.as_str().to_owned(),
+                    run_limit: None,
+                })
+                .await
+                .is_ok_and(|view| !view.result.session.runs.is_empty());
+            child_id = Some(child.session_id);
+            Ok(started)
+        },
+    )
+    .await?;
+    let child_id = child_id.expect("the wait found a child");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    terminate_live_session(&client, &child_id, "a child whose session stopped").await;
+
+    let parent_run = wait_for_terminal_run(api.as_ref(), &session_id, &run_id).await?;
+    assert_eq!(
+        parent_run.status,
+        api::RunStatus::Completed,
+        "parent run: {parent_run:?}"
+    );
+    let agent_calls = parent_run
+        .tool_batches
+        .iter()
+        .flat_map(|batch| &batch.calls)
+        .filter(|call| call.tool_name == AGENT_RUN_TOOL_NAME)
+        .collect::<Vec<_>>();
+    assert_eq!(agent_calls.len(), 1, "expected one joined agent_run call");
+    assert_eq!(agent_calls[0].status, api::ToolItemStatus::Failed);
+    let parent_output = final_assistant_text(&parent_run).expect("parent assistant output");
+    assert!(
+        parent_output.contains("\"status\":\"failed\"")
+            && parent_output.contains("session stopped before its run finished")
+            && parent_output.contains("was terminated")
+            && !parent_output.contains("slow child completed"),
+        "expected a failed envelope saying the child's session stopped, got: {parent_output}"
+    );
+
+    let children = wait_for_children_closed(&sessions, &session_id, 1).await?;
+    let mut all = vec![session_id];
+    all.extend(children.iter().map(|child| child.session_id.clone()));
+    cleanup_subagent_test(&client, api.as_ref(), profile_id, &all).await;
+    Ok(())
+}
+
+async fn rolled_over_executions(client: &Client) -> anyhow::Result<usize> {
+    Ok(client
+        .count_workflows(
+            "WorkflowType = 'SubagentExecutionWorkflow' AND ExecutionStatus = 'ContinuedAsNew'",
+            Default::default(),
+        )
+        .await?
+        .count())
+}
+
+/// The suite runs serially, so what this adds to the count is the one delegation.
+async fn wait_for_rollovers_since(client: &Client, before: usize) -> anyhow::Result<()> {
+    wait_until(
+        "the execution to have rolled over",
+        Duration::from_secs(30),
+        async || Ok(rolled_over_executions(client).await? > before),
+    )
+    .await
+}
+
+async fn run_deadline_across_rollovers_live_client(
+    client: Client,
+    session_id: SessionId,
+    api: Arc<GatewayAgentApi>,
+    _blobs: Arc<dyn BlobStore>,
+    sessions: Arc<dyn SessionStore>,
+    model: ModelSelection,
+) -> anyhow::Result<()> {
+    let rolled_over_before = rolled_over_executions(&client).await?;
+    let profile_id = create_child_profile(api.as_ref()).await?;
+    let run_id = start_subagent_parent_with_features(
+        api.as_ref(),
+        &session_id,
+        &model,
+        subagents_features_with_deadline(&profile_id, 16, Some(5_000)),
+        &format!("AGENT_RUN_SLOW {profile_id}"),
+    )
+    .await?;
+
+    let parent_run = wait_for_terminal_run(api.as_ref(), &session_id, &run_id).await?;
+    assert_eq!(
+        parent_run.status,
+        api::RunStatus::Completed,
+        "parent run: {parent_run:?}"
+    );
+    let parent_output = final_assistant_text(&parent_run).expect("parent assistant output");
+    assert!(
+        parent_output.contains("\"status\":\"deadline\"")
+            && !parent_output.contains("slow child completed"),
+        "expected a deadline envelope without the child's output, got: {parent_output}"
+    );
+    wait_for_rollovers_since(&client, rolled_over_before).await?;
+
+    let children = wait_for_children_closed(&sessions, &session_id, 1).await?;
+    let mut all = vec![session_id];
+    all.extend(children.iter().map(|child| child.session_id.clone()));
+    cleanup_subagent_test(&client, api.as_ref(), profile_id, &all).await;
+    Ok(())
+}
+
+async fn run_result_across_rollovers_live_client(
+    client: Client,
+    session_id: SessionId,
+    api: Arc<GatewayAgentApi>,
+    _blobs: Arc<dyn BlobStore>,
+    sessions: Arc<dyn SessionStore>,
+    model: ModelSelection,
+) -> anyhow::Result<()> {
+    let rolled_over_before = rolled_over_executions(&client).await?;
+    let profile_id = create_child_profile(api.as_ref()).await?;
+    let run_id = start_subagent_parent(
+        api.as_ref(),
+        &session_id,
+        &model,
+        &profile_id,
+        16,
+        &format!("AGENT_RUN_SLOW {profile_id}"),
+    )
+    .await?;
+
+    let parent_run = wait_for_terminal_run(api.as_ref(), &session_id, &run_id).await?;
+    assert_eq!(
+        parent_run.status,
+        api::RunStatus::Completed,
+        "parent run: {parent_run:?}"
+    );
+    let parent_output = final_assistant_text(&parent_run).expect("parent assistant output");
+    assert!(
+        parent_output.contains("slow child completed"),
+        "expected the child's output after the rollovers, got: {parent_output}"
+    );
+    wait_for_rollovers_since(&client, rolled_over_before).await?;
+
+    let children = wait_for_children_closed(&sessions, &session_id, 1).await?;
     let mut all = vec![session_id];
     all.extend(children.iter().map(|child| child.session_id.clone()));
     cleanup_subagent_test(&client, api.as_ref(), profile_id, &all).await;

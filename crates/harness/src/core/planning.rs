@@ -5,8 +5,8 @@ use crate::{
     core::components::{approval, context, run, tooling, turn},
 };
 
-/// Consults the run, tool, context, and turn planners in order and returns
-/// the first non-empty batch of proposals.
+/// Consults the approval, run, tool, context, and turn planners in order and
+/// returns the first non-empty batch of proposals.
 pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {
     for plan in [
         approval::plan_approval_next,

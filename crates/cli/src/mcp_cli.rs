@@ -124,10 +124,11 @@ struct McpServerPutArgs {
     /// Optional provider-side MCP tool allowlist entry. Repeat to allow multiple.
     #[arg(long = "allowed-tool")]
     allowed_tools: Vec<String>,
-    /// Who connects to and executes this MCP server's tools.
-    #[arg(long, default_value_t = RemoteMcpExecutionArg::Provider)]
+    /// Who connects to and executes this MCP server's tools. With provider, a retried
+    /// generation can run a tool again.
+    #[arg(long, default_value_t = RemoteMcpExecutionArg::Runtime)]
     execution: RemoteMcpExecutionArg,
-    /// How native tools are exposed to the model.
+    /// How tools the runtime executes are exposed to the model.
     #[arg(long, default_value_t = RemoteMcpExposureArg::Inject)]
     exposure: RemoteMcpExposureArg,
     /// Default remote MCP approval behavior.
@@ -335,16 +336,16 @@ enum RemoteMcpApprovalArg {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 enum RemoteMcpExecutionArg {
-    #[default]
     Provider,
-    Native,
+    #[default]
+    Runtime,
 }
 
 impl std::fmt::Display for RemoteMcpExecutionArg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Provider => "provider",
-            Self::Native => "native",
+            Self::Runtime => "runtime",
         })
     }
 }
@@ -353,7 +354,7 @@ impl From<RemoteMcpExecutionArg> for api::RemoteMcpExecution {
     fn from(value: RemoteMcpExecutionArg) -> Self {
         match value {
             RemoteMcpExecutionArg::Provider => Self::Provider,
-            RemoteMcpExecutionArg::Native => Self::Native,
+            RemoteMcpExecutionArg::Runtime => Self::Runtime,
         }
     }
 }
@@ -873,5 +874,36 @@ async fn server_tools(args: McpServerReadArgs) -> Result<()> {
             crate::output::show(args.json, &response)?;
             anyhow::bail!("MCP tool discovery failed: {message}")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    #[derive(Parser)]
+    struct PutCommand {
+        #[command(flatten)]
+        put: McpServerPutArgs,
+    }
+
+    #[test]
+    fn a_new_server_runs_on_the_runtime_unless_told_otherwise() {
+        let required = [
+            "put",
+            "--id",
+            "docs",
+            "--label",
+            "docs",
+            "https://docs.example.com/mcp",
+        ];
+        let put = PutCommand::try_parse_from(required).expect("parse").put;
+        assert_eq!(put.execution, RemoteMcpExecutionArg::Runtime);
+
+        let explicit = required.into_iter().chain(["--execution", "provider"]);
+        let put = PutCommand::try_parse_from(explicit).expect("parse").put;
+        assert_eq!(put.execution, RemoteMcpExecutionArg::Provider);
     }
 }

@@ -3,7 +3,7 @@ use harness::{
     CoreAgentIoError, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
     LlmGenerationStatus, ToolCallStatus, ToolInvocationBatchRequest, ToolInvocationBatchResult,
     ToolInvocationResult,
-    storage::{BlobStore, BlobStoreError},
+    storage::{BlobStore, BlobStoreError, SessionStoreError},
 };
 use std::time::Duration;
 
@@ -18,13 +18,39 @@ pub(super) fn activity_error(
     ActivityError::application(ApplicationFailure::new(error))
 }
 
+/// A failure no retry heals: the same request gets the same answer on every attempt,
+/// so the workflow should hear it now rather than wait behind endless retries.
+pub(super) fn non_retryable_activity_error(
+    error: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+) -> ActivityError {
+    ActivityError::application(ApplicationFailure::non_retryable(error))
+}
+
+/// A session store failure as an activity failure. Only a plain store failure can be
+/// outlasted, and it is retried for as long as the outage lasts. Everything else is the
+/// store's answer about this request.
+pub(super) fn session_store_failure(error: SessionStoreError) -> ActivityError {
+    match error {
+        SessionStoreError::Store { .. } => activity_error(error),
+        error if error.is_data_rejection() => ActivityError::from(
+            ApplicationFailure::builder(error)
+                .type_name(temporal_workflow::SESSION_DATA_REJECTED_ERROR_TYPE.to_owned())
+                .non_retryable(true)
+                .build(),
+        ),
+        error => non_retryable_activity_error(error),
+    }
+}
+
 /// Run `work` as a cancellable, heartbeating activity body. The
 /// activity heartbeats on a ticker so Temporal can deliver a workflow-side
 /// cancellation (`TryCancel` from the session workflow); when it arrives the
 /// in-flight work is dropped — the provider request or tool execution is
 /// abandoned — and the activity completes as cancelled. Dropping the future
 /// is the abort: provider clients and tool runtimes must not hold work alive
-/// past their future.
+/// past their future, and `run_process` terminates a command whose handle never
+/// came back. That needs a live worker. A worker that dies runs none of this, so
+/// its command may keep running, and the workflow's boundary failure says so.
 pub(super) async fn cancellable<T>(
     ctx: &ActivityContext,
     work: impl Future<Output = Result<T, ActivityError>>,
@@ -58,11 +84,11 @@ pub(super) async fn cancellable<T>(
 const MAX_TRANSIENT_FAILURE_MESSAGE_BYTES: usize = 8 * 1024;
 
 /// Builds the typed retryable `llm_provider_transient` application failure
-/// for a transient provider error. Temporal owns the durable backoff;
-/// a provider-suggested delay is honored via `next_retry_delay`, clamped to
-/// the policy's maximum interval so it cannot schedule past the bounded total
-/// budget.
-pub(super) fn transient_provider_failure(
+/// for a transient failure of the provider or our own stores. Temporal owns
+/// the durable backoff; a provider-suggested delay is honored via
+/// `next_retry_delay`, clamped to the policy's maximum interval so it cannot
+/// schedule past the bounded total budget.
+pub(super) fn transient_llm_failure(
     operation: &'static str,
     attempt: u32,
     message: String,
@@ -83,10 +109,10 @@ pub(super) fn transient_provider_failure(
         attempt,
         next_retry_delay_ms = next_retry_delay.map(|delay| delay.as_millis() as u64),
         message = %message,
-        "transient LLM provider failure; Temporal retries within the bounded policy"
+        "transient LLM failure; Temporal retries within the bounded policy"
     );
     let failure = ApplicationFailure::builder(anyhow::anyhow!(
-        "{operation} hit a transient provider failure (attempt {attempt}): {message}"
+        "{operation} hit a transient failure (attempt {attempt}): {message}"
     ))
     .type_name(temporal_workflow::LLM_PROVIDER_TRANSIENT_ERROR_TYPE.to_owned())
     .maybe_next_retry_delay(next_retry_delay)
@@ -98,6 +124,23 @@ pub(super) fn transient_provider_failure(
     })
     .build();
     ActivityError::from(failure)
+}
+
+/// A terminal LLM failure whose report could not be stored. The provider's answer
+/// would survive a retry, and an untyped failure would end the workflow once retries
+/// run out, so this is transient like any other outage of the stores: the workflow
+/// fails the run when the budget is spent.
+pub(super) fn unrecorded_llm_failure(
+    operation: &'static str,
+    attempt: u32,
+    error: BlobStoreError,
+) -> ActivityError {
+    transient_llm_failure(
+        operation,
+        attempt,
+        format!("could not store the failure: {error}"),
+        None,
+    )
 }
 
 pub(super) async fn failed_generation_result_from_error(
@@ -222,11 +265,17 @@ pub(super) async fn failed_tool_call_result(
     request: &harness::ToolInvocationCallRequest,
     error: impl AsRef<str>,
 ) -> Result<ToolInvocationResult, BlobStoreError> {
+    // A failure can quote third-party text, such as the input schema of an MCP tool,
+    // and it sits in context like any result, so the same budget applies.
+    let projection = tools::limits::projected(
+        error.as_ref().as_bytes().to_vec(),
+        tools::limits::ToolLimits::default().max_model_visible_output_bytes,
+    );
     let error_ref = write_error_blob(
         blobs,
         format!(
             "{}\nrun_id={}\nturn_id={}\nbatch_id={}\ncall_id={}\ntool_name={}\n",
-            error.as_ref(),
+            String::from_utf8_lossy(&projection.bytes),
             request.run_id,
             request.turn_id,
             request.batch_id,
@@ -238,8 +287,8 @@ pub(super) async fn failed_tool_call_result(
     Ok(ToolInvocationResult {
         attachments: Vec::new(),
         duration_ms: None,
-        output_bytes: None,
-        truncated: false,
+        output_bytes: projection.truncated.then_some(projection.output_bytes),
+        truncated: projection.truncated,
         call_id: request.call.call_id.clone(),
         status: ToolCallStatus::Failed,
         output_ref: None,
@@ -258,4 +307,85 @@ pub(super) async fn write_error_blob(
     message: impl Into<String>,
 ) -> Result<BlobRef, BlobStoreError> {
     blobs.put_bytes(message.into().into_bytes()).await
+}
+
+#[cfg(test)]
+mod tests {
+    use harness::SessionId;
+
+    use super::*;
+
+    fn failure(error: SessionStoreError) -> ApplicationFailure {
+        match session_store_failure(error) {
+            ActivityError::Application(failure) => *failure,
+            other => panic!("expected an application failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_terminal_llm_failure_that_cannot_be_stored_stays_recognizable_to_the_workflow() {
+        let error = BlobStoreError::Store {
+            message: "database down".to_owned(),
+        };
+        let ActivityError::Application(failure) =
+            unrecorded_llm_failure("LLM generation", 2, error)
+        else {
+            panic!("expected an application failure");
+        };
+        assert_eq!(
+            failure.type_name(),
+            Some(temporal_workflow::LLM_PROVIDER_TRANSIENT_ERROR_TYPE)
+        );
+        assert!(!failure.is_non_retryable());
+    }
+
+    #[test]
+    fn data_rejections_are_typed_and_final() {
+        let session_id = SessionId::new("session");
+        for error in [
+            SessionStoreError::DataRejected {
+                message: "invalid input syntax for type json".to_owned(),
+            },
+            SessionStoreError::MissingBlobs {
+                session_id: session_id.clone(),
+                blob_refs: vec![BlobRef::from_bytes(b"never stored")],
+            },
+        ] {
+            let message = error.to_string();
+            let failure = failure(error);
+            assert!(failure.is_non_retryable());
+            assert_eq!(
+                failure.type_name(),
+                Some(temporal_workflow::SESSION_DATA_REJECTED_ERROR_TYPE)
+            );
+            assert_eq!(failure.to_string(), message);
+        }
+    }
+
+    #[test]
+    fn store_answers_are_final_and_carry_no_rejection_type() {
+        let session_id = SessionId::new("session");
+        for error in [
+            SessionStoreError::SessionNotFound {
+                session_id: session_id.clone(),
+            },
+            SessionStoreError::ExpectedHeadMismatch {
+                session_id,
+                expected: None,
+                actual: None,
+            },
+        ] {
+            let failure = failure(error);
+            assert!(failure.is_non_retryable());
+            assert_eq!(failure.type_name(), None);
+        }
+    }
+
+    #[test]
+    fn an_outage_keeps_retrying() {
+        let failure = failure(SessionStoreError::Store {
+            message: "connection refused".to_owned(),
+        });
+        assert!(!failure.is_non_retryable());
+    }
 }

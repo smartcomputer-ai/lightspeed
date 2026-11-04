@@ -629,11 +629,11 @@ mod tests {
             serde_json::from_value::<RoutedSession>(stored.clone()).unwrap(),
             routed
         );
-        let mut legacy = stored;
-        legacy.as_object_mut().unwrap().remove("sessionKey");
-        let legacy: RoutedSession = serde_json::from_value(legacy).unwrap();
-        assert_eq!(legacy.session_key, None);
-        assert_eq!(legacy.label, "Ops room");
+        let mut unkeyed = stored;
+        unkeyed.as_object_mut().unwrap().remove("sessionKey");
+        let unkeyed: RoutedSession = serde_json::from_value(unkeyed).unwrap();
+        assert_eq!(unkeyed.session_key, None);
+        assert_eq!(unkeyed.label, "Ops room");
         assert_eq!(
             routed.session_id,
             bot_keyed_session_id(&bot(), "telegram:12345")

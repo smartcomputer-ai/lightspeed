@@ -21,7 +21,7 @@ function core(sessions: Record<string, Access> = {}) {
     if (rpc.method === "session/read") {
       const access = sessions[rpc.params.sessionId];
       if (!access) {
-        return Response.json({ id: rpc.id, error: { code: -32004, message: "not found", data: { kind: "not_found", message: "not found" } } });
+        return Response.json({ id: rpc.id, error: { code: -32004, message: "not found", data: { kind: "notFound", message: "not found" } } });
       }
       return Response.json({ id: rpc.id, result: { result: { session: { id: rpc.params.sessionId, access } }, notifications: [] } });
     }
@@ -181,7 +181,7 @@ describe("prepared contributor sessions", () => {
   it.each([
     "session/config/put", "session/profiles/apply", "session/metadata/put",
     "session/environments/activate", "session/environments/deactivate",
-    "session/managed/start", "profiles/create", "profiles/put", "profiles/delete",
+    "session/declared/start", "profiles/create", "profiles/put", "profiles/delete",
   ] as const)("keeps %s out of contributor access, including owned sessions", async (method) => {
     const calls = core({ own: { visibility: "restricted", createdBy: { kind: "actor", id: "alice" } } });
     const error = await refusal(as("contributor").call(method, { sessionId: "own" } as never));
@@ -243,7 +243,7 @@ describe("session lifecycle permissions", () => {
   });
   it("non-admin starts override profile retention and reject an explicit deletion schedule", async () => {
     const calls = core();
-    for (const method of ["session/start", "session/managed/start"] as const) {
+    for (const method of ["session/start", "session/declared/start"] as const) {
       await as("operator").call(method, { profile: { kind: "named", profileId: "scheduled" } } as never);
       expect(calls.at(-1)!.params.deleteAfterCloseMs).toBeNull();
       expect(await refusal(as("operator").call(method, { deleteAfterCloseMs: 1 } as never))).toBeInstanceOf(GateRefusal);

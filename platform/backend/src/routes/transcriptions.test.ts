@@ -59,9 +59,9 @@ it("preserves the missing speech default error", async () => {
   const f = fixture();
   f.fetch.mockImplementation(async (_url, init) => {
     const rpc = JSON.parse(String(init.body));
-    return Response.json({ id: rpc.id, error: { code: -32014, message: "Choose a speech model", data: { kind: "model_default_unset", message: "Choose a speech model", modelDefaultSlot: "speechToText" } } });
+    return Response.json({ id: rpc.id, error: { code: -32014, message: "Choose a speech model", data: { kind: "modelDefaultUnset", message: "Choose a speech model", modelDefaultSlot: "speechToText" } } });
   });
   const response = await f.call("POST", "", { audio, idempotencyKey: "request" });
   expect(response.status).toBe(400);
-  expect(await response.json()).toMatchObject({ kind: "model_default_unset", modelDefaultSlot: "speechToText" });
+  expect(await response.json()).toMatchObject({ kind: "modelDefaultUnset", modelDefaultSlot: "speechToText" });
 });

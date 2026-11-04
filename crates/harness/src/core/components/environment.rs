@@ -7,6 +7,7 @@ pub const ENVIRONMENT_DEACTIVATE_EFFECT_KIND: &str = "lightspeed.environment.dea
 const ENVIRONMENT_ID_EFFECT_KEY: &str = "environment_id";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct EnvironmentState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_environment_id: Option<EnvironmentId>,
@@ -43,6 +44,7 @@ pub fn environment_activate_effect(environment_id: &EnvironmentId) -> ToolEffect
         )]
         .into_iter()
         .collect(),
+        refs: Default::default(),
     }
 }
 
@@ -50,6 +52,7 @@ pub fn environment_deactivate_effect() -> ToolEffect {
     ToolEffect {
         kind: ENVIRONMENT_DEACTIVATE_EFFECT_KIND.to_owned(),
         data: Default::default(),
+        refs: Default::default(),
     }
 }
 

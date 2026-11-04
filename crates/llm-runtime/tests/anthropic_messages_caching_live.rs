@@ -9,7 +9,7 @@ use harness::{
     BlobRef, ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind,
     ContextEntrySource, ContextMessageRole, ContextSnapshot, LlmGenerationRequest,
     LlmGenerationStatus, LlmRequest, LlmUsage, ModelSelection, ProviderApiKind, RunId, SessionId,
-    ToolChoice, ToolName, TurnId,
+    ToolChoice, ToolId, TurnId,
     storage::{BlobStore, InMemoryBlobStore},
 };
 use llm_runtime::{
@@ -144,7 +144,6 @@ fn intent_request(
         reasoning_effort: None,
         parallel_tool_use: None,
         processing_tier: None,
-        provider_response_id: None,
         compaction: None,
         params: params.as_ref().map(anthropic_params),
     }
@@ -284,7 +283,7 @@ async fn anthropic_caching_live_tool_round_trip_keeps_the_prefix_warm() {
         .expect("schema blob");
     let description_ref = text_blob(&blobs, "Get current weather for a city").await;
     let tool = harness::ToolSpec {
-        name: ToolName::new("get_weather"),
+        id: ToolId::new("get_weather"),
         execution: Default::default(),
         kind: harness::ToolKind::Function(harness::FunctionToolSpec {
             description_ref: Some(description_ref),
@@ -304,7 +303,7 @@ async fn anthropic_caching_live_tool_round_trip_keeps_the_prefix_warm() {
         None,
     );
     request.tools = vec![tool.clone()];
-    request.tool_choice = Some(ToolChoice::RequiredAny);
+    request.tool_choice = Some(ToolChoice::Auto);
     request.parallel_tool_use = Some(false);
     let execution = adapter
         .generate(generation_request(1, request))

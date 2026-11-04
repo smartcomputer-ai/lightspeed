@@ -1,8 +1,8 @@
 //! Session event-log storage contract.
 
 use crate::{
-    BlobRef, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND,
-    CoreAgentCodec, CoreAgentEvent, SubagentLimits, WorkflowToolConfigEvent,
+    BlobRef, CoreAgentCodec, CoreAgentEvent, RunId, SubagentLimits, WorkflowToolConfigEvent,
+    event_kind,
     session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
 };
 use async_trait::async_trait;
@@ -31,7 +31,7 @@ pub struct SessionRecord {
     /// replaying inherited history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed_at_seq: Option<EventSeq>,
-    /// Observation time of the terminal lifecycle event. Cleared on reopen.
+    /// Observation time of the terminal lifecycle event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed_at_ms: Option<u64>,
     /// What the session is doing now, projected from run events for lists.
@@ -49,10 +49,11 @@ pub struct SessionRecord {
     /// Materialized root-only deadline derived from close time and policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delete_at_ms: Option<u64>,
-    /// Cheap catalog/list projection of immutable lifecycle ownership. This
-    /// is true only when a managed-session declaration names a lifecycle
-    /// controller; workflow-tool-only declarations remain ordinary sessions.
-    pub managed: bool,
+    /// Cheap catalog/list projection of immutable lifecycle ownership. True only
+    /// when the session's declaration names a lifecycle controller; a declaration
+    /// holding only workflow tools leaves it false.
+    #[serde(default)]
+    pub lifecycle_controlled: bool,
     pub head: Option<SessionPosition>,
     pub source_session_id: Option<SessionId>,
     pub source_seq: Option<EventSeq>,
@@ -61,7 +62,9 @@ pub struct SessionRecord {
     /// is clone/fork content ancestry and stays empty for profile spawns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<SessionOrigin>,
+    #[serde(default)]
     pub created_at_ms: u64,
+    #[serde(default)]
     pub updated_at_ms: u64,
 }
 
@@ -240,7 +243,6 @@ pub struct AppendSessionEvents {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppendSessionEventsResult {
     pub entries: Vec<StoredSessionEntry>,
-    pub head: Option<SessionPosition>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,11 +287,38 @@ pub struct ReadSessionEventRange {
     pub limit: usize,
 }
 
+/// Which pruned runs to read back: the `limit` highest run ids below `before`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadRunRecordEntries {
+    pub session_id: SessionId,
+    pub before: RunId,
+    pub limit: usize,
+}
+
+impl ReadRunRecordEntries {
+    /// The run ids asked for, as a half-open range. A session numbers its runs from
+    /// one with no gaps, so a page of runs is a page of ids.
+    pub fn run_ids(&self) -> std::ops::Range<u64> {
+        let before = self.before.as_u64();
+        let limit = u64::try_from(self.limit).unwrap_or(u64::MAX);
+        before.saturating_sub(limit).max(1)..before.max(1)
+    }
+}
+
 /// Keyset cursor for [`SessionStore::list_sessions`]: the sort key of the
 /// last row of the previous page (most-recently-updated-first ordering).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionListCursor {
     pub updated_at_ms: u64,
+    pub session_id: SessionId,
+}
+
+/// Keyset cursor for [`SessionStore::list_retention_roots_due_for_deletion`]:
+/// the sort key of the last root of the previous page. A root that cannot be
+/// deleted keeps its deadline, so only a position gets a walk past it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RetentionRootCursor {
+    pub delete_at_ms: u64,
     pub session_id: SessionId,
 }
 
@@ -301,10 +330,10 @@ pub struct ListSessions {
     /// Only closed sessions (`true`), or only new and open ones (`false`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed: Option<bool>,
-    /// Only sessions whose root is managed (`true`) or unmanaged (`false`)
-    /// by a lifecycle controller; sub-agents follow their root.
+    /// Only sessions whose root a lifecycle controller owns (`true`) or none
+    /// owns (`false`); sub-agents follow their root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub managed: Option<bool>,
+    pub lifecycle_controlled: Option<bool>,
     /// Only sessions with an origin (`true`), or only roots (`false`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent: Option<bool>,
@@ -415,11 +444,11 @@ pub enum SessionStoreError {
         lifecycle_status: SessionLifecycleStatus,
     },
 
-    #[error("lifecycle-managed session cannot be cloned or forked: {session_id}")]
-    ManagedSessionCannotBranch { session_id: SessionId },
+    #[error("lifecycle-controlled session cannot be cloned or forked: {session_id}")]
+    LifecycleControlledSessionCannotBranch { session_id: SessionId },
 
     /// An appended entry references blobs the store does not hold. The
-    /// store derives collection roots from every ref an entry embeds, so a
+    /// store derives collection roots from every typed ref in an entry, so a
     /// dangling ref fails the append instead of failing a later read.
     #[error("session {session_id} event references missing blobs: {}", blob_refs.iter().map(|blob_ref| blob_ref.as_str()).collect::<Vec<_>>().join(", "))]
     MissingBlobs {
@@ -427,8 +456,23 @@ pub enum SessionStoreError {
         blob_refs: Vec<BlobRef>,
     },
 
+    /// The store cannot hold a value it was given: Postgres answered with a data
+    /// exception (SQLSTATE class 22), such as a NUL in a text or jsonb column, or an
+    /// appended event does not decode, so it could never be read back. Nothing was
+    /// written, and the same value is refused on every attempt.
+    #[error("session store rejected the data: {message}")]
+    DataRejected { message: String },
+
     #[error("session store failure: {message}")]
     Store { message: String },
+}
+
+impl SessionStoreError {
+    /// The data itself is what the store refused. Nothing was written, and no
+    /// retry of the same data can succeed.
+    pub fn is_data_rejection(&self) -> bool {
+        matches!(self, Self::MissingBlobs { .. } | Self::DataRejected { .. })
+    }
 }
 
 #[async_trait]
@@ -448,12 +492,7 @@ pub trait SessionStore: Send + Sync {
     async fn list_sessions(
         &self,
         request: ListSessions,
-    ) -> Result<SessionListPage, SessionStoreError> {
-        let _ = request;
-        Err(SessionStoreError::Store {
-            message: "list_sessions is not supported by this session store".to_owned(),
-        })
-    }
+    ) -> Result<SessionListPage, SessionStoreError>;
 
     /// Replace the session's display name (`None` clears it). Metadata only:
     /// does not touch the event log or `updated_at_ms`.
@@ -461,14 +500,7 @@ pub trait SessionStore: Send + Sync {
         &self,
         session_id: &SessionId,
         display_name: Option<String>,
-    ) -> Result<SessionRecord, SessionStoreError> {
-        let _ = display_name;
-        Err(SessionStoreError::Store {
-            message: format!(
-                "set_session_display_name is not supported by this session store for {session_id}"
-            ),
-        })
-    }
+    ) -> Result<SessionRecord, SessionStoreError>;
 
     /// Replace the session's metadata map. Metadata only: does not touch
     /// the event log or `updated_at_ms`.
@@ -476,14 +508,7 @@ pub trait SessionStore: Send + Sync {
         &self,
         session_id: &SessionId,
         metadata: BTreeMap<String, String>,
-    ) -> Result<SessionRecord, SessionStoreError> {
-        let _ = metadata;
-        Err(SessionStoreError::Store {
-            message: format!(
-                "set_session_metadata is not supported by this session store for {session_id}"
-            ),
-        })
-    }
+    ) -> Result<SessionRecord, SessionStoreError>;
 
     /// Replace the root-owned automatic-deletion duration. Descendant targets
     /// are rejected rather than mutating their root implicitly.
@@ -491,27 +516,25 @@ pub trait SessionStore: Send + Sync {
         &self,
         session_id: &SessionId,
         delete_after_close_ms: Option<u64>,
-    ) -> Result<SessionRecord, SessionStoreError> {
-        let _ = delete_after_close_ms;
-        Err(SessionStoreError::Store {
-            message: format!(
-                "set_session_retention is not supported by this session store for {session_id}"
-            ),
-        })
-    }
+    ) -> Result<SessionRecord, SessionStoreError>;
 
-    /// List due retention roots in deadline order.
+    /// List due retention roots in deadline order, starting after `after`.
     async fn list_retention_roots_due_for_deletion(
         &self,
         now_ms: u64,
+        after: Option<&RetentionRootCursor>,
         limit: usize,
-    ) -> Result<Vec<SessionRecord>, SessionStoreError> {
-        let _ = (now_ms, limit);
-        Err(SessionStoreError::Store {
-            message: "list_retention_roots_due_for_deletion is not supported by this session store"
-                .to_owned(),
-        })
-    }
+    ) -> Result<Vec<SessionRecord>, SessionStoreError>;
+
+    /// Remove a session that never opened: a row with no events, lifecycle
+    /// `new`. Such a row holds a delegation slot and blocks its tree's deletion,
+    /// and it cannot be closed because it has no log. Answers whether a row went.
+    /// An opened or missing session is left alone, so this cannot lose an opening
+    /// that lands first.
+    async fn discard_unopened_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<bool, SessionStoreError>;
 
     /// Delete a logically closed session. Implementations must perform the
     /// lifecycle check and delete atomically and reject sessions whose event
@@ -519,14 +542,7 @@ pub trait SessionStore: Send + Sync {
     async fn delete_closed_sessions(
         &self,
         request: DeleteClosedSessions,
-    ) -> Result<DeleteClosedSessionsResult, SessionStoreError> {
-        Err(SessionStoreError::Store {
-            message: format!(
-                "delete_closed_sessions is not supported by this session store for {}",
-                request.session_id
-            ),
-        })
-    }
+    ) -> Result<DeleteClosedSessionsResult, SessionStoreError>;
 
     async fn delete_closed_session(
         &self,
@@ -544,34 +560,14 @@ pub trait SessionStore: Send + Sync {
     async fn create_cloned_session(
         &self,
         request: CreateClonedSession,
-    ) -> Result<SessionRecord, SessionStoreError> {
-        Err(SessionStoreError::Store {
-            message: format!(
-                "create_cloned_session is not supported by this session store for {}",
-                request.session_id
-            ),
-        })
-    }
+    ) -> Result<SessionRecord, SessionStoreError>;
 
     async fn create_forked_session(
         &self,
         request: CreateForkedSession,
-    ) -> Result<SessionRecord, SessionStoreError> {
-        Err(SessionStoreError::Store {
-            message: format!(
-                "create_forked_session is not supported by this session store for {}",
-                request.session_id
-            ),
-        })
-    }
+    ) -> Result<SessionRecord, SessionStoreError>;
 
-    async fn safe_fork_seq(&self, session_id: &SessionId) -> Result<EventSeq, SessionStoreError> {
-        Err(SessionStoreError::Store {
-            message: format!(
-                "safe_fork_seq is not supported by this session store for {session_id}"
-            ),
-        })
-    }
+    async fn safe_fork_seq(&self, session_id: &SessionId) -> Result<EventSeq, SessionStoreError>;
 
     async fn append(
         &self,
@@ -608,21 +604,27 @@ pub trait SessionStore: Send + Sync {
         Ok(page)
     }
 
+    /// The entries a pruned run's record is rebuilt from, in log order: the
+    /// [`event_kind::RUN_RECORD_KINDS`] events of the runs asked for. Reduced state
+    /// keeps a recent window of run records and this serves the rest. It scans the
+    /// session's log, with no index or table of its own, which suits paging back
+    /// through old runs and nothing on a hot path.
+    async fn read_run_record_entries(
+        &self,
+        request: ReadRunRecordEntries,
+    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError>;
+
     async fn load_checkpoint(
         &self,
-        _session_id: &SessionId,
-    ) -> Result<Option<SessionCheckpoint>, SessionStoreError> {
-        Ok(None)
-    }
+        session_id: &SessionId,
+    ) -> Result<Option<SessionCheckpoint>, SessionStoreError>;
 
     /// Advance the checkpoint pointer. Returns false when a newer pointer
-    /// already exists or the store intentionally does not support checkpoints.
+    /// already exists.
     async fn advance_checkpoint(
         &self,
-        _request: AdvanceSessionCheckpoint,
-    ) -> Result<bool, SessionStoreError> {
-        Ok(false)
-    }
+        request: AdvanceSessionCheckpoint,
+    ) -> Result<bool, SessionStoreError>;
 
     async fn head(
         &self,
@@ -705,7 +707,7 @@ impl SessionStore for InMemorySessionStore {
             retention_root_session_id,
             delete_after_close_ms: request.delete_after_close_ms,
             delete_at_ms: None,
-            managed: false,
+            lifecycle_controlled: false,
             head: None,
             source_session_id: None,
             source_seq: None,
@@ -773,11 +775,15 @@ impl SessionStore for InMemorySessionStore {
                     .origin
                     .as_ref()
                     .map_or(&record.session_id, |origin| &origin.root_session_id);
-                let managed = inner
+                let lifecycle_controlled = inner
                     .records
                     .get(root)
-                    .map_or(record.managed, |root| root.managed);
-                request.managed.is_none_or(|wanted| managed == wanted)
+                    .map_or(record.lifecycle_controlled, |root| {
+                        root.lifecycle_controlled
+                    });
+                request
+                    .lifecycle_controlled
+                    .is_none_or(|wanted| lifecycle_controlled == wanted)
                     && (request.trees.is_empty() || request.trees.contains(root))
             })
             .filter(|record| {
@@ -869,6 +875,7 @@ impl SessionStore for InMemorySessionStore {
     async fn list_retention_roots_due_for_deletion(
         &self,
         now_ms: u64,
+        after: Option<&RetentionRootCursor>,
         limit: usize,
     ) -> Result<Vec<SessionRecord>, SessionStoreError> {
         if limit == 0 {
@@ -886,6 +893,10 @@ impl SessionStore for InMemorySessionStore {
                     && record
                         .delete_at_ms
                         .is_some_and(|deadline| deadline <= now_ms)
+                    && after.is_none_or(|after| {
+                        (record.delete_at_ms.unwrap_or_default(), &record.session_id)
+                            > (after.delete_at_ms, &after.session_id)
+                    })
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -896,6 +907,23 @@ impl SessionStore for InMemorySessionStore {
         });
         due.truncate(limit);
         Ok(due)
+    }
+
+    async fn discard_unopened_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<bool, SessionStoreError> {
+        let mut inner = self.inner.write().map_err(|_| SessionStoreError::Store {
+            message: "session store write lock poisoned".into(),
+        })?;
+        let unopened = inner.records.get(session_id).is_some_and(|record| {
+            record.lifecycle_status == SessionLifecycleStatus::New && record.head.is_none()
+        });
+        if unopened {
+            inner.records.remove(session_id);
+            inner.entries.remove(session_id);
+        }
+        Ok(unopened)
     }
 
     async fn delete_closed_sessions(
@@ -986,8 +1014,8 @@ impl SessionStore for InMemorySessionStore {
             .ok_or_else(|| SessionStoreError::SessionNotFound {
                 session_id: request.source_session_id.clone(),
             })?;
-        if source.managed {
-            return Err(SessionStoreError::ManagedSessionCannotBranch {
+        if source.lifecycle_controlled {
+            return Err(SessionStoreError::LifecycleControlledSessionCannotBranch {
                 session_id: request.source_session_id,
             });
         }
@@ -1008,7 +1036,7 @@ impl SessionStore for InMemorySessionStore {
             retention_root_session_id: request.session_id.clone(),
             delete_after_close_ms: None,
             delete_at_ms: None,
-            managed: false,
+            lifecycle_controlled: false,
             head: None,
             source_session_id: Some(request.source_session_id),
             source_seq: None,
@@ -1016,6 +1044,9 @@ impl SessionStore for InMemorySessionStore {
             created_at_ms: request.created_at_ms,
             updated_at_ms: request.created_at_ms,
         };
+        for event in &request.opening_events {
+            super::blob_roots::check_typed_walk_sees_every_ref(&event.event)?;
+        }
         let committed = commit_uncommitted_events(&mut record, request.opening_events);
         inner.entries.insert(record.session_id.clone(), committed);
         inner
@@ -1037,8 +1068,8 @@ impl SessionStore for InMemorySessionStore {
             .ok_or_else(|| SessionStoreError::SessionNotFound {
                 session_id: request.source_session_id.clone(),
             })?;
-        if source.managed {
-            return Err(SessionStoreError::ManagedSessionCannotBranch {
+        if source.lifecycle_controlled {
+            return Err(SessionStoreError::LifecycleControlledSessionCannotBranch {
                 session_id: request.source_session_id,
             });
         }
@@ -1066,7 +1097,7 @@ impl SessionStore for InMemorySessionStore {
             retention_root_session_id: source.retention_root_session_id.clone(),
             delete_after_close_ms: None,
             delete_at_ms: None,
-            managed: false,
+            lifecycle_controlled: false,
             head,
             source_session_id: Some(request.source_session_id),
             source_seq: Some(request.source_seq),
@@ -1114,13 +1145,15 @@ impl SessionStore for InMemorySessionStore {
                 actual: actual_head,
             });
         }
+        for event in &request.events {
+            super::blob_roots::check_typed_walk_sees_every_ref(&event.event)?;
+        }
 
         let record = inner
             .records
             .get_mut(&request.session_id)
             .expect("validated session record");
         let committed = commit_uncommitted_events(record, request.events);
-        let head = record.head.clone();
 
         let entries = inner
             .entries
@@ -1128,10 +1161,7 @@ impl SessionStore for InMemorySessionStore {
             .expect("session entries exist for record");
         entries.extend(committed.clone());
 
-        Ok(AppendSessionEventsResult {
-            entries: committed,
-            head,
-        })
+        Ok(AppendSessionEventsResult { entries: committed })
     }
 
     async fn read_after(
@@ -1161,6 +1191,29 @@ impl SessionStore for InMemorySessionStore {
             next_after,
             complete,
         })
+    }
+
+    async fn read_run_record_entries(
+        &self,
+        request: ReadRunRecordEntries,
+    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
+        if request.limit == 0 {
+            return Err(SessionStoreError::InvalidLimit { limit: 0 });
+        }
+        let inner = self.inner.read().map_err(|_| SessionStoreError::Store {
+            message: "session store read lock poisoned".into(),
+        })?;
+        let run_ids = request.run_ids();
+        let mut entries = effective_entries(&inner, &request.session_id)?;
+        entries.retain(|entry| {
+            event_kind::RUN_RECORD_KINDS.contains(&entry.event.kind.as_str())
+                && entry
+                    .joins
+                    .get("run_id")
+                    .and_then(|run_id| run_id.parse::<u64>().ok())
+                    .is_some_and(|run_id| run_ids.contains(&run_id))
+        });
+        Ok(entries)
     }
 
     async fn load_checkpoint(
@@ -1194,7 +1247,11 @@ impl SessionStore for InMemorySessionStore {
         if inner
             .checkpoints
             .get(&checkpoint.session_id)
-            .is_some_and(|current| current.through_seq >= checkpoint.through_seq)
+            .is_some_and(|current| {
+                current.through_seq > checkpoint.through_seq
+                    || (current.through_seq == checkpoint.through_seq
+                        && current.format_version == checkpoint.format_version)
+            })
         {
             return Ok(false);
         }
@@ -1337,23 +1394,15 @@ fn run_boundary(entry: &StoredSessionEntry) -> Option<RunBoundary> {
     let run_id = entry
         .joins
         .get("run_id")
-        .and_then(|value| value.parse::<u64>().ok())
-        .or_else(|| {
-            entry
-                .event
-                .payload
-                .get("kind")
-                .and_then(|kind| kind.get("run_id"))
-                .and_then(serde_json::Value::as_u64)
-        })?;
+        .and_then(|value| value.parse::<u64>().ok())?;
     let terminal = is_terminal_run_entry(entry);
     let is_run = terminal
         || matches!(
             entry.event.kind.as_str(),
-            "lightspeed.core.run.accepted"
-                | "lightspeed.core.run.started"
-                | "lightspeed.core.run.steering_accepted"
-                | "lightspeed.core.run.cancellation_requested"
+            event_kind::RUN_ACCEPTED
+                | event_kind::RUN_STARTED
+                | event_kind::RUN_STEERING_ACCEPTED
+                | event_kind::RUN_CANCELLATION_REQUESTED
         );
     is_run.then_some(RunBoundary { run_id, terminal })
 }
@@ -1361,11 +1410,11 @@ fn run_boundary(entry: &StoredSessionEntry) -> Option<RunBoundary> {
 pub fn is_terminal_run_entry(entry: &StoredSessionEntry) -> bool {
     matches!(
         entry.event.kind.as_str(),
-        "lightspeed.core.run.completed"
-            | "lightspeed.core.run.failed"
-            | "lightspeed.core.run.cancelled"
-            | "lightspeed.core.run.force_cancelled"
-            | "lightspeed.core.run.queued_cancelled"
+        event_kind::RUN_COMPLETED
+            | event_kind::RUN_FAILED
+            | event_kind::RUN_CANCELLED
+            | event_kind::RUN_FORCE_CANCELLED
+            | event_kind::RUN_QUEUED_CANCELLED
     )
 }
 
@@ -1398,13 +1447,10 @@ fn commit_uncommitted_events(
 
 pub fn apply_lifecycle_projection(record: &mut SessionRecord, entry: &StoredSessionEntry) {
     match entry.event.kind.as_str() {
-        CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND => {
+        event_kind::LIFECYCLE_OPENED => {
             record.lifecycle_status = SessionLifecycleStatus::Open;
-            record.closed_at_seq = None;
-            record.closed_at_ms = None;
-            refresh_delete_at(record);
         }
-        CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND => {
+        event_kind::LIFECYCLE_CLOSED => {
             record.lifecycle_status = SessionLifecycleStatus::Closed;
             record.closed_at_seq = Some(entry.position.seq);
             record.closed_at_ms = Some(entry.observed_at_ms);
@@ -1412,33 +1458,34 @@ pub fn apply_lifecycle_projection(record: &mut SessionRecord, entry: &StoredSess
             refresh_delete_at(record);
         }
         // Activity follows the run: working from its start, waiting while it
-        // is parked on approvals, working again at its next step (a run only
-        // steps on once every approval is decided), idle once it ends.
-        "lightspeed.core.run.started" => record.activity = SessionActivity::Working,
-        "lightspeed.core.approval.run_parked" => record.activity = SessionActivity::Waiting,
-        "lightspeed.core.turn.started"
-        | "lightspeed.core.turn.generation_requested"
-        | "lightspeed.core.tool.call_started"
-        | "lightspeed.core.tool.batch_resumed"
+        // is parked on approvals, working again once it leaves that park, idle
+        // once it ends. A park that also held a batch ends when the batch unparks.
+        event_kind::RUN_STARTED => record.activity = SessionActivity::Working,
+        event_kind::APPROVAL_RUN_PARKED => record.activity = SessionActivity::Waiting,
+        event_kind::APPROVAL_RUN_UNPARKED
+        | event_kind::TURN_STARTED
+        | event_kind::TURN_GENERATION_REQUESTED
+        | event_kind::TOOL_CALL_STARTED
+        | event_kind::TOOL_BATCH_UNPARKED
             if record.activity == SessionActivity::Waiting =>
         {
             record.activity = SessionActivity::Working;
         }
-        "lightspeed.core.run.completed"
-        | "lightspeed.core.run.failed"
-        | "lightspeed.core.run.cancelled"
-        | "lightspeed.core.run.force_cancelled" => record.activity = SessionActivity::Idle,
-        "lightspeed.core.workflow_tool_config.managed_bindings_admitted" => {
+        event_kind::RUN_COMPLETED
+        | event_kind::RUN_FAILED
+        | event_kind::RUN_CANCELLED
+        | event_kind::RUN_FORCE_CANCELLED => record.activity = SessionActivity::Idle,
+        event_kind::WORKFLOW_TOOL_CONFIG_DECLARED_BINDINGS_ADMITTED => {
             if matches!(
                 CoreAgentCodec.decode_event(&entry.event),
                 Ok(CoreAgentEvent::WorkflowToolConfig(
-                    WorkflowToolConfigEvent::ManagedBindingsAdmitted {
+                    WorkflowToolConfigEvent::DeclaredBindingsAdmitted {
                         lifecycle_controller: Some(_),
                         ..
                     }
                 ))
             ) {
-                record.managed = true;
+                record.lifecycle_controlled = true;
             }
         }
         _ => {}
@@ -1596,25 +1643,113 @@ fn position_from_nonzero_seq(seq: EventSeq) -> Option<SessionPosition> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{StoredEvent, StoredJoins};
+    use crate::session::StoredJoins;
 
-    fn test_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
-        UncommittedStoredEvent {
-            observed_at_ms: at_ms,
-            joins: StoredJoins::default(),
-            event: StoredEvent::new(kind, 1, serde_json::Value::Object(Default::default())),
+    fn encoded_event(
+        at_ms: u64,
+        joins: crate::CoreAgentJoins,
+        event: CoreAgentEvent,
+    ) -> UncommittedStoredEvent {
+        CoreAgentCodec
+            .encode_uncommitted(&crate::UncommittedCoreAgentEvent {
+                observed_at_ms: at_ms,
+                joins,
+                event,
+            })
+            .expect("encode event")
+    }
+
+    /// A real event of the kind a projection branches on. Stores decode what they
+    /// append, so a fixture cannot stand in with an empty payload.
+    fn event_of_kind(kind: &str) -> CoreAgentEvent {
+        use crate::{ApprovalEvent, CoreAgentLifecycleEvent, RunEvent, RunId};
+        let run_id = RunId::new(1);
+        match kind {
+            event_kind::LIFECYCLE_OPENED => {
+                CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Opened {
+                    config: crate::SessionConfig {
+                        model: crate::ModelSelection {
+                            api_kind: crate::ProviderApiKind::OpenAiResponses,
+                            provider_id: "openai".to_owned(),
+                            model: "gpt-test".to_owned(),
+                        },
+                        generation: Default::default(),
+                        limits: Default::default(),
+                        context: crate::ContextConfig {
+                            input_limit_tokens: None,
+                            compaction: None,
+                        },
+                        features: Default::default(),
+                    },
+                })
+            }
+            event_kind::LIFECYCLE_CLOSED => {
+                CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Closed)
+            }
+            event_kind::RUN_ACCEPTED => {
+                CoreAgentEvent::Run(RunEvent::Accepted(crate::AcceptedRunEvent {
+                    run_id,
+                    submission_id: None,
+                    source: crate::RunSource::Input { input: Vec::new() },
+                    run_config: Default::default(),
+                    input_limit_tokens: None,
+                    config_revision: 0,
+                    notify_on_terminal: Vec::new(),
+                    requested_by: None,
+                }))
+            }
+            event_kind::RUN_STARTED => CoreAgentEvent::Run(RunEvent::Started { run_id }),
+            event_kind::RUN_CANCELLED => CoreAgentEvent::Run(RunEvent::Cancelled { run_id }),
+            event_kind::APPROVAL_REQUESTED => CoreAgentEvent::Approval(ApprovalEvent::Requested {
+                approval: crate::ApprovalRequested {
+                    approval_id: crate::ApprovalId::new("approval_1"),
+                    run_id,
+                    subject: crate::ApprovalSubject::McpToolCall {
+                        server_id: "server".to_owned(),
+                        server_label: "server".to_owned(),
+                        tool_name: "tool".to_owned(),
+                        arguments_ref: crate::BlobRef::from_bytes(b"{}"),
+                    },
+                    continuation: crate::ApprovalContinuation::ProviderMcp {
+                        provider_request_id: "request".to_owned(),
+                    },
+                },
+            }),
+            event_kind::APPROVAL_RUN_PARKED => {
+                CoreAgentEvent::Approval(ApprovalEvent::RunParked { run_id })
+            }
+            event_kind::APPROVAL_RUN_UNPARKED => {
+                CoreAgentEvent::Approval(ApprovalEvent::RunUnparked { run_id })
+            }
+            event_kind::APPROVAL_DECIDED => CoreAgentEvent::Approval(ApprovalEvent::Decided {
+                approval_id: crate::ApprovalId::new("approval_1"),
+                run_id,
+                decision: crate::ApprovalDecision::Approved,
+                note: None,
+                decided_by: None,
+            }),
+            other => panic!("no fixture for event kind {other}"),
         }
     }
 
-    fn open_event(at_ms: u64) -> UncommittedStoredEvent {
-        test_event(at_ms, "lightspeed.test.lifecycle.closed")
+    fn test_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
+        encoded_event(at_ms, Default::default(), event_of_kind(kind))
+    }
+
+    /// A real event with no effect on any projection.
+    fn filler_event(at_ms: u64) -> UncommittedStoredEvent {
+        encoded_event(
+            at_ms,
+            Default::default(),
+            CoreAgentEvent::Environment(crate::EnvironmentEvent::ActiveEnvironmentCleared),
+        )
     }
 
     fn lifecycle_opened_event(at_ms: u64) -> UncommittedStoredEvent {
-        test_event(at_ms, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)
+        test_event(at_ms, event_kind::LIFECYCLE_OPENED)
     }
 
-    fn managed_bindings_event(
+    fn declared_bindings_event(
         at_ms: u64,
         lifecycle_controller: Option<crate::WorkflowEndpointRef>,
     ) -> UncommittedStoredEvent {
@@ -1623,7 +1758,7 @@ mod tests {
                 observed_at_ms: at_ms,
                 joins: crate::CoreAgentJoins::default(),
                 event: CoreAgentEvent::WorkflowToolConfig(
-                    WorkflowToolConfigEvent::ManagedBindingsAdmitted {
+                    WorkflowToolConfigEvent::DeclaredBindingsAdmitted {
                         session_universe_id: uuid::Uuid::from_u128(1),
                         declaration_version: 1,
                         lifecycle_controller,
@@ -1632,19 +1767,60 @@ mod tests {
                     },
                 ),
             })
-            .expect("encode managed bindings event")
+            .expect("encode declared bindings event")
     }
 
     fn lifecycle_closed_event(at_ms: u64) -> UncommittedStoredEvent {
-        test_event(at_ms, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)
+        test_event(at_ms, event_kind::LIFECYCLE_CLOSED)
     }
 
-    fn run_event(at_ms: u64, kind: &'static str, run_id: u64) -> UncommittedStoredEvent {
-        UncommittedStoredEvent {
-            observed_at_ms: at_ms,
-            joins: StoredJoins::from([("run_id".to_owned(), run_id.to_string())]),
-            event: StoredEvent::new(kind, 1, serde_json::Value::Object(Default::default())),
+    fn run_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
+        encoded_event(
+            at_ms,
+            crate::CoreAgentJoins {
+                run_id: Some(crate::RunId::new(1)),
+                ..Default::default()
+            },
+            event_of_kind(kind),
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn in_memory_store_refuses_what_a_store_could_not_read_or_retain() {
+        let store = InMemorySessionStore::new();
+        let session_id = SessionId::new("session-a");
+        store
+            .create_session(CreateSession {
+                metadata: Default::default(),
+                session_id: session_id.clone(),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+        let mut undecodable = filler_event(10);
+        undecodable.event = crate::session::StoredEvent::new(
+            "lightspeed.test.event",
+            1,
+            serde_json::Value::Object(Default::default()),
+        );
+        let mut plain_string_ref = filler_event(10);
+        plain_string_ref.event.payload["held"] =
+            serde_json::json!(crate::BlobRef::from_bytes(b"blob").to_string());
+        for event in [undecodable, plain_string_ref] {
+            let error = store
+                .append(AppendSessionEvents {
+                    session_id: session_id.clone(),
+                    expected_head: None,
+                    events: vec![event],
+                })
+                .await
+                .expect_err("refused");
+            assert!(error.is_data_rejection(), "{error}");
         }
+        assert_eq!(store.head(&session_id).await.expect("head"), None);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1667,17 +1843,13 @@ mod tests {
             .append(AppendSessionEvents {
                 session_id: session_id.clone(),
                 expected_head: None,
-                events: vec![open_event(10), open_event(11)],
+                events: vec![filler_event(10), filler_event(11)],
             })
             .await
             .expect("append");
 
         assert_eq!(result.entries[0].position.seq, EventSeq::new(1));
         assert_eq!(result.entries[1].position.seq, EventSeq::new(2));
-        assert_eq!(
-            result.head.as_ref().map(|head| head.seq),
-            Some(EventSeq::new(2))
-        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1729,6 +1901,60 @@ mod tests {
                 .through_seq,
             EventSeq::new(2)
         );
+    }
+
+    /// A version bump rejects a checkpoint at the session's head. The replay that follows
+    /// reaches the same sequence, and has to replace the pointer or every load replays.
+    #[tokio::test(flavor = "current_thread")]
+    async fn checkpoint_of_another_format_is_replaced_at_the_same_sequence() {
+        let store = InMemorySessionStore::new();
+        let session_id = SessionId::new("format-heal");
+        store
+            .create_session(CreateSession {
+                metadata: Default::default(),
+                session_id: session_id.clone(),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+        let checkpoint = |format_version, state: &[u8]| AdvanceSessionCheckpoint {
+            checkpoint: SessionCheckpoint {
+                session_id: session_id.clone(),
+                through_seq: EventSeq::new(4),
+                format_version,
+                state_ref: BlobRef::from_bytes(state),
+                lineage_source_session_id: None,
+                lineage_source_seq: None,
+                byte_len: 1,
+                created_at_ms: 1,
+            },
+        };
+
+        assert!(
+            store
+                .advance_checkpoint(checkpoint(1, b"old"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .advance_checkpoint(checkpoint(1, b"same"))
+                .await
+                .unwrap(),
+            "the same format at the same sequence changes nothing"
+        );
+        assert!(
+            store
+                .advance_checkpoint(checkpoint(2, b"new"))
+                .await
+                .unwrap()
+        );
+        let stored = store.load_checkpoint(&session_id).await.unwrap().unwrap();
+        assert_eq!(stored.format_version, 2);
+        assert_eq!(stored.state_ref, BlobRef::from_bytes(b"new"));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1889,7 +2115,7 @@ mod tests {
             max_depth: 2,
             max_descendants: 3,
             max_concurrent: 2,
-            deadline_ms: 1_000,
+            run_timeout_ms: Some(1_000),
         };
 
         create_delegated(
@@ -1996,6 +2222,155 @@ mod tests {
                 max: 1,
                 actual: 2,
             }
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn retrying_a_delegated_create_at_capacity_hears_that_the_row_exists() {
+        let store = InMemorySessionStore::new();
+        store
+            .create_session(CreateSession {
+                metadata: Default::default(),
+                session_id: SessionId::new("root"),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("root");
+        let limits = SubagentLimits {
+            max_concurrent: 1,
+            max_descendants: 1,
+            ..SubagentLimits::default()
+        };
+        create_delegated(&store, "child", subagent_origin("root", "root", 1, limits))
+            .await
+            .expect("takes the last slot");
+        assert_eq!(
+            create_delegated(&store, "child", subagent_origin("root", "root", 1, limits)).await,
+            Err(SessionStoreError::SessionAlreadyExists {
+                session_id: SessionId::new("child"),
+            })
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn discarding_removes_only_a_session_that_never_opened() {
+        let store = InMemorySessionStore::new();
+        store
+            .create_session(CreateSession {
+                metadata: Default::default(),
+                session_id: SessionId::new("root"),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("root");
+        let limits = SubagentLimits {
+            max_concurrent: 1,
+            ..SubagentLimits::default()
+        };
+        create_delegated(&store, "child", subagent_origin("root", "root", 1, limits))
+            .await
+            .expect("reservation");
+        assert!(
+            store
+                .discard_unopened_session(&SessionId::new("child"))
+                .await
+                .expect("discard")
+        );
+        assert_eq!(
+            store
+                .load_session(&SessionId::new("child"))
+                .await
+                .expect("load"),
+            None
+        );
+        // The slot is free again, and a missing row is not an error.
+        create_delegated(&store, "next", subagent_origin("root", "root", 1, limits))
+            .await
+            .expect("slot freed");
+        assert!(
+            !store
+                .discard_unopened_session(&SessionId::new("child"))
+                .await
+                .expect("discard a missing row")
+        );
+
+        store
+            .append(AppendSessionEvents {
+                session_id: SessionId::new("root"),
+                expected_head: None,
+                events: vec![lifecycle_opened_event(2)],
+            })
+            .await
+            .expect("open root");
+        assert!(
+            !store
+                .discard_unopened_session(&SessionId::new("root"))
+                .await
+                .expect("an opened session stays")
+        );
+        assert!(
+            store
+                .load_session(&SessionId::new("root"))
+                .await
+                .expect("load")
+                .is_some()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn due_retention_roots_page_in_deadline_order_past_a_cursor() {
+        let store = InMemorySessionStore::new();
+        for (id, closed_at_ms) in [("late", 30), ("first", 10), ("second", 10)] {
+            store
+                .create_session(CreateSession {
+                    metadata: Default::default(),
+                    session_id: SessionId::new(id),
+                    display_name: None,
+                    origin: None,
+                    delete_after_close_ms: Some(5),
+                    created_at_ms: 1,
+                })
+                .await
+                .expect("root");
+            store
+                .append(AppendSessionEvents {
+                    session_id: SessionId::new(id),
+                    expected_head: None,
+                    events: vec![
+                        lifecycle_opened_event(closed_at_ms - 1),
+                        lifecycle_closed_event(closed_at_ms),
+                    ],
+                })
+                .await
+                .expect("close root");
+        }
+        let ids = |records: Vec<SessionRecord>| {
+            records
+                .into_iter()
+                .map(|record| record.session_id.as_str().to_owned())
+                .collect::<Vec<_>>()
+        };
+        let first = store
+            .list_retention_roots_due_for_deletion(100, None, 2)
+            .await
+            .expect("first page");
+        let after = RetentionRootCursor {
+            delete_at_ms: first[1].delete_at_ms.expect("due root"),
+            session_id: first[1].session_id.clone(),
+        };
+        assert_eq!(ids(first), ["first", "second"]);
+        assert_eq!(
+            ids(store
+                .list_retention_roots_due_for_deletion(100, Some(&after), 2)
+                .await
+                .expect("second page")),
+            ["late"]
         );
     }
 
@@ -2273,7 +2648,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn lists_filter_managed_work_and_whole_trees_by_their_root() {
+    async fn lists_filter_controlled_work_and_whole_trees_by_their_root() {
         let store = InMemorySessionStore::new();
         let create = |id: &'static str, parent: Option<&'static str>| {
             let store = store.clone();
@@ -2301,16 +2676,16 @@ mod tests {
                     .expect("create");
             }
         };
-        create("managed", None).await;
-        create("managed-child", Some("managed")).await;
+        create("controlled", None).await;
+        create("controlled-child", Some("controlled")).await;
         create("plain", None).await;
         store
             .append(AppendSessionEvents {
-                session_id: SessionId::new("managed"),
+                session_id: SessionId::new("controlled"),
                 expected_head: None,
                 events: vec![
                     lifecycle_opened_event(10),
-                    managed_bindings_event(
+                    declared_bindings_event(
                         11,
                         Some(crate::WorkflowEndpointRef {
                             workflow_id: "controller".to_owned(),
@@ -2320,14 +2695,14 @@ mod tests {
                 ],
             })
             .await
-            .expect("admit management");
-        let list = |managed: Option<bool>, trees: Vec<SessionId>| {
+            .expect("admit declaration");
+        let list = |lifecycle_controlled: Option<bool>, trees: Vec<SessionId>| {
             let store = store.clone();
             async move {
                 let mut ids = store
                     .list_sessions(ListSessions {
                         limit: 10,
-                        managed,
+                        lifecycle_controlled,
                         trees,
                         ..Default::default()
                     })
@@ -2344,13 +2719,268 @@ mod tests {
         assert_eq!(list(Some(false), Vec::new()).await, ["plain"]);
         assert_eq!(
             list(Some(true), Vec::new()).await,
-            ["managed", "managed-child"]
+            ["controlled", "controlled-child"]
         );
         assert_eq!(
-            list(None, vec![SessionId::new("managed")]).await,
-            ["managed", "managed-child"]
+            list(None, vec![SessionId::new("controlled")]).await,
+            ["controlled", "controlled-child"]
         );
         assert_eq!(list(None, Vec::new()).await.len(), 3);
+    }
+
+    /// The projections read a kind from the stored envelope, so this encodes the
+    /// real events: the arm a codec change moves is the arm these assertions see.
+    fn encoded_run_event(
+        at_ms: u64,
+        run_id: crate::RunId,
+        event: CoreAgentEvent,
+    ) -> UncommittedStoredEvent {
+        encoded_event(
+            at_ms,
+            crate::CoreAgentJoins {
+                run_id: Some(run_id),
+                ..Default::default()
+            },
+            event,
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_record_entries_are_read_by_run_id_across_a_fork() {
+        use crate::{RunEvent, RunId};
+
+        let run = |at_ms, run_id, event| encoded_run_event(at_ms, RunId::new(run_id), event);
+        let started = |run_id| {
+            CoreAgentEvent::Run(RunEvent::Started {
+                run_id: RunId::new(run_id),
+            })
+        };
+        let cancelled = |run_id| {
+            CoreAgentEvent::Run(RunEvent::Cancelled {
+                run_id: RunId::new(run_id),
+            })
+        };
+        let store = InMemorySessionStore::new();
+        let root = SessionId::new("root");
+        store
+            .create_session(CreateSession {
+                metadata: Default::default(),
+                session_id: root.clone(),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create root");
+        store
+            .append(AppendSessionEvents {
+                session_id: root.clone(),
+                expected_head: None,
+                events: vec![
+                    run(1, 1, started(1)),
+                    run(2, 1, cancelled(1)),
+                    // Same run, not one of the kinds a record is built from.
+                    run(
+                        3,
+                        2,
+                        CoreAgentEvent::Run(RunEvent::CancellationRequested {
+                            run_id: RunId::new(2),
+                            requested_by: None,
+                        }),
+                    ),
+                    run(4, 2, started(2)),
+                    filler_event(5),
+                    run(6, 2, cancelled(2)),
+                    // Past the fork point, so the child never sees this.
+                    run(7, 3, started(3)),
+                ],
+            })
+            .await
+            .expect("append root");
+        let fork = SessionId::new("fork");
+        store
+            .create_forked_session(CreateForkedSession {
+                source_session_id: root,
+                session_id: fork.clone(),
+                source_seq: EventSeq::new(6),
+                created_at_ms: 8,
+            })
+            .await
+            .expect("fork");
+        store
+            .append(AppendSessionEvents {
+                session_id: fork.clone(),
+                expected_head: Some(SessionPosition {
+                    seq: EventSeq::new(6),
+                }),
+                events: vec![run(9, 3, started(3)), run(10, 3, cancelled(3))],
+            })
+            .await
+            .expect("append fork");
+
+        let read = |before, limit| {
+            let store = store.clone();
+            let session_id = fork.clone();
+            async move {
+                store
+                    .read_run_record_entries(ReadRunRecordEntries {
+                        session_id,
+                        before: RunId::new(before),
+                        limit,
+                    })
+                    .await
+                    .map(|entries| {
+                        entries
+                            .iter()
+                            .map(|entry| entry.observed_at_ms)
+                            .collect::<Vec<_>>()
+                    })
+            }
+        };
+        assert_eq!(read(4, 2).await.unwrap(), vec![4, 6, 9, 10]);
+        assert_eq!(read(2, 1).await.unwrap(), vec![1, 2]);
+        assert_eq!(read(4, 100).await.unwrap(), vec![1, 2, 4, 6, 9, 10]);
+        assert_eq!(read(1, 5).await.unwrap(), Vec::<u64>::new());
+        assert!(matches!(
+            read(4, 0).await,
+            Err(SessionStoreError::InvalidLimit { limit: 0 })
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn encoded_events_drive_activity_and_run_boundaries() {
+        use crate::{
+            ApprovalEvent, RunEvent, RunFailure, RunFailureKind, RunId, ToolEvent, TurnEvent,
+        };
+
+        let run_id = RunId::new(1);
+        let turn_id = crate::TurnId::new(1);
+        let batch_id = crate::ToolBatchId::new(1);
+        let started = || CoreAgentEvent::Run(RunEvent::Started { run_id });
+        let parked = || CoreAgentEvent::Approval(ApprovalEvent::RunParked { run_id });
+
+        let store = InMemorySessionStore::new();
+        let session = SessionId::new("session");
+        store
+            .create_session(CreateSession {
+                metadata: Default::default(),
+                session_id: session.clone(),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+        let append = async |event: CoreAgentEvent| {
+            let expected_head = store.head(&session).await.expect("head");
+            let result = store
+                .append(AppendSessionEvents {
+                    session_id: session.clone(),
+                    expected_head,
+                    events: vec![encoded_run_event(10, run_id, event)],
+                })
+                .await
+                .expect("append");
+            let activity = store
+                .load_session(&session)
+                .await
+                .expect("load")
+                .expect("exists")
+                .activity;
+            (result.entries.into_iter().next().expect("entry"), activity)
+        };
+
+        assert_eq!(append(started()).await.1, SessionActivity::Working);
+        for resuming in [
+            CoreAgentEvent::Approval(ApprovalEvent::RunUnparked { run_id }),
+            CoreAgentEvent::Turn(TurnEvent::Started { turn_id, run_id }),
+            CoreAgentEvent::Turn(TurnEvent::GenerationRequested { turn_id, run_id }),
+            CoreAgentEvent::Tool(ToolEvent::CallStarted {
+                run_id,
+                turn_id,
+                batch_id,
+                call_id: crate::ToolCallId::new("call"),
+                tool_name: crate::ToolName::new("tool"),
+                arguments_ref: crate::BlobRef::from_bytes(b"{}"),
+            }),
+            CoreAgentEvent::Tool(ToolEvent::BatchUnparked {
+                run_id,
+                turn_id,
+                batch_id,
+            }),
+        ] {
+            assert_eq!(append(parked()).await.1, SessionActivity::Waiting);
+            assert_eq!(append(resuming).await.1, SessionActivity::Working);
+        }
+
+        for ending in [
+            CoreAgentEvent::Run(RunEvent::Completed {
+                run_id,
+                output: None,
+            }),
+            CoreAgentEvent::Run(RunEvent::Failed {
+                run_id,
+                failure: RunFailure {
+                    kind: RunFailureKind::ModelFailure,
+                    message_ref: None,
+                },
+            }),
+            CoreAgentEvent::Run(RunEvent::Cancelled { run_id }),
+            CoreAgentEvent::Run(RunEvent::ForceCancelled { run_id }),
+        ] {
+            assert_eq!(append(started()).await.1, SessionActivity::Working);
+            let (entry, activity) = append(ending).await;
+            assert!(is_terminal_run_entry(&entry));
+            assert_eq!(activity, SessionActivity::Idle);
+        }
+        let (queued_cancelled, activity) = append(CoreAgentEvent::Run(RunEvent::QueuedCancelled {
+            run_id,
+            requested_by: None,
+        }))
+        .await;
+        assert!(is_terminal_run_entry(&queued_cancelled));
+        assert_eq!(activity, SessionActivity::Idle);
+
+        // Each of these opens a run on its own, so a fork inside it is refused.
+        for opening in [
+            CoreAgentEvent::Run(RunEvent::Accepted(crate::AcceptedRunEvent {
+                run_id,
+                submission_id: None,
+                source: crate::RunSource::Input { input: Vec::new() },
+                run_config: Default::default(),
+                input_limit_tokens: None,
+                config_revision: 0,
+                notify_on_terminal: Vec::new(),
+                requested_by: None,
+            })),
+            started(),
+            CoreAgentEvent::Run(RunEvent::SteeringAccepted {
+                run_id,
+                steering_id: crate::SteeringId::new(1),
+                submission_id: crate::SubmissionId::new("steer-1"),
+                input: Vec::new(),
+                requested_by: None,
+            }),
+            CoreAgentEvent::Run(RunEvent::CancellationRequested {
+                run_id,
+                requested_by: None,
+            }),
+        ] {
+            let entry = StoredSessionEntry {
+                position: SessionPosition {
+                    seq: EventSeq::new(1),
+                },
+                observed_at_ms: 10,
+                joins: StoredJoins::from([("run_id".to_owned(), "1".to_owned())]),
+                event: CoreAgentCodec.encode_event(&opening).expect("encode event"),
+            };
+            assert!(matches!(
+                validate_fork_point(&session, EventSeq::new(1), &[entry], 1),
+                Err(SessionStoreError::InvalidForkPoint { .. })
+            ));
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2402,10 +3032,7 @@ mod tests {
         let record = step(
             &store,
             &session,
-            &[
-                CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND,
-                "lightspeed.core.run.accepted",
-            ],
+            &[event_kind::LIFECYCLE_OPENED, event_kind::RUN_ACCEPTED],
         )
         .await;
         assert_eq!(
@@ -2413,20 +3040,20 @@ mod tests {
             SessionActivity::Idle,
             "a queued run is not work yet"
         );
-        let record = step(&store, &session, &["lightspeed.core.run.started"]).await;
+        let record = step(&store, &session, &[event_kind::RUN_STARTED]).await;
         assert_eq!(activity(record), SessionActivity::Working);
         let record = step(
             &store,
             &session,
             &[
-                "lightspeed.core.approval.requested",
-                "lightspeed.core.approval.requested",
-                "lightspeed.core.approval.run_parked",
+                event_kind::APPROVAL_REQUESTED,
+                event_kind::APPROVAL_REQUESTED,
+                event_kind::APPROVAL_RUN_PARKED,
             ],
         )
         .await;
         assert_eq!(activity(record), SessionActivity::Waiting);
-        let record = step(&store, &session, &["lightspeed.core.approval.decided"]).await;
+        let record = step(&store, &session, &[event_kind::APPROVAL_DECIDED]).await;
         assert_eq!(
             activity(record),
             SessionActivity::Waiting,
@@ -2436,25 +3063,22 @@ mod tests {
             &store,
             &session,
             &[
-                "lightspeed.core.approval.decided",
-                "lightspeed.core.tool.batch_resumed",
+                event_kind::APPROVAL_DECIDED,
+                event_kind::APPROVAL_RUN_UNPARKED,
             ],
         )
         .await;
         assert_eq!(
             activity(record),
             SessionActivity::Working,
-            "the run stepped on"
+            "an approved call may run for minutes with no further event"
         );
-        let record = step(&store, &session, &["lightspeed.core.run.cancelled"]).await;
+        let record = step(&store, &session, &[event_kind::RUN_CANCELLED]).await;
         assert_eq!(activity(record), SessionActivity::Idle);
         let record = step(
             &store,
             &session,
-            &[
-                "lightspeed.core.run.started",
-                CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
-            ],
+            &[event_kind::RUN_STARTED, event_kind::LIFECYCLE_CLOSED],
         )
         .await;
         assert_eq!(
@@ -2498,7 +3122,7 @@ mod tests {
                 expected_head: None,
                 events: vec![
                     lifecycle_opened_event(10),
-                    test_event(11, "parent.work"),
+                    filler_event(11),
                     lifecycle_closed_event(12),
                 ],
             })
@@ -2654,14 +3278,14 @@ mod tests {
 
         assert!(
             store
-                .list_retention_roots_due_for_deletion(119, 10)
+                .list_retention_roots_due_for_deletion(119, None, 10)
                 .await
                 .expect("list before deadline")
                 .is_empty()
         );
         assert_eq!(
             store
-                .list_retention_roots_due_for_deletion(120, 10)
+                .list_retention_roots_due_for_deletion(120, None, 10)
                 .await
                 .expect("list at deadline")
                 .into_iter()
@@ -2710,9 +3334,9 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn management_projection_rejects_clones_and_forks() {
+    async fn controlled_projection_rejects_clones_and_forks() {
         let store = InMemorySessionStore::new();
-        let parent = SessionId::new("managed-parent");
+        let parent = SessionId::new("controlled-parent");
         store
             .create_session(CreateSession {
                 metadata: Default::default(),
@@ -2730,7 +3354,7 @@ mod tests {
                 expected_head: None,
                 events: vec![
                     lifecycle_opened_event(10),
-                    managed_bindings_event(
+                    declared_bindings_event(
                         11,
                         Some(crate::WorkflowEndpointRef {
                             workflow_id: "channels/session-1".to_owned(),
@@ -2740,41 +3364,41 @@ mod tests {
                 ],
             })
             .await
-            .expect("admit management");
+            .expect("admit declaration");
 
         let parent_record = store
             .load_session(&parent)
             .await
             .expect("load parent")
             .expect("parent exists");
-        assert!(parent_record.managed);
+        assert!(parent_record.lifecycle_controlled);
 
         let clone_error = store
             .create_cloned_session(CreateClonedSession {
                 source_session_id: parent.clone(),
-                session_id: SessionId::new("managed-clone"),
+                session_id: SessionId::new("controlled-clone"),
                 created_at_ms: 20,
                 opening_events: vec![lifecycle_opened_event(20)],
             })
             .await
-            .expect_err("managed session cannot be cloned");
+            .expect_err("declared session cannot be cloned");
         assert!(matches!(
             clone_error,
-            SessionStoreError::ManagedSessionCannotBranch { .. }
+            SessionStoreError::LifecycleControlledSessionCannotBranch { .. }
         ));
 
         let fork_error = store
             .create_forked_session(CreateForkedSession {
                 source_session_id: parent.clone(),
-                session_id: SessionId::new("managed-fork"),
+                session_id: SessionId::new("controlled-fork"),
                 source_seq: EventSeq::new(2),
                 created_at_ms: 21,
             })
             .await
-            .expect_err("managed session cannot be forked");
+            .expect_err("declared session cannot be forked");
         assert!(matches!(
             fork_error,
-            SessionStoreError::ManagedSessionCannotBranch { .. }
+            SessionStoreError::LifecycleControlledSessionCannotBranch { .. }
         ));
 
         let tool_only = SessionId::new("tool-only");
@@ -2793,7 +3417,10 @@ mod tests {
             .append(AppendSessionEvents {
                 session_id: tool_only.clone(),
                 expected_head: None,
-                events: vec![lifecycle_opened_event(31), managed_bindings_event(32, None)],
+                events: vec![
+                    lifecycle_opened_event(31),
+                    declared_bindings_event(32, None),
+                ],
             })
             .await
             .expect("admit tool-only bindings");
@@ -2802,7 +3429,7 @@ mod tests {
             .await
             .expect("load tool-only session")
             .expect("tool-only session exists");
-        assert!(!tool_only.managed);
+        assert!(!tool_only.lifecycle_controlled);
 
         let tool_only_fork = store
             .create_forked_session(CreateForkedSession {
@@ -2813,7 +3440,7 @@ mod tests {
             })
             .await
             .expect("tool-only session remains forkable");
-        assert!(!tool_only_fork.managed);
+        assert!(!tool_only_fork.lifecycle_controlled);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2835,7 +3462,7 @@ mod tests {
             .append(AppendSessionEvents {
                 session_id: session_id.clone(),
                 expected_head: None,
-                events: vec![open_event(10)],
+                events: vec![filler_event(10)],
             })
             .await
             .expect("append first");
@@ -2844,7 +3471,7 @@ mod tests {
             .append(AppendSessionEvents {
                 session_id: session_id.clone(),
                 expected_head: None,
-                events: vec![open_event(11)],
+                events: vec![filler_event(11)],
             })
             .await
             .expect_err("stale append fails");
@@ -2855,7 +3482,7 @@ mod tests {
                 expected: None,
                 actual,
                 ..
-            } if actual == first.head
+            } if actual.as_ref() == first.entries.last().map(|entry| &entry.position)
         ));
     }
 
@@ -2895,7 +3522,7 @@ mod tests {
             .append(AppendSessionEvents {
                 session_id: SessionId::new("missing"),
                 expected_head: None,
-                events: vec![open_event(10)],
+                events: vec![filler_event(10)],
             })
             .await
             .expect_err("missing session fails");
@@ -2907,7 +3534,7 @@ mod tests {
                 expected_head: Some(SessionPosition {
                     seq: EventSeq::new(1),
                 }),
-                events: vec![open_event(11)],
+                events: vec![filler_event(11)],
             })
             .await
             .expect_err("expected-head conflict fails");
@@ -2936,7 +3563,7 @@ mod tests {
             .append(AppendSessionEvents {
                 session_id: source_id.clone(),
                 expected_head: None,
-                events: vec![open_event(10), open_event(11)],
+                events: vec![filler_event(10), filler_event(11)],
             })
             .await
             .expect("append source");
@@ -2947,7 +3574,7 @@ mod tests {
                 source_session_id: source_id.clone(),
                 session_id: child_id.clone(),
                 created_at_ms: 20,
-                opening_events: vec![test_event(21, "lightspeed.test.clone.opened")],
+                opening_events: vec![filler_event(21)],
             })
             .await
             .expect("clone session");
@@ -2968,7 +3595,7 @@ mod tests {
             .expect("read clone");
         assert_eq!(page.entries.len(), 1);
         assert_eq!(page.entries[0].position.seq, EventSeq::new(1));
-        assert_eq!(page.entries[0].event.kind, "lightspeed.test.clone.opened");
+        assert_eq!(page.entries[0].observed_at_ms, 21);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2990,11 +3617,7 @@ mod tests {
             .append(AppendSessionEvents {
                 session_id: root.clone(),
                 expected_head: None,
-                events: vec![
-                    test_event(10, "root.1"),
-                    test_event(11, "root.2"),
-                    test_event(12, "root.3"),
-                ],
+                events: vec![filler_event(10), filler_event(11), filler_event(12)],
             })
             .await
             .expect("append root");
@@ -3015,7 +3638,7 @@ mod tests {
                 expected_head: Some(SessionPosition {
                     seq: EventSeq::new(2),
                 }),
-                events: vec![test_event(21, "fork.3"), test_event(22, "fork.4")],
+                events: vec![filler_event(21), filler_event(22)],
             })
             .await
             .expect("append fork");
@@ -3034,7 +3657,7 @@ mod tests {
                 expected_head: Some(SessionPosition {
                     seq: EventSeq::new(3),
                 }),
-                events: vec![test_event(30, "root.4-hidden")],
+                events: vec![filler_event(30)],
             })
             .await
             .expect("append root tail");
@@ -3055,7 +3678,7 @@ mod tests {
                 expected_head: Some(SessionPosition {
                     seq: EventSeq::new(3),
                 }),
-                events: vec![test_event(41, "grandchild.4")],
+                events: vec![filler_event(41)],
             })
             .await
             .expect("append grandchild");
@@ -3071,9 +3694,9 @@ mod tests {
         assert_eq!(
             page.entries
                 .iter()
-                .map(|entry| (entry.position.seq.as_u64(), entry.event.kind.as_str()))
+                .map(|entry| (entry.position.seq.as_u64(), entry.observed_at_ms))
                 .collect::<Vec<_>>(),
-            vec![(2, "root.2"), (3, "fork.3"), (4, "grandchild.4")]
+            vec![(2, 11), (3, 21), (4, 41)]
         );
     }
 
@@ -3097,9 +3720,9 @@ mod tests {
                 session_id: session_id.clone(),
                 expected_head: None,
                 events: vec![
-                    test_event(10, "standalone.1"),
-                    run_event(11, "lightspeed.core.run.accepted", 1),
-                    run_event(12, "lightspeed.core.run.started", 1),
+                    filler_event(10),
+                    run_event(11, event_kind::RUN_ACCEPTED),
+                    run_event(12, event_kind::RUN_STARTED),
                 ],
             })
             .await

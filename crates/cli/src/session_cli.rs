@@ -50,6 +50,8 @@ enum SessionCommand {
     Context(ContextCommandArgs),
     /// Set or clear automatic soft deletion for a retention root.
     Retention(RetentionArgs),
+    /// Bring back an open session whose workflow execution stopped, from its log.
+    Restart(RestartArgs),
     /// Close one session by id, or every open session matching a filter.
     Close(CloseArgs),
     /// Permanently delete one closed session or closed filter matches;
@@ -207,6 +209,13 @@ struct RetentionArgs {
 }
 
 #[derive(Args, Debug, Clone)]
+struct RestartArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+    session_id: String,
+}
+
+#[derive(Args, Debug, Clone)]
 struct CloseArgs {
     #[command(flatten)]
     common: CommonArgs,
@@ -229,7 +238,7 @@ struct DeleteArgs {
     session_id: Option<String>,
     #[command(flatten)]
     metadata: MetadataPairs,
-    /// Also delete history forks and delegated child sessions.
+    /// Also delete delegated child sessions.
     #[arg(long)]
     cascade: bool,
     /// Hide sessions and retain their history instead of permanently deleting it.
@@ -257,6 +266,7 @@ pub(crate) async fn handle(args: SessionArgs) -> Result<()> {
             ContextCommand::Redact(args) => redact_context(args).await,
         },
         SessionCommand::Retention(args) => put_retention(args).await,
+        SessionCommand::Restart(args) => restart(args).await,
         SessionCommand::Close(args) => close(args).await,
         SessionCommand::Delete(args) => delete(args).await,
     }
@@ -506,6 +516,24 @@ async fn put_retention(args: RetentionArgs) -> Result<()> {
     })
 }
 
+async fn restart(args: RestartArgs) -> Result<()> {
+    let response = HttpAgentApi::new(args.common.api_url)
+        .restart_session(api::SessionRestartParams {
+            session_id: args.session_id.clone(),
+        })
+        .await
+        .map_err(api_error)?
+        .result;
+    print_json_or(args.common.json, &response, || {
+        let outcome = if response.restarted {
+            "restarted"
+        } else {
+            "already running"
+        };
+        println!("{}: {outcome}", args.session_id);
+    })
+}
+
 async fn close(args: CloseArgs) -> Result<()> {
     let client = HttpAgentApi::new(args.common.api_url);
     let targets = select_targets(
@@ -743,8 +771,8 @@ mod tests {
                 "id": "item_1",
                 "kind": kind,
                 "content": {
-                    "contentRef": "sha256:00",
-                    "mediaType": "image/png",
+                    "blobRef": "sha256:00",
+                    "mime": "image/png",
                     "providerKind": null,
                     "mediaHandle": media_handle,
                 },
@@ -790,7 +818,7 @@ mod tests {
         let entry: api::ContextEntryView = serde_json::from_value(serde_json::json!({
             "id": "item_12",
             "kind": { "type": "toolResult", "callId": "call_1", "isError": false },
-            "content": { "contentRef": "sha256:00", "mediaType": "text/plain", "providerKind": null },
+            "content": { "blobRef": "sha256:00", "mime": "text/plain", "providerKind": null },
             "preview": "[tool result removed by\noperator]",
         }))
         .expect("entry view");
@@ -843,7 +871,7 @@ mod tests {
                 delete_after_close_ms: None,
                 delete_at_ms: None,
             },
-            managed: false,
+            lifecycle_controlled: false,
             origin: None,
             access: api::ResourceAccessSummary {
                 visibility: api::Visibility::Universe,

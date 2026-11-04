@@ -91,7 +91,14 @@
                 "type": "null"
               }
             ],
-            "description": "Present for model_default_unset; clients need not parse the message."
+            "description": "Present for modelDefaultUnset; clients need not parse the message."
+          },
+          "submissionId": {
+            "description": "Present for operationPending on a call that took a submission id, including\none the server allocated. Retrying with it cannot land the same work twice.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -104,10 +111,10 @@
         "oneOf": [
           {
             "enum": [
-              "invalid_request",
-              "not_found",
+              "invalidRequest",
+              "notFound",
               "conflict",
-              "audio_blob_too_large",
+              "audioBlobTooLarge",
               "internal"
             ],
             "type": "string"
@@ -128,23 +135,33 @@
             "type": "string"
           },
           {
-            "const": "model_default_unset",
+            "const": "modelDefaultUnset",
             "description": "No model was supplied and this universe has no default for the requested use.",
             "type": "string"
           },
           {
-            "const": "session_bootstrap_failed",
+            "const": "sessionBootstrapFailed",
             "description": "The session's agent workflow exists but failed during bootstrap\n(rehydration) and cannot serve runs. Distinct from `NotFound` (no\nworkflow) so clients/bridges treat it as a session recovery problem\nrather than an ordinary \"answer this message\" failure.",
             "type": "string"
           },
           {
-            "const": "environment_not_ready",
+            "const": "sessionExecutionStopped",
+            "description": "The session is open and its history is intact, but its workflow execution\nhas stopped, so nothing can serve it. Nothing restarts it behind the caller:\n`session/restart`, or a retried `session/start` with its id, brings it back.",
+            "type": "string"
+          },
+          {
+            "const": "environmentNotReady",
             "description": "The environment exists but is not reachable yet: it is still\nprovisioning, its provider is waking or booting it after a data\nroute dial, or its registered daemon is reconnecting. Distinct from\n`Rejected` so clients retry with backoff instead of failing —\npolling and automation callers lean on this for wake-on-use.",
             "type": "string"
           },
           {
-            "const": "response_too_large",
+            "const": "responseTooLarge",
             "description": "The requested page still exceeds the public serialized response\nbudget. Callers can retry with a smaller page limit or continuation.",
+            "type": "string"
+          },
+          {
+            "const": "operationPending",
+            "description": "The wait for this command expired while the session may still be holding it,\nfor example behind a compaction. It can still take effect, so this is not a\nfailure. Retrying the same request, with the same submission id where it takes\none, is safe.",
             "type": "string"
           }
         ]
@@ -2206,6 +2223,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfSessionRestartResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/SessionRestartResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfSessionRetentionPutResponse": {
         "properties": {
           "notifications": {
@@ -2426,34 +2460,6 @@
                 },
                 "required": [
                   "session"
-                ],
-                "type": "object"
-              }
-            },
-            "required": [
-              "method",
-              "params"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "method": {
-                "const": "session/status/changed",
-                "type": "string"
-              },
-              "params": {
-                "properties": {
-                  "sessionId": {
-                    "type": "string"
-                  },
-                  "status": {
-                    "$ref": "#/components/schemas/SessionStatus"
-                  }
-                },
-                "required": [
-                  "sessionId",
-                  "status"
                 ],
                 "type": "object"
               }
@@ -2764,17 +2770,26 @@
         "type": "object"
       },
       "ApprovalDecisionFailureKind": {
-        "enum": [
-          "invalidId",
-          "unknown",
-          "foreignRun",
-          "alreadyDecided",
-          "cancelled",
-          "duplicate",
-          "invalidNote",
-          "rejected"
-        ],
-        "type": "string"
+        "oneOf": [
+          {
+            "enum": [
+              "invalidId",
+              "unknown",
+              "foreignRun",
+              "alreadyDecided",
+              "cancelled",
+              "duplicate",
+              "invalidNote",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "internal",
+            "description": "The decision's outcome could not be read, and the session may be failing.",
+            "type": "string"
+          }
+        ]
       },
       "ApprovalDecisionInput": {
         "properties": {
@@ -2830,11 +2845,20 @@
         "type": "object"
       },
       "ApprovalDecisionStatus": {
-        "enum": [
-          "decided",
-          "failed"
-        ],
-        "type": "string"
+        "oneOf": [
+          {
+            "enum": [
+              "decided",
+              "failed"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "pending",
+            "description": "The wait for this decision expired while the session may still be holding it.\nIt can still apply, or lose to another decision. Read the run to learn which.",
+            "type": "string"
+          }
+        ]
       },
       "ApprovalSubjectView": {
         "oneOf": [
@@ -4370,8 +4394,8 @@
           "initializing",
           "degraded",
           "idle",
-          "delivering_event",
-          "budget_exhausted",
+          "deliveringEvent",
+          "budgetExhausted",
           "closing",
           "closed"
         ],
@@ -4707,7 +4731,7 @@
           "ignored",
           "blocked",
           "unresolved",
-          "run_failed",
+          "runFailed",
           "steered",
           "appended",
           "archived"
@@ -5588,12 +5612,12 @@
             "type": "string"
           },
           {
-            "const": "poll_failed",
+            "const": "pollFailed",
             "description": "Too many consecutive poll failures.",
             "type": "string"
           },
           {
-            "const": "one_shot",
+            "const": "oneShot",
             "description": "A one-shot schedule fired.",
             "type": "string"
           },
@@ -5603,7 +5627,7 @@
             "type": "string"
           },
           {
-            "const": "bot_closed",
+            "const": "botClosed",
             "description": "The bot was closed.",
             "type": "string"
           }
@@ -6990,12 +7014,12 @@
             "type": "string"
           },
           {
-            "const": "pairing_required",
+            "const": "pairingRequired",
             "description": "A chat trigger would serve this conversation but it has not paired;\nthe message looked addressed to the bot, so prompt for the code.",
             "type": "string"
           },
           {
-            "const": "pairing_pending",
+            "const": "pairingPending",
             "description": "Same as above, but the message was ambient traffic; stay silent.",
             "type": "string"
           },
@@ -7419,6 +7443,7 @@
       "CompactionPolicy": {
         "oneOf": [
           {
+            "description": "The engine never compacts on its own, and `session/context/compact` still works.\nOnce active context reaches 2,000 entries each run fails at its next turn\nboundary, until a compaction brings the count down or the policy changes.",
             "properties": {
               "mode": {
                 "const": "disabled",
@@ -7483,17 +7508,17 @@
       "ContentRefView": {
         "description": "Immutable content and its encoding. A reference can name plain text,\nprovider-native JSON, or media; it does not imply a UTF-8 text payload.",
         "properties": {
-          "contentRef": {
+          "blobRef": {
             "type": "string"
           },
           "mediaHandle": {
-            "description": "The model-facing name of provider-native media (an admitted image or\nPDF): `media:` plus the first twelve hex characters of `content_ref`.\nThe model writes it as a URL (`![…](media:3f9a2c1d4e7b)`) to refer to\nmedia it was shown; resolve it against the media of the same session.\nAbsent for text and other content.",
+            "description": "The model-facing name of provider-native media (an admitted image or\nPDF): `media:` plus the first twelve hex characters of `blobRef`.\nThe model writes it as a URL (`![…](media:3f9a2c1d4e7b)`) to refer to\nmedia it was shown; resolve it against the media of the same session.\nAbsent for text and other content.",
             "type": [
               "string",
               "null"
             ]
           },
-          "mediaType": {
+          "mime": {
             "type": [
               "string",
               "null"
@@ -7507,7 +7532,7 @@
           }
         },
         "required": [
-          "contentRef"
+          "blobRef"
         ],
         "type": "object"
       },
@@ -7517,7 +7542,7 @@
             "$ref": "#/components/schemas/InputItem"
           },
           "key": {
-            "description": "Stable client-chosen context key. Re-sending the same key with the\nsame content is a no-op, so the key doubles as the idempotency handle.\n`run`, `run.*`, `runtime`, and `runtime.*` are reserved for the runtime.",
+            "description": "Stable client-chosen context key, which names one entry. Re-sending\nthe key with the same content is a no-op, so a retry lands once. With\ndifferent content the earlier entry leaves active context and the new\none goes last under a new id; a catalog keeps the earlier version\nrendered and supersedes it instead.\n`run`, `run.*`, `runtime`, and `runtime.*` are reserved for the runtime.",
             "type": "string"
           }
         },
@@ -7567,16 +7592,6 @@
       },
       "ContextAppendResult": {
         "properties": {
-          "activationText": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "activationTextTruncated": {
-            "description": "True when `activation_text` was cut off at the server-side length cap.\nThe committed context entry always holds the full text.",
-            "type": "boolean"
-          },
           "entry": {
             "anyOf": [
               {
@@ -7640,6 +7655,81 @@
         ],
         "type": "object"
       },
+      "ContextCompactionMode": {
+        "enum": [
+          "disabled",
+          "providerTriggered",
+          "providerStandalone"
+        ],
+        "type": "string"
+      },
+      "ContextCompactionStatus": {
+        "enum": [
+          "succeeded",
+          "failed"
+        ],
+        "type": "string"
+      },
+      "ContextCompactionStrategy": {
+        "enum": [
+          "disabled",
+          "providerTriggered",
+          "modelSummary",
+          "nativePreferred"
+        ],
+        "type": "string"
+      },
+      "ContextCompactionThresholdSource": {
+        "description": "Where `compactThresholdTokens` came from.",
+        "oneOf": [
+          {
+            "enum": [
+              "disabled"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "override",
+            "description": "The session's own `compactThresholdTokens`.",
+            "type": "string"
+          },
+          {
+            "const": "providerDefault",
+            "description": "The provider decides, and no threshold is known.",
+            "type": "string"
+          },
+          {
+            "const": "inputCapacity",
+            "description": "Four fifths of the input capacity.",
+            "type": "string"
+          },
+          {
+            "const": "contextLengthError",
+            "description": "No capacity is known, so compaction waits for the provider's overflow error.",
+            "type": "string"
+          }
+        ]
+      },
+      "ContextCompactionTrigger": {
+        "description": "What asked for a compaction.",
+        "oneOf": [
+          {
+            "const": "manual",
+            "description": "`session/context/compact`.",
+            "type": "string"
+          },
+          {
+            "const": "highWatermark",
+            "description": "The context passed its compaction threshold.",
+            "type": "string"
+          },
+          {
+            "const": "contextLimit",
+            "description": "The provider reported that the context no longer fits.",
+            "type": "string"
+          }
+        ]
+      },
       "ContextCompactionView": {
         "description": "Resolved automatic policy and the currently pending standalone operation.",
         "properties": {
@@ -7652,13 +7742,23 @@
             ]
           },
           "effectiveMode": {
-            "type": "string"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ContextCompactionMode"
+              }
+            ],
+            "description": "Standalone when the context already holds a window from a native standalone\ncompaction, whatever was requested."
           },
           "effectiveStrategy": {
-            "description": "Native APIs are preferred where supported; summaries use the same model route.",
-            "type": "string"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ContextCompactionStrategy"
+              }
+            ],
+            "description": "Native APIs are preferred where supported; summaries use the same model route."
           },
           "inputLimitTokens": {
+            "description": "The active run's input capacity, or the declared limit. While idle with none\ndeclared, what the last generation recorded, so a session that has not run yet\nshows no reported capacity: that is resolved for each run as it is prepared.",
             "format": "uint32",
             "minimum": 0,
             "type": [
@@ -7686,10 +7786,10 @@
             "type": "integer"
           },
           "requestedMode": {
-            "type": "string"
+            "$ref": "#/components/schemas/ContextCompactionMode"
           },
           "thresholdSource": {
-            "type": "string"
+            "$ref": "#/components/schemas/ContextCompactionThresholdSource"
           }
         },
         "required": [
@@ -7718,7 +7818,7 @@
             "description": "Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
           },
           "inputLimitTokens": {
-            "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
+            "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors. Where a limit is known, a run start or steering holding one text entry over it is refused with `invalidRequest`.",
             "format": "uint32",
             "minimum": 0,
             "type": [
@@ -8070,7 +8170,7 @@
         ]
       },
       "ContextEntryView": {
-        "description": "A session context entry, faithful to the stored harness entry: keyed,\nkind-tagged, ref-backed. Keys are a stable extension point — clients\nreconstruct derived surfaces (e.g. the prompted instruction set via the\n`prompt_instructions/` key prefix) by filtering on `key` and fetching\noriginal bytes through `blobs/read`. `text` contains complete message and\nvisible reasoning text; tool and catalog bodies use bounded text previews.",
+        "description": "A session context entry, faithful to the stored harness entry: keyed,\nkind-tagged, ref-backed. Keys are a stable extension point — clients\nreconstruct derived surfaces (e.g. the prompted instruction set via the\n`instructions.100.prompts` key prefix) by filtering on `key` and fetching\noriginal bytes through `blobs/read`. `text` contains complete message and\nvisible reasoning text; tool and catalog bodies use bounded text previews.",
         "properties": {
           "citations": {
             "description": "Sources this assistant message cites, derived from its own native\npayload. Empty for every other entry kind.",
@@ -8190,6 +8290,16 @@
           "assistant"
         ],
         "type": "string"
+      },
+      "ContextRemovalReason": {
+        "description": "Why entries left the active context.",
+        "oneOf": [
+          {
+            "const": "providerCompacted",
+            "description": "A compaction the provider ran replaced them.",
+            "type": "string"
+          }
+        ]
       },
       "ContextRemoveParams": {
         "properties": {
@@ -8390,6 +8500,116 @@
         },
         "required": [
           "revision"
+        ],
+        "type": "object"
+      },
+      "DeclaredSessionStartParams": {
+        "additionalProperties": false,
+        "description": "Creation request for a session with immutable workflow ownership and\nworkflow-backed tools.",
+        "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Audience of the new session, as for `session/start`."
+          },
+          "config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deleteAfterCloseMs": {
+            "description": "Root-owned automatic deletion measured from close. Absent inherits a\nprofile default, explicit null keeps the tree, and a duration overrides\nthe profile.",
+            "format": "uint64",
+            "maximum": 3153600000000,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "displayName": {
+            "description": "Cannot contain NUL.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Descriptive key/value metadata with the same bounds as\n`session/start`; applied only when the session is first created.",
+            "type": "object"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workflowTools": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DeclaredSessionWorkflowToolsInput"
+              }
+            ],
+            "description": "Immutable workflow tools admitted only when the session is first\ncreated. This document is not part of `SessionConfig` and cannot be\nchanged through `session/config/put`."
+          }
+        },
+        "required": [
+          "workflowTools"
+        ],
+        "type": "object"
+      },
+      "DeclaredSessionWorkflowToolsInput": {
+        "additionalProperties": false,
+        "properties": {
+          "lifecycleController": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowEndpointInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowToolDeclarationInput"
+            },
+            "type": "array"
+          },
+          "version": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "tools"
         ],
         "type": "object"
       },
@@ -8968,7 +9188,7 @@
       "DeploymentSessionPurgeResponse": {
         "properties": {
           "deletedSessionIds": {
-            "description": "Includes soft-deleted history forks and delegated descendants.\nEmpty when the target has already been permanently deleted.",
+            "description": "Includes soft-deleted delegated descendants.\nEmpty when the target has already been permanently deleted.",
             "items": {
               "type": "string"
             },
@@ -9185,7 +9405,7 @@
             "$ref": "#/components/schemas/EnvironmentAccess"
           },
           "default": {
-            "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. Never overrides a live\nselection and never applies on a plain `session/config/put`.",
+            "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. A `session/config/put` that\nchanges the default activates it when the put leaves nothing active, and\nrefuses a default that cannot be selected. Never overrides a live selection,\nand an unchanged default never undoes a deliberate deactivation.",
             "type": "boolean"
           },
           "environmentId": {
@@ -10987,12 +11207,6 @@
       },
       "EventJoinsView": {
         "properties": {
-          "correlationId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "runId": {
             "type": [
               "string",
@@ -11021,41 +11235,6 @@
             "type": [
               "string",
               "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "EventLogGap": {
-        "properties": {
-          "nextCursor": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/EventCursor"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "requestedAfter": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/EventCursor"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "retainedAfter": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/EventCursor"
-              },
-              {
-                "type": "null"
-              }
             ]
           }
         },
@@ -11346,7 +11525,7 @@
           {
             "properties": {
               "origin": {
-                "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                 "type": [
                   "string",
                   "null"
@@ -11379,7 +11558,7 @@
                 "type": "string"
               },
               "origin": {
-                "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                 "type": [
                   "string",
                   "null"
@@ -11415,13 +11594,14 @@
                 "type": "string"
               },
               "name": {
+                "description": "Shown as the item's preview; at most 256 characters, with no NUL.",
                 "type": [
                   "string",
                   "null"
                 ]
               },
               "origin": {
-                "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                 "type": [
                   "string",
                   "null"
@@ -11448,7 +11628,7 @@
                 "type": "string"
               },
               "title": {
-                "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".",
+                "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".\nCannot contain NUL.",
                 "type": "string"
               },
               "type": {
@@ -11493,17 +11673,10 @@
       },
       "LimitsConfig": {
         "additionalProperties": false,
-        "description": "Run budget defaults enforced by the harness drive loop.",
+        "description": "Limits applied to every run of the session unless the run sets its own.",
         "properties": {
-          "maxToolRounds": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
           "maxTurns": {
+            "description": "Model turns a run may start, at least 1. A run that needs another turn past this fails with `limitExceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.",
             "format": "uint32",
             "minimum": 0,
             "type": [
@@ -11568,115 +11741,6 @@
             ]
           }
         },
-        "type": "object"
-      },
-      "ManagedSessionStartParams": {
-        "additionalProperties": false,
-        "description": "Creation request for a session with immutable workflow ownership and\nworkflow-backed tools.",
-        "properties": {
-          "access": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AccessInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Audience of the new session, as for `session/start`."
-          },
-          "config": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SessionConfig"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "deleteAfterCloseMs": {
-            "description": "Root-owned automatic deletion measured from close. Absent inherits a\nprofile default, explicit null keeps the tree, and a duration overrides\nthe profile.",
-            "format": "uint64",
-            "maximum": 3153600000000,
-            "minimum": 1,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "displayName": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "metadata": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "description": "Descriptive key/value metadata with the same bounds as\n`session/start`; applied only when the session is first created.",
-            "type": "object"
-          },
-          "profile": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ProfileSource"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "sessionId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "workflowTools": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ManagedSessionWorkflowToolsInput"
-              }
-            ],
-            "description": "Immutable workflow tools admitted only when the session is first\ncreated. This document is not part of `SessionConfig` and cannot be\nchanged through `session/config/put`."
-          }
-        },
-        "required": [
-          "workflowTools"
-        ],
-        "type": "object"
-      },
-      "ManagedSessionWorkflowToolsInput": {
-        "additionalProperties": false,
-        "properties": {
-          "lifecycleController": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/WorkflowEndpointInput"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "tools": {
-            "items": {
-              "$ref": "#/components/schemas/WorkflowToolDeclarationInput"
-            },
-            "type": "array"
-          },
-          "version": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "version",
-          "tools"
-        ],
         "type": "object"
       },
       "McpAdvertisedToolView": {
@@ -11760,7 +11824,7 @@
       },
       "McpServerAttachment": {
         "additionalProperties": false,
-        "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session.",
+        "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session. A request that newly names a\nserver it cannot resolve is refused. Once attached, or when brought in by a\nprofile, a server that is disabled, deleted, or otherwise unusable is left out\nof later runs and the model is told, so a catalog action never stops the\nsession.",
         "properties": {
           "serverId": {
             "type": "string"
@@ -12035,7 +12099,7 @@
                 "$ref": "#/components/schemas/RemoteMcpExecution"
               }
             ],
-            "default": "provider"
+            "default": "runtime"
           },
           "exposure": {
             "allOf": [
@@ -13456,6 +13520,14 @@
           }
         ]
       },
+      "PromiseSourceKind": {
+        "description": "Where a promise's answer comes from.",
+        "enum": [
+          "timer",
+          "workflow"
+        ],
+        "type": "string"
+      },
       "ProviderContextDisplayView": {
         "properties": {
           "arguments": {
@@ -13522,9 +13594,10 @@
         "type": "string"
       },
       "RemoteMcpExecution": {
+        "description": "Who connects to the server and runs its tools. `runtime`, the default, means\nLightspeed does: each call runs once, under the approval policy, and is recorded.\nWith `provider` the model provider does, so the endpoint must be publicly reachable\nand tools run at least once: a retried generation re-sends the request, so a tool\ncan run again with its side effects, and the transcript shows at most one run.",
         "enum": [
           "provider",
-          "native"
+          "runtime"
         ],
         "type": "string"
       },
@@ -13612,7 +13685,7 @@
             "type": "array"
           },
           "run": {
-            "$ref": "#/components/schemas/RunView"
+            "$ref": "#/components/schemas/RunSummaryView"
           }
         },
         "required": [
@@ -13639,7 +13712,7 @@
       "RunCancelResponse": {
         "properties": {
           "run": {
-            "$ref": "#/components/schemas/RunView"
+            "$ref": "#/components/schemas/RunSummaryView"
           }
         },
         "required": [
@@ -13651,34 +13724,65 @@
         "description": "Why a run failed, as the harness classified it.",
         "oneOf": [
           {
-            "enum": [
-              "model_failure",
-              "tool_failure",
-              "context_failure",
-              "limit_exceeded",
-              "cancelled",
-              "internal"
-            ],
+            "const": "contextFailure",
+            "description": "The context no longer fits the model, or holds too many entries to keep\nrunning, and compaction did not bring it down. `message` says what to do.",
             "type": "string"
           },
           {
-            "const": "request_rejected",
+            "const": "modelFailure",
+            "description": "The provider or the path to it failed the generation, including a generation\nthe provider cancelled unasked. A run someone cancelled has status `cancelled`\nand no failure.",
+            "type": "string"
+          },
+          {
+            "const": "requestRejected",
             "description": "The provider rejected the request as invalid or larger than the model\naccepts. `message` is the provider's own text, unchanged; resending the\nsame context fails the same way.",
+            "type": "string"
+          },
+          {
+            "const": "outputTruncated",
+            "description": "The provider cut the response off at its output cap. Raising\n`maxOutputTokens` or lowering `reasoningEffort` can help; the partial text\nstays in context.",
+            "type": "string"
+          },
+          {
+            "const": "contentFiltered",
+            "description": "The provider refused the request or filtered the response.",
+            "type": "string"
+          },
+          {
+            "const": "limitExceeded",
+            "description": "The run needed another turn and its `maxTurns` allowed none. Its tool calls\nhave results and the session stays usable.",
+            "type": "string"
+          },
+          {
+            "const": "internal",
+            "description": "The harness refused a step of this run because of what the session holds.\n`message` is the refusal's own text. The session stays usable, and open\ntool calls were answered as cancelled.",
             "type": "string"
           }
         ]
       },
+      "RunFailureView": {
+        "description": "Why a run failed. `kind` is the harness's classification; `message` is free text\nfor display, and the provider's own message for `requestRejected`.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RunFailureKindView"
+          },
+          "message": {
+            "type": "string"
+          },
+          "messageTruncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "type": "object"
+      },
       "RunLimitsConfig": {
         "properties": {
-          "maxToolRounds": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
           "maxTurns": {
+            "description": "Model turns this run may start, at least 1, in place of the session's `maxTurns`.",
             "format": "uint32",
             "minimum": 0,
             "type": [
@@ -13755,7 +13859,7 @@
         "type": "object"
       },
       "RunReadResponse": {
-        "description": "The complete projection of one run. Run projection is stateful across the\nrun's events, so partial pages would silently lose cross-event state; a\nrun whose interval exceeds the server's detail ceiling is rejected with a\ntyped error and remains readable through `session/events/read`. Inline\nmessage and reasoning text is complete. Tool and catalog previews are bounded;\ntheir full bodies remain available through `blobs/read`.",
+        "description": "The projection of one run. A run past the server's detail limit keeps its opening\nevents, so its input renders, and its most recent whole turns, and reports the gap\nin `earlierEventsOmitted`; `session/events/read` has the rest. Inline message and\nreasoning text is complete. Tool and catalog previews are bounded; their full bodies\nremain available through `blobs/read`.",
         "properties": {
           "run": {
             "$ref": "#/components/schemas/RunView"
@@ -13797,7 +13901,7 @@
                 "type": "null"
               }
             ],
-            "description": "Optional model override within the session's provider identity and API\nkind. Changing either requires a new session, even before the first run."
+            "description": "Optional model override within the session's provider identity and API\nkind. Changing either requires a new session, even before the first run.\nAny model on that route is allowed, whatever context the session retains."
           }
         },
         "type": "object"
@@ -13823,7 +13927,7 @@
                 "type": "null"
               }
             ],
-            "description": "Request an at-least-once terminal emission to the managed session's\nimmutable lifecycle controller. The destination is derived by the\ngateway; callers supply only the controller's opaque dedup token."
+            "description": "Request a terminal emission to the session's immutable\nlifecycle controller. It is delivered to a running controller, which may\nhear it more than once; others reconcile through `session/runs/read`.\nThe destination is derived by the gateway; callers supply only the\ncontroller's opaque dedup token."
           },
           "sessionId": {
             "type": "string"
@@ -13832,7 +13936,7 @@
             "$ref": "#/components/schemas/RunStartSource"
           },
           "submissionId": {
-            "description": "Client-supplied idempotency key, unique per session. Retrying\n`session/runs/start` with the same submission id and the same\nsource/config/terminal notification returns the original run instead\nof starting a second one; reusing a submission id with any of those\ninputs changed is rejected.",
+            "description": "Client-supplied idempotency key, unique per session. Retrying\n`session/runs/start` with the same submission id and the same\nsource/config/terminal notification returns the original run instead\nof starting a second one; reusing a submission id with any of those\ninputs changed is rejected. The session recognizes it against queued and\nactive runs and its most recent 256 terminal runs, so a retry older than\nthat starts a new run.",
             "type": [
               "string",
               "null"
@@ -13848,7 +13952,7 @@
       "RunStartResponse": {
         "properties": {
           "run": {
-            "$ref": "#/components/schemas/RunView"
+            "$ref": "#/components/schemas/RunSummaryView"
           }
         },
         "required": [
@@ -13894,18 +13998,25 @@
       "RunSteerParams": {
         "properties": {
           "items": {
-            "description": "Steering input, same vocabulary as run input. Delivered to the model\nat the next turn boundary of the run; it does not interrupt the\nin-flight turn or wake a parked await.",
+            "description": "Steering input, same vocabulary as run input. Delivered to the model\nat the next turn boundary of the run; it does not interrupt the\nin-flight turn or wake a parked run. If the run fails before that\nboundary, the input still enters context and the next run sees it as\nhistory. Cancelling the run drops it.",
             "items": {
               "$ref": "#/components/schemas/InputItem"
             },
             "type": "array"
           },
           "runId": {
-            "description": "The run to steer. Must be the session's current active run (running\nor parked on an await); a finished or cancelling run is rejected so a\nlate steer never lands on the next run.",
+            "description": "The run to steer. Must be the session's current active run, running or\nparked; a queued, finished or cancelling run is rejected so a late steer\nnever lands on the next run.",
             "type": "string"
           },
           "sessionId": {
             "type": "string"
+          },
+          "submissionId": {
+            "description": "Client-supplied idempotency key. Retrying with the same id and the same items\nlands the steering once and returns its original id; reusing the id with other\nitems is rejected. The run recognizes it among its most recent steering batches.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -13918,7 +14029,7 @@
       "RunSteerResponse": {
         "properties": {
           "run": {
-            "$ref": "#/components/schemas/RunView"
+            "$ref": "#/components/schemas/RunSummaryView"
           },
           "steeringId": {
             "description": "Identifier of the accepted steering batch within the session.",
@@ -13935,7 +14046,7 @@
         "oneOf": [
           {
             "properties": {
-              "contentRef": {
+              "blobRef": {
                 "type": [
                   "string",
                   "null"
@@ -13970,7 +14081,18 @@
             "minimum": 0,
             "type": "integer"
           },
-          "completedAtMs": {
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunFailureView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why a failed run failed. The message is cut to a preview here, and\n`session/runs/read` has all of it."
+          },
+          "finishedAtMs": {
             "format": "uint64",
             "minimum": 0,
             "type": [
@@ -14009,7 +14131,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Provider usage so far. A summary of a run old enough to be read back from the\nsession's log has none; `session/runs/read` still totals it."
           }
         },
         "required": [
@@ -14034,14 +14157,9 @@
       },
       "RunView": {
         "properties": {
-          "completedAtMs": {
-            "description": "When the run reached a terminal state, derived from its committed\ncompleted, failed, or cancelled event. Absent for non-terminal runs.",
-            "format": "uint64",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
+          "earlierEventsOmitted": {
+            "description": "This run is past the server's detail limit: `entries` and `toolBatches` hold\nits opening and its most recent turns. `session/events/read` has the turns\nbetween them.",
+            "type": "boolean"
           },
           "entries": {
             "default": [],
@@ -14049,6 +14167,26 @@
               "$ref": "#/components/schemas/ContextEntryView"
             },
             "type": "array"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunFailureView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why a failed run failed, with its whole message."
+          },
+          "finishedAtMs": {
+            "description": "When the run reached a terminal state, derived from its committed\ncompleted, failed, or cancelled event. Absent for non-terminal runs.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "id": {
             "type": "string"
@@ -14218,7 +14356,7 @@
         "properties": {
           "force": {
             "default": false,
-            "description": "Cancel the active run and drop queued runs instead of rejecting on\nactive work. Recovers sessions whose workflow no longer exists (e.g.\nafter an operator terminate) by reconciling the session log directly.",
+            "description": "Cancel the active run and drop queued runs instead of rejecting on\nactive work. Recovers sessions whose workflow no longer exists (e.g.\nafter an operator terminate) by reconciling the session log directly. A\nsession that never opened has no log to close, so it is removed and the\ncall answers `notFound`.",
             "type": "boolean"
           },
           "sessionId": {
@@ -14294,7 +14432,7 @@
                 "type": "null"
               }
             ],
-            "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+            "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime. The model name may change at\nany time: retained reasoning and compaction state goes to the new model\nunchanged, and the provider keeps or drops it. A combination the provider\nrefuses fails that run as `requestRejected`, and the session stays open."
           }
         },
         "type": "object"
@@ -14338,7 +14476,7 @@
       "SessionDeleteParams": {
         "properties": {
           "cascade": {
-            "description": "Delete history forks and delegated descendants too. False requires the\ntarget to be a closed retention-tree leaf.",
+            "description": "Delete delegated descendants too. False requires the target to be a\nclosed retention-tree leaf.",
             "type": "boolean"
           },
           "sessionId": {
@@ -14493,21 +14631,21 @@
                   "null"
                 ]
               },
-              "toolIds": {
+              "type": {
+                "const": "workflowToolsConfigured",
+                "type": "string"
+              },
+              "workflowToolIds": {
                 "items": {
                   "type": "string"
                 },
                 "type": "array"
-              },
-              "type": {
-                "const": "workflowToolsConfigured",
-                "type": "string"
               }
             },
             "required": [
               "type",
               "creationFingerprint",
-              "toolIds"
+              "workflowToolIds"
             ],
             "type": "object"
           },
@@ -14517,17 +14655,17 @@
               "bindingFingerprint": {
                 "type": "string"
               },
-              "toolId": {
-                "type": "string"
-              },
               "type": {
                 "const": "systemWorkflowToolConfigured",
+                "type": "string"
+              },
+              "workflowToolId": {
                 "type": "string"
               }
             },
             "required": [
               "type",
-              "toolId",
+              "workflowToolId",
               "bindingFingerprint"
             ],
             "type": "object"
@@ -14550,7 +14688,7 @@
                 "additionalProperties": {
                   "type": "string"
                 },
-                "description": "Keyed completion promises created atomically with the\ninvocation; absent for notify-only (accepted) invocations.",
+                "description": "Keyed completion promises created atomically with the\ninvocation; absent for accepted invocations.",
                 "type": [
                   "object",
                   "null"
@@ -14570,21 +14708,21 @@
               "semanticType": {
                 "type": "string"
               },
-              "toolId": {
-                "type": "string"
-              },
               "turnId": {
                 "type": "string"
               },
               "type": {
-                "const": "workflowToolEmitted",
+                "const": "workflowToolInvoked",
+                "type": "string"
+              },
+              "workflowToolId": {
                 "type": "string"
               }
             },
             "required": [
               "type",
               "invocationId",
-              "toolId",
+              "workflowToolId",
               "semanticType",
               "schemaRevision",
               "bindingFingerprint",
@@ -14656,21 +14794,21 @@
               "semanticType": {
                 "type": "string"
               },
-              "toolId": {
-                "type": "string"
-              },
               "turnId": {
                 "type": "string"
               },
               "type": {
                 "const": "workflowToolStartRequested",
                 "type": "string"
+              },
+              "workflowToolId": {
+                "type": "string"
               }
             },
             "required": [
               "type",
               "invocationId",
-              "toolId",
+              "workflowToolId",
               "semanticType",
               "schemaRevision",
               "bindingFingerprint",
@@ -14875,6 +15013,23 @@
             "type": "object"
           },
           {
+            "description": "No approval remains and no batch holds the run parked, so it is working\nagain even if no other event follows for a while.",
+            "properties": {
+              "runId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "approvalRunUnparked",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "runId"
+            ],
+            "type": "object"
+          },
+          {
             "properties": {
               "approvalId": {
                 "type": "string"
@@ -14961,7 +15116,7 @@
             "type": "object"
           },
           {
-            "description": "The run ended in failure. `kind` is the harness's classification;\n`message` is free text for display, and the provider's own message for\n`request_rejected`.",
+            "description": "The run ended in failure. `kind` is the harness's classification;\n`message` is free text for display, and the provider's own message for\n`requestRejected`.",
             "properties": {
               "kind": {
                 "$ref": "#/components/schemas/RunFailureKindView"
@@ -15018,7 +15173,7 @@
                 "type": "string"
               },
               "source": {
-                "type": "string"
+                "$ref": "#/components/schemas/PromiseSourceKind"
               },
               "type": {
                 "const": "promiseCreated",
@@ -15174,7 +15329,7 @@
                 "type": "string"
               },
               "status": {
-                "type": "string"
+                "$ref": "#/components/schemas/TurnGenerationStatus"
               },
               "turnId": {
                 "type": "string"
@@ -15285,7 +15440,7 @@
                 "type": "array"
               },
               "reason": {
-                "type": "string"
+                "$ref": "#/components/schemas/ContextRemovalReason"
               },
               "revision": {
                 "format": "uint64",
@@ -15405,37 +15560,21 @@
             "type": "object"
           },
           {
+            "description": "A compaction was asked for while something else held the context. It waits\nfor a safe boundary, where `contextCompactionRequested` follows, and the\ncontext revision does not move until then.",
             "properties": {
               "baseRevision": {
                 "format": "uint64",
                 "minimum": 0,
                 "type": "integer"
               },
-              "entries": {
-                "items": {
-                  "$ref": "#/components/schemas/ContextEntryView"
-                },
-                "type": "array"
-              },
-              "reason": {
-                "type": "string"
-              },
-              "revision": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
               "type": {
-                "const": "contextStateReplaced",
+                "const": "contextCompactionQueued",
                 "type": "string"
               }
             },
             "required": [
               "type",
-              "baseRevision",
-              "revision",
-              "entries",
-              "reason"
+              "baseRevision"
             ],
             "type": "object"
           },
@@ -15452,7 +15591,7 @@
                 "type": "integer"
               },
               "trigger": {
-                "type": "string"
+                "$ref": "#/components/schemas/ContextCompactionTrigger"
               },
               "type": {
                 "const": "contextCompactionRequested",
@@ -15492,7 +15631,7 @@
                 "type": "integer"
               },
               "status": {
-                "type": "string"
+                "$ref": "#/components/schemas/ContextCompactionStatus"
               },
               "type": {
                 "const": "contextCompactionFinished",
@@ -15678,7 +15817,7 @@
             "description": "One tool call finished. `output_bytes` is the size of the\nmodel-visible text the tool produced before the runtime's projection\nbudget was applied, absent for synthetic results; `truncated` is true\nwhen that budget cut it.",
             "properties": {
               "attachments": {
-                "description": "Portable immutable assets, separate from effects and native media input.",
+                "description": "Files the call linked. Media it supplied arrives as context entries.",
                 "items": {
                   "$ref": "#/components/schemas/ToolAttachmentView"
                 },
@@ -15744,7 +15883,7 @@
                 "type": "string"
               },
               "type": {
-                "const": "toolBatchDeferred",
+                "const": "toolBatchParked",
                 "type": "string"
               }
             },
@@ -15768,7 +15907,7 @@
                 "type": "string"
               },
               "type": {
-                "const": "toolBatchResumed",
+                "const": "toolBatchUnparked",
                 "type": "string"
               }
             },
@@ -15943,16 +16082,6 @@
             },
             "type": "array"
           },
-          "gap": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/EventLogGap"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "headCursor": {
             "anyOf": [
               {
@@ -15980,6 +16109,31 @@
           "complete"
         ],
         "type": "object"
+      },
+      "SessionExecutionFailureView": {
+        "description": "How an open session's workflow execution stopped. A session that closed\nnormally never reports one.",
+        "oneOf": [
+          {
+            "const": "failed",
+            "description": "The execution failed; its error is in the Temporal workflow history.",
+            "type": "string"
+          },
+          {
+            "const": "terminated",
+            "description": "The execution was ended from outside, or ended without closing the\nsession.",
+            "type": "string"
+          },
+          {
+            "const": "timedOut",
+            "description": "The execution ran past a Temporal timeout.",
+            "type": "string"
+          },
+          {
+            "const": "missing",
+            "description": "Temporal has no execution for this session, for example because a dead\none has passed namespace retention.",
+            "type": "string"
+          }
+        ]
       },
       "SessionJobCancelEntryView": {
         "properties": {
@@ -16549,6 +16703,8 @@
         "type": "string"
       },
       "SessionListParams": {
+        "additionalProperties": false,
+        "description": "Filters for `session/list`. An unknown field is refused, so a misspelled\nfilter fails rather than returning a wider list.",
         "properties": {
           "closed": {
             "description": "Only closed sessions (`true`), or only new and open ones (`false`).\nAbsent lists both. Every filter here narrows the list, and an absent\none does not filter.",
@@ -16564,18 +16720,18 @@
               "null"
             ]
           },
+          "lifecycleControlled": {
+            "description": "Only work whose root a lifecycle controller owns (`true`), or work no\ncontroller owns (`false`); sub-agents follow their root. Absent lists\nboth.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "limit": {
             "format": "uint32",
             "minimum": 0,
             "type": [
               "integer",
-              "null"
-            ]
-          },
-          "managed": {
-            "description": "Only work whose root a lifecycle controller manages (`true`), or\nwork nobody manages (`false`); sub-agents follow their root. Absent\nlists both.",
-            "type": [
-              "boolean",
               "null"
             ]
           },
@@ -16669,6 +16825,9 @@
       "SessionMutationView": {
         "description": "Compact acknowledgement returned by session mutations. Call\n`session/read` when the complete current-state summary is needed.",
         "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/SessionActivity"
+          },
           "configRevision": {
             "format": "uint64",
             "minimum": 0,
@@ -16692,13 +16851,14 @@
           "id": {
             "type": "string"
           },
-          "status": {
-            "$ref": "#/components/schemas/SessionStatus"
+          "lifecycleStatus": {
+            "$ref": "#/components/schemas/SessionLifecycleStatus"
           }
         },
         "required": [
           "id",
-          "status",
+          "lifecycleStatus",
+          "activity",
           "configRevision",
           "contextRevision"
         ],
@@ -16800,7 +16960,7 @@
       "SessionRenameParams": {
         "properties": {
           "displayName": {
-            "description": "New display name; absent clears it.",
+            "description": "New display name; absent clears it. Cannot contain NUL.",
             "type": [
               "string",
               "null"
@@ -16823,6 +16983,33 @@
         },
         "required": [
           "session"
+        ],
+        "type": "object"
+      },
+      "SessionRestartParams": {
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "SessionRestartResponse": {
+        "properties": {
+          "restarted": {
+            "description": "A new execution started. False when one was already running.",
+            "type": "boolean"
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionMutationView"
+          }
+        },
+        "required": [
+          "session",
+          "restarted"
         ],
         "type": "object"
       },
@@ -16860,7 +17047,7 @@
         "type": "object"
       },
       "SessionRetentionView": {
-        "description": "Effective tree-owned retention for a session. Forks and delegated children\nname their owning root and project that root's policy and deadline.",
+        "description": "Effective tree-owned retention for a session. Delegated children name their\nowning root and project that root's policy and deadline.",
         "properties": {
           "deleteAfterCloseMs": {
             "format": "uint64",
@@ -16945,6 +17132,7 @@
             ]
           },
           "displayName": {
+            "description": "Cannot contain NUL.",
             "type": [
               "string",
               "null"
@@ -16987,16 +17175,6 @@
         ],
         "type": "object"
       },
-      "SessionStatus": {
-        "enum": [
-          "notLoaded",
-          "idle",
-          "active",
-          "closed",
-          "error"
-        ],
-        "type": "string"
-      },
       "SessionSummaryView": {
         "properties": {
           "access": {
@@ -17037,12 +17215,12 @@
           "id": {
             "type": "string"
           },
+          "lifecycleControlled": {
+            "description": "True only when the session's declaration names a lifecycle controller.",
+            "type": "boolean"
+          },
           "lifecycleStatus": {
             "$ref": "#/components/schemas/SessionLifecycleStatus"
-          },
-          "managed": {
-            "description": "True only when immutable lifecycle ownership was admitted with a\nlifecycle controller at managed-session creation.",
-            "type": "boolean"
           },
           "metadata": {
             "additionalProperties": {
@@ -17076,7 +17254,7 @@
           "lifecycleStatus",
           "activity",
           "retention",
-          "managed",
+          "lifecycleControlled",
           "access",
           "createdAtMs",
           "updatedAtMs"
@@ -17162,29 +17340,48 @@
             "minimum": 0,
             "type": "integer"
           },
-          "displayName": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "id": {
-            "type": "string"
-          },
-          "managed": {
-            "description": "True only when immutable lifecycle ownership was admitted with a\nlifecycle controller at managed-session creation.",
-            "type": "boolean"
-          },
-          "management": {
+          "declaration": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/ManagedSessionWorkflowToolsInput"
+                "$ref": "#/components/schemas/DeclaredSessionWorkflowToolsInput"
               },
               {
                 "type": "null"
               }
             ],
             "description": "Immutable workflow-backed tool declaration. A lifecycle controller\nindicates external session ownership; tool-only declarations do not."
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "executionFailure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionExecutionFailureView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set by `session/read` when the session is still open but its workflow\nexecution has stopped. Nothing is running and the rest of the view is\nthe stored log, so `activity` can still say what it last did. Lists do not check\nthe execution, so a list and a read of the same session can differ."
+          },
+          "id": {
+            "type": "string"
+          },
+          "lifecycleControlled": {
+            "description": "True only when the session's declaration names a lifecycle controller.",
+            "type": "boolean"
+          },
+          "lifecycleStatus": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SessionLifecycleStatus"
+              }
+            ],
+            "description": "Whether the session has opened or closed. What it is doing while open is\n`activity`, and whether its workflow is still there is `executionFailure`."
           },
           "metadata": {
             "additionalProperties": {
@@ -17214,9 +17411,6 @@
             },
             "type": "array"
           },
-          "status": {
-            "$ref": "#/components/schemas/SessionStatus"
-          },
           "updatedAtMs": {
             "format": "uint64",
             "minimum": 0,
@@ -17225,11 +17419,11 @@
         },
         "required": [
           "id",
-          "status",
+          "lifecycleStatus",
           "activity",
           "retention",
           "access",
-          "managed",
+          "lifecycleControlled",
           "configRevision",
           "createdAtMs",
           "updatedAtMs",
@@ -17424,11 +17618,6 @@
       },
       "SubagentLimitsView": {
         "properties": {
-          "deadlineMs": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
           "maxConcurrent": {
             "format": "uint32",
             "minimum": 0,
@@ -17443,13 +17632,21 @@
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
+          },
+          "runTimeoutMs": {
+            "description": "Absent when a child's run has no time limit.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "required": [
           "maxDepth",
           "maxDescendants",
-          "maxConcurrent",
-          "deadlineMs"
+          "maxConcurrent"
         ],
         "type": "object"
       },
@@ -17463,13 +17660,6 @@
               "$ref": "#/components/schemas/SubagentAgentRef"
             },
             "type": "array"
-          },
-          "deadlineMs": {
-            "default": 3600000,
-            "description": "Per-child run deadline in milliseconds; at most the execution\nceiling of 24 hours.",
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
           },
           "maxConcurrent": {
             "default": 4,
@@ -17491,6 +17681,15 @@
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
+          },
+          "runTimeoutMs": {
+            "description": "Per-child run deadline in milliseconds. Omit it for no time limit.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "version": {
             "default": 1,
@@ -17550,17 +17749,10 @@
         ],
         "type": "object"
       },
-      "ToolAttachmentKind": {
-        "enum": [
-          "media",
-          "file"
-        ],
-        "type": "string"
-      },
       "ToolAttachmentView": {
-        "description": "A portable immutable asset supplied by a completed tool call.",
+        "description": "A file a completed tool call supplied, linked by name rather than shown to the\nmodel. Media a call supplied is in `media` on the call and in context entries.",
         "properties": {
-          "contentRef": {
+          "blobRef": {
             "description": "Full immutable blob identity; read through the universe-scoped blob API.",
             "type": "string"
           },
@@ -17568,20 +17760,14 @@
             "description": "Model-facing alias, resolved against recorded attachments.",
             "type": "string"
           },
-          "kind": {
-            "$ref": "#/components/schemas/ToolAttachmentKind"
-          },
-          "mediaType": {
+          "mime": {
             "type": [
               "string",
               "null"
             ]
           },
           "name": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "source": {
             "anyOf": [
@@ -17595,9 +17781,9 @@
           }
         },
         "required": [
-          "kind",
           "handle",
-          "contentRef"
+          "blobRef",
+          "name"
         ],
         "type": "object"
       },
@@ -17658,7 +17844,7 @@
           },
           {
             "const": "mcp",
-            "description": "Calls a tool on an MCP server, through the builtin bridge or a\nprovider-native MCP block.",
+            "description": "Calls a tool on an MCP server, through the builtin bridge or a\nprovider-hosted MCP block.",
             "type": "string"
           },
           {
@@ -17754,7 +17940,7 @@
             "type": "string"
           },
           "handle": {
-            "description": "`media:` plus the first twelve hex characters of `blob_ref`; what the\nmodel calls this item.",
+            "description": "`media:` plus the first twelve hex characters of `blobRef`; what the\nmodel calls this item.",
             "type": "string"
           },
           "kind": {
@@ -17781,16 +17967,20 @@
       "ToolCallView": {
         "properties": {
           "arguments": {
+            "description": "Bounded preview; `argumentsRef` has the full body.",
             "type": [
               "string",
               "null"
             ]
           },
+          "argumentsPreviewTruncated": {
+            "type": "boolean"
+          },
           "argumentsRef": {
             "type": "string"
           },
           "attachments": {
-            "description": "Immutable attachments available from this call; files do not imply model input.",
+            "description": "Files the call linked, which the model does not get as input. Media it supplied\nis in `media`.",
             "items": {
               "$ref": "#/components/schemas/ToolAttachmentView"
             },
@@ -17798,15 +17988,6 @@
           },
           "callId": {
             "type": "string"
-          },
-          "completedAtMs": {
-            "description": "When the call's terminal result was committed. The window to\n`startedAtMs` includes runtime scheduling overhead.",
-            "format": "uint64",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
           },
           "display": {
             "anyOf": [
@@ -17833,6 +18014,15 @@
             },
             "type": "array"
           },
+          "finishedAtMs": {
+            "description": "When the call's terminal result was committed. The window to\n`startedAtMs` includes runtime scheduling overhead.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "isError": {
             "default": false,
             "type": "boolean"
@@ -17845,6 +18035,25 @@
             "type": "array"
           },
           "output": {
+            "description": "Bounded preview of the model-visible result; `outputRef` has the full body.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outputBytes": {
+            "description": "Bytes of model-visible text the tool produced before the runtime applied its\nbudget, from the call's `toolCallCompleted` event.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "outputPreviewTruncated": {
+            "type": "boolean"
+          },
+          "outputRef": {
             "type": [
               "string",
               "null"
@@ -17871,6 +18080,10 @@
           },
           "toolName": {
             "type": "string"
+          },
+          "truncated": {
+            "description": "The runtime cut the model-visible text to its budget, from the call's\n`toolCallCompleted` event. This is separate from the preview bound above.",
+            "type": "boolean"
           }
         },
         "required": [
@@ -18065,10 +18278,6 @@
                 ],
                 "default": "never"
               },
-              "authRequired": {
-                "default": false,
-                "type": "boolean"
-              },
               "deferLoading": {
                 "type": [
                   "boolean",
@@ -18087,9 +18296,6 @@
               "serverLabel": {
                 "type": "string"
               },
-              "serverUrl": {
-                "type": "string"
-              },
               "type": {
                 "const": "remoteMcp",
                 "type": "string"
@@ -18098,8 +18304,7 @@
             "required": [
               "type",
               "serverId",
-              "serverLabel",
-              "serverUrl"
+              "serverLabel"
             ],
             "type": "object"
           }
@@ -18322,40 +18527,58 @@
         ],
         "type": "object"
       },
+      "TurnGenerationStatus": {
+        "description": "How a generation ended.",
+        "oneOf": [
+          {
+            "enum": [
+              "succeeded",
+              "failed",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "rejected",
+            "description": "The provider rejected the request instead of serving it.",
+            "type": "string"
+          }
+        ]
+      },
       "UniverseAction": {
         "description": "What a public method does, independent of its RPC spelling. Requests are\ngated by their key's groups; this classifies what the runtime's own work\nmay do and which role a gate built on the contract should require.",
         "oneOf": [
           {
             "enum": [
               "read",
-              "create_session",
-              "control_session",
-              "configure_session",
-              "stop_session",
-              "close_session",
-              "delete_session",
-              "set_session_retention",
-              "create_profile",
-              "manage_profile",
-              "create_bot",
-              "manage_bot",
-              "invoke_bot",
-              "create_workspace"
+              "createSession",
+              "controlSession",
+              "configureSession",
+              "stopSession",
+              "closeSession",
+              "deleteSession",
+              "setSessionRetention",
+              "createProfile",
+              "manageProfile",
+              "createBot",
+              "manageBot",
+              "invokeBot",
+              "createWorkspace"
             ],
             "type": "string"
           },
           {
-            "const": "share_session",
+            "const": "shareSession",
             "description": "Share an unshared session with the universe.",
             "type": "string"
           },
           {
-            "const": "use_resource",
+            "const": "useResource",
             "description": "Use a workspace, environment or MCP server, or store bytes.",
             "type": "string"
           },
           {
-            "const": "configure_resource",
+            "const": "configureResource",
             "description": "Configure a workspace, environment, MCP server or shared\nconfiguration such as credentials and channels.",
             "type": "string"
           }
@@ -18872,7 +19095,7 @@
           "recipeRef": {
             "type": "string"
           },
-          "revision": {
+          "recipeRevision": {
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
@@ -18880,7 +19103,7 @@
         },
         "required": [
           "recipeFormat",
-          "revision",
+          "recipeRevision",
           "recipeRef",
           "recipeFingerprint"
         ],
@@ -18906,9 +19129,13 @@
             "additionalProperties": false,
             "properties": {
               "deadlineAfterMs": {
+                "description": "Hard deadline for the reply, in milliseconds. Required for a bound\nreceiver, which has no other way to free a caller it never answers.\nA started execution may omit it, because the recovery poll detects\nan execution that died.",
                 "format": "uint64",
                 "minimum": 0,
-                "type": "integer"
+                "type": [
+                  "integer",
+                  "null"
+                ]
               },
               "replySchemaRef": {
                 "type": [
@@ -18922,8 +19149,7 @@
               }
             },
             "required": [
-              "type",
-              "deadlineAfterMs"
+              "type"
             ],
             "type": "object"
           },
@@ -19070,7 +19296,7 @@
       "WorkflowToolDefinitionInput": {
         "additionalProperties": false,
         "properties": {
-          "revision": {
+          "schemaRevision": {
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
@@ -19081,13 +19307,14 @@
           "tool": {
             "$ref": "#/components/schemas/WorkflowToolSpecInput"
           },
-          "toolId": {
+          "workflowToolId": {
+            "description": "The workflow-tool namespace: what invocations and bindings are keyed on. The\nregistry identity the model sees through `activeTools` is `tool.name`.",
             "type": "string"
           }
         },
         "required": [
-          "toolId",
-          "revision",
+          "workflowToolId",
+          "schemaRevision",
           "semanticType",
           "tool"
         ],
@@ -19307,7 +19534,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.",
+      "description": "Creates a session, unshared unless access says universe, with optional config/profile setup. Explicit values override profile metadata and retention; the config's default environment attachment becomes active. Retrying an id returns it, keeps its audience, and restarts a stopped workflow execution from its log. Failed setup closes a server-allocated id.",
       "name": "session/start",
       "paramStructure": "by-name",
       "params": [
@@ -19325,9 +19552,9 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionStartResponse"
         }
       },
-      "summary": "Create or reopen a session",
+      "summary": "Start a session",
       "x-lightspeed-access": {
-        "action": "create_session",
+        "action": "createSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19335,15 +19562,15 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.",
-      "name": "session/managed/start",
+      "description": "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile defaults and attachment selection follow session/start. Retrying an id requires the same declaration; an undeclared session cannot be upgraded. A retry never restarts a stopped workflow execution: it answers sessionExecutionStopped.",
+      "name": "session/declared/start",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/ManagedSessionStartParams"
+            "$ref": "#/components/schemas/DeclaredSessionStartParams"
           }
         }
       ],
@@ -19353,9 +19580,9 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfSessionStartResponse"
         }
       },
-      "summary": "Create or reopen a managed session",
+      "summary": "Start a declared session",
       "x-lightspeed-access": {
-        "action": "create_session",
+        "action": "createSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19363,7 +19590,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
+      "description": "Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
       "name": "session/read",
       "paramStructure": "by-name",
       "params": [
@@ -19391,7 +19618,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.",
+      "description": "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by filters such as visibleTo, which keeps sessions whose root is shared with the universe or was created by that actor. An unknown parameter is refused. Pages may shift while sessions are changing.",
       "name": "session/list",
       "paramStructure": "by-name",
       "params": [
@@ -19419,7 +19646,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.",
+      "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.",
       "name": "session/config/put",
       "paramStructure": "by-name",
       "params": [
@@ -19439,7 +19666,7 @@
       },
       "summary": "Replace session configuration",
       "x-lightspeed-access": {
-        "action": "configure_session",
+        "action": "configureSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19467,7 +19694,7 @@
       },
       "summary": "Rename a session",
       "x-lightspeed-access": {
-        "action": "control_session",
+        "action": "controlSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19495,7 +19722,7 @@
       },
       "summary": "Replace session metadata",
       "x-lightspeed-access": {
-        "action": "configure_session",
+        "action": "configureSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19503,7 +19730,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
+      "description": "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
       "name": "session/retention/put",
       "paramStructure": "by-name",
       "params": [
@@ -19523,7 +19750,7 @@
       },
       "summary": "Replace session retention",
       "x-lightspeed-access": {
-        "action": "set_session_retention",
+        "action": "setSessionRetention",
         "kind": "universe"
       },
       "x-lightspeed-group": "session/delete",
@@ -19531,7 +19758,35 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
+      "description": "Starts a new workflow execution for an open session whose last one stopped, from its log. A run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards. A running session is left alone. Refused for a closed session and for one with no run history.",
+      "name": "session/restart",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionRestartParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionRestartResponse"
+        }
+      },
+      "summary": "Restart a stopped session",
+      "x-lightspeed-access": {
+        "action": "configureSession",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": "sessionId"
+    },
+    {
+      "description": "Closes an idle session and detaches its environment bindings. Without force, active work of any kind, including a pending detached promise, rejects the call. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
       "name": "session/close",
       "paramStructure": "by-name",
       "params": [
@@ -19551,7 +19806,7 @@
       },
       "summary": "Close a session",
       "x-lightspeed-access": {
-        "action": "close_session",
+        "action": "closeSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19559,7 +19814,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.",
+      "description": "Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.",
       "name": "session/delete",
       "paramStructure": "by-name",
       "params": [
@@ -19579,7 +19834,7 @@
       },
       "summary": "Delete closed sessions",
       "x-lightspeed-access": {
-        "action": "delete_session",
+        "action": "deleteSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session/delete",
@@ -19607,7 +19862,7 @@
       },
       "summary": "Share a session with the universe",
       "x-lightspeed-access": {
-        "action": "share_session",
+        "action": "shareSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19643,7 +19898,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.",
+      "description": "Admits a batch of keyed context entries with per-entry results. The same content under a key is a no-op. Different content replaces the earlier entry, which leaves active context, and goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry without discarding successful entries.",
       "name": "session/context/append",
       "paramStructure": "by-name",
       "params": [
@@ -19663,7 +19918,7 @@
       },
       "summary": "Append keyed session context",
       "x-lightspeed-access": {
-        "action": "control_session",
+        "action": "controlSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19691,7 +19946,7 @@
       },
       "summary": "Remove keyed session context",
       "x-lightspeed-access": {
-        "action": "control_session",
+        "action": "controlSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19719,7 +19974,7 @@
       },
       "summary": "Replace session context entries",
       "x-lightspeed-access": {
-        "action": "control_session",
+        "action": "controlSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19727,7 +19982,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.",
+      "description": "Performs one standalone compaction in any automatic mode, including Disabled, and waits for its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves the context unchanged and fails the call with its reason. A wait that runs out fails with operationPending while it can still complete; session events report the outcome.",
       "name": "session/context/compact",
       "paramStructure": "by-name",
       "params": [
@@ -19747,7 +20002,7 @@
       },
       "summary": "Compact session context",
       "x-lightspeed-access": {
-        "action": "control_session",
+        "action": "controlSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19755,7 +20010,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.",
+      "description": "Returns once the run is accepted — queued behind an active run, or running — not when it finishes. A compacting session holds the request; if the wait runs out the call fails with operationPending and the submission id, and the run still starts later. Retrying with that id cannot start a second run. Follow session events or reread the session.",
       "name": "session/runs/start",
       "paramStructure": "by-name",
       "params": [
@@ -19775,7 +20030,7 @@
       },
       "summary": "Start an agent run",
       "x-lightspeed-access": {
-        "action": "control_session",
+        "action": "controlSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19783,7 +20038,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Returns a newest-first keyset page of bounded run summaries projected from current reducer state.",
+      "description": "Returns a newest-first keyset page of bounded run summaries, from current state for recent runs and from the session's log for older ones.",
       "name": "session/runs/list",
       "paramStructure": "by-name",
       "params": [
@@ -19811,7 +20066,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Reads and projects one run from its bounded event interval, paged by event sequence.",
+      "description": "Projects one run from its events. A run past the server's detail limit keeps its opening and its most recent turns and sets earlierEventsOmitted; session/events/read has the rest.",
       "name": "session/runs/read",
       "paramStructure": "by-name",
       "params": [
@@ -19839,7 +20094,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
+      "description": "Requests cancellation of the named queued or active run and returns its summary; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
       "name": "session/runs/cancel",
       "paramStructure": "by-name",
       "params": [
@@ -19859,7 +20114,7 @@
       },
       "summary": "Cancel a run",
       "x-lightspeed-access": {
-        "action": "stop_session",
+        "action": "stopSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19867,7 +20122,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.",
+      "description": "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision. A decision whose wait runs out reports status pending and can still apply.",
       "name": "session/runs/approvals/decide",
       "paramStructure": "by-name",
       "params": [
@@ -19887,7 +20142,7 @@
       },
       "summary": "Decide pending run approvals",
       "x-lightspeed-access": {
-        "action": "control_session",
+        "action": "controlSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19895,7 +20150,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.",
+      "description": "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. A parked run holds it without waking. Rejected for queued, cancelling, or finished runs. Supply submissionId so a retry lands once; a wait that runs out fails with operationPending and the steering can still land.",
       "name": "session/runs/steer",
       "paramStructure": "by-name",
       "params": [
@@ -19915,7 +20170,7 @@
       },
       "summary": "Steer the active run",
       "x-lightspeed-access": {
-        "action": "control_session",
+        "action": "controlSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19971,7 +20226,7 @@
       },
       "summary": "Apply a profile to a session",
       "x-lightspeed-access": {
-        "action": "configure_session",
+        "action": "configureSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -19999,7 +20254,7 @@
       },
       "summary": "Activate a session environment",
       "x-lightspeed-access": {
-        "action": "configure_session",
+        "action": "configureSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -20027,7 +20282,7 @@
       },
       "summary": "Deactivate the session environment",
       "x-lightspeed-access": {
-        "action": "configure_session",
+        "action": "configureSession",
         "kind": "universe"
       },
       "x-lightspeed-group": "session",
@@ -20055,7 +20310,7 @@
       },
       "summary": "Bind a credential into an environment",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20083,7 +20338,7 @@
       },
       "summary": "List environment credential bindings",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20111,7 +20366,7 @@
       },
       "summary": "Unbind an environment credential",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20139,7 +20394,7 @@
       },
       "summary": "Create an environment",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20195,7 +20450,7 @@
       },
       "summary": "Update an environment",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20251,7 +20506,7 @@
       },
       "summary": "Close an environment",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20279,7 +20534,7 @@
       },
       "summary": "Register an external environment",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20307,7 +20562,7 @@
       },
       "summary": "Configure environment public ingress",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20335,7 +20590,7 @@
       },
       "summary": "Set environment power",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20455,7 +20710,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environment_not_ready while it wakes or reconnects; retry with backoff.",
+      "description": "Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environmentNotReady while it wakes or reconnects; retry with backoff.",
       "name": "environments/jobs/create",
       "paramStructure": "by-name",
       "params": [
@@ -20475,7 +20730,7 @@
       },
       "summary": "Create environment jobs",
       "x-lightspeed-access": {
-        "action": "use_resource",
+        "action": "useResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20531,7 +20786,7 @@
       },
       "summary": "Cancel environment jobs",
       "x-lightspeed-access": {
-        "action": "use_resource",
+        "action": "useResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20559,7 +20814,7 @@
       },
       "summary": "Mint an environment registration key",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20587,7 +20842,7 @@
       },
       "summary": "Read an environment registration key",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20615,7 +20870,7 @@
       },
       "summary": "List environment registration keys",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20643,7 +20898,7 @@
       },
       "summary": "Update an environment registration key",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20671,7 +20926,7 @@
       },
       "summary": "Rotate an environment registration key",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20699,7 +20954,7 @@
       },
       "summary": "Revoke an environment registration key",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
@@ -20727,7 +20982,7 @@
       },
       "summary": "Start transcription",
       "x-lightspeed-access": {
-        "action": "use_resource",
+        "action": "useResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "transcriptions",
@@ -20783,7 +21038,7 @@
       },
       "summary": "Cancel transcription",
       "x-lightspeed-access": {
-        "action": "use_resource",
+        "action": "useResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "transcriptions",
@@ -20839,7 +21094,7 @@
       },
       "summary": "Set a universe model default",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "models",
@@ -20895,7 +21150,7 @@
       },
       "summary": "Create an agent profile",
       "x-lightspeed-access": {
-        "action": "create_profile",
+        "action": "createProfile",
         "kind": "universe"
       },
       "x-lightspeed-group": "profiles",
@@ -20979,7 +21234,7 @@
       },
       "summary": "Create or replace an agent profile",
       "x-lightspeed-access": {
-        "action": "manage_profile",
+        "action": "manageProfile",
         "kind": "universe"
       },
       "x-lightspeed-group": "profiles",
@@ -21007,7 +21262,7 @@
       },
       "summary": "Delete an agent profile",
       "x-lightspeed-access": {
-        "action": "manage_profile",
+        "action": "manageProfile",
         "kind": "universe"
       },
       "x-lightspeed-group": "profiles",
@@ -21035,7 +21290,7 @@
       },
       "summary": "Store content-addressed blobs",
       "x-lightspeed-access": {
-        "action": "use_resource",
+        "action": "useResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "blobs/put",
@@ -21119,7 +21374,7 @@
       },
       "summary": "Commit a VFS snapshot",
       "x-lightspeed-access": {
-        "action": "use_resource",
+        "action": "useResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "vfs",
@@ -21175,7 +21430,7 @@
       },
       "summary": "Create a mutable VFS workspace",
       "x-lightspeed-access": {
-        "action": "create_workspace",
+        "action": "createWorkspace",
         "kind": "universe"
       },
       "x-lightspeed-group": "vfs",
@@ -21259,7 +21514,7 @@
       },
       "summary": "Update a VFS workspace",
       "x-lightspeed-access": {
-        "action": "use_resource",
+        "action": "useResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "vfs",
@@ -21287,7 +21542,7 @@
       },
       "summary": "Delete a VFS workspace",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "vfs",
@@ -21295,7 +21550,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.",
+      "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.",
       "name": "mcp/servers/put",
       "paramStructure": "by-name",
       "params": [
@@ -21315,7 +21570,7 @@
       },
       "summary": "Create or replace an MCP server record",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "mcp",
@@ -21343,7 +21598,7 @@
       },
       "summary": "Discover MCP server authentication",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "mcp",
@@ -21371,7 +21626,7 @@
       },
       "summary": "Discover MCP server tools",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "mcp",
@@ -21455,7 +21710,7 @@
       },
       "summary": "Delete an MCP server record",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "mcp",
@@ -21483,7 +21738,7 @@
       },
       "summary": "Import a static bearer grant",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "auth",
@@ -21594,7 +21849,7 @@
       },
       "summary": "Revoke an authentication grant",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "auth",
@@ -21622,7 +21877,7 @@
       },
       "summary": "Register an OAuth client",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "auth",
@@ -21706,7 +21961,7 @@
       },
       "summary": "Delete an OAuth client",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "auth",
@@ -21734,7 +21989,7 @@
       },
       "summary": "Start an OAuth authorization flow",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "auth",
@@ -21762,7 +22017,7 @@
       },
       "summary": "Read OAuth flow status",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "auth",
@@ -21790,7 +22045,7 @@
       },
       "summary": "Register an authentication provider",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "auth",
@@ -21874,7 +22129,7 @@
       },
       "summary": "Delete an authentication provider",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "auth",
@@ -21902,7 +22157,7 @@
       },
       "summary": "List GitHub App installations",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "auth",
@@ -21930,7 +22185,7 @@
       },
       "summary": "Grant access to a GitHub App installation",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "auth",
@@ -21958,7 +22213,7 @@
       },
       "summary": "Create a bot",
       "x-lightspeed-access": {
-        "action": "create_bot",
+        "action": "createBot",
         "kind": "universe"
       },
       "x-lightspeed-group": "bots",
@@ -21986,7 +22241,7 @@
       },
       "summary": "Create or replace a bot document",
       "x-lightspeed-access": {
-        "action": "manage_bot",
+        "action": "manageBot",
         "kind": "universe"
       },
       "x-lightspeed-group": "bots",
@@ -22070,7 +22325,7 @@
       },
       "summary": "Close a bot",
       "x-lightspeed-access": {
-        "action": "manage_bot",
+        "action": "manageBot",
         "kind": "universe"
       },
       "x-lightspeed-group": "bots",
@@ -22098,7 +22353,7 @@
       },
       "summary": "Delete a bot",
       "x-lightspeed-access": {
-        "action": "manage_bot",
+        "action": "manageBot",
         "kind": "universe"
       },
       "x-lightspeed-group": "bots",
@@ -22154,7 +22409,7 @@
       },
       "summary": "Rotate a bot session",
       "x-lightspeed-access": {
-        "action": "manage_bot",
+        "action": "manageBot",
         "kind": "universe"
       },
       "x-lightspeed-group": "bots",
@@ -22182,7 +22437,7 @@
       },
       "summary": "Create or replace a trigger",
       "x-lightspeed-access": {
-        "action": "manage_bot",
+        "action": "manageBot",
         "kind": "universe"
       },
       "x-lightspeed-group": "bots",
@@ -22266,7 +22521,7 @@
       },
       "summary": "Delete a trigger",
       "x-lightspeed-access": {
-        "action": "manage_bot",
+        "action": "manageBot",
         "kind": "universe"
       },
       "x-lightspeed-group": "bots",
@@ -22294,7 +22549,7 @@
       },
       "summary": "Admit an event manually",
       "x-lightspeed-access": {
-        "action": "invoke_bot",
+        "action": "invokeBot",
         "kind": "universe"
       },
       "x-lightspeed-group": "bots",
@@ -22322,7 +22577,7 @@
       },
       "summary": "Replay a stored event",
       "x-lightspeed-access": {
-        "action": "manage_bot",
+        "action": "manageBot",
         "kind": "universe"
       },
       "x-lightspeed-group": "bots",
@@ -22406,7 +22661,7 @@
       },
       "summary": "Test a CEL filter",
       "x-lightspeed-access": {
-        "action": "manage_bot",
+        "action": "manageBot",
         "kind": "universe"
       },
       "x-lightspeed-group": "bots",
@@ -22434,7 +22689,7 @@
       },
       "summary": "Create a channel account",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "channels",
@@ -22462,7 +22717,7 @@
       },
       "summary": "Create or replace a channel account",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "channels",
@@ -22546,7 +22801,7 @@
       },
       "summary": "Delete a channel account",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "channels",
@@ -22629,7 +22884,7 @@
       },
       "summary": "Unpair a conversation",
       "x-lightspeed-access": {
-        "action": "configure_resource",
+        "action": "configureResource",
         "kind": "universe"
       },
       "x-lightspeed-group": "channels",
@@ -22989,7 +23244,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalid_request, unreachable is accepted. The provider never calls Lightspeed.",
+      "description": "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.",
       "name": "deployment/environment-providers/put",
       "paramStructure": "by-name",
       "params": [

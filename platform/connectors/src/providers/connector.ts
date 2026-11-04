@@ -14,7 +14,7 @@ export interface ConnectorActivities {
   maintainChannelTyping(input: MaintainChannelTypingInput): Promise<void>;
 }
 
-export type InboundOutcome = ChannelInboundDecision | "rate_limited" | "failed";
+export type InboundOutcome = ChannelInboundDecision | "rateLimited" | "failed";
 
 export interface InboundVerdict {
   outcome: InboundOutcome;

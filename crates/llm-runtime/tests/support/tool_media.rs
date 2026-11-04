@@ -4,7 +4,7 @@
 
 use harness::{
     BlobRef, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
-    ContextMessageRole, FunctionToolSpec, RunId, ToolCallId, ToolExecutionSpec, ToolKind, ToolName,
+    ContextMessageRole, FunctionToolSpec, RunId, ToolCallId, ToolExecutionSpec, ToolId, ToolKind,
     ToolParallelism, ToolSpec, TurnId,
     media::{MediaKind, media_context_entry, media_handle, tool_media_line},
     storage::{BlobStore, InMemoryBlobStore},
@@ -67,7 +67,7 @@ pub async fn view_images_tool_spec(blobs: &InMemoryBlobStore) -> ToolSpec {
     .await
     .expect("schema");
     ToolSpec {
-        name: ToolName::try_new("view_images").expect("tool name"),
+        id: ToolId::try_new("view_images").expect("tool name"),
         kind: ToolKind::Function(FunctionToolSpec {
             description_ref: Some(
                 blobs

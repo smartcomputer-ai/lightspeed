@@ -3,25 +3,26 @@
 //!
 //! Workflow-local machinery handles the normal path: terminal runs notify
 //! holder workflows, and holder-side promise cancellation flushes source
-//! cancellation. The promise reaper is the backstop for the cases that no
-//! single workflow can repair by itself: missed signals, terminated
-//! workflows, or promise/source state that is only visible by scanning
-//! session logs. The retention reaper soft-deletes closed session trees whose
+//! cancellation. The promise reaper is the backstop for promise and source
+//! state that no single workflow can repair by itself, including what a
+//! terminated workflow leaves behind and what is only visible by scanning
+//! session logs. It does not send missed run terminals again: it reports an
+//! active run on a stopped workflow, and leaves the session to whoever owns
+//! it. The retention reaper soft-deletes closed session trees whose
 //! deadline passed, and the blob sweeper frees the blobs nothing references
 //! any more.
 
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use anyhow::Context as _;
-use api_projection::MAX_EVENT_PAGE_LIMIT;
 use async_trait::async_trait;
 use harness::{
-    BlobRef, CodecError, CoreAgentAction, CoreAgentCodec, CoreAgentCommand, CoreAgentDrive,
-    CoreAgentState, CoreAgentStatus, DomainError, EventSeq, Promise, PromiseId, PromiseResolution,
-    PromiseScope, PromiseSource, SessionId,
+    BlobRef, CoreAgentAction, CoreAgentCommand, CoreAgentDrive, CoreAgentState, CoreAgentStatus,
+    Promise, PromiseId, PromiseResolution, PromiseScope, PromiseSource, RunId, SessionId,
     storage::{
-        AppendSessionEvents, DeleteClosedSessions, ListSessions, ReadSessionEvents,
-        SessionListCursor, SessionRecord, SessionStore, SessionStoreError, harness_blob_refs,
+        AppendSessionEvents, BlobStore, DeleteClosedSessions, DeleteClosedSessionsResult,
+        ListSessions, RetentionRootCursor, SessionLifecycleStatus, SessionListCursor,
+        SessionRecord, SessionStore, SessionStoreError, harness_blob_refs,
     },
 };
 use store_pg::{
@@ -38,11 +39,14 @@ use uuid::Uuid;
 
 use crate::{
     config::DeploymentStores,
+    gateway::service::ExecutionLiveness,
     session_deletion::{SessionDeletionCause, delete_session_subtree},
 };
 
 const DEFAULT_REAPER_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const SESSION_PAGE_LIMIT: usize = 256;
+/// Blocked retention roots a warning names; the count carries the rest.
+const OPEN_TREE_SAMPLE_LIMIT: usize = 8;
 const CAS_SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
 /// Bound each database scan/delete independently of the hourly allowance.
 const CAS_SWEEP_PAGE_LIMIT: usize = 1024;
@@ -52,8 +56,10 @@ const CAS_SWEEP_PASS_BUDGET: Duration = Duration::from_secs(10 * 60);
 
 /// Periodic collector of content-addressed blobs nothing references.
 ///
-/// One leader scans bounded catalog pages, preserving cursors between passes.
-/// FK-backed holders protect concurrent attachments. Physical object keys are
+/// One leader scans bounded catalog pages. Each universe's position is stored, so
+/// a restart or a new leader carries on past rows already examined: live rows count
+/// against a pass's allowance, and starting over each time would never get past an
+/// old live region to the garbage behind it. FK-backed holders protect concurrent attachments. Physical object keys are
 /// unique per catalog incarnation, so delayed object cleanup cannot hurt a put.
 #[derive(Clone)]
 pub struct CasBlobSweeper {
@@ -65,7 +71,6 @@ pub struct CasBlobSweeper {
 
 #[derive(Default)]
 struct CasSweepProgress {
-    cursors: BTreeMap<Uuid, Option<CasSweepCursor>>,
     last_universe: Option<Uuid>,
 }
 
@@ -74,6 +79,8 @@ pub struct CasSweepStats {
     pub rows_scanned: usize,
     pub leader_busy: bool,
     pub universes_scanned: usize,
+    /// Universes whose walk reached the end of the catalog in this pass.
+    pub walks_completed: usize,
     pub candidates: usize,
     pub rows_deleted: usize,
     pub bytes_freed: u64,
@@ -112,6 +119,7 @@ impl CasBlobSweeper {
                             target: "temporal_runtime",
                             universes_scanned = stats.universes_scanned,
                             rows_scanned = stats.rows_scanned,
+                            walks_completed = stats.walks_completed,
                             candidates = stats.candidates,
                             rows_deleted = stats.rows_deleted,
                             bytes_freed = stats.bytes_freed,
@@ -139,7 +147,8 @@ impl CasBlobSweeper {
     }
 
     /// One bounded pass. Manual deletion yields to an active background
-    /// leader; dry-run remains available and never advances sweep cursors.
+    /// leader; dry-run remains available, starts at the stored position and
+    /// never advances it.
     pub async fn run_once(&self, dry_run: bool) -> anyhow::Result<CasSweepStats> {
         if dry_run {
             return self.run_pass(true, None).await;
@@ -161,9 +170,6 @@ impl CasBlobSweeper {
         let mut universes = store_pg::list_universes(self.stores.pool()).await?;
         universes.sort_by_key(|(id, _)| *id);
         let mut progress = self.progress.lock().await;
-        progress
-            .cursors
-            .retain(|id, _| universes.binary_search_by_key(id, |(id, _)| *id).is_ok());
         if let Some(last) = progress.last_universe {
             let offset = universes.partition_point(|(id, _)| *id <= last);
             universes.rotate_left(offset);
@@ -180,8 +186,7 @@ impl CasBlobSweeper {
                 leader.check().await?;
             }
             let store = self.stores.store_for(universe_id);
-            let mut cursor = progress.cursors.get(&universe_id).cloned().flatten();
-            sweep_universe_pass(
+            sweep_universe_from_stored_cursor(
                 universe_id,
                 store.as_ref(),
                 cutoff_ms,
@@ -190,15 +195,80 @@ impl CasBlobSweeper {
                 dry_run,
                 deadline,
                 &mut stats,
-                &mut cursor,
             )
             .await;
             if !dry_run {
-                progress.cursors.insert(universe_id, cursor);
                 progress.last_universe = Some(universe_id);
             }
         }
         Ok(stats)
+    }
+}
+
+/// One universe's pass, resumed from and written back to its stored position. The
+/// store holds the only copy, so a leader that lost and regained the lock cannot
+/// walk back to where it was before another leader moved on.
+#[allow(clippy::too_many_arguments)]
+async fn sweep_universe_from_stored_cursor(
+    universe_id: Uuid,
+    store: &dyn CasSweepStore,
+    cutoff_ms: u64,
+    pinned: &[BlobRef],
+    row_limit: usize,
+    dry_run: bool,
+    deadline: std::time::Instant,
+    stats: &mut CasSweepStats,
+) {
+    let mut cursor = match store.load_sweep_cursor().await {
+        Ok(cursor) => cursor,
+        Err(error) => {
+            stats.errors += 1;
+            tracing::warn!(
+                target: "temporal_runtime",
+                %universe_id,
+                %error,
+                "could not load the cas sweep cursor"
+            );
+            return;
+        }
+    };
+    let rows_scanned_before = stats.rows_scanned;
+    sweep_universe_pass(
+        universe_id,
+        store,
+        cutoff_ms,
+        pinned,
+        row_limit,
+        dry_run,
+        deadline,
+        stats,
+        &mut cursor,
+    )
+    .await;
+    let rows_scanned = stats.rows_scanned - rows_scanned_before;
+    let wrapped = rows_scanned > 0 && cursor.is_none();
+    if wrapped {
+        stats.walks_completed += 1;
+    }
+    if rows_scanned > 0 {
+        tracing::info!(
+            target: "temporal_runtime",
+            %universe_id,
+            rows_scanned,
+            cursor_touched_at_ms = cursor.as_ref().map(|cursor| cursor.touched_at_ms),
+            wrapped,
+            dry_run,
+            "cas sweep universe pass"
+        );
+    }
+    if !dry_run && let Err(error) = store.save_sweep_cursor(cursor.as_ref()).await {
+        stats.errors += 1;
+        tracing::warn!(
+            target: "temporal_runtime",
+            %universe_id,
+            %error,
+            "could not save the cas sweep cursor"
+        );
     }
 }
 
@@ -227,6 +297,11 @@ pub(super) trait CasSweepStore: Send + Sync {
     ) -> Result<Vec<CasSweepCandidate>, CasSweepError>;
 
     async fn delete_blob_objects(&self, keys: &[String]) -> CasObjectDeletion;
+
+    async fn load_sweep_cursor(&self) -> Result<Option<CasSweepCursor>, CasSweepError>;
+
+    async fn save_sweep_cursor(&self, cursor: Option<&CasSweepCursor>)
+    -> Result<(), CasSweepError>;
 }
 
 #[async_trait]
@@ -252,6 +327,17 @@ impl CasSweepStore for PgStore {
 
     async fn delete_blob_objects(&self, keys: &[String]) -> CasObjectDeletion {
         PgStore::delete_blob_objects(self, keys).await
+    }
+
+    async fn load_sweep_cursor(&self) -> Result<Option<CasSweepCursor>, CasSweepError> {
+        PgStore::load_sweep_cursor(self).await
+    }
+
+    async fn save_sweep_cursor(
+        &self,
+        cursor: Option<&CasSweepCursor>,
+    ) -> Result<(), CasSweepError> {
+        PgStore::save_sweep_cursor(self, cursor).await
     }
 }
 
@@ -436,7 +522,10 @@ pub struct SessionRetentionReaperStats {
     pub due_roots_scanned: usize,
     pub roots_deleted: usize,
     pub sessions_deleted: usize,
+    /// Due roots that stayed because a descendant is still open.
     pub open_tree_skips: usize,
+    /// The first few of those roots, so an operator can find them.
+    pub open_tree_sample: Vec<SessionId>,
     pub conflicts: usize,
     pub errors: usize,
 }
@@ -444,6 +533,13 @@ pub struct SessionRetentionReaperStats {
 impl SessionRetentionReaperStats {
     fn reportable(&self) -> bool {
         self.due_roots_scanned > 0 || self.errors > 0
+    }
+
+    fn report_open_tree(&mut self, root: SessionId) {
+        self.open_tree_skips += 1;
+        if self.open_tree_sample.len() < OPEN_TREE_SAMPLE_LIMIT {
+            self.open_tree_sample.push(root);
+        }
     }
 }
 
@@ -458,18 +554,29 @@ impl SessionRetentionReaper {
     pub async fn run_forever(self) {
         loop {
             match self.run_once().await {
-                Ok(stats) if stats.reportable() => tracing::info!(
-                    target: "temporal_runtime",
-                    universes_scanned = stats.universes_scanned,
-                    due_roots_scanned = stats.due_roots_scanned,
-                    roots_deleted = stats.roots_deleted,
-                    sessions_deleted = stats.sessions_deleted,
-                    open_tree_skips = stats.open_tree_skips,
-                    conflicts = stats.conflicts,
-                    errors = stats.errors,
-                    "session retention reaper pass complete"
-                ),
-                Ok(_) => {}
+                Ok(stats) => {
+                    if stats.reportable() {
+                        tracing::info!(
+                            target: "temporal_runtime",
+                            universes_scanned = stats.universes_scanned,
+                            due_roots_scanned = stats.due_roots_scanned,
+                            roots_deleted = stats.roots_deleted,
+                            sessions_deleted = stats.sessions_deleted,
+                            open_tree_skips = stats.open_tree_skips,
+                            conflicts = stats.conflicts,
+                            errors = stats.errors,
+                            "session retention reaper pass complete"
+                        );
+                    }
+                    if stats.open_tree_skips > 0 {
+                        tracing::warn!(
+                            target: "temporal_runtime",
+                            open_tree_skips = stats.open_tree_skips,
+                            sample = ?stats.open_tree_sample,
+                            "session trees past their retention deadline stay because a descendant is still open; force close it"
+                        );
+                    }
+                }
                 Err(error) => tracing::warn!(
                     target: "temporal_runtime",
                     %error,
@@ -487,63 +594,126 @@ impl SessionRetentionReaper {
         for (universe_id, _) in universes {
             stats.universes_scanned += 1;
             let store = self.stores.store_for(universe_id);
-            let due = match store
-                .list_retention_roots_due_for_deletion(now_ms, SESSION_PAGE_LIMIT)
-                .await
-            {
-                Ok(due) => due,
+            reap_due_roots(universe_id, store.as_ref(), now_ms, &mut stats).await;
+        }
+        Ok(stats)
+    }
+}
+
+/// What a retention pass needs from a store, so the walk is testable against an
+/// in-memory double. Postgres is the only production implementation.
+#[async_trait]
+trait RetentionStore: Send + Sync {
+    async fn list_due_roots(
+        &self,
+        now_ms: u64,
+        after: Option<&RetentionRootCursor>,
+        limit: usize,
+    ) -> Result<Vec<SessionRecord>, SessionStoreError>;
+
+    async fn delete_due_tree(
+        &self,
+        root: &SessionId,
+        now_ms: u64,
+    ) -> Result<DeleteClosedSessionsResult, SessionStoreError>;
+}
+
+#[async_trait]
+impl RetentionStore for PgStore {
+    async fn list_due_roots(
+        &self,
+        now_ms: u64,
+        after: Option<&RetentionRootCursor>,
+        limit: usize,
+    ) -> Result<Vec<SessionRecord>, SessionStoreError> {
+        self.list_retention_roots_due_for_deletion(now_ms, after, limit)
+            .await
+    }
+
+    async fn delete_due_tree(
+        &self,
+        root: &SessionId,
+        now_ms: u64,
+    ) -> Result<DeleteClosedSessionsResult, SessionStoreError> {
+        delete_session_subtree(
+            self,
+            DeleteClosedSessions {
+                session_id: root.clone(),
+                cascade: true,
+                due_at_or_before_ms: Some(now_ms),
+            },
+            SessionDeletionCause::Retention,
+            true,
+            false,
+        )
+        .await
+    }
+}
+
+/// Walks every due root once. The walk moves by position rather than by what got
+/// deleted, because a root that stays keeps its deadline: without a position
+/// enough of them would fill the page on every pass and hide every later root.
+async fn reap_due_roots(
+    universe_id: Uuid,
+    store: &dyn RetentionStore,
+    now_ms: u64,
+    stats: &mut SessionRetentionReaperStats,
+) {
+    let mut after: Option<RetentionRootCursor> = None;
+    loop {
+        let due = match store
+            .list_due_roots(now_ms, after.as_ref(), SESSION_PAGE_LIMIT)
+            .await
+        {
+            Ok(due) => due,
+            Err(error) => {
+                stats.errors += 1;
+                tracing::warn!(
+                    target: "temporal_runtime",
+                    %universe_id,
+                    %error,
+                    "could not list due session-retention roots"
+                );
+                return;
+            }
+        };
+        stats.due_roots_scanned += due.len();
+        let last_page = due.len() < SESSION_PAGE_LIMIT;
+        after = due.last().and_then(|root| {
+            root.delete_at_ms.map(|delete_at_ms| RetentionRootCursor {
+                delete_at_ms,
+                session_id: root.session_id.clone(),
+            })
+        });
+        for root in due {
+            match store.delete_due_tree(&root.session_id, now_ms).await {
+                Ok(deleted) => {
+                    stats.roots_deleted += 1;
+                    stats.sessions_deleted += deleted.deleted_session_ids.len();
+                }
+                Err(SessionStoreError::SessionTreeNotClosed { .. })
+                | Err(SessionStoreError::SessionNotClosed { .. }) => {
+                    stats.report_open_tree(root.session_id);
+                }
+                Err(SessionStoreError::SessionRetentionNotDue { .. })
+                | Err(SessionStoreError::SessionNotFound { .. }) => {
+                    stats.conflicts += 1;
+                }
                 Err(error) => {
                     stats.errors += 1;
                     tracing::warn!(
                         target: "temporal_runtime",
                         %universe_id,
+                        session_id = %root.session_id,
                         %error,
-                        "could not list due session-retention roots"
+                        "could not delete due session-retention tree"
                     );
-                    continue;
-                }
-            };
-            stats.due_roots_scanned += due.len();
-            for root in due {
-                let result = delete_session_subtree(
-                    store.as_ref(),
-                    DeleteClosedSessions {
-                        session_id: root.session_id.clone(),
-                        cascade: true,
-                        due_at_or_before_ms: Some(now_ms),
-                    },
-                    SessionDeletionCause::Retention,
-                    true,
-                    false,
-                )
-                .await;
-                match result {
-                    Ok(deleted) => {
-                        stats.roots_deleted += 1;
-                        stats.sessions_deleted += deleted.deleted_session_ids.len();
-                    }
-                    Err(SessionStoreError::SessionTreeNotClosed { .. })
-                    | Err(SessionStoreError::SessionNotClosed { .. }) => {
-                        stats.open_tree_skips += 1;
-                    }
-                    Err(SessionStoreError::SessionRetentionNotDue { .. })
-                    | Err(SessionStoreError::SessionNotFound { .. }) => {
-                        stats.conflicts += 1;
-                    }
-                    Err(error) => {
-                        stats.errors += 1;
-                        tracing::warn!(
-                            target: "temporal_runtime",
-                            %universe_id,
-                            session_id = %root.session_id,
-                            %error,
-                            "could not delete due session-retention tree"
-                        );
-                    }
                 }
             }
         }
-        Ok(stats)
+        if last_page || after.is_none() {
+            return;
+        }
     }
 }
 
@@ -552,14 +722,18 @@ pub struct PromiseReaper {
     client: Client,
     stores: DeploymentStores,
     interval: Duration,
+    signalled: SignalledRepairs,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ReaperStats {
     pub universes_scanned: usize,
     pub sessions_scanned: usize,
+    pub events_read: u64,
     pub promises_examined: usize,
     pub holder_repairs_signalled: usize,
+    /// Repairs signalled again because the previous pass's signal changed nothing.
+    pub holder_repairs_repeated: usize,
     pub holder_repairs_appended: usize,
     pub stale_active_projections: usize,
     pub workflow_status_errors: usize,
@@ -571,17 +745,40 @@ impl ReaperStats {
     fn merge(&mut self, other: Self) {
         self.universes_scanned += other.universes_scanned;
         self.sessions_scanned += other.sessions_scanned;
+        self.events_read += other.events_read;
         self.promises_examined += other.promises_examined;
         self.holder_repairs_signalled += other.holder_repairs_signalled;
+        self.holder_repairs_repeated += other.holder_repairs_repeated;
         self.holder_repairs_appended += other.holder_repairs_appended;
         self.stale_active_projections += other.stale_active_projections;
         self.workflow_status_errors += other.workflow_status_errors;
         self.conflicts += other.conflicts;
         self.errors += other.errors;
     }
+}
 
-    fn repaired_anything(&self) -> bool {
-        self.holder_repairs_signalled > 0 || self.holder_repairs_appended > 0
+/// Which repairs were signalled on the previous pass. The plan comes from the
+/// log, and a workflow that is not processing admissions accepts signals while
+/// its log stands still, so the same repair comes back on every pass. Holding
+/// only the last pass's keys keeps this bounded by the repairs in flight.
+#[derive(Clone, Debug, Default)]
+struct SignalledRepairs {
+    previous: BTreeSet<RepairKey>,
+    current: BTreeSet<RepairKey>,
+}
+
+type RepairKey = (Uuid, SessionId, PromiseId);
+
+impl SignalledRepairs {
+    fn start_pass(&mut self) {
+        self.previous = std::mem::take(&mut self.current);
+    }
+
+    /// Records a signal and says whether the previous pass sent the same one.
+    fn record(&mut self, key: RepairKey) -> bool {
+        let repeated = self.previous.contains(&key);
+        self.current.insert(key);
+        repeated
     }
 }
 
@@ -591,25 +788,24 @@ impl PromiseReaper {
             client,
             stores,
             interval: DEFAULT_REAPER_INTERVAL,
+            signalled: SignalledRepairs::default(),
         }
     }
 
-    pub async fn run_forever(self) {
+    pub async fn run_forever(mut self) {
         loop {
+            let started = std::time::Instant::now();
             match self.run_once().await {
-                Ok(stats)
-                    if stats.repaired_anything()
-                        || stats.stale_active_projections > 0
-                        || stats.workflow_status_errors > 0
-                        || stats.errors > 0
-                        || stats.conflicts > 0 =>
-                {
+                Ok(stats) => {
                     tracing::info!(
                         target: "temporal_runtime",
+                        duration_ms = started.elapsed().as_millis() as u64,
                         universes_scanned = stats.universes_scanned,
                         sessions_scanned = stats.sessions_scanned,
+                        events_read = stats.events_read,
                         promises_examined = stats.promises_examined,
                         holder_repairs_signalled = stats.holder_repairs_signalled,
+                        holder_repairs_repeated = stats.holder_repairs_repeated,
                         holder_repairs_appended = stats.holder_repairs_appended,
                         stale_active_projections = stats.stale_active_projections,
                         workflow_status_errors = stats.workflow_status_errors,
@@ -618,7 +814,6 @@ impl PromiseReaper {
                         "promise reaper pass complete"
                     );
                 }
-                Ok(_) => {}
                 Err(error) => {
                     tracing::warn!(
                         target: "temporal_runtime",
@@ -631,23 +826,23 @@ impl PromiseReaper {
         }
     }
 
-    pub async fn run_once(&self) -> anyhow::Result<ReaperStats> {
-        let workflows: Arc<dyn WorkflowRepairClient> = Arc::new(TemporalWorkflowRepairClient {
+    pub async fn run_once(&mut self) -> anyhow::Result<ReaperStats> {
+        let workflows = TemporalWorkflowRepairClient {
             client: self.client.clone(),
-        });
+        };
         let universes = store_pg::list_universes(self.stores.pool())
             .await
             .context("list universes for promise repair")?;
         let mut stats = ReaperStats::default();
+        self.signalled.start_pass();
         for (universe_id, _) in universes {
             let store = self.stores.store_for(universe_id);
-            let sessions: Arc<dyn SessionStore> = store.clone();
-            let append_store: Arc<dyn SessionStore> = store;
             let universe_stats = reap_universe_once(
                 universe_id,
-                sessions,
-                append_store,
-                workflows.clone(),
+                store.as_ref(),
+                store.as_ref(),
+                &workflows,
+                &mut self.signalled,
                 now_ms(),
             )
             .await;
@@ -657,98 +852,196 @@ impl PromiseReaper {
     }
 }
 
-#[derive(Clone)]
-struct LoadedSessionSnapshot {
-    record: SessionRecord,
-    state: CoreAgentState,
-}
-
-#[derive(Default)]
-struct ReaperPlan {
-    holder_commands: BTreeMap<SessionId, Vec<CoreAgentCommand>>,
-}
-
-pub(super) async fn reap_universe_once(
+/// Walks a universe's open sessions one at a time, so at most one reduced state
+/// is in memory however many sessions the universe holds. Closed sessions cannot
+/// hold pending promises and are not read.
+async fn reap_universe_once(
     universe_id: Uuid,
-    sessions: Arc<dyn SessionStore>,
-    append_store: Arc<dyn SessionStore>,
-    workflows: Arc<dyn WorkflowRepairClient>,
+    sessions: &dyn SessionStore,
+    blobs: &dyn BlobStore,
+    workflows: &dyn WorkflowRepairClient,
+    signalled: &mut SignalledRepairs,
     now_ms: u64,
 ) -> ReaperStats {
-    let mut workflow_status_cache = BTreeMap::<SessionId, SessionWorkflowStatus>::new();
     let mut stats = ReaperStats {
         universes_scanned: 1,
         ..ReaperStats::default()
     };
-    let snapshots = load_session_snapshots(universe_id, sessions.as_ref(), &mut stats).await;
-    observe_active_projection_statuses(
-        universe_id,
-        &snapshots,
-        workflows.as_ref(),
-        &mut workflow_status_cache,
-        &mut stats,
-    )
-    .await;
-    let plan = plan_repair(&snapshots, now_ms, &mut stats);
-
-    apply_holder_repairs(
-        universe_id,
-        append_store.clone(),
-        workflows.as_ref(),
-        &snapshots,
-        plan.holder_commands,
-        now_ms,
-        &mut stats,
-    )
-    .await;
-    stats
+    let mut cursor: Option<SessionListCursor> = None;
+    loop {
+        let page = match sessions
+            .list_sessions(ListSessions {
+                cursor,
+                limit: SESSION_PAGE_LIMIT,
+                closed: Some(false),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(page) => page,
+            Err(error) => {
+                stats.errors += 1;
+                tracing::warn!(target: "temporal_runtime", %universe_id, operation = "list_sessions",
+                    %error, "promise reaper could not list sessions");
+                return stats;
+            }
+        };
+        for record in page.sessions {
+            reap_session(
+                universe_id,
+                &record.session_id,
+                sessions,
+                blobs,
+                workflows,
+                signalled,
+                now_ms,
+                &mut stats,
+            )
+            .await;
+        }
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            return stats;
+        }
+    }
 }
 
-fn plan_repair(
-    snapshots: &BTreeMap<SessionId, LoadedSessionSnapshot>,
+#[allow(clippy::too_many_arguments)]
+async fn reap_session(
+    universe_id: Uuid,
+    session_id: &SessionId,
+    sessions: &dyn SessionStore,
+    blobs: &dyn BlobStore,
+    workflows: &dyn WorkflowRepairClient,
+    signalled: &mut SignalledRepairs,
     now_ms: u64,
     stats: &mut ReaperStats,
-) -> ReaperPlan {
-    let mut plan = ReaperPlan::default();
-    for (holder_session_id, holder) in snapshots {
-        for promise in holder.state.promises.pending() {
-            stats.promises_examined += 1;
-            if !promise_owner_live(&holder.state, promise) {
-                plan_holder_resolution(
-                    &mut plan,
-                    holder_session_id,
-                    promise.promise_id.clone(),
-                    PromiseResolution::Cancelled,
+) {
+    stats.sessions_scanned += 1;
+    let mut state = match load_open_state(sessions, blobs, session_id, stats).await {
+        Ok(Some(state)) => state,
+        Ok(None) => return,
+        Err(error) => {
+            stats.errors += 1;
+            tracing::warn!(target: "temporal_runtime", %universe_id, %session_id,
+                error = %format_args!("{error:#}"), "promise reaper skipped unreadable session");
+            return;
+        }
+    };
+    if let Some(run_id) = active_or_queued_run(&state) {
+        let temporal_status = match workflows.workflow_status(universe_id, session_id).await {
+            SessionWorkflowStatus::Running => None,
+            SessionWorkflowStatus::Terminal(status) => Some(format!("{status:?}")),
+            SessionWorkflowStatus::NotFound => Some("not_found".to_owned()),
+            SessionWorkflowStatus::Unavailable(error) => {
+                stats.workflow_status_errors += 1;
+                tracing::warn!(
+                    target: "temporal_runtime",
+                    event = "session_workflow_status_unavailable",
+                    %universe_id,
+                    %session_id,
+                    lightspeed_run_id = run_id.as_u64(),
+                    %error,
+                    "could not verify active session projection against Temporal"
                 );
-                continue;
+                None
             }
-
-            if let Some(resolution) = promise_source_resolution(&promise.source, now_ms) {
-                plan_holder_resolution(
-                    &mut plan,
-                    holder_session_id,
-                    promise.promise_id.clone(),
-                    resolution,
+        };
+        if let Some(temporal_status) = temporal_status {
+            // A stopped execution writes nothing more, so this read sees its
+            // final log. A run that ended, or a close that landed, between the
+            // first read and the describe is an ordinary exit.
+            state = match load_open_state(sessions, blobs, session_id, stats).await {
+                Ok(Some(state)) => state,
+                Ok(None) => return,
+                Err(error) => {
+                    stats.workflow_status_errors += 1;
+                    tracing::warn!(target: "temporal_runtime", %universe_id, %session_id,
+                        error = %format_args!("{error:#}"),
+                        "could not recheck a session whose workflow has stopped");
+                    return;
+                }
+            };
+            if let Some(run_id) = active_or_queued_run(&state) {
+                stats.stale_active_projections += 1;
+                tracing::error!(
+                    target: "temporal_runtime",
+                    event = "stale_active_projection",
+                    %universe_id,
+                    %session_id,
+                    workflow_id = %compose_workflow_id(universe_id, session_id),
+                    lightspeed_run_id = run_id.as_u64(),
+                    session_head_seq = state.reduced_to.as_ref().map(|head| head.seq.as_u64()),
+                    temporal_status,
+                    "session log has an active or queued run but its workflow has stopped"
                 );
             }
         }
     }
-    plan
+    let repairs = plan_session_repairs(&state, now_ms, stats);
+    if !repairs.is_empty() {
+        apply_session_repairs(
+            universe_id,
+            session_id,
+            sessions,
+            workflows,
+            signalled,
+            state,
+            repairs,
+            now_ms,
+            stats,
+        )
+        .await;
+    }
 }
 
-fn plan_holder_resolution(
-    plan: &mut ReaperPlan,
-    holder_session_id: &SessionId,
-    promise_id: PromiseId,
-    resolution: PromiseResolution,
-) {
-    plan.holder_commands
-        .entry(holder_session_id.clone())
-        .or_default()
-        .push(CoreAgentCommand::ResolvePromise {
-            promise_id,
-            resolution,
-        });
+/// The session's state now, or nothing once it has closed or gone. The record is
+/// read here rather than taken from the list page, because a checkpoint newer
+/// than a list-time head would be rejected and replace a cheap load with a replay.
+async fn load_open_state(
+    sessions: &dyn SessionStore,
+    blobs: &dyn BlobStore,
+    session_id: &SessionId,
+    stats: &mut ReaperStats,
+) -> anyhow::Result<Option<CoreAgentState>> {
+    let Some(record) = sessions.load_session(session_id).await? else {
+        return Ok(None);
+    };
+    if record.lifecycle_status == SessionLifecycleStatus::Closed {
+        return Ok(None);
+    }
+    let loaded = crate::checkpoint::load_reduction(sessions, blobs, &record).await?;
+    stats.events_read += loaded.tail_event_count;
+    Ok(Some(loaded.reduced.core_state))
+}
+
+fn active_or_queued_run(state: &CoreAgentState) -> Option<RunId> {
+    state
+        .runs
+        .active
+        .as_ref()
+        .map(|run| run.run_id)
+        .or_else(|| state.runs.queued.first().map(|run| run.run_id))
+}
+
+fn plan_session_repairs(
+    state: &CoreAgentState,
+    now_ms: u64,
+    stats: &mut ReaperStats,
+) -> Vec<(PromiseId, PromiseResolution)> {
+    let mut repairs = Vec::new();
+    for promise in state.promises.pending() {
+        stats.promises_examined += 1;
+        let resolution = if promise_owner_live(state, promise) {
+            promise_source_resolution(&promise.source, now_ms)
+        } else {
+            Some(PromiseResolution::Cancelled)
+        };
+        if let Some(resolution) = resolution {
+            repairs.push((promise.promise_id.clone(), resolution));
+        }
+    }
+    repairs
 }
 
 fn promise_source_resolution(source: &PromiseSource, now_ms: u64) -> Option<PromiseResolution> {
@@ -783,154 +1076,112 @@ pub(super) enum SessionWorkflowStatus {
     Unavailable(String),
 }
 
-async fn workflow_status_cached(
-    workflows: &dyn WorkflowRepairClient,
-    cache: &mut BTreeMap<SessionId, SessionWorkflowStatus>,
+/// An accepted signal is only a request: the repair has happened once the log
+/// no longer plans it. A repeat logs louder and counts apart, and goes out again
+/// because a workflow that was merely slow still needs it.
+#[allow(clippy::too_many_arguments)]
+async fn apply_session_repairs(
     universe_id: Uuid,
     session_id: &SessionId,
-) -> SessionWorkflowStatus {
-    if let Some(status) = cache.get(session_id) {
-        return status.clone();
-    }
-    let status = workflows.workflow_status(universe_id, session_id).await;
-    cache.insert(session_id.clone(), status.clone());
-    status
-}
-
-async fn observe_active_projection_statuses(
-    universe_id: Uuid,
-    snapshots: &BTreeMap<SessionId, LoadedSessionSnapshot>,
+    store: &dyn SessionStore,
     workflows: &dyn WorkflowRepairClient,
-    cache: &mut BTreeMap<SessionId, SessionWorkflowStatus>,
-    stats: &mut ReaperStats,
-) {
-    for (session_id, snapshot) in snapshots {
-        let active_run_id = snapshot
-            .state
-            .runs
-            .active
-            .as_ref()
-            .map(|run| run.run_id)
-            .or_else(|| snapshot.state.runs.queued.first().map(|run| run.run_id));
-        let Some(active_run_id) = active_run_id else {
-            continue;
-        };
-
-        let workflow_id = compose_workflow_id(universe_id, session_id);
-        let session_head_seq = snapshot
-            .record
-            .head
-            .as_ref()
-            .map(|head| head.seq.to_string())
-            .unwrap_or_default();
-        match workflow_status_cached(workflows, cache, universe_id, session_id).await {
-            SessionWorkflowStatus::Running => {}
-            SessionWorkflowStatus::Terminal(status) => {
-                stats.stale_active_projections += 1;
-                tracing::error!(
-                    target: "temporal_runtime",
-                    event = "stale_active_projection",
-                    %universe_id,
-                    %session_id,
-                    %workflow_id,
-                    lightspeed_run_id = active_run_id.as_u64(),
-                    session_head_seq,
-                    temporal_status = ?status,
-                    "session projection is active but its workflow is terminal"
-                );
-            }
-            SessionWorkflowStatus::NotFound => {
-                stats.stale_active_projections += 1;
-                tracing::error!(
-                    target: "temporal_runtime",
-                    event = "stale_active_projection",
-                    %universe_id,
-                    %session_id,
-                    %workflow_id,
-                    lightspeed_run_id = active_run_id.as_u64(),
-                    session_head_seq,
-                    temporal_status = "not_found",
-                    "session projection is active but its workflow was not found"
-                );
-            }
-            SessionWorkflowStatus::Unavailable(error) => {
-                stats.workflow_status_errors += 1;
-                tracing::warn!(
-                    target: "temporal_runtime",
-                    event = "session_workflow_status_unavailable",
-                    %universe_id,
-                    %session_id,
-                    %workflow_id,
-                    lightspeed_run_id = active_run_id.as_u64(),
-                    session_head_seq,
-                    %error,
-                    "could not verify active session projection against Temporal"
-                );
-            }
-        }
-    }
-}
-
-async fn apply_holder_repairs(
-    universe_id: Uuid,
-    store: Arc<dyn SessionStore>,
-    workflows: &dyn WorkflowRepairClient,
-    snapshots: &BTreeMap<SessionId, LoadedSessionSnapshot>,
-    holder_commands: BTreeMap<SessionId, Vec<CoreAgentCommand>>,
+    signalled: &mut SignalledRepairs,
+    state: CoreAgentState,
+    repairs: Vec<(PromiseId, PromiseResolution)>,
     now_ms: u64,
     stats: &mut ReaperStats,
 ) {
-    for (session_id, commands) in holder_commands {
-        match workflows
-            .signal_admissions(universe_id, &session_id, admissions(commands.clone()))
-            .await
-        {
-            Ok(()) => {
-                stats.holder_repairs_signalled += commands.len();
-                continue;
+    let admissions = repairs
+        .iter()
+        .map(|(promise_id, resolution)| AgentAdmission {
+            command: CoreAgentCommand::ResolvePromise {
+                promise_id: promise_id.clone(),
+                resolution: resolution.clone(),
+            },
+            correlation_token: None,
+        })
+        .collect();
+    match workflows
+        .signal_admissions(universe_id, session_id, admissions)
+        .await
+    {
+        Ok(()) => {
+            for (promise_id, _) in &repairs {
+                let key = (universe_id, session_id.clone(), promise_id.clone());
+                if signalled.record(key) {
+                    stats.holder_repairs_repeated += 1;
+                    tracing::warn!(
+                        target: "temporal_runtime",
+                        event = "promise_repair_repeated",
+                        %universe_id,
+                        %session_id,
+                        %promise_id,
+                        "promise repair signalled on the previous pass is still pending; the session workflow may be stalled"
+                    );
+                } else {
+                    stats.holder_repairs_signalled += 1;
+                    tracing::info!(
+                        target: "temporal_runtime",
+                        event = "promise_repair_signalled",
+                        %universe_id,
+                        %session_id,
+                        %promise_id,
+                        "promise repair signalled to the session workflow"
+                    );
+                }
             }
-            Err(WorkflowSignalFailure::NotFound) => {}
-            Err(WorkflowSignalFailure::Other(error)) => {
-                stats.errors += 1;
-                tracing::warn!(
+            return;
+        }
+        Err(WorkflowSignalFailure::NotFound) => {}
+        Err(WorkflowSignalFailure::Other(error)) => {
+            stats.errors += 1;
+            tracing::warn!(
+                target: "temporal_runtime",
+                %universe_id,
+                %session_id,
+                %error,
+                "promise reaper failed to signal holder repair"
+            );
+            return;
+        }
+    }
+    let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), state);
+    for (promise_id, resolution) in repairs {
+        let command = CoreAgentCommand::ResolvePromise {
+            promise_id: promise_id.clone(),
+            resolution,
+        };
+        match append_command_direct(store, session_id, &mut drive, command, now_ms).await {
+            Ok(true) => {
+                stats.holder_repairs_appended += 1;
+                tracing::info!(
                     target: "temporal_runtime",
+                    event = "promise_repair_appended",
                     %universe_id,
                     %session_id,
-                    %error,
-                    "promise reaper failed to signal holder repair"
+                    %promise_id,
+                    "promise repair appended for a session with no running workflow"
                 );
-                continue;
             }
-        }
-        let Some(snapshot) = snapshots.get(&session_id) else {
-            continue;
-        };
-        match append_commands_direct(store.as_ref(), &session_id, snapshot, commands, now_ms).await
-        {
-            Ok(appended) => stats.holder_repairs_appended += appended,
-            Err(DirectAppendError::Conflict) => stats.conflicts += 1,
+            Ok(false) => {}
+            Err(DirectAppendError::Conflict) => {
+                stats.conflicts += 1;
+                return;
+            }
             Err(DirectAppendError::Other(error)) => {
                 stats.errors += 1;
                 tracing::warn!(
                     target: "temporal_runtime",
                     %universe_id,
                     %session_id,
+                    %promise_id,
                     %error,
                     "promise reaper failed to append holder repair"
                 );
+                return;
             }
         }
     }
-}
-
-fn admissions(commands: Vec<CoreAgentCommand>) -> Vec<AgentAdmission> {
-    commands
-        .into_iter()
-        .map(|command| AgentAdmission {
-            command,
-            correlation_token: None,
-        })
-        .collect()
 }
 
 #[derive(Debug, Error)]
@@ -941,165 +1192,44 @@ enum DirectAppendError {
     Other(#[from] anyhow::Error),
 }
 
-async fn append_commands_direct(
+/// Returns whether the command wrote anything. The drive's state fences the
+/// append, so a writer that got in after this state was read wins the conflict.
+async fn append_command_direct(
     store: &dyn SessionStore,
     session_id: &SessionId,
-    snapshot: &LoadedSessionSnapshot,
-    commands: Vec<CoreAgentCommand>,
+    drive: &mut CoreAgentDrive,
+    command: CoreAgentCommand,
     now_ms: u64,
-) -> Result<usize, DirectAppendError> {
-    let mut drive = CoreAgentDrive::from_replayed(
-        session_id.clone(),
-        snapshot.state.clone(),
-        snapshot.record.head.clone(),
-    );
-    let mut appended_count = 0usize;
-    for command in commands {
-        let action = drive
-            .admit_command(command, now_ms)
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
-        match action {
-            CoreAgentAction::AppendEvents {
-                expected_head,
-                events,
-            } => {
-                let result = store
-                    .append(AppendSessionEvents {
-                        session_id: session_id.clone(),
-                        expected_head,
-                        events,
-                    })
-                    .await
-                    .map_err(|error| match error {
-                        SessionStoreError::ExpectedHeadMismatch { .. } => {
-                            DirectAppendError::Conflict
-                        }
-                        other => DirectAppendError::Other(anyhow::anyhow!("{other}")),
-                    })?;
-                if !result.entries.is_empty() {
-                    appended_count += 1;
-                }
-                drive
-                    .resume_appended(result.entries)
-                    .map_err(|error| anyhow::anyhow!("{error}"))?;
-            }
-            CoreAgentAction::Idle | CoreAgentAction::Closed => {}
-            other => {
-                return Err(DirectAppendError::Other(anyhow::anyhow!(
-                    "direct repair command produced unexpected action: {other:?}"
-                )));
-            }
+) -> Result<bool, DirectAppendError> {
+    let action = drive
+        .admit_command(command, now_ms)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    match action {
+        CoreAgentAction::AppendEvents {
+            expected_head,
+            events,
+        } => {
+            let result = store
+                .append(AppendSessionEvents {
+                    session_id: session_id.clone(),
+                    expected_head,
+                    events,
+                })
+                .await
+                .map_err(|error| match error {
+                    SessionStoreError::ExpectedHeadMismatch { .. } => DirectAppendError::Conflict,
+                    other => DirectAppendError::Other(anyhow::anyhow!("{other}")),
+                })?;
+            let wrote = !result.entries.is_empty();
+            drive
+                .resume_appended(result.entries)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            Ok(wrote)
         }
-    }
-    Ok(appended_count)
-}
-
-async fn load_session_snapshots(
-    universe_id: Uuid,
-    sessions: &dyn SessionStore,
-    stats: &mut ReaperStats,
-) -> BTreeMap<SessionId, LoadedSessionSnapshot> {
-    let mut cursor: Option<SessionListCursor> = None;
-    let mut snapshots = BTreeMap::new();
-    loop {
-        let page = match sessions
-            .list_sessions(ListSessions {
-                cursor,
-                limit: SESSION_PAGE_LIMIT,
-                ..Default::default()
-            })
-            .await
-        {
-            Ok(page) => page,
-            Err(error) => {
-                stats.errors += 1;
-                tracing::warn!(target: "temporal_runtime", %universe_id, operation = "list_sessions",
-                    %error, "promise reaper could not list sessions");
-                return snapshots;
-            }
-        };
-        for record in page.sessions {
-            stats.sessions_scanned += 1;
-            let state = match load_session_state(sessions, &record.session_id).await {
-                Ok(state) => state,
-                Err(error) => {
-                    stats.errors += 1;
-                    tracing::warn!(target: "temporal_runtime", %universe_id,
-                        session_id = %record.session_id, operation = error.operation(),
-                        event_seq = error.event_seq().map(EventSeq::as_u64),
-                        %error, "promise reaper skipped unreadable session");
-                    continue;
-                }
-            };
-            snapshots.insert(
-                record.session_id.clone(),
-                LoadedSessionSnapshot { record, state },
-            );
-        }
-        cursor = page.next_cursor;
-        if cursor.is_none() {
-            return snapshots;
-        }
-    }
-}
-
-#[derive(Debug, Error)]
-enum SessionLoadError {
-    #[error("read history after {after:?}: {source}")]
-    Read {
-        after: Option<EventSeq>,
-        source: SessionStoreError,
-    },
-    #[error("decode event {seq}: {source}")]
-    Decode { seq: EventSeq, source: CodecError },
-    #[error("replay event {seq}: {source}")]
-    Replay { seq: EventSeq, source: DomainError },
-}
-
-impl SessionLoadError {
-    fn operation(&self) -> &'static str {
-        match self {
-            Self::Read { .. } => "read_history",
-            Self::Decode { .. } => "decode",
-            Self::Replay { .. } => "replay",
-        }
-    }
-
-    fn event_seq(&self) -> Option<EventSeq> {
-        match self {
-            Self::Read { .. } => None,
-            Self::Decode { seq, .. } | Self::Replay { seq, .. } => Some(*seq),
-        }
-    }
-}
-
-async fn load_session_state(
-    sessions: &dyn SessionStore,
-    session_id: &SessionId,
-) -> Result<CoreAgentState, SessionLoadError> {
-    let mut state = CoreAgentState::new();
-    let mut after = None;
-    loop {
-        let page = sessions
-            .read_after(ReadSessionEvents {
-                session_id: session_id.clone(),
-                after,
-                limit: MAX_EVENT_PAGE_LIMIT as usize,
-            })
-            .await
-            .map_err(|source| SessionLoadError::Read { after, source })?;
-        for stored in &page.entries {
-            let seq = stored.position.seq;
-            let entry = CoreAgentCodec
-                .decode_entry(stored)
-                .map_err(|source| SessionLoadError::Decode { seq, source })?;
-            harness::apply_event(&mut state, &entry)
-                .map_err(|source| SessionLoadError::Replay { seq, source })?;
-        }
-        if page.complete {
-            return Ok(state);
-        }
-        after = page.next_after;
+        CoreAgentAction::Idle | CoreAgentAction::Closed => Ok(false),
+        other => Err(DirectAppendError::Other(anyhow::anyhow!(
+            "direct repair command produced unexpected action: {other:?}"
+        ))),
     }
 }
 
@@ -1168,7 +1298,10 @@ impl WorkflowRepairClient for TemporalWorkflowRepairClient {
             .describe(WorkflowDescribeOptions::default())
             .await
         {
-            Ok(description) if description.status() == WorkflowExecutionStatus::Running => {
+            Ok(description)
+                if ExecutionLiveness::from_status(description.status())
+                    == ExecutionLiveness::Running =>
+            {
                 SessionWorkflowStatus::Running
             }
             Ok(description) => SessionWorkflowStatus::Terminal(description.status()),
@@ -1187,12 +1320,13 @@ fn now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-    use std::sync::Mutex;
+    use std::{collections::BTreeMap, sync::Mutex};
 
     use harness::{
-        ActiveRun, ModelSelection, ProviderApiKind, RunId, RunSource, RunStatus,
-        storage::{BlobGraphStore as _, BlobStore as _},
+        ContentRef, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCodec,
+        CoreAgentEvent, CoreAgentLifecycleEvent, ModelSelection, PromiseEvent, PromiseOwnership,
+        PromiseStatus, ProviderApiKind, RunRequestCommand, RunRequestSource,
+        storage::{BlobGraphStore as _, InMemoryBlobStore},
     };
     use temporal_workflow::{default_run_config, default_session_config};
 
@@ -1248,68 +1382,33 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn unreadable_sessions_are_identified_without_blocking_healthy_repairs() {
-        use harness::{
-            CoreAgentEvent, CoreAgentLifecycleEvent, PromiseEvent, PromiseOwnership, PromiseStatus,
-            StoredEvent,
-        };
-        let store = Arc::new(harness::storage::InMemorySessionStore::new());
-        let opened = CoreAgentCodec
-            .encode_event(&CoreAgentEvent::Lifecycle(
-                CoreAgentLifecycleEvent::Opened {
-                    config: default_session_config(test_model()),
-                },
-            ))
+        let store = harness::storage::InMemorySessionStore::new();
+        let opened = opened_event();
+        // Stores refuse an event that does not decode, so a log a reader cannot
+        // decode is one whose joins went bad.
+        let malformed = stored_session(&store, "malformed", vec![opened.clone()]).await;
+        store
+            .append(AppendSessionEvents {
+                session_id: malformed.clone(),
+                expected_head: store.head(&malformed).await.unwrap(),
+                events: vec![harness::session::UncommittedStoredEvent {
+                    observed_at_ms: 2,
+                    joins: harness::session::StoredJoins::from([(
+                        "run_id".to_owned(),
+                        "not a number".to_owned(),
+                    )]),
+                    event: CoreAgentCodec
+                        .encode_event(&CoreAgentEvent::Environment(
+                            harness::EnvironmentEvent::ActiveEnvironmentCleared,
+                        ))
+                        .unwrap(),
+                }],
+            })
+            .await
             .unwrap();
-        let malformed = stored_session(
-            &store,
-            "malformed",
-            vec![
-                opened.clone(),
-                StoredEvent::new(
-                    "lightspeed.core.context.unknown",
-                    1,
-                    serde_json::json!({"context":{"unknown":{}}}),
-                ),
-            ],
-        )
-        .await;
         let invalid = stored_session(&store, "invalid", vec![opened.clone(), opened.clone()]).await;
         let promise_id = PromiseId::from_number(1);
-        let healthy = stored_session(
-            &store,
-            "healthy",
-            vec![
-                opened,
-                CoreAgentCodec
-                    .encode_event(&CoreAgentEvent::Promise(PromiseEvent::Created {
-                        promise: Promise {
-                            promise_id: promise_id.clone(),
-                            source: PromiseSource::Timer { fire_at_ms: 5 },
-                            scope: PromiseScope::Session,
-                            ownership: PromiseOwnership::Model,
-                            status: PromiseStatus::Pending,
-                            payload_ref: None,
-                            error_ref: None,
-                            deadline_ms: None,
-                        },
-                    }))
-                    .unwrap(),
-            ],
-        )
-        .await;
-        assert!(
-            matches!(load_session_state(store.as_ref(), &malformed).await,
-            Err(SessionLoadError::Decode { seq, .. }) if seq == EventSeq::new(2))
-        );
-        assert!(matches!(load_session_state(store.as_ref(), &invalid).await,
-            Err(SessionLoadError::Replay { seq, source: DomainError::InvariantViolation(_) }) if seq == EventSeq::new(2)));
-        assert!(matches!(
-            load_session_state(store.as_ref(), &SessionId::new("missing")).await,
-            Err(SessionLoadError::Read {
-                after: None,
-                source: SessionStoreError::SessionNotFound { .. }
-            })
-        ));
+        let healthy = stored_session(&store, "healthy", vec![opened, timer_event(1, 5)]).await;
         let logs = Arc::new(Mutex::new(Vec::new()));
         let writer = LogWriter(logs.clone());
         let subscriber = tracing_subscriber::fmt()
@@ -1319,18 +1418,20 @@ mod tests {
             .finish();
         let _guard = tracing::subscriber::set_default(subscriber);
         let universe_id = Uuid::new_v4();
+        let blobs = InMemoryBlobStore::new();
         let stats = reap_universe_once(
             universe_id,
-            store.clone(),
-            store.clone(),
-            Arc::new(FakeWorkflows::default()),
+            &store,
+            &blobs,
+            &FakeWorkflows::default(),
+            &mut SignalledRepairs::default(),
             10,
         )
         .await;
         assert_eq!(stats.sessions_scanned, 3);
         assert_eq!(stats.errors, 2);
         assert_eq!(stats.holder_repairs_appended, 1);
-        let state = load_session_state(store.as_ref(), &healthy).await.unwrap();
+        let state = current_state(&store, &healthy).await;
         assert_eq!(
             state.promises.promises[&promise_id].status,
             PromiseStatus::Resolved
@@ -1340,16 +1441,23 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()["fields"].clone())
             .collect();
-        for (session, operation) in [(&malformed, "decode"), (&invalid, "replay")] {
+        for session in [&malformed, &invalid] {
             let log = fields
                 .iter()
-                .find(|log| log["session_id"] == session.as_str())
+                .find(|log| {
+                    log["session_id"] == session.as_str()
+                        && log["message"] == "promise reaper skipped unreadable session"
+                })
                 .expect("session-specific warning");
             assert_eq!(log["universe_id"], universe_id.to_string());
-            assert_eq!(log["operation"], operation);
-            assert_eq!(log["event_seq"], 2);
             assert!(log["error"].as_str().is_some_and(|error| !error.is_empty()));
         }
+        let repair = fields
+            .iter()
+            .find(|log| log["event"] == "promise_repair_appended")
+            .expect("a repair names its session and promise");
+        assert_eq!(repair["session_id"], healthy.as_str());
+        assert_eq!(repair["promise_id"], promise_id.as_str());
     }
 
     #[derive(Default)]
@@ -1392,41 +1500,31 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn terminal_workflow_with_active_run_is_observed_as_stale() {
-        let universe_id = Uuid::new_v4();
-        let session_id = SessionId::new("stale");
-        let mut state = open_state();
-        state.runs.active = Some(active_run(RunId::new(7)));
-        let snapshots = snapshots([(session_id.clone(), state)]);
-        let workflows = FakeWorkflows {
-            statuses: BTreeMap::from([(
-                session_id,
-                SessionWorkflowStatus::Terminal(WorkflowExecutionStatus::Failed),
-            )]),
-            ..FakeWorkflows::default()
-        };
-        let mut cache = BTreeMap::new();
-        let mut stats = ReaperStats::default();
-
-        observe_active_projection_statuses(
-            universe_id,
-            &snapshots,
-            &workflows,
-            &mut cache,
-            &mut stats,
-        )
-        .await;
-
-        assert_eq!(stats.stale_active_projections, 1);
-        assert_eq!(stats.workflow_status_errors, 0);
+    fn opened_event() -> harness::StoredEvent {
+        CoreAgentCodec
+            .encode_event(&CoreAgentEvent::Lifecycle(
+                CoreAgentLifecycleEvent::Opened {
+                    config: default_session_config(test_model()),
+                },
+            ))
+            .unwrap()
     }
 
-    fn open_state() -> CoreAgentState {
-        let mut state = CoreAgentState::new();
-        state.lifecycle.status = CoreAgentStatus::Open;
-        state.lifecycle.config = Some(default_session_config(test_model()));
-        state
+    fn timer_event(number: u64, fire_at_ms: u64) -> harness::StoredEvent {
+        CoreAgentCodec
+            .encode_event(&CoreAgentEvent::Promise(PromiseEvent::Created {
+                promise: Promise {
+                    promise_id: PromiseId::from_number(number),
+                    source: PromiseSource::Timer { fire_at_ms },
+                    scope: PromiseScope::Session,
+                    ownership: PromiseOwnership::Model,
+                    status: PromiseStatus::Pending,
+                    payload_ref: None,
+                    error_ref: None,
+                    deadline_at_ms: None,
+                },
+            }))
+            .unwrap()
     }
 
     fn test_model() -> ModelSelection {
@@ -1437,33 +1535,502 @@ mod tests {
         }
     }
 
-    fn active_run(run_id: RunId) -> ActiveRun {
-        ActiveRun {
-            context_recovery: Default::default(),
-            run_id,
-            status: RunStatus::Active,
-            submission_id: None,
-            source: RunSource::Input { input: Vec::new() },
-            input_entry_ids: Vec::new(),
-            input_consumed_by_turn_id: None,
-            run_config: default_run_config(),
-            config_revision: 0,
-            first_seq: harness::EventSeq::new(1),
-            accepted_at_ms: 1,
-            started_at_ms: Some(1),
-            usage: None,
-            steering: Vec::new(),
-            turns: BTreeMap::new(),
-            active_turn_id: None,
-            active_tool_batch_id: None,
-            approvals: Default::default(),
-            parked_tool_batch: None,
-            tool_batches: BTreeMap::new(),
-            completed_tool_batches: BTreeMap::new(),
-            output: None,
-            failure: None,
-            notify_on_terminal: Vec::new(),
+    async fn current_state(
+        store: &harness::storage::InMemorySessionStore,
+        session_id: &SessionId,
+    ) -> CoreAgentState {
+        let record = store.load_session(session_id).await.unwrap().unwrap();
+        crate::checkpoint::load_reduction(store, &InMemoryBlobStore::new(), &record)
+            .await
+            .unwrap()
+            .reduced
+            .core_state
+    }
+
+    async fn apply_command(
+        store: &harness::storage::InMemorySessionStore,
+        session_id: &SessionId,
+        command: CoreAgentCommand,
+    ) {
+        let state = current_state(store, session_id).await;
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), state);
+        append_command_direct(store, session_id, &mut drive, command, 2)
+            .await
+            .unwrap();
+    }
+
+    async fn session_with_active_run(
+        store: &harness::storage::InMemorySessionStore,
+        id: &str,
+    ) -> SessionId {
+        let session_id = stored_session(store, id, vec![opened_event()]).await;
+        apply_command(
+            store,
+            &session_id,
+            CoreAgentCommand::RequestRun(RunRequestCommand {
+                requested_by: None,
+                notify_on_terminal: Vec::new(),
+                submission_id: None,
+                source: RunRequestSource::Input {
+                    input: vec![ContextEntryInput {
+                        kind: ContextEntryKind::Message {
+                            role: ContextMessageRole::User,
+                        },
+                        content: ContentRef {
+                            content_ref: BlobRef::from_bytes(b"hello"),
+                            media_type: Some("text/plain".to_owned()),
+                            provider_kind: None,
+                        },
+                        preview: None,
+                        origin: None,
+                        provenance_ref: None,
+                        token_estimate: None,
+                    }],
+                },
+                run_config: default_run_config(),
+                input_limit_tokens: None,
+            }),
+        )
+        .await;
+        assert!(active_or_queued_run(&current_state(store, &session_id).await).is_some());
+        session_id
+    }
+
+    async fn reap(
+        store: &harness::storage::InMemorySessionStore,
+        workflows: &dyn WorkflowRepairClient,
+        signalled: &mut SignalledRepairs,
+        now_ms: u64,
+    ) -> ReaperStats {
+        signalled.start_pass();
+        reap_universe_once(
+            Uuid::from_u128(1),
+            store,
+            &InMemoryBlobStore::new(),
+            workflows,
+            signalled,
+            now_ms,
+        )
+        .await
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stopped_workflow_with_active_run_is_observed_as_stale() {
+        let store = harness::storage::InMemorySessionStore::new();
+        let session_id = session_with_active_run(&store, "stale").await;
+        let workflows = FakeWorkflows {
+            statuses: BTreeMap::from([(
+                session_id,
+                SessionWorkflowStatus::Terminal(WorkflowExecutionStatus::Failed),
+            )]),
+            ..FakeWorkflows::default()
+        };
+        let stats = reap(&store, &workflows, &mut SignalledRepairs::default(), 10).await;
+        assert_eq!(stats.stale_active_projections, 1);
+        assert_eq!(stats.workflow_status_errors, 0);
+    }
+
+    /// Finishes the session between the reaper's read and its describe, as a
+    /// child that is force closed and exits does, then reports it stopped.
+    struct ClosesDuringDescribe {
+        store: harness::storage::InMemorySessionStore,
+        status: SessionWorkflowStatus,
+    }
+
+    #[async_trait]
+    impl WorkflowRepairClient for ClosesDuringDescribe {
+        async fn signal_admissions(
+            &self,
+            _universe_id: Uuid,
+            _session_id: &SessionId,
+            _admissions: Vec<AgentAdmission>,
+        ) -> Result<(), WorkflowSignalFailure> {
+            panic!("a closed session has nothing to repair");
         }
+
+        async fn workflow_status(
+            &self,
+            _universe_id: Uuid,
+            session_id: &SessionId,
+        ) -> SessionWorkflowStatus {
+            apply_command(
+                &self.store,
+                session_id,
+                CoreAgentCommand::CloseSession { force: true },
+            )
+            .await;
+            self.status.clone()
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_session_that_closed_before_its_describe_is_not_reported_stale() {
+        for status in [
+            SessionWorkflowStatus::Terminal(WorkflowExecutionStatus::Completed),
+            SessionWorkflowStatus::Terminal(WorkflowExecutionStatus::Terminated),
+            SessionWorkflowStatus::NotFound,
+        ] {
+            let store = harness::storage::InMemorySessionStore::new();
+            session_with_active_run(&store, "child").await;
+            let workflows = ClosesDuringDescribe {
+                store: store.clone(),
+                status,
+            };
+            let stats = reap(&store, &workflows, &mut SignalledRepairs::default(), 10).await;
+            assert_eq!(stats.sessions_scanned, 1);
+            assert_eq!(stats.stale_active_projections, 0);
+            assert_eq!(stats.workflow_status_errors, 0);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_signalled_repair_that_stays_pending_counts_as_a_repeat_and_logs_at_warn() {
+        let store = harness::storage::InMemorySessionStore::new();
+        let session_id =
+            stored_session(&store, "stalled", vec![opened_event(), timer_event(1, 5)]).await;
+        let workflows = FakeWorkflows {
+            running: BTreeSet::from([session_id.clone()]),
+            ..FakeWorkflows::default()
+        };
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let writer = LogWriter(logs.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let mut signalled = SignalledRepairs::default();
+
+        let first = reap(&store, &workflows, &mut signalled, 10).await;
+        assert_eq!(first.holder_repairs_signalled, 1);
+        assert_eq!(first.holder_repairs_repeated, 0);
+
+        let second = reap(&store, &workflows, &mut signalled, 10).await;
+        assert_eq!(second.holder_repairs_signalled, 0);
+        assert_eq!(second.holder_repairs_repeated, 1);
+        assert_eq!(workflows.signals.lock().unwrap().len(), 2);
+
+        let captured = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
+        let logged: Vec<serde_json::Value> = captured
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let repeat = logged
+            .iter()
+            .find(|log| log["fields"]["event"] == "promise_repair_repeated")
+            .expect("a repeat is logged");
+        assert_eq!(repeat["level"], "WARN");
+        assert_eq!(repeat["fields"]["session_id"], session_id.as_str());
+        assert_eq!(
+            repeat["fields"]["promise_id"],
+            PromiseId::from_number(1).as_str()
+        );
+
+        // Landing the resolution drops the key, so a later repair of the same
+        // promise id would count as new.
+        apply_command(
+            &store,
+            &session_id,
+            CoreAgentCommand::ResolvePromise {
+                promise_id: PromiseId::from_number(1),
+                resolution: PromiseResolution::Resolved { payload_ref: None },
+            },
+        )
+        .await;
+        let settled = reap(&store, &workflows, &mut signalled, 10).await;
+        assert_eq!(settled.holder_repairs_signalled, 0);
+        assert_eq!(settled.holder_repairs_repeated, 0);
+        assert!(signalled.current.is_empty());
+        signalled.start_pass();
+        assert!(signalled.previous.is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn closed_sessions_are_not_read_and_a_later_page_is_still_repaired() {
+        let store = harness::storage::InMemorySessionStore::new();
+        // A closed session whose log would fail any read of it.
+        let closed = stored_session(
+            &store,
+            "zz-closed",
+            vec![
+                opened_event(),
+                CoreAgentCodec
+                    .encode_event(&CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Closed))
+                    .unwrap(),
+            ],
+        )
+        .await;
+        store
+            .append(AppendSessionEvents {
+                session_id: closed.clone(),
+                expected_head: store.head(&closed).await.unwrap(),
+                events: vec![harness::session::UncommittedStoredEvent {
+                    observed_at_ms: 2,
+                    joins: harness::session::StoredJoins::from([(
+                        "run_id".to_owned(),
+                        "not a number".to_owned(),
+                    )]),
+                    event: CoreAgentCodec
+                        .encode_event(&CoreAgentEvent::Environment(
+                            harness::EnvironmentEvent::ActiveEnvironmentCleared,
+                        ))
+                        .unwrap(),
+                }],
+            })
+            .await
+            .unwrap();
+        let target =
+            stored_session(&store, "aa-target", vec![opened_event(), timer_event(1, 5)]).await;
+        for index in 0..SESSION_PAGE_LIMIT {
+            stored_session(&store, &format!("s-{index:04}"), vec![opened_event()]).await;
+        }
+        let first_page = store
+            .list_sessions(ListSessions {
+                limit: SESSION_PAGE_LIMIT,
+                closed: Some(false),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(
+            first_page
+                .sessions
+                .iter()
+                .all(|record| record.session_id != target),
+            "the repair sits past the first page"
+        );
+
+        let stats = reap(
+            &store,
+            &FakeWorkflows::default(),
+            &mut SignalledRepairs::default(),
+            10,
+        )
+        .await;
+        assert_eq!(stats.sessions_scanned, SESSION_PAGE_LIMIT + 1);
+        assert_eq!(stats.errors, 0, "the closed session was never read");
+        assert_eq!(stats.holder_repairs_appended, 1);
+        assert_eq!(
+            current_state(&store, &target)
+                .await
+                .promises
+                .pending()
+                .count(),
+            0
+        );
+    }
+
+    /// The fence of a direct repair is the state it was planned from, so a write
+    /// after the list page costs nothing.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_direct_repair_fences_on_the_state_it_read_not_the_list_page() {
+        let store = harness::storage::InMemorySessionStore::new();
+        let session_id = stored_session(&store, "s", vec![opened_event()]).await;
+        let listed = store.load_session(&session_id).await.unwrap().unwrap();
+        store
+            .append(AppendSessionEvents {
+                session_id: session_id.clone(),
+                expected_head: listed.head.clone(),
+                events: vec![harness::session::UncommittedStoredEvent {
+                    observed_at_ms: 3,
+                    joins: Default::default(),
+                    event: timer_event(1, 5),
+                }],
+            })
+            .await
+            .unwrap();
+        let mut stats = ReaperStats::default();
+        reap_session(
+            Uuid::from_u128(1),
+            &listed.session_id,
+            &store,
+            &InMemoryBlobStore::new(),
+            &FakeWorkflows::default(),
+            &mut SignalledRepairs::default(),
+            10,
+            &mut stats,
+        )
+        .await;
+        assert_eq!(stats.conflicts, 0);
+        assert_eq!(stats.holder_repairs_appended, 1);
+    }
+
+    /// A plan built from an older state loses to the writer that moved the log,
+    /// and writes nothing.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_direct_repair_from_a_stale_state_conflicts_and_writes_nothing() {
+        let store = harness::storage::InMemorySessionStore::new();
+        let session_id = stored_session(&store, "s", vec![opened_event(), timer_event(1, 5)]).await;
+        let stale = current_state(&store, &session_id).await;
+        store
+            .append(AppendSessionEvents {
+                session_id: session_id.clone(),
+                expected_head: store.head(&session_id).await.unwrap(),
+                events: vec![harness::session::UncommittedStoredEvent {
+                    observed_at_ms: 3,
+                    joins: Default::default(),
+                    event: timer_event(2, 50),
+                }],
+            })
+            .await
+            .unwrap();
+        let mut stats = ReaperStats::default();
+        apply_session_repairs(
+            Uuid::from_u128(1),
+            &session_id,
+            &store,
+            &FakeWorkflows::default(),
+            &mut SignalledRepairs::default(),
+            stale,
+            vec![(
+                PromiseId::from_number(1),
+                PromiseResolution::Resolved { payload_ref: None },
+            )],
+            10,
+            &mut stats,
+        )
+        .await;
+        assert_eq!(stats.conflicts, 1);
+        assert_eq!(stats.holder_repairs_appended, 0);
+        assert_eq!(
+            current_state(&store, &session_id)
+                .await
+                .promises
+                .pending()
+                .count(),
+            2
+        );
+    }
+
+    #[async_trait]
+    impl RetentionStore for harness::storage::InMemorySessionStore {
+        async fn list_due_roots(
+            &self,
+            now_ms: u64,
+            after: Option<&RetentionRootCursor>,
+            limit: usize,
+        ) -> Result<Vec<SessionRecord>, SessionStoreError> {
+            self.list_retention_roots_due_for_deletion(now_ms, after, limit)
+                .await
+        }
+
+        async fn delete_due_tree(
+            &self,
+            root: &SessionId,
+            now_ms: u64,
+        ) -> Result<DeleteClosedSessionsResult, SessionStoreError> {
+            self.delete_closed_sessions(DeleteClosedSessions {
+                session_id: root.clone(),
+                cascade: true,
+                due_at_or_before_ms: Some(now_ms),
+            })
+            .await
+        }
+    }
+
+    async fn closed_root(store: &harness::storage::InMemorySessionStore, id: &str, at_ms: u64) {
+        let session_id = SessionId::new(id);
+        store
+            .create_session(harness::storage::CreateSession {
+                session_id: session_id.clone(),
+                display_name: None,
+                metadata: Default::default(),
+                origin: None,
+                delete_after_close_ms: Some(1),
+                created_at_ms: 1,
+            })
+            .await
+            .unwrap();
+        store
+            .append(AppendSessionEvents {
+                session_id,
+                expected_head: None,
+                events: vec![
+                    harness::session::UncommittedStoredEvent {
+                        observed_at_ms: at_ms,
+                        joins: Default::default(),
+                        event: opened_event(),
+                    },
+                    harness::session::UncommittedStoredEvent {
+                        observed_at_ms: at_ms,
+                        joins: Default::default(),
+                        event: CoreAgentCodec
+                            .encode_event(&CoreAgentEvent::Lifecycle(
+                                CoreAgentLifecycleEvent::Closed,
+                            ))
+                            .unwrap(),
+                    },
+                ],
+            })
+            .await
+            .unwrap();
+    }
+
+    /// The row a delegation reserves before its child opens.
+    async fn reserved_child(store: &harness::storage::InMemorySessionStore, root: &str, id: &str) {
+        store
+            .create_session(harness::storage::CreateSession {
+                session_id: SessionId::new(id),
+                display_name: None,
+                metadata: Default::default(),
+                origin: Some(harness::storage::SessionOrigin {
+                    kind: harness::storage::SessionOriginKind::Subagent,
+                    parent_session_id: SessionId::new(root),
+                    parent_run_id: 1,
+                    root_session_id: SessionId::new(root),
+                    depth: 1,
+                    invocation_id: format!("invocation-{id}"),
+                    profile_id: "reviewer".to_owned(),
+                    profile_revision: 1,
+                    limits: harness::SubagentLimits::default(),
+                }),
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocked_retention_roots_do_not_hide_a_later_due_root_and_are_counted() {
+        let store = harness::storage::InMemorySessionStore::new();
+        // More roots with a never-opened child than one page holds, all due first.
+        let blocked = SESSION_PAGE_LIMIT + 2;
+        for index in 0..blocked {
+            let root = format!("blocked-{index:04}");
+            closed_root(&store, &root, 10 + index as u64).await;
+            reserved_child(&store, &root, &format!("child-{index:04}")).await;
+        }
+        closed_root(&store, "clean-root", 10_000).await;
+
+        let mut stats = SessionRetentionReaperStats::default();
+        reap_due_roots(Uuid::from_u128(1), &store, 20_000, &mut stats).await;
+
+        assert_eq!(stats.due_roots_scanned, blocked + 1);
+        assert_eq!(stats.open_tree_skips, blocked);
+        assert_eq!(stats.open_tree_sample.len(), OPEN_TREE_SAMPLE_LIMIT);
+        assert_eq!(stats.roots_deleted, 1);
+        assert_eq!(stats.errors, 0);
+        assert_eq!(
+            store
+                .load_session(&SessionId::new("clean-root"))
+                .await
+                .unwrap(),
+            None
+        );
+
+        // Discarding the child that never opened lets its tree go on the next pass.
+        assert!(
+            store
+                .discard_unopened_session(&SessionId::new("child-0000"))
+                .await
+                .unwrap()
+        );
+        let mut next = SessionRetentionReaperStats::default();
+        reap_due_roots(Uuid::from_u128(1), &store, 20_000, &mut next).await;
+        assert_eq!(next.roots_deleted, 1);
+        assert_eq!(next.open_tree_skips, blocked - 1);
     }
 
     /// Sweep double over the in-memory blob store: `live` refs stand in for
@@ -1479,6 +2046,7 @@ mod tests {
         holder_conflict: bool,
         deleted_objects: Mutex<Vec<String>>,
         scan_limits: Mutex<Vec<usize>>,
+        stored_cursor: Mutex<Option<CasSweepCursor>>,
     }
 
     impl FakeSweepStore {
@@ -1594,6 +2162,18 @@ mod tests {
                 }
             }
             outcome
+        }
+
+        async fn load_sweep_cursor(&self) -> Result<Option<CasSweepCursor>, CasSweepError> {
+            Ok(self.stored_cursor.lock().expect("cursor lock").clone())
+        }
+
+        async fn save_sweep_cursor(
+            &self,
+            cursor: Option<&CasSweepCursor>,
+        ) -> Result<(), CasSweepError> {
+            *self.stored_cursor.lock().expect("cursor lock") = cursor.cloned();
+            Ok(())
         }
     }
 
@@ -1864,6 +2444,73 @@ mod tests {
         assert_eq!(store.blobs.blob_refs().len(), CAS_SWEEP_PAGE_LIMIT);
     }
 
+    /// Live rows at the front of the order fill a pass's allowance, so a process
+    /// that started over each time would never reach the garbage behind them.
+    #[tokio::test(flavor = "current_thread")]
+    async fn cas_sweep_carries_on_past_live_rows_after_a_restart_and_clears_at_the_end() {
+        let store = paged_sweep_store(CAS_SWEEP_PAGE_LIMIT + 2).await;
+        let rows = store.blobs.blobs_touched_before(100);
+        store.live.lock().expect("live lock").extend(
+            rows[..CAS_SWEEP_PAGE_LIMIT]
+                .iter()
+                .map(|blob| blob.blob_ref.clone()),
+        );
+        let universe_id = Uuid::new_v4();
+        // Each call stands for a new process: nothing but the store carries over.
+        let pass = |limit, dry_run| {
+            let store = &store;
+            async move {
+                let mut stats = CasSweepStats::default();
+                sweep_universe_from_stored_cursor(
+                    universe_id,
+                    store,
+                    100,
+                    &[],
+                    limit,
+                    dry_run,
+                    std::time::Instant::now() + CAS_SWEEP_PASS_BUDGET,
+                    &mut stats,
+                )
+                .await;
+                stats
+            }
+        };
+
+        let first = pass(CAS_SWEEP_PAGE_LIMIT, false).await;
+        assert_eq!(first.rows_scanned, CAS_SWEEP_PAGE_LIMIT);
+        assert_eq!(first.rows_deleted, 0, "only live rows fit this pass");
+        assert_eq!(first.walks_completed, 0);
+        let stored = store.stored_cursor.lock().unwrap().clone();
+        assert!(stored.is_some());
+
+        let dry = pass(CAS_SWEEP_ROW_LIMIT, true).await;
+        assert_eq!(
+            dry.rows_scanned, 2,
+            "a dry run starts at the stored position"
+        );
+        assert_eq!(dry.candidates, 2);
+        assert_eq!(
+            *store.stored_cursor.lock().unwrap(),
+            stored,
+            "and does not move it"
+        );
+
+        let second = pass(CAS_SWEEP_ROW_LIMIT, false).await;
+        assert_eq!(second.rows_scanned, 2, "resumes past the live rows");
+        assert_eq!(second.rows_deleted, 2);
+        assert_eq!(second.walks_completed, 1);
+        assert_eq!(
+            *store.stored_cursor.lock().unwrap(),
+            None,
+            "reaching the end clears the position"
+        );
+
+        // The next walk starts at the oldest row and revisits everything.
+        let third = pass(CAS_SWEEP_ROW_LIMIT, false).await;
+        assert_eq!(third.rows_scanned, CAS_SWEEP_PAGE_LIMIT);
+        assert_eq!(third.rows_deleted, 0);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn cas_sweep_dry_run_traverses_multiple_pages_without_deleting_or_wrapping() {
         let count = CAS_SWEEP_PAGE_LIMIT + 3;
@@ -1930,40 +2577,5 @@ mod tests {
             *store.scan_limits.lock().unwrap(),
             vec![CAS_SWEEP_PAGE_LIMIT]
         );
-    }
-
-    fn snapshots(
-        states: impl IntoIterator<Item = (SessionId, CoreAgentState)>,
-    ) -> BTreeMap<SessionId, LoadedSessionSnapshot> {
-        states
-            .into_iter()
-            .map(|(session_id, state)| {
-                (
-                    session_id.clone(),
-                    LoadedSessionSnapshot {
-                        record: SessionRecord {
-                            metadata: Default::default(),
-                            session_id: session_id.clone(),
-                            display_name: None,
-                            lifecycle_status: harness::storage::SessionLifecycleStatus::New,
-                            closed_at_seq: None,
-                            closed_at_ms: None,
-                            activity: Default::default(),
-                            retention_root_session_id: session_id,
-                            delete_after_close_ms: None,
-                            delete_at_ms: None,
-                            managed: false,
-                            head: None,
-                            source_session_id: None,
-                            source_seq: None,
-                            origin: None,
-                            created_at_ms: 0,
-                            updated_at_ms: 0,
-                        },
-                        state,
-                    },
-                )
-            })
-            .collect()
     }
 }

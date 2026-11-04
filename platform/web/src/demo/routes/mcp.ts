@@ -68,8 +68,8 @@ function materialize(
       defaultServerLabel,
       description: stringOrNull(input.description),
       allowedTools: allowedTools.length > 0 ? allowedTools : null,
-      execution: input.execution === "native" ? "native" : "provider",
-      exposure: input.execution === "native" && input.exposure === "search" ? "search" : "inject",
+      execution: input.execution === "provider" ? "provider" : "runtime",
+      exposure: input.execution !== "provider" && input.exposure === "search" ? "search" : "inject",
       approval: typeof input.approval === "string" && APPROVALS.has(input.approval)
         ? (input.approval as McpServer["approval"])
         : "never",

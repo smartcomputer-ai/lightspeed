@@ -175,9 +175,9 @@ export type CodeExecutionTerminal =
 export type ToolCallId = string;
 /**
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "CodeToolCallStatus".
+ * via the `definition` "CodeToolCallOutcomeStatus".
  */
-export type CodeToolCallStatus =
+export type CodeToolCallOutcomeStatus =
   "pending" | "waiting" | "succeeded" | "failed" | "cancelled" | "unavailable";
 /**
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
@@ -200,9 +200,6 @@ export type CodeToolRejectionKind =
 export type ToolName = string;
 /**
  * Closed internal vocabulary carried by the shared delivery signal.
- *
- * Workflow-tool invocation bodies join this enum when the durable tool
- * contracts land. This first slice folds the two existing transports.
  *
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
  * via the `definition` "EmissionBody".
@@ -241,16 +238,16 @@ export type EmissionBody =
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
  * via the `definition` "RunStatus".
  */
-export type RunStatus = "active" | "parked" | "cancelling" | "completed" | "failed" | "cancelled";
+export type RunStatus = "running" | "parked" | "cancelling" | "completed" | "failed" | "cancelled";
 /**
  * Stable identifier for a promise: a session-scoped counter rendered as
  * `promise_<n>`, the same convention as `run_<n>`, so the model copies a
- * short handle rather than a digest. The harness hands every tool batch a
- * base one past the session cursor (`ToolInvocationBatchRequest::
- * promise_id_base`); the executor numbers the promises it creates from
- * that base, and the reducer accepts a creation only at or above the
- * batch's base and never twice. Producer correlation lives on
- * `PromiseSource`, not in the id.
+ * short handle rather than a digest. The harness hands every dispatch of a
+ * tool batch a base above the session cursor (`ToolInvocationBatchRequest::
+ * promise_id_base`); the executor numbers the promises it creates from that
+ * base. Proposal building accepts a creation only at or above the batch's
+ * base, and neither it nor the reducer accepts one twice. Producer correlation
+ * lives on `PromiseSource`, not in the id.
  *
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
  * via the `definition` "PromiseId".
@@ -300,6 +297,11 @@ export type EmissionProducer =
       universe_id: string;
       workflow_id: string;
     };
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "ToolId".
+ */
+export type ToolId = string;
 /**
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
  * via the `definition` "TranscriptionActivityResult".
@@ -470,14 +472,13 @@ export interface ChatActivation {
   triggerPrefixes?: string[];
 }
 /**
- * Close admission immediately. Cancellation additionally requests cleanup of
- * admitted work; closing a scope does not roll back any completed effects.
+ * Close admission immediately and cancel admitted work. Closing a scope does
+ * not roll back any completed effects.
  *
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
  * via the `definition` "CloseCodeToolScopeRequest".
  */
 export interface CloseCodeToolScopeRequest {
-  cancel_pending: boolean;
   execution_id: string;
 }
 /**
@@ -594,7 +595,7 @@ export interface CodeToolCallOutcome {
   error_ref?: string | null;
   output_ref?: string | null;
   request_id: string;
-  status: CodeToolCallStatus;
+  status: CodeToolCallOutcomeStatus;
 }
 /**
  * Admission failures are successful protocol replies, distinct from transport
@@ -624,7 +625,6 @@ export interface CodeToolScopeReport {
   calls: {
     [k: string]: CodeToolCallOutcome;
   };
-  cancel_requested: boolean;
   closed: boolean;
   execution_id: string;
 }
@@ -691,7 +691,8 @@ export interface ConversationStart {
   universeId: string;
 }
 /**
- * Bounded durable record of one successful workflow-tool tool call.
+ * Bounded durable record of one admitted workflow-tool call. A joined call is
+ * recorded while it is still pending.
  *
  * The model arguments remain in CAS and are referenced by `arguments_ref`.
  * Receiver-specific interpretation belongs to the receiving workflow.
@@ -704,7 +705,7 @@ export interface WorkflowToolInvocation {
   binding_fingerprint: string;
   /**
    * Keyed promise set created atomically with this invocation; `None`
-   * for notify (`Accepted`) completion. Request/reply is the single
+   * for `Accepted` completion. Request/reply is the single
    * reserved key `reply`.
    */
   completion_promises?: {
@@ -724,8 +725,8 @@ export interface WorkflowToolInvocation {
   session_universe_id: string;
   tool_batch_id: number;
   tool_call_id: ToolCallId;
-  tool_id: WorkflowToolId;
   turn_id: number;
+  workflow_tool_id: WorkflowToolId;
 }
 /**
  * Bounded cross-workflow fact delivered through the fixed
@@ -785,7 +786,7 @@ export interface OpenCodeToolScopeRequest {
    * tools. None selects all currently host-callable tools except the parent
    * operation. Reopening an existing scope retains its original bindings.
    */
-  allowed_tools?: ToolName[] | null;
+  allowed_tools?: ToolId[] | null;
   execution_id: string;
   max_calls: number;
   max_in_flight: number;

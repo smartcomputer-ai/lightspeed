@@ -1158,10 +1158,6 @@ fn response_budget_exempt(method: &str) -> bool {
             | api::METHOD_SESSION_READ
             | api::METHOD_SESSION_EVENTS_READ
             | api::METHOD_SESSION_RUNS_READ
-            | api::METHOD_SESSION_RUNS_START
-            | api::METHOD_SESSION_RUNS_CANCEL
-            | api::METHOD_SESSION_RUNS_APPROVALS_DECIDE
-            | api::METHOD_SESSION_RUNS_STEER
             | api::METHOD_SESSION_ENVIRONMENTS_ACTIVATE
             | api::METHOD_SESSION_ENVIRONMENTS_DEACTIVATE
             | api::METHOD_SESSION_PROFILES_APPLY

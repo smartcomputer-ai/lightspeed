@@ -6,7 +6,7 @@ Start with the extension path that fits the work:
 
 | Requirement | Extension path |
 | --- | --- |
-| Call an external service through ordinary tool requests | Register a native MCP server and grant it to the profile/session. |
+| Call an external service through ordinary tool requests | Register an MCP server on the runtime path and grant it to the profile/session. |
 | Start or coordinate durable external work | Declare a workflow tool and run its receiver or execution on a custom worker. |
 | Add a built-in runtime capability | Implement and register a compiled tool, including its admission and execution paths. |
 | Use another service speaking Responses or Chat Completions | Configure an OpenAI-compatible provider connection and select its model route. |
@@ -19,13 +19,13 @@ in its own service or worker.
 
 ## Add an external tool through MCP
 
-A native MCP server is the usual starting point for an external request/reply
-tool. Lightspeed handles discovery, tool admission, credentials, and execution
+An MCP server on the runtime path is the usual starting point for an external
+request/reply tool. Lightspeed handles discovery, tool admission, credentials, and execution
 through the stored server connection. The session or profile must also grant
 the MCP feature and select the server; registering an endpoint does not expose
 its tools to every agent.
 
-Native execution supports the existing Responses, Chat Completions, and
+Runtime execution, the default, supports the existing Responses, Chat Completions, and
 Anthropic Messages routes. Provider-hosted MCP has different reachability and
 capability constraints. Test discovery, one valid
 call, an argument error, and the expected approval behavior. For private

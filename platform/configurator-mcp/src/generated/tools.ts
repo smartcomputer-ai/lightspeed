@@ -38,8 +38,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_session_start",
     "method": "session/start",
     "group": "session",
-    "summary": "Create or reopen a session",
-    "description": "Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.",
+    "summary": "Start a session",
+    "description": "Creates a session, unshared unless access says universe, with optional config/profile setup. Explicit values override profile metadata and retention; the config's default environment attachment becomes active. Retrying an id returns it, keeps its audience, and restarts a stopped workflow execution from its log. Failed setup closes a server-allocated id.",
     "paramsType": "SessionStartParams",
     "resultType": "AgentApiOutcome<SessionStartResponse>",
     "inputSchema": {
@@ -80,6 +80,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ]
         },
         "displayName": {
+          "description": "Cannot contain NUL.",
           "type": [
             "string",
             "null"
@@ -228,6 +229,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "CompactionPolicy": {
           "oneOf": [
             {
+              "description": "The engine never compacts on its own, and `session/context/compact` still works.\nOnce active context reaches 2,000 entries each run fails at its next turn\nboundary, until a compaction brings the count down or the policy changes.",
               "properties": {
                 "mode": {
                   "const": "disabled",
@@ -306,7 +308,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "description": "Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
             },
             "inputLimitTokens": {
-              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
+              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors. Where a limit is known, a run start or steering holding one text entry over it is refused with `invalidRequest`.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -337,7 +339,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "$ref": "#/definitions/EnvironmentAccess"
             },
             "default": {
-              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. Never overrides a live\nselection and never applies on a plain `session/config/put`.",
+              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. A `session/config/put` that\nchanges the default activates it when the put leaves nothing active, and\nrefuses a default that cannot be selected. Never overrides a live selection,\nand an unchanged default never undoes a deliberate deactivation.",
               "type": "boolean"
             },
             "environmentId": {
@@ -641,17 +643,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the harness drive loop.",
+          "description": "Limits applied to every run of the session unless the run sets its own.",
           "properties": {
-            "maxToolRounds": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
             "maxTurns": {
+              "description": "Model turns a run may start, at least 1. A run that needs another turn past this fails with `limitExceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -688,7 +683,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session. A request that newly names a\nserver it cannot resolve is refused. Once attached, or when brought in by a\nprofile, a server that is disabled, deleted, or otherwise unusable is left out\nof later runs and the model is told, so a catalog action never stops the\nsession.",
           "properties": {
             "serverId": {
               "type": "string"
@@ -887,7 +882,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime. The model name may change at\nany time: retained reasoning and compaction state goes to the new model\nunchanged, and the provider keeps or drops it. A combination the provider\nrefuses fails that run as `requestRejected`, and the session stays open."
             }
           },
           "type": "object"
@@ -919,13 +914,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               },
               "type": "array"
             },
-            "deadlineMs": {
-              "default": 3600000,
-              "description": "Per-child run deadline in milliseconds; at most the execution\nceiling of 24 hours.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            },
             "maxConcurrent": {
               "default": 4,
               "description": "Open sessions under the root at any time, excluding the root.",
@@ -946,6 +934,15 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "runTimeoutMs": {
+              "description": "Per-child run deadline in milliseconds. Omit it for no time limit.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "version": {
               "default": 1,
@@ -1238,7 +1235,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/read",
     "group": "session",
     "summary": "Read a session",
-    "description": "Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
+    "description": "Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
     "paramsType": "SessionReadParams",
     "resultType": "AgentApiOutcome<SessionReadResponse>",
     "inputSchema": {
@@ -1268,11 +1265,15 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/list",
     "group": "session",
     "summary": "List sessions",
-    "description": "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.",
+    "description": "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by filters such as visibleTo, which keeps sessions whose root is shared with the universe or was created by that actor. An unknown parameter is refused. Pages may shift while sessions are changing.",
     "paramsType": "SessionListParams",
     "resultType": "AgentApiOutcome<SessionListResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "description": "Filters for `session/list`. An unknown field is refused, so a misspelled\nfilter fails rather than returning a wider list.",
       "properties": {
         "closed": {
           "description": "Only closed sessions (`true`), or only new and open ones (`false`).\nAbsent lists both. Every filter here narrows the list, and an absent\none does not filter.",
@@ -1288,18 +1289,18 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "null"
           ]
         },
+        "lifecycleControlled": {
+          "description": "Only work whose root a lifecycle controller owns (`true`), or work no\ncontroller owns (`false`); sub-agents follow their root. Absent lists\nboth.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "limit": {
           "format": "uint32",
           "minimum": 0,
           "type": [
             "integer",
-            "null"
-          ]
-        },
-        "managed": {
-          "description": "Only work whose root a lifecycle controller manages (`true`), or\nwork nobody manages (`false`); sub-agents follow their root. Absent\nlists both.",
-          "type": [
-            "boolean",
             "null"
           ]
         },
@@ -1347,7 +1348,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/config/put",
     "group": "session",
     "summary": "Replace session configuration",
-    "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.",
+    "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.",
     "paramsType": "SessionConfigPutParams",
     "resultType": "AgentApiOutcome<SessionConfigPutResponse>",
     "inputSchema": {
@@ -1474,6 +1475,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "CompactionPolicy": {
           "oneOf": [
             {
+              "description": "The engine never compacts on its own, and `session/context/compact` still works.\nOnce active context reaches 2,000 entries each run fails at its next turn\nboundary, until a compaction brings the count down or the policy changes.",
               "properties": {
                 "mode": {
                   "const": "disabled",
@@ -1552,7 +1554,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "description": "Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
             },
             "inputLimitTokens": {
-              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
+              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors. Where a limit is known, a run start or steering holding one text entry over it is refused with `invalidRequest`.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -1583,7 +1585,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "$ref": "#/definitions/EnvironmentAccess"
             },
             "default": {
-              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. Never overrides a live\nselection and never applies on a plain `session/config/put`.",
+              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. A `session/config/put` that\nchanges the default activates it when the put leaves nothing active, and\nrefuses a default that cannot be selected. Never overrides a live selection,\nand an unchanged default never undoes a deliberate deactivation.",
               "type": "boolean"
             },
             "environmentId": {
@@ -1832,17 +1834,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the harness drive loop.",
+          "description": "Limits applied to every run of the session unless the run sets its own.",
           "properties": {
-            "maxToolRounds": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
             "maxTurns": {
+              "description": "Model turns a run may start, at least 1. A run that needs another turn past this fails with `limitExceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -1879,7 +1874,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session. A request that newly names a\nserver it cannot resolve is refused. Once attached, or when brought in by a\nprofile, a server that is disabled, deleted, or otherwise unusable is left out\nof later runs and the model is told, so a catalog action never stops the\nsession.",
           "properties": {
             "serverId": {
               "type": "string"
@@ -1986,7 +1981,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime. The model name may change at\nany time: retained reasoning and compaction state goes to the new model\nunchanged, and the provider keeps or drops it. A combination the provider\nrefuses fails that run as `requestRejected`, and the session stays open."
             }
           },
           "type": "object"
@@ -2018,13 +2013,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               },
               "type": "array"
             },
-            "deadlineMs": {
-              "default": 3600000,
-              "description": "Per-child run deadline in milliseconds; at most the execution\nceiling of 24 hours.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            },
             "maxConcurrent": {
               "default": 4,
               "description": "Open sessions under the root at any time, excluding the root.",
@@ -2045,6 +2033,15 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "runTimeoutMs": {
+              "description": "Per-child run deadline in milliseconds. Omit it for no time limit.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "version": {
               "default": 1,
@@ -2336,7 +2333,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "displayName": {
-          "description": "New display name; absent clears it.",
+          "description": "New display name; absent clears it. Cannot contain NUL.",
           "type": [
             "string",
             "null"
@@ -2386,7 +2383,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/retention/put",
     "group": "session/delete",
     "summary": "Replace session retention",
-    "description": "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
+    "description": "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
     "paramsType": "SessionRetentionPutParams",
     "resultType": "AgentApiOutcome<SessionRetentionPutResponse>",
     "inputSchema": {
@@ -2416,11 +2413,32 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
+    "name": "lightspeed_session_restart",
+    "method": "session/restart",
+    "group": "session",
+    "summary": "Restart a stopped session",
+    "description": "Starts a new workflow execution for an open session whose last one stopped, from its log. A run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards. A running session is left alone. Refused for a closed session and for one with no run history.",
+    "paramsType": "SessionRestartParams",
+    "resultType": "AgentApiOutcome<SessionRestartResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "lightspeed_session_close",
     "method": "session/close",
     "group": "session",
     "summary": "Close a session",
-    "description": "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
+    "description": "Closes an idle session and detaches its environment bindings. Without force, active work of any kind, including a pending detached promise, rejects the call. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
     "paramsType": "SessionCloseParams",
     "resultType": "AgentApiOutcome<SessionCloseResponse>",
     "inputSchema": {
@@ -2428,7 +2446,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "properties": {
         "force": {
           "default": false,
-          "description": "Cancel the active run and drop queued runs instead of rejecting on\nactive work. Recovers sessions whose workflow no longer exists (e.g.\nafter an operator terminate) by reconciling the session log directly.",
+          "description": "Cancel the active run and drop queued runs instead of rejecting on\nactive work. Recovers sessions whose workflow no longer exists (e.g.\nafter an operator terminate) by reconciling the session log directly. A\nsession that never opened has no log to close, so it is removed and the\ncall answers `notFound`.",
           "type": "boolean"
         },
         "sessionId": {
@@ -2446,14 +2464,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/delete",
     "group": "session/delete",
     "summary": "Delete closed sessions",
-    "description": "Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.",
+    "description": "Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.",
     "paramsType": "SessionDeleteParams",
     "resultType": "AgentApiOutcome<SessionDeleteResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "cascade": {
-          "description": "Delete history forks and delegated descendants too. False requires the\ntarget to be a closed retention-tree leaf.",
+          "description": "Delete delegated descendants too. False requires the target to be a\nclosed retention-tree leaf.",
           "type": "boolean"
         },
         "sessionId": {
@@ -2592,7 +2610,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/context/append",
     "group": "session",
     "summary": "Append keyed session context",
-    "description": "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.",
+    "description": "Admits a batch of keyed context entries with per-entry results. The same content under a key is a no-op. Different content replaces the earlier entry, which leaves active context, and goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry without discarding successful entries.",
     "paramsType": "ContextAppendParams",
     "resultType": "AgentApiOutcome<ContextAppendResponse>",
     "inputSchema": {
@@ -2620,7 +2638,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "$ref": "#/definitions/InputItem"
             },
             "key": {
-              "description": "Stable client-chosen context key. Re-sending the same key with the\nsame content is a no-op, so the key doubles as the idempotency handle.\n`run`, `run.*`, `runtime`, and `runtime.*` are reserved for the runtime.",
+              "description": "Stable client-chosen context key, which names one entry. Re-sending\nthe key with the same content is a no-op, so a retry lands once. With\ndifferent content the earlier entry leaves active context and the new\none goes last under a new id; a catalog keeps the earlier version\nrendered and supersedes it instead.\n`run`, `run.*`, `runtime`, and `runtime.*` are reserved for the runtime.",
               "type": "string"
             }
           },
@@ -2635,7 +2653,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             {
               "properties": {
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -2668,7 +2686,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -2704,13 +2722,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "name": {
+                  "description": "Shown as the item's preview; at most 256 characters, with no NUL.",
                   "type": [
                     "string",
                     "null"
                   ]
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -2737,7 +2756,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "title": {
-                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".",
+                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".\nCannot contain NUL.",
                   "type": "string"
                 },
                 "type": {
@@ -2842,7 +2861,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             {
               "properties": {
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -2875,7 +2894,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -2911,13 +2930,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "name": {
+                  "description": "Shown as the item's preview; at most 256 characters, with no NUL.",
                   "type": [
                     "string",
                     "null"
                   ]
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -2944,7 +2964,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "title": {
-                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".",
+                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".\nCannot contain NUL.",
                   "type": "string"
                 },
                 "type": {
@@ -2977,7 +2997,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/context/compact",
     "group": "session",
     "summary": "Compact session context",
-    "description": "Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.",
+    "description": "Performs one standalone compaction in any automatic mode, including Disabled, and waits for its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves the context unchanged and fails the call with its reason. A wait that runs out fails with operationPending while it can still complete; session events report the outcome.",
     "paramsType": "ContextCompactParams",
     "resultType": "AgentApiOutcome<ContextCompactResponse>",
     "inputSchema": {
@@ -2998,7 +3018,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/runs/start",
     "group": "session",
     "summary": "Start an agent run",
-    "description": "Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.",
+    "description": "Returns once the run is accepted — queued behind an active run, or running — not when it finishes. A compacting session holds the request; if the wait runs out the call fails with operationPending and the submission id, and the run still starts later. Retrying with that id cannot start a second run. Follow session events or reread the session.",
     "paramsType": "RunStartParams",
     "resultType": "AgentApiOutcome<RunStartResponse>",
     "inputSchema": {
@@ -3023,7 +3043,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "null"
             }
           ],
-          "description": "Request an at-least-once terminal emission to the managed session's\nimmutable lifecycle controller. The destination is derived by the\ngateway; callers supply only the controller's opaque dedup token."
+          "description": "Request a terminal emission to the session's immutable\nlifecycle controller. It is delivered to a running controller, which may\nhear it more than once; others reconcile through `session/runs/read`.\nThe destination is derived by the gateway; callers supply only the\ncontroller's opaque dedup token."
         },
         "sessionId": {
           "type": "string"
@@ -3032,7 +3052,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "$ref": "#/definitions/RunStartSource"
         },
         "submissionId": {
-          "description": "Client-supplied idempotency key, unique per session. Retrying\n`session/runs/start` with the same submission id and the same\nsource/config/terminal notification returns the original run instead\nof starting a second one; reusing a submission id with any of those\ninputs changed is rejected.",
+          "description": "Client-supplied idempotency key, unique per session. Retrying\n`session/runs/start` with the same submission id and the same\nsource/config/terminal notification returns the original run instead\nof starting a second one; reusing a submission id with any of those\ninputs changed is rejected. The session recognizes it against queued and\nactive runs and its most recent 256 terminal runs, so a retry older than\nthat starts a new run.",
           "type": [
             "string",
             "null"
@@ -3102,7 +3122,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             {
               "properties": {
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -3135,7 +3155,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -3171,13 +3191,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "name": {
+                  "description": "Shown as the item's preview; at most 256 characters, with no NUL.",
                   "type": [
                     "string",
                     "null"
                   ]
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -3204,7 +3225,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "title": {
-                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".",
+                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".\nCannot contain NUL.",
                   "type": "string"
                 },
                 "type": {
@@ -3259,15 +3280,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         },
         "RunLimitsConfig": {
           "properties": {
-            "maxToolRounds": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
             "maxTurns": {
+              "description": "Model turns this run may start, at least 1, in place of the session's `maxTurns`.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -3309,7 +3323,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Optional model override within the session's provider identity and API\nkind. Changing either requires a new session, even before the first run."
+              "description": "Optional model override within the session's provider identity and API\nkind. Changing either requires a new session, even before the first run.\nAny model on that route is allowed, whatever context the session retains."
             }
           },
           "type": "object"
@@ -3415,7 +3429,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/runs/list",
     "group": "session",
     "summary": "List session runs",
-    "description": "Returns a newest-first keyset page of bounded run summaries projected from current reducer state.",
+    "description": "Returns a newest-first keyset page of bounded run summaries, from current state for recent runs and from the session's log for older ones.",
     "paramsType": "RunListParams",
     "resultType": "AgentApiOutcome<RunListResponse>",
     "inputSchema": {
@@ -3451,7 +3465,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/runs/read",
     "group": "session",
     "summary": "Read one session run",
-    "description": "Reads and projects one run from its bounded event interval, paged by event sequence.",
+    "description": "Projects one run from its events. A run past the server's detail limit keeps its opening and its most recent turns and sets earlierEventsOmitted; session/events/read has the rest.",
     "paramsType": "RunReadParams",
     "resultType": "AgentApiOutcome<RunReadResponse>",
     "inputSchema": {
@@ -3476,7 +3490,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/runs/cancel",
     "group": "session",
     "summary": "Cancel a run",
-    "description": "Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
+    "description": "Requests cancellation of the named queued or active run and returns its summary; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
     "paramsType": "RunCancelParams",
     "resultType": "AgentApiOutcome<RunCancelResponse>",
     "inputSchema": {
@@ -3501,7 +3515,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/runs/approvals/decide",
     "group": "session",
     "summary": "Decide pending run approvals",
-    "description": "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.",
+    "description": "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision. A decision whose wait runs out reports status pending and can still apply.",
     "paramsType": "RunApprovalsDecideParams",
     "resultType": "AgentApiOutcome<RunApprovalsDecideResponse>",
     "inputSchema": {
@@ -3563,25 +3577,32 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/runs/steer",
     "group": "session",
     "summary": "Steer the active run",
-    "description": "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.",
+    "description": "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. A parked run holds it without waking. Rejected for queued, cancelling, or finished runs. Supply submissionId so a retry lands once; a wait that runs out fails with operationPending and the steering can still land.",
     "paramsType": "RunSteerParams",
     "resultType": "AgentApiOutcome<RunSteerResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "items": {
-          "description": "Steering input, same vocabulary as run input. Delivered to the model\nat the next turn boundary of the run; it does not interrupt the\nin-flight turn or wake a parked await.",
+          "description": "Steering input, same vocabulary as run input. Delivered to the model\nat the next turn boundary of the run; it does not interrupt the\nin-flight turn or wake a parked run. If the run fails before that\nboundary, the input still enters context and the next run sees it as\nhistory. Cancelling the run drops it.",
           "items": {
             "$ref": "#/definitions/InputItem"
           },
           "type": "array"
         },
         "runId": {
-          "description": "The run to steer. Must be the session's current active run (running\nor parked on an await); a finished or cancelling run is rejected so a\nlate steer never lands on the next run.",
+          "description": "The run to steer. Must be the session's current active run, running or\nparked; a queued, finished or cancelling run is rejected so a late steer\nnever lands on the next run.",
           "type": "string"
         },
         "sessionId": {
           "type": "string"
+        },
+        "submissionId": {
+          "description": "Client-supplied idempotency key. Retrying with the same id and the same items\nlands the steering once and returns its original id; reusing the id with other\nitems is rejected. The run recognizes it among its most recent steering batches.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -3596,7 +3617,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             {
               "properties": {
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -3629,7 +3650,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -3665,13 +3686,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "name": {
+                  "description": "Shown as the item's preview; at most 256 characters, with no NUL.",
                   "type": [
                     "string",
                     "null"
                   ]
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -3698,7 +3720,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "title": {
-                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".",
+                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".\nCannot contain NUL.",
                   "type": "string"
                 },
                 "type": {
@@ -3885,6 +3907,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "CompactionPolicy": {
           "oneOf": [
             {
+              "description": "The engine never compacts on its own, and `session/context/compact` still works.\nOnce active context reaches 2,000 entries each run fails at its next turn\nboundary, until a compaction brings the count down or the policy changes.",
               "properties": {
                 "mode": {
                   "const": "disabled",
@@ -3963,7 +3986,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "description": "Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
             },
             "inputLimitTokens": {
-              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
+              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors. Where a limit is known, a run start or steering holding one text entry over it is refused with `invalidRequest`.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -3994,7 +4017,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "$ref": "#/definitions/EnvironmentAccess"
             },
             "default": {
-              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. Never overrides a live\nselection and never applies on a plain `session/config/put`.",
+              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. A `session/config/put` that\nchanges the default activates it when the put leaves nothing active, and\nrefuses a default that cannot be selected. Never overrides a live selection,\nand an unchanged default never undoes a deliberate deactivation.",
               "type": "boolean"
             },
             "environmentId": {
@@ -4298,17 +4321,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the harness drive loop.",
+          "description": "Limits applied to every run of the session unless the run sets its own.",
           "properties": {
-            "maxToolRounds": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
             "maxTurns": {
+              "description": "Model turns a run may start, at least 1. A run that needs another turn past this fails with `limitExceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -4345,7 +4361,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session. A request that newly names a\nserver it cannot resolve is refused. Once attached, or when brought in by a\nprofile, a server that is disabled, deleted, or otherwise unusable is left out\nof later runs and the model is told, so a catalog action never stops the\nsession.",
           "properties": {
             "serverId": {
               "type": "string"
@@ -4544,7 +4560,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime. The model name may change at\nany time: retained reasoning and compaction state goes to the new model\nunchanged, and the provider keeps or drops it. A combination the provider\nrefuses fails that run as `requestRejected`, and the session stays open."
             }
           },
           "type": "object"
@@ -4576,13 +4592,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               },
               "type": "array"
             },
-            "deadlineMs": {
-              "default": 3600000,
-              "description": "Per-child run deadline in milliseconds; at most the execution\nceiling of 24 hours.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            },
             "maxConcurrent": {
               "default": 4,
               "description": "Open sessions under the root at any time, excluding the root.",
@@ -4603,6 +4612,15 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "runTimeoutMs": {
+              "description": "Per-child run deadline in milliseconds. Omit it for no time limit.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "version": {
               "default": 1,
@@ -5964,6 +5982,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "CompactionPolicy": {
           "oneOf": [
             {
+              "description": "The engine never compacts on its own, and `session/context/compact` still works.\nOnce active context reaches 2,000 entries each run fails at its next turn\nboundary, until a compaction brings the count down or the policy changes.",
               "properties": {
                 "mode": {
                   "const": "disabled",
@@ -6042,7 +6061,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "description": "Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
             },
             "inputLimitTokens": {
-              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
+              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors. Where a limit is known, a run start or steering holding one text entry over it is refused with `invalidRequest`.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -6073,7 +6092,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "$ref": "#/definitions/EnvironmentAccess"
             },
             "default": {
-              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. Never overrides a live\nselection and never applies on a plain `session/config/put`.",
+              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. A `session/config/put` that\nchanges the default activates it when the put leaves nothing active, and\nrefuses a default that cannot be selected. Never overrides a live selection,\nand an unchanged default never undoes a deliberate deactivation.",
               "type": "boolean"
             },
             "environmentId": {
@@ -6322,17 +6341,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the harness drive loop.",
+          "description": "Limits applied to every run of the session unless the run sets its own.",
           "properties": {
-            "maxToolRounds": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
             "maxTurns": {
+              "description": "Model turns a run may start, at least 1. A run that needs another turn past this fails with `limitExceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -6369,7 +6381,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session. A request that newly names a\nserver it cannot resolve is refused. Once attached, or when brought in by a\nprofile, a server that is disabled, deleted, or otherwise unusable is left out\nof later runs and the model is told, so a catalog action never stops the\nsession.",
           "properties": {
             "serverId": {
               "type": "string"
@@ -6532,7 +6544,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime. The model name may change at\nany time: retained reasoning and compaction state goes to the new model\nunchanged, and the provider keeps or drops it. A combination the provider\nrefuses fails that run as `requestRejected`, and the session stays open."
             }
           },
           "type": "object"
@@ -6564,13 +6576,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               },
               "type": "array"
             },
-            "deadlineMs": {
-              "default": 3600000,
-              "description": "Per-child run deadline in milliseconds; at most the execution\nceiling of 24 hours.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            },
             "maxConcurrent": {
               "default": 4,
               "description": "Open sessions under the root at any time, excluding the root.",
@@ -6591,6 +6596,15 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "runTimeoutMs": {
+              "description": "Per-child run deadline in milliseconds. Omit it for no time limit.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "version": {
               "default": 1,
@@ -7097,6 +7111,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "CompactionPolicy": {
           "oneOf": [
             {
+              "description": "The engine never compacts on its own, and `session/context/compact` still works.\nOnce active context reaches 2,000 entries each run fails at its next turn\nboundary, until a compaction brings the count down or the policy changes.",
               "properties": {
                 "mode": {
                   "const": "disabled",
@@ -7175,7 +7190,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "description": "Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
             },
             "inputLimitTokens": {
-              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
+              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors. Where a limit is known, a run start or steering holding one text entry over it is refused with `invalidRequest`.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -7206,7 +7221,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "$ref": "#/definitions/EnvironmentAccess"
             },
             "default": {
-              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. Never overrides a live\nselection and never applies on a plain `session/config/put`.",
+              "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. A `session/config/put` that\nchanges the default activates it when the put leaves nothing active, and\nrefuses a default that cannot be selected. Never overrides a live selection,\nand an unchanged default never undoes a deliberate deactivation.",
               "type": "boolean"
             },
             "environmentId": {
@@ -7455,17 +7470,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the harness drive loop.",
+          "description": "Limits applied to every run of the session unless the run sets its own.",
           "properties": {
-            "maxToolRounds": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
             "maxTurns": {
+              "description": "Model turns a run may start, at least 1. A run that needs another turn past this fails with `limitExceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -7502,7 +7510,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session.",
+          "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session. A request that newly names a\nserver it cannot resolve is refused. Once attached, or when brought in by a\nprofile, a server that is disabled, deleted, or otherwise unusable is left out\nof later runs and the model is told, so a catalog action never stops the\nsession.",
           "properties": {
             "serverId": {
               "type": "string"
@@ -7665,7 +7673,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime. The model name may change at\nany time: retained reasoning and compaction state goes to the new model\nunchanged, and the provider keeps or drops it. A combination the provider\nrefuses fails that run as `requestRejected`, and the session stays open."
             }
           },
           "type": "object"
@@ -7697,13 +7705,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               },
               "type": "array"
             },
-            "deadlineMs": {
-              "default": 3600000,
-              "description": "Per-child run deadline in milliseconds; at most the execution\nceiling of 24 hours.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            },
             "maxConcurrent": {
               "default": 4,
               "description": "Open sessions under the root at any time, excluding the root.",
@@ -7724,6 +7725,15 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "runTimeoutMs": {
+              "description": "Per-child run deadline in milliseconds. Omit it for no time limit.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "version": {
               "default": 1,
@@ -8281,7 +8291,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "mcp/servers/put",
     "group": "mcp",
     "summary": "Create or replace an MCP server record",
-    "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.",
+    "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.",
     "paramsType": "McpServerPutParams",
     "resultType": "AgentApiOutcome<McpServerPutResponse>",
     "inputSchema": {
@@ -8512,7 +8522,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "$ref": "#/definitions/RemoteMcpExecution"
                 }
               ],
-              "default": "provider"
+              "default": "runtime"
             },
             "exposure": {
               "allOf": [
@@ -8561,9 +8571,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "type": "string"
         },
         "RemoteMcpExecution": {
+          "description": "Who connects to the server and runs its tools. `runtime`, the default, means\nLightspeed does: each call runs once, under the approval policy, and is recorded.\nWith `provider` the model provider does, so the endpoint must be publicly reachable\nand tools run at least once: a retried generation re-sends the request, so a tool\ncan run again with its side effects, and the transcript shows at most one run.",
           "enum": [
             "provider",
-            "native"
+            "runtime"
           ],
           "type": "string"
         },

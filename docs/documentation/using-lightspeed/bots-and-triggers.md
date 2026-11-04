@@ -206,13 +206,20 @@ Expanding an event reveals its stored outcome and replay action.*
 The agent can resolve an event as `handled`, `deferred`, `ignored`, or
 `blocked`, with a summary. Those are the agent's reported decisions. A
 `deferred` outcome does not schedule a retry automatically. An unresolved
-event has no explicit resolution, while `run_failed` records an execution
+event has no explicit resolution, while `runFailed` records an execution
 failure. System dispositions such as `steered`, `appended`, or `archived`
 describe what the controller did with delivery.
 
 **Replay this event** creates a new event and repeats the agent work using
 the original routing. It can repeat external effects. This action is distinct
 from deterministic workflow replay used internally to recover state.
+
+Starting a run is retried on its own. A delivery the runtime cannot act on at all, such
+as a file it cannot read or a request it refuses, ends `runFailed` straight away, and a
+chat gets the failure reply. One that hits a temporary failure goes back to the queue with a
+backoff of up to 5 minutes, for about 20 minutes in all, and then ends `runFailed`. A
+start held behind a compaction can still land after that. A delivery waiting on a busy
+session has no such limit: it looks again every few seconds until the session is free.
 
 ## Pause, update, reset, or close
 
@@ -227,12 +234,23 @@ held by the limit waits for the next UTC day. Flood protection can also pause
 an individual trigger, which must be resumed separately.
 
 The named session profile is reapplied to Main when it is idle after the
-profile changes. Open routed threads keep their setup until closed. Use the
+profile changes. If that fails, the bot shows **needs attention** with the real
+message, and keeps trying on its own at intervals of up to 15 minutes. Its routed threads keep
+working meanwhile. Open routed threads keep their setup until closed. Use the
 conversation menu's **Reset Main…** or corresponding thread reset when you
 want a fresh conversation. Reset closes the old conversation and its open
 children at an idle boundary and retains the previous history according to
 retention policy. Main gets a successor as the bot reconciles; a routed
-thread gets its next conversation when another event needs it.
+thread gets its next conversation when another event needs it. A bot's conversations
+are kept until deleted, whatever retention its profile sets.
+
+A run may take as long as it needs, and steering also reaches a run parked on an
+approval or a result. If a conversation's session dies or is closed outside the bot,
+the bot moves on to a new session with no earlier context. An event whose run had not
+started is retried there once. An event whose run was under way ends `runFailed`,
+which a waiting bot notices within 15 minutes, or at once if the session is force
+closed. A session stuck running holds its conversation until someone force closes it.
+Rotating a conversation forces the old session closed when its workflow has stopped.
 
 Under **Settings → Danger zone**, **Close bot** is terminal. It cancels work,
 closes conversations and descendants, archives pending events, removes
@@ -256,6 +274,8 @@ templates' idle policies.
 | The first poll appears to do nothing | It establishes a baseline. Introduce a new source item to test later delivery. |
 | A trigger stopped producing events | Check poll failures, flood protection, and whether a one-time schedule already fired. |
 | A successful run has no useful event outcome | Inspect the conversation and brief. The agent needs to resolve admitted events, not only write a final answer. |
+| Events pile up behind one conversation | A session stuck running holds its conversation. Inspect it, and force close it to let the bot move on. |
+| Conversation context disappeared | The session died or was closed, and the bot continued in a new one. The bot's status names the old session. |
 
 To give the bot a messaging account, continue with
 [Chat channels](chat-channels.md). To delegate parts of its work or coordinate

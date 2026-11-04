@@ -1,20 +1,23 @@
 use harness::{
-    CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND, CoreAgentCodec,
-    CoreAgentEvent, CoreAgentJoins, StoredEvent, UncommittedCoreAgentEvent, WorkflowEndpointRef,
-    WorkflowToolConfigEvent,
-    session::{EventSeq, SessionId, StoredJoins, UncommittedStoredEvent},
+    CoreAgentCodec, CoreAgentEvent, CoreAgentJoins, UncommittedCoreAgentEvent, WorkflowEndpointRef,
+    WorkflowToolConfigEvent, event_kind,
+    session::{EventSeq, SessionId, SessionPosition, UncommittedStoredEvent},
     storage::{
-        AppendSessionEvents, CreateClonedSession, CreateForkedSession, CreateSession, ListSessions,
-        SessionLifecycleStatus, SessionStore, SessionStoreError,
+        AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession, CreateForkedSession,
+        CreateSession, ListSessions, SessionLifecycleStatus, SessionStore, SessionStoreError,
     },
 };
 use sqlx::postgres::PgPoolOptions;
 use store_pg::{PgStore, PgStoreConfig};
 use uuid::Uuid;
 
+fn committed_head(appended: &AppendSessionEventsResult) -> Option<SessionPosition> {
+    appended.entries.last().map(|entry| entry.position.clone())
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres env"]
-async fn pg_live_lifecycle_projection_rejects_managed_branches() {
+async fn pg_live_lifecycle_projection_rejects_controlled_branches() {
     let store = live_store().await;
     let parent = SessionId::new("lifecycle-parent");
     let created = store
@@ -35,7 +38,7 @@ async fn pg_live_lifecycle_projection_rejects_managed_branches() {
         .append(AppendSessionEvents {
             session_id: parent.clone(),
             expected_head: None,
-            events: vec![lifecycle_event(10, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)],
+            events: vec![lifecycle_event(10, event_kind::LIFECYCLE_OPENED)],
         })
         .await
         .expect("append opened event");
@@ -50,9 +53,9 @@ async fn pg_live_lifecycle_projection_rejects_managed_branches() {
     store
         .append(AppendSessionEvents {
             session_id: parent.clone(),
-            expected_head: opened.head,
+            expected_head: committed_head(&opened),
             events: vec![
-                managed_bindings_event(
+                declared_bindings_event(
                     11,
                     Some(WorkflowEndpointRef {
                         workflow_id: "lifecycle/controller-1".to_owned(),
@@ -60,7 +63,7 @@ async fn pg_live_lifecycle_projection_rejects_managed_branches() {
                     }),
                 ),
                 lifecycle_event(12, "lightspeed.test.work"),
-                lifecycle_event(13, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
+                lifecycle_event(13, event_kind::LIFECYCLE_CLOSED),
             ],
         })
         .await
@@ -75,7 +78,7 @@ async fn pg_live_lifecycle_projection_rejects_managed_branches() {
         SessionLifecycleStatus::Closed
     );
     assert_eq!(closed_record.closed_at_seq, Some(EventSeq::new(4)));
-    assert!(closed_record.managed);
+    assert!(closed_record.lifecycle_controlled);
 
     let listed = store
         .list_sessions(ListSessions {
@@ -93,34 +96,34 @@ async fn pg_live_lifecycle_projection_rejects_managed_branches() {
         listed_parent.lifecycle_status,
         SessionLifecycleStatus::Closed
     );
-    assert!(listed_parent.managed);
+    assert!(listed_parent.lifecycle_controlled);
 
     let clone_error = store
         .create_cloned_session(CreateClonedSession {
             source_session_id: parent.clone(),
-            session_id: SessionId::new("managed-clone"),
+            session_id: SessionId::new("controlled-clone"),
             created_at_ms: 19,
-            opening_events: vec![lifecycle_event(19, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)],
+            opening_events: vec![lifecycle_event(19, event_kind::LIFECYCLE_OPENED)],
         })
         .await
-        .expect_err("managed session cannot be cloned");
+        .expect_err("declared session cannot be cloned");
     assert!(matches!(
         clone_error,
-        SessionStoreError::ManagedSessionCannotBranch { .. }
+        SessionStoreError::LifecycleControlledSessionCannotBranch { .. }
     ));
 
     let fork_error = store
         .create_forked_session(CreateForkedSession {
             source_session_id: parent.clone(),
-            session_id: SessionId::new("managed-fork"),
+            session_id: SessionId::new("controlled-fork"),
             source_seq: EventSeq::new(4),
             created_at_ms: 20,
         })
         .await
-        .expect_err("managed session cannot be forked");
+        .expect_err("declared session cannot be forked");
     assert!(matches!(
         fork_error,
-        SessionStoreError::ManagedSessionCannotBranch { .. }
+        SessionStoreError::LifecycleControlledSessionCannotBranch { .. }
     ));
 
     let tool_only = SessionId::new("workflow-tools-without-controller");
@@ -140,8 +143,8 @@ async fn pg_live_lifecycle_projection_rejects_managed_branches() {
             session_id: tool_only.clone(),
             expected_head: None,
             events: vec![
-                lifecycle_event(31, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND),
-                managed_bindings_event(32, None),
+                lifecycle_event(31, event_kind::LIFECYCLE_OPENED),
+                declared_bindings_event(32, None),
             ],
         })
         .await
@@ -151,7 +154,7 @@ async fn pg_live_lifecycle_projection_rejects_managed_branches() {
         .await
         .expect("load tool-only session")
         .expect("tool-only session exists");
-    assert!(!tool_only_record.managed);
+    assert!(!tool_only_record.lifecycle_controlled);
     let tool_only_fork = store
         .create_forked_session(CreateForkedSession {
             source_session_id: tool_only,
@@ -161,12 +164,12 @@ async fn pg_live_lifecycle_projection_rejects_managed_branches() {
         })
         .await
         .expect("tool-only session remains forkable");
-    assert!(!tool_only_fork.managed);
+    assert!(!tool_only_fork.lifecycle_controlled);
 
     cleanup_universe(&store).await;
 }
 
-fn managed_bindings_event(
+fn declared_bindings_event(
     at_ms: u64,
     lifecycle_controller: Option<WorkflowEndpointRef>,
 ) -> UncommittedStoredEvent {
@@ -175,7 +178,7 @@ fn managed_bindings_event(
             observed_at_ms: at_ms,
             joins: CoreAgentJoins::default(),
             event: CoreAgentEvent::WorkflowToolConfig(
-                WorkflowToolConfigEvent::ManagedBindingsAdmitted {
+                WorkflowToolConfigEvent::DeclaredBindingsAdmitted {
                     session_universe_id: Uuid::from_u128(1),
                     declaration_version: 1,
                     lifecycle_controller,
@@ -184,7 +187,7 @@ fn managed_bindings_event(
                 },
             ),
         })
-        .expect("encode managed bindings event")
+        .expect("encode declared bindings event")
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -207,7 +210,7 @@ async fn pg_live_delete_is_closed_only_and_preserves_fork_history() {
         .append(AppendSessionEvents {
             session_id: parent.clone(),
             expected_head: None,
-            events: vec![lifecycle_event(10, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)],
+            events: vec![lifecycle_event(10, event_kind::LIFECYCLE_OPENED)],
         })
         .await
         .expect("open parent");
@@ -223,8 +226,8 @@ async fn pg_live_delete_is_closed_only_and_preserves_fork_history() {
     store
         .append(AppendSessionEvents {
             session_id: parent.clone(),
-            expected_head: opened.head,
-            events: vec![lifecycle_event(11, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)],
+            expected_head: committed_head(&opened),
+            events: vec![lifecycle_event(11, event_kind::LIFECYCLE_CLOSED)],
         })
         .await
         .expect("close parent");
@@ -298,8 +301,8 @@ async fn pg_live_retention_deadline_follows_close_time_and_policy() {
             session_id: session_id.clone(),
             expected_head: None,
             events: vec![
-                lifecycle_event(10, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND),
-                lifecycle_event(20, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
+                lifecycle_event(10, event_kind::LIFECYCLE_OPENED),
+                lifecycle_event(20, event_kind::LIFECYCLE_CLOSED),
             ],
         })
         .await
@@ -328,53 +331,22 @@ async fn pg_live_retention_deadline_follows_close_time_and_policy() {
             .await
             .expect("replace retention policy on closed root");
         assert_eq!(updated.delete_at_ms, deadline);
-        assert_eq!(updated.head, closed.head);
+        assert_eq!(updated.head, committed_head(&closed));
         assert_eq!(updated.updated_at_ms, 20);
     }
     assert!(
         store
-            .list_retention_roots_due_for_deletion(69, 10)
+            .list_retention_roots_due_for_deletion(69, None, 10)
             .await
             .unwrap()
             .is_empty()
     );
     let due = store
-        .list_retention_roots_due_for_deletion(70, 10)
+        .list_retention_roots_due_for_deletion(70, None, 10)
         .await
         .unwrap();
     assert_eq!(due.len(), 1);
     assert_eq!(due[0].session_id, session_id);
-
-    let opened = store
-        .append(AppendSessionEvents {
-            session_id: session_id.clone(),
-            expected_head: closed.head,
-            events: vec![lifecycle_event(30, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)],
-        })
-        .await
-        .expect("reopen retention root");
-    let record = store.load_session(&session_id).await.unwrap().unwrap();
-    assert_eq!(record.closed_at_ms, None);
-    assert_eq!(record.delete_after_close_ms, Some(50));
-    assert_eq!(record.delete_at_ms, None);
-    assert!(
-        store
-            .list_retention_roots_due_for_deletion(100, 10)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-
-    store
-        .append(AppendSessionEvents {
-            session_id: session_id.clone(),
-            expected_head: opened.head,
-            events: vec![lifecycle_event(40, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)],
-        })
-        .await
-        .expect("close retention root again");
-    let record = store.load_session(&session_id).await.unwrap().unwrap();
-    assert_eq!(record.delete_at_ms, Some(90));
 
     // The database derives the deadline even when a writer only knows the policy.
     let deadline: Option<i64> = sqlx::query_scalar(
@@ -386,7 +358,7 @@ async fn pg_live_retention_deadline_follows_close_time_and_policy() {
     .fetch_one(store.pool())
     .await
     .expect("change policy directly");
-    assert_eq!(deadline, Some(65));
+    assert_eq!(deadline, Some(45));
     let error = sqlx::query(
         "UPDATE sessions SET delete_at_ms = 999
          WHERE universe_id = $1 AND session_id = $2",
@@ -404,21 +376,47 @@ async fn pg_live_retention_deadline_follows_close_time_and_policy() {
         store
             .set_session_retention(&session_id, Some(i64::MAX as u64))
             .await,
-        Err(SessionStoreError::Store { .. })
+        Err(SessionStoreError::DataRejected { .. })
     ));
     let record = store.load_session(&session_id).await.unwrap().unwrap();
     assert_eq!(record.delete_after_close_ms, Some(25));
-    assert_eq!(record.delete_at_ms, Some(65));
+    assert_eq!(record.delete_at_ms, Some(45));
 
     cleanup_universe(&store).await;
 }
 
 fn lifecycle_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
-    UncommittedStoredEvent {
-        observed_at_ms: at_ms,
-        joins: StoredJoins::default(),
-        event: StoredEvent::new(kind, 1, serde_json::Value::Object(Default::default())),
-    }
+    let event = match kind {
+        event_kind::LIFECYCLE_OPENED => {
+            CoreAgentEvent::Lifecycle(harness::CoreAgentLifecycleEvent::Opened {
+                config: harness::SessionConfig {
+                    model: harness::ModelSelection {
+                        api_kind: harness::ProviderApiKind::OpenAiResponses,
+                        provider_id: "openai".to_owned(),
+                        model: "gpt-test".to_owned(),
+                    },
+                    generation: Default::default(),
+                    limits: Default::default(),
+                    context: harness::ContextConfig {
+                        input_limit_tokens: None,
+                        compaction: None,
+                    },
+                    features: Default::default(),
+                },
+            })
+        }
+        event_kind::LIFECYCLE_CLOSED => {
+            CoreAgentEvent::Lifecycle(harness::CoreAgentLifecycleEvent::Closed)
+        }
+        _ => CoreAgentEvent::Environment(harness::EnvironmentEvent::ActiveEnvironmentCleared),
+    };
+    CoreAgentCodec
+        .encode_uncommitted(&UncommittedCoreAgentEvent {
+            observed_at_ms: at_ms,
+            joins: CoreAgentJoins::default(),
+            event,
+        })
+        .expect("encode lifecycle event")
 }
 
 async fn live_store() -> PgStore {
@@ -466,7 +464,7 @@ async fn permanent_delete_checks_lifecycle_and_removes_retained_descendants() {
         .append(AppendSessionEvents {
             session_id: root.clone(),
             expected_head: None,
-            events: vec![lifecycle_event(10, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)],
+            events: vec![lifecycle_event(10, event_kind::LIFECYCLE_OPENED)],
         })
         .await
         .unwrap();
@@ -503,7 +501,7 @@ async fn permanent_delete_checks_lifecycle_and_removes_retained_descendants() {
             expected_head: Some(SessionPosition {
                 seq: EventSeq::new(1),
             }),
-            events: vec![lifecycle_event(20, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)],
+            events: vec![lifecycle_event(20, event_kind::LIFECYCLE_CLOSED)],
         })
         .await
         .unwrap();
@@ -518,7 +516,7 @@ async fn permanent_delete_checks_lifecycle_and_removes_retained_descendants() {
             expected_head: Some(SessionPosition {
                 seq: EventSeq::new(1),
             }),
-            events: vec![lifecycle_event(21, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)],
+            events: vec![lifecycle_event(21, event_kind::LIFECYCLE_CLOSED)],
         })
         .await
         .unwrap();
@@ -613,8 +611,8 @@ async fn soft_delete_hides_history_until_explicit_permanent_deletion() {
             session_id: root.clone(),
             expected_head: None,
             events: vec![
-                lifecycle_event(10, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND),
-                lifecycle_event(20, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
+                lifecycle_event(10, event_kind::LIFECYCLE_OPENED),
+                lifecycle_event(20, event_kind::LIFECYCLE_CLOSED),
             ],
         })
         .await
@@ -734,7 +732,7 @@ async fn soft_delete_hides_history_until_explicit_permanent_deletion() {
     );
     assert!(
         store
-            .list_retention_roots_due_for_deletion(u64::MAX / 2, 10)
+            .list_retention_roots_due_for_deletion(u64::MAX / 2, None, 10)
             .await
             .unwrap()
             .is_empty()

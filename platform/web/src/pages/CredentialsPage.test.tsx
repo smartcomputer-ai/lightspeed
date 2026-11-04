@@ -43,7 +43,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path.endsWith("/access")) return { actions: ["read", "configure_resource"], resources: [] };
+    if (path.endsWith("/access")) return { actions: ["read", "configureResource"], resources: [] };
     if (path.endsWith("/secrets")) return { providers: [], grants: [...hidden, ...reusable] };
     if (path.endsWith("/integrations/github")) return { apps: [app], grants: [reusable[2]] };
     throw new Error(`Unexpected request: ${path}`);

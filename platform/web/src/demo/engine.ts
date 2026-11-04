@@ -18,7 +18,7 @@ import type {
   ToolCallEventView,
 } from "@lightspeed-ai/sdk";
 import type { MessageAttachment } from "@lightspeed-ai/platform-shared";
-import type { SessionManagement, SessionOrigin, SessionView } from "@/api";
+import type { SessionDeclaration, SessionOrigin, SessionView } from "@/api";
 import type {
   DemoResponder,
   DemoStore,
@@ -87,7 +87,7 @@ export function contextMessage(
 ): ContextEntryView {
   return {
     id,
-    content: { contentRef: `blob:${id}`, mediaType: "text/plain", providerKind: null },
+    content: { blobRef: `blob:${id}`, mime: "text/plain", providerKind: null },
     kind: { type: "message", role },
     text,
     ...(source ? { source } : {}),
@@ -108,8 +108,8 @@ export function contextMedia(
   return {
     id,
     content: {
-      contentRef: attachment.blobRef,
-      mediaType: attachment.mime,
+      blobRef: attachment.blobRef,
+      mime: attachment.mime,
       providerKind: null,
       // Text documents reach the model as text; the runtime gives only
       // images and PDFs a media handle.
@@ -147,7 +147,7 @@ function responderText(text: string, media: readonly MessageAttachment[]): strin
 }
 
 export function contextToolCall(id: string, callId: string, name: string): ContextEntryView {
-  return { id, content: { contentRef: `blob:${id}`, mediaType: "text/plain", providerKind: null }, kind: { type: "toolCall", callId, name } } as ContextEntryView;
+  return { id, content: { blobRef: `blob:${id}`, mime: "text/plain", providerKind: null }, kind: { type: "toolCall", callId, name } } as ContextEntryView;
 }
 
 export function contextToolResult(
@@ -158,14 +158,14 @@ export function contextToolResult(
 ): ContextEntryView {
   return {
     id,
-    content: { contentRef: `blob:${id}`, mediaType: "text/plain", providerKind: null },
+    content: { blobRef: `blob:${id}`, mime: "text/plain", providerKind: null },
     kind: { type: "toolResult", callId, isError },
     text: output,
   } as ContextEntryView;
 }
 
 export function contextReasoning(id: string, text: string): ContextEntryView {
-  return { id, content: { contentRef: `blob:${id}`, mediaType: "text/plain", providerKind: null }, kind: { type: "reasoningState" }, text };
+  return { id, content: { blobRef: `blob:${id}`, mime: "text/plain", providerKind: null }, kind: { type: "reasoningState" }, text };
 }
 
 /// Applies entries to the active context and records the event.
@@ -220,7 +220,6 @@ export function readEvents(
     nextCursor: events.at(-1)?.cursor ?? null,
     headCursor: session.events.at(-1)?.cursor ?? null,
     complete: pending.length <= limit,
-    gap: null,
   };
 }
 
@@ -259,8 +258,8 @@ export interface NewSessionInit {
   id?: string;
   displayName?: string | null;
   config?: Record<string, unknown>;
-  managed?: boolean;
-  management?: SessionManagement | null;
+  lifecycleControlled?: boolean;
+  declaration?: SessionDeclaration | null;
   origin?: SessionOrigin | null;
   activeEnvironmentId?: string | null;
   instructions?: string | null;
@@ -295,7 +294,7 @@ export function newSession(
     createdAtMs: at,
     updatedAtMs: at,
     closedAtMs: null,
-    status: "idle",
+    lifecycleStatus: "open",
     retention: {
       rootSessionId: retentionRootSessionId,
       deleteAfterCloseMs: retentionRootSessionId === id
@@ -303,11 +302,11 @@ export function newSession(
         : universe.sessions.get(retentionRootSessionId)?.view.retention.deleteAfterCloseMs ?? null,
       deleteAtMs: null,
     },
-    managed: init.managed ?? false,
+    lifecycleControlled: init.lifecycleControlled ?? false,
     activeEnvironmentId: init.activeEnvironmentId ?? null,
     config,
     configRevision: 0,
-    management: init.management ?? null,
+    declaration: init.declaration ?? null,
     origin: init.origin ?? null,
     runs: [],
   };
@@ -349,7 +348,7 @@ export function setInstructions(store: DemoStore, session: SessionRecord, text: 
       id: "default-instructions",
       key: DEFAULT_INSTRUCTIONS_KEY,
       kind: { type: "instructions" },
-      content: { contentRef: store.defaultInstructionsRef, mediaType: "text/plain", providerKind: null },
+      content: { blobRef: store.defaultInstructionsRef, mime: "text/plain", providerKind: null },
       preview: "Default instructions",
     },
   ];
@@ -358,7 +357,7 @@ export function setInstructions(store: DemoStore, session: SessionRecord, text: 
       id: store.nextId("instructions"),
       key: PROFILE_INSTRUCTIONS_KEY,
       kind: { type: "instructions" },
-      content: { contentRef: store.putText(text), mediaType: "text/plain", providerKind: null },
+      content: { blobRef: store.putText(text), mime: "text/plain", providerKind: null },
       preview: "Profile instructions",
     });
   }
@@ -370,7 +369,7 @@ export function setInstructions(store: DemoStore, session: SessionRecord, text: 
 export function inputSource(store: DemoStore, text: string, origin?: string): RunAcceptedSourceView {
   return {
     type: "input",
-    entries: [{ origin, content: { contentRef: store.putText(text), mediaType: "text/plain", providerKind: null }, kind: { type: "message", role: "user" }, preview: text }],
+    entries: [{ origin, content: { blobRef: store.putText(text), mime: "text/plain", providerKind: null }, kind: { type: "message", role: "user" }, preview: text }],
   };
 }
 
@@ -448,7 +447,6 @@ export function startRun(
   const begin = () => {
     run.status = "running";
     run.startedAtMs = Date.now();
-    session.view.status = "active";
     session.view.activity = "working";
     pushEvent(session, { type: "runStarted", runId: run.id }, joins);
     session.turns += 1;
@@ -513,7 +511,7 @@ export function finishRun(
   for (const timer of session.timers) clearTimeout(timer);
   session.timers.clear();
   run.status = status;
-  run.completedAtMs = at;
+  run.finishedAtMs = at;
   const joins = { runId: run.id };
   if (status === "completed") {
     completeRunOutput(session, run, at);
@@ -527,7 +525,6 @@ export function finishRun(
       at,
     );
   }
-  if (session.view.status !== "closed") session.view.status = "idle";
   session.view.activity = "idle";
   const next = session.queue.shift();
   if (next) next.begin();
@@ -550,7 +547,7 @@ export function cancelRun(session: SessionRecord, runId: string): RunView | null
   if (run.status === "queued") {
     session.queue = session.queue.filter((queued) => queued.runId !== runId);
     run.status = "cancelled";
-    run.completedAtMs = Date.now();
+    run.finishedAtMs = Date.now();
     pushEvent(session, { type: "runCancelled", runId }, { runId });
     return run;
   }
@@ -592,7 +589,7 @@ export function steerRun(
           return { origin, content: entry.content, kind: entry.kind, preview: entry.preview };
         }),
         ...(text.trim()
-          ? [{ origin, content: { contentRef: store.putText(text), mediaType: "text/plain", providerKind: null }, kind: { type: "message" as const, role: "user" as const }, preview: text }]
+          ? [{ origin, content: { blobRef: store.putText(text), mime: "text/plain", providerKind: null }, kind: { type: "message" as const, role: "user" as const }, preview: text }]
           : []),
       ],
     },
@@ -605,17 +602,17 @@ export function steerRun(
 export function closeSession(session: SessionRecord, force: boolean, at = Date.now()): boolean {
   const active = activeRun(session);
   if (active && !force) return false;
-  if (session.view.status === "closed") return true;
+  if (session.view.lifecycleStatus === "closed") return true;
   for (const queued of session.queue) {
     const run = findRun(session, queued.runId);
     if (run) {
       run.status = "cancelled";
-      run.completedAtMs = at;
+      run.finishedAtMs = at;
     }
   }
   session.queue = [];
   if (active) finishRun(session, active, "cancelled", at);
-  session.view.status = "closed";
+  session.view.lifecycleStatus = "closed";
   session.view.activity = "idle";
   session.view.closedAtMs = at;
   if (session.view.retention.rootSessionId === session.view.id) {
@@ -903,7 +900,7 @@ function nativeCompactionEntry(store: DemoStore, session: SessionRecord, summary
   const payload = JSON.stringify({ type: "compaction", content: summary, signature: "demo-compaction-signature" });
   return {
     id: store.nextId("compaction"), kind: { type: "providerOpaque" }, source,
-    content: { contentRef: store.putText(payload), mediaType: "application/json", providerKind },
+    content: { blobRef: store.putText(payload), mime: "application/json", providerKind },
     preview: "Native compaction state",
   };
 }
@@ -1110,7 +1107,7 @@ export function appendScriptedRun(store: DemoStore, session: SessionRecord, scri
           type: "runSteeringAccepted",
           runId: run.id,
           steeringId,
-          input: [{ origin: steerOrigin, content: { contentRef: store.putText(text), mediaType: "text/plain", providerKind: null }, kind: { type: "message", role: "user" }, preview: text }],
+          input: [{ origin: steerOrigin, content: { blobRef: store.putText(text), mime: "text/plain", providerKind: null }, kind: { type: "message", role: "user" }, preview: text }],
         },
         runJoins,
         clock,
@@ -1131,7 +1128,7 @@ export function appendScriptedRun(store: DemoStore, session: SessionRecord, scri
   });
 
   clock += 400;
-  run.completedAtMs = clock;
+  run.finishedAtMs = clock;
   if (script.failure) {
     run.status = "failed";
     pushEvent(

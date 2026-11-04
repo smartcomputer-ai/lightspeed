@@ -38,7 +38,7 @@ import {
   github,
   hex,
   inboxTrigger,
-  managedSession,
+  controlledSession,
   mcpCall,
   mcpServer,
   member,
@@ -515,7 +515,6 @@ const TRIAGE_PROFILE: ProfileInit = {
       web: { fetch: {} },
       mcp: { servers: [{ serverId: MCP.statuspage }, { serverId: MCP.pagerduty }] },
     },
-    limits: { maxToolRounds: 12 },
   },
   revision: 4,
   createdAtMs: ago(31 * DAY_MS),
@@ -536,7 +535,6 @@ const ESCALATION_PROFILE: ProfileInit = {
         servers: [{ serverId: MCP.github }],
       },
     },
-    limits: { maxToolRounds: 8 },
   },
   revision: 4,
   createdAtMs: ago(21 * DAY_MS),
@@ -1153,7 +1151,7 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
 
   // Sessions: the main desk plus one thread per conversation.
   const tools = [...BOT_TOOLS, EMIT_TOOL, ...MESSAGE_TOOLS];
-  const desk = managedSession(store, universe, {
+  const desk = controlledSession(store, universe, {
     id: main(BOT.helpdesk).sessionId,
     botId: BOT.helpdesk,
     displayName: "Developer Helpdesk",
@@ -1193,7 +1191,7 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
     ],
   }).id;
 
-  const group = managedSession(store, universe, {
+  const group = controlledSession(store, universe, {
     id: DEVS_GROUP.sessionId,
     botId: BOT.helpdesk,
     displayName: DEVS_GROUP.label,
@@ -1237,7 +1235,7 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
     ],
   }).id;
 
-  const dana = managedSession(store, universe, {
+  const dana = controlledSession(store, universe, {
     id: DANA.sessionId,
     botId: BOT.helpdesk,
     displayName: DANA.label,
@@ -1261,7 +1259,7 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
     ],
   }).id;
 
-  const wa = managedSession(store, universe, {
+  const wa = controlledSession(store, universe, {
     id: WA_DEV.sessionId,
     botId: BOT.helpdesk,
     displayName: WA_DEV.label,
@@ -1290,7 +1288,7 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
     ],
   }).id;
 
-  const lee = managedSession(store, universe, {
+  const lee = controlledSession(store, universe, {
     id: LEE.sessionId,
     botId: BOT.helpdesk,
     displayName: LEE.label,
@@ -1470,7 +1468,7 @@ function seedEscalations(store: DemoStore, universe: UniverseState): void {
     BUG_CURSOR_DATA,
   );
 
-  const session = managedSession(store, universe, {
+  const session = controlledSession(store, universe, {
     id: main(BOT.escalations).sessionId,
     botId: BOT.escalations,
     displayName: "Engineering Escalations",
@@ -1710,7 +1708,7 @@ function seedStatusWatch(store: DemoStore, universe: UniverseState): void {
   const s7 = pollEvent(SANDBOX_INCIDENT, ago(HOUR_MS + 50 * MINUTE_MS), "handled", "Severity 3: sandbox only, 2.3% of requests — logged, no page");
   const s8 = pollEvent({ ...SANDBOX_INCIDENT, status: "monitoring", body: "The affected sandbox nodes were rotated out; error rates are back to baseline." }, ago(HOUR_MS + 5 * MINUTE_MS), "handled", "Sandbox back to baseline; nothing for on-call");
 
-  const session = managedSession(store, universe, {
+  const session = controlledSession(store, universe, {
     id: main(BOT.statusWatch).sessionId,
     botId: BOT.statusWatch,
     displayName: "Status watch",
@@ -1874,7 +1872,7 @@ function seedOncall(store: DemoStore, universe: UniverseState): void {
   ]);
 
   const log = eventLog(store, BOT.oncall);
-  const page = (incident: Page, atMs: number, outcome: "handled" | "steered" | "run_failed", detail: string): ScriptedEvent =>
+  const page = (incident: Page, atMs: number, outcome: "handled" | "steered" | "runFailed", detail: string): ScriptedEvent =>
     log.add({
       kind: "incident.triggered",
       source: "webhook:pagerduty",
@@ -1920,7 +1918,7 @@ function seedOncall(store: DemoStore, universe: UniverseState): void {
     detail: `All-clear sent to helpdesk (#${SEQ.helpdeskAllClear} there) with the 15:03–15:20 duplicate window; #inc-0819 left open for Jonas to resolve`,
     data: { incident: DELAY_INCIDENT.id, severity: 2, status: "monitoring" },
   });
-  const o4 = page({ id: "PD-4497", title: "API 5xx rate above 1% (eu-1)", urgency: "high", service: "API" }, at(4, 11, 48), "run_failed", "run failed: tool pagerduty.acknowledge returned 401 Unauthorized — the PagerDuty API token was rejected (rotated 2026-08-24)");
+  const o4 = page({ id: "PD-4497", title: "API 5xx rate above 1% (eu-1)", urgency: "high", service: "API" }, at(4, 11, 48), "runFailed", "run failed: tool pagerduty.acknowledge returned 401 Unauthorized — the PagerDuty API token was rejected (rotated 2026-08-24)");
   const o5 = log.add({
     kind: "schedule",
     source: "schedule:daily-digest",
@@ -1934,7 +1932,7 @@ function seedOncall(store: DemoStore, universe: UniverseState): void {
   });
   const o6 = page({ id: "PD-4510", title: "TLS certificate for webhooks.northwind.dev expires in 7 days", urgency: "low", service: "Webhooks" }, ago(2 * HOUR_MS + 50 * MINUTE_MS), "handled", "Low urgency: auto-renewal is scheduled for Sep 1; not acknowledged — PagerDuty token still rejected (#4) — noted for Jonas in #ops");
 
-  const session = managedSession(store, universe, {
+  const session = controlledSession(store, universe, {
     id: main(BOT.oncall).sessionId,
     botId: BOT.oncall,
     displayName: "On-call",

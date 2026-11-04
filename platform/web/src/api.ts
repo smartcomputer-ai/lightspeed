@@ -4,6 +4,7 @@ import type {
   Attribution,
   ResourceAccessSummary,
   SessionActivity,
+  SessionExecutionFailureView,
   ContextEntryView,
   ContextCompactionView,
   RunSummaryView,
@@ -333,7 +334,7 @@ export interface McpServer {
   defaultServerLabel: string;
   description?: string | null;
   allowedTools?: string[] | null;
-  execution: "provider" | "native";
+  execution: "provider" | "runtime";
   exposure: "inject" | "search";
   approval: "always" | "never";
   deferLoading?: boolean | null;
@@ -426,7 +427,7 @@ export interface SessionOrigin {
   depth: number;
   invocationId: string;
   agent: { profileId: string; revision: number };
-  limits: { maxDepth: number; maxDescendants: number; maxConcurrent: number; deadlineMs: number };
+  limits: { maxDepth: number; maxDescendants: number; maxConcurrent: number; runTimeoutMs?: number };
 }
 
 export interface SessionSummary {
@@ -442,7 +443,7 @@ export interface SessionSummary {
   closedAtMs?: number | null;
   lifecycleStatus: "new" | "open" | "closed";
   retention: SessionRetention;
-  managed: boolean;
+  lifecycleControlled: boolean;
   origin?: SessionOrigin | null;
 }
 
@@ -452,10 +453,10 @@ export interface SessionRetention {
   deleteAtMs?: number | null;
 }
 
-export interface SessionManagement {
+export interface SessionDeclaration {
   version: number;
   lifecycleController?: WorkflowEndpoint | null;
-  tools?: ManagedWorkflowTool[];
+  tools?: DeclaredWorkflowTool[];
 }
 
 export interface WorkflowEndpoint {
@@ -463,8 +464,8 @@ export interface WorkflowEndpoint {
   workflowKind: string;
 }
 
-export interface ManagedWorkflowTool {
-  toolId: string;
+export interface DeclaredWorkflowTool {
+  workflowToolId: string;
   name: string;
   semanticType: string;
   target: "bound" | "start";
@@ -481,14 +482,16 @@ export interface SessionView {
   createdAtMs: number;
   updatedAtMs: number;
   closedAtMs?: number | null;
-  status: "notLoaded" | "idle" | "active" | "closed" | "error";
+  lifecycleStatus: "new" | "open" | "closed";
+  /// Set on a read when the session is open but its workflow has stopped.
+  executionFailure?: SessionExecutionFailureView | null;
   retention: SessionRetention;
-  managed: boolean;
+  lifecycleControlled: boolean;
   activeEnvironmentId?: string | null;
   config?: Record<string, unknown> | null;
   configRevision: number;
   activeContext?: { compaction?: ContextCompactionView | null };
-  management?: SessionManagement | null;
+  declaration?: SessionDeclaration | null;
   origin?: SessionOrigin | null;
   /// Bounded newest-first run summary page. Authoritative for recent run
   /// state; the event tail is the live, incremental transcript view.
@@ -511,7 +514,7 @@ export interface SessionInstructionState {
   contextRevision: number;
   active: Array<{
     key: string | null;
-    contentRef: string;
+    blobRef: string;
     preview: string | null;
   }>;
 }
@@ -551,7 +554,7 @@ export interface SessionRunCancelled {
 export interface SessionRunApprovalsDecided {
   results: Array<{
     approvalId: string;
-    status: "decided" | "failed";
+    status: "decided" | "failed" | "pending";
     failure?: { kind: string; message: string };
   }>;
   run: SessionRunView;

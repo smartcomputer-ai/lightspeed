@@ -39,10 +39,13 @@ pub fn text_only_omission(entry: &harness::ContextEntry) -> String {
 
 /// A user-message entry carrying an inbound document.
 ///
-/// PDFs are unambiguous by media type. Text-based documents share
-/// `text/plain`-family media types with ordinary text turns, so they are
-/// recognized by the `[document...]` preview marker the gateway writes at
-/// admission.
+/// Only a user message with no provider kind can be one: that is the shape of
+/// a document admitted at the gateway or produced by a tool. Model-written text
+/// such as a compaction summary or a truncated answer can start with the same
+/// words and has to lower as ordinary text. PDFs are then unambiguous by media
+/// type. Text-based documents share `text/plain`-family media types with
+/// ordinary text turns, so they are recognized by the `[document...]` preview
+/// marker the gateway writes at admission.
 pub struct DocumentEntry {
     pub mime: String,
     /// Parsed from the `[document: <name>]` preview, when present.
@@ -50,8 +53,18 @@ pub struct DocumentEntry {
     pub is_pdf: bool,
 }
 
-pub fn document_entry(media_type: Option<&str>, preview: Option<&str>) -> Option<DocumentEntry> {
-    let mime = media_type?;
+pub fn document_entry(entry: &harness::ContextEntry) -> Option<DocumentEntry> {
+    if !matches!(
+        entry.kind,
+        harness::ContextEntryKind::Message {
+            role: harness::ContextMessageRole::User
+        }
+    ) || entry.content.provider_kind.is_some()
+    {
+        return None;
+    }
+    let mime = entry.content.media_type.as_deref()?;
+    let preview = entry.preview.as_deref();
     let is_pdf = mime == "application/pdf";
     let is_text_document = matches!(
         mime,

@@ -1,7 +1,5 @@
 use super::*;
 
-pub(super) const MCP_SERVER_SECRET_NAMESPACE: &str = "mcp_server";
-
 pub(super) fn put_mcp_server_record(
     server: McpServerInput,
     now_ms: i64,
@@ -136,7 +134,8 @@ pub(super) fn validate_mcp_server_credential(
 
 /// Resolve one declared config attachment against its catalog record and grant
 /// into the remote MCP tool spec. Shared by put-time validation and toolset
-/// reconciliation, so a config put fails fast when an attachment cannot resolve.
+/// reconciliation, so what refuses a newly named attachment is what leaves an
+/// already attached one out of a later run.
 pub(super) fn mcp_tool_from_config_attachment(
     attachment: &harness::McpServerAttachment,
     record: &mcp::McpServerRecord,
@@ -172,65 +171,152 @@ pub(super) fn mcp_tool_from_config_attachment(
         }
         None => record.allowed_tools.clone(),
     };
-    let tool_name = default_mcp_tool_name(&record.default_server_label)?;
-    let auth_ref = auth_ref_for_server(record, grant)?;
+    let tool_id = default_mcp_tool_id(&record.default_server_label)?;
+    validate_server_auth(record, grant)?;
     Ok(harness::ToolSpec {
-        name: tool_name,
-        execution: harness::ToolExecutionSpec::default(),
+        id: tool_id,
+        execution: harness::ToolExecutionSpec::new(
+            harness::ToolExecutionClass::RemoteInteractive,
+            false,
+        ),
         kind: harness::ToolKind::RemoteMcp(harness::RemoteMcpToolSpec {
             server_id: record.server_id.as_str().to_owned(),
             record_revision: record.revision,
             server_label: record.default_server_label.clone(),
-            server_url: record.server_url.clone(),
             description_ref: None,
             allowed_tools,
             execution: harness_execution(record.execution),
             exposure: harness_exposure(record.exposure),
             approval: harness_approval(api_approval(record.approval)),
             defer_loading: record.defer_loading,
-            auth_ref,
-            auth_required: matches!(
-                record.auth_policy,
-                mcp::McpServerAuthPolicy::RequiredBearer
-                    | mcp::McpServerAuthPolicy::RequiredOAuth { .. }
-            ),
-            allow_private_network: record.allow_private_network,
         }),
         parallelism: harness::ToolParallelism::ParallelSafe,
     })
 }
 
+/// What a configuration's MCP attachments resolve to right now.
+pub(crate) struct McpInventory {
+    pub(crate) tools: BTreeMap<ToolId, harness::ToolSpec>,
+    /// Attachments that resolved to nothing, in document order.
+    pub(crate) unavailable: Vec<UnavailableMcpServer>,
+}
+
+pub(crate) struct UnavailableMcpServer {
+    pub(crate) attachment: harness::McpServerAttachment,
+    pub(crate) error: AgentApiError,
+}
+
+/// Whether a refused resolution describes the attachment itself: a server that is
+/// disabled, deleted or awaiting auth, a grant no longer usable, a narrowed
+/// allowlist. An outage says nothing about the server and fails the caller instead,
+/// so it can retry rather than lose the tool.
+pub(super) fn mcp_attachment_is_unavailable(error: &AgentApiError) -> bool {
+    matches!(
+        error.kind,
+        AgentApiErrorKind::NotFound
+            | AgentApiErrorKind::Rejected
+            | AgentApiErrorKind::InvalidRequest
+    )
+}
+
+/// The notice telling the model which attached servers it cannot use, or nothing
+/// when it can use them all. It sits in context, so an operator reading the session
+/// sees why a tool is missing as well.
+pub(super) async fn mcp_catalog_entry(
+    blobs: &dyn BlobStore,
+    unavailable: &[UnavailableMcpServer],
+) -> Result<Option<harness::ContextEntryInput>, AgentApiError> {
+    if unavailable.is_empty() {
+        return Ok(None);
+    }
+    let body = mcp_catalog_text(unavailable);
+    let content_ref = blobs
+        .put_bytes(body.into_bytes())
+        .await
+        .map_err(map_blob_store_error)?;
+    let title = "Unavailable MCP servers";
+    Ok(Some(harness::ContextEntryInput {
+        kind: harness::ContextEntryKind::Catalog {
+            title: title.to_owned(),
+        },
+        content: harness::ContentRef {
+            content_ref,
+            media_type: Some("text/markdown".to_owned()),
+            provider_kind: None,
+        },
+        preview: Some(title.to_owned()),
+        origin: None,
+        provenance_ref: None,
+        token_estimate: None,
+    }))
+}
+
+fn mcp_catalog_text(unavailable: &[UnavailableMcpServer]) -> String {
+    let mut text = String::from(
+        "These MCP servers are attached to this session but unavailable right now, so their \
+         tools are not offered. If a task needs one of them, say so rather than working around \
+         its absence.\n\n",
+    );
+    for server in unavailable {
+        text.push_str(&format!(
+            "- {}: {}\n",
+            server.attachment.server_id, server.error.message
+        ));
+    }
+    text
+}
+
 impl super::session_preparation::SessionPreparationService {
-    /// Resolve the config's declared MCP attachments into the desired remote tool
-    /// specs, loading catalog records and auth grants. Used both to validate
-    /// a config document at admission and to reconcile the session toolset.
-    pub(crate) async fn desired_mcp_tools(
+    async fn resolve_mcp_attachment(
+        &self,
+        attachment: &harness::McpServerAttachment,
+    ) -> Result<(harness::ToolSpec, mcp::McpServerRecord), AgentApiError> {
+        let server_id = parse_mcp_server_id(attachment.server_id.clone())?;
+        let record = self
+            .store
+            .read_server(&server_id)
+            .await
+            .map_err(map_mcp_error)?;
+        let grant = match record.auth_grant_id.as_ref() {
+            Some(grant_id) => Some(
+                self.store
+                    .read_grant(grant_id)
+                    .await
+                    .map_err(map_auth_error)?,
+            ),
+            None => None,
+        };
+        let tool = mcp_tool_from_config_attachment(attachment, &record, grant.as_ref())?;
+        Ok((tool, record))
+    }
+
+    /// Resolve the config's declared MCP attachments against the catalog as it is
+    /// now. An attachment that cannot resolve is reported rather than refused:
+    /// whether that stops anything depends on who named it, and only a caller naming
+    /// it for the first time should hear no.
+    pub(crate) async fn mcp_inventory(
         &self,
         features: &harness::FeaturesConfig,
-    ) -> Result<BTreeMap<ToolName, harness::ToolSpec>, AgentApiError> {
-        let Some(mcp) = features.mcp.as_ref() else {
-            return Ok(BTreeMap::new());
-        };
+    ) -> Result<McpInventory, AgentApiError> {
         let mut tools = BTreeMap::new();
+        let mut unavailable = Vec::new();
+        let Some(mcp) = features.mcp.as_ref() else {
+            return Ok(McpInventory { tools, unavailable });
+        };
         let mut search_descriptions = Vec::new();
         for attachment in &mcp.servers {
-            let server_id = parse_mcp_server_id(attachment.server_id.clone())?;
-            let record = self
-                .store
-                .read_server(&server_id)
-                .await
-                .map_err(map_mcp_error)?;
-            let grant = match record.auth_grant_id.as_ref() {
-                Some(grant_id) => Some(
-                    self.store
-                        .read_grant(grant_id)
-                        .await
-                        .map_err(map_auth_error)?,
-                ),
-                None => None,
+            let (tool, record) = match self.resolve_mcp_attachment(attachment).await {
+                Ok(resolved) => resolved,
+                Err(error) if mcp_attachment_is_unavailable(&error) => {
+                    unavailable.push(UnavailableMcpServer {
+                        attachment: attachment.clone(),
+                        error,
+                    });
+                    continue;
+                }
+                Err(error) => return Err(error),
             };
-            let tool = mcp_tool_from_config_attachment(attachment, &record, grant.as_ref())?;
-            if record.execution == mcp::McpExecution::Native
+            if record.execution == mcp::McpExecution::Runtime
                 && record.exposure == mcp::McpExposure::Search
             {
                 search_descriptions.push(format!(
@@ -239,7 +325,7 @@ impl super::session_preparation::SessionPreparationService {
                     record.description.as_deref().unwrap_or("MCP tools")
                 ));
             }
-            if tools.insert(tool.name.clone(), tool).is_some() {
+            if tools.insert(tool.id.clone(), tool).is_some() {
                 return Err(AgentApiError::invalid_request(format!(
                     "MCP server tool names collide after normalization: {}",
                     record.server_id
@@ -254,7 +340,7 @@ impl super::session_preparation::SessionPreparationService {
                 ..Default::default()
             };
             let find = tools::definitions::register(
-                "mcp.find_tools",
+                harness::MCP_FIND_TOOLS_TOOL_ID,
                 settings.clone(),
                 harness::ToolParallelism::ParallelSafe,
                 harness::ToolExecutionSpec::new(
@@ -263,7 +349,7 @@ impl super::session_preparation::SessionPreparationService {
                 ),
             );
             let call = tools::definitions::register(
-                "mcp.call",
+                harness::MCP_CALL_TOOL_ID,
                 settings,
                 harness::ToolParallelism::Exclusive,
                 harness::ToolExecutionSpec::new(
@@ -272,14 +358,14 @@ impl super::session_preparation::SessionPreparationService {
                 ),
             );
             for tool in [find, call] {
-                if tools.insert(tool.name.clone(), tool).is_some() {
+                if tools.insert(tool.id.clone(), tool).is_some() {
                     return Err(AgentApiError::invalid_request(
-                        "an MCP server id collides with a reserved native MCP search tool name",
+                        "an MCP server id collides with a reserved runtime MCP search tool name",
                     ));
                 }
             }
         }
-        Ok(tools)
+        Ok(McpInventory { tools, unavailable })
     }
 }
 
@@ -293,21 +379,21 @@ fn registry_approval(value: api::RemoteMcpApprovalPolicy) -> mcp::McpApprovalPol
 fn registry_execution(value: api::RemoteMcpExecution) -> mcp::McpExecution {
     match value {
         api::RemoteMcpExecution::Provider => mcp::McpExecution::Provider,
-        api::RemoteMcpExecution::Native => mcp::McpExecution::Native,
+        api::RemoteMcpExecution::Runtime => mcp::McpExecution::Runtime,
     }
 }
 
 fn api_execution(value: mcp::McpExecution) -> api::RemoteMcpExecution {
     match value {
         mcp::McpExecution::Provider => api::RemoteMcpExecution::Provider,
-        mcp::McpExecution::Native => api::RemoteMcpExecution::Native,
+        mcp::McpExecution::Runtime => api::RemoteMcpExecution::Runtime,
     }
 }
 
 fn harness_execution(value: mcp::McpExecution) -> harness::RemoteMcpExecution {
     match value {
         mcp::McpExecution::Provider => harness::RemoteMcpExecution::Provider,
-        mcp::McpExecution::Native => harness::RemoteMcpExecution::Native,
+        mcp::McpExecution::Runtime => harness::RemoteMcpExecution::Runtime,
     }
 }
 
@@ -440,7 +526,7 @@ pub(super) fn map_mcp_error(error: mcp::McpRegistryError) -> AgentApiError {
     }
 }
 
-fn default_mcp_tool_name(server_label: &str) -> Result<ToolName, AgentApiError> {
+fn default_mcp_tool_id(server_label: &str) -> Result<ToolId, AgentApiError> {
     let mut tool_id = String::from("mcp_");
     for ch in server_label.chars() {
         if tool_id.len() >= 64 {
@@ -452,18 +538,18 @@ fn default_mcp_tool_name(server_label: &str) -> Result<ToolName, AgentApiError> 
             '_'
         });
     }
-    parse_mcp_tool_name(tool_id)
+    parse_mcp_tool_id(tool_id)
 }
 
-fn parse_mcp_tool_name(tool_id: String) -> Result<ToolName, AgentApiError> {
-    ToolName::try_new(tool_id)
+fn parse_mcp_tool_id(tool_id: String) -> Result<ToolId, AgentApiError> {
+    ToolId::try_new(tool_id)
         .map_err(|error| AgentApiError::invalid_request(format!("invalid MCP tool id: {error}")))
 }
 
-fn auth_ref_for_server(
+fn validate_server_auth(
     record: &mcp::McpServerRecord,
     grant: Option<&auth::AuthGrantRecord>,
-) -> Result<Option<harness::SecretRef>, AgentApiError> {
+) -> Result<(), AgentApiError> {
     match (&record.auth_policy, grant) {
         (mcp::McpServerAuthPolicy::None, Some(_)) => Err(AgentApiError::invalid_request(
             "an MCP server credential is only valid with an auth policy",
@@ -472,19 +558,8 @@ fn auth_ref_for_server(
         | (mcp::McpServerAuthPolicy::RequiredOAuth { .. }, None) => Err(AgentApiError::rejected(
             format!("MCP server requires an auth grant: {}", record.server_id),
         )),
-        (_, Some(grant)) => {
-            auth_api::validate_mcp_grant_for_server(record, grant)?;
-            Ok(Some(harness::SecretRef {
-                namespace: MCP_SERVER_SECRET_NAMESPACE.to_owned(),
-                id: record.server_id.as_str().to_owned(),
-            }))
-        }
-        (mcp::McpServerAuthPolicy::OptionalBearer, None)
-        | (mcp::McpServerAuthPolicy::OptionalOAuth { .. }, None) => Ok(Some(harness::SecretRef {
-            namespace: MCP_SERVER_SECRET_NAMESPACE.to_owned(),
-            id: record.server_id.as_str().to_owned(),
-        })),
-        (_, None) => Ok(None),
+        (_, Some(grant)) => auth_api::validate_mcp_grant_for_server(record, grant),
+        (_, None) => Ok(()),
     }
 }
 
@@ -501,18 +576,81 @@ fn api_status(value: mcp::McpServerStatus) -> api::McpServerStatus {
     }
 }
 
-impl GatewayAgentApi {
-    pub(super) async fn desired_mcp_tools(
-        &self,
-        features: &harness::FeaturesConfig,
-    ) -> Result<BTreeMap<ToolName, harness::ToolSpec>, AgentApiError> {
-        self.preparation_service().desired_mcp_tools(features).await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The refusal becomes the notice in session context, so the URL must stay out.
+    #[test]
+    fn the_notice_on_a_server_its_grant_stopped_covering_holds_no_url() {
+        let attachment = harness::McpServerAttachment {
+            server_id: "crm".to_owned(),
+            tools: None,
+        };
+        let record = |server_url: &str| {
+            mcp::PutMcpServerRecord {
+                server_id: mcp::McpServerId::new("crm"),
+                display_name: None,
+                server_url: server_url.to_owned(),
+                transport: mcp::RemoteMcpTransport::default(),
+                default_server_label: "crm".to_owned(),
+                description: None,
+                allowed_tools: None,
+                execution: mcp::McpExecution::Runtime,
+                exposure: mcp::McpExposure::Inject,
+                approval: mcp::McpApprovalPolicy::Never,
+                defer_loading: None,
+                allow_private_network: false,
+                auth_policy: mcp::McpServerAuthPolicy::RequiredOAuth {
+                    resource: "https://resource.example.com/SECRET".to_owned(),
+                    scopes_default: Vec::new(),
+                    protected_resource_metadata_url: None,
+                    authorization_server: None,
+                },
+                auth_grant_id: Some(auth::AuthGrantId::new("authgrant_1")),
+                status: mcp::McpServerStatus::Active,
+                now_ms: 1,
+            }
+            .into_record()
+        };
+        let grant = auth::CreateAuthGrantRecord {
+            grant_id: auth::AuthGrantId::new("authgrant_1"),
+            provider_id: "oauth".to_owned(),
+            provider_kind: auth::AuthProviderKind::McpOAuth,
+            exposure: auth::AuthGrantExposure::Brokered,
+            created_by: Attribution::Local,
+            display_name: None,
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: Some("https://crm.example.com".to_owned()),
+            access_token_secret: None,
+            refresh_token_secret: None,
+            oauth_client: None,
+            expires_at_ms: None,
+            status: auth::AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
+            created_at_ms: 1,
+        }
+        .into_record();
+
+        for server_url in [
+            // The admin moved the server, so the grant no longer covers its URL.
+            "https://moved.example.com/s/SECRET/mcp?key=SECRET",
+            // The URL is covered and the OAuth resource is not.
+            "https://crm.example.com/s/SECRET/mcp",
+        ] {
+            let error =
+                mcp_tool_from_config_attachment(&attachment, &record(server_url), Some(&grant))
+                    .expect_err("the grant does not cover the server");
+            assert!(mcp_attachment_is_unavailable(&error));
+            let notice = mcp_catalog_text(&[UnavailableMcpServer {
+                attachment: attachment.clone(),
+                error,
+            }]);
+            assert!(notice.contains("authgrant_1"), "{notice}");
+            assert!(!notice.contains("SECRET"), "{notice}");
+        }
+    }
 
     #[test]
     fn search_meta_tools_are_not_strict_functions() {
@@ -520,7 +658,7 @@ mod tests {
             tools::runtime::ToolTarget::api_kind(harness::ProviderApiKind::OpenAiResponses);
         for id in ["mcp.call", "mcp.find_tools"] {
             let resolved = tools::definitions::resolve(
-                &ToolName::new(id),
+                &ToolId::new(id),
                 &harness::BuiltinToolSpec::default(),
                 &target,
             )

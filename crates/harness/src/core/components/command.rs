@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    ApprovalDecisionCommand, BlobRef, ContextEntryInput, ContextEntryKey, EnvironmentId,
-    ManagedSessionWorkflowTools, PromiseId, PromiseResolution, ResumeToolBatchCommand, RunId,
-    RunRequestCommand, SessionConfig, ToolName, ToolPatch, ToolSpec, WorkflowToolDeclaration,
-    WorkflowToolInvocationId,
+    ApprovalDecisionCommand, BlobRef, ContextEntryInput, ContextEntryKey,
+    DeclaredSessionWorkflowTools, EnvironmentId, PromiseId, PromiseResolution, RunId,
+    RunRequestCommand, SessionConfig, SubmissionId, ToolId, ToolPatch, ToolSpec,
+    UnparkToolBatchCommand, WorkflowToolDeclaration, WorkflowToolInvocationId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,16 +16,16 @@ pub enum CoreAgentCommand {
     OpenSession {
         config: SessionConfig,
     },
-    /// Trusted managed-session creation path. The lifecycle controller and
+    /// Trusted declared-session creation path. The lifecycle controller and
     /// independently addressed workflow tools are admitted once, atomically
     /// with the lifecycle open event.
-    OpenManagedSession {
+    OpenDeclaredSession {
         config: SessionConfig,
         session_universe_id: Uuid,
-        workflow_tools: ManagedSessionWorkflowTools,
+        workflow_tools: DeclaredSessionWorkflowTools,
     },
     /// Trusted runtime admission for one system-owned workflow-backed tool.
-    /// Unlike managed-session declarations, system bindings may be added to
+    /// Unlike declared-session declarations, system bindings may be added to
     /// an already-open session and do not imply lifecycle ownership. They are
     /// immutable once admitted; an identical command is an idempotent no-op.
     AdmitSystemWorkflowTool {
@@ -35,7 +35,9 @@ pub enum CoreAgentCommand {
     /// Replace the session config with a complete document. The previous
     /// config is not consulted beyond validation (provider and API-kind pinning) and the
     /// revision guard; anything omitted from the document reverts to
-    /// defaults. Putting an identical document is an idempotent no-op.
+    /// defaults. Putting an identical document on an open, idle session at the
+    /// expected revision is an idempotent no-op; a busy session refuses it like
+    /// any other replacement.
     ReplaceSessionConfig {
         #[serde(default)]
         expected_revision: Option<u64>,
@@ -44,7 +46,7 @@ pub enum CoreAgentCommand {
     ReplaceTools {
         #[serde(default)]
         expected_revision: Option<u64>,
-        tools: BTreeMap<ToolName, ToolSpec>,
+        tools: BTreeMap<ToolId, ToolSpec>,
     },
     PatchTools {
         #[serde(default)]
@@ -84,6 +86,9 @@ pub enum CoreAgentCommand {
     RequestRun(RunRequestCommand),
     RequestRunSteering {
         run_id: RunId,
+        /// Identifies this steering among the run's retained batches, so a retry
+        /// lands once.
+        submission_id: SubmissionId,
         input: Vec<ContextEntryInput>,
         /// Who asked, as the API boundary attributed the request.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,7 +110,17 @@ pub enum CoreAgentCommand {
     ForceCancelRun {
         run_id: RunId,
     },
-    ResumeToolBatch(ResumeToolBatchCommand),
+    /// End the matching active run as failed, kind `Internal`, without planning.
+    /// The host admits this when the harness refuses a step of the run from
+    /// durable state, so the same state would refuse it on every later attempt.
+    /// Open calls are answered and accepted steering is written down in the same
+    /// append, so the next run gets a valid request. A run no longer active makes
+    /// this an idempotent no-op.
+    FailRun {
+        run_id: RunId,
+        message_ref: BlobRef,
+    },
+    UnparkToolBatch(UnparkToolBatchCommand),
     /// Deliver a promise resolution. All transports converge here; a promise
     /// that is already terminal makes this an idempotent no-op
     /// (first-writer-wins).
@@ -113,7 +128,7 @@ pub enum CoreAgentCommand {
         promise_id: PromiseId,
         resolution: PromiseResolution,
     },
-    /// Terminal push-delivery failure for one promise-bearing workflow-tool
+    /// Terminal push-delivery failure for one pushed workflow-tool
     /// invocation: atomically records `WorkflowTool::DeliveryFailed` and
     /// fails every still-pending completion promise of that invocation, so a
     /// dead receiver can never leave an unresolvable promise. Re-admission
@@ -151,7 +166,6 @@ pub enum CoreAgentCommand {
     },
     CloseCodeToolScope {
         execution_id: String,
-        cancel: bool,
     },
     CloseSession {
         /// Force-cancel the active run and drop queued runs before closing
@@ -170,6 +184,7 @@ mod tests {
         let command = CoreAgentCommand::RequestRunSteering {
             requested_by: None,
             run_id: RunId::new(7),
+            submission_id: SubmissionId::new("steer-1"),
             input: Vec::new(),
         };
         let mut wire = serde_json::to_value(&command).unwrap();

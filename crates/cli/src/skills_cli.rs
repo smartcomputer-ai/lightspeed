@@ -136,6 +136,7 @@ async fn use_skill(args: SkillsUseArgs) -> Result<()> {
     if let Some(run) = session.active_run {
         let response = api
             .steer_run(api::RunSteerParams {
+                submission_id: None,
                 session_id: args.session,
                 run_id: run.id,
                 items,
@@ -314,15 +315,15 @@ mod tests {
                 let responses = [
                     serde_json::to_value(catalog()).unwrap(),
                     json!({"session": {
-                        "id": "session_1", "status": if status.is_some() { "active" } else { "idle" },
-                        "retention": {"rootSessionId": "session_1"}, "managed": false,
+                        "id": "session_1", "lifecycleStatus": "open",
+                        "retention": {"rootSessionId": "session_1"}, "lifecycleControlled": false,
                         "configRevision": 0, "createdAtMs": 1, "updatedAtMs": 1, "access": {"visibility": "restricted"}, "activity": "idle",
                         "activeContext": {"revision": 0}, "activeRun": active_run,
                         "runs": [{"id": "run_2", "status": "queued", "acceptedAtMs": 2, "source": {"type": "input"}}],
                     }, "hasOlderRuns": false}),
                     json!({"steeringId": "steer_1", "run": {
                         "id": if status.is_some() { "run_1" } else { "run_3" },
-                        "status": status.unwrap_or("queued"), "source": {"type": "input", "items": []},
+                        "status": status.unwrap_or("queued"), "acceptedAtMs": 3, "source": {"type": "input"},
                     }}),
                 ];
                 let mut requests = Vec::new();

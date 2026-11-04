@@ -1,9 +1,62 @@
 use super::*;
 
+/// What a request itself attaches that the session does not hold yet. Only these
+/// can refuse the request over the state of a catalog record: the caller can still
+/// choose otherwise. What a profile brought in, or what the session already held,
+/// is left out of the run with a notice when it has gone away, so that one catalog
+/// action cannot stop the sessions attaching it.
+#[derive(Default)]
+pub(super) struct NewlyNamed {
+    mcp: Vec<harness::McpServerAttachment>,
+    /// A default the document changes to. Machine state only refuses a save over
+    /// this, so a save never fails because a machine it already held is closing.
+    default_environment: Option<String>,
+}
+
+impl NewlyNamed {
+    /// `current` is the session's document, absent on creation.
+    pub(super) fn in_document(
+        document: &harness::FeaturesConfig,
+        current: Option<&harness::FeaturesConfig>,
+    ) -> Self {
+        let held = current.and_then(|features| features.mcp.as_ref());
+        let default_of = |features: &harness::FeaturesConfig| {
+            features
+                .environments
+                .as_ref()
+                .and_then(|environments| environments.default_attachment())
+                .map(|attachment| attachment.environment_id.clone())
+        };
+        let default_environment =
+            default_of(document).filter(|_| default_of(document) != current.and_then(default_of));
+        Self {
+            default_environment,
+            mcp: document
+                .mcp
+                .iter()
+                .flat_map(|mcp| &mcp.servers)
+                .filter(|attachment| !held.is_some_and(|held| held.servers.contains(attachment)))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn mcp(&self) -> &[harness::McpServerAttachment] {
+        &self.mcp
+    }
+
+    #[cfg(test)]
+    pub(super) fn default_environment(&self) -> Option<&str> {
+        self.default_environment.as_deref()
+    }
+}
+
 impl GatewayAgentApi {
     pub(super) async fn session_config_for_start(
         &self,
         api_config: Option<api::SessionConfig>,
+        request_names_features: bool,
     ) -> Result<SessionConfig, AgentApiError> {
         let api_config = api_config.unwrap_or_default();
         let model = model_defaults::creation_model(api_config.model.clone(), async {
@@ -13,23 +66,64 @@ impl GatewayAgentApi {
                 .map_err(model_defaults::map_store_error)
         })
         .await?;
-        let mut config = harness_session_config_from_api(api_config, model)?;
-        self.resolve_context_capacity(&mut config).await;
+        let config = harness_session_config_from_api(api_config, model)?;
         config
             .validate()
-            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
-        self.admit_attachments(&config.features).await?;
-        self.validate_workspace_attachment_targets(&config.features)
+            .map_err(|error| AgentApiError::invalid_request(error.message()))?;
+        let named = if request_names_features {
+            NewlyNamed::in_document(&config.features, None)
+        } else {
+            NewlyNamed::default()
+        };
+        self.validate_session_document(&config.features, &named)
             .await?;
-        self.validate_subagent_agents(&config.features).await?;
         Ok(config)
     }
 
-    pub(super) async fn resolve_context_capacity(&self, config: &mut SessionConfig) {
-        if config.context.input_limit_tokens.is_none() {
-            config.context.reported_input_limit_tokens =
-                self.model_discovery.input_limit(&config.model).await;
+    /// What a configuration document must satisfy before it enters a session,
+    /// through session start and config put alike. Failing here costs the caller
+    /// one refusal and leaves no session behind.
+    pub(super) async fn validate_session_document(
+        &self,
+        features: &harness::FeaturesConfig,
+        named: &NewlyNamed,
+    ) -> Result<(), AgentApiError> {
+        if let Some(environment_id) = &named.default_environment {
+            self.validate_named_default_environment(environment_id)
+                .await?;
         }
+        // Workspaces and environments must exist whoever named them.
+        self.admit_attachments(features).await?;
+        // Resolving reports collisions across the whole document; a server that
+        // cannot resolve refuses only if this request is what names it.
+        let inventory = self.preparation_service().mcp_inventory(features).await?;
+        if let Some(refused) = inventory
+            .unavailable
+            .into_iter()
+            .find(|server| named.mcp.contains(&server.attachment))
+        {
+            return Err(refused.error);
+        }
+        self.validate_workspace_attachment_targets(features).await?;
+        self.validate_subagent_agents(features).await
+    }
+
+    /// A default the caller is changing to must be selectable, as activation
+    /// requires. Refused here as the caller's mistake rather than failing later when
+    /// a tool first uses it. Provisioning, powered-down and away machines pass, so a
+    /// save never fails on transient machine state.
+    async fn validate_named_default_environment(
+        &self,
+        environment_id: &str,
+    ) -> Result<(), AgentApiError> {
+        let id = harness::EnvironmentId::try_new(environment_id.to_owned())
+            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+        crate::environments::resolver::EnvironmentResolver::from_pg_store(self.store.clone())
+            .selectable(&id)
+            .await
+            .map(|_| ())
+            .map_err(environments::map_environment_resolve_error)
+            .map_err(|error| unselectable_default_refusal(environment_id, error))
     }
 
     /// Every allowlisted sub-agent profile must exist when the grant is
@@ -67,6 +161,20 @@ impl GatewayAgentApi {
     }
 }
 
+/// A machine that is missing, closed or failed is a bad choice of default. Any other
+/// failure, such as a store outage, says nothing about the machine and stays as it is.
+fn unselectable_default_refusal(environment_id: &str, error: AgentApiError) -> AgentApiError {
+    match error.kind {
+        AgentApiErrorKind::NotFound | AgentApiErrorKind::Rejected => {
+            AgentApiError::invalid_request(format!(
+                "default environment {environment_id} cannot be selected: {}",
+                error.message
+            ))
+        }
+        _ => error,
+    }
+}
+
 /// Build only the per-run overrides supplied by `session/runs/start`.
 /// Session defaults remain in `SessionConfig` and are resolved by the harness
 /// from its live state; they must not be copied into the override document.
@@ -98,11 +206,9 @@ pub(super) fn harness_session_config_from_api(
             .limits
             .map(|limits| harness::LimitsConfig {
                 max_turns: limits.max_turns,
-                max_tool_rounds: limits.max_tool_rounds,
             })
             .unwrap_or_default(),
         context: harness::ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: api_config
                 .context
                 .as_ref()
@@ -213,7 +319,7 @@ fn features_from_api(
                     max_depth: subagents.max_depth,
                     max_descendants: subagents.max_descendants,
                     max_concurrent: subagents.max_concurrent,
-                    deadline_ms: subagents.deadline_ms,
+                    run_timeout_ms: subagents.run_timeout_ms,
                 },
             }),
         code_mode: features.code_mode.map(|code| harness::CodeModeFeature {
@@ -280,7 +386,9 @@ fn workspace_attachment_from_api(
         (Some(workspace_id), None) => {
             harness::WorkspaceAttachmentTarget::Workspace { workspace_id }
         }
-        (None, Some(snapshot_ref)) => harness::WorkspaceAttachmentTarget::Snapshot { snapshot_ref },
+        (None, Some(snapshot_ref)) => harness::WorkspaceAttachmentTarget::Snapshot {
+            snapshot_ref: parse_blob_ref(&snapshot_ref)?,
+        },
         _ => {
             return Err(AgentApiError::invalid_request(format!(
                 "workspace attachment at {} must set exactly one of workspaceId and snapshotRef",
@@ -380,15 +488,12 @@ pub(super) fn apply_run_start_config(
     }
     run_config
         .validate_provider_compatibility(&session_config.model)
-        .map_err(|error| AgentApiError::invalid_request(error.to_string()))
+        .map_err(|error| AgentApiError::invalid_request(error.message()))
 }
 
 pub(super) fn apply_run_limits_config(run_config: &mut RunConfig, limits: RunLimitsConfig) {
     if let Some(max_turns) = limits.max_turns {
         run_config.max_turns = Some(max_turns);
-    }
-    if let Some(max_tool_rounds) = limits.max_tool_rounds {
-        run_config.max_tool_rounds = Some(max_tool_rounds);
     }
 }
 
@@ -423,7 +528,7 @@ fn tool_choice_from_api(choice: api::ToolChoice) -> Result<ToolChoice, AgentApiE
         api::ToolChoice::None => ToolChoice::None,
         api::ToolChoice::RequiredAny => ToolChoice::RequiredAny,
         api::ToolChoice::Specific { tool_id } => ToolChoice::Specific {
-            tool_name: ToolName::try_new(tool_id).map_err(|error| {
+            tool_id: ToolId::try_new(tool_id).map_err(|error| {
                 AgentApiError::invalid_request(format!("invalid tool choice tool id: {error}"))
             })?,
         },
@@ -542,5 +647,38 @@ mod tests {
             }
             assert!(validate_reasoning_effort(&api_kind, "ultra").is_err());
         }
+    }
+
+    #[test]
+    fn only_a_bad_machine_makes_a_default_the_callers_mistake() {
+        for error in [
+            AgentApiError::not_found("environment not found: gone"),
+            AgentApiError::rejected("environment is closed: gone"),
+        ] {
+            let refused = unselectable_default_refusal("gone", error);
+            assert_eq!(refused.kind, api::AgentApiErrorKind::InvalidRequest);
+            assert!(refused.message.starts_with("default environment gone"));
+        }
+        let outage = AgentApiError::internal("connection refused");
+        assert_eq!(unselectable_default_refusal("gone", outage.clone()), outage);
+    }
+
+    #[test]
+    fn a_snapshot_attachment_that_is_not_a_ref_is_the_callers_mistake() {
+        let attachment = |snapshot_ref: String| api::WorkspaceAttachment {
+            path: "/pinned".into(),
+            workspace_id: None,
+            snapshot_ref: Some(snapshot_ref),
+            access: api::WorkspaceAccess::Read,
+        };
+        let error = workspace_attachment_from_api(attachment("not-a-blob".into())).unwrap_err();
+        assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
+        let held = BlobRef::from_bytes(b"snapshot");
+        assert_eq!(
+            workspace_attachment_from_api(attachment(held.to_string()))
+                .unwrap()
+                .target,
+            harness::WorkspaceAttachmentTarget::Snapshot { snapshot_ref: held }
+        );
     }
 }

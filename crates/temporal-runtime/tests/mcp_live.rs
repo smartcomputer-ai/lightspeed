@@ -1,6 +1,6 @@
 //! End-to-end MCP acceptance coverage over a real Temporal worker and local
 //! Stateless Streamable HTTP servers. Provider-hosted MCP has separate live
-//! suites in `llm-runtime`; this suite owns Lightspeed-native execution and
+//! suites in `llm-runtime`; this suite owns Lightspeed runtime execution and
 //! the universe/session control plane.
 
 mod support;
@@ -12,9 +12,9 @@ use api::{
     FeaturesConfig, InputItem, McpServerAttachment, McpServerDeleteParams, McpServerInput,
     McpServerListParams, McpServerPutParams, McpServerReadParams, McpServerStatus,
     McpServerToolsDiscoverParams, McpServerToolsDiscoverResponse, RemoteMcpApprovalPolicy,
-    RemoteMcpExecution, RemoteMcpExposure, RunApprovalsDecideParams, RunLimitsConfig,
-    RunStartConfig, RunStartParams, RunStartSource, SessionConfig, SessionConfigPutParams,
-    SessionEventsReadParams, SessionReadParams, SessionStartParams, TimersFeature,
+    RemoteMcpExecution, RemoteMcpExposure, RunApprovalsDecideParams, RunStartParams,
+    RunStartSource, SessionConfig, SessionConfigPutParams, SessionEventsReadParams,
+    SessionReadParams, SessionStartParams, TimersFeature,
 };
 use api_projection::model_to_api;
 use async_trait::async_trait;
@@ -55,7 +55,7 @@ const LARGE_PAGE_SIZE: usize = 15;
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra and LIGHTSPEED_MCP_PRIVATE_NETWORKS allowing loopback"]
-async fn mcp_live_native_configuration_and_server_size_matrix() -> anyhow::Result<()> {
+async fn mcp_live_runtime_configuration_and_server_size_matrix() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
     require_storage_live_env()?;
@@ -75,7 +75,7 @@ async fn mcp_live_native_configuration_and_server_size_matrix() -> anyhow::Resul
     }) as Arc<dyn CoreAgentLlm>;
     let tools = Arc::new(FakeTools::new(blobs)) as Arc<dyn CoreAgentTools>;
     let state = ActivityState::from_pg_store(store.clone(), llm, tools)
-        .with_native_mcp_from_pg_store(store)?;
+        .with_runtime_mcp_from_pg_store(store)?;
     let activities = WorkerActivities::for_universe(live_universe_id()?, state);
     let fixture_for_client = fixture.clone();
     let ids_for_client = ids.clone();
@@ -315,7 +315,7 @@ impl CoreAgentLlm for MatrixScriptedLlm {
             }
             "matrix_approved_call" => {
                 require_contains(&result, "large-call:catalog_tool_039:approved", &call_id)?;
-                self.final_result(&request, "native MCP matrix complete")
+                self.final_result(&request, "runtime MCP matrix complete")
                     .await
             }
             other => Err(CoreAgentIoError::Failed {
@@ -519,17 +519,11 @@ async fn run_matrix_client(
                 items: vec![InputItem::Text {
                     provenance_ref: None,
                     origin: None,
-                    text: "Exercise the native MCP matrix".to_owned(),
+                    text: "Exercise the runtime MCP matrix".to_owned(),
                 }],
             },
             submission_id: None,
-            config: Some(RunStartConfig {
-                limits: Some(RunLimitsConfig {
-                    max_turns: Some(12),
-                    max_tool_rounds: Some(12),
-                }),
-                ..RunStartConfig::default()
-            }),
+            config: None,
             notify_on_terminal: None,
         })
         .await?;
@@ -557,7 +551,7 @@ async fn run_matrix_client(
     let terminal = wait_for_terminal_run(&api, &session_id, &started.result.run.id).await?;
     assert_eq!(
         final_assistant_text(&terminal),
-        Some("native MCP matrix complete")
+        Some("runtime MCP matrix complete")
     );
     // The run view attaches the media the rich call handed the model to that
     // call, by handle, and the session's context carries the entries with
@@ -627,7 +621,7 @@ async fn put_fixture_server(
             default_server_label: server_id.to_owned(),
             description: Some("Local Streamable HTTP MCP acceptance fixture".to_owned()),
             allowed_tools,
-            execution: RemoteMcpExecution::Native,
+            execution: RemoteMcpExecution::Runtime,
             exposure,
             approval,
             defer_loading: None,
@@ -1001,40 +995,40 @@ async fn temporal_live_mcp_approval_approve_and_reject_continue_runs() -> anyhow
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra, npm install, and LIGHTSPEED_MCP_PRIVATE_NETWORKS allowing loopback"]
-async fn temporal_live_native_mcp_search_call_and_approval() -> anyhow::Result<()> {
+async fn temporal_live_runtime_mcp_search_call_and_approval() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
     require_storage_live_env()?;
-    let server_id = format!("native_configurator_{}", uuid::Uuid::new_v4().simple());
+    let server_id = format!("runtime_configurator_{}", uuid::Uuid::new_v4().simple());
     let store = pg_store_from_env().await?;
     let blobs: Arc<dyn BlobStore> = store.clone();
-    let llm = Arc::new(NativeMcpScriptedLlm {
+    let llm = Arc::new(RuntimeMcpScriptedLlm {
         blobs: blobs.clone(),
         server_id: server_id.clone(),
         selected_tool: "lightspeed_models_list".to_owned(),
     }) as Arc<dyn CoreAgentLlm>;
     let tools = Arc::new(FakeTools::new(blobs)) as Arc<dyn CoreAgentTools>;
     let state = ActivityState::from_pg_store(store.clone(), llm, tools)
-        .with_native_mcp_from_pg_store(store)?;
+        .with_runtime_mcp_from_pg_store(store)?;
     let activities = WorkerActivities::for_universe(support::live::live_universe_id()?, state);
     run_with_live_worker(activities, move |client, task_queue, session_id| {
-        run_native_mcp_live_client(client, task_queue, session_id, server_id)
+        run_runtime_mcp_live_client(client, task_queue, session_id, server_id)
     })
     .await
 }
 
-/// A model turn that mixes an `await` (batch-unit execution) with an injected
-/// native MCP call whose server gates every call on approval. The batch must
-/// park once on the MCP approval while the await stays pending, then complete
-/// every call through its intended runtime after the decision.
+/// A model turn that mixes an `await` with two injected runtime MCP calls whose
+/// server gates every call on approval. The two calls run in one parallel group,
+/// so the batch must park once for both while the await stays pending, then
+/// complete every call through its intended runtime after the decisions.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra, npm install, and LIGHTSPEED_MCP_PRIVATE_NETWORKS allowing loopback"]
-async fn temporal_live_native_mcp_mixed_await_batch_parks_once_and_completes() -> anyhow::Result<()>
+async fn temporal_live_runtime_mcp_mixed_await_batch_parks_once_and_completes() -> anyhow::Result<()>
 {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
     require_storage_live_env()?;
-    let server_id = format!("native_mixed_{}", uuid::Uuid::new_v4().simple());
+    let server_id = format!("runtime_mixed_{}", uuid::Uuid::new_v4().simple());
     let store = pg_store_from_env().await?;
     let blobs: Arc<dyn BlobStore> = store.clone();
     let llm = Arc::new(MixedBatchScriptedLlm {
@@ -1043,12 +1037,12 @@ async fn temporal_live_native_mcp_mixed_await_batch_parks_once_and_completes() -
         selected_tool: "lightspeed_models_list".to_owned(),
     }) as Arc<dyn CoreAgentLlm>;
     // The hosted runtime is required: `sleep` and `await` are real tools here
-    // and the mixed batch must take the production batch-unit path.
+    // and the mixed batch must take the production path through both activities.
     let hosted = Arc::new(SessionTools::from_pg_store(store.clone()));
     let tools: Arc<dyn CoreAgentTools> = hosted.clone();
     let state = ActivityState::from_pg_store(store.clone(), llm, tools)
         .with_hosted_tools(hosted)
-        .with_native_mcp_from_pg_store(store)?;
+        .with_runtime_mcp_from_pg_store(store)?;
     let activities = WorkerActivities::for_universe(support::live::live_universe_id()?, state);
     run_with_live_worker(activities, move |client, task_queue, session_id| {
         run_mixed_batch_live_client(client, task_queue, session_id, server_id)
@@ -1067,20 +1061,308 @@ async fn temporal_live_mcp_and_session_links_materialize() -> anyhow::Result<()>
     run_with_live_worker(activities, run_mcp_live_client).await
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_unavailable_mcp_server_degrades_runs_and_refuses_only_new_attachments()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_unavailable_server_live_client).await
+}
+
+async fn run_unavailable_server_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = support::live::openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
+    let api = GatewayAgentApi::builder(client, store)
+        .with_task_queue(task_queue)
+        .build();
+
+    let unique = uuid::Uuid::new_v4().simple().to_string();
+    let label = format!("degrade{}", &unique[..8]);
+    let tool_id = format!("mcp_{label}");
+    let put_server =
+        |server_id: String, label: String, status: McpServerStatus, revision: Option<u64>| {
+            McpServerPutParams {
+                server: McpServerInput {
+                    server_id,
+                    display_name: None,
+                    server_url: "https://mcp.example.test/mcp".to_owned(),
+                    default_server_label: label,
+                    description: None,
+                    allowed_tools: None,
+                    execution: api::RemoteMcpExecution::Provider,
+                    exposure: api::RemoteMcpExposure::Inject,
+                    approval: RemoteMcpApprovalPolicy::Never,
+                    defer_loading: None,
+                    allow_private_network: false,
+                    auth_policy: api::McpServerAuthPolicy::None,
+                    credential: None,
+                    status,
+                },
+                expected_revision: revision,
+            }
+        };
+    let attaching = |servers: &[&str]| SessionConfig {
+        model: Some(model_to_api(&model)),
+        features: Some(FeaturesConfig {
+            mcp: Some(api::McpFeature {
+                version: api::CURRENT_FEATURE_VERSION,
+                servers: servers
+                    .iter()
+                    .map(|server_id| McpServerAttachment {
+                        server_id: (*server_id).to_owned(),
+                        tools: None,
+                    })
+                    .collect(),
+            }),
+            ..Default::default()
+        }),
+        ..SessionConfig::default()
+    };
+    let start_params = |session_id: Option<String>, config| SessionStartParams {
+        access: None,
+        metadata: Default::default(),
+        session_id,
+        display_name: None,
+        config,
+        profile: None,
+        delete_after_close_ms: None,
+    };
+
+    let server_id = format!("degrade_{unique}");
+    api.put_mcp_server(put_server(
+        server_id.clone(),
+        label.clone(),
+        McpServerStatus::Active,
+        None,
+    ))
+    .await?;
+    let disabled_id = format!("disabled_{unique}");
+    api.put_mcp_server(put_server(
+        disabled_id.clone(),
+        format!("off{}", &unique[..8]),
+        McpServerStatus::Disabled,
+        None,
+    ))
+    .await?;
+
+    // A caller naming a server it cannot use hears so, before anything exists.
+    let refused = api
+        .start_session(start_params(None, Some(attaching(&[&disabled_id]))))
+        .await
+        .expect_err("start names a disabled server");
+    assert_eq!(refused.kind, api::AgentApiErrorKind::Rejected);
+    assert!(refused.message.contains("disabled"), "{refused:?}");
+
+    api.start_session(start_params(
+        Some(session_id.as_str().to_owned()),
+        Some(attaching(&[&server_id])),
+    ))
+    .await?;
+    let has_tool = |view: &api::SessionView| {
+        view.active_tools
+            .tools
+            .iter()
+            .any(|tool| tool.tool_id == tool_id)
+    };
+    let notice = |view: &api::SessionView| {
+        view.active_context
+            .entries
+            .iter()
+            .rfind(|entry| entry.key.as_deref() == Some(temporal_workflow::MCP_CATALOG_CONTEXT_KEY))
+            .map(|entry| entry.text.clone().unwrap_or_default())
+    };
+    let view = read_session_view(&api, &session_id).await?;
+    assert!(has_tool(&view));
+    assert_eq!(notice(&view), None);
+
+    // Disabling it stops nothing: the run proceeds without the tool, told why.
+    api.put_mcp_server(put_server(
+        server_id.clone(),
+        label.clone(),
+        McpServerStatus::Disabled,
+        Some(1),
+    ))
+    .await?;
+    let run_to_completion = async |text: &str| -> anyhow::Result<api::RunView> {
+        let run = support::live::start_text_run(&api, &session_id, text).await?;
+        wait_for_terminal_run(&api, &session_id, run.id.as_str()).await
+    };
+    assert_eq!(
+        run_to_completion("first").await?.status,
+        api::RunStatus::Completed
+    );
+    let view = read_session_view(&api, &session_id).await?;
+    assert!(!has_tool(&view));
+    let text = notice(&view).expect("the model is told");
+    assert!(
+        text.contains(&format!("{server_id}: MCP server is disabled")),
+        "{text}"
+    );
+
+    // A save keeping the attachment still goes through; only a new one is refused.
+    let mut edited = attaching(&[&server_id]);
+    edited.limits = Some(api::LimitsConfig {
+        max_turns: Some(50),
+    });
+    api.put_session_config(SessionConfigPutParams {
+        session_id: session_id.as_str().to_owned(),
+        expected_config_revision: None,
+        config: edited,
+    })
+    .await?;
+    let refused = api
+        .put_session_config(SessionConfigPutParams {
+            session_id: session_id.as_str().to_owned(),
+            expected_config_revision: None,
+            config: attaching(&[&server_id, &disabled_id]),
+        })
+        .await
+        .expect_err("the put newly names a disabled server");
+    assert_eq!(refused.kind, api::AgentApiErrorKind::Rejected);
+
+    // Deleting behaves the same, and a profile bringing the server in is not refused.
+    api.delete_mcp_server(McpServerDeleteParams {
+        server_id: server_id.clone(),
+    })
+    .await?;
+    assert_eq!(
+        run_to_completion("second").await?.status,
+        api::RunStatus::Completed
+    );
+    let text = notice(&read_session_view(&api, &session_id).await?).expect("the model is told");
+    assert!(text.contains("not found"), "{text}");
+    api.apply_profile(api::ProfileApplyParams {
+        session_id: session_id.as_str().to_owned(),
+        profile: api::ProfileSource::Inline {
+            profile: Box::new(api::InlineAgentProfile {
+                display_name: None,
+                description: None,
+                document: api::ProfileDocument {
+                    config: Some(attaching(&[&server_id, &disabled_id])),
+                    instructions: None,
+                    metadata: Default::default(),
+                    retention: None,
+                },
+            }),
+        },
+        expected_config_revision: None,
+        expected_tools_revision: None,
+    })
+    .await?;
+    let from_profile = SessionId::new(format!("degrade_profile_{unique}"));
+    api.start_session(SessionStartParams {
+        profile: Some(api::ProfileSource::Inline {
+            profile: Box::new(api::InlineAgentProfile {
+                display_name: None,
+                description: None,
+                document: api::ProfileDocument {
+                    config: Some(attaching(&[&server_id])),
+                    instructions: None,
+                    metadata: Default::default(),
+                    retention: None,
+                },
+            }),
+        }),
+        ..start_params(Some(from_profile.as_str().to_owned()), None)
+    })
+    .await?;
+    assert!(notice(&read_session_view(&api, &from_profile).await?).is_some());
+
+    // Bringing the server back restores the tool and takes the notice away.
+    api.put_mcp_server(put_server(
+        server_id.clone(),
+        label.clone(),
+        McpServerStatus::Active,
+        None,
+    ))
+    .await?;
+    api.put_session_config(SessionConfigPutParams {
+        session_id: session_id.as_str().to_owned(),
+        expected_config_revision: None,
+        config: {
+            let mut chosen = attaching(&[&server_id]);
+            chosen.generation = Some(api::GenerationConfig {
+                tool_choice: Some(api::ToolChoice::Specific {
+                    tool_id: tool_id.clone(),
+                }),
+                ..Default::default()
+            });
+            chosen
+        },
+    })
+    .await?;
+    let view = read_session_view(&api, &session_id).await?;
+    assert!(has_tool(&view));
+    assert_eq!(notice(&view), None);
+
+    // A session's own choice left dangling fails its runs with the real message,
+    // and the session stays usable.
+    api.put_mcp_server(put_server(
+        server_id.clone(),
+        label,
+        McpServerStatus::Disabled,
+        Some(1),
+    ))
+    .await?;
+    let failed = run_to_completion("third").await?;
+    assert_eq!(failed.status, api::RunStatus::Failed);
+    let message = failed.failure.expect("a failure").message;
+    assert!(
+        message.contains(&format!(
+            "tool_choice references missing active tool {tool_id}"
+        )),
+        "{message}"
+    );
+    api.put_session_config(SessionConfigPutParams {
+        session_id: session_id.as_str().to_owned(),
+        expected_config_revision: None,
+        config: attaching(&[&server_id]),
+    })
+    .await?;
+    assert_eq!(
+        run_to_completion("fourth").await?.status,
+        api::RunStatus::Completed
+    );
+
+    for session in [&session_id, &from_profile] {
+        api.close_session(api::SessionCloseParams {
+            session_id: session.as_str().to_owned(),
+            force: true,
+        })
+        .await?;
+    }
+    api.delete_mcp_server(McpServerDeleteParams { server_id })
+        .await?;
+    api.delete_mcp_server(McpServerDeleteParams {
+        server_id: disabled_id,
+    })
+    .await?;
+    Ok(())
+}
+
 #[derive(Clone)]
 struct ApprovalScriptedLlm {
     blobs: Arc<dyn BlobStore>,
 }
 
 #[derive(Clone)]
-struct NativeMcpScriptedLlm {
+struct RuntimeMcpScriptedLlm {
     blobs: Arc<dyn BlobStore>,
     server_id: String,
     selected_tool: String,
 }
 
 #[async_trait]
-impl CoreAgentLlm for NativeMcpScriptedLlm {
+impl CoreAgentLlm for RuntimeMcpScriptedLlm {
     async fn generate(
         &self,
         request: LlmGenerationRequest,
@@ -1102,17 +1384,17 @@ impl CoreAgentLlm for NativeMcpScriptedLlm {
                 self.tool_call(
                     &request,
                     "mcp_find_tools",
-                    "native_find",
+                    "runtime_find",
                     serde_json::json!({"server": self.server_id, "query": "models"}),
                 )
                 .await
             }
-            Some((call_id, result_ref)) if call_id.as_str() == "native_find" => {
+            Some((call_id, result_ref)) if call_id.as_str() == "runtime_find" => {
                 let result = self.blobs.read_text(&result_ref).await.map_err(io_error)?;
                 if !result.contains(&self.selected_tool) {
                     return Err(CoreAgentIoError::Failed {
                         message: format!(
-                            "native MCP search did not return {}: {result}",
+                            "runtime MCP search did not return {}: {result}",
                             self.selected_tool
                         ),
                     });
@@ -1120,7 +1402,7 @@ impl CoreAgentLlm for NativeMcpScriptedLlm {
                 self.tool_call(
                     &request,
                     "mcp_call",
-                    "native_call",
+                    "runtime_call",
                     serde_json::json!({
                         "server": self.server_id,
                         "tool": self.selected_tool,
@@ -1131,14 +1413,14 @@ impl CoreAgentLlm for NativeMcpScriptedLlm {
             }
             Some((_call_id, result_ref)) => {
                 let result = self.blobs.read_text(&result_ref).await.map_err(io_error)?;
-                self.final_result(&request, format!("native MCP completed: {result}"))
+                self.final_result(&request, format!("runtime MCP completed: {result}"))
                     .await
             }
         }
     }
 }
 
-impl NativeMcpScriptedLlm {
+impl RuntimeMcpScriptedLlm {
     async fn tool_call(
         &self,
         request: &LlmGenerationRequest,
@@ -1148,7 +1430,7 @@ impl NativeMcpScriptedLlm {
     ) -> Result<LlmGenerationResult, CoreAgentIoError> {
         if test_support::scripted_tool_id(request, tool).is_none() {
             return Err(CoreAgentIoError::Failed {
-                message: format!("native MCP scripted model expected {tool}"),
+                message: format!("runtime MCP scripted model expected {tool}"),
             });
         }
         let arguments_ref = self
@@ -1171,7 +1453,7 @@ impl NativeMcpScriptedLlm {
                 content: harness::ContentRef {
                     content_ref: arguments_ref.clone(),
                     media_type: Some("application/json".to_owned()),
-                    provider_kind: Some("native-mcp-script".to_owned()),
+                    provider_kind: Some("runtime-mcp-script".to_owned()),
                 },
                 preview: None,
                 origin: None,
@@ -1180,14 +1462,14 @@ impl NativeMcpScriptedLlm {
             }],
             facts: LlmGenerationFacts {
                 duration_ms: None,
-                provider_response_id: Some(format!("native-mcp-{}", request.turn_id.as_u64())),
+                provider_response_id: Some(format!("runtime-mcp-{}", request.turn_id.as_u64())),
                 finish: LlmFinish::ToolCalls,
                 usage: None,
                 tool_calls: vec![ObservedToolCall {
                     call_id,
                     tool_id: test_support::scripted_tool_id(request, tool_name.as_str()),
                     tool_name,
-                    provider_kind: Some("native-mcp-script".to_owned()),
+                    provider_kind: Some("runtime-mcp-script".to_owned()),
                     arguments_ref,
                     native_call_ref: None,
                 }],
@@ -1219,7 +1501,7 @@ impl NativeMcpScriptedLlm {
                 content: harness::ContentRef {
                     content_ref,
                     media_type: Some("text/plain".to_owned()),
-                    provider_kind: Some("native-mcp-script".to_owned()),
+                    provider_kind: Some("runtime-mcp-script".to_owned()),
                 },
                 preview: None,
                 origin: None,
@@ -1229,7 +1511,7 @@ impl NativeMcpScriptedLlm {
             facts: LlmGenerationFacts {
                 duration_ms: None,
                 provider_response_id: Some(format!(
-                    "native-mcp-final-{}",
+                    "runtime-mcp-final-{}",
                     request.turn_id.as_u64()
                 )),
                 finish: LlmFinish::Stop,
@@ -1342,7 +1624,8 @@ impl CoreAgentLlm for ApprovalScriptedLlm {
                     content_ref: opaque_ref,
                     media_type: Some("application/json".to_owned()),
                     provider_kind: Some(
-                        harness::OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND.to_owned(),
+                        llm_clients::content::OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND
+                            .to_owned(),
                     ),
                 },
                 preview: None,
@@ -1363,7 +1646,7 @@ impl CoreAgentLlm for ApprovalScriptedLlm {
                         tool_name: "send".to_owned(),
                         arguments_ref,
                     },
-                    continuation: ApprovalContinuation::OpenAiMcp {
+                    continuation: ApprovalContinuation::ProviderMcp {
                         provider_request_id,
                     },
                 }],
@@ -1477,6 +1760,15 @@ async fn wait_for_temporal_pending_approval(
     session_id: &SessionId,
     run_id: &str,
 ) -> anyhow::Result<api::PendingApprovalView> {
+    let mut pending = wait_for_temporal_pending_approvals(api, session_id, run_id).await?;
+    Ok(pending.remove(0))
+}
+
+async fn wait_for_temporal_pending_approvals(
+    api: &GatewayAgentApi,
+    session_id: &SessionId,
+    run_id: &str,
+) -> anyhow::Result<Vec<api::PendingApprovalView>> {
     tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             let session = api
@@ -1489,9 +1781,9 @@ async fn wait_for_temporal_pending_approval(
                 .session;
             if let Some(run) = session.runs.iter().find(|run| run.id == run_id)
                 && run.status == api::RunStatus::Parked
-                && let Some(approval) = run.pending_approvals.first()
+                && !run.pending_approvals.is_empty()
             {
-                return Ok(approval.clone());
+                return Ok(run.pending_approvals.clone());
             }
             if let Some(run) = session.runs.iter().find(|run| run.id == run_id)
                 && matches!(
@@ -1514,7 +1806,7 @@ async fn wait_for_temporal_pending_approval(
     .map_err(|_| anyhow::anyhow!("timed out waiting for pending approval"))?
 }
 
-async fn run_native_mcp_live_client(
+async fn run_runtime_mcp_live_client(
     client: Client,
     task_queue: String,
     session_id: SessionId,
@@ -1534,12 +1826,12 @@ async fn run_native_mcp_live_client(
     api.put_mcp_server(McpServerPutParams {
         server: McpServerInput {
             server_id: server_id.clone(),
-            display_name: Some("Native Configurator".to_owned()),
+            display_name: Some("Runtime Configurator".to_owned()),
             server_url: configurator.mcp_url.clone(),
-            default_server_label: "native_configurator".to_owned(),
+            default_server_label: "runtime_configurator".to_owned(),
             description: Some("Read and configure this Lightspeed universe".to_owned()),
             allowed_tools: None,
-            execution: api::RemoteMcpExecution::Native,
+            execution: api::RemoteMcpExecution::Runtime,
             exposure: api::RemoteMcpExposure::Search,
             approval: RemoteMcpApprovalPolicy::Always,
             defer_loading: None,
@@ -1613,8 +1905,8 @@ async fn run_native_mcp_live_client(
     })
     .await?;
     let terminal = wait_for_terminal_run(&api, &session_id, &started.result.run.id).await?;
-    let output = final_assistant_text(&terminal).expect("native MCP final output");
-    assert!(output.contains("native MCP completed"));
+    let output = final_assistant_text(&terminal).expect("runtime MCP final output");
+    assert!(output.contains("runtime MCP completed"));
 
     api.delete_mcp_server(McpServerDeleteParams { server_id })
         .await?;
@@ -1622,7 +1914,7 @@ async fn run_native_mcp_live_client(
     let _ = handle
         .terminate(
             WorkflowTerminateOptions::builder()
-                .reason("native MCP live test cleanup")
+                .reason("runtime MCP live test cleanup")
                 .build(),
         )
         .await;
@@ -1973,7 +2265,7 @@ fn expected_configurator_tool_names() -> anyhow::Result<BTreeSet<String>> {
 }
 
 /// Scripted model for the mixed-batch scenario: schedule a timer, then emit
-/// one turn holding both the `await` on that timer and an injected native MCP
+/// one turn holding both the `await` on that timer and an injected runtime MCP
 /// call, then summarize every tool result it can see.
 #[derive(Clone)]
 struct MixedBatchScriptedLlm {
@@ -1985,6 +2277,7 @@ struct MixedBatchScriptedLlm {
 const MIXED_SLEEP_CALL_ID: &str = "mixed_sleep";
 const MIXED_AWAIT_CALL_ID: &str = "mixed_await";
 const MIXED_MCP_CALL_ID: &str = "mixed_mcp";
+const MIXED_MCP_SIBLING_CALL_ID: &str = "mixed_mcp_sibling";
 
 fn parse_timer_promise(sleep_result: &str) -> Option<String> {
     // "Timer scheduled for N ms (promise promise_1). Await it with ..."
@@ -2035,6 +2328,7 @@ impl CoreAgentLlm for MixedBatchScriptedLlm {
                             json!({"promises": [promise], "mode": "all", "timeout_ms": 60_000}),
                         ),
                         (injected.as_str(), MIXED_MCP_CALL_ID, json!({})),
+                        (injected.as_str(), MIXED_MCP_SIBLING_CALL_ID, json!({})),
                     ],
                 )
                 .await
@@ -2047,7 +2341,7 @@ impl CoreAgentLlm for MixedBatchScriptedLlm {
                 }
                 self.final_result(
                     &request,
-                    format!("mixed native MCP batch completed: {}", texts.join(" | ")),
+                    format!("mixed runtime MCP batch completed: {}", texts.join(" | ")),
                 )
                 .await
             }
@@ -2070,7 +2364,7 @@ impl MixedBatchScriptedLlm {
             .find(|tool| {
                 matches!(&tool.kind, ToolKind::RemoteMcp(spec) if spec.server_id == self.server_id)
             })
-            .map(|tool| format!("{}__{}", tool.name, self.selected_tool))
+            .map(|tool| format!("{}__{}", tool.id, self.selected_tool))
             .ok_or_else(|| CoreAgentIoError::Failed {
                 message: format!(
                     "mixed batch scripted model expected the {} MCP server tool",
@@ -2201,12 +2495,12 @@ async fn run_mixed_batch_live_client(
     api.put_mcp_server(McpServerPutParams {
         server: McpServerInput {
             server_id: server_id.clone(),
-            display_name: Some("Native Mixed Configurator".to_owned()),
+            display_name: Some("Runtime Mixed Configurator".to_owned()),
             server_url: configurator.mcp_url.clone(),
-            default_server_label: "native_mixed".to_owned(),
+            default_server_label: "runtime_mixed".to_owned(),
             description: Some("Read this Lightspeed universe".to_owned()),
             allowed_tools: Some(vec![selected_tool.to_owned()]),
-            execution: api::RemoteMcpExecution::Native,
+            execution: api::RemoteMcpExecution::Runtime,
             exposure: api::RemoteMcpExposure::Inject,
             approval: RemoteMcpApprovalPolicy::Always,
             defer_loading: None,
@@ -2261,38 +2555,49 @@ async fn run_mixed_batch_live_client(
         })
         .await?;
 
-    // The mixed batch parks on the MCP approval; the await sibling neither
-    // fails nor defers ahead of the decision.
+    // The mixed batch parks once for both MCP approvals; the await sibling
+    // neither fails nor defers ahead of the decisions.
     let pending =
-        wait_for_temporal_pending_approval(&api, &session_id, &started.result.run.id).await?;
-    match &pending.subject {
-        api::ApprovalSubjectView::McpToolCall {
-            server_id: actual_server,
-            tool_name,
-            ..
-        } => {
-            assert_eq!(actual_server, &server_id);
-            assert_eq!(tool_name, selected_tool);
+        wait_for_temporal_pending_approvals(&api, &session_id, &started.result.run.id).await?;
+    assert_eq!(pending.len(), 2, "{pending:?}");
+    for approval in &pending {
+        match &approval.subject {
+            api::ApprovalSubjectView::McpToolCall {
+                server_id: actual_server,
+                tool_name,
+                ..
+            } => {
+                assert_eq!(actual_server, &server_id);
+                assert_eq!(tool_name, selected_tool);
+            }
         }
     }
     api.decide_run_approvals(RunApprovalsDecideParams {
         session_id: session_id.as_str().to_owned(),
         run_id: started.result.run.id.clone(),
-        decisions: vec![ApprovalDecisionInput {
-            approval_id: pending.approval_id,
-            decision: ApprovalDecisionKind::Approve,
-            note: None,
-        }],
+        decisions: pending
+            .into_iter()
+            .map(|approval| ApprovalDecisionInput {
+                approval_id: approval.approval_id,
+                decision: ApprovalDecisionKind::Approve,
+                note: None,
+            })
+            .collect(),
     })
     .await?;
 
     let terminal = wait_for_terminal_run(&api, &session_id, &started.result.run.id).await?;
     let output = final_assistant_text(&terminal).expect("mixed batch final output");
     assert!(
-        output.contains("mixed native MCP batch completed"),
+        output.contains("mixed runtime MCP batch completed"),
         "unexpected final output: {output}"
     );
-    for call_id in [MIXED_SLEEP_CALL_ID, MIXED_AWAIT_CALL_ID, MIXED_MCP_CALL_ID] {
+    for call_id in [
+        MIXED_SLEEP_CALL_ID,
+        MIXED_AWAIT_CALL_ID,
+        MIXED_MCP_CALL_ID,
+        MIXED_MCP_SIBLING_CALL_ID,
+    ] {
         let call = terminal
             .tool_batches
             .iter()
@@ -2321,7 +2626,7 @@ async fn run_mixed_batch_live_client(
     let _ = handle
         .terminate(
             WorkflowTerminateOptions::builder()
-                .reason("native MCP mixed batch live test cleanup")
+                .reason("runtime MCP mixed batch live test cleanup")
                 .build(),
         )
         .await;

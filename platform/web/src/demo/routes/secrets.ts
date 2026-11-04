@@ -399,7 +399,7 @@ function finishConfiguratorInstall(
     defaultServerLabel: "configurator",
     description: "Configure and operate this Lightspeed universe through its generated API.",
     allowedTools: null,
-    execution: "native",
+    execution: "runtime",
     exposure: "search",
     approval: "never",
     deferLoading: null,

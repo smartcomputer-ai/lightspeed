@@ -52,30 +52,6 @@ pub enum Hunk {
     },
 }
 
-impl Hunk {
-    pub fn source_path(&self) -> &Path {
-        match self {
-            Self::AddFile { path, .. } | Self::DeleteFile { path } => path,
-            Self::UpdateFile { path, .. } => path,
-        }
-    }
-
-    pub fn affected_path(&self) -> &Path {
-        match self {
-            Self::AddFile { path, .. } | Self::DeleteFile { path } => path,
-            Self::UpdateFile {
-                move_path: Some(path),
-                ..
-            } => path,
-            Self::UpdateFile {
-                path,
-                move_path: None,
-                ..
-            } => path,
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct UpdateFileChunk {
     pub change_context: Option<String>,

@@ -100,7 +100,7 @@ async fn anthropic_messages_live_harness_prunes_and_reuses_provider_compaction()
     assert!(first.accepted, "run rejected: {:?}", first.rejection);
     assert_eq!(first.quiescence, RunnerQuiescence::Idle);
     assert_eq!(
-        first.state.runs.completed[0].status,
+        first.state.runs.finished[0].status,
         RunStatus::Completed,
         "{}",
         run_failure_text(blobs.as_ref(), &first.state).await
@@ -151,7 +151,7 @@ async fn anthropic_messages_live_harness_prunes_and_reuses_provider_compaction()
     assert!(second.accepted, "recall rejected: {:?}", second.rejection);
     assert_eq!(second.quiescence, RunnerQuiescence::Idle);
     assert_eq!(
-        second.state.runs.completed[1].status,
+        second.state.runs.finished[1].status,
         RunStatus::Completed,
         "{}",
         run_failure_text(blobs.as_ref(), &second.state).await
@@ -185,6 +185,7 @@ fn provider_compaction_run(content_ref: BlobRef) -> CoreAgentCommand {
             }],
         },
         run_config: run_config(),
+        input_limit_tokens: None,
     })
 }
 
@@ -321,6 +322,7 @@ async fn anthropic_messages_live_manual_standalone_compaction_preserves_marker()
                     }],
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(128),
         })
@@ -329,7 +331,7 @@ async fn anthropic_messages_live_manual_standalone_compaction_preserves_marker()
 
     assert_eq!(recalled.quiescence, RunnerQuiescence::Idle);
     assert_eq!(
-        recalled.state.runs.completed[0].status,
+        recalled.state.runs.finished[0].status,
         RunStatus::Completed,
         "{}",
         run_failure_text(blobs.as_ref(), &recalled.state).await
@@ -361,23 +363,36 @@ async fn anthropic_messages_live_high_watermark_standalone_compaction() {
 
     let context_ref = store_anthropic_raw_message(
         blobs.as_ref(),
-        "Summarize this short context for future continuation: Lightspeed is testing idle \
+        "Summarize this short context for future continuation: Lightspeed is testing \
          high-watermark standalone compaction on the Anthropic Messages adapter.",
     )
     .await;
-    let compacted = runner
+    runner
         .drive_command(DriveCommand {
-            session_id,
+            session_id: session_id.clone(),
             observed_at_ms: 20,
             command: CoreAgentCommand::UpsertContext {
                 expected_revision: None,
                 key: ContextEntryKey::new("client.anthropic.raw.high_watermark"),
                 entry: anthropic_raw_context_input(context_ref.clone(), Some(11)),
             },
+            max_steps: Some(64),
+        })
+        .await
+        .expect("seed context");
+    let prompt_ref = blobs
+        .put_bytes(b"Reply with the single word OK.".to_vec())
+        .await
+        .expect("store prompt");
+    let compacted = runner
+        .drive_command(DriveCommand {
+            session_id,
+            observed_at_ms: 30,
+            command: provider_compaction_run(prompt_ref),
             max_steps: Some(128),
         })
         .await
-        .expect("seed context and compact at high watermark");
+        .expect("compact at high watermark when the run starts");
 
     assert_eq!(compacted.quiescence, RunnerQuiescence::Idle);
     assert!(
@@ -466,7 +481,6 @@ fn standalone_session_config(
         },
         limits: Default::default(),
         context: ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: None,
             compaction: Some(CompactionPolicy::ProviderStandalone {
                 compact_threshold_tokens,
@@ -479,15 +493,12 @@ fn standalone_session_config(
 
 fn run_config() -> RunConfig {
     RunConfig {
-        input_limit_tokens: None,
-        max_turns: Some(4),
+        max_turns: None,
         reasoning_effort: None,
         parallel_tool_use: None,
         processing_tier: None,
-        max_tool_rounds: Some(0),
         model_override: None,
         max_output_tokens: None,
-        provider_params: None,
         tool_choice: None,
     }
 }
@@ -629,7 +640,7 @@ async fn compaction_failure_text(
 }
 
 async fn run_failure_text(blobs: &dyn BlobStore, state: &harness::CoreAgentState) -> String {
-    let Some(run) = state.runs.completed.last() else {
+    let Some(run) = state.runs.finished.last() else {
         return "run did not complete".to_owned();
     };
     let Some(failure) = run.failure.as_ref() else {
@@ -713,7 +724,7 @@ async fn anthropic_messages_live_chunked_compaction_keeps_tail_and_transitions_t
             .await
             .unwrap();
         assert_eq!(
-            completed.state.runs.completed.last().unwrap().status,
+            completed.state.runs.finished.last().unwrap().status,
             RunStatus::Completed,
             "{}",
             run_failure_text(blobs.as_ref(), &completed.state).await
@@ -792,7 +803,7 @@ async fn anthropic_messages_live_chunked_compaction_keeps_tail_and_transitions_t
         .await
         .unwrap();
     assert_eq!(
-        recalled.state.runs.completed.last().unwrap().status,
+        recalled.state.runs.finished.last().unwrap().status,
         RunStatus::Completed,
         "{}",
         run_failure_text(blobs.as_ref(), &recalled.state).await

@@ -1,4 +1,4 @@
-//! Bot workflows: the controller that owns a bot's managed sessions
+//! Bot workflows: the controller that owns a bot's controlled sessions
 //! and the trigger fire started by Temporal Schedules. Both run in the
 //! `bots` worker role on its own task queue; their activities are defined in
 //! [`activities`] and implemented in `temporal-runtime`.
@@ -16,7 +16,7 @@ use temporalio_sdk::{ActivityCloseTimeouts, ActivityOptions};
 pub use activities::*;
 pub use controller::{
     BOT_CONTROLLER_WORKFLOW_KIND, BotControllerArgs, BotControllerCarry, BotControllerWorkflow,
-    BotDelivery, CoalesceBuffer, ManagedSession,
+    BotDelivery, CoalesceBuffer, ControlledSession, WaitingLane,
 };
 pub use trigger_fire::BotTriggerFireWorkflow;
 pub use types::*;
@@ -27,16 +27,26 @@ pub const DEFAULT_BOTS_TASK_QUEUE: &str = "lightspeed-bots";
 /// Ordinary bot activities: core calls, store writes, receipts.
 pub const BOT_ACTIVITY_START_TO_CLOSE: Duration = Duration::from_secs(60);
 pub const BOT_ACTIVITY_MAX_ATTEMPTS: i32 = 5;
-/// The poll activity absorbs environment wake latency (`environment_not_ready`
+/// The poll activity absorbs environment wake latency (`environmentNotReady`
 /// retries) without badly overlapping the next fire; overlap policy `Skip`
 /// drops collisions.
 pub const BOT_POLL_START_TO_CLOSE: Duration = Duration::from_secs(240);
 pub const BOT_POLL_MAX_ATTEMPTS: i32 = 6;
-/// How long a controller lane waits for a run terminal before giving up on
-/// the delivery.
-pub const BOT_EVENT_TERMINAL_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
-/// Retry pause after a lost run-start race or a busy session.
+/// While a lane waits on a started run, how often the controller checks that the
+/// lanes' sessions are still alive. A long run is normal, so a lane waits for as long
+/// as its session lives, across continue-as-new, and only a dead session ends the wait.
+pub const BOT_DEAD_SESSION_SWEEP_INTERVAL: Duration = Duration::from_secs(15 * 60);
+/// Retry pause for a busy session, and the first step of the backoffs below.
 pub const BOT_BUSY_RETRY_DELAY: Duration = Duration::from_secs(5);
+/// A run start waits out the gateway's command wait, so a start held behind a
+/// compaction answers `operationPending` instead of timing out the activity.
+pub const BOT_START_RUN_START_TO_CLOSE: Duration = Duration::from_secs(120);
+/// Start attempts a delivery gets before it ends `runFailed`. With the backoff
+/// below that is about 20 minutes between attempts, held starts aside.
+pub const BOT_START_MAX_ATTEMPTS: u32 = 10;
+pub const BOT_START_RETRY_MAX_DELAY: Duration = Duration::from_secs(5 * 60);
+/// Longest pause between attempts to bring a degraded main session back.
+pub const BOT_RECONCILE_RETRY_MAX_DELAY: Duration = Duration::from_secs(15 * 60);
 /// Descendant (sub-agent) budget refresh cadence while a run is in flight.
 pub const BOT_DESCENDANT_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 /// Controller continue-as-new threshold, in processed events.
@@ -69,6 +79,15 @@ fn retry(max_attempts: i32) -> RetryPolicy {
 pub fn bot_activity_options() -> ActivityOptions {
     ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::StartToClose(
         BOT_ACTIVITY_START_TO_CLOSE,
+    ))
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
+    .retry_policy(retry(BOT_ACTIVITY_MAX_ATTEMPTS))
+    .build()
+}
+
+pub fn bot_start_run_activity_options() -> ActivityOptions {
+    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::StartToClose(
+        BOT_START_RUN_START_TO_CLOSE,
     ))
     .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(retry(BOT_ACTIVITY_MAX_ATTEMPTS))

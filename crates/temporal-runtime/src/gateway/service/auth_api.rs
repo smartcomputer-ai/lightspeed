@@ -198,9 +198,11 @@ pub(super) fn validate_mcp_grant_for_server(
 
     if let Some(audience) = &grant.audience {
         if !auth::audience_covers(audience, &record.server_url) {
+            // This text can reach the model and session context through the notice on
+            // unavailable servers, so it names the grant and not the URL.
             return Err(AgentApiError::rejected(format!(
-                "auth grant {} audience does not cover MCP server URL {}",
-                grant.grant_id, record.server_url
+                "auth grant {} audience does not cover this MCP server's URL",
+                grant.grant_id
             )));
         }
         let oauth_resource = match &record.auth_policy {
@@ -212,8 +214,8 @@ pub(super) fn validate_mcp_grant_for_server(
             && !auth::audience_covers(audience, resource)
         {
             return Err(AgentApiError::rejected(format!(
-                "auth grant {} audience does not cover MCP OAuth resource {}",
-                grant.grant_id, resource
+                "auth grant {} audience does not cover this MCP server's OAuth resource",
+                grant.grant_id
             )));
         }
     }

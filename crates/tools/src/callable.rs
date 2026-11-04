@@ -9,8 +9,8 @@
 use std::collections::BTreeSet;
 
 use harness::{
-    BlobRef, ProviderApiKind, ProviderNativeToolExecution, RemoteMcpToolSpec, ToolKind, ToolName,
-    ToolSpec, storage::BlobStore,
+    BlobRef, ProviderApiKind, ProviderNativeToolExecution, RemoteMcpToolSpec, ToolId, ToolKind,
+    ToolName, ToolSpec, storage::BlobStore,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,7 +38,7 @@ pub enum CatalogError {
 
 #[derive(Clone, Debug)]
 pub struct ResolvedTool {
-    pub id: ToolName,
+    pub id: ToolId,
     pub name: ToolName,
     pub kind: ResolvedToolKind,
     pub callable_binding: Option<CallableBinding>,
@@ -76,7 +76,7 @@ pub enum CallableBinding {
 /// value. Failures reject the guest promise with their structured output intact.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallableTool {
-    pub tool_id: ToolName,
+    pub tool_id: ToolId,
     pub definition: CallableSpecification,
     pub binding: CallableBinding,
     /// A workflow binding changes completion semantics. Retain its admitted
@@ -218,15 +218,12 @@ pub async fn resolve(
     let mut ids = BTreeSet::new();
     let mut names = BTreeSet::new();
     for tool in tools {
-        if !ids.insert(&tool.name) {
-            return Err(invalid(format!(
-                "duplicate tool registration {}",
-                tool.name
-            )));
+        if !ids.insert(&tool.id) {
+            return Err(invalid(format!("duplicate tool registration {}", tool.id)));
         }
         match &tool.kind {
             ToolKind::Builtin(spec) => {
-                for builtin in definitions::resolve(&tool.name, spec, target)? {
+                for builtin in definitions::resolve(&tool.id, spec, target)? {
                     let kind = match builtin.definition {
                         Definition::Function(function) => ResolvedToolKind::Function(function),
                         Definition::Native(definition) => {
@@ -238,7 +235,7 @@ pub async fn resolve(
                         }
                     };
                     resolved.push(ResolvedTool {
-                        id: tool.name.clone(),
+                        id: tool.id.clone(),
                         name: builtin.name,
                         kind,
                         callable_binding: builtin
@@ -249,10 +246,10 @@ pub async fn resolve(
             }
             ToolKind::Function(function) => {
                 resolved.push(ResolvedTool {
-                    id: tool.name.clone(),
-                    name: tool.name.clone(),
+                    id: tool.id.clone(),
+                    name: tool.id.as_wire_name(),
                     kind: ResolvedToolKind::Function(FunctionDefinition {
-                        name: tool.name.clone(),
+                        name: tool.id.as_wire_name(),
                         description: match &function.description_ref {
                             Some(reference) => Some(read_text(blobs, reference).await?),
                             None => None,
@@ -277,10 +274,10 @@ pub async fn resolve(
                     Some(name) => {
                         ToolName::try_new(name).map_err(|error| invalid(error.to_string()))?
                     }
-                    None => tool.name.clone(),
+                    None => tool.id.as_wire_name(),
                 };
                 resolved.push(ResolvedTool {
-                    id: tool.name.clone(),
+                    id: tool.id.clone(),
                     name,
                     kind: ResolvedToolKind::ProviderNative(NativeDefinition {
                         api_kind: native.api_kind.clone(),
@@ -291,8 +288,8 @@ pub async fn resolve(
                 });
             }
             ToolKind::RemoteMcp(remote) => resolved.push(ResolvedTool {
-                id: tool.name.clone(),
-                name: tool.name.clone(),
+                id: tool.id.clone(),
+                name: tool.id.as_wire_name(),
                 kind: ResolvedToolKind::RemoteMcp(remote.clone()),
                 callable_binding: None,
             }),
@@ -403,7 +400,7 @@ mod tests {
 
     async fn function(blobs: &dyn BlobStore, output: Option<Value>) -> ToolSpec {
         ToolSpec {
-            name: ToolName::new("lookup"),
+            id: ToolId::new("lookup"),
             kind: ToolKind::Function(FunctionToolSpec {
                 description_ref: Some(blobs.put_bytes(b"Find one item".to_vec()).await.unwrap()),
                 input_schema_ref: blobs
@@ -496,7 +493,7 @@ mod tests {
             .await
             .unwrap();
         let native = ToolSpec {
-            name: ToolName::new("native_effect"),
+            id: ToolId::new("native_effect"),
             kind: ToolKind::ProviderNative(harness::ProviderNativeToolSpec {
                 api_kind: ProviderApiKind::AnthropicMessages,
                 native_tool_ref: native_ref,
@@ -520,7 +517,7 @@ mod tests {
     async fn duplicate_exposed_names_cannot_produce_ambiguous_bindings() {
         let blobs = InMemoryBlobStore::new();
         let mut authored = function(&blobs, None).await;
-        authored.name = ToolName::new("exec_command");
+        authored.id = ToolId::new("exec_command");
         assert!(matches!(
             resolve(
                 &blobs,
@@ -598,8 +595,8 @@ mod tests {
         harness::WorkflowToolBinding::admit(
             uuid::Uuid::from_u128(1),
             harness::WorkflowToolDefinition {
-                tool_id: harness::WorkflowToolId::new("lookup"),
-                revision: 1,
+                workflow_tool_id: harness::WorkflowToolId::new("lookup"),
+                schema_revision: 1,
                 semantic_type: "test.lookup.v1".to_owned(),
                 tool,
             },
@@ -672,7 +669,7 @@ mod tests {
             registered,
             harness::WorkflowToolCompletion::Joined {
                 reply_schema_ref: Some(reply_ref),
-                deadline_after_ms: 1000,
+                deadline_after_ms: Some(1000),
             },
         );
         let callable = resolve_workflow(&blobs, &target, &joined)
@@ -704,7 +701,7 @@ mod tests {
             tool,
             harness::WorkflowToolCompletion::Joined {
                 reply_schema_ref: None,
-                deadline_after_ms: 1000,
+                deadline_after_ms: Some(1000),
             },
         );
         let callable = resolve_workflow(&blobs, &target, &binding)

@@ -7,7 +7,7 @@
 //! and `KillShell` are both `continue_process`), and a toolset may restrict
 //! the process tools to a one-shot shape that omits the handle path.
 
-use harness::{ToolExecutionClass, ToolExecutionSpec, ToolName, ToolParallelism};
+use harness::{ToolExecutionClass, ToolExecutionSpec, ToolId, ToolName, ToolParallelism};
 use serde_json::Value;
 
 use crate::{
@@ -79,7 +79,7 @@ pub struct BuiltinToolRequirements {
 }
 
 impl BuiltinToolRequirements {
-    pub fn for_id(id: &ToolName) -> Self {
+    pub fn for_id(id: &ToolId) -> Self {
         BuiltinTool::from_logical_id(id.as_str())
             .map(|tool| tool.requirements())
             .unwrap_or_default()
@@ -935,21 +935,21 @@ mod tests {
             }
         }
         assert_eq!(
-            BuiltinToolRequirements::for_id(&ToolName::new("vfs.read_file")),
+            BuiltinToolRequirements::for_id(&ToolId::new("vfs.read_file")),
             BuiltinToolRequirements {
                 vfs: true,
                 active_environment: false
             }
         );
         assert_eq!(
-            BuiltinToolRequirements::for_id(&ToolName::new("env.run_process")),
+            BuiltinToolRequirements::for_id(&ToolId::new("env.run_process")),
             BuiltinToolRequirements {
                 vfs: false,
                 active_environment: true
             }
         );
         assert_eq!(
-            BuiltinToolRequirements::for_id(&ToolName::new("env.job_read")),
+            BuiltinToolRequirements::for_id(&ToolId::new("env.job_read")),
             BuiltinToolRequirements::default()
         );
     }

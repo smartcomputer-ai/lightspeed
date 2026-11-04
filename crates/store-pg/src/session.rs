@@ -4,16 +4,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use async_trait::async_trait;
 use harness::storage::SessionActivity;
 use harness::{
-    BlobRef,
-    session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
+    BlobRef, event_kind,
+    session::{
+        EventSeq, SessionId, SessionPosition, StoredEvent, StoredSessionEntry,
+        UncommittedStoredEvent,
+    },
     storage::{
         AdvanceSessionCheckpoint, AppendSessionEvents, AppendSessionEventsResult,
         CreateClonedSession, CreateForkedSession, CreateSession, DeleteClosedSessions,
-        DeleteClosedSessionsResult, ListSessions, ReadSessionEventRange, ReadSessionEvents,
-        SessionCheckpoint, SessionLifecycleStatus, SessionListCursor, SessionListPage,
-        SessionOrigin, SessionOriginCounts, SessionPage, SessionRecord, SessionStore,
-        SessionStoreError, apply_lifecycle_projection, check_origin_limits, collect_blob_refs,
-        largest_safe_fork_seq, lifecycle_at_fork, validate_fork_point,
+        DeleteClosedSessionsResult, ListSessions, ReadRunRecordEntries, ReadSessionEventRange,
+        ReadSessionEvents, RetentionRootCursor, SessionCheckpoint, SessionLifecycleStatus,
+        SessionListCursor, SessionListPage, SessionOrigin, SessionOriginCounts, SessionPage,
+        SessionRecord, SessionStore, SessionStoreError, apply_lifecycle_projection,
+        check_origin_limits, event_blob_roots, largest_safe_fork_seq, lifecycle_at_fork,
+        validate_fork_point,
     },
 };
 use sqlx::{Postgres, Row, Transaction};
@@ -37,7 +41,7 @@ const SESSION_COLUMNS: &str = r#"
     retention_root_session_id,
     delete_after_close_ms,
     delete_at_ms,
-    managed,
+    lifecycle_controlled,
     head_seq,
     source_session_id,
     source_seq,
@@ -111,7 +115,7 @@ impl PgStore {
                 serde_json::to_value(&entry).map_err(|error| SessionStoreError::Store {
                     message: format!("serialize session entry: {error}"),
                 })?;
-            embedded.observe(&entry_json);
+            embedded.observe(&entry.event)?;
             sqlx::query(
                 r#"
                 INSERT INTO session_events (universe_id, session_id, entry_json)
@@ -155,7 +159,7 @@ impl PgStore {
                     updated_at_ms = $4,
                     lifecycle_status = $5,
                     closed_at_seq = $6,
-                    managed = $7,
+                    lifecycle_controlled = $7,
                     closed_at_ms = $8
                 WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
                 "#,
@@ -169,7 +173,7 @@ impl PgStore {
                 record.closed_at_seq,
                 "closed_at_seq",
             )?)
-            .bind(record.managed)
+            .bind(record.lifecycle_controlled)
             .bind(optional_u64_to_i64(record.closed_at_ms, "closed_at_ms")?)
             .execute(&mut *tx)
             .await
@@ -179,28 +183,23 @@ impl PgStore {
         tx.commit()
             .await
             .map_err(|error| session_sql_error("commit append transaction", error))?;
-        Ok(AppendSessionEventsResult {
-            entries: committed,
-            head,
-        })
+        Ok(AppendSessionEventsResult { entries: committed })
     }
 
-    async fn read_all_effective_events(
+    /// The effective log through `through`, a head the caller already read. The
+    /// log only grows, so this is a consistent snapshot at that head whatever
+    /// lands after it.
+    async fn read_effective_events_through(
         &self,
         session_id: &SessionId,
+        through: u64,
     ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
-        let head = self
-            .load_session(session_id)
-            .await?
-            .ok_or_else(|| SessionStoreError::SessionNotFound {
-                session_id: session_id.clone(),
-            })?
-            .head
-            .map_or(0, |head| head.seq.as_u64());
         let mut entries = Vec::new();
         let mut after = 0;
-        while after < head {
-            let page = self.read_effective_window(session_id, after, 512).await?;
+        while after < through {
+            let page = self
+                .read_effective_window_through(session_id, after, through, 512)
+                .await?;
             if page.is_empty() {
                 return Err(SessionStoreError::Store {
                     message: format!(
@@ -256,9 +255,15 @@ impl PgStore {
                 continue;
             }
             let remaining = limit.saturating_sub(selected.len());
-            let mut entries = self
-                .read_local_segment(&segment.session_id, lower, segment.through, remaining)
-                .await?;
+            let mut entries = read_local_segment(
+                &self.pool,
+                self.config.universe_id,
+                &segment.session_id,
+                lower,
+                segment.through,
+                remaining,
+            )
+            .await?;
             selected.append(&mut entries);
         }
         Ok(selected)
@@ -348,37 +353,6 @@ impl PgStore {
         }
 
         Ok(segments)
-    }
-
-    async fn read_local_segment(
-        &self,
-        session_id: &SessionId,
-        after: u64,
-        through: u64,
-        limit: usize,
-    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
-        let rows = sqlx::query(
-            r#"
-            SELECT entry_json
-            FROM session_events
-            WHERE universe_id = $1
-              AND session_id = $2
-              AND seq > $3
-              AND seq <= $4
-            ORDER BY seq
-            LIMIT $5
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(session_id.as_str())
-        .bind(u64_to_i64(after, "read_after seq")?)
-        .bind(u64_to_i64(through, "read through seq")?)
-        .bind(usize_to_session_i64(limit, "read_after limit")?)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| session_sql_error("read session event segment", error))?;
-
-        rows.iter().map(session_entry_from_row).collect()
     }
 
     async fn load_session_required(
@@ -479,7 +453,7 @@ impl PgStore {
               {closed_predicate}
               {subagent_predicate}
               {access_predicate}
-              AND ($9::boolean IS NULL OR COALESCE(r.managed, s.managed) = $9)
+              AND ($9::boolean IS NULL OR COALESCE(r.lifecycle_controlled, s.lifecycle_controlled) = $9)
               AND (cardinality($10::text[]) = 0
                    OR COALESCE(s.origin_root_session_id, s.session_id) = ANY($10))
               {metadata_predicate}
@@ -493,13 +467,16 @@ impl PgStore {
             .bind(cursor_session_id)
             .bind(request.parent.as_ref().map(|id| id.as_str().to_owned()))
             .bind(fetch_limit);
-        let mut sql = access_binds.bind(sql).bind(request.managed).bind(
-            request
-                .trees
-                .iter()
-                .map(|id| id.as_str().to_owned())
-                .collect::<Vec<_>>(),
-        );
+        let mut sql = access_binds
+            .bind(sql)
+            .bind(request.lifecycle_controlled)
+            .bind(
+                request
+                    .trees
+                    .iter()
+                    .map(|id| id.as_str().to_owned())
+                    .collect::<Vec<_>>(),
+            );
         if let Some(filter) = metadata_filter {
             sql = sql.bind(filter);
         }
@@ -609,6 +586,22 @@ impl SessionStore for PgStore {
                     "lock parent session for reservation",
                 )
                 .await?;
+            }
+            // An existing row answers first. A retry of this creation must hear
+            // that its row exists, whatever the tree's capacity now is, because
+            // the row it is asking about is one of the rows being counted.
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM sessions WHERE universe_id = $1 AND session_id = $2)",
+            )
+            .bind(self.config.universe_id)
+            .bind(request.session_id.as_str())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|error| session_sql_error("check session exists", error))?;
+            if exists {
+                return Err(SessionStoreError::SessionAlreadyExists {
+                    session_id: request.session_id,
+                });
             }
             let counts =
                 origin_counts_in_tx(&mut tx, self.config.universe_id, &origin.root_session_id)
@@ -818,6 +811,7 @@ impl SessionStore for PgStore {
     async fn list_retention_roots_due_for_deletion(
         &self,
         now_ms: u64,
+        after: Option<&RetentionRootCursor>,
         limit: usize,
     ) -> Result<Vec<SessionRecord>, SessionStoreError> {
         if limit == 0 {
@@ -832,6 +826,7 @@ impl SessionStore for PgStore {
               AND lifecycle_status = 'closed'
               AND delete_at_ms IS NOT NULL
               AND delete_at_ms <= $2
+              AND (delete_at_ms, session_id) > ($4, $5)
             ORDER BY delete_at_ms, session_id
             LIMIT $3
             "#,
@@ -840,10 +835,34 @@ impl SessionStore for PgStore {
             .bind(self.config.universe_id)
             .bind(u64_to_i64(now_ms, "retention now_ms")?)
             .bind(usize_to_session_i64(limit, "retention limit")?)
+            .bind(
+                after
+                    .map(|after| u64_to_i64(after.delete_at_ms, "retention cursor"))
+                    .transpose()?
+                    .unwrap_or(-1),
+            )
+            .bind(after.map_or("", |after| after.session_id.as_str()))
             .fetch_all(&self.pool)
             .await
             .map_err(|error| session_sql_error("list due retention roots", error))?;
         rows.iter().map(session_record_from_row).collect()
+    }
+
+    async fn discard_unopened_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<bool, SessionStoreError> {
+        let discarded = sqlx::query(
+            "DELETE FROM sessions
+             WHERE universe_id = $1 AND session_id = $2
+               AND lifecycle_status = 'new' AND head_seq IS NULL",
+        )
+        .bind(self.config.universe_id)
+        .bind(session_id.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(|error| session_sql_error("discard unopened session", error))?;
+        Ok(discarded.rows_affected() > 0)
     }
 
     async fn delete_closed_sessions(
@@ -875,8 +894,8 @@ impl SessionStore for PgStore {
             "clone source",
         )
         .await?;
-        if source.managed {
-            return Err(SessionStoreError::ManagedSessionCannotBranch {
+        if source.lifecycle_controlled {
+            return Err(SessionStoreError::LifecycleControlledSessionCannotBranch {
                 session_id: request.source_session_id,
             });
         }
@@ -937,24 +956,21 @@ impl SessionStore for PgStore {
             .ok_or_else(|| SessionStoreError::SessionNotFound {
                 session_id: request.source_session_id.clone(),
             })?;
-        if source_record.managed {
-            return Err(SessionStoreError::ManagedSessionCannotBranch {
+        if source_record.lifecycle_controlled {
+            return Err(SessionStoreError::LifecycleControlledSessionCannotBranch {
                 session_id: request.source_session_id,
             });
         }
-        let source_entries = self
-            .read_all_effective_events(&request.source_session_id)
-            .await?;
-        let source_head = self
-            .head(&request.source_session_id)
-            .await?
+        // Most of the log is read before taking any lock, so a long session's
+        // appends do not wait on it. The fork point is judged further down,
+        // under the locks.
+        let read_head = source_record
+            .head
+            .as_ref()
             .map_or(0, |head| head.seq.as_u64());
-        validate_fork_point(
-            &request.source_session_id,
-            request.source_seq,
-            &source_entries,
-            source_head,
-        )?;
+        let mut source_entries = self
+            .read_effective_events_through(&request.source_session_id, read_head)
+            .await?;
 
         let created_at_ms = u64_to_i64(request.created_at_ms, "created_at_ms")?;
         let source_seq_u64 = request.source_seq.as_u64();
@@ -986,11 +1002,32 @@ impl SessionStore for PgStore {
             )
             .await?
         };
-        if source.managed {
-            return Err(SessionStoreError::ManagedSessionCannotBranch {
+        if source.lifecycle_controlled {
+            return Err(SessionStoreError::LifecycleControlledSessionCannotBranch {
                 session_id: request.source_session_id,
             });
         }
+        // Appends hold this row's lock, so the head is final until the fork
+        // commits. A run appended since the read above sits in the session's
+        // own log, past any inherited prefix, and is seen by this validation.
+        let source_head = source.head.as_ref().map_or(0, |head| head.seq.as_u64());
+        source_entries.extend(
+            read_local_segment(
+                &mut *tx,
+                self.config.universe_id,
+                &request.source_session_id,
+                read_head,
+                source_head,
+                source_head.saturating_sub(read_head) as usize,
+            )
+            .await?,
+        );
+        validate_fork_point(
+            &request.source_session_id,
+            request.source_seq,
+            &source_entries,
+            source_head,
+        )?;
         let (lifecycle_status, closed_at_seq) = lifecycle_at_fork(&source, request.source_seq);
         let closed_at_ms = closed_at_seq.and(source.closed_at_ms);
         let query = format!(
@@ -1002,7 +1039,7 @@ impl SessionStore for PgStore {
                 closed_at_seq,
                 closed_at_ms,
                 retention_root_session_id,
-                managed,
+                lifecycle_controlled,
                 head_seq,
                 source_session_id,
                 source_seq,
@@ -1043,11 +1080,12 @@ impl SessionStore for PgStore {
     }
 
     async fn safe_fork_seq(&self, session_id: &SessionId) -> Result<EventSeq, SessionStoreError> {
-        let entries = self.read_all_effective_events(session_id).await?;
         let head = self
-            .head(session_id)
+            .load_session_required(session_id)
             .await?
+            .head
             .map_or(0, |head| head.seq.as_u64());
+        let entries = self.read_effective_events_through(session_id, head).await?;
         Ok(largest_safe_fork_seq(&entries, head))
     }
 
@@ -1081,6 +1119,50 @@ impl SessionStore for PgStore {
             next_after,
             complete,
         })
+    }
+
+    async fn read_run_record_entries(
+        &self,
+        request: ReadRunRecordEntries,
+    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
+        if request.limit == 0 {
+            return Err(SessionStoreError::InvalidLimit { limit: 0 });
+        }
+        let record = self.load_session_required(&request.session_id).await?;
+        let through = record.head.as_ref().map_or(0, |head| head.seq.as_u64());
+        let run_ids = request.run_ids();
+        let kinds = event_kind::RUN_RECORD_KINDS.map(str::to_owned);
+        let mut entries = Vec::new();
+        for segment in self.resolve_segments(&request.session_id, through).await? {
+            let rows = sqlx::query(
+                r#"
+                SELECT entry_json
+                FROM session_events
+                WHERE universe_id = $1
+                  AND session_id = $2
+                  AND seq > $3
+                  AND seq <= $4
+                  AND event_kind = ANY($5)
+                  AND (entry_json #>> '{joins,run_id}')::bigint >= $6
+                  AND (entry_json #>> '{joins,run_id}')::bigint < $7
+                ORDER BY seq
+                "#,
+            )
+            .bind(self.config.universe_id)
+            .bind(segment.session_id.as_str())
+            .bind(u64_to_i64(segment.after, "run record read seq")?)
+            .bind(u64_to_i64(segment.through, "run record read seq")?)
+            .bind(kinds.as_slice())
+            .bind(u64_to_i64(run_ids.start, "run record read run id")?)
+            .bind(u64_to_i64(run_ids.end, "run record read run id")?)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| session_sql_error("read run record entries", error))?;
+            for row in &rows {
+                entries.push(session_entry_from_row(row)?);
+            }
+        }
+        Ok(entries)
     }
 
     async fn read_range(
@@ -1237,6 +1319,8 @@ impl SessionStore for PgStore {
                 byte_len = excluded.byte_len,
                 created_at_ms = excluded.created_at_ms
             WHERE session_checkpoints.through_seq < excluded.through_seq
+               OR (session_checkpoints.through_seq = excluded.through_seq
+                   AND session_checkpoints.format_version <> excluded.format_version)
             "#,
         )
         .bind(self.config.universe_id)
@@ -1282,6 +1366,38 @@ impl SessionStore for PgStore {
             .await
             .map(|record| record.and_then(|record| record.head))
     }
+}
+
+async fn read_local_segment<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    universe_id: Uuid,
+    session_id: &SessionId,
+    after: u64,
+    through: u64,
+    limit: usize,
+) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT entry_json
+        FROM session_events
+        WHERE universe_id = $1
+          AND session_id = $2
+          AND seq > $3
+          AND seq <= $4
+        ORDER BY seq
+        LIMIT $5
+        "#,
+    )
+    .bind(universe_id)
+    .bind(session_id.as_str())
+    .bind(u64_to_i64(after, "read_after seq")?)
+    .bind(u64_to_i64(through, "read through seq")?)
+    .bind(usize_to_session_i64(limit, "read_after limit")?)
+    .fetch_all(executor)
+    .await
+    .map_err(|error| session_sql_error("read session event segment", error))?;
+
+    rows.iter().map(session_entry_from_row).collect()
 }
 
 fn session_record_from_row(
@@ -1336,9 +1452,9 @@ fn session_record_from_row(
         .try_get::<Option<i64>, _>("delete_at_ms")
         .map_err(|error| session_sql_error("decode delete_at_ms", error))
         .and_then(|value| optional_i64_to_u64(value, "delete_at_ms"))?;
-    let managed = row
-        .try_get::<bool, _>("managed")
-        .map_err(|error| session_sql_error("decode managed", error))?;
+    let lifecycle_controlled = row
+        .try_get::<bool, _>("lifecycle_controlled")
+        .map_err(|error| session_sql_error("decode lifecycle_controlled", error))?;
     let activity = match row
         .try_get::<Option<String>, _>("activity")
         .map_err(|error| session_sql_error("decode session activity", error))?
@@ -1391,7 +1507,7 @@ fn session_record_from_row(
         retention_root_session_id,
         delete_after_close_ms,
         delete_at_ms,
-        managed,
+        lifecycle_controlled,
         head,
         source_session_id,
         source_seq,
@@ -1604,7 +1720,7 @@ async fn append_events_in_tx(
             serde_json::to_value(&entry).map_err(|error| SessionStoreError::Store {
                 message: format!("serialize session entry: {error}"),
             })?;
-        embedded.observe(&entry_json);
+        embedded.observe(&entry.event)?;
         sqlx::query(
             r#"
             INSERT INTO session_events (universe_id, session_id, entry_json)
@@ -1634,7 +1750,7 @@ async fn append_events_in_tx(
                 updated_at_ms = $4,
                 lifecycle_status = $5,
                 closed_at_seq = $6,
-                managed = $7,
+                lifecycle_controlled = $7,
                 closed_at_ms = $8
             WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
             "#,
@@ -1648,7 +1764,7 @@ async fn append_events_in_tx(
             record.closed_at_seq,
             "closed_at_seq",
         )?)
-        .bind(record.managed)
+        .bind(record.lifecycle_controlled)
         .bind(optional_u64_to_i64(record.closed_at_ms, "closed_at_ms")?)
         .execute(&mut **tx)
         .await
@@ -1658,16 +1774,17 @@ async fn append_events_in_tx(
     Ok((record, committed))
 }
 
-/// Distinct refs in an append. The store derives FK-backed roots inside the
-/// append transaction; callers never register roots separately.
+/// Distinct typed refs in an append. The store derives FK-backed roots inside
+/// the append transaction; callers never register roots separately.
 #[derive(Default)]
 struct EmbeddedBlobRefs {
     refs: BTreeSet<BlobRef>,
 }
 
 impl EmbeddedBlobRefs {
-    fn observe(&mut self, entry_json: &serde_json::Value) {
-        self.refs.extend(collect_blob_refs(entry_json));
+    fn observe(&mut self, event: &StoredEvent) -> Result<(), SessionStoreError> {
+        self.refs.extend(event_blob_roots(event)?);
+        Ok(())
     }
 
     async fn record_roots(
@@ -1778,14 +1895,16 @@ impl PgStore {
             .map_err(|error| session_sql_error("check deleted session", error))
     }
 
-    /// Recreated bots keep their previous conversations and start fresh generations.
+    /// Sessions a controller starting without a carry must begin past: all the
+    /// bot's retained ids, from any incarnation or namespace. Per-event ids are
+    /// left out: a busy bot can retain any number of them while the seeding has
+    /// no use for them.
     pub async fn previous_bot_session_ids(
         &self,
         bot_id: &api::BotId,
-        created_at_ms: i64,
     ) -> Result<Vec<String>, SessionStoreError> {
-        sqlx::query_scalar("SELECT session_id FROM sessions WHERE universe_id=$1 AND bot_id=$2 AND created_at_ms < $3")
-            .bind(self.config.universe_id).bind(bot_id.as_str()).bind(created_at_ms)
+        sqlx::query_scalar("SELECT session_id FROM sessions WHERE universe_id=$1 AND bot_id=$2 AND session_id NOT LIKE '%:e-%'")
+            .bind(self.config.universe_id).bind(bot_id.as_str())
             .fetch_all(&self.pool).await.map_err(|error| session_sql_error("read previous bot sessions", error))
     }
 }

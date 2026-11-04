@@ -105,6 +105,7 @@ export const sessionMessageSchema = z.object({
 /// origin; the route stamps the signed-in user.
 export const sessionSteerSchema = z.object({
   text: z.string().max(100_000).default(""),
+  submissionId: z.string().min(1).max(200).optional(),
   attachments: z.array(messageAttachmentSchema).max(MAX_MESSAGE_ATTACHMENTS).default([]),
 }).refine(hasContent, contentMessage);
 

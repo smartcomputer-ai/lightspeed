@@ -1,0 +1,1246 @@
+[
+  {
+    "position": {
+      "seq": 1
+    },
+    "observed_at_ms": 1780000000007,
+    "joins": {},
+    "event": {
+      "kind": "lightspeed.core.lifecycle.opened",
+      "version": 1,
+      "payload": {
+        "lifecycle": {
+          "opened": {
+            "config": {
+              "context": {
+                "compaction": {
+                  "mode": "provider_standalone"
+                },
+                "input_limit_tokens": 200000
+              },
+              "features": {
+                "environments": {
+                  "environments": [
+                    {
+                      "access": "exec",
+                      "default": true,
+                      "environment_id": "env"
+                    }
+                  ],
+                  "selection": true,
+                  "version": 1
+                }
+              },
+              "model": {
+                "api_kind": "open_ai_responses",
+                "model": "gpt-test",
+                "provider_id": "openai"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 2
+    },
+    "observed_at_ms": 1780000000014,
+    "joins": {},
+    "event": {
+      "kind": "lightspeed.core.tool_config.tools_replaced",
+      "version": 1,
+      "payload": {
+        "tool_config": {
+          "tools_replaced": {
+            "base_revision": 0,
+            "tools": {
+              "read_file": {
+                "execution": {
+                  "class": "interactive",
+                  "retry_safe": false
+                },
+                "id": "read_file",
+                "kind": {
+                  "function": {
+                    "description_ref": null,
+                    "input_schema_ref": "sha256:a2c799262a3ce3c19ef5cdd983bf3d12b43ab3c426227091b909dcb7054738c0",
+                    "output_schema_ref": null,
+                    "provider_options_ref": null,
+                    "strict": null
+                  }
+                },
+                "parallelism": "parallel_safe"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 3
+    },
+    "observed_at_ms": 1780000000021,
+    "joins": {},
+    "event": {
+      "kind": "lightspeed.core.environment.active_set",
+      "version": 1,
+      "payload": {
+        "environment": {
+          "active_environment_set": {
+            "environment_id": "env"
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 4
+    },
+    "observed_at_ms": 1780000000028,
+    "joins": {},
+    "event": {
+      "kind": "lightspeed.core.context.entries_applied",
+      "version": 1,
+      "payload": {
+        "context": {
+          "entries_applied": {
+            "base_revision": 0,
+            "entries": [
+              {
+                "content": {
+                  "content_ref": "sha256:238fa28a94976c7da14563bc873c2729bd5cd325389085bb4c6dd0de28923590",
+                  "media_type": "text/plain",
+                  "provider_kind": null
+                },
+                "entry_id": 1,
+                "key": "instructions.000.default",
+                "kind": "instructions",
+                "preview": null,
+                "provenance_ref": null,
+                "source": "context_edit",
+                "token_estimate": null
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 5
+    },
+    "observed_at_ms": 1780000000035,
+    "joins": {
+      "run_id": "1",
+      "submission_id": "bd6f1b2c-1b1e-4a7e-9b1a-000000000001"
+    },
+    "event": {
+      "kind": "lightspeed.core.run.accepted",
+      "version": 1,
+      "payload": {
+        "run": {
+          "accepted": {
+            "config_revision": 0,
+            "run_config": {},
+            "run_id": 1,
+            "source": {
+              "input": [
+                {
+                  "content": {
+                    "content_ref": "sha256:c6c289e49e9c05b2145860387b73bcb18df43fb09a1e4a4a9713c76c88bb541b",
+                    "media_type": "text/plain",
+                    "provider_kind": null
+                  },
+                  "kind": {
+                    "message": {
+                      "role": "user"
+                    }
+                  },
+                  "preview": null,
+                  "provenance_ref": null,
+                  "token_estimate": null
+                }
+              ],
+              "type": "input"
+            },
+            "submission_id": "bd6f1b2c-1b1e-4a7e-9b1a-000000000001"
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 6
+    },
+    "observed_at_ms": 1780000000042,
+    "joins": {
+      "run_id": "1",
+      "submission_id": "bd6f1b2c-1b1e-4a7e-9b1a-000000000001"
+    },
+    "event": {
+      "kind": "lightspeed.core.run.started",
+      "version": 1,
+      "payload": {
+        "run": {
+          "started": {
+            "run_id": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 7
+    },
+    "observed_at_ms": 1780000000049,
+    "joins": {
+      "run_id": "1"
+    },
+    "event": {
+      "kind": "lightspeed.core.context.entries_applied",
+      "version": 1,
+      "payload": {
+        "context": {
+          "entries_applied": {
+            "base_revision": 1,
+            "entries": [
+              {
+                "content": {
+                  "content_ref": "sha256:c6c289e49e9c05b2145860387b73bcb18df43fb09a1e4a4a9713c76c88bb541b",
+                  "media_type": "text/plain",
+                  "provider_kind": null
+                },
+                "entry_id": 2,
+                "key": "run.1.input.0",
+                "kind": {
+                  "message": {
+                    "role": "user"
+                  }
+                },
+                "preview": null,
+                "provenance_ref": null,
+                "source": {
+                  "run_input": {
+                    "input_index": 0,
+                    "run_id": 1
+                  }
+                },
+                "token_estimate": null
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 8
+    },
+    "observed_at_ms": 1780000000056,
+    "joins": {
+      "run_id": "1",
+      "turn_id": "1"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.started",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "started": {
+            "run_id": 1,
+            "turn_id": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 9
+    },
+    "observed_at_ms": 1780000000063,
+    "joins": {
+      "run_id": "1",
+      "turn_id": "1"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.planned",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "planned": {
+            "config_revision": 0,
+            "context_revision": 2,
+            "request_fingerprint": "llm:sha256:1183b6e2b431aef98296c2fc10f606e03f8f4ab8990b831c2f3b0e6806383887",
+            "run_id": 1,
+            "toolset_revision": 1,
+            "turn_id": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 10
+    },
+    "observed_at_ms": 1780000000070,
+    "joins": {
+      "run_id": "1",
+      "turn_id": "1"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.generation_requested",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "generation_requested": {
+            "run_id": 1,
+            "turn_id": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 11
+    },
+    "observed_at_ms": 1780000000084,
+    "joins": {
+      "run_id": "1",
+      "turn_id": "1"
+    },
+    "event": {
+      "kind": "lightspeed.core.context.entries_applied",
+      "version": 1,
+      "payload": {
+        "context": {
+          "entries_applied": {
+            "base_revision": 2,
+            "entries": [
+              {
+                "content": {
+                  "content_ref": "sha256:75b4875266243a68cfbdbaf4696ee5f9238400d4d47f94c0f7de99cd36194cc5",
+                  "media_type": "application/json",
+                  "provider_kind": "openai.responses.function_call"
+                },
+                "entry_id": 3,
+                "kind": {
+                  "tool_call": {
+                    "call_id": "call_00000000000000000001",
+                    "name": "read_file"
+                  }
+                },
+                "preview": null,
+                "provenance_ref": null,
+                "source": {
+                  "assistant_output": {
+                    "run_id": 1,
+                    "turn_id": 1
+                  }
+                },
+                "token_estimate": null
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 12
+    },
+    "observed_at_ms": 1780000000084,
+    "joins": {
+      "run_id": "1",
+      "turn_id": "1"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.generation_completed",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "generation_completed": {
+            "facts": {
+              "context_token_estimate": {
+                "quality": "provider_counted",
+                "tokens": 48000
+              },
+              "duration_ms": 8123,
+              "finish": "tool_calls",
+              "provider_response_id": "resp_0123456789abcdef",
+              "tool_calls": [
+                {
+                  "arguments_ref": "sha256:d93c6422b2492009aa53294dd191e9a4cce1177bfe800cee4435de36e0ea8bdd",
+                  "call_id": "call_00000000000000000001",
+                  "native_call_ref": "sha256:340ba565c9cee6cc3680a0144c46cb63b123d7e4c432bbb3b3879fb5dbed0d4e",
+                  "provider_kind": "openai.responses.function_call",
+                  "tool_id": "read_file",
+                  "tool_name": "read_file"
+                }
+              ],
+              "usage": {
+                "cache_miss_input_tokens": 7211,
+                "cached_input_tokens": 41000,
+                "input_tokens": 48211,
+                "output_tokens": 912,
+                "reasoning_tokens": 640,
+                "total_tokens": 49123
+              }
+            },
+            "run_id": 1,
+            "status": "succeeded",
+            "turn_id": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 13
+    },
+    "observed_at_ms": 1780000000084,
+    "joins": {
+      "run_id": "1",
+      "turn_id": "1"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.completed",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "completed": {
+            "outcome": "tool_calls_queued",
+            "turn_id": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 14
+    },
+    "observed_at_ms": 1780000000091,
+    "joins": {
+      "run_id": "1",
+      "tool_batch_id": "1",
+      "turn_id": "1"
+    },
+    "event": {
+      "kind": "lightspeed.core.tool.batch_started",
+      "version": 1,
+      "payload": {
+        "tool": {
+          "batch_started": {
+            "batch_id": 1,
+            "calls": [
+              {
+                "arguments_ref": "sha256:d93c6422b2492009aa53294dd191e9a4cce1177bfe800cee4435de36e0ea8bdd",
+                "call_id": "call_00000000000000000001",
+                "native_call_ref": "sha256:340ba565c9cee6cc3680a0144c46cb63b123d7e4c432bbb3b3879fb5dbed0d4e",
+                "provider_kind": "openai.responses.function_call",
+                "tool_id": "read_file",
+                "tool_name": "read_file"
+              }
+            ],
+            "run_id": 1,
+            "toolset_revision": 1,
+            "turn_id": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 15
+    },
+    "observed_at_ms": 1780000000098,
+    "joins": {
+      "run_id": "1",
+      "tool_batch_id": "1",
+      "tool_call_id": "call_00000000000000000001",
+      "turn_id": "1"
+    },
+    "event": {
+      "kind": "lightspeed.core.tool.call_started",
+      "version": 1,
+      "payload": {
+        "tool": {
+          "call_started": {
+            "arguments_ref": "sha256:d93c6422b2492009aa53294dd191e9a4cce1177bfe800cee4435de36e0ea8bdd",
+            "batch_id": 1,
+            "call_id": "call_00000000000000000001",
+            "run_id": 1,
+            "tool_name": "read_file",
+            "turn_id": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 16
+    },
+    "observed_at_ms": 1780000000112,
+    "joins": {
+      "run_id": "1",
+      "tool_batch_id": "1",
+      "tool_call_id": "call_00000000000000000001",
+      "turn_id": "1"
+    },
+    "event": {
+      "kind": "lightspeed.core.tool.call_completed",
+      "version": 1,
+      "payload": {
+        "tool": {
+          "call_completed": {
+            "batch_id": 1,
+            "result": {
+              "call_id": "call_00000000000000000001",
+              "duration_ms": 42,
+              "error_ref": null,
+              "model_visible_context_entries": [
+                {
+                  "content": {
+                    "content_ref": "sha256:f24148feb9c08a18aab2e71f6cfb4abec7deb21611e594ad0f6b716b56710919",
+                    "media_type": null,
+                    "provider_kind": null
+                  },
+                  "kind": {
+                    "tool_result": {
+                      "call_id": "call_00000000000000000001",
+                      "is_error": false
+                    }
+                  },
+                  "preview": null,
+                  "provenance_ref": null,
+                  "token_estimate": null
+                }
+              ],
+              "output_bytes": 4096,
+              "output_ref": "sha256:f24148feb9c08a18aab2e71f6cfb4abec7deb21611e594ad0f6b716b56710919",
+              "status": "succeeded"
+            },
+            "run_id": 1,
+            "turn_id": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 17
+    },
+    "observed_at_ms": 1780000000119,
+    "joins": {
+      "run_id": "1",
+      "tool_batch_id": "1",
+      "turn_id": "1"
+    },
+    "event": {
+      "kind": "lightspeed.core.context.entries_applied",
+      "version": 1,
+      "payload": {
+        "context": {
+          "entries_applied": {
+            "base_revision": 3,
+            "entries": [
+              {
+                "content": {
+                  "content_ref": "sha256:f24148feb9c08a18aab2e71f6cfb4abec7deb21611e594ad0f6b716b56710919",
+                  "media_type": null,
+                  "provider_kind": "openai.responses.function_call"
+                },
+                "entry_id": 4,
+                "kind": {
+                  "tool_result": {
+                    "call_id": "call_00000000000000000001",
+                    "is_error": false
+                  }
+                },
+                "preview": null,
+                "provenance_ref": null,
+                "source": {
+                  "tool": {
+                    "batch_id": 1,
+                    "run_id": 1,
+                    "turn_id": 1
+                  }
+                },
+                "token_estimate": null
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 18
+    },
+    "observed_at_ms": 1780000000119,
+    "joins": {
+      "run_id": "1",
+      "tool_batch_id": "1",
+      "turn_id": "1"
+    },
+    "event": {
+      "kind": "lightspeed.core.tool.batch_completed",
+      "version": 1,
+      "payload": {
+        "tool": {
+          "batch_completed": {
+            "batch_id": 1,
+            "run_id": 1,
+            "turn_id": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 19
+    },
+    "observed_at_ms": 1780000000126,
+    "joins": {
+      "run_id": "1",
+      "turn_id": "2"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.started",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "started": {
+            "run_id": 1,
+            "turn_id": 2
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 20
+    },
+    "observed_at_ms": 1780000000133,
+    "joins": {
+      "run_id": "1",
+      "turn_id": "2"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.planned",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "planned": {
+            "config_revision": 0,
+            "context_revision": 4,
+            "request_fingerprint": "llm:sha256:667f3c0e61910e49bb44d2ea37d3d8d1733eee96beb79f5a48d4fb6ba274333e",
+            "run_id": 1,
+            "toolset_revision": 1,
+            "turn_id": 2
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 21
+    },
+    "observed_at_ms": 1780000000140,
+    "joins": {
+      "run_id": "1",
+      "turn_id": "2"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.generation_requested",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "generation_requested": {
+            "run_id": 1,
+            "turn_id": 2
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 22
+    },
+    "observed_at_ms": 1780000000154,
+    "joins": {
+      "run_id": "1",
+      "turn_id": "2"
+    },
+    "event": {
+      "kind": "lightspeed.core.context.entries_applied",
+      "version": 1,
+      "payload": {
+        "context": {
+          "entries_applied": {
+            "base_revision": 4,
+            "entries": [
+              {
+                "content": {
+                  "content_ref": "sha256:5d98bc479d6b49f6437e30506cddfbdf45055ba0349ca9d104bb71a32f0e5b31",
+                  "media_type": "text/plain",
+                  "provider_kind": "openai.responses.message"
+                },
+                "entry_id": 5,
+                "kind": {
+                  "message": {
+                    "role": "assistant"
+                  }
+                },
+                "preview": null,
+                "provenance_ref": null,
+                "source": {
+                  "assistant_output": {
+                    "run_id": 1,
+                    "turn_id": 2
+                  }
+                },
+                "token_estimate": null
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 23
+    },
+    "observed_at_ms": 1780000000154,
+    "joins": {
+      "run_id": "1",
+      "turn_id": "2"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.generation_completed",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "generation_completed": {
+            "facts": {
+              "context_token_estimate": {
+                "quality": "provider_counted",
+                "tokens": 48000
+              },
+              "duration_ms": 8123,
+              "finish": "stop",
+              "provider_response_id": "resp_0123456789abcdef",
+              "tool_calls": [],
+              "usage": {
+                "cache_miss_input_tokens": 7211,
+                "cached_input_tokens": 41000,
+                "input_tokens": 48211,
+                "output_tokens": 912,
+                "reasoning_tokens": 640,
+                "total_tokens": 49123
+              }
+            },
+            "run_id": 1,
+            "status": "succeeded",
+            "turn_id": 2
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 24
+    },
+    "observed_at_ms": 1780000000154,
+    "joins": {
+      "run_id": "1",
+      "turn_id": "2"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.completed",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "completed": {
+            "outcome": {
+              "final_output": {
+                "output": {
+                  "content_ref": "sha256:5d98bc479d6b49f6437e30506cddfbdf45055ba0349ca9d104bb71a32f0e5b31",
+                  "media_type": "text/plain",
+                  "provider_kind": "openai.responses.message"
+                }
+              }
+            },
+            "turn_id": 2
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 25
+    },
+    "observed_at_ms": 1780000000161,
+    "joins": {
+      "run_id": "1",
+      "turn_id": "2"
+    },
+    "event": {
+      "kind": "lightspeed.core.run.completed",
+      "version": 1,
+      "payload": {
+        "run": {
+          "completed": {
+            "output": {
+              "content_ref": "sha256:5d98bc479d6b49f6437e30506cddfbdf45055ba0349ca9d104bb71a32f0e5b31",
+              "media_type": "text/plain",
+              "provider_kind": "openai.responses.message"
+            },
+            "run_id": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 26
+    },
+    "observed_at_ms": 1780000000175,
+    "joins": {},
+    "event": {
+      "kind": "lightspeed.core.context.compaction_requested",
+      "version": 1,
+      "payload": {
+        "context": {
+          "compaction_requested": {
+            "base_revision": 5,
+            "plan": {
+              "covered_entry_ids": [
+                2,
+                3,
+                4,
+                5
+              ],
+              "trigger": "manual"
+            },
+            "trigger": "manual"
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 27
+    },
+    "observed_at_ms": 1780000000189,
+    "joins": {},
+    "event": {
+      "kind": "lightspeed.core.context.entries_removed",
+      "version": 1,
+      "payload": {
+        "context": {
+          "entries_removed": {
+            "base_revision": 6,
+            "entry_ids": [
+              2,
+              3,
+              4,
+              5
+            ],
+            "reason": "provider_compacted"
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 28
+    },
+    "observed_at_ms": 1780000000189,
+    "joins": {},
+    "event": {
+      "kind": "lightspeed.core.context.entries_applied",
+      "version": 1,
+      "payload": {
+        "context": {
+          "entries_applied": {
+            "base_revision": 7,
+            "entries": [
+              {
+                "content": {
+                  "content_ref": "sha256:2c879683e7249fc3ce09997edf4cbab04c496a2e1fa3e7a0c482ec50b6647bcb",
+                  "media_type": "text/plain",
+                  "provider_kind": null
+                },
+                "entry_id": 6,
+                "kind": {
+                  "message": {
+                    "role": "user"
+                  }
+                },
+                "preview": null,
+                "provenance_ref": null,
+                "source": {
+                  "runtime": {
+                    "label": "standalone_compaction_prefix"
+                  }
+                },
+                "token_estimate": null
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 29
+    },
+    "observed_at_ms": 1780000000189,
+    "joins": {},
+    "event": {
+      "kind": "lightspeed.core.context.compaction_finished",
+      "version": 1,
+      "payload": {
+        "context": {
+          "compaction_finished": {
+            "base_revision": 8,
+            "calls": 1,
+            "failure_ref": null,
+            "status": "succeeded",
+            "usage": {
+              "cache_miss_input_tokens": 7211,
+              "cached_input_tokens": 41000,
+              "input_tokens": 48211,
+              "output_tokens": 912,
+              "reasoning_tokens": 640,
+              "total_tokens": 49123
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 30
+    },
+    "observed_at_ms": 1780000000203,
+    "joins": {
+      "run_id": "2",
+      "submission_id": "bd6f1b2c-1b1e-4a7e-9b1a-000000000002"
+    },
+    "event": {
+      "kind": "lightspeed.core.run.accepted",
+      "version": 1,
+      "payload": {
+        "run": {
+          "accepted": {
+            "config_revision": 0,
+            "run_config": {},
+            "run_id": 2,
+            "source": {
+              "input": [
+                {
+                  "content": {
+                    "content_ref": "sha256:d92b69cfb82cecab45c753f56002b2c0e6d01f132fe39f2c878858dc9528e10b",
+                    "media_type": "text/plain",
+                    "provider_kind": null
+                  },
+                  "kind": {
+                    "message": {
+                      "role": "user"
+                    }
+                  },
+                  "preview": null,
+                  "provenance_ref": null,
+                  "token_estimate": null
+                }
+              ],
+              "type": "input"
+            },
+            "submission_id": "bd6f1b2c-1b1e-4a7e-9b1a-000000000002"
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 31
+    },
+    "observed_at_ms": 1780000000210,
+    "joins": {
+      "run_id": "2",
+      "submission_id": "bd6f1b2c-1b1e-4a7e-9b1a-000000000002"
+    },
+    "event": {
+      "kind": "lightspeed.core.run.started",
+      "version": 1,
+      "payload": {
+        "run": {
+          "started": {
+            "run_id": 2
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 32
+    },
+    "observed_at_ms": 1780000000217,
+    "joins": {
+      "run_id": "2"
+    },
+    "event": {
+      "kind": "lightspeed.core.context.entries_applied",
+      "version": 1,
+      "payload": {
+        "context": {
+          "entries_applied": {
+            "base_revision": 9,
+            "entries": [
+              {
+                "content": {
+                  "content_ref": "sha256:d92b69cfb82cecab45c753f56002b2c0e6d01f132fe39f2c878858dc9528e10b",
+                  "media_type": "text/plain",
+                  "provider_kind": null
+                },
+                "entry_id": 7,
+                "key": "run.2.input.0",
+                "kind": {
+                  "message": {
+                    "role": "user"
+                  }
+                },
+                "preview": null,
+                "provenance_ref": null,
+                "source": {
+                  "run_input": {
+                    "input_index": 0,
+                    "run_id": 2
+                  }
+                },
+                "token_estimate": null
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 33
+    },
+    "observed_at_ms": 1780000000224,
+    "joins": {
+      "run_id": "2",
+      "turn_id": "3"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.started",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "started": {
+            "run_id": 2,
+            "turn_id": 3
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 34
+    },
+    "observed_at_ms": 1780000000231,
+    "joins": {
+      "run_id": "2",
+      "turn_id": "3"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.planned",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "planned": {
+            "config_revision": 0,
+            "context_revision": 10,
+            "request_fingerprint": "llm:sha256:94df22a2ebcd21c72049d4024fb0ad57bf5b99a606b8c0c83afb56212c6d589d",
+            "run_id": 2,
+            "toolset_revision": 1,
+            "turn_id": 3
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 35
+    },
+    "observed_at_ms": 1780000000238,
+    "joins": {
+      "run_id": "2",
+      "turn_id": "3"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.generation_requested",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "generation_requested": {
+            "run_id": 2,
+            "turn_id": 3
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 36
+    },
+    "observed_at_ms": 1780000000252,
+    "joins": {
+      "run_id": "2",
+      "turn_id": "3"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.generation_completed",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "generation_completed": {
+            "facts": {
+              "context_token_estimate": {
+                "quality": "provider_counted",
+                "tokens": 48000
+              },
+              "duration_ms": 8123,
+              "finish": "failed",
+              "provider_response_id": "resp_0123456789abcdef",
+              "tool_calls": [],
+              "usage": null
+            },
+            "run_id": 2,
+            "status": "failed",
+            "turn_id": 3
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 37
+    },
+    "observed_at_ms": 1780000000252,
+    "joins": {
+      "run_id": "2",
+      "turn_id": "3"
+    },
+    "event": {
+      "kind": "lightspeed.core.turn.completed",
+      "version": 1,
+      "payload": {
+        "turn": {
+          "completed": {
+            "outcome": {
+              "failed": {
+                "failure_ref": "sha256:1d14aec3a9fc16c62753af13ccc5ec515f954ca425dd21501329d7aea12b19dd"
+              }
+            },
+            "turn_id": 3
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 38
+    },
+    "observed_at_ms": 1780000000259,
+    "joins": {
+      "run_id": "2",
+      "turn_id": "3"
+    },
+    "event": {
+      "kind": "lightspeed.core.run.failed",
+      "version": 1,
+      "payload": {
+        "run": {
+          "failed": {
+            "failure": {
+              "kind": "model_failure",
+              "message_ref": "sha256:1d14aec3a9fc16c62753af13ccc5ec515f954ca425dd21501329d7aea12b19dd"
+            },
+            "run_id": 2
+          }
+        }
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 39
+    },
+    "observed_at_ms": 1780000000273,
+    "joins": {},
+    "event": {
+      "kind": "lightspeed.core.environment.active_cleared",
+      "version": 1,
+      "payload": {
+        "environment": "active_environment_cleared"
+      }
+    }
+  },
+  {
+    "position": {
+      "seq": 40
+    },
+    "observed_at_ms": 1780000000280,
+    "joins": {},
+    "event": {
+      "kind": "lightspeed.core.lifecycle.closed",
+      "version": 1,
+      "payload": {
+        "lifecycle": "closed"
+      }
+    }
+  }
+]

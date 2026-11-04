@@ -1,5 +1,6 @@
 import { useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";
 import { api, type SessionView } from "@/api";
+import { isOperationPending } from "./held-request";
 
 /** Share request state between a bot's menu and its embedded session. */
 export function useSessionCompaction(universeId: string, sessionId: string, session?: SessionView) {
@@ -21,7 +22,8 @@ export function useSessionCompaction(universeId: string, sessionId: string, sess
     : request?.status === "pending" ? "Requesting compaction…" : null;
   return {
     label,
-    error: request?.status === "error" ? request.error?.message : null,
+    // A wait that ran out is not a failure: the session view reports its progress.
+    error: request?.status === "error" && !isOperationPending(request.error) ? request.error?.message : null,
     compact: () => { if (!label) mutation.mutate(); },
   };
 }

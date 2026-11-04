@@ -184,12 +184,28 @@ npm run test --workspace @lightspeed-ai/sdk -- test/workflow.test.ts
 
 `WORKFLOW_CONTRACT_VERSION` versions the manifest layout. It does not
 negotiate every workflow behavior or make existing Temporal histories
-compatible with a code change. Review changes to stored events, checkpoint
-or rollover state, workflow command ordering, signal names, and identity
-derivations against retained histories and data. The current session workflow
-uses Temporal patching at its active-run rollover boundary; follow the
-existing implementation when a change needs that mechanism. New schemas
-alone don't rewrite an old history.
+compatible with a code change. Rollover state, recorded payloads, workflow command
+ordering, signal names, and identity derivations all meet retained histories. The
+harness counts as workflow code here, because its planner decides the next activity.
+
+Open executions are not carried across a change to any of this. The repository has no
+`patched()` markers and no replay check.
+`scripts/release/workflow-compat.sh` compares two refs, and a `breaking` result means
+the release starts on a new Temporal namespace, with open sessions restarted from the
+log. New schemas alone don't rewrite an old history. See
+[Upgrades and recovery](../deployment/upgrades-and-recovery.md#decide-whether-the-release-breaks-open-work).
+[Stored events and checkpoints](#change-stored-session-events-and-state) cross every
+release, so they have their own rules.
+
+Payloads recorded in history decode leniently, because a workflow reads them again on
+every replay. A new field on start args, a continuation, a bootstrap result or a carry
+gets a default. A container takes `#[serde(default)]` when every field has an honest
+empty value. One holding an identity keeps the identity required, because a made-up ID
+would run real work under it. Renames need no alias, since a breaking release leaves
+old history behind. At session bootstrap, in the bot controller and in a conversation, a
+result the running build cannot convert fails the workflow task rather than taking the
+activity's failure branch, so a build that reads it heals the execution. Later session
+activities and trigger fires still take their failure branch.
 
 [Agent loop and durability](../how-it-works/agent-loop-and-durability.md)
 explains the two histories involved, and
@@ -204,6 +220,40 @@ and the connector's
 [`delivery.ts`](../../../platform/connectors/src/providers/delivery.ts).
 When changing delivery compatibility, check both validators and their tests;
 regenerating TypeScript shapes does not prove they accept the same versions.
+
+## Change stored session events and state
+
+The runtime database crosses every release, whichever namespace the release runs on,
+so the session log and its checkpoints outlive the code that wrote them.
+
+The log has no fallback: it decodes and reduces, or the session cannot load.
+
+- A new field on any event gets a serde default.
+- Removing a field is harmless.
+- An event variant is never renamed or removed while logs hold it.
+- An unknown event stays a decode error, because a session missing history must not
+  load as if it were whole.
+
+`crates/harness/tests/recorded_log.rs` holds these rules against a recorded log. Its
+log has no promise, approval, workflow-tool or code-tool events, so a rename of one of
+those would not fail it.
+
+A checkpoint can always be rebuilt. One of another `SESSION_CHECKPOINT_FORMAT_VERSION`
+is ignored and the session replays its log, which costs that one load. Bump the version
+when a change would let an old checkpoint load with a value replay would have set
+differently: a new field filled from events already in the log, a changed reduction, or
+a removed field something still needs. A field only new event kinds can fill does not
+need it, because replay would leave it empty too.
+
+`stored_state_keeps_its_committed_shape` compares a fully populated state with a
+committed copy, so a changed shape fails the test and prompts that decision. Once
+decided, regenerate the copy:
+
+```bash
+LIGHTSPEED_REGENERATE_CHECKPOINT_FIXTURE=1 cargo test -p harness --lib stored_state_keeps_its_committed_shape
+```
+
+The test cannot see a change in meaning with the same shape, so review covers that.
 
 <a id="change-the-environment-protocol-explicitly"></a>
 

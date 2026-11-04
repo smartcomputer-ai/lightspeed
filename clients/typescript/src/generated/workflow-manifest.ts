@@ -181,7 +181,6 @@ export const WORKFLOW_CONTRACT_MANIFEST =
     },
     "codeTools": {
       "closeRequest": {
-        "cancel_pending": true,
         "execution_id": "execution:vector"
       },
       "invokeRequest": {
@@ -221,7 +220,6 @@ export const WORKFLOW_CONTRACT_MANIFEST =
             "status": "succeeded"
           }
         },
-        "cancel_requested": true,
         "closed": true,
         "execution_id": "execution:vector"
       },
@@ -291,8 +289,8 @@ export const WORKFLOW_CONTRACT_MANIFEST =
             "session_universe_id": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f",
             "tool_batch_id": 9,
             "tool_call_id": "call_1",
-            "tool_id": "lightspeed.bots.event.resolve.v1",
-            "turn_id": 8
+            "turn_id": 8,
+            "workflow_tool_id": "lightspeed.bots.event.resolve.v1"
           },
           "kind": "tool_invocation"
         },
@@ -365,8 +363,8 @@ export const WORKFLOW_CONTRACT_MANIFEST =
         "session_universe_id": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f",
         "tool_batch_id": 9,
         "tool_call_id": "call_1",
-        "tool_id": "lightspeed.bots.event.resolve.v1",
-        "turn_id": 8
+        "turn_id": 8,
+        "workflow_tool_id": "lightspeed.bots.event.resolve.v1"
       },
       "universe_id": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f"
     },

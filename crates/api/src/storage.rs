@@ -42,11 +42,11 @@ pub struct BlobReadParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ContentRefView {
-    pub content_ref: String,
-    pub media_type: Option<String>,
+    pub blob_ref: String,
+    pub mime: Option<String>,
     pub provider_kind: Option<String>,
     /// The model-facing name of provider-native media (an admitted image or
-    /// PDF): `media:` plus the first twelve hex characters of `content_ref`.
+    /// PDF): `media:` plus the first twelve hex characters of `blobRef`.
     /// The model writes it as a URL (`![…](media:3f9a2c1d4e7b)`) to refer to
     /// media it was shown; resolve it against the media of the same session.
     /// Absent for text and other content.

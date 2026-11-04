@@ -609,8 +609,6 @@ fn session_description(summary: &ChatSessionSummary, current: bool) -> String {
     }
     if let Some(lifecycle) = summary.lifecycle {
         parts.push(format!("{lifecycle:?}").to_ascii_lowercase());
-    } else if let Some(status) = summary.status {
-        parts.push(format!("{status:?}").to_ascii_lowercase());
     }
     parts.push(format!("{} runs", summary.run_count));
     if let Some(model) = summary.model.as_ref() {

@@ -17,7 +17,7 @@ use crate::{
     environment::EnvironmentToolContext,
     error::{ToolError, ToolResult},
     fs::FsToolContext,
-    limits::ToolLimits,
+    limits::{ToolLimits, projected},
     runtime::{ToolBinding, ToolCatalog, ToolInvocationOutput, ToolRuntime},
     web::fetch::{WEB_FETCH_LOGICAL_ID, invoke_web_fetch},
 };
@@ -566,15 +566,6 @@ impl CoreAgentTools for InlineToolRuntime {
     }
 }
 
-/// Model-visible text after the projection budget, with the accounting
-/// facts the completion event carries: how much the tool produced and
-/// whether the budget cut it.
-struct ProjectedText {
-    bytes: Vec<u8>,
-    output_bytes: u64,
-    truncated: bool,
-}
-
 /// The tool result entry followed by one media entry per admitted asset, in
 /// the order the visible text announces them.
 fn model_visible_entries(
@@ -596,29 +587,6 @@ fn model_visible_entries(
     entries
 }
 
-fn projected(bytes: Vec<u8>, max_bytes: u64) -> ProjectedText {
-    let output_bytes = bytes.len() as u64;
-    let truncated = output_bytes > max_bytes;
-    ProjectedText {
-        bytes: truncate_bytes(bytes, max_bytes),
-        output_bytes,
-        truncated,
-    }
-}
-
-fn truncate_bytes(mut bytes: Vec<u8>, max_bytes: u64) -> Vec<u8> {
-    let max_bytes = max_bytes as usize;
-    if bytes.len() <= max_bytes {
-        return bytes;
-    }
-    bytes.truncate(max_bytes);
-    while std::str::from_utf8(&bytes).is_err() {
-        bytes.pop();
-    }
-    bytes.extend_from_slice(b"\n[truncated]");
-    bytes
-}
-
 fn io_error(message: impl Into<String>) -> CoreAgentIoError {
     CoreAgentIoError::Failed {
         message: message.into(),
@@ -627,6 +595,7 @@ fn io_error(message: impl Into<String>) -> CoreAgentIoError {
 
 #[cfg(test)]
 mod tests {
+    use harness::ToolId;
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
@@ -725,7 +694,7 @@ mod tests {
                 },
             }),
             call_id: ToolCallId::new("call-1"),
-            tool_id: Some(ToolName::new(match tool_name {
+            tool_id: Some(ToolId::new(match tool_name {
                 "vfs_read_file" => "vfs.read_file",
                 "web_fetch" => "web.fetch",
                 "run_process" => "env.run_process",
@@ -1296,7 +1265,7 @@ mod tests {
                 .unwrap();
             let mut request = call(arguments_ref, "run_process");
             request.tool_name = ToolName::new(name);
-            request.tool_id = Some(ToolName::new(id));
+            request.tool_id = Some(ToolId::new(id));
             let builtin = request.builtin.as_mut().unwrap();
             builtin.model.api_kind = harness::ProviderApiKind::OpenAiCompletions;
             builtin.spec.settings = settings;
@@ -1371,7 +1340,7 @@ mod tests {
             ("env.apply_patch", "apply_patch", &environment),
         ] {
             let mut request = call(arguments_ref.clone(), "run_process");
-            request.tool_id = Some(ToolName::new(id));
+            request.tool_id = Some(ToolId::new(id));
             request.tool_name = ToolName::new(name);
             let builtin = request.builtin.as_mut().unwrap();
             builtin.model.api_kind = harness::ProviderApiKind::OpenAiCompletions;
@@ -1486,7 +1455,7 @@ mod tests {
                 .await
                 .unwrap();
             let mut request = call(arguments_ref, "run_process");
-            request.tool_id = Some(ToolName::new("env.continue_process"));
+            request.tool_id = Some(ToolId::new("env.continue_process"));
             request.tool_name = ToolName::new(name);
             request.builtin.as_mut().unwrap().model.api_kind =
                 harness::ProviderApiKind::AnthropicMessages;

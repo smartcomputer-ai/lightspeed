@@ -15,9 +15,9 @@ pub const DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT: Duration = Duration::from_sec
 /// `CoreAgentState` plus small indices). Temporal's default activity-result
 /// payload limit is 2 MiB; we guard well below it so a near-limit reduced state
 /// fails with a typed `SessionBootstrapPayloadTooLarge` error before Temporal
-/// rejects the activity completion with an opaque size error. Reduced state is
-/// bounded by active context (entry metadata + content refs), not by total log
-/// length, so this budget should never be hit in normal operation.
+/// rejects the activity completion with an opaque size error. The reducer prunes
+/// what runs leave behind, so what normally fills reduced state is active context.
+/// Context is only as small as compaction keeps it, so this can still be reached.
 pub const DEFAULT_BOOTSTRAP_PAYLOAD_BUDGET_BYTES: u64 = 1_500_000;
 
 pub const FAKE_TOOL_NAME: &str = "agent_echo";
@@ -42,10 +42,50 @@ pub fn default_instructions() -> &'static str {
     "You are Lightspeed, a concise personal assistant. Use available tools when useful, then answer plainly."
 }
 
+/// Storage activities that must outlast a store outage: there is no retry limit, so
+/// a permanent failure has to reach the workflow as a non-retryable one, or it blocks
+/// the session loop for good.
 pub fn activity_options() -> ActivityOptions {
     ActivityOptions::with_start_to_close_timeout(DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT)
         .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
         .build()
+}
+
+/// A sub-agent activity's budget across all its attempts, long enough to ride out
+/// a store or Temporal outage. Past it the execution fails, which frees the parent
+/// waiting on it through the recovery poll.
+pub const SUBAGENT_ACTIVITY_SCHEDULE_TO_CLOSE: Duration = Duration::from_secs(15 * 60);
+
+/// How often an execution waiting on a child asks whether the child's session
+/// workflow has stopped. A stopped child sends no run terminal, and with no grant
+/// deadline nothing else would end the wait.
+pub const SUBAGENT_LIVENESS_CHECK_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
+/// Bounded options for a sub-agent execution's prepare, resolve and close. Retries
+/// run until the schedule-to-close, so an outage of a few minutes costs nothing;
+/// the activities mark what no retry can heal as non-retryable.
+pub fn subagent_activity_options() -> ActivityOptions {
+    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
+        start_to_close: DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT,
+        schedule_to_close: SUBAGENT_ACTIVITY_SCHEDULE_TO_CLOSE,
+    })
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
+    .retry_policy(RetryPolicy {
+        initial_interval: Some(
+            Duration::from_secs(1)
+                .try_into()
+                .expect("static duration fits the proto range"),
+        ),
+        backoff_coefficient: 2.0,
+        maximum_interval: Some(
+            Duration::from_secs(60)
+                .try_into()
+                .expect("static duration fits the proto range"),
+        ),
+        maximum_attempts: 0,
+        non_retryable_error_types: Vec::new(),
+    })
+    .build()
 }
 
 // Tool execution classes. Every tool activity carries a bounded
@@ -65,7 +105,7 @@ pub const TOOL_INTERACTIVE_START_TO_CLOSE: Duration = Duration::from_secs(120);
 pub const TOOL_INTERACTIVE_SCHEDULE_TO_CLOSE: Duration = Duration::from_secs(600);
 
 /// Worker-enforced operation deadline for bounded network-shaped calls (web,
-/// environment jobs, fleet messaging).
+/// environment jobs).
 pub const TOOL_REMOTE_OPERATION_TIMEOUT: Duration = Duration::from_secs(120);
 pub const TOOL_REMOTE_START_TO_CLOSE: Duration = Duration::from_secs(150);
 pub const TOOL_REMOTE_SCHEDULE_TO_CLOSE: Duration = Duration::from_secs(600);
@@ -109,6 +149,37 @@ pub fn boundary_error_blob_activity_options() -> ActivityOptions {
     ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
         start_to_close: Duration::from_secs(30),
         schedule_to_close: Duration::from_secs(120),
+    })
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
+    .retry_policy(tool_retry_policy(TOOL_RETRY_SAFE_MAX_ATTEMPTS))
+    .build()
+}
+
+/// How long the session waits for one code tool scope's bindings. The caller's own
+/// preparation stops waiting after 45 s and a reply after that has no reader, so the
+/// one attempt it gets has to finish inside that window.
+pub const CODE_TOOL_PREPARE_SCOPE_START_TO_CLOSE: Duration = Duration::from_secs(38);
+pub const CODE_TOOL_PREPARE_SCOPE_SCHEDULE_TO_CLOSE: Duration = Duration::from_secs(40);
+
+/// Bounded options for preparing a code tool scope on the session's outer loop. A
+/// failure rejects the scope, and the script reports it as a readable error.
+pub fn code_tool_prepare_scope_activity_options() -> ActivityOptions {
+    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
+        start_to_close: CODE_TOOL_PREPARE_SCOPE_START_TO_CLOSE,
+        schedule_to_close: CODE_TOOL_PREPARE_SCOPE_SCHEDULE_TO_CLOSE,
+    })
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
+    .retry_policy(tool_retry_policy(1))
+    .build()
+}
+
+/// Bounded options for one recovery poll of a started execution. It runs on the
+/// session's outer loop, and when these attempts are exhausted the poll simply asks
+/// again later, so it must never reintroduce Temporal's default unlimited retries.
+pub fn recovery_poll_activity_options() -> ActivityOptions {
+    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
+        start_to_close: Duration::from_secs(60),
+        schedule_to_close: Duration::from_secs(180),
     })
     .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(tool_retry_policy(TOOL_RETRY_SAFE_MAX_ATTEMPTS))
@@ -255,9 +326,9 @@ pub fn environment_ready_activity_options() -> ActivityOptions {
     .build()
 }
 
-/// Temporal options for a batch-unit tool activity (await batches and
-/// workflow-tool batches execute as one unit). Bounded: one attempt and an
-/// explicit total deadline, never Temporal's default unlimited retries.
+/// Temporal options for the batch tool activity, which runs a batch's `await` and
+/// workflow-tool calls once its other calls have finished. Bounded: one attempt and
+/// an explicit total deadline, never Temporal's default unlimited retries.
 pub fn tool_batch_activity_options() -> ActivityOptions {
     ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
         start_to_close: DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT,
@@ -281,6 +352,25 @@ mod tests {
             activity_options().close_timeouts,
             ActivityCloseTimeouts::StartToClose(DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT)
         );
+    }
+
+    #[test]
+    fn subagent_activities_have_a_bounded_budget_and_the_shared_options_stay_unbounded() {
+        let options = subagent_activity_options();
+        assert_eq!(
+            options.close_timeouts,
+            ActivityCloseTimeouts::ScheduleAndStartToClose {
+                start_to_close: DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT,
+                schedule_to_close: SUBAGENT_ACTIVITY_SCHEDULE_TO_CLOSE,
+            }
+        );
+        assert!(SUBAGENT_ACTIVITY_SCHEDULE_TO_CLOSE >= Duration::from_secs(10 * 60));
+        assert!(SUBAGENT_ACTIVITY_SCHEDULE_TO_CLOSE <= Duration::from_secs(15 * 60));
+        assert!(SUBAGENT_ACTIVITY_SCHEDULE_TO_CLOSE > DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT);
+        assert!(options.retry_policy.is_some());
+
+        let shared = activity_options();
+        assert!(shared.retry_policy.is_none());
     }
 
     fn all_execution_specs() -> impl Iterator<Item = ToolExecutionSpec> {
@@ -378,6 +468,29 @@ mod tests {
             boundary_error_blob_activity_options().close_timeouts,
             ActivityCloseTimeouts::ScheduleAndStartToClose { .. }
         ));
+    }
+
+    #[test]
+    fn preparing_a_code_tool_scope_gets_one_attempt_inside_its_callers_wait() {
+        let options = code_tool_prepare_scope_activity_options();
+        assert_eq!(
+            options
+                .retry_policy
+                .expect("declares a retry policy")
+                .raw()
+                .maximum_attempts,
+            1
+        );
+        assert!(matches!(
+            options.close_timeouts,
+            ActivityCloseTimeouts::ScheduleAndStartToClose {
+                start_to_close: CODE_TOOL_PREPARE_SCOPE_START_TO_CLOSE,
+                schedule_to_close: CODE_TOOL_PREPARE_SCOPE_SCHEDULE_TO_CLOSE,
+            }
+        ));
+        assert!(
+            CODE_TOOL_PREPARE_SCOPE_START_TO_CLOSE <= CODE_TOOL_PREPARE_SCOPE_SCHEDULE_TO_CLOSE
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import type { SessionManagement } from "@/api";
+import type { SessionDeclaration } from "@/api";
 
 const BOT_CONTROLLER_KINDS = new Set([
   "BotControllerWorkflow",
@@ -6,21 +6,21 @@ const BOT_CONTROLLER_KINDS = new Set([
   "bot_controller_v1",
 ]);
 
-export function managedSessionOwnerLabel(
-  management: SessionManagement | null | undefined,
+export function controlledSessionOwnerLabel(
+  declaration: SessionDeclaration | null | undefined,
 ): string {
-  const kind = management?.lifecycleController?.workflowKind;
+  const kind = declaration?.lifecycleController?.workflowKind;
   if (kind === "channelConversationWorkflowV1") return "Channels";
   if (kind && BOT_CONTROLLER_KINDS.has(kind)) return "a bot";
   return kind || "an external workflow";
 }
 
 /** Resolve the owning bot only when the lifecycle controller is a bot controller. */
-export function managedSessionBotId(
-  management: SessionManagement | null | undefined,
+export function controlledSessionBotId(
+  declaration: SessionDeclaration | null | undefined,
   metadata: Record<string, string> | undefined,
 ): string | null {
-  const controller = management?.lifecycleController;
+  const controller = declaration?.lifecycleController;
   if (!controller || !BOT_CONTROLLER_KINDS.has(controller.workflowKind)) return null;
 
   const metadataId = metadata?.bot?.trim();

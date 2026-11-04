@@ -208,7 +208,7 @@ fn validate_start(start: &WorkflowToolStartArgs) -> Result<(), PreparationError>
                 start.universe_id,
                 &start.invocation.session_id,
             )
-        || start.invocation.tool_id.as_str() != CODE_EXECUTE_WORKFLOW_TOOL_ID
+        || start.invocation.workflow_tool_id.as_str() != CODE_EXECUTE_WORKFLOW_TOOL_ID
         || start.invocation.semantic_type != CODE_EXECUTE_WORKFLOW_SEMANTIC_TYPE
         || start.invocation.schema_revision != 1
     {
@@ -392,7 +392,7 @@ fn report_children(report: &DetailedCodeReport) -> Vec<BlobRef> {
             children.extend(
                 call.attachments
                     .iter()
-                    .flat_map(harness::Attachment::blob_refs),
+                    .map(|attachment| attachment.content_ref().clone()),
             );
         }
     }
@@ -554,7 +554,7 @@ async fn finalize(
             selected
                 .attachments
                 .iter()
-                .flat_map(harness::Attachment::blob_refs),
+                .map(|attachment| attachment.content_ref().clone()),
         )
         .collect();
     let model = model_report_with_output(&report, &report_ref, selected);
@@ -652,7 +652,7 @@ async fn prepare_code_output(
                         "selected tool request is missing from the authoritative scope".into(),
                     )
                 })?;
-            if call.status != temporal_workflow::CodeToolCallStatus::Succeeded {
+            if call.status != temporal_workflow::CodeToolCallOutcomeStatus::Succeeded {
                 return Err(CodeOutputAdmissionError::Invalid(
                     "selected tool request did not succeed".into(),
                 ));
@@ -749,9 +749,7 @@ async fn validate_selected_attachment(
     }
     // Renew admission immediately before publishing. The generic joined-result
     // adapter performs the same native media checks when adding companions.
-    for reference in attachment.blob_refs() {
-        blobs.retain_blob(&reference).await?;
-    }
+    blobs.retain_blob(attachment.content_ref()).await?;
     Ok(())
 }
 
@@ -797,12 +795,12 @@ fn model_report(report: &DetailedCodeReport, report_ref: &BlobRef) -> Value {
     if let Some(scope) = &report.scope {
         for call in scope.calls.values() {
             let status = match call.status {
-                temporal_workflow::CodeToolCallStatus::Succeeded => "succeeded",
-                temporal_workflow::CodeToolCallStatus::Failed => "failed",
-                temporal_workflow::CodeToolCallStatus::Cancelled => "cancelled",
-                temporal_workflow::CodeToolCallStatus::Unavailable => "unavailable",
-                temporal_workflow::CodeToolCallStatus::Pending
-                | temporal_workflow::CodeToolCallStatus::Waiting => "pending",
+                temporal_workflow::CodeToolCallOutcomeStatus::Succeeded => "succeeded",
+                temporal_workflow::CodeToolCallOutcomeStatus::Failed => "failed",
+                temporal_workflow::CodeToolCallOutcomeStatus::Cancelled => "cancelled",
+                temporal_workflow::CodeToolCallOutcomeStatus::Unavailable => "unavailable",
+                temporal_workflow::CodeToolCallOutcomeStatus::Pending
+                | temporal_workflow::CodeToolCallOutcomeStatus::Waiting => "pending",
             };
             *counts.entry(status).or_default() += 1;
         }
@@ -882,7 +880,6 @@ mod tests {
             scope: Some(CodeToolScopeReport {
                 execution_id: "code-output-test".into(),
                 closed: true,
-                cancel_requested: false,
                 bindings: Default::default(),
                 calls: calls
                     .into_iter()
@@ -902,7 +899,7 @@ mod tests {
         temporal_workflow::CodeToolCallOutcome {
             request_id: request_id.into(),
             call_id: harness::ToolCallId::new(format!("tool-{request_id}")),
-            status: temporal_workflow::CodeToolCallStatus::Succeeded,
+            status: temporal_workflow::CodeToolCallOutcomeStatus::Succeeded,
             output_ref: Some(BlobRef::from_bytes(request_id.as_bytes())),
             error_ref: None,
             attachments: vec![attachment],
@@ -917,6 +914,12 @@ mod tests {
         harness::Attachment::Media(
             harness::media::MediaDescriptor::new(reference, "image/png", Some(name)).unwrap(),
         )
+    }
+
+    /// A scope's bindings that arrive after this worker stopped waiting have no reader.
+    #[test]
+    fn the_session_stops_preparing_a_scope_before_preparation_stops_waiting_for_it() {
+        assert!(temporal_workflow::CODE_TOOL_PREPARE_SCOPE_SCHEDULE_TO_CLOSE < PREPARE_TIMEOUT);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1010,7 +1013,7 @@ mod tests {
         let blobs = harness::storage::InMemoryBlobStore::new();
         let valid = image_attachment(&blobs, "valid.png").await;
         let mut failed = admitted_call("failed", valid.clone());
-        failed.status = temporal_workflow::CodeToolCallStatus::Failed;
+        failed.status = temporal_workflow::CodeToolCallOutcomeStatus::Failed;
         let missing = harness::Attachment::Media(
             harness::media::MediaDescriptor::new(
                 BlobRef::from_bytes(b"missing"),
@@ -1282,14 +1285,13 @@ mod tests {
             scope: Some(CodeToolScopeReport {
                 execution_id: "code-test".into(),
                 closed: true,
-                cancel_requested: true,
                 bindings: Default::default(),
                 calls: [(
                     "call-1".into(),
                     temporal_workflow::CodeToolCallOutcome {
                         request_id: "call-1".into(),
                         call_id: harness::ToolCallId::new("tool-call-1"),
-                        status: temporal_workflow::CodeToolCallStatus::Failed,
+                        status: temporal_workflow::CodeToolCallOutcomeStatus::Failed,
                         output_ref: Some(output_ref.clone()),
                         error_ref: Some(error_ref.clone()),
                         attachments: vec![harness::Attachment::File(harness::FileAttachment::new(

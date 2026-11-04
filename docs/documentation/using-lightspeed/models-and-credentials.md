@@ -93,11 +93,12 @@ Use manual entry when discovery omits a supported model, or when you need
 Chat Completions instead of the picker's preferred Responses route. Select
 an API kind implemented by that provider.
 
-For an existing session, change compatible model settings only while it is
-idle. Provider identity and API kind are fixed for that session because its
-conversation can contain provider-native state. Retained reasoning or native
-compaction state can also restrict model changes within that route. Create a
-new session for an incompatible model or route. A profile change can select
+For an existing session, change model settings only while it is idle. Provider
+identity and API kind are fixed for that session because its conversation can contain
+provider-native state. Any model within that route is allowed. A switch sends the
+retained reasoning and compaction state as it is: the provider decides whether the new
+model uses it, and if the provider refuses, the run fails with its message and you can
+switch back. Create a new session for a different route. A profile change can select
 a different route for future sessions.
 
 Leave optional reasoning and generation settings unset until you need them
@@ -123,11 +124,11 @@ not choose a default.
 
 For a new session, an explicit session model takes precedence over the
 profile's model, followed by the universe's **Agent runs** default. If all
-three are unset, creation fails with `model_default_unset`; Lightspeed does
+three are unset, creation fails with `modelDefaultUnset`; Lightspeed does
 not assume an OpenAI route. An explicit model works without a universe default.
 
 The resolved model is saved in the session. Changing or clearing a default
-does not retarget existing sessions, forks, clones, or admitted work. Applying
+does not retarget existing sessions or admitted work. Applying
 a profile or replacing an existing session's configuration with the model
 omitted preserves that session's current model. Other configuration fields
 retain their replacement semantics.
@@ -186,7 +187,7 @@ that need it should use the authentication types and methods in the
 
 Model choice affects which tools Lightspeed can expose. Built-in web search
 supports Responses and Anthropic Messages; Chat Completions supports page
-fetching but not that search feature. Native MCP execution works across all
+fetching but not that search feature. Runtime MCP execution works across all
 three API kinds, while provider-hosted MCP has additional restrictions.
 [Tools and MCP](tools-and-mcp.md) explains those choices.
 
@@ -198,11 +199,12 @@ Verify the input types used by your actual tasks.
 
 | Symptom | What to check |
 | --- | --- |
-| Creating a session reports `model_default_unset` | Choose the universe's Agent runs default, or select a model explicitly in the session or profile. |
+| Creating a session reports `modelDefaultUnset` | Choose the universe's Agent runs default, or select a model explicitly in the session or profile. |
 | Runtime startup rejects `LIGHTSPEED_CHAT_PROVIDER` or `LIGHTSPEED_CHAT_MODEL` | Remove the retired variables and configure universe defaults through Models or the CLI. |
 | The provider connects but the model is missing | Refresh discovery or enter the exact route manually. Confirm that the credential can access that model. |
 | Authentication fails despite a deployment key | Check for an existing universe provider record. Disabled or unusable records block fallback. |
 | A compatible service is unreachable | Test reachability from the gateway and session-worker network, and check the base URL and API path. |
-| A request rejects tools or generation parameters | Reduce the setup to the supported capabilities and leave optional parameters unset. Discovery alone does not establish feature compatibility. |
+| A request rejects tools or generation parameters | Reduce the setup to the supported capabilities and leave optional parameters unset. Discovery alone does not establish feature compatibility. Some current Anthropic models refuse a forced tool choice. |
+| The provider refuses a request after a model switch | The run failed with the provider's message and the session is still open. Switch back to the earlier model, or start a new session on the new one. |
 | A subscription login did not enable session inference | Configure the model provider separately; coding-agent subscription integrations serve tools inside environments. |
 | Updating a profile did not change the current session | Start a new session or update the idle session's setup explicitly. See [Profiles and instructions](profiles-and-instructions.md). |

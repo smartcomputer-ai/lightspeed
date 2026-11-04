@@ -7,7 +7,7 @@ async fn recent(api: &HttpAgentApi, resume: bool) -> Result<Vec<api::SessionSumm
     Ok(api
         .list_sessions(api::SessionListParams {
             limit: Some(if resume { 1 } else { 10 }),
-            managed: Some(false),
+            lifecycle_controlled: Some(false),
             subagent: Some(false),
             closed: resume.then_some(false),
             ..Default::default()
@@ -24,7 +24,7 @@ pub(super) async fn resume_id(api: &HttpAgentApi) -> Result<String> {
         .into_iter()
         .next()
         .map(|session| session.id)
-        .context("No resumable unmanaged chat sessions in this universe. Start one with `lightspeed chat`.")
+        .context("No resumable chat sessions in this universe. Start one with `lightspeed chat`.")
 }
 
 pub(super) async fn list(api: &HttpAgentApi, json: bool) -> Result<()> {
@@ -57,7 +57,7 @@ pub(super) async fn list(api: &HttpAgentApi, json: bool) -> Result<()> {
             ("activity", "ACTIVITY"),
             ("updated", "UPDATED"),
         ],
-        "No unmanaged chat sessions in this universe. Start one with `lightspeed chat`.",
+        "No chat sessions in this universe. Start one with `lightspeed chat`.",
     )?;
     if !sessions.is_empty() {
         println!(

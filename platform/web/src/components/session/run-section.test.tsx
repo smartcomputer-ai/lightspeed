@@ -28,7 +28,7 @@ const read = (callId: string, over: Partial<TranscriptToolCall> = {}): Transcrip
   callId, toolId: "env.read_file", toolName: "read_file", status: "succeeded", isError: false,
   argumentsJson: '{"path":"/w/a.ts"}', output: "contents",
   display: { group: "explore", verb: "Read", target: "/w/a.ts" },
-  startedAtMs: 1_700_000_000_000, completedAtMs: 1_700_000_000_340, durationMs: 340, outputBytes: 412,
+  startedAtMs: 1_700_000_000_000, finishedAtMs: 1_700_000_000_340, durationMs: 340, outputBytes: 412,
   ...over,
 });
 
@@ -89,7 +89,7 @@ it("offers copy only on the final reply, including when activity is expanded", a
 
 it("names the provider when it rejected the run's request", async () => {
   const section = finished();
-  section.summary = { ...section.summary!, failureKind: "request_rejected", error: "prompt is too long" };
+  section.summary = { ...section.summary!, failureKind: "requestRejected", error: "prompt is too long" };
   await render(section);
   expect(container.textContent).toContain("The provider rejected the request: prompt is too long");
   expect(container.textContent).not.toContain("Run failed");
@@ -200,7 +200,7 @@ it("drops the statistics from the strip and the opened run when the preference i
 it("streams a live run open with a status row instead of a strip", async () => {
   const entries: TranscriptEntry[] = [
     { kind: "message", key: "ask", role: "user", text: "Retry", runId: "r2" },
-    { kind: "tool-group", key: "batch", runId: "r2", status: "running", calls: [read("c1", { status: "running", completedAtMs: undefined, durationMs: undefined })] },
+    { kind: "tool-group", key: "batch", runId: "r2", status: "running", calls: [read("c1", { status: "running", finishedAtMs: undefined, durationMs: undefined })] },
   ];
   const activeRun: ActiveRun = { runId: "r2", label: "running tools", cancelling: false, startedAtMs: Date.now() - 41_000 };
   const section = sectionsByRun(entries, activeRun)[0] as RunSection;

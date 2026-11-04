@@ -76,7 +76,7 @@ pub struct DeploymentSessionPurgeParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentSessionPurgeResponse {
-    /// Includes soft-deleted history forks and delegated descendants.
+    /// Includes soft-deleted delegated descendants.
     /// Empty when the target has already been permanently deleted.
     pub deleted_session_ids: Vec<String>,
 }
@@ -647,7 +647,7 @@ deployment_api_methods! {
     METHOD_DEPLOYMENT_API_KEYS_REVOKE => revoke_api_key(DeploymentApiKeyRevokeParams) -> DeploymentApiKeyRevokeResponse =>
         ["Revoke a scoped API key", "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT => put_environment_provider(DeploymentEnvironmentProviderPutParams) -> DeploymentEnvironmentProviderPutResponse =>
-        ["Put an environment provider", "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalid_request, unreachable is accepted. The provider never calls Lightspeed."], access: MethodAccess::Deployment,
+        ["Put an environment provider", "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers(DeploymentEnvironmentProviderListParams) -> DeploymentEnvironmentProviderListResponse =>
         ["List environment providers", "Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ => read_environment_provider(DeploymentEnvironmentProviderReadParams) -> DeploymentEnvironmentProviderReadResponse =>

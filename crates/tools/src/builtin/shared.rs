@@ -94,6 +94,11 @@ pub(super) fn process_visible_output(
     if let Some(note) = leftover_note(&output.leftover_processes) {
         visible = join_lines(visible, note);
     }
+    if output.status == ProcessStatus::Running
+        && let Some(failure) = &output.failure
+    {
+        visible = join_lines(visible, format!("[note: {failure}]"));
+    }
     visible
 }
 
@@ -335,6 +340,28 @@ mod tests {
             },
             omitted_bytes: 0,
             leftover_processes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn every_presentation_shows_why_a_running_result_came_back_early() {
+        let mut interrupted = output(ProcessStatus::Running, "partial\n", "");
+        interrupted.failure = Some("the wait was interrupted".to_owned());
+        for presentation in [
+            ProcessPresentation::Canonical,
+            ProcessPresentation::ClaudeBash { background: false },
+            ProcessPresentation::ClaudeBash { background: true },
+            ProcessPresentation::Codex {
+                wall_time: Duration::from_secs(1),
+            },
+        ] {
+            let visible = process_visible_output(&interrupted, presentation);
+            assert!(visible.contains("partial"), "{presentation:?}: {visible}");
+            assert!(visible.contains("proc-7"), "{presentation:?}: {visible}");
+            assert!(
+                visible.ends_with("[note: the wait was interrupted]"),
+                "{presentation:?}: {visible}"
+            );
         }
     }
 

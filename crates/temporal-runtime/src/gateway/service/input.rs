@@ -16,6 +16,10 @@ const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
 /// Text documents land in model context verbatim; keep them small.
 const MAX_TEXT_DOCUMENT_BYTES: u64 = 1024 * 1024;
 const MAX_MEDIA_ITEMS_PER_RUN: usize = 8;
+/// As in compaction's estimate of the same entry.
+const TEXT_BYTES_PER_TOKEN: u64 = 4;
+/// No provider reports a window this small, so shorter text skips the model listing.
+const REPORTED_LIMIT_MIN_TOKENS: u64 = 16 * 1024;
 
 pub(super) async fn run_input_from_api(
     store: &dyn BlobStore,
@@ -40,10 +44,7 @@ pub(super) async fn run_input_from_api(
             }
             InputItem::TextRef { blob_ref, .. } => {
                 let blob_ref = parse_blob_ref(blob_ref)?;
-                let text = store
-                    .read_text(&blob_ref)
-                    .await
-                    .map_err(map_input_blob_store_error)?;
+                let text = read_input_text(store, &blob_ref, "text input").await?;
                 let text = text.trim();
                 if !text.is_empty() {
                     entries.push(user_message_input(blob_ref));
@@ -84,6 +85,62 @@ pub(super) async fn run_input_from_api(
     Ok(entries)
 }
 
+/// Reads text input. Bytes that do not decode are the caller's own input and no
+/// retry changes them; a store failure says nothing about the input and may heal.
+async fn read_input_text(
+    store: &dyn BlobStore,
+    blob_ref: &BlobRef,
+    what: &str,
+) -> Result<String, AgentApiError> {
+    let bytes = store
+        .read_bytes(blob_ref)
+        .await
+        .map_err(map_input_blob_store_error)?;
+    String::from_utf8(bytes)
+        .map_err(|_| AgentApiError::invalid_request(format!("{what} is not valid UTF-8")))
+}
+
+/// Refuses input holding a text entry larger than the model's whole window: once in
+/// context it would fail this run and every later one until someone replaces it. Each
+/// entry is judged alone, because compaction can still rescue several smaller ones. A
+/// limit the document declares covers only the document's model, and `reported_limit` is
+/// awaited only for large text, so ordinary input never pays for discovery. With no known
+/// limit nothing is refused.
+pub(super) async fn refuse_oversized_text(
+    store: &dyn BlobStore,
+    input: &[ContextEntryInput],
+    config: &harness::SessionConfig,
+    model: &harness::ModelSelection,
+    reported_limit: impl Future<Output = Option<u32>> + Send,
+) -> Result<(), AgentApiError> {
+    let mut largest = 0u64;
+    for entry in input {
+        let media_type = entry.content.media_type.as_deref();
+        if media_type.and_then(harness::media::media_kind).is_some() {
+            continue;
+        }
+        let info = store
+            .stat_blob(&entry.content.content_ref)
+            .await
+            .map_err(map_input_blob_store_error)?;
+        largest = largest.max(info.byte_len.div_ceil(TEXT_BYTES_PER_TOKEN));
+    }
+    let declared_limit = (*model == config.model)
+        .then_some(config.context.input_limit_tokens)
+        .flatten();
+    let limit = match declared_limit {
+        Some(limit) => Some(limit),
+        None if largest >= REPORTED_LIMIT_MIN_TOKENS => reported_limit.await,
+        None => None,
+    };
+    match limit {
+        Some(limit) if largest > u64::from(limit) => Err(AgentApiError::invalid_request(format!(
+            "a text input of about {largest} tokens cannot fit this model's window of {limit} tokens: shorten it or split it into smaller files"
+        ))),
+        _ => Ok(()),
+    }
+}
+
 async fn media_message_input(
     store: &dyn BlobStore,
     blob_ref: &str,
@@ -91,6 +148,15 @@ async fn media_message_input(
     kind: MediaKind,
     name: Option<&str>,
 ) -> Result<ContextEntryInput, AgentApiError> {
+    if let Some(name) = name {
+        reject_nul("media name", name)?;
+        if name.trim().chars().count() > api::MAX_MEDIA_NAME_CHARS {
+            return Err(AgentApiError::invalid_request(format!(
+                "media name is longer than {} characters",
+                api::MAX_MEDIA_NAME_CHARS
+            )));
+        }
+    }
     let mime = mime
         .split(';')
         .next()
@@ -137,10 +203,11 @@ async fn media_message_input(
     if matches!(kind, MediaKind::Document) && mime != PDF_MIME {
         // Text documents reach the model as text; reject undecodable bytes
         // here instead of failing the run later in the adapter.
-        store
-            .read_text(&blob_ref)
-            .await
-            .map_err(map_input_blob_store_error)?;
+        let document = match name {
+            Some(name) if !name.trim().is_empty() => format!("document \"{}\"", name.trim()),
+            _ => "document".to_owned(),
+        };
+        read_input_text(store, &blob_ref, &document).await?;
     }
     let preview = match name {
         Some(name) if !name.trim().is_empty() => format!("[{label}: {}]", name.trim()),
@@ -181,10 +248,7 @@ pub(super) async fn context_entry_input_from_api(
         }
         InputItem::TextRef { blob_ref, .. } => {
             let blob_ref = parse_blob_ref(blob_ref)?;
-            let text = store
-                .read_text(&blob_ref)
-                .await
-                .map_err(map_input_blob_store_error)?;
+            let text = read_input_text(store, &blob_ref, "text input").await?;
             if text.trim().is_empty() {
                 return Err(empty_context_append_item_error());
             }
@@ -204,6 +268,7 @@ pub(super) async fn context_entry_input_from_api(
                     "session/context/append catalog items need a title",
                 ));
             }
+            reject_nul("catalog title", title)?;
             let text = text.trim();
             if text.is_empty() {
                 return Err(empty_context_append_item_error());
@@ -261,6 +326,17 @@ pub(super) fn empty_run_input_error() -> AgentApiError {
     )
 }
 
+/// Postgres cannot store U+0000. The session log replaces it, but a caller's own field
+/// is better refused here, where the caller hears why.
+pub(super) fn reject_nul(field: &str, value: &str) -> Result<(), AgentApiError> {
+    if value.contains('\0') {
+        return Err(AgentApiError::invalid_request(format!(
+            "{field} cannot contain a NUL character"
+        )));
+    }
+    Ok(())
+}
+
 fn input_origin_from_api(item: &InputItem) -> Result<Option<String>, AgentApiError> {
     let origin = match item {
         InputItem::Text { origin, .. }
@@ -274,6 +350,9 @@ fn input_origin_from_api(item: &InputItem) -> Result<Option<String>, AgentApiErr
         return Err(AgentApiError::invalid_request(
             "origin must contain 1–200 bytes and cannot be blank",
         ));
+    }
+    if let Some(origin) = origin {
+        reject_nul("origin", origin)?;
     }
     Ok(origin.clone())
 }
@@ -297,4 +376,76 @@ async fn input_provenance_from_api(
         .await
         .map_err(map_input_blob_store_error)?;
     Ok(Some(reference))
+}
+
+#[cfg(test)]
+mod tests {
+    use harness::storage::InMemoryBlobStore;
+
+    use super::*;
+
+    /// Reads fail as a store outage would.
+    struct FailingReads(InMemoryBlobStore);
+
+    #[async_trait::async_trait]
+    impl BlobStore for FailingReads {
+        async fn put_bytes(&self, bytes: Vec<u8>) -> Result<BlobRef, BlobStoreError> {
+            self.0.put_bytes(bytes).await
+        }
+
+        async fn read_bytes(&self, _blob_ref: &BlobRef) -> Result<Vec<u8>, BlobStoreError> {
+            Err(BlobStoreError::Store {
+                message: "connection reset".to_owned(),
+            })
+        }
+
+        async fn has_blob(&self, blob_ref: &BlobRef) -> Result<bool, BlobStoreError> {
+            self.0.has_blob(blob_ref).await
+        }
+
+        async fn stat_blob(
+            &self,
+            blob_ref: &BlobRef,
+        ) -> Result<harness::storage::BlobInfo, BlobStoreError> {
+            self.0.stat_blob(blob_ref).await
+        }
+    }
+
+    fn csv(blob_ref: &BlobRef) -> InputItem {
+        InputItem::Media {
+            origin: None,
+            blob_ref: blob_ref.to_string(),
+            mime: "text/csv".to_owned(),
+            kind: MediaKind::Document,
+            name: Some("report.csv".to_owned()),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_document_that_does_not_decode_is_refused_by_name() {
+        let store = InMemoryBlobStore::default();
+        let windows_1252 = store.put_bytes(vec![b'a', 0xE9, b'b']).await.unwrap();
+        let error = run_input_from_api(&store, &[csv(&windows_1252)])
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+        assert!(error.message.contains("report.csv"), "{}", error.message);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_store_failure_on_input_is_not_the_callers_fault() {
+        let store = FailingReads(InMemoryBlobStore::default());
+        let stored = store.put_bytes(b"a,b".to_vec()).await.unwrap();
+        for item in [
+            csv(&stored),
+            InputItem::TextRef {
+                origin: None,
+                provenance_ref: None,
+                blob_ref: stored.to_string(),
+            },
+        ] {
+            let error = run_input_from_api(&store, &[item]).await.unwrap_err();
+            assert_eq!(error.kind, AgentApiErrorKind::Internal);
+        }
+    }
 }

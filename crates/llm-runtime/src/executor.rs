@@ -152,10 +152,10 @@ impl LlmRuntime {
 }
 
 /// Preserves the client-derived retry disposition and request rejections
-/// across the generic I/O boundary. Only provider errors with explicit
-/// transient evidence become `Retryable`; a provider refusing the request
-/// itself becomes `Rejected` with the provider's message unchanged; every
-/// other adapter error stays terminal.
+/// across the generic I/O boundary. Provider errors with explicit transient
+/// evidence and failures of our own stores become `Retryable`; a provider refusing
+/// the request itself becomes `Rejected` with the provider's message unchanged;
+/// every other adapter error stays terminal.
 fn io_error_from_adapter_error(error: LlmAdapterError) -> CoreAgentIoError {
     match &error {
         LlmAdapterError::ContextLimit { message } => CoreAgentIoError::ContextLimit {
@@ -163,6 +163,18 @@ fn io_error_from_adapter_error(error: LlmAdapterError) -> CoreAgentIoError {
         },
         LlmAdapterError::Provider { source } if source.retryable() => CoreAgentIoError::Retryable {
             retry_after: source.retry_after(),
+            message: error.to_string(),
+        },
+        LlmAdapterError::BlobStore {
+            transient: true, ..
+        }
+        | LlmAdapterError::ProviderKeyResolution {
+            transient: true, ..
+        }
+        | LlmAdapterError::McpInventory {
+            transient: true, ..
+        } => CoreAgentIoError::Retryable {
+            retry_after: None,
             message: error.to_string(),
         },
         LlmAdapterError::Provider { source } => match source.request_rejection() {
@@ -244,6 +256,46 @@ mod tests {
         assert!(error.to_string().contains("boom"));
     }
 
+    #[test]
+    fn a_store_that_may_recover_is_retried_and_a_missing_blob_is_not() {
+        let outage = LlmAdapterError::from(harness::storage::BlobStoreError::Store {
+            message: "connection reset".to_owned(),
+        });
+        assert!(matches!(
+            io_error_from_adapter_error(outage),
+            CoreAgentIoError::Retryable { .. }
+        ));
+
+        let missing = LlmAdapterError::from(harness::storage::BlobStoreError::NotFound {
+            blob_ref: harness::BlobRef::from_bytes(b"gone"),
+        });
+        assert!(matches!(
+            io_error_from_adapter_error(missing),
+            CoreAgentIoError::Failed { .. }
+        ));
+
+        for (transient, retried) in [(true, true), (false, false)] {
+            let key = LlmAdapterError::ProviderKeyResolution {
+                message: "lookup".to_owned(),
+                transient,
+            };
+            let inventory = LlmAdapterError::McpInventory {
+                server: "docs".to_owned(),
+                message: "lookup".to_owned(),
+                transient,
+            };
+            for error in [key, inventory] {
+                assert_eq!(
+                    matches!(
+                        io_error_from_adapter_error(error),
+                        CoreAgentIoError::Retryable { .. }
+                    ),
+                    retried
+                );
+            }
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn retryable_provider_errors_preserve_the_retry_disposition() {
         let error =
@@ -298,7 +350,7 @@ mod tests {
             }
         );
 
-        let context = "prompt is too long: maximum context length is 200000 tokens";
+        let context = "prompt is too long: 250000 tokens > 200000 maximum";
         let error = failing_generate(http_error(
             400,
             llm_clients::ProviderFailureKind::ContextLength,
@@ -354,7 +406,6 @@ mod tests {
                 reasoning_effort: None,
                 parallel_tool_use: None,
                 processing_tier: None,
-                provider_response_id: None,
                 compaction: None,
                 params: None,
             },

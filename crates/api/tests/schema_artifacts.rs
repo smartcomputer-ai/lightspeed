@@ -6,8 +6,9 @@
 use std::{fs, path::PathBuf};
 
 use api::{
-    AgentApiOutcome, AgentNotification, EventCursor, InputItem, RunStartParams, RunStartResponse,
-    RunStartSource, RunStatus, RunView, RunViewSource, SessionEventsReadParams,
+    AgentApiOutcome, AgentNotification, EventCursor, InputItem, RunFailureKindView, RunFailureView,
+    RunStartParams, RunStartResponse, RunStartSource, RunStatus, RunSummarySourceView,
+    RunSummaryView, RunView, RunViewSource, SessionEventsReadParams,
 };
 use serde_json::{Value, json};
 
@@ -114,7 +115,7 @@ fn serialized_fixtures_validate_against_exported_schemas() {
         id: "run_1".to_owned(),
         status: RunStatus::Completed,
         started_at_ms: Some(10),
-        completed_at_ms: Some(20),
+        finished_at_ms: Some(20),
         source: RunViewSource::Input {
             items: vec![InputItem::Text {
                 provenance_ref: None,
@@ -126,9 +127,30 @@ fn serialized_fixtures_validate_against_exported_schemas() {
         tool_batches: Vec::new(),
         usage: None,
         pending_approvals: Vec::new(),
+        failure: None,
+        earlier_events_omitted: false,
+    };
+    let summary = RunSummaryView {
+        id: "run_1".to_owned(),
+        status: RunStatus::Completed,
+        accepted_at_ms: 5,
+        started_at_ms: Some(10),
+        finished_at_ms: Some(20),
+        source: RunSummarySourceView::Input {
+            blob_ref: None,
+            preview: Some("hello".to_owned()),
+            preview_truncated: false,
+        },
+        usage: None,
+        pending_approvals: Vec::new(),
+        failure: Some(RunFailureView {
+            kind: RunFailureKindView::ModelFailure,
+            message: "the provider refused".to_owned(),
+            message_truncated: true,
+        }),
     };
     let outcome = AgentApiOutcome::with_notifications(
-        RunStartResponse { run: run.clone() },
+        RunStartResponse { run: summary },
         vec![AgentNotification::RunStarted {
             session_id: "session_1".to_owned(),
             run,
@@ -166,6 +188,49 @@ fn serialized_fixtures_validate_against_exported_schemas() {
     let value = serde_json::to_value(&backward).expect("backward request");
     assert_validates(&bundle, "SessionEventsReadParams", &value);
     assert_eq!(value["direction"], "backward");
+}
+
+/// The API has one casing rule, so a closed value never holds an underscore.
+#[test]
+fn closed_values_in_the_public_schema_are_camel_case() {
+    fn walk(value: &Value, path: &str, found: &mut Vec<String>) {
+        match value {
+            Value::Object(fields) => {
+                for (key, field) in fields {
+                    if key == "enum" || key == "const" {
+                        let values = match field {
+                            Value::Array(values) => values.as_slice(),
+                            single => std::slice::from_ref(single),
+                        };
+                        found.extend(
+                            values
+                                .iter()
+                                .filter_map(Value::as_str)
+                                .filter(|text| text.contains('_'))
+                                .map(|text| format!("{path}: {text}")),
+                        );
+                    }
+                    walk(field, &format!("{path}/{key}"), found);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    walk(item, path, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    walk(&api::export_schemas().schema_bundle, "", &mut found);
+    assert!(found.is_empty(), "snake_case closed values: {found:#?}");
+
+    let server = api::ResourceRef::McpServer("crm".to_owned());
+    assert_eq!(server.kind(), "mcpServer");
+    assert_eq!(
+        serde_json::to_value(&server).unwrap(),
+        json!({ "kind": server.kind(), "id": "crm" })
+    );
 }
 
 #[test]

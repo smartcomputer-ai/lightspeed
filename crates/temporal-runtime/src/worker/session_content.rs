@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use harness::{
     Attachment, CodeToolEvent, ContentRef, ContextEntryKind, ContextEvent, CoreAgentCodec,
-    CoreAgentEvent, CoreAgentIoError, RunEvent, SessionId, ToolEvent,
+    CoreAgentEvent, CoreAgentIoError, RunEvent, SessionId, ToolEvent, event_kind,
     media::{MediaDescriptor, media_preview_name},
     storage::{ReadSessionEvents, SessionStore},
 };
@@ -51,14 +51,13 @@ pub(super) async fn recorded_content_attachments(
 fn records_content(kind: &str) -> bool {
     matches!(
         kind,
-        "lightspeed.core.tool.call_completed"
-            | "lightspeed.core.code_tool.call_completed"
-            | "lightspeed.core.context.entries_applied"
-            | "lightspeed.core.context.entries_replaced"
-            | "lightspeed.core.context.state_replaced"
-            | "lightspeed.core.context.key_prefix_replaced"
-            | "lightspeed.core.run.accepted"
-            | "lightspeed.core.run.steering_accepted"
+        event_kind::TOOL_CALL_COMPLETED
+            | event_kind::CODE_TOOL_CALL_COMPLETED
+            | event_kind::CONTEXT_ENTRIES_APPLIED
+            | event_kind::CONTEXT_ENTRIES_REPLACED
+            | event_kind::CONTEXT_KEY_PREFIX_REPLACED
+            | event_kind::RUN_ACCEPTED
+            | event_kind::RUN_STEERING_ACCEPTED
     )
 }
 
@@ -115,7 +114,6 @@ impl RecordedAttachments {
             CoreAgentEvent::Context(
                 ContextEvent::EntriesApplied { entries, .. }
                 | ContextEvent::EntriesReplaced { entries, .. }
-                | ContextEvent::StateReplaced { entries, .. }
                 | ContextEvent::KeyPrefixReplaced { entries, .. },
             ) => {
                 for entry in entries {
@@ -141,9 +139,8 @@ mod tests {
 
     use harness::{
         AcceptedRunEvent, BlobRef, CodeToolOrigin, ContextEntry, ContextEntryId,
-        ContextEntrySource, ContextRemovalReason, ContextRewriteReason, FileAttachment, RunId,
-        RunSource, SteeringId, StoredEvent, ToolBatchId, ToolCallId, ToolCallResult,
-        ToolCallStatus, ToolInvocationResult, TurnId,
+        ContextEntrySource, ContextRemovalReason, FileAttachment, RunId, RunSource, SteeringId,
+        ToolBatchId, ToolCallId, ToolCallResult, ToolCallStatus, ToolInvocationResult, TurnId,
         session::UncommittedStoredEvent,
         storage::{
             AppendSessionEvents, BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore,
@@ -268,24 +265,18 @@ mod tests {
             stored(ordinary_completion(ordinary.clone())),
             stored(ordinary_completion(ordinary.clone())),
         ];
-        // The second page must still be scanned, and unrelated events are not
-        // decoded as core events or followed into arbitrary blob payloads.
-        events.extend((0..1000).map(|_| UncommittedStoredEvent {
-            observed_at_ms: 1,
-            joins: Default::default(),
-            event: StoredEvent::new("lightspeed.test.unrelated", 99, serde_json::Value::Null),
+        // The second page must still be scanned.
+        events.extend((0..1000).map(|_| {
+            stored(CoreAgentEvent::Environment(
+                harness::EnvironmentEvent::ActiveEnvironmentCleared,
+            ))
         }));
         events.extend([
             stored(code_completion(code.clone())),
             stored(CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
                 base_revision: 1,
                 entry_ids: vec![ContextEntryId::new(1)],
-                reason: ContextRemovalReason::Pruned,
-            })),
-            stored(CoreAgentEvent::Context(ContextEvent::StateReplaced {
-                base_revision: 2,
-                entries: Vec::new(),
-                reason: ContextRewriteReason::ProviderCompacted,
+                reason: ContextRemovalReason::ProviderCompacted,
             })),
         ]);
         let (sessions, session_id) = history(events).await;
@@ -325,7 +316,6 @@ mod tests {
         let steering = media(b"steering", "steering.png");
         let replaced = media(b"replaced", "replacement.png");
         let keyed = media(b"keyed", "keyed.png");
-        let state = media(b"state", "state.png");
         let (sessions, session_id) = history(vec![
             stored(CoreAgentEvent::Run(RunEvent::Accepted(AcceptedRunEvent {
                 run_id: RunId::new(1),
@@ -334,11 +324,13 @@ mod tests {
                     input: vec![accepted.context_entry()],
                 },
                 run_config: Default::default(),
+                input_limit_tokens: None,
                 config_revision: 0,
                 notify_on_terminal: Vec::new(),
                 requested_by: None,
             }))),
             stored(CoreAgentEvent::Run(RunEvent::SteeringAccepted {
+                submission_id: harness::SubmissionId::new("steer-1"),
                 run_id: RunId::new(1),
                 steering_id: SteeringId::new(1),
                 input: vec![steering.context_entry()],
@@ -353,11 +345,6 @@ mod tests {
                 key_prefix: harness::ContextEntryKey::new("test"),
                 entries: vec![context_entry(&keyed, 2)],
             })),
-            stored(CoreAgentEvent::Context(ContextEvent::StateReplaced {
-                base_revision: 2,
-                entries: vec![context_entry(&state, 3)],
-                reason: ContextRewriteReason::PolicyChanged,
-            })),
         ])
         .await;
 
@@ -365,8 +352,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(attachments.len(), 5);
-        for descriptor in [accepted, steering, replaced, keyed, state] {
+        assert_eq!(attachments.len(), 4);
+        for descriptor in [accepted, steering, replaced, keyed] {
             assert!(attachments.contains(&Attachment::Media(descriptor)));
         }
     }

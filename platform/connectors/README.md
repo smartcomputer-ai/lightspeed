@@ -29,8 +29,8 @@ dependencies are the core JSON-RPC API and Temporal; it reads no database.
    `ChannelInbound`, rate limited per chat and sender, and handed to
    `channels/inbound/admit { accountId, inbound }` stamped with the account's
    universe. The decision drives what the host sends back itself: `paired`
-   gets the pairing confirmation, `pairing_required` the pairing prompt;
-   `bound`, `pairing_pending`, and `unbound` stay silent. The provider is
+   gets the pairing confirmation, `pairingRequired` the pairing prompt;
+   `bound`, `pairingPending`, and `unbound` stay silent. The provider is
    acknowledged only after the core answered.
 4. **Health and metrics.** One listener (`LIGHTSPEED_CONNECTOR_HEALTH_PORT`,
    default 8090) serves `/healthz`, `/readyz` (200 only when discovery
@@ -43,9 +43,9 @@ dependencies are the core JSON-RPC API and Temporal; it reads no database.
 
 The host authenticates to a core in `authenticated` mode using its own
 `LIGHTSPEED_CONNECTOR_API_KEY`. Universe calls also select
-`x-lightspeed-universe: <universeId>`. Provision deployment
-`discover_channel_accounts` and per-universe `lease_credentials` and
-`admit_channel_inbound` capabilities. Service kind alone grants no access.
+`x-lightspeed-universe: <universeId>`. The key needs the `deployment/channels`,
+`auth/lease`, `channels/inbound`, and `blobs/put` method groups. Service kind alone
+grants no access.
 
 For implementing another provider, read
 [Channel connectors](../../docs/documentation/integrating-and-extending/channel-connectors.md)

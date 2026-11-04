@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
   defaults = { revision: 7, agentRun: { providerId: "openai", apiKind: "openai:responses", model: "gpt-6-sol" }, speechToText: null };
-  actions = ["read", "configure_resource"];
+  actions = ["read", "configureResource"];
   discoveryFails = false;
   mocks.role = "operator";
   mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: { slot: "agentRun" | "speechToText"; expectedRevision: number; model: ModelDefaults["agentRun"] }) => {

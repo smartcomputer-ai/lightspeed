@@ -17,16 +17,16 @@ use environments::{
     PutEnvironmentProviderBinding,
 };
 use harness::{
-    BlobRef, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
-    session::{
-        EventSeq, SessionId, SessionPosition, StoredEvent, StoredJoins, UncommittedStoredEvent,
-    },
+    BlobRef, ContentRef, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCodec,
+    CoreAgentEvent, CoreAgentJoins, CoreAgentLifecycleEvent, EnvironmentEvent, RunEvent, RunId,
+    SteeringId, UncommittedCoreAgentEvent, event_kind,
+    session::{EventSeq, SessionId, SessionPosition, UncommittedStoredEvent},
     storage::{
         AdvanceSessionCheckpoint, AppendSessionEvents, BlobEdge, BlobGraphStore, BlobStore,
         CreateClonedSession, CreateForkedSession, CreateSession, DeleteClosedSessions,
-        ListSessions, ReadSessionEventRange, ReadSessionEvents, SessionCheckpoint, SessionOrigin,
-        SessionOriginKind, SessionStore, SessionStoreError, ensure_harness_blobs,
-        harness_blob_refs,
+        ListSessions, ReadRunRecordEntries, ReadSessionEventRange, ReadSessionEvents,
+        SessionCheckpoint, SessionOrigin, SessionOriginKind, SessionStore, SessionStoreError,
+        ensure_harness_blobs, harness_blob_refs,
     },
 };
 use mcp::{
@@ -73,7 +73,7 @@ async fn pg_live_sessions_are_isolated_by_universe() {
         .expect("append left events");
 
     assert_eq!(
-        appended.head.as_ref().map(|head| head.seq),
+        appended.entries.last().map(|entry| entry.position.seq),
         Some(EventSeq::new(2))
     );
     assert!(
@@ -222,7 +222,27 @@ async fn pg_live_session_ranges_are_fenced_and_checkpoint_pointers_only_advance(
             .load_checkpoint(&session_id)
             .await
             .expect("load checkpoint"),
-        Some(newest)
+        Some(newest.clone())
+    );
+
+    let repaired = SessionCheckpoint {
+        format_version: newest.format_version + 1,
+        ..newest
+    };
+    assert!(
+        store
+            .advance_checkpoint(AdvanceSessionCheckpoint {
+                checkpoint: repaired.clone(),
+            })
+            .await
+            .expect("replace a checkpoint of another format at the same sequence")
+    );
+    assert_eq!(
+        store
+            .load_checkpoint(&session_id)
+            .await
+            .expect("load repaired checkpoint"),
+        Some(repaired)
     );
 }
 
@@ -412,7 +432,7 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
         max_depth: 1,
         max_descendants: 2,
         max_concurrent: 1,
-        deadline_ms: 1_000,
+        run_timeout_ms: Some(1_000),
     };
     let origin = |invocation: &str, depth: u32| SessionOrigin {
         kind: SessionOriginKind::Subagent,
@@ -481,6 +501,22 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
             ..
         }
     ));
+    // A retry of the child that took the last slot hears that its row exists.
+    let retried = store
+        .create_session(CreateSession {
+            metadata: Default::default(),
+            session_id: SessionId::new("child-1"),
+            display_name: None,
+            origin: Some(origin("inv-1", 1)),
+            delete_after_close_ms: None,
+            created_at_ms: 41,
+        })
+        .await
+        .expect_err("retry of an existing child");
+    assert!(matches!(
+        retried,
+        SessionStoreError::SessionAlreadyExists { .. }
+    ));
     // max_depth = 1: depth 2 is refused before any counting.
     let too_deep = store
         .create_session(CreateSession {
@@ -500,6 +536,155 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
             ..
         }
     ));
+    // Discarding the reservation frees its slot, and leaves an opened session alone.
+    assert!(
+        store
+            .discard_unopened_session(&SessionId::new("child-1"))
+            .await
+            .expect("discard the reservation")
+    );
+    assert_eq!(
+        store
+            .load_session(&SessionId::new("child-1"))
+            .await
+            .expect("load"),
+        None
+    );
+    store
+        .create_session(CreateSession {
+            metadata: Default::default(),
+            session_id: SessionId::new("child-2"),
+            display_name: None,
+            origin: Some(origin("inv-2", 1)),
+            delete_after_close_ms: None,
+            created_at_ms: 43,
+        })
+        .await
+        .expect("the discarded slot is free");
+    assert!(
+        !store
+            .discard_unopened_session(&SessionId::new("child-1"))
+            .await
+            .expect("discard a missing row")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_fork_point_is_judged_under_the_source_lock() {
+    let store = live_store("session-graph-fork-lock", 1024).await;
+    let universe_id = store.config().universe_id;
+    let source = SessionId::new("fork-lock-source");
+    store
+        .create_session(CreateSession {
+            metadata: Default::default(),
+            session_id: source.clone(),
+            display_name: None,
+            origin: None,
+            delete_after_close_ms: None,
+            created_at_ms: 1,
+        })
+        .await
+        .expect("create source");
+    store
+        .append(AppendSessionEvents {
+            session_id: source.clone(),
+            expected_head: None,
+            events: vec![open_event(10)],
+        })
+        .await
+        .expect("seed source");
+
+    // Hold the source row the way an in-flight append does, so the fork finishes
+    // its unlocked read and then waits on the lock.
+    let mut append = store.pool().begin().await.expect("begin append");
+    sqlx::query(
+        "SELECT session_id FROM sessions WHERE universe_id = $1 AND session_id = $2 FOR UPDATE",
+    )
+    .bind(universe_id)
+    .bind(source.as_str())
+    .fetch_one(&mut *append)
+    .await
+    .expect("lock source");
+
+    let fork_store = store.clone();
+    let fork_source = source.clone();
+    let fork = tokio::spawn(async move {
+        fork_store
+            .create_forked_session(CreateForkedSession {
+                source_session_id: fork_source,
+                session_id: SessionId::new("fork-lock-fork"),
+                source_seq: EventSeq::new(2),
+                created_at_ms: 20,
+            })
+            .await
+    });
+    loop {
+        let waiting: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid)))",
+        )
+        .fetch_one(&mut *append)
+        .await
+        .expect("look for the waiting fork");
+        if waiting {
+            break;
+        }
+        assert!(
+            !fork.is_finished(),
+            "the fork must wait on the source lock before it judges the fork point"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    // The append lands a run that opens at the fork point and stays open.
+    let opened = [
+        (event_kind::RUN_ACCEPTED, 2_i64),
+        (event_kind::RUN_STARTED, 3_i64),
+    ];
+    for (kind, seq) in opened {
+        sqlx::query(
+            "INSERT INTO session_events (universe_id, session_id, entry_json) VALUES ($1, $2, $3)",
+        )
+        .bind(universe_id)
+        .bind(source.as_str())
+        .bind(serde_json::json!({
+            "position": { "seq": seq },
+            "observed_at_ms": 11,
+            "joins": { "run_id": "1" },
+            "event": { "kind": kind, "version": 1, "payload": {} },
+        }))
+        .execute(&mut *append)
+        .await
+        .expect("insert run event");
+    }
+    sqlx::query("UPDATE sessions SET head_seq = 3 WHERE universe_id = $1 AND session_id = $2")
+        .bind(universe_id)
+        .bind(source.as_str())
+        .execute(&mut *append)
+        .await
+        .expect("advance head");
+    append.commit().await.expect("commit append");
+
+    let error = fork
+        .await
+        .expect("fork task")
+        .expect_err("a fork point inside the appended run is refused");
+    assert!(matches!(
+        error,
+        SessionStoreError::InvalidForkPoint { source_seq, .. }
+            if source_seq == EventSeq::new(2)
+    ));
+    assert_eq!(
+        store.safe_fork_seq(&source).await.expect("safe fork seq"),
+        EventSeq::new(1)
+    );
+    assert!(
+        store
+            .load_session(&SessionId::new("fork-lock-fork"))
+            .await
+            .expect("load refused fork")
+            .is_none()
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -616,6 +801,113 @@ async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
             .collect::<Vec<_>>(),
         vec![11, 21, 41]
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_run_record_entries_are_read_by_run_id_across_a_fork() {
+    let run = |at_ms, run_id: u64, event| {
+        CoreAgentCodec
+            .encode_uncommitted(&UncommittedCoreAgentEvent {
+                observed_at_ms: at_ms,
+                joins: CoreAgentJoins {
+                    run_id: Some(RunId::new(run_id)),
+                    ..CoreAgentJoins::default()
+                },
+                event,
+            })
+            .expect("encode event")
+    };
+    let started = |run_id| {
+        CoreAgentEvent::Run(RunEvent::Started {
+            run_id: RunId::new(run_id),
+        })
+    };
+    let cancelled = |run_id| {
+        CoreAgentEvent::Run(RunEvent::Cancelled {
+            run_id: RunId::new(run_id),
+        })
+    };
+    let store = live_store("session-run-records", 1024).await;
+    let root = SessionId::new("root-session");
+    store
+        .create_session(CreateSession {
+            metadata: Default::default(),
+            session_id: root.clone(),
+            display_name: None,
+            origin: None,
+            delete_after_close_ms: None,
+            created_at_ms: 1,
+        })
+        .await
+        .expect("create root");
+    store
+        .append(AppendSessionEvents {
+            session_id: root.clone(),
+            expected_head: None,
+            events: vec![
+                run(1, 1, started(1)),
+                run(2, 1, cancelled(1)),
+                // Same run, not one of the kinds a record is built from.
+                run(
+                    3,
+                    2,
+                    CoreAgentEvent::Run(RunEvent::CancellationRequested {
+                        run_id: RunId::new(2),
+                        requested_by: None,
+                    }),
+                ),
+                run(4, 2, started(2)),
+                open_event(5),
+                run(6, 2, cancelled(2)),
+                // Past the fork point, so the child never sees this.
+                run(7, 3, started(3)),
+            ],
+        })
+        .await
+        .expect("append root");
+    let fork = SessionId::new("fork-session");
+    store
+        .create_forked_session(CreateForkedSession {
+            source_session_id: root,
+            session_id: fork.clone(),
+            source_seq: EventSeq::new(6),
+            created_at_ms: 8,
+        })
+        .await
+        .expect("fork");
+    store
+        .append(AppendSessionEvents {
+            session_id: fork.clone(),
+            expected_head: Some(SessionPosition {
+                seq: EventSeq::new(6),
+            }),
+            events: vec![run(9, 3, started(3)), run(10, 3, cancelled(3))],
+        })
+        .await
+        .expect("append fork");
+
+    let read = |before, limit| {
+        let store = &store;
+        let session_id = fork.clone();
+        async move {
+            store
+                .read_run_record_entries(ReadRunRecordEntries {
+                    session_id,
+                    before: RunId::new(before),
+                    limit,
+                })
+                .await
+                .expect("read run records")
+                .iter()
+                .map(|entry| entry.observed_at_ms)
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(read(4, 2).await, vec![4, 6, 9, 10]);
+    assert_eq!(read(2, 1).await, vec![1, 2]);
+    assert_eq!(read(4, 100).await, vec![1, 2, 4, 6, 9, 10]);
+    assert_eq!(read(1, 5).await, Vec::<u64>::new());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -932,20 +1224,14 @@ async fn pg_live_event_appends_record_roots_and_reject_missing_blobs() {
             session_id: session_id.clone(),
             expected_head: None,
             events: vec![
-                ref_event(10, serde_json::json!({ "content_ref": first.as_str() })),
-                ref_event(
-                    11,
-                    serde_json::json!({
-                        "nested": { "content_ref": first.as_str() },
-                        "items": [{ "ref": second.as_str() }]
-                    }),
-                ),
-                ref_event(
+                ref_event(10, &[&first]),
+                ref_event(11, &[&first, &second]),
+                entries_event(
                     12,
-                    serde_json::json!({
-                        "content_ref": second.as_str(),
-                        "preview": format!("mentions {first} in prose")
-                    }),
+                    vec![input_entry(
+                        &second,
+                        Some(format!("mentions {first} in prose")),
+                    )],
                 ),
             ],
         })
@@ -970,10 +1256,7 @@ async fn pg_live_event_appends_record_roots_and_reject_missing_blobs() {
             expected_head: Some(SessionPosition {
                 seq: EventSeq::new(3),
             }),
-            events: vec![ref_event(
-                13,
-                serde_json::json!({ "content_ref": first.as_str() }),
-            )],
+            events: vec![ref_event(13, &[&first])],
         })
         .await
         .expect("append widening event");
@@ -997,10 +1280,7 @@ async fn pg_live_event_appends_record_roots_and_reject_missing_blobs() {
             expected_head: Some(SessionPosition {
                 seq: EventSeq::new(4),
             }),
-            events: vec![
-                ref_event(14, serde_json::json!({ "content_ref": second.as_str() })),
-                ref_event(15, serde_json::json!({ "content_ref": missing.as_str() })),
-            ],
+            events: vec![ref_event(14, &[&second]), ref_event(15, &[&missing])],
         })
         .await
         .expect_err("dangling ref must fail the append");
@@ -1026,6 +1306,30 @@ async fn pg_live_event_appends_record_roots_and_reject_missing_blobs() {
     assert_eq!(
         events_embedding(&store, &session_id, &second).await,
         vec![2, 3]
+    );
+
+    // A digest that is someone's text is not a ref: it commits and retains nothing.
+    let spoken = BlobRef::from_bytes(b"a digest a model replied with, never stored");
+    store
+        .append(AppendSessionEvents {
+            session_id: session_id.clone(),
+            expected_head: Some(SessionPosition {
+                seq: EventSeq::new(4),
+            }),
+            events: vec![entries_event(
+                14,
+                vec![input_entry(&second, Some(spoken.to_string()))],
+            )],
+        })
+        .await
+        .expect("a digest in a preview commits");
+    assert_eq!(
+        store
+            .head(&session_id)
+            .await
+            .expect("head")
+            .map(|head| head.seq.as_u64()),
+        Some(5)
     );
 
     // Edges are still the writer's job.
@@ -1058,6 +1362,123 @@ async fn pg_live_event_appends_record_roots_and_reject_missing_blobs() {
     .await
     .expect("count edge rows");
     assert_eq!(edge_count, 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires PostgreSQL and object storage"]
+async fn pg_live_a_value_postgres_cannot_hold_is_a_data_rejection_and_writes_nothing() {
+    let store = live_store("data-rejection", 1024).await;
+    let session_id = SessionId::new("session-nul");
+    store
+        .create_session(CreateSession {
+            metadata: Default::default(),
+            session_id: session_id.clone(),
+            display_name: None,
+            origin: None,
+            delete_after_close_ms: None,
+            created_at_ms: 1,
+        })
+        .await
+        .expect("create");
+
+    // jsonb refuses it, with 22P05.
+    let error = store
+        .append(AppendSessionEvents {
+            session_id: session_id.clone(),
+            expected_head: None,
+            events: vec![{
+                // The codec replaces NUL, so only a writer bypassing it can send one.
+                let mut event = ref_event(2, &[]);
+                let nul = serde_json::Value::String("a\0b".to_owned());
+                event.event.payload["run"]["steering_accepted"]["run_label"] = nul;
+                event
+            }],
+        })
+        .await
+        .expect_err("jsonb cannot hold NUL");
+    assert!(
+        matches!(error, SessionStoreError::DataRejected { .. }),
+        "{error:?}"
+    );
+    assert!(error.is_data_rejection());
+    assert_eq!(store.head(&session_id).await.expect("head"), None);
+
+    // text refuses it, with 22021, here and when a session is created.
+    let error = store
+        .set_session_display_name(&session_id, Some("a\0b".to_owned()))
+        .await
+        .expect_err("text cannot hold NUL");
+    assert!(
+        matches!(error, SessionStoreError::DataRejected { .. }),
+        "{error:?}"
+    );
+    let error = store
+        .create_session(CreateSession {
+            metadata: Default::default(),
+            session_id: SessionId::new("session-nul-name"),
+            display_name: Some("a\0b".to_owned()),
+            origin: None,
+            delete_after_close_ms: None,
+            created_at_ms: 1,
+        })
+        .await
+        .expect_err("text cannot hold NUL");
+    assert!(
+        matches!(error, SessionStoreError::DataRejected { .. }),
+        "{error:?}"
+    );
+
+    // What the session codec encodes always fits, NUL or not.
+    let mut drive =
+        harness::CoreAgentDrive::from_replayed(session_id.clone(), harness::CoreAgentState::new());
+    let content_ref = put_blob(&store, "catalog body").await;
+    let commands = [
+        harness::CoreAgentCommand::OpenSession {
+            config: harness::SessionConfig {
+                model: harness::ModelSelection {
+                    api_kind: harness::ProviderApiKind::OpenAiCompletions,
+                    provider_id: "openai".to_owned(),
+                    model: "gpt-test".to_owned(),
+                },
+                generation: Default::default(),
+                limits: Default::default(),
+                context: Default::default(),
+                features: Default::default(),
+            },
+        },
+        harness::CoreAgentCommand::UpsertContext {
+            expected_revision: None,
+            key: harness::ContextEntryKey::new("client.catalog"),
+            entry: harness::ContextEntryInput {
+                kind: harness::ContextEntryKind::Catalog {
+                    title: "cat\0alog".to_owned(),
+                },
+                content: harness::ContentRef::text(content_ref),
+                preview: Some("cat\0alog".to_owned()),
+                origin: None,
+                provenance_ref: None,
+                token_estimate: None,
+            },
+        },
+    ];
+    for command in commands {
+        let harness::CoreAgentAction::AppendEvents {
+            expected_head,
+            events,
+        } = drive.admit_command(command, 3).expect("admit")
+        else {
+            panic!("expected an append");
+        };
+        let appended = store
+            .append(AppendSessionEvents {
+                session_id: session_id.clone(),
+                expected_head,
+                events,
+            })
+            .await
+            .expect("an encoded event commits");
+        drive.resume_appended(appended.entries).expect("resume");
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1165,14 +1586,9 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
         let mut events = refs
             .into_iter()
             .enumerate()
-            .map(|(index, blob_ref)| {
-                ref_event(
-                    10 + index as u64,
-                    serde_json::json!({ "content_ref": blob_ref.as_str() }),
-                )
-            })
+            .map(|(index, blob_ref)| ref_event(10 + index as u64, &[blob_ref]))
             .collect::<Vec<_>>();
-        events.push(lifecycle_event(20, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND));
+        events.push(closed_event(20));
         store
             .append(AppendSessionEvents {
                 session_id: session_id.clone(),
@@ -1467,13 +1883,7 @@ async fn pg_live_sweep_follows_fork_trees_and_clone_roots() {
         .append(AppendSessionEvents {
             session_id: root.clone(),
             expected_head: None,
-            events: vec![
-                ref_event(
-                    10,
-                    serde_json::json!({ "content_ref": config_blob.as_str() }),
-                ),
-                lifecycle_event(11, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
-            ],
+            events: vec![ref_event(10, &[&config_blob]), closed_event(11)],
         })
         .await
         .expect("append root events");
@@ -1495,10 +1905,7 @@ async fn pg_live_sweep_follows_fork_trees_and_clone_roots() {
             expected_head: Some(SessionPosition {
                 seq: EventSeq::new(1),
             }),
-            events: vec![
-                ref_event(21, serde_json::json!({ "content_ref": fork_only.as_str() })),
-                lifecycle_event(22, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
-            ],
+            events: vec![ref_event(21, &[&fork_only]), closed_event(22)],
         })
         .await
         .expect("append fork events");
@@ -1516,13 +1923,7 @@ async fn pg_live_sweep_follows_fork_trees_and_clone_roots() {
             source_session_id: root.clone(),
             session_id: clone.clone(),
             created_at_ms: 30,
-            opening_events: vec![
-                ref_event(
-                    31,
-                    serde_json::json!({ "content_ref": config_blob.as_str() }),
-                ),
-                lifecycle_event(32, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
-            ],
+            opening_events: vec![ref_event(31, &[&config_blob]), closed_event(32)],
         })
         .await
         .expect("clone root");
@@ -1640,20 +2041,57 @@ async fn blob_object_etag(store: &PgStore, blob_ref: &BlobRef) -> Option<String>
     .expect("load object etag")
 }
 
-fn ref_event(at_ms: u64, payload: serde_json::Value) -> UncommittedStoredEvent {
-    UncommittedStoredEvent {
-        observed_at_ms: at_ms,
-        joins: StoredJoins::default(),
-        event: StoredEvent::new("lightspeed.test.references", 1, payload),
+fn encoded_event(at_ms: u64, event: CoreAgentEvent) -> UncommittedStoredEvent {
+    CoreAgentCodec
+        .encode_uncommitted(&UncommittedCoreAgentEvent {
+            observed_at_ms: at_ms,
+            joins: CoreAgentJoins::default(),
+            event,
+        })
+        .expect("encode event")
+}
+
+fn input_entry(content: &BlobRef, preview: Option<String>) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        },
+        content: ContentRef::text(content.clone()),
+        preview,
+        origin: None,
+        provenance_ref: None,
+        token_estimate: None,
     }
 }
 
-fn lifecycle_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
-    UncommittedStoredEvent {
-        observed_at_ms: at_ms,
-        joins: StoredJoins::default(),
-        event: StoredEvent::new(kind, 1, serde_json::Value::Object(Default::default())),
-    }
+fn entries_event(at_ms: u64, input: Vec<ContextEntryInput>) -> UncommittedStoredEvent {
+    encoded_event(
+        at_ms,
+        CoreAgentEvent::Run(RunEvent::SteeringAccepted {
+            submission_id: harness::SubmissionId::new("steer-1"),
+            run_id: RunId::new(1),
+            steering_id: SteeringId::new(1),
+            input,
+            requested_by: None,
+        }),
+    )
+}
+
+/// A real event holding each ref as typed content, which is what makes it a root.
+fn ref_event(at_ms: u64, refs: &[&BlobRef]) -> UncommittedStoredEvent {
+    entries_event(
+        at_ms,
+        refs.iter()
+            .map(|blob_ref| input_entry(blob_ref, None))
+            .collect(),
+    )
+}
+
+fn closed_event(at_ms: u64) -> UncommittedStoredEvent {
+    encoded_event(
+        at_ms,
+        CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Closed),
+    )
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -2981,16 +3419,12 @@ fn live_object_store() -> Arc<dyn ObjectStore> {
     Arc::new(store)
 }
 
+/// A real event with no effect on any projection.
 fn open_event(at_ms: u64) -> UncommittedStoredEvent {
-    UncommittedStoredEvent {
-        observed_at_ms: at_ms,
-        joins: StoredJoins::default(),
-        event: StoredEvent::new(
-            "lightspeed.test.lifecycle.closed",
-            1,
-            serde_json::Value::Object(Default::default()),
-        ),
-    }
+    encoded_event(
+        at_ms,
+        CoreAgentEvent::Environment(EnvironmentEvent::ActiveEnvironmentCleared),
+    )
 }
 
 fn put_mcp_server(server_id: &str, status: McpServerStatus) -> PutMcpServerRecord {
@@ -3236,7 +3670,7 @@ async fn pg_live_concurrent_deletion_rolls_back_session_attachment() {
             .append(AppendSessionEvents {
                 session_id: append_id,
                 expected_head: None,
-                events: vec![ref_event(2, serde_json::json!({"content_ref": append_ref}))],
+                events: vec![ref_event(2, &[&append_ref])],
             })
             .await
     });
@@ -3266,6 +3700,51 @@ async fn pg_live_concurrent_deletion_rolls_back_session_attachment() {
         "no dangling event commits"
     );
     assert_eq!(session_root_count(&store, &session_id).await, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires Postgres + MinIO"]
+async fn pg_live_sweep_cursor_is_stored_per_universe_and_holds_nothing() {
+    let store = live_store("sweep-cursor", 1024).await;
+    let other = live_store("sweep-cursor-other", 1024).await;
+    assert_eq!(store.load_sweep_cursor().await.expect("load"), None);
+
+    let digest_ref = store
+        .put_bytes(b"blob the cursor names".to_vec())
+        .await
+        .expect("put");
+    let cursor = store_pg::CasSweepCursor {
+        touched_at_ms: 42,
+        blob_ref: digest_ref.clone(),
+    };
+    store
+        .save_sweep_cursor(Some(&cursor))
+        .await
+        .expect("insert");
+    assert_eq!(store.load_sweep_cursor().await.expect("load"), Some(cursor));
+    assert_eq!(
+        other.load_sweep_cursor().await.expect("other universe"),
+        None
+    );
+
+    let moved = store_pg::CasSweepCursor {
+        touched_at_ms: 43,
+        blob_ref: digest_ref.clone(),
+    };
+    store.save_sweep_cursor(Some(&moved)).await.expect("update");
+    assert_eq!(store.load_sweep_cursor().await.expect("load"), Some(moved));
+
+    // A cursor is a position, so the blob it names can still be collected.
+    let deleted = store
+        .delete_dead_blobs(std::slice::from_ref(&digest_ref), u64::MAX / 2, &[])
+        .await
+        .expect("the cursor is not a holder");
+    assert_eq!(deleted.len(), 1);
+    assert!(store.load_sweep_cursor().await.expect("load").is_some());
+
+    store.save_sweep_cursor(None).await.expect("clear");
+    assert_eq!(store.load_sweep_cursor().await.expect("load"), None);
+    store.save_sweep_cursor(None).await.expect("clear again");
 }
 
 #[tokio::test(flavor = "current_thread")]

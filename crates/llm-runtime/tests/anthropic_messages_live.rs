@@ -1,15 +1,16 @@
 use std::sync::Arc;
 
 use harness::{
-    ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND,
+    ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, BlobRef, ContextCompactionRequest,
+    ContextCompactionStatus, ContextCompactionTask, ContextEntry, ContextEntryId,
+    ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextMessageRole, ContextSnapshot,
+    LlmFinish, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, LlmRequest,
+    ModelSelection, ProviderApiKind, RunId, SessionId, ToolChoice, ToolId, ToolName, TurnId,
+    storage::{BlobStore, InMemoryBlobStore},
+};
+use llm_clients::content::{
     ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND,
-    BlobRef, ContextCompactionRequest, ContextCompactionStatus, ContextCompactionTask,
-    ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource,
-    ContextMessageRole, ContextSnapshot, LlmFinish, LlmGenerationRequest, LlmGenerationResult,
-    LlmGenerationStatus, LlmRequest, ModelSelection, ProviderApiKind, RunId, SessionId, ToolChoice,
-    ToolName, TurnId,
-    storage::{BlobStore, InMemoryBlobStore},
 };
 use llm_runtime::{AnthropicMessagesLlmAdapter, LlmCompactionAdapter, LlmGenerationAdapter};
 use serde_json::{Value, json};
@@ -77,7 +78,6 @@ fn intent_request(fingerprint: &str, entries: Vec<ContextEntry>) -> LlmRequest {
         reasoning_effort: None,
         parallel_tool_use: None,
         processing_tier: None,
-        provider_response_id: None,
         compaction: None,
         params: None,
     }
@@ -161,7 +161,7 @@ fn retained_context_entry(index: usize, item: &ContextEntryInput) -> ContextEntr
 
 fn weather_tool_spec(schema_ref: BlobRef, description_ref: BlobRef) -> harness::ToolSpec {
     harness::ToolSpec {
-        name: ToolName::new("get_weather"),
+        id: ToolId::new("get_weather"),
         execution: Default::default(),
         kind: harness::ToolKind::Function(harness::FunctionToolSpec {
             description_ref: Some(description_ref),
@@ -324,7 +324,6 @@ async fn assert_hosted_web_replay(
         .entries
         .push(user_entry(request.context.entries.len() as u64 + 1, prompt));
     request.tool_choice = Some(ToolChoice::Auto);
-    request.provider_response_id = None;
     request.output_limit = Some(512);
     let followup = adapter
         .generate(generation_request(2, request))
@@ -360,9 +359,7 @@ async fn anthropic_messages_live_adapter_uses_hosted_web_search() {
         vec![user_entry(1, input_ref)],
     );
     request.tools = vec![tool];
-    request.tool_choice = Some(ToolChoice::Specific {
-        tool_name: ToolName::new("web.search"),
-    });
+    request.tool_choice = Some(ToolChoice::Auto);
     let adapter = AnthropicMessagesLlmAdapter::new(
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
@@ -425,9 +422,7 @@ async fn anthropic_messages_live_adapter_uses_hosted_web_fetch() {
         vec![user_entry(1, input_ref)],
     );
     request.tools = vec![tool];
-    request.tool_choice = Some(ToolChoice::Specific {
-        tool_name: ToolName::new("web.fetch"),
-    });
+    request.tool_choice = Some(ToolChoice::Auto);
     let adapter = AnthropicMessagesLlmAdapter::new(
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
@@ -661,7 +656,7 @@ async fn anthropic_messages_live_adapter_runs_tool_round_trip() {
         schema_ref.clone(),
         description_ref.clone(),
     )];
-    request.tool_choice = Some(ToolChoice::RequiredAny);
+    request.tool_choice = Some(ToolChoice::Auto);
     request.parallel_tool_use = Some(false);
 
     let execution = adapter
@@ -753,6 +748,176 @@ async fn anthropic_messages_live_adapter_runs_tool_round_trip() {
 /// The product path: the session's `reasoningEffort` alone must yield
 /// visible (summarized) thinking, billed thinking tokens in usage, and
 /// signed blocks that replay on the next turn.
+/// A model that still accepts a forced tool choice. The current Opus and Sonnet
+/// refuse one, as the rejection test below pins.
+const FORCED_TOOL_CHOICE_MODEL: &str = "claude-sonnet-5";
+
+async fn weather_tool(blobs: &InMemoryBlobStore) -> harness::ToolSpec {
+    let schema_ref = blobs
+        .put_bytes(
+            serde_json::to_vec(&json!({
+                "type": "object",
+                "properties": { "city": { "type": "string" } },
+                "required": ["city"]
+            }))
+            .expect("schema bytes"),
+        )
+        .await
+        .expect("schema blob");
+    let description_ref = text_blob(blobs, "Get current weather for a city").await;
+    weather_tool_spec(schema_ref, description_ref)
+}
+
+/// The prompt gives no reason to call a tool, so the call can only come from
+/// the forced choice on the wire.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_forces_a_function_tool() {
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let input_ref = text_blob(&blobs, "Say hello to Zurich in one short sentence.").await;
+    let tool = weather_tool(&blobs).await;
+    let adapter = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_debug_dumps(true);
+
+    for (choice, wire) in [
+        (ToolChoice::RequiredAny, json!({ "type": "any" })),
+        (
+            ToolChoice::Specific {
+                tool_id: ToolId::new("get_weather"),
+            },
+            json!({ "type": "tool", "name": "get_weather" }),
+        ),
+    ] {
+        let mut request = intent_request(
+            "live-anthropic-messages-forced-tool",
+            vec![user_entry(1, input_ref.clone())],
+        );
+        request.model.model = FORCED_TOOL_CHOICE_MODEL.to_owned();
+        request.tools = vec![tool.clone()];
+        request.tool_choice = Some(choice);
+
+        let execution = adapter
+            .generate(generation_request(1, request))
+            .await
+            .expect("generate forced tool call");
+
+        let sent = provider_request_json(&blobs, &dumps(&execution).provider_request_ref).await;
+        assert_eq!(sent["tool_choice"], wire);
+        assert_eq!(execution.result.status, LlmGenerationStatus::Succeeded);
+        assert_eq!(execution.result.facts.finish, LlmFinish::ToolCalls);
+        assert_eq!(
+            execution.result.facts.tool_calls[0].tool_name,
+            ToolName::new("get_weather")
+        );
+    }
+}
+
+/// A forced hosted tool goes out under the provider's name for it, not ours.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY and a model supporting hosted web tools (costs real money)"]
+async fn anthropic_messages_live_adapter_forces_a_hosted_tool() {
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let adapter = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_debug_dumps(true);
+
+    for (tool_name, wire_name, prompt) in [
+        (
+            "web.search",
+            "web_search",
+            "Find Anthropic's web search tool documentation. Reply with one short sourced sentence.",
+        ),
+        (
+            "web.fetch",
+            "web_fetch",
+            "Read https://www.rfc-editor.org/rfc/rfc2606.txt. State which top-level domains it reserves and cite the document.",
+        ),
+    ] {
+        let tool = tools::definitions::register(
+            tool_name,
+            Default::default(),
+            harness::ToolParallelism::ParallelSafe,
+            Default::default(),
+        );
+        let input_ref = text_blob(&blobs, prompt).await;
+        let mut request = intent_request(
+            "live-anthropic-messages-forced-hosted-tool",
+            vec![user_entry(1, input_ref)],
+        );
+        request.model.model = FORCED_TOOL_CHOICE_MODEL.to_owned();
+        request.tools = vec![tool];
+        request.tool_choice = Some(ToolChoice::Specific {
+            tool_id: ToolId::new(tool_name),
+        });
+
+        let execution = adapter
+            .generate(generation_request(1, request))
+            .await
+            .unwrap_or_else(|error| panic!("{tool_name}: {error:?}"));
+
+        let sent = provider_request_json(&blobs, &dumps(&execution).provider_request_ref).await;
+        assert_eq!(
+            sent["tool_choice"],
+            json!({ "type": "tool", "name": wire_name })
+        );
+        assert_hosted_web_result(&execution.result, tool_name);
+    }
+}
+
+/// A forced choice is a promise that the turn calls a tool, so the adapter does
+/// not quietly lower it to `auto` for a model that refuses it. The caller hears
+/// the provider's own refusal as a rejection, the same as any other request the
+/// provider will not take.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (the provider refuses this request before generating)"]
+async fn anthropic_messages_live_runtime_reports_a_refused_forced_tool_choice() {
+    use harness::{CoreAgentIoError, CoreAgentLlm as _};
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let input_ref = text_blob(&blobs, "What is the current temperature in Zurich?").await;
+    let tool = weather_tool(&blobs).await;
+    let adapter = Arc::new(AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    ));
+    let runtime = llm_runtime::LlmRuntime::new(
+        llm_runtime::LlmAdapterRegistry::new()
+            .with_generation_adapter(ProviderApiKind::AnthropicMessages, adapter),
+    );
+
+    for choice in [
+        ToolChoice::RequiredAny,
+        ToolChoice::Specific {
+            tool_id: ToolId::new("get_weather"),
+        },
+    ] {
+        let mut request = intent_request(
+            "live-anthropic-refused-forced-tool",
+            vec![user_entry(1, input_ref.clone())],
+        );
+        request.model.model = "claude-opus-5-5".to_owned();
+        request.tools = vec![tool.clone()];
+        request.tool_choice = Some(choice);
+
+        let error = runtime
+            .generate(generation_request(1, request))
+            .await
+            .expect_err("the provider refuses a forced tool choice on this model");
+
+        let CoreAgentIoError::Rejected { message } = error else {
+            panic!("expected a rejection, got {error:?}");
+        };
+        assert!(
+            message.contains("tool_choice"),
+            "expected the provider to name tool_choice: {message}"
+        );
+    }
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
 async fn anthropic_messages_live_adapter_preserves_thinking_blocks() {
@@ -1081,7 +1246,8 @@ async fn anthropic_messages_live_adapter_default_output_cap_is_accepted() {
 /// A turn cut off at `max_tokens` fails the run but keeps the partial text.
 /// Thinking is off (`reasoningEffort: none` → `thinking: disabled`, proved on
 /// the wire here) so the tiny cap lands on visible output rather than on
-/// reasoning.
+/// reasoning. That needs a model that accepts `disabled`, which the current
+/// Opus and Sonnet do not, so the model is pinned.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
 async fn anthropic_messages_live_adapter_fails_the_turn_on_truncation_but_keeps_partial_text() {
@@ -1102,6 +1268,7 @@ async fn anthropic_messages_live_adapter_fails_the_turn_on_truncation_but_keeps_
         "live-anthropic-messages-truncation",
         vec![user_entry(1, input_ref)],
     );
+    request.model.model = "claude-sonnet-5".to_string();
     request.output_limit = Some(48);
     request.reasoning_effort = Some("none".to_string());
 
@@ -1164,9 +1331,10 @@ async fn anthropic_messages_live_adapter_fails_the_turn_on_truncation_but_keeps_
 /// complete it as an empty answer, and nothing may fall back to another
 /// model. Claude Opus 5's real-time cyber safeguard has refused exactly this
 /// note plus summary request every time it was sent (`stop_reason: refusal`,
-/// category `cyber`, zero output); if the classifier ever stops refusing it,
-/// this test fails on the status assertion and the fixture needs a new
-/// trigger — the adapter path it proves is unchanged.
+/// category `cyber`, zero output), and Opus 5.5 answers it, so the model is
+/// pinned. If the classifier ever stops refusing it, this test fails on the
+/// status assertion and the fixture needs a new trigger — the adapter path it
+/// proves is unchanged.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
 async fn anthropic_messages_live_adapter_fails_the_turn_on_refusal() {
@@ -1192,10 +1360,11 @@ async fn anthropic_messages_live_adapter_fails_the_turn_on_refusal() {
     )
     .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
-    let request = intent_request(
+    let mut request = intent_request(
         "live-anthropic-messages-refusal",
         vec![user_entry(1, notes_ref), user_entry(2, ask_ref)],
     );
+    request.model.model = "claude-opus-5".to_string();
 
     let execution = adapter
         .generate(generation_request(1, request))
@@ -1277,7 +1446,6 @@ async fn check_adapter_context_compaction(model: ModelSelection, native: bool) {
                 token_estimate: None,
             },
             target_tokens: Some(300),
-            params: None,
         },
     };
 
@@ -1376,7 +1544,7 @@ async fn tool_media_round_trip(model: String, set: support::tool_media::ToolMedi
     );
     request.model.model = model.clone();
     request.tools = vec![tool.clone()];
-    request.tool_choice = Some(ToolChoice::RequiredAny);
+    request.tool_choice = Some(ToolChoice::Auto);
     request.parallel_tool_use = Some(false);
     let execution = adapter
         .generate(generation_request(1, request))
@@ -1611,7 +1779,6 @@ async fn anthropic_messages_live_adapter_continues_after_an_image_edit() {
                 token_estimate: None,
             },
             target_tokens: Some(300),
-            params: None,
         },
     };
     let strict_compacted = strict
@@ -1809,7 +1976,7 @@ async fn anthropic_messages_live_accepts_builtin_input_schema_vfs_write_file() {
 
 /// A request the provider refuses crosses the runtime boundary as
 /// `Rejected`, carrying the provider's own message rather than a wrapped
-/// runtime error, so the run fails as `request_rejected`.
+/// runtime error, so the run fails as `requestRejected`.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
 async fn anthropic_messages_live_runtime_reports_provider_rejections() {
@@ -1846,6 +2013,43 @@ async fn anthropic_messages_live_runtime_reports_provider_rejections() {
     assert!(
         !message.contains("provider call failed"),
         "the provider's message is kept without runtime wrapping: {message}"
+    );
+}
+
+/// Input alone over the window is refused with a 400 that carries no code of
+/// its own. It has to cross the runtime boundary as `ContextLimit`, because
+/// that is what starts recovery compaction and what makes rolling compaction
+/// split its chunk.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (the provider refuses this request before generating)"]
+async fn anthropic_messages_live_runtime_reports_input_overflow_as_context_limit() {
+    use harness::{CoreAgentIoError, CoreAgentLlm as _};
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let oversized = "lorem 12345 ".repeat(1_000_000);
+    let entry = user_entry(1, text_blob(&blobs, &oversized).await);
+    let adapter = Arc::new(AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    ));
+    let runtime = llm_runtime::LlmRuntime::new(
+        llm_runtime::LlmAdapterRegistry::new()
+            .with_generation_adapter(ProviderApiKind::AnthropicMessages, adapter),
+    );
+
+    let error = runtime
+        .generate(generation_request(
+            1,
+            intent_request("live-anthropic-overflow", vec![entry]),
+        ))
+        .await
+        .expect_err("the provider refuses input over the window");
+
+    let CoreAgentIoError::ContextLimit { message } = error else {
+        panic!("expected a context limit, got {error:?}");
+    };
+    assert!(
+        message.contains("prompt is too long"),
+        "the provider's message is kept word for word: {message}"
     );
 }
 

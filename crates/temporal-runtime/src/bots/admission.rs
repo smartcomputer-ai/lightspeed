@@ -1,7 +1,8 @@
 //! Store, then wake. Every event path — hook route, manual admit, replay,
 //! schedule and poll fires, chat emit, `bot_emit`, receipts — runs through
-//! here. The row in Postgres is authoritative; the controller signal is a
-//! notification over it, never the system of record.
+//! here. The row in Postgres is the record of the event and the controller
+//! signal delivers it. A fresh controller does not rescan stored rows, so an
+//! event whose signal went unprocessed waits for a manual replay.
 //!
 //! Order of the trigger pipeline: filter (a miss stores nothing, so a strict
 //! filter on a firehose costs nothing) → route → idle-close policy → coalesce →
@@ -9,8 +10,8 @@
 //! trigger is enabled and the breaker has not tripped.
 
 use api::{
-    BotEventDocument, BotEventMedia, BotEventOutcome, BotEventReplyRef, BotId, BotTriggerSpec,
-    BotWhenBusy,
+    BotEventDocument, BotEventMedia, BotEventOutcome, BotEventReplyRef, BotId, BotSessionKind,
+    BotTriggerSpec, BotWhenBusy,
 };
 use bots::{
     BotCoalesceParams, BotControllerConfig, BotError, BotEvent, BotEventRecord, BotEventStore,
@@ -25,7 +26,10 @@ use bots::{
 use harness::storage::BlobStore;
 use serde_json::Value;
 use temporal_workflow::bots::{BotControllerArgs, BotControllerCarry};
-use temporalio_client::{UntypedSignal, UntypedWorkflow, WorkflowStartOptions};
+use temporalio_client::{
+    UntypedSignal, UntypedWorkflow, WorkflowSignalOptions, WorkflowStartOptions,
+    errors::WorkflowInteractionError,
+};
 use temporalio_common::data_converters::{PayloadConverter, RawValue};
 use temporalio_common::protos::coresdk::AsJsonPayloadExt as _;
 
@@ -204,42 +208,54 @@ impl GatewayAgentApi {
         })
     }
 
-    /// Signal-with-start the bot's controller with one event. The start
-    /// argument is the bot's current configuration, so a controller that is
-    /// not running comes up with the row's truth.
+    /// Wake the bot's controller with one event. The start argument is the
+    /// bot's current configuration, so a controller that is not running comes
+    /// up with the row's truth.
     pub(crate) async fn wake_bot_controller(
         &self,
         bot: &BotRecord,
         event: &BotEvent,
     ) -> anyhow::Result<()> {
         let config = BotControllerConfig::from_record(self.universe_id(), bot);
-        let workflow_id = bot_controller_workflow_id(self.universe_id(), &bot.bot_id);
         let payload = event.as_json_payload()?;
-        let options =
-            WorkflowStartOptions::new(self.bot_task_queue().to_owned(), workflow_id).build();
-        self.start_bot_controller(
+        self.signal_or_start_bot_controller(
             config,
-            bot.created_at_ms,
-            options,
             bots::BOT_EVENT_SIGNAL,
             RawValue::new(vec![payload]),
         )
         .await
     }
 
-    /// Start (or signal-with-start) the controller workflow by type name so
-    /// this module depends on the workflow's wire, not its Rust type.
-    async fn start_bot_controller(
+    /// Signal the controller workflow, by type name so this module depends on
+    /// the workflow's wire, not its Rust type. Only a controller that is not
+    /// running needs its start arguments: it has no state of its own, so it
+    /// begins past every session the bot retains, whether the id was reused or
+    /// the namespace is new after a breaking release. That read and the carry
+    /// grow with the sessions a bot keeps, so a running controller must not pay
+    /// for them on every event, and an oversized carry must not refuse its events.
+    async fn signal_or_start_bot_controller(
         &self,
         config: BotControllerConfig,
-        created_at_ms: i64,
-        options: WorkflowStartOptions,
         signal_name: &str,
         signal_input: RawValue,
     ) -> anyhow::Result<()> {
+        let workflow_id = bot_controller_workflow_id(self.universe_id(), &config.bot_id);
+        let signalled = self
+            .temporal_client()
+            .get_workflow_handle::<UntypedWorkflow>(workflow_id.clone())
+            .signal(
+                UntypedSignal::new(signal_name),
+                signal_input.clone(),
+                WorkflowSignalOptions::default(),
+            )
+            .await;
+        match signalled {
+            Err(WorkflowInteractionError::NotFound(_)) => {}
+            other => return other.map_err(|error| anyhow::anyhow!("{error}")),
+        }
         let previous = self
             .store()
-            .previous_bot_session_ids(&config.bot_id, created_at_ms)
+            .previous_bot_session_ids(&config.bot_id)
             .await?;
         let carry = carry_after_previous_sessions(&config.bot_id, previous)?;
         let input = RawValue::from_value(
@@ -249,6 +265,8 @@ impl GatewayAgentApi {
             },
             &PayloadConverter::default(),
         );
+        let options =
+            WorkflowStartOptions::new(self.bot_task_queue().to_owned(), workflow_id).build();
         self.temporal_client()
             .signal_with_start_workflow(
                 UntypedWorkflow::new(BOT_CONTROLLER_WORKFLOW_TYPE),
@@ -262,19 +280,14 @@ impl GatewayAgentApi {
             .map_err(|error| anyhow::anyhow!("{error}"))
     }
 
-    /// Signal-with-start the controller with a configuration change (a put,
-    /// a close). Starting a controller for a bot that has never received an
-    /// event is harmless: it reconciles its main session and parks.
+    /// Tell the controller about a configuration change (a put, a close),
+    /// starting it if needed. Starting a controller for a bot that has never
+    /// received an event is harmless: it reconciles its main session and parks.
     pub(crate) async fn signal_bot_config(&self, bot: &BotRecord) -> anyhow::Result<()> {
         let config = BotControllerConfig::from_record(self.universe_id(), bot);
-        let workflow_id = bot_controller_workflow_id(self.universe_id(), &bot.bot_id);
         let payload = config.as_json_payload()?;
-        let options =
-            WorkflowStartOptions::new(self.bot_task_queue().to_owned(), workflow_id).build();
-        self.start_bot_controller(
+        self.signal_or_start_bot_controller(
             config,
-            bot.created_at_ms,
-            options,
             bots::BOT_CONFIG_SIGNAL,
             RawValue::new(vec![payload]),
         )
@@ -496,7 +509,10 @@ mod tests {
     }
 }
 
-/// Reusing a bot id starts after its retained session generations.
+/// A controller without a carry starts after the bot's retained session
+/// generations: a reused id would find a closed session and, in a new namespace,
+/// an open row with no workflow behind it. Per-event sessions are skipped because
+/// each event has its own base, so they would only grow the carry.
 fn carry_after_previous_sessions(
     bot_id: &BotId,
     ids: Vec<String>,
@@ -504,6 +520,9 @@ fn carry_after_previous_sessions(
     let main = bots::ids::bot_main_session_id(bot_id, 1);
     let mut carry = BotControllerCarry::default();
     for id in ids {
+        if bots::ids::bot_session_kind(&id) == BotSessionKind::PerEvent {
+            continue;
+        }
         let (base, generation) = if id == main {
             (id.as_str(), 1)
         } else if let Some(generation) = id.strip_prefix(&format!("{main}-g"))
@@ -549,6 +568,8 @@ mod retained_session_tests {
                 "bot:v1:triage-g4".into(),
                 "bot:v1:triage:k-mail-g3".into(),
                 "bot:v1:triage-other".into(),
+                "bot:v1:triage:e-0123456789ab".into(),
+                "bot:v1:triage:e-ba9876543210-g2".into(),
             ],
         )
         .unwrap();
@@ -559,5 +580,11 @@ mod retained_session_tests {
         );
         assert_eq!(carry.session_generations.len(), 1);
         assert!(!carry.session_ready);
+    }
+
+    #[test]
+    fn bot_without_retained_sessions_starts_at_its_first_generation() {
+        let carry = carry_after_previous_sessions(&BotId::new("triage"), Vec::new()).unwrap();
+        assert_eq!(carry, BotControllerCarry::default());
     }
 }

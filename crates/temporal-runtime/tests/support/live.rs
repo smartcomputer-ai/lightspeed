@@ -9,7 +9,7 @@ use std::{
 
 use api::{
     AgentApiService, ContextEntryKindView, ContextMessageRoleView, InputItem, RunStartParams,
-    RunStartSource, RunStatus, SessionReadParams, SessionStatus,
+    RunStartSource, RunStatus, SessionLifecycleStatus, SessionReadParams,
 };
 use harness::{
     CoreAgentLlm, CoreAgentTools, ModelSelection, ProviderApiKind, SessionId, storage::BlobStore,
@@ -277,6 +277,22 @@ pub async fn fake_worker_activities_with_transient_llm_failures(
     ))
 }
 
+/// Worker whose fake LLM answers its next `refused_generations` generate calls
+/// with a result the harness refuses, then behaves normally.
+pub async fn fake_worker_activities_with_refused_generations(
+    refused_generations: usize,
+) -> anyhow::Result<WorkerActivities> {
+    let store = pg_store_from_env().await?;
+    let blobs: Arc<dyn BlobStore> = store.clone();
+    let llm = Arc::new(FakeLlm::new(blobs.clone()).with_refused_generations(refused_generations))
+        as Arc<dyn CoreAgentLlm>;
+    let tools = Arc::new(FakeTools::new(blobs)) as Arc<dyn CoreAgentTools>;
+    Ok(WorkerActivities::for_universe(
+        live_universe_id()?,
+        ActivityState::from_pg_store(store, llm, tools),
+    ))
+}
+
 /// Worker for active-run-control live tests: slow generations and/or
 /// slow tool calls so cancel/steer/queue can land mid-run, with shared
 /// counters to prove what the runtime actually executed or abandoned.
@@ -424,7 +440,7 @@ pub async fn start_text_run(
     api: &temporal_runtime::gateway::GatewayAgentApi,
     session_id: &SessionId,
     text: &str,
-) -> anyhow::Result<api::RunView> {
+) -> anyhow::Result<api::RunSummaryView> {
     Ok(api
         .start_run(RunStartParams {
             notify_on_terminal: None,
@@ -551,22 +567,22 @@ pub async fn wait_for_admission_failure(
             .iter()
             .any(|failure| failure.kind == kind)
         {
-            assert_eq!(status.last_error, None);
+            assert_eq!(status.fatal_error, None);
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
-pub async fn wait_for_session_status(
+pub async fn wait_for_session_lifecycle(
     api: &temporal_runtime::gateway::GatewayAgentApi,
     session_id: &SessionId,
-    expected: SessionStatus,
+    expected: SessionLifecycleStatus,
 ) -> anyhow::Result<()> {
     let started = Instant::now();
     loop {
         if started.elapsed() > Duration::from_secs(30) {
-            anyhow::bail!("timed out waiting for session status {expected:?}");
+            anyhow::bail!("timed out waiting for session lifecycle {expected:?}");
         }
         let session = api
             .read_session(SessionReadParams {
@@ -574,7 +590,7 @@ pub async fn wait_for_session_status(
                 run_limit: None,
             })
             .await?;
-        if session.result.session.status == expected {
+        if session.result.session.lifecycle_status == expected {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(100)).await;

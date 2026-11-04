@@ -8,7 +8,7 @@ import { SessionSettingsDialog } from "./session-settings-sheet";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), configure: false }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/permissions", () => ({ useActionPermissions: () => ({ can: (action: string) => action === "configure_session" && mocks.configure }) }));
+vi.mock("@/lib/permissions", () => ({ useActionPermissions: () => ({ can: (action: string) => action === "configureSession" && mocks.configure }) }));
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
 let root: Root;
 let container: HTMLDivElement;

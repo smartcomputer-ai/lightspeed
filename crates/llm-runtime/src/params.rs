@@ -1,9 +1,8 @@
 //! Typed provider request parameters.
 //!
-//! The harness carries provider request settings as opaque
-//! [`harness::ProviderParams`] (`api_kind` + versioned JSON body). This module
-//! owns the typed schemas for those bodies: admission boundaries validate
-//! incoming params against them, and adapters parse them when materializing
+//! An adapter call may carry opaque [`harness::ProviderParams`] (`api_kind` +
+//! versioned JSON body). This module owns the typed schemas for those bodies,
+//! which adapters also use as their workspace when materializing
 //! provider-native wire requests. The deterministic core never sees these
 //! types.
 
@@ -226,30 +225,6 @@ pub struct OpenAiCompletionsParams {
     pub service_tier: Option<OpenAiServiceTier>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
-}
-
-/// Validate opaque provider params against the typed schema for their API
-/// kind. Admission boundaries call this before params enter the session log.
-pub fn validate_provider_params(params: &ProviderParams) -> LlmAdapterResult<()> {
-    if params.version != PROVIDER_PARAMS_VERSION {
-        return Err(LlmAdapterError::InvalidProviderRequest {
-            message: format!(
-                "unsupported provider params version {}, expected {}",
-                params.version, PROVIDER_PARAMS_VERSION
-            ),
-        });
-    }
-    match params.api_kind {
-        ProviderApiKind::OpenAiResponses => {
-            parse_params_body::<OpenAiResponsesParams>(&params.body).map(|_| ())
-        }
-        ProviderApiKind::AnthropicMessages => {
-            parse_params_body::<AnthropicMessagesParams>(&params.body).map(|_| ())
-        }
-        ProviderApiKind::OpenAiCompletions => {
-            parse_params_body::<OpenAiCompletionsParams>(&params.body).map(|_| ())
-        }
-    }
 }
 
 /// Parse OpenAI Responses params from optional opaque params, defaulting when
@@ -641,13 +616,13 @@ mod tests {
     }
 
     #[test]
-    fn validate_provider_params_rejects_unknown_fields() {
+    fn params_reject_unknown_fields() {
         let params = ProviderParams::new(
             ProviderApiKind::OpenAiResponses,
             json!({ "reasonig_effort": "high" }),
         );
 
-        let error = validate_provider_params(&params).expect_err("unknown field must fail");
+        let error = openai_responses_params(Some(&params)).expect_err("unknown field must fail");
         assert!(matches!(
             error,
             LlmAdapterError::InvalidProviderRequest { .. }
@@ -655,47 +630,54 @@ mod tests {
     }
 
     #[test]
-    fn validate_provider_params_accepts_each_api_kind() {
-        for (api_kind, body) in [
-            (
-                ProviderApiKind::OpenAiResponses,
-                json!({ "temperature": 0.2 }),
-            ),
-            (
-                ProviderApiKind::AnthropicMessages,
-                json!({ "thinking": { "type": "enabled", "budget_tokens": 2048 } }),
-            ),
-            (
-                ProviderApiKind::OpenAiCompletions,
-                json!({ "response_format": { "type": "json_object" } }),
-            ),
-        ] {
-            let params = ProviderParams::new(api_kind, body);
-            validate_provider_params(&params).expect("valid params");
-        }
+    fn params_parse_for_each_api_kind() {
+        openai_responses_params(Some(&ProviderParams::new(
+            ProviderApiKind::OpenAiResponses,
+            json!({ "temperature": 0.2 }),
+        )))
+        .expect("valid params");
+        anthropic_messages_params(Some(&ProviderParams::new(
+            ProviderApiKind::AnthropicMessages,
+            json!({ "thinking": { "type": "enabled", "budget_tokens": 2048 } }),
+        )))
+        .expect("valid params");
+        openai_completions_params(Some(&ProviderParams::new(
+            ProviderApiKind::OpenAiCompletions,
+            json!({ "response_format": { "type": "json_object" } }),
+        )))
+        .expect("valid params");
     }
 
     #[test]
     fn openai_service_tiers_are_typed_for_both_api_kinds() {
-        for api_kind in [
-            ProviderApiKind::OpenAiResponses,
-            ProviderApiKind::OpenAiCompletions,
-        ] {
-            for tier in ["auto", "default", "flex", "fast", "priority"] {
-                validate_provider_params(&ProviderParams::new(
-                    api_kind.clone(),
-                    json!({"service_tier": tier}),
-                ))
-                .expect("documented service tier");
-            }
-            assert!(
-                validate_provider_params(&ProviderParams::new(
-                    api_kind,
-                    json!({"service_tier": "turbo"}),
-                ))
-                .is_err()
-            );
+        for tier in ["auto", "default", "flex", "fast", "priority"] {
+            let body = json!({ "service_tier": tier });
+            openai_responses_params(Some(&ProviderParams::new(
+                ProviderApiKind::OpenAiResponses,
+                body.clone(),
+            )))
+            .expect("documented service tier");
+            openai_completions_params(Some(&ProviderParams::new(
+                ProviderApiKind::OpenAiCompletions,
+                body,
+            )))
+            .expect("documented service tier");
         }
+        let body = json!({ "service_tier": "turbo" });
+        assert!(
+            openai_responses_params(Some(&ProviderParams::new(
+                ProviderApiKind::OpenAiResponses,
+                body.clone(),
+            )))
+            .is_err()
+        );
+        assert!(
+            openai_completions_params(Some(&ProviderParams::new(
+                ProviderApiKind::OpenAiCompletions,
+                body,
+            )))
+            .is_err()
+        );
     }
 
     #[test]

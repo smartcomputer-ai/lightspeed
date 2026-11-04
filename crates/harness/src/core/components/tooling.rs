@@ -7,7 +7,7 @@ use crate::{
     ContextEvent, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
     CoreAgentStatus, DomainError, ParkedToolBatch, PlanningError, PromiseOwnership,
     ProviderApiKind, RunId, RunStatus, ToolBatchId, ToolBatchSuspension, ToolCallId, ToolEffect,
-    ToolName, TurnId, TurnOutcome, TurnStatus,
+    ToolId, ToolName, TurnId, TurnOutcome, TurnStatus,
     core::components::context::context_entries_from_inputs,
 };
 
@@ -16,7 +16,7 @@ use crate::{
 pub enum ConfigEvent {
     ToolsReplaced {
         base_revision: u64,
-        tools: BTreeMap<ToolName, ToolSpec>,
+        tools: BTreeMap<ToolId, ToolSpec>,
     },
     ToolsPatched {
         base_revision: u64,
@@ -48,13 +48,13 @@ pub enum Event {
         batch_id: ToolBatchId,
         result: ToolCallResult,
     },
-    BatchDeferred {
+    BatchParked {
         run_id: RunId,
         turn_id: TurnId,
         batch_id: ToolBatchId,
         suspension: ToolBatchSuspension,
     },
-    BatchResumed {
+    BatchUnparked {
         run_id: RunId,
         turn_id: TurnId,
         batch_id: ToolBatchId,
@@ -83,8 +83,8 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
 
     if let Some(batch_id) = active_run.active_tool_batch_id {
         return match active_run.status {
-            RunStatus::Active => {
-                let proposals = decide_active_tool_batch_invocations(state, active_run, batch_id)?;
+            RunStatus::Running => {
+                let proposals = decide_active_tool_batch_invocations(active_run, batch_id)?;
                 if proposals.is_empty() {
                     decide_active_tool_batch_completion(state, active_run, batch_id)
                 } else {
@@ -109,10 +109,13 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
             RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled => Ok(Vec::new()),
         };
     }
-    // Active runs start the batch for a completed tool-call turn; so do
+    // Running runs start the batch for a completed tool-call turn; so do
     // cancelling runs, whose batch then resolves to cancelled results above,
     // so a cancelled run never leaves tool calls without results in context.
-    if !matches!(active_run.status, RunStatus::Active | RunStatus::Cancelling) {
+    if !matches!(
+        active_run.status,
+        RunStatus::Running | RunStatus::Cancelling
+    ) {
         return Ok(Vec::new());
     }
 
@@ -188,23 +191,37 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ToolingState {
     pub revision: u64,
-    pub tools: BTreeMap<ToolName, ToolSpec>,
+    pub tools: BTreeMap<ToolId, ToolSpec>,
 }
 
-pub fn validate_tool_map(tools: &BTreeMap<ToolName, ToolSpec>) -> Result<(), DomainError> {
+/// Whether the toolset must not move right now. The model chose its calls from the
+/// toolset its turn was planned against, and those calls and any code scope
+/// granted from them execute against that same toolset. That holds from the start
+/// of the turn until the batch it queued has finished, including while the batch is
+/// parked; a change waits for the next boundary.
+pub fn tools_frozen(state: &CoreAgentState) -> bool {
+    state.runs.active.as_ref().is_some_and(|run| {
+        run.active_turn_id.is_some()
+            || run.active_tool_batch_id.is_some()
+            || crate::core::components::run::has_unstarted_tool_call_turn(run)
+    })
+}
+
+pub fn validate_tool_map(tools: &BTreeMap<ToolId, ToolSpec>) -> Result<(), DomainError> {
     for (tool_name, tool) in tools {
-        if &tool.name != tool_name {
+        if &tool.id != tool_name {
             return Err(DomainError::InvariantViolation(format!(
                 "tool map key {} does not match tool name {}",
-                tool_name, tool.name
+                tool_name, tool.id
             )));
         }
     }
 
     validate_unique_remote_mcp_server_labels(tools)?;
-    validate_unique_native_mcp_prefixes(tools)?;
+    validate_unique_runtime_mcp_prefixes(tools)?;
 
     for tool in tools.values() {
         tool.validate()?;
@@ -213,17 +230,17 @@ pub fn validate_tool_map(tools: &BTreeMap<ToolName, ToolSpec>) -> Result<(), Dom
     Ok(())
 }
 
-fn validate_unique_native_mcp_prefixes(
-    tools: &BTreeMap<ToolName, ToolSpec>,
+fn validate_unique_runtime_mcp_prefixes(
+    tools: &BTreeMap<ToolId, ToolSpec>,
 ) -> Result<(), DomainError> {
     let prefixes = tools
         .values()
         .filter_map(|tool| match &tool.kind {
             ToolKind::RemoteMcp(spec)
-                if spec.execution == RemoteMcpExecution::Native
+                if spec.execution == RemoteMcpExecution::Runtime
                     && spec.exposure == RemoteMcpExposure::Inject =>
             {
-                Some((format!("{}__", tool.name), &tool.name))
+                Some((format!("{}__", tool.id), &tool.id))
             }
             _ => None,
         })
@@ -232,7 +249,7 @@ fn validate_unique_native_mcp_prefixes(
         for (other_prefix, other_name) in prefixes.iter().skip(index + 1) {
             if prefix.starts_with(other_prefix) || other_prefix.starts_with(prefix) {
                 return Err(DomainError::InvariantViolation(format!(
-                    "native MCP tool prefixes for {name} and {other_name} are ambiguous"
+                    "runtime MCP tool prefixes for {name} and {other_name} are ambiguous"
                 )));
             }
         }
@@ -241,18 +258,17 @@ fn validate_unique_native_mcp_prefixes(
 }
 
 fn validate_unique_remote_mcp_server_labels(
-    tools: &BTreeMap<ToolName, ToolSpec>,
+    tools: &BTreeMap<ToolId, ToolSpec>,
 ) -> Result<(), DomainError> {
-    let mut labels = BTreeMap::<&str, &ToolName>::new();
-    for (tool_name, tool) in tools {
+    let mut labels = BTreeMap::<&str, &ToolId>::new();
+    for (tool_id, tool) in tools {
         let ToolKind::RemoteMcp(remote_mcp) = &tool.kind else {
             continue;
         };
-        if let Some(existing_tool_name) = labels.insert(remote_mcp.server_label.as_str(), tool_name)
-        {
+        if let Some(existing_tool_id) = labels.insert(remote_mcp.server_label.as_str(), tool_id) {
             return Err(DomainError::InvariantViolation(format!(
                 "active tool set has duplicate remote MCP server label {} for tools {} and {}",
-                remote_mcp.server_label, existing_tool_name, tool_name
+                remote_mcp.server_label, existing_tool_id, tool_id
             )));
         }
     }
@@ -264,7 +280,7 @@ pub struct ToolPatch {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub upsert: Vec<ToolSpec>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub remove: Vec<ToolName>,
+    pub remove: Vec<ToolId>,
 }
 
 impl ToolPatch {
@@ -272,14 +288,14 @@ impl ToolPatch {
         self.upsert.is_empty() && self.remove.is_empty()
     }
 
-    pub fn validate_for(&self, tools: &BTreeMap<ToolName, ToolSpec>) -> Result<(), DomainError> {
+    pub fn validate_for(&self, tools: &BTreeMap<ToolId, ToolSpec>) -> Result<(), DomainError> {
         let mut upsert_names = BTreeSet::new();
         for tool in &self.upsert {
             tool.validate()?;
-            if !upsert_names.insert(tool.name.clone()) {
+            if !upsert_names.insert(tool.id.clone()) {
                 return Err(DomainError::InvariantViolation(format!(
                     "tool patch contains duplicate upsert {}",
-                    tool.name
+                    tool.id
                 )));
             }
         }
@@ -311,18 +327,27 @@ impl ToolPatch {
 
     pub fn apply_to(
         &self,
-        tools: &BTreeMap<ToolName, ToolSpec>,
-    ) -> Result<BTreeMap<ToolName, ToolSpec>, DomainError> {
+        tools: &BTreeMap<ToolId, ToolSpec>,
+    ) -> Result<BTreeMap<ToolId, ToolSpec>, DomainError> {
         self.validate_for(tools)?;
+        let next = self.merged_into(tools);
+        validate_tool_map(&next)?;
+        Ok(next)
+    }
+
+    /// The recorded effect of a patch, with no opinion on the tools it names.
+    pub(crate) fn merged_into(
+        &self,
+        tools: &BTreeMap<ToolId, ToolSpec>,
+    ) -> BTreeMap<ToolId, ToolSpec> {
         let mut next = tools.clone();
         for tool_name in &self.remove {
             next.remove(tool_name);
         }
         for tool in &self.upsert {
-            next.insert(tool.name.clone(), tool.clone());
+            next.insert(tool.id.clone(), tool.clone());
         }
-        validate_tool_map(&next)?;
-        Ok(next)
+        next
     }
 }
 
@@ -330,7 +355,7 @@ impl ToolPatch {
 pub struct ToolSpec {
     /// Admitted identity. Built-ins use logical ids; their exposed names are
     /// chosen by the runtime for each model request.
-    pub name: ToolName,
+    pub id: ToolId,
     pub kind: ToolKind,
     pub parallelism: ToolParallelism,
     /// Runtime-owned execution policy facts admitted with the toolset. The
@@ -391,7 +416,7 @@ impl ToolSpec {
             ToolKind::ProviderNative(native) => {
                 native.execution == ProviderNativeToolExecution::ClientEffect
             }
-            ToolKind::RemoteMcp(remote) => remote.execution == RemoteMcpExecution::Native,
+            ToolKind::RemoteMcp(remote) => remote.execution == RemoteMcpExecution::Runtime,
         }
     }
 }
@@ -443,33 +468,33 @@ pub struct ProviderNativeToolSpec {
     pub execution: ProviderNativeToolExecution,
 }
 
+/// One attached MCP server as session state sees it: identity, label and policy.
+/// Its URL, private-network opt-in and credential stay on the server's record,
+/// which adapters read at each use. They never enter session state, so a URL
+/// carrying a token cannot persist in the log, and an admin's change applies at once.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteMcpToolSpec {
     pub server_id: String,
     pub record_revision: u64,
     pub server_label: String,
-    pub server_url: String,
     pub description_ref: Option<BlobRef>,
     pub allowed_tools: Option<Vec<String>>,
     pub execution: RemoteMcpExecution,
     pub exposure: RemoteMcpExposure,
     pub approval: RemoteMcpApprovalPolicy,
     pub defer_loading: Option<bool>,
-    pub auth_ref: Option<SecretRef>,
-    pub auth_required: bool,
-    pub allow_private_network: bool,
 }
 
 impl RemoteMcpToolSpec {
     pub fn validate(&self) -> Result<(), DomainError> {
-        validate_secret_ref_component("remote MCP server id", &self.server_id)?;
+        crate::validate_general_string_id("remote MCP server id", &self.server_id)
+            .map_err(|error| DomainError::InvariantViolation(error.to_string()))?;
         if self.record_revision == 0 {
             return Err(DomainError::InvariantViolation(
                 "remote MCP record revision must be >= 1".to_owned(),
             ));
         }
         validate_remote_mcp_server_label(&self.server_label)?;
-        validate_remote_mcp_server_url(&self.server_url)?;
         if let Some(allowed_tools) = &self.allowed_tools {
             if allowed_tools.is_empty() {
                 return Err(DomainError::InvariantViolation(
@@ -487,23 +512,11 @@ impl RemoteMcpToolSpec {
                 }
             }
         }
-        if let Some(auth_ref) = &self.auth_ref {
-            auth_ref.validate()?;
-            if auth_ref.namespace != "mcp_server" || auth_ref.id != self.server_id {
-                return Err(DomainError::InvariantViolation(
-                    "remote MCP auth refs must identify the configured mcp_server".to_owned(),
-                ));
-            }
-        } else if self.auth_required {
-            return Err(DomainError::InvariantViolation(
-                "remote MCP required auth needs a server credential ref".to_owned(),
-            ));
-        }
         if self.execution == RemoteMcpExecution::Provider
             && self.exposure != RemoteMcpExposure::Inject
         {
             return Err(DomainError::InvariantViolation(
-                "remote MCP exposure applies only to native execution".to_owned(),
+                "remote MCP exposure applies only to runtime execution".to_owned(),
             ));
         }
         Ok(())
@@ -513,9 +526,9 @@ impl RemoteMcpToolSpec {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RemoteMcpExecution {
-    #[default]
     Provider,
-    Native,
+    #[default]
+    Runtime,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -533,20 +546,6 @@ pub enum RemoteMcpApprovalPolicy {
     Always,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecretRef {
-    pub namespace: String,
-    pub id: String,
-}
-
-impl SecretRef {
-    pub fn validate(&self) -> Result<(), DomainError> {
-        validate_secret_ref_component("secret ref namespace", &self.namespace)?;
-        validate_secret_ref_component("secret ref id", &self.id)
-    }
-}
-
-const REMOTE_MCP_URL_MAX_LEN: usize = 2048;
 const REMOTE_MCP_ALLOWED_TOOL_MAX_LEN: usize = 128;
 
 fn validate_remote_mcp_server_label(value: &str) -> Result<(), DomainError> {
@@ -567,78 +566,6 @@ fn validate_remote_mcp_server_label(value: &str) -> Result<(), DomainError> {
             "remote MCP server label must start with an ASCII letter or digit and contain only ASCII letters, digits, '_' or '-'".to_owned(),
         ));
     }
-    Ok(())
-}
-
-fn validate_remote_mcp_server_url(value: &str) -> Result<(), DomainError> {
-    if value.is_empty() {
-        return Err(DomainError::InvariantViolation(
-            "remote MCP server URL must not be empty".to_owned(),
-        ));
-    }
-    if value.len() > REMOTE_MCP_URL_MAX_LEN {
-        return Err(DomainError::InvariantViolation(format!(
-            "remote MCP server URL is too long: {} bytes, max {}",
-            value.len(),
-            REMOTE_MCP_URL_MAX_LEN
-        )));
-    }
-    if value.chars().any(char::is_whitespace) || value.chars().any(|ch| ch.is_control()) {
-        return Err(DomainError::InvariantViolation(
-            "remote MCP server URL must not contain whitespace or control characters".to_owned(),
-        ));
-    }
-    if value.contains('#') {
-        return Err(DomainError::InvariantViolation(
-            "remote MCP server URL must not contain a fragment".to_owned(),
-        ));
-    }
-
-    let Some((scheme, rest)) = value.split_once("://") else {
-        return Err(DomainError::InvariantViolation(
-            "remote MCP server URL must include http:// or https:// scheme".to_owned(),
-        ));
-    };
-    let scheme = scheme.to_ascii_lowercase();
-    if scheme != "http" && scheme != "https" {
-        return Err(DomainError::InvariantViolation(format!(
-            "remote MCP server URL scheme {scheme:?} is not supported"
-        )));
-    }
-
-    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let authority = &rest[..authority_end];
-    if authority.is_empty() {
-        return Err(DomainError::InvariantViolation(
-            "remote MCP server URL host must not be empty".to_owned(),
-        ));
-    }
-    if authority.contains('@') {
-        return Err(DomainError::InvariantViolation(
-            "remote MCP server URL must not include credentials".to_owned(),
-        ));
-    }
-
-    if let Some(stripped) = authority.strip_prefix('[') {
-        let Some(end) = stripped.find(']') else {
-            return Err(DomainError::InvariantViolation(
-                "remote MCP server URL IPv6 host is missing closing ']'".to_owned(),
-            ));
-        };
-        if end == 0 {
-            return Err(DomainError::InvariantViolation(
-                "remote MCP server URL host must not be empty".to_owned(),
-            ));
-        }
-    } else {
-        let host = authority.split(':').next().unwrap_or(authority);
-        if host.is_empty() {
-            return Err(DomainError::InvariantViolation(
-                "remote MCP server URL host must not be empty".to_owned(),
-            ));
-        }
-    }
-
     Ok(())
 }
 
@@ -668,11 +595,6 @@ fn validate_remote_mcp_allowed_tool_name(value: &str) -> Result<(), DomainError>
     Ok(())
 }
 
-fn validate_secret_ref_component(kind: &'static str, value: &str) -> Result<(), DomainError> {
-    crate::validate_general_string_id(kind, value)
-        .map_err(|error| DomainError::InvariantViolation(error.to_string()))
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderNativeToolExecution {
@@ -690,7 +612,7 @@ pub enum ToolChoice {
     Auto,
     None,
     RequiredAny,
-    Specific { tool_name: ToolName },
+    Specific { tool_id: ToolId },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -705,7 +627,7 @@ pub struct ObservedToolCall {
     pub call_id: ToolCallId,
     /// Admitted registry identity resolved by the response adapter. Absent for
     /// an unadvertised name. The original name remains transcript data below.
-    pub tool_id: Option<ToolName>,
+    pub tool_id: Option<ToolId>,
     pub tool_name: ToolName,
     pub provider_kind: Option<String>,
     pub arguments_ref: BlobRef,
@@ -718,10 +640,10 @@ pub struct ActiveToolBatch {
     pub run_id: RunId,
     pub turn_id: TurnId,
     pub calls: Vec<ToolCallState>,
-    /// First promise id this batch's executors may mint: one past the
-    /// session cursor when the batch was created. Every dispatch of the
-    /// batch (including per-call re-dispatch) numbers from here, so results
-    /// applied in any order stay above every earlier batch's promises.
+    /// The lowest promise id this batch's executors may mint: one past the
+    /// session cursor when the batch was created, so results applied in any
+    /// order stay above every earlier batch's promises. A later dispatch of the
+    /// batch numbers from the session cursor when that has moved past this.
     #[serde(default)]
     pub promise_id_base: u64,
 }
@@ -738,20 +660,13 @@ pub struct CompletedToolBatch {
 pub struct ToolCallState {
     pub call: ObservedToolCall,
     pub status: ToolCallStatus,
-    pub execution_policy: Option<ToolCallExecutionPolicy>,
     pub result: Option<ToolCallResult>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolCallExecutionPolicy {
-    pub invokes_client_effect: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum ToolCallStatus {
-    Observed,
     Accepted,
     Unavailable,
     Pending,
@@ -803,7 +718,7 @@ pub struct ToolCallResult {
     pub truncated: bool,
 }
 
-pub(crate) fn tool_result_context_item_exists(
+pub(crate) fn tool_result_context_entry_exists(
     state: &CoreAgentState,
     run_id: RunId,
     turn_id: TurnId,
@@ -914,7 +829,6 @@ fn validate_model_visible_tool_entries(
 }
 
 fn decide_active_tool_batch_invocations(
-    _state: &CoreAgentState,
     active_run: &ActiveRun,
     batch_id: ToolBatchId,
 ) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {
@@ -941,20 +855,6 @@ fn decide_active_tool_batch_invocations(
         if call_state.status != ToolCallStatus::Accepted {
             continue;
         }
-        let Some(policy) = call_state.execution_policy.as_ref() else {
-            return Err(DomainError::InvariantViolation(format!(
-                "accepted tool call {} is missing execution policy",
-                call_state.call.call_id
-            ))
-            .into());
-        };
-        if !policy.invokes_client_effect {
-            return Err(DomainError::InvariantViolation(format!(
-                "accepted tool call {} does not invoke a client effect",
-                call_state.call.call_id
-            ))
-            .into());
-        }
         let joins = CoreAgentJoins {
             run_id: Some(batch.run_id),
             turn_id: Some(batch.turn_id),
@@ -979,7 +879,7 @@ fn decide_active_tool_batch_invocations(
 }
 
 /// Cancelled completions for every non-terminal call of the active batch of
-/// a cancelling run. Parked batches are resumed through the await path and
+/// a cancelling run. Parked batches are unparked through the await path and
 /// are not touched here.
 fn decide_cancelling_tool_batch_calls(
     active_run: &ActiveRun,
@@ -1044,19 +944,19 @@ fn decide_active_tool_batch_completion(
     }
 
     let mut proposals = Vec::new();
-    let result_items = tool_result_context_entries(state, batch)?;
+    let result_entries = tool_result_context_entries(state, batch)?;
     let joins = CoreAgentJoins {
         run_id: Some(batch.run_id),
         turn_id: Some(batch.turn_id),
         tool_batch_id: Some(batch.batch_id),
         ..CoreAgentJoins::default()
     };
-    if !result_items.is_empty() {
+    if !result_entries.is_empty() {
         proposals.push(CoreAgentEventProposal::new(
             joins.clone(),
             CoreAgentEvent::Context(ContextEvent::EntriesApplied {
                 base_revision: state.context.revision,
-                entries: result_items,
+                entries: result_entries,
             }),
         ));
     }
@@ -1109,7 +1009,7 @@ fn tool_result_context_entries(
 }
 
 pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(), DomainError> {
-    let next_promise_id_base = state.id_cursors.last_promise_id + 1;
+    let next_promise_id_base = state.id_cursors.last_promise_id.saturating_add(1);
     match event {
         Event::BatchStarted {
             run_id,
@@ -1157,7 +1057,10 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                 .collect::<Vec<_>>();
             {
                 let active_run = crate::core::components::run::active_run_mut(state, *run_id)?;
-                if !matches!(active_run.status, RunStatus::Active | RunStatus::Cancelling) {
+                if !matches!(
+                    active_run.status,
+                    RunStatus::Running | RunStatus::Cancelling
+                ) {
                     return Err(DomainError::InvariantViolation(
                         "tool batches can only start for active or cancelling runs".into(),
                     ));
@@ -1253,17 +1156,17 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             batch_id,
             result,
         } => complete_tool_call(state, *run_id, *turn_id, *batch_id, result),
-        Event::BatchDeferred {
+        Event::BatchParked {
             run_id,
             turn_id,
             batch_id,
             suspension,
-        } => defer_tool_batch(state, *run_id, *turn_id, *batch_id, suspension.clone()),
-        Event::BatchResumed {
+        } => park_tool_batch(state, *run_id, *turn_id, *batch_id, suspension.clone()),
+        Event::BatchUnparked {
             run_id,
             turn_id,
             batch_id,
-        } => resume_deferred_tool_batch(state, *run_id, *turn_id, *batch_id),
+        } => unpark_tool_batch(state, *run_id, *turn_id, *batch_id),
         Event::BatchCompleted {
             run_id,
             turn_id,
@@ -1288,7 +1191,6 @@ pub(crate) fn apply_config_event(
             tools,
         } => {
             validate_tooling_base_revision(state, *base_revision)?;
-            validate_tool_map(tools)?;
             state.tooling.tools = tools.clone();
             bump_tooling_revision(state)?;
             Ok(())
@@ -1298,7 +1200,7 @@ pub(crate) fn apply_config_event(
             patch,
         } => {
             validate_tooling_base_revision(state, *base_revision)?;
-            state.tooling.tools = patch.apply_to(&state.tooling.tools)?;
+            state.tooling.tools = patch.merged_into(&state.tooling.tools);
             bump_tooling_revision(state)?;
             Ok(())
         }
@@ -1333,45 +1235,29 @@ fn initial_tool_call_state(
     turn_id: TurnId,
     call: &ObservedToolCall,
 ) -> ToolCallState {
-    let execution_policy = initial_tool_call_execution_policy(state, turn_id, call);
-    let status = if execution_policy.is_some() {
-        ToolCallStatus::Accepted
-    } else {
-        ToolCallStatus::Unavailable
-    };
-    let result = if status == ToolCallStatus::Unavailable {
-        Some(unavailable_tool_result(call))
-    } else {
-        None
-    };
-    ToolCallState {
-        call: call.clone(),
-        status,
-        execution_policy,
-        result,
-    }
-}
-
-fn initial_tool_call_execution_policy(
-    state: &CoreAgentState,
-    turn_id: TurnId,
-    call: &ObservedToolCall,
-) -> Option<ToolCallExecutionPolicy> {
     let invokes_client_effect = call
         .tool_id
         .as_ref()
         .and_then(|tool_id| planned_tool_for_turn(state, turn_id, tool_id))
         .is_some_and(|tool| tool.invokes_client_effect());
-    if !invokes_client_effect {
-        return None;
+    if invokes_client_effect {
+        ToolCallState {
+            call: call.clone(),
+            status: ToolCallStatus::Accepted,
+            result: None,
+        }
+    } else {
+        ToolCallState {
+            call: call.clone(),
+            status: ToolCallStatus::Unavailable,
+            result: Some(unavailable_tool_result(call)),
+        }
     }
-    Some(ToolCallExecutionPolicy {
-        invokes_client_effect: true,
-    })
 }
 
 pub fn remote_mcp_call_runtime(
     state: &CoreAgentState,
+    batch_id: ToolBatchId,
     call: &ObservedToolCall,
 ) -> Option<crate::RemoteMcpCallRuntime> {
     let tool_id = call.tool_id.as_ref()?;
@@ -1382,23 +1268,26 @@ pub fn remote_mcp_call_runtime(
         .as_ref()
         .and_then(|run| {
             run.approvals.values().find_map(|record| {
-                let crate::ApprovalContinuation::NativeMcp {
+                let crate::ApprovalContinuation::RuntimeMcp {
+                    batch_id: approval_batch_id,
                     call_id: approval_call_id,
                 } = &record.request.continuation
                 else {
                     return None;
                 };
-                (approval_call_id == call_id).then_some(match record.status {
-                    crate::ApprovalStatus::Approved => Some(true),
-                    crate::ApprovalStatus::Rejected => Some(false),
-                    crate::ApprovalStatus::Pending | crate::ApprovalStatus::Cancelled => None,
-                })
+                (*approval_batch_id == batch_id && approval_call_id == call_id).then_some(
+                    match record.status {
+                        crate::ApprovalStatus::Approved => Some(true),
+                        crate::ApprovalStatus::Rejected => Some(false),
+                        crate::ApprovalStatus::Pending | crate::ApprovalStatus::Cancelled => None,
+                    },
+                )
             })
         })
         .flatten();
 
     if let Some((spec, remote_tool_name)) =
-        resolve_injected_native_mcp(state, tool_id, &call.tool_name)
+        resolve_injected_runtime_mcp(state, tool_id, &call.tool_name)
     {
         return Some(crate::RemoteMcpCallRuntime::Injected {
             target: remote_mcp_target(spec),
@@ -1406,7 +1295,10 @@ pub fn remote_mcp_call_runtime(
             approval_decision,
         });
     }
-    if !matches!(tool_id.as_str(), "mcp.find_tools" | "mcp.call") {
+    if !matches!(
+        tool_id.as_str(),
+        crate::MCP_FIND_TOOLS_TOOL_ID | crate::MCP_CALL_TOOL_ID
+    ) {
         return None;
     }
     let targets = state
@@ -1415,7 +1307,7 @@ pub fn remote_mcp_call_runtime(
         .values()
         .filter_map(|tool| match &tool.kind {
             ToolKind::RemoteMcp(spec)
-                if spec.execution == RemoteMcpExecution::Native
+                if spec.execution == RemoteMcpExecution::Runtime
                     && spec.exposure == RemoteMcpExposure::Search =>
             {
                 Some(remote_mcp_target(spec))
@@ -1429,16 +1321,16 @@ pub fn remote_mcp_call_runtime(
     })
 }
 
-fn resolve_injected_native_mcp<'a>(
+fn resolve_injected_runtime_mcp<'a>(
     state: &'a CoreAgentState,
-    tool_id: &ToolName,
+    tool_id: &ToolId,
     exposed_name: &ToolName,
 ) -> Option<(&'a RemoteMcpToolSpec, String)> {
     let tool = state.tooling.tools.get(tool_id)?;
     let ToolKind::RemoteMcp(spec) = &tool.kind else {
         return None;
     };
-    if spec.execution != RemoteMcpExecution::Native || spec.exposure != RemoteMcpExposure::Inject {
+    if spec.execution != RemoteMcpExecution::Runtime || spec.exposure != RemoteMcpExposure::Inject {
         return None;
     }
     let prefix = format!("{tool_id}__");
@@ -1460,27 +1352,20 @@ fn remote_mcp_target(spec: &RemoteMcpToolSpec) -> crate::RemoteMcpCallTarget {
         server_id: spec.server_id.clone(),
         record_revision: spec.record_revision,
         server_label: spec.server_label.clone(),
-        server_url: spec.server_url.clone(),
         allowed_tools: spec.allowed_tools.clone(),
         approval: spec.approval.clone(),
-        auth_ref: spec.auth_ref.clone(),
-        auth_required: spec.auth_required,
-        allow_private_network: spec.allow_private_network,
     }
 }
 
 fn planned_tool_for_turn(
     state: &CoreAgentState,
     turn_id: TurnId,
-    tool_name: &ToolName,
+    tool_id: &ToolId,
 ) -> Option<ToolSpec> {
     let active_run = state.runs.active.as_ref()?;
     let turn = active_run.turns.get(&turn_id)?;
-    let planned = turn.planned_request.as_ref()?;
-    if planned.toolset_revision != state.tooling.revision {
-        return None;
-    }
-    state.tooling.tools.get(tool_name).cloned()
+    turn.planned_request.as_ref()?;
+    state.tooling.tools.get(tool_id).cloned()
 }
 
 fn planned_toolset_revision_for_turn(
@@ -1527,15 +1412,131 @@ pub fn tool_runtime_boundary_failure_ref() -> BlobRef {
     BlobRef::from_bytes(TOOL_RUNTIME_BOUNDARY_FAILURE_CONTENT.as_bytes())
 }
 
-/// Model-visible content for tool calls the harness cancelled because their
-/// run was cancelled before they completed. Like
-/// [`UNAVAILABLE_TOOL_RESULT_CONTENT`], every runtime must guarantee the
-/// matching blob exists via [`crate::storage::ensure_harness_blobs`].
-pub const CANCELLED_TOOL_RESULT_CONTENT: &str =
-    "tool call cancelled: the run was cancelled before this call completed\n";
+/// Model-visible content for tool calls cancelled before they completed. It
+/// names no cause, because a run cancel, a closed code scope and a timed-out
+/// code wait all end up here. Like [`UNAVAILABLE_TOOL_RESULT_CONTENT`], every
+/// runtime must guarantee this and each blob below exists via
+/// [`crate::storage::ensure_harness_blobs`].
+pub const CANCELLED_TOOL_RESULT_CONTENT: &str = "tool call cancelled before it completed\n";
 
 pub fn cancelled_tool_result_ref() -> BlobRef {
     BlobRef::from_bytes(CANCELLED_TOOL_RESULT_CONTENT.as_bytes())
+}
+
+/// An `await` whose target failed the state check. Old promises are pruned from
+/// state, so an id the model once held can be absent without having been wrong.
+pub const AWAIT_REJECTED_CONTENT: &str =
+    "await rejected: a promise id is unknown, no longer retained or not awaitable by this run\n";
+
+pub fn await_rejected_ref() -> BlobRef {
+    BlobRef::from_bytes(AWAIT_REJECTED_CONTENT.as_bytes())
+}
+
+/// A call the harness refused because of the batch it shares, not its own
+/// arguments: retrying it alone can work.
+pub const AWAIT_BATCH_CONFLICT_CONTENT: &str = "tool call rejected: a batch may hold one await and no joined workflow tool beside it, and this call did not start\n";
+
+pub fn await_batch_conflict_ref() -> BlobRef {
+    BlobRef::from_bytes(AWAIT_BATCH_CONFLICT_CONTENT.as_bytes())
+}
+
+/// The error of a promise the host failed for its hard deadline. Hosts compare
+/// against this ref to tell that failure from a producer's own report.
+pub const PROMISE_DEADLINE_EXCEEDED_CONTENT: &str =
+    "deadline exceeded: no result arrived before this call's completion deadline\n";
+
+pub fn promise_deadline_exceeded_ref() -> BlobRef {
+    BlobRef::from_bytes(PROMISE_DEADLINE_EXCEEDED_CONTENT.as_bytes())
+}
+
+/// A joined call whose promise was cancelled while its holder was not cancelling
+/// it, so the only actor left is the receiver.
+pub const RECEIVER_CANCELLED_CONTENT: &str = "tool call cancelled by its receiver\n";
+
+pub fn receiver_cancelled_ref() -> BlobRef {
+    BlobRef::from_bytes(RECEIVER_CANCELLED_CONTENT.as_bytes())
+}
+
+/// A joined call whose receiver reported success with no payload.
+pub const EMPTY_SUCCESS_CONTENT: &str = "tool call succeeded with no output\n";
+
+pub fn empty_success_ref() -> BlobRef {
+    BlobRef::from_bytes(EMPTY_SUCCESS_CONTENT.as_bytes())
+}
+
+/// A joined call whose receiver reported failure with no error of its own.
+pub const FAILED_WITHOUT_DETAIL_CONTENT: &str = "tool call failed without detail\n";
+
+pub fn failed_without_detail_ref() -> BlobRef {
+    BlobRef::from_bytes(FAILED_WITHOUT_DETAIL_CONTENT.as_bytes())
+}
+
+/// Context entries that answer every call of the run's open tool group: the
+/// recorded result where a call has a usable one, a cancelled result otherwise.
+/// Results normally reach context when the batch completes, so a run ending
+/// before that would otherwise leave its calls unanswered and drop finished
+/// siblings, and providers refuse every later request carrying such a call.
+/// Plain entries, because the run ends in the same append and a parked batch
+/// could not take call completions anyway.
+pub(crate) fn open_tool_group_closing_entries(
+    state: &CoreAgentState,
+    active_run: &ActiveRun,
+) -> Result<Vec<ContextEntry>, DomainError> {
+    let (turn_id, batch_id, calls) = if let Some(batch_id) = active_run.active_tool_batch_id {
+        let batch = active_run.tool_batches.get(&batch_id).ok_or_else(|| {
+            DomainError::InvariantViolation(format!("active tool batch {batch_id} is missing"))
+        })?;
+        let calls = batch
+            .calls
+            .iter()
+            .map(|call| (&call.call, call.result.as_ref()))
+            .collect::<Vec<_>>();
+        (batch.turn_id, Some(batch_id), calls)
+    } else if crate::core::components::run::has_unstarted_tool_call_turn(active_run) {
+        let (turn_id, turn) = active_run
+            .turns
+            .iter()
+            .next_back()
+            .expect("an unstarted tool-call turn exists");
+        let calls = turn
+            .facts
+            .iter()
+            .flat_map(|facts| &facts.tool_calls)
+            .map(|call| (call, None))
+            .collect::<Vec<_>>();
+        (*turn_id, None, calls)
+    } else {
+        return Ok(Vec::new());
+    };
+    let mut inputs = Vec::new();
+    for (call, recorded) in calls {
+        let result = recorded.filter(|result| {
+            tool_result_context_inputs(result, call.provider_kind.as_deref()).is_ok()
+        });
+        let cancelled;
+        let result = match result {
+            Some(result) => result,
+            None => {
+                cancelled = cancelled_tool_result(call);
+                &cancelled
+            }
+        };
+        for input in tool_result_context_inputs(result, call.provider_kind.as_deref())? {
+            if tool_result_context_input_exists(state, active_run.run_id, turn_id, result, &input) {
+                continue;
+            }
+            inputs.push((
+                None,
+                ContextEntrySource::Tool {
+                    run_id: active_run.run_id,
+                    turn_id,
+                    batch_id,
+                },
+                input,
+            ));
+        }
+    }
+    context_entries_from_inputs(state, inputs)
 }
 
 fn cancelled_tool_result(call: &ObservedToolCall) -> ToolCallResult {
@@ -1633,7 +1634,7 @@ fn complete_tool_batch(
             .is_some_and(|parked| parked.batch_id == batch_id)
         {
             return Err(DomainError::InvariantViolation(
-                "deferred tool batch cannot complete before it is resumed".into(),
+                "parked tool batch cannot complete before it is unparked".into(),
             ));
         }
 
@@ -1654,7 +1655,7 @@ fn complete_tool_batch(
                     "terminal tool call result does not match call state".into(),
                 ));
             }
-            if !tool_result_context_item_exists(
+            if !tool_result_context_entry_exists(
                 state,
                 run_id,
                 turn_id,
@@ -1662,7 +1663,7 @@ fn complete_tool_batch(
                 call_state.call.provider_kind.as_deref(),
             ) {
                 return Err(DomainError::InvariantViolation(
-                    "tool batch cannot complete before result context items are recorded".into(),
+                    "tool batch cannot complete before result context entries are recorded".into(),
                 ));
             }
             results.push(result);
@@ -1684,10 +1685,12 @@ fn complete_tool_batch(
         },
     );
     active_run.active_tool_batch_id = None;
+    crate::core::components::run::prune_settled_run_records(active_run);
+    crate::core::components::run::prune_finished_work(state);
     Ok(())
 }
 
-fn defer_tool_batch(
+fn park_tool_batch(
     state: &mut CoreAgentState,
     run_id: RunId,
     turn_id: TurnId,
@@ -1695,24 +1698,24 @@ fn defer_tool_batch(
     suspension: ToolBatchSuspension,
 ) -> Result<(), DomainError> {
     let active_run = crate::core::components::run::active_run_ref(state, run_id)?;
-    if active_run.status != RunStatus::Active {
+    if active_run.status != RunStatus::Running {
         return Err(DomainError::InvariantViolation(
-            "tool batches can only defer for active runs".into(),
+            "tool batches can only park for running runs".into(),
         ));
     }
     if active_run.active_turn_id.is_some() {
         return Err(DomainError::InvariantViolation(
-            "tool batches cannot defer while a turn is active".into(),
+            "tool batches cannot park while a turn is active".into(),
         ));
     }
     if active_run.active_tool_batch_id != Some(batch_id) {
         return Err(DomainError::InvariantViolation(
-            "deferred tool batch does not match active tool batch".into(),
+            "parked tool batch does not match active tool batch".into(),
         ));
     }
     if active_run.parked_tool_batch.is_some() {
         return Err(DomainError::InvariantViolation(format!(
-            "tool batch {} is already deferred",
+            "tool batch {} is already parked",
             batch_id
         )));
     }
@@ -1721,7 +1724,7 @@ fn defer_tool_batch(
     })?;
     if batch.run_id != run_id || batch.turn_id != turn_id {
         return Err(DomainError::InvariantViolation(
-            "deferred tool batch does not match run/turn".into(),
+            "parked tool batch does not match run/turn".into(),
         ));
     }
     match &suspension {
@@ -1806,12 +1809,11 @@ fn defer_tool_batch(
             }
         }
     }
-    if batch.calls.iter().any(|call_state| {
-        matches!(
-            call_state.status,
-            ToolCallStatus::Observed | ToolCallStatus::Accepted
-        )
-    }) {
+    if batch
+        .calls
+        .iter()
+        .any(|call_state| call_state.status == ToolCallStatus::Accepted)
+    {
         return Err(DomainError::InvariantViolation(
             "tool batch deferral requires all invocable calls to be pending".into(),
         ));
@@ -1825,7 +1827,7 @@ fn defer_tool_batch(
     Ok(())
 }
 
-fn resume_deferred_tool_batch(
+fn unpark_tool_batch(
     state: &mut CoreAgentState,
     run_id: RunId,
     turn_id: TurnId,
@@ -1834,7 +1836,7 @@ fn resume_deferred_tool_batch(
     let active_run = crate::core::components::run::active_run_mut(state, run_id)?;
     if active_run.active_tool_batch_id != Some(batch_id) {
         return Err(DomainError::InvariantViolation(
-            "resumed tool batch does not match active tool batch".into(),
+            "unparked tool batch does not match active tool batch".into(),
         ));
     }
     let batch = active_run.tool_batches.get_mut(&batch_id).ok_or_else(|| {
@@ -1842,7 +1844,7 @@ fn resume_deferred_tool_batch(
     })?;
     if batch.run_id != run_id || batch.turn_id != turn_id {
         return Err(DomainError::InvariantViolation(
-            "resumed tool batch does not match run/turn".into(),
+            "unparked tool batch does not match run/turn".into(),
         ));
     }
     if active_run
@@ -1851,13 +1853,13 @@ fn resume_deferred_tool_batch(
         .is_none_or(|parked| parked.batch_id != batch_id)
     {
         return Err(DomainError::InvariantViolation(format!(
-            "tool batch {} is not deferred",
+            "tool batch {} is not parked",
             batch_id
         )));
     }
     active_run.parked_tool_batch = None;
     if active_run.status == RunStatus::Parked {
-        active_run.status = RunStatus::Active;
+        active_run.status = RunStatus::Running;
     }
     Ok(())
 }
@@ -1871,26 +1873,18 @@ fn start_tool_call(
     tool_name: &ToolName,
     arguments_ref: &BlobRef,
 ) -> Result<(), DomainError> {
-    let policy = {
-        let active_run = crate::core::components::run::active_run_ref(state, run_id)?;
-        tool_call_execution_policy_for_start(
-            active_run,
-            turn_id,
-            batch_id,
-            call_id,
-            tool_name,
-            arguments_ref,
-        )?
-    };
-    if !policy.invokes_client_effect {
-        return Err(DomainError::InvariantViolation(
-            "tool call start requires a client-effect tool".into(),
-        ));
-    }
+    validate_tool_call_start(
+        crate::core::components::run::active_run_ref(state, run_id)?,
+        turn_id,
+        batch_id,
+        call_id,
+        tool_name,
+        arguments_ref,
+    )?;
     let active_run = crate::core::components::run::active_run_mut(state, run_id)?;
-    if active_run.status != RunStatus::Active {
+    if active_run.status != RunStatus::Running {
         return Err(DomainError::InvariantViolation(
-            "tool calls can only start for active runs".into(),
+            "tool calls can only start for running runs".into(),
         ));
     }
     if active_run.active_turn_id.is_some() {
@@ -1909,7 +1903,7 @@ fn start_tool_call(
         .is_some_and(|parked| parked.batch_id == batch_id)
     {
         return Err(DomainError::InvariantViolation(
-            "deferred tool batch cannot start calls".into(),
+            "parked tool batch cannot start calls".into(),
         ));
     }
     let batch = active_run.tool_batches.get_mut(&batch_id).ok_or_else(|| {
@@ -1949,14 +1943,14 @@ fn start_tool_call(
     Ok(())
 }
 
-fn tool_call_execution_policy_for_start(
+fn validate_tool_call_start(
     active_run: &ActiveRun,
     turn_id: TurnId,
     batch_id: ToolBatchId,
     call_id: &ToolCallId,
     tool_name: &ToolName,
     arguments_ref: &BlobRef,
-) -> Result<ToolCallExecutionPolicy, DomainError> {
+) -> Result<(), DomainError> {
     if active_run.active_tool_batch_id != Some(batch_id) {
         return Err(DomainError::InvariantViolation(
             "tool call start does not match active tool batch".into(),
@@ -1995,12 +1989,7 @@ fn tool_call_execution_policy_for_start(
             "tool call already has a result".into(),
         ));
     }
-    call_state.execution_policy.clone().ok_or_else(|| {
-        DomainError::InvariantViolation(format!(
-            "accepted tool call {} is missing execution policy",
-            call_id
-        ))
-    })
+    Ok(())
 }
 
 fn complete_tool_call(
@@ -2030,7 +2019,7 @@ fn complete_tool_call(
         .is_some_and(|parked| parked.batch_id == batch_id)
     {
         return Err(DomainError::InvariantViolation(
-            "deferred tool batch must be resumed before calls complete".into(),
+            "parked tool batch must be unparked before calls complete".into(),
         ));
     }
     let batch = active_run.tool_batches.get_mut(&batch_id).ok_or_else(|| {
@@ -2054,7 +2043,7 @@ fn complete_tool_call(
     let cancellable = result.status == ToolCallStatus::Cancelled
         && matches!(
             call_state.status,
-            ToolCallStatus::Observed | ToolCallStatus::Accepted | ToolCallStatus::Pending
+            ToolCallStatus::Accepted | ToolCallStatus::Pending
         );
     if call_state.status != ToolCallStatus::Pending && !cancellable {
         return Err(DomainError::InvariantViolation(
@@ -2075,35 +2064,25 @@ fn complete_tool_call(
 mod tests {
     use super::*;
 
-    fn remote_mcp_spec(server_label: &str, server_url: &str) -> RemoteMcpToolSpec {
+    fn remote_mcp_spec(server_label: &str) -> RemoteMcpToolSpec {
         RemoteMcpToolSpec {
             server_id: server_label.to_owned(),
             record_revision: 1,
             server_label: server_label.to_owned(),
-            server_url: server_url.to_owned(),
             description_ref: None,
             allowed_tools: Some(vec!["hello".to_owned()]),
             execution: RemoteMcpExecution::Provider,
             exposure: RemoteMcpExposure::Inject,
             approval: RemoteMcpApprovalPolicy::Never,
             defer_loading: Some(true),
-            auth_ref: Some(SecretRef {
-                namespace: "mcp_server".to_owned(),
-                id: server_label.to_owned(),
-            }),
-            auth_required: true,
-            allow_private_network: false,
         }
     }
 
     fn remote_mcp_tool(name: &str, server_label: &str) -> ToolSpec {
         ToolSpec {
-            name: ToolName::new(name),
+            id: ToolId::new(name),
             execution: Default::default(),
-            kind: ToolKind::RemoteMcp(remote_mcp_spec(
-                server_label,
-                "https://echo.example.com/mcp",
-            )),
+            kind: ToolKind::RemoteMcp(remote_mcp_spec(server_label)),
             parallelism: ToolParallelism::ParallelSafe,
         }
     }
@@ -2117,23 +2096,45 @@ mod tests {
     }
 
     #[test]
-    fn remote_mcp_validation_rejects_url_credentials() {
-        let mut spec = remote_mcp_spec("echo", "https://echo.example.com/mcp");
-        spec.server_url = "https://user:secret@echo.example.com/mcp".to_owned();
-
-        let error = spec
-            .validate()
-            .expect_err("remote MCP URL credentials must be rejected");
-
-        let DomainError::InvariantViolation(message) = error else {
-            panic!("expected invariant violation, got {error:?}");
+    fn remote_mcp_durable_shapes_hold_no_transport_facts() {
+        let spec = remote_mcp_spec("echo");
+        let keys = |value: serde_json::Value| {
+            value
+                .as_object()
+                .expect("object")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
         };
-        assert!(message.contains("credentials"));
+        assert_eq!(
+            keys(serde_json::to_value(&spec).expect("spec")),
+            [
+                "allowed_tools",
+                "approval",
+                "defer_loading",
+                "description_ref",
+                "execution",
+                "exposure",
+                "record_revision",
+                "server_id",
+                "server_label",
+            ]
+        );
+        assert_eq!(
+            keys(serde_json::to_value(remote_mcp_target(&spec)).expect("target")),
+            [
+                "allowed_tools",
+                "approval",
+                "record_revision",
+                "server_id",
+                "server_label",
+            ]
+        );
     }
 
     #[test]
     fn remote_mcp_validation_rejects_duplicate_allowed_tools() {
-        let mut spec = remote_mcp_spec("echo", "https://echo.example.com/mcp");
+        let mut spec = remote_mcp_spec("echo");
         spec.allowed_tools = Some(vec!["hello".to_owned(), "hello".to_owned()]);
 
         let error = spec
@@ -2147,8 +2148,8 @@ mod tests {
     fn tool_map_rejects_duplicate_remote_mcp_labels() {
         let first = remote_mcp_tool("mcp_echo_one", "echo");
         let second = remote_mcp_tool("mcp_echo_two", "echo");
-        let first_name = first.name.clone();
-        let second_name = second.name.clone();
+        let first_name = first.id.clone();
+        let second_name = second.id.clone();
         let tools = BTreeMap::from([(first_name.clone(), first), (second_name.clone(), second)]);
 
         let error = validate_tool_map(&tools)
@@ -2164,7 +2165,7 @@ mod tests {
     fn unavailable_tool_results_reference_the_well_known_constant_blob() {
         let call = ObservedToolCall {
             call_id: crate::ToolCallId::new("call_1"),
-            tool_id: Some(ToolName::new("missing_tool")),
+            tool_id: Some(ToolId::new("missing_tool")),
             tool_name: ToolName::new("missing_tool"),
             provider_kind: None,
             arguments_ref: BlobRef::from_bytes(b"{}"),

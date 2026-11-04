@@ -58,9 +58,9 @@ pub trait AgentApiService: Send + Sync {
         params: SessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError>;
 
-    async fn start_managed_session(
+    async fn start_declared_session(
         &self,
-        params: ManagedSessionStartParams,
+        params: DeclaredSessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError>;
 
     async fn create_profile(
@@ -129,6 +129,13 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: SessionEventsReadParams,
     ) -> Result<AgentApiOutcome<SessionEventsReadResponse>, AgentApiError>;
+
+    async fn restart_session(
+        &self,
+        _params: SessionRestartParams,
+    ) -> Result<AgentApiOutcome<SessionRestartResponse>, AgentApiError> {
+        Err(AgentApiError::internal("session restart is unavailable"))
+    }
 
     async fn close_session(
         &self,

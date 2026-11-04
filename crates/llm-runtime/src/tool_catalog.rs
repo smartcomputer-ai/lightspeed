@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use harness::{
-    LlmGenerationResult, ProviderNativeToolExecution, ToolChoice, ToolName, ToolSpec,
+    LlmGenerationResult, ProviderNativeToolExecution, ToolChoice, ToolId, ToolName, ToolSpec,
     storage::BlobStore,
 };
 use tools::{callable, runtime::ToolTarget};
@@ -14,10 +14,20 @@ pub(crate) use tools::callable::{
 
 use crate::error::{LlmAdapterError, LlmAdapterResult};
 
+/// A tool choice lowered for one provider request: a specific choice names the tool as
+/// that request presents it, which the session's choice by registry identity cannot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LoweredToolChoice {
+    Auto,
+    None,
+    RequiredAny,
+    Specific { wire_name: ToolName },
+}
+
 pub(crate) struct ToolCatalog {
     pub tools: Vec<ResolvedTool>,
     pub names: AdvertisedNames,
-    primary_names: BTreeMap<ToolName, ToolName>,
+    primary_names: BTreeMap<ToolId, ToolName>,
     code_mode: Option<harness::CodeModePresentation>,
 }
 
@@ -57,7 +67,7 @@ impl ToolCatalog {
             };
             if let Some(contract) = presentation.workflow_results.get(&tool.id) {
                 let authored = request.tools.iter().any(|spec| {
-                    spec.name == tool.id && matches!(spec.kind, harness::ToolKind::Function(_))
+                    spec.id == tool.id && matches!(spec.kind, harness::ToolKind::Function(_))
                 });
                 definition.output_schema = callable::workflow_result_schema(
                     blobs,
@@ -78,11 +88,11 @@ impl ToolCatalog {
                 definition.output_schema.as_ref(),
                 callable,
                 outer,
-                tool.id.as_str() == "mcp.call",
+                tool.id.as_str() == harness::MCP_CALL_TOOL_ID,
             );
             match tool.id.as_str() {
-                "mcp.call" => description.push_str(" Obtain the selected remote tool's inputSchema and optional outputSchema with mcp_find_tools; that outputSchema describes the server's structuredContent."),
-                "mcp.find_tools" => description.push_str(" Discovery results carry inputSchema and optional outputSchema. Remote outputSchema describes structuredContent within the MCP result envelope. Emit discovery results with text(value) if the model needs them to write a subsequent script."),
+                harness::MCP_CALL_TOOL_ID => description.push_str(" Obtain the selected remote tool's inputSchema and optional outputSchema with mcp_find_tools; that outputSchema describes the server's structuredContent."),
+                harness::MCP_FIND_TOOLS_TOOL_ID => description.push_str(" Discovery results carry inputSchema and optional outputSchema. Remote outputSchema describes structuredContent within the MCP result envelope. Emit discovery results with text(value) if the model needs them to write a subsequent script."),
                 _ => {},
             }
             definition.description = Some(description);
@@ -91,11 +101,11 @@ impl ToolCatalog {
         Ok(catalog)
     }
 
-    pub fn native_mcp_description(
+    pub fn runtime_mcp_description(
         &self,
-        id: &ToolName,
+        id: &ToolId,
         name: &str,
-        tool: &crate::mcp::NativeMcpTool,
+        tool: &crate::mcp::RuntimeMcpTool,
     ) -> Option<String> {
         self.code_mode.as_ref().map_or_else(
             || tool.description.clone(),
@@ -132,17 +142,28 @@ impl ToolCatalog {
         Ok(())
     }
 
-    pub fn tool_choice(&self, choice: Option<&ToolChoice>) -> LlmAdapterResult<Option<ToolChoice>> {
-        Ok(match choice {
-            Some(ToolChoice::Specific { tool_name }) => Some(ToolChoice::Specific {
-                tool_name: self.primary_names.get(tool_name).cloned().ok_or_else(|| {
-                    LlmAdapterError::InvalidProviderRequest {
-                        message: format!("tool choice {tool_name} has no available presentation"),
-                    }
-                })?,
-            }),
-            other => other.cloned(),
-        })
+    pub fn tool_choice(
+        &self,
+        choice: Option<&ToolChoice>,
+    ) -> LlmAdapterResult<Option<LoweredToolChoice>> {
+        choice
+            .map(|choice| {
+                Ok::<_, LlmAdapterError>(match choice {
+                    ToolChoice::Auto => LoweredToolChoice::Auto,
+                    ToolChoice::None => LoweredToolChoice::None,
+                    ToolChoice::RequiredAny => LoweredToolChoice::RequiredAny,
+                    ToolChoice::Specific { tool_id } => LoweredToolChoice::Specific {
+                        wire_name: self.primary_names.get(tool_id).cloned().ok_or_else(|| {
+                            LlmAdapterError::InvalidProviderRequest {
+                                message: format!(
+                                    "tool choice {tool_id} has no available presentation"
+                                ),
+                            }
+                        })?,
+                    },
+                })
+            })
+            .transpose()
     }
 
     pub fn normalize(&self, result: &mut LlmGenerationResult) {
@@ -195,11 +216,11 @@ fn code_description(
 #[derive(Default)]
 pub(crate) struct AdvertisedNames {
     exposed: BTreeSet<ToolName>,
-    call_ids: BTreeMap<ToolName, ToolName>,
+    call_ids: BTreeMap<ToolName, ToolId>,
 }
 
 impl AdvertisedNames {
-    pub fn insert(&mut self, name: ToolName, id: Option<ToolName>) -> LlmAdapterResult<()> {
+    pub fn insert(&mut self, name: ToolName, id: Option<ToolId>) -> LlmAdapterResult<()> {
         if !valid_exposed_name(name.as_str()) {
             return Err(LlmAdapterError::InvalidProviderRequest {
                 message: format!("invalid exposed tool name {name}"),
@@ -308,7 +329,7 @@ mod tests {
                 .facts
                 .tool_calls
                 .iter()
-                .map(|call| call.tool_id.as_ref().map(ToolName::as_str))
+                .map(|call| call.tool_id.as_ref().map(ToolId::as_str))
                 .collect::<Vec<_>>(),
             [
                 Some("env.continue_process"),
@@ -333,29 +354,29 @@ mod tests {
                 .facts
                 .tool_calls
                 .iter()
-                .map(|call| call.tool_id.as_ref().map(ToolName::as_str))
+                .map(|call| call.tool_id.as_ref().map(ToolId::as_str))
                 .collect::<Vec<_>>(),
             [None, None, Some("env.continue_process"), None]
         );
         let choice = ToolChoice::Specific {
-            tool_name: ToolName::new("env.continue_process"),
+            tool_id: ToolId::new("env.continue_process"),
         };
         assert_eq!(
             claude.tool_choice(Some(&choice)).unwrap(),
-            Some(ToolChoice::Specific {
-                tool_name: ToolName::new("BashOutput")
+            Some(LoweredToolChoice::Specific {
+                wire_name: ToolName::new("BashOutput")
             })
         );
         assert_eq!(
             codex.tool_choice(Some(&choice)).unwrap(),
-            Some(ToolChoice::Specific {
-                tool_name: ToolName::new("write_stdin")
+            Some(LoweredToolChoice::Specific {
+                wire_name: ToolName::new("write_stdin")
             })
         );
         assert!(
             claude
                 .tool_choice(Some(&ToolChoice::Specific {
-                    tool_name: ToolName::new("env.run_process")
+                    tool_id: ToolId::new("env.run_process")
                 }))
                 .is_err()
         );
@@ -382,7 +403,7 @@ mod tests {
         ] {
             assert_eq!(
                 catalog.names.call_ids.get(&ToolName::new(name)),
-                Some(&ToolName::new(id))
+                Some(&ToolId::new(id))
             );
         }
         for name in [
@@ -397,7 +418,7 @@ mod tests {
         for id in ["env.apply_patch", "vfs.apply_patch"] {
             assert!(matches!(
                 catalog.tool_choice(Some(&ToolChoice::Specific {
-                    tool_name: ToolName::new(id)
+                    tool_id: ToolId::new(id)
                 })),
                 Err(LlmAdapterError::InvalidProviderRequest { .. })
             ));
@@ -413,7 +434,7 @@ mod tests {
             .unwrap();
         for name in ["exec_command", "custom.operation"] {
             let custom = ToolSpec {
-                name: ToolName::new(name),
+                id: ToolId::new(name),
                 kind: ToolKind::Function(FunctionToolSpec {
                     description_ref: None,
                     input_schema_ref: schema.clone(),
@@ -472,7 +493,7 @@ mod tests {
             .await
             .unwrap();
         let native = ToolSpec {
-            name: ToolName::new("custom"),
+            id: ToolId::new("custom"),
             kind: ToolKind::ProviderNative(harness::ProviderNativeToolSpec {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 native_tool_ref,

@@ -66,7 +66,7 @@ export interface TranscriptRunSummary {
   /// null means the completed run explicitly has no output; undefined means unknown.
   outputContentRef?: string | null;
   error?: string;
-  /// The engine's classification of a failed run, e.g. `request_rejected`.
+  /// The engine's classification of a failed run, e.g. `requestRejected`.
   failureKind?: string;
   contextTokens?: number;
   usage?: RunUsage;
@@ -75,13 +75,18 @@ export interface TranscriptRunSummary {
   durationMs?: number;
 }
 
+const RUN_FAILURE_LEADS: Record<string, string> = {
+  requestRejected: "The provider rejected the request",
+  outputTruncated: "The response was cut off",
+  contentFiltered: "The provider refused the response",
+};
+
 /// The line a failed run shows. A provider rejection names the provider as
-/// the source; its message is the provider's own text, shown unchanged.
+/// the source; its message is the provider's own text, shown unchanged. A
+/// truncated or refused response says which of the two it was.
 export function runFailureText(summary: Pick<TranscriptRunSummary, "error" | "failureKind">): string {
-  const detail = summary.error ? `: ${summary.error}` : "";
-  return summary.failureKind === "request_rejected"
-    ? `The provider rejected the request${detail}`
-    : `Run failed${detail}`;
+  const lead = (summary.failureKind && RUN_FAILURE_LEADS[summary.failureKind]) || "Run failed";
+  return summary.error ? `${lead}: ${summary.error}` : lead;
 }
 
 export interface TranscriptToolCall {
@@ -104,7 +109,7 @@ export interface TranscriptToolCall {
   /// Observed times of the call's dispatch and terminal result; the window
   /// includes runtime scheduling overhead, which is what a reader waited.
   startedAtMs?: number;
-  completedAtMs?: number;
+  finishedAtMs?: number;
   durationMs?: number;
   /// Model-visible output size before the projection budget, when reported.
   outputBytes?: number;
@@ -293,7 +298,6 @@ export function applyEvents(
         break;
       case "contextEntriesApplied":
       case "contextKeyPrefixReplaced":
-      case "contextStateReplaced":
         applyItems(next, kind.entries);
         break;
       case "runAccepted":
@@ -322,6 +326,10 @@ export function applyEvents(
         break;
       case "approvalRunParked":
         setRunLabel(next, "approval required");
+        next.runRevision += 1;
+        break;
+      case "approvalRunUnparked":
+        setRunLabel(next, "working");
         next.runRevision += 1;
         break;
       case "approvalDecided":
@@ -367,7 +375,7 @@ export function applyEvents(
         updateToolCall(next, String(kind.callId), (call) => ({
           ...call,
           status: kind.status,
-          completedAtMs: event.observedAtMs,
+          finishedAtMs: event.observedAtMs,
           ...(call.startedAtMs !== undefined
             ? { durationMs: Math.max(0, event.observedAtMs - call.startedAtMs) }
             : {}),
@@ -378,11 +386,11 @@ export function applyEvents(
         syncToolGroupStatusForCall(next, String(kind.callId));
         break;
       }
-      case "toolBatchDeferred":
+      case "toolBatchParked":
         updateToolGroupStatus(next, String(kind.batchId), "waiting");
         setRunLabel(next, "waiting for tools");
         break;
-      case "toolBatchResumed":
+      case "toolBatchUnparked":
         updateToolGroupStatus(next, String(kind.batchId), "running");
         setRunLabel(next, "running tools");
         break;
@@ -395,7 +403,7 @@ export function applyEvents(
         finishRun(next, runId);
         next.entries.push({
           ...runSummary(next, event, runId, "completed"),
-          outputContentRef: kind.output?.contentRef ?? null,
+          outputContentRef: kind.output?.blobRef ?? null,
         });
         break;
       }
@@ -419,13 +427,20 @@ export function applyEvents(
         if (!wasQueued) next.entries.push(runSummary(next, event, runId, "cancelled"));
         break;
       }
+      case "contextCompactionQueued": {
+        const runId = compactionRunId(next, event);
+        const markerKey = next.compaction?.markerKey ?? `evt-${event.cursor.seq}`;
+        next.compaction = { markerKey, phase: "queued", ...(runId ? { runId } : {}) };
+        setCompactionMarker(next, markerKey, "context compaction queued", "muted", true);
+        next.runRevision += 1;
+        break;
+      }
       case "contextCompactionRequested": {
         const runId = compactionRunId(next, event);
-        const queued = kind.trigger === "manualQueued";
         const markerKey = next.compaction?.markerKey ?? `evt-${event.cursor.seq}`;
-        next.compaction = { markerKey, phase: queued ? "queued" : "pending", ...(runId ? { runId } : {}) };
-        setCompactionMarker(next, markerKey, queued ? "context compaction queued" : "compacting context", "muted", true);
-        if (!queued && runId === next.activeRun?.runId) setRunLabel(next, "compacting context");
+        next.compaction = { markerKey, phase: "pending", ...(runId ? { runId } : {}) };
+        setCompactionMarker(next, markerKey, "compacting context", "muted", true);
+        if (runId === next.activeRun?.runId) setRunLabel(next, "compacting context");
         next.runRevision += 1;
         break;
       }
@@ -560,10 +575,10 @@ function startRun(state: TranscriptState, runId: string, observedAtMs?: number) 
 function runDurationMs(
   state: TranscriptState,
   runId: string,
-  completedAtMs: number,
+  finishedAtMs: number,
 ): number | undefined {
   const startedAtMs = state.runStartedAtMs.get(runId);
-  return startedAtMs === undefined ? undefined : Math.max(0, completedAtMs - startedAtMs);
+  return startedAtMs === undefined ? undefined : Math.max(0, finishedAtMs - startedAtMs);
 }
 
 function finishRun(state: TranscriptState, runId: string) {
@@ -760,7 +775,7 @@ function applyNonToolCallItem(
           key: item.id,
           role: kind.role,
           text: item.text,
-          contentRef: item.content.contentRef,
+          contentRef: item.content.blobRef,
           ...(item.content.providerKind ? { providerKind: item.content.providerKind } : {}),
           ...(source && "turnId" in source ? { turnId: String(source.turnId) } : {}),
           ...(item.origin ? { origin: item.origin } : {}),
@@ -791,7 +806,7 @@ function applyNonToolCallItem(
           kind: "system",
           key: item.id,
           text: item.preview ?? "",
-          contentRef: item.content.contentRef,
+          contentRef: item.content.blobRef,
           ...(item.supersededBy ? { superseded: true } : {}),
         });
       }
@@ -805,7 +820,7 @@ function applyNonToolCallItem(
           kind: "system",
           key: item.id,
           text: item.supersedes ? `${text} (updated)` : text,
-          contentRef: item.content.contentRef,
+          contentRef: item.content.blobRef,
           ...(item.supersededBy ? { superseded: true } : {}),
         });
       }
@@ -851,7 +866,7 @@ function applyNonToolCallItem(
         toolName: item.display?.toolName ?? call.toolName,
         status: item.display?.status ?? (isError ? "failed" : "succeeded"),
         output: item.display?.output ?? item.text,
-        outputContentRef: item.content.contentRef,
+        outputContentRef: item.content.blobRef,
         outputTruncated: item.textTruncated === true,
         error: item.display?.error ?? (isError ? item.display?.output ?? item.text : null),
         isError,
@@ -865,11 +880,11 @@ function applyNonToolCallItem(
 }
 
 function transcriptMedia(item: SessionItem): TranscriptMedia {
-  const mime = item.content.mediaType ?? "application/octet-stream";
+  const mime = item.content.mime ?? "application/octet-stream";
   const name = mediaPreviewName(item.preview);
   return {
-    handle: item.content.mediaHandle ?? mediaHandleFor(item.content.contentRef),
-    blobRef: item.content.contentRef,
+    handle: item.content.mediaHandle ?? mediaHandleFor(item.content.blobRef),
+    blobRef: item.content.blobRef,
     mime,
     kind: mime.startsWith("image/") ? "image" : "document",
     ...(name ? { name } : {}),

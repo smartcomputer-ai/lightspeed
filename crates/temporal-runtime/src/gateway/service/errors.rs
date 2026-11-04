@@ -4,24 +4,6 @@ pub(super) fn is_not_found(error: &AgentApiError) -> bool {
     matches!(error.kind, AgentApiErrorKind::NotFound)
 }
 
-pub(super) fn map_admission_failure_to_api_error(failure: &AgentAdmissionFailure) -> AgentApiError {
-    if let Some(error) = &failure.preparation_error {
-        return error.clone();
-    }
-    match failure.kind {
-        AgentAdmissionFailureKind::RejectedCommand
-            if failure.rejection.as_ref().is_some_and(|rejection| {
-                rejection.kind == harness::CommandRejectionKind::RevisionConflict
-            }) =>
-        {
-            AgentApiError::conflict(failure.message.clone())
-        }
-        AgentAdmissionFailureKind::RejectedCommand => {
-            AgentApiError::rejected(failure.message.clone())
-        }
-    }
-}
-
 pub(super) fn map_blob_store_error(error: BlobStoreError) -> AgentApiError {
     match error {
         BlobStoreError::NotFound { blob_ref } => {
@@ -82,7 +64,8 @@ pub(super) fn map_input_blob_store_error(error: BlobStoreError) -> AgentApiError
         BlobStoreError::NotFound { blob_ref } => AgentApiError::invalid_request(format!(
             "session/runs/start input blob not found: {blob_ref}"
         )),
-        BlobStoreError::Store { message } => AgentApiError::invalid_request(message),
+        // A store failure says nothing about the input and may heal on retry.
+        BlobStoreError::Store { message } => AgentApiError::internal(message),
     }
 }
 

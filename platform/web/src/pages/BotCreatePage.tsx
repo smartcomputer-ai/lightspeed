@@ -34,7 +34,6 @@ import {
 import { ProviderReadinessBanner } from "@/components/provider-readiness-banner";
 import { modelFromConfig } from "@/lib/model-defaults";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";
-import { ProfileRetentionEditor } from "@/components/session/profile-retention-editor";
 import { SessionConfigEditor } from "@/components/session/session-config-editor";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
@@ -74,14 +73,12 @@ export function botOwnedProfileDocument({
   config,
   baseInstructions,
   metadata,
-  retention,
 }: {
   profileId: string;
   displayName: string;
   config?: Record<string, unknown>;
   baseInstructions: string;
   metadata?: Record<string, string>;
-  retention?: number;
 }): ProfileDocument {
   return {
     profileId,
@@ -90,7 +87,6 @@ export function botOwnedProfileDocument({
     ...(config ? { config } : {}),
     ...(baseInstructions.trim() ? { instructions: { type: "text", text: baseInstructions } } : {}),
     ...(metadata ? { metadata } : {}),
-    ...(retention !== undefined ? { retention: { deleteAfterCloseMs: retention } } : {}),
   };
 }
 
@@ -135,7 +131,7 @@ export function BotCreateDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const permissions = useActionPermissions(universeId);
-  if (!permissions.can("create_bot")) return null;
+  if (!permissions.can("createBot")) return null;
   return <Wizard universeId={universeId} slug={slug} open={open} onOpenChange={onOpenChange} />;
 }
 
@@ -171,8 +167,6 @@ function Wizard({
   const [configError, setConfigError] = useState<string | null>(null);
   const [baseInstructions, setBaseInstructions] = useState("");
   const [metadata, setMetadata] = useState<Record<string, string> | undefined>();
-  const [retention, setRetention] = useState<number | undefined>();
-  const [retentionError, setRetentionError] = useState<string | null>(null);
   const [runsPerDay, setRunsPerDay] = useState("50");
   const [selfConfig, setSelfConfig] = useState(true);
   const [emit, setEmit] = useState(false);
@@ -298,9 +292,7 @@ function Wizard({
     setupMode === "own"
       ? configError
         ? `Session profile: ${configError}`
-        : retentionError
-          ? `Session profile: ${retentionError}`
-          : setupResourceFeatureError({ config })
+        : setupResourceFeatureError({ config })
       : sharedProfileId
         ? null
         : "Pick the shared profile this bot applies.";
@@ -318,7 +310,7 @@ function Wizard({
 
   const create = useMutation({
     mutationFn: async () => {
-      if (!permissions.can("create_bot") || (setupMode === "own" && !permissions.can("create_profile"))) {
+      if (!permissions.can("createBot") || (setupMode === "own" && !permissions.can("createProfile"))) {
         throw new Error("You do not have permission to create this bot setup.");
       }
       const id = botId.trim();
@@ -334,7 +326,6 @@ function Wizard({
             config,
             baseInstructions,
             metadata,
-            retention,
           }),
         );
       }
@@ -630,8 +621,8 @@ function Wizard({
                 <header className="grid gap-1">
                   <h1 className="text-xl font-semibold tracking-tight">How should {label}&apos;s sessions run?</h1>
                   <p className="text-sm text-muted-foreground">
-                    Choose the instructions, model, tools, environment, metadata, and retention saved in its session
-                    profile.
+                    Choose the instructions, model, tools, environment, and metadata saved in its session profile. Its
+                    conversations are kept until someone deletes them.
                   </p>
                 </header>
                 <ProviderReadinessBanner universeId={universeId} slug={slug}
@@ -694,14 +685,6 @@ function Wizard({
                       mcpToolDiscovery={options.mcpToolDiscovery}
                       metadataSetup={<MetadataMapEditor value={metadata} onChange={setMetadata} />}
                       metadataDescription="Defaults copied to every session this bot creates. Metadata helps with filtering and does not affect runtime behavior."
-                      retentionSetup={
-                        <ProfileRetentionEditor
-                          value={retention}
-                          onChange={setRetention}
-                          onValidityChange={setRetentionError}
-                        />
-                      }
-                      retentionDescription="Default automatic deletion for each new root session this bot creates."
                       onValidityChange={setConfigError}
                       onChange={(next) => setConfig(next as Record<string, unknown> | undefined)}
                     />
@@ -769,7 +752,7 @@ function Wizard({
             <Button
               className="shrink-0"
               onClick={() => create.mutate()}
-              disabled={!permissions.can("create_bot") || (setupMode === "own" && !permissions.can("create_profile")) || create.isPending || problems.length > 0}
+              disabled={!permissions.can("createBot") || (setupMode === "own" && !permissions.can("createProfile")) || create.isPending || problems.length > 0}
             >
               {create.isPending ? "Creating…" : "Create bot"}
             </Button>

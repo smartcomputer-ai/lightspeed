@@ -1,14 +1,22 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use harness::{
     BlobRef, CommandRejection, ContextEntryInput, CoreAgentCommand, CoreAgentState,
-    EmissionEnvelope, ManagedSessionWorkflowTools, RunStatus, SessionConfig, SessionId,
+    DeclaredSessionWorkflowTools, EmissionEnvelope, RunStatus, SessionConfig, SessionId,
     SessionPosition, SubmissionId, ToolBatchId,
     storage::{SessionRecord, UncommittedStoredEvent},
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Start arguments, continuation, bootstrap results and carries sit in Temporal history
+/// and are decoded again on every replay. Decoding them is lenient, so a field added
+/// later has a default and an older payload still loads. A container gets
+/// `#[serde(default)]` when every field has an honest empty value. One holding an identity
+/// or a session's model keeps that required and has a default on each other field, because
+/// a made-up one would run real work under it.
+/// A breaking release starts a new namespace and leaves old history behind, so renames
+/// need no alias.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSessionArgs {
     /// Universe (tenant) that owns this session. Activities route storage and
@@ -30,17 +38,11 @@ pub struct AgentSessionArgs {
     pub session_config: SessionConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup: Option<crate::SessionProfileIntent>,
-    /// Present only for the trusted managed-session creation path. The
+    /// Present only for the trusted declared-session creation path. The
     /// declaration is validated against `universe_id` and recorded as an
     /// immutable creation fact on the first append.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow_tools: Option<ManagedSessionWorkflowTools>,
-    /// Legacy cutover field accepted from workflows started before active-run
-    /// rollover support.
-    /// Hosted drive ignores it, and continuation/new-session payloads never
-    /// serialize it.
-    #[serde(default, rename = "max_steps_per_input", skip_serializing)]
-    pub legacy_max_steps_per_input: Option<u32>,
+    pub workflow_tools: Option<DeclaredSessionWorkflowTools>,
     pub continue_as_new_history_threshold: Option<u32>,
     #[serde(default)]
     pub close_on_terminal: bool,
@@ -48,6 +50,13 @@ pub struct AgentSessionArgs {
     /// append explicit rejection continuations instead of parking forever.
     #[serde(default)]
     pub auto_reject_approvals: bool,
+    /// This execution takes over an open session whose last execution stopped. The
+    /// log already holds the session's declaration and its setup, so neither is
+    /// repeated or checked against these args. Rollovers keep the flag, because they
+    /// carry the same args; only the first execution, which has no continuation state,
+    /// recovers the interrupted work.
+    #[serde(default)]
+    pub restart: bool,
     /// Workflow-local query state that is not reconstructible from the
     /// PostgreSQL session log. Transport queues are deliberately drained
     /// instead of being copied into this payload.
@@ -56,23 +65,31 @@ pub struct AgentSessionArgs {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AgentSessionContinuationState {
     pub version: u32,
     pub ready: bool,
     pub operation_outcomes: crate::SessionOperationReceipts,
     #[serde(default)]
     pub admission_failures: Vec<AgentAdmissionFailure>,
+    /// Started executions whose promises all went terminal and whose cancel has not
+    /// gone out. The log says when a promise ended, not whether this was sent.
+    #[serde(default)]
+    pub pending_execution_cancels: BTreeSet<String>,
 }
 
 impl AgentSessionContinuationState {
     pub const VERSION: u32 = 1;
+}
 
-    pub fn v1(admission_failures: Vec<AgentAdmissionFailure>) -> Self {
+impl Default for AgentSessionContinuationState {
+    fn default() -> Self {
         Self {
             version: Self::VERSION,
             ready: false,
-            operation_outcomes: crate::SessionOperationReceipts::default(),
-            admission_failures,
+            operation_outcomes: Default::default(),
+            admission_failures: Vec::new(),
+            pending_execution_cancels: BTreeSet::new(),
         }
     }
 }
@@ -122,20 +139,32 @@ pub struct AgentSessionStatus {
     #[serde(default)]
     pub setup_error: Option<api::AgentApiError>,
     pub pending_admissions: usize,
+    /// Submissions among the pending admissions, including a run being prepared.
+    /// Their outcome is still open, so a run matching one proves nothing yet.
     #[serde(default)]
-    pub pending_tool_batch_resumes: usize,
+    pub pending_submission_ids: Vec<SubmissionId>,
+    #[serde(default)]
+    pub pending_tool_batch_unparks: usize,
     #[serde(default)]
     pub active_waits: usize,
     #[serde(default)]
     pub pending_emissions: usize,
     pub active_run: Option<AgentActiveRunSummary>,
     pub queued_runs: Vec<AgentQueuedRunSummary>,
-    pub completed_runs: Vec<AgentCompletedRunSummary>,
+    pub finished_runs: Vec<AgentFinishedRunSummary>,
     #[serde(default)]
     pub admission_failures: Vec<AgentAdmissionFailure>,
-    pub last_error: Option<String>,
+    /// Why the execution is failing. Set only on paths that end the workflow,
+    /// and the one status field waiters fail fast on.
+    pub fatal_error: Option<String>,
+    /// The latest advisory fact: an emission refused or a best-effort step that
+    /// did not happen. The session carried on, so no gateway path reads this as
+    /// an error. It stays until a newer warning replaces it or the execution
+    /// rolls over, which starts the snapshot fresh.
+    #[serde(default)]
+    pub last_warning: Option<String>,
     /// True when the session workflow failed during bootstrap/rehydration. The
-    /// gateway surfaces this as a typed `session_bootstrap_failed` error.
+    /// gateway surfaces this as a typed `sessionBootstrapFailed` error.
     #[serde(default)]
     pub bootstrap_failed: bool,
 }
@@ -159,12 +188,45 @@ pub enum AgentAdmissionFailureKind {
     RejectedCommand,
 }
 
+impl AgentAdmissionFailure {
+    /// What the caller of the refused command is told.
+    pub fn api_error(&self) -> api::AgentApiError {
+        if let Some(error) = &self.preparation_error {
+            return error.clone();
+        }
+        match &self.rejection {
+            Some(rejection) => command_rejection_to_api_error(rejection),
+            None => api::AgentApiError::rejected(self.message.clone()),
+        }
+    }
+}
+
+/// The one classification of a harness refusal for API callers. Input the caller
+/// must change is an invalid request, a lost race is a conflict, and a refusal by
+/// current state stays `rejected`, which is what callers may retry.
+pub fn command_rejection_to_api_error(rejection: &CommandRejection) -> api::AgentApiError {
+    use harness::CommandRejectionKind as Kind;
+    let kind = match rejection.kind {
+        Kind::Invalid | Kind::ProviderCompatibility => api::AgentApiErrorKind::InvalidRequest,
+        Kind::RevisionConflict | Kind::Conflict | Kind::ApprovalAlreadyTerminal => {
+            api::AgentApiErrorKind::Conflict
+        }
+        Kind::Internal => api::AgentApiErrorKind::Internal,
+        Kind::SessionLifecycle
+        | Kind::ActiveWork
+        | Kind::MissingActiveRun
+        | Kind::UnknownReference
+        | Kind::DuplicateSubmission
+        | Kind::Refused => api::AgentApiErrorKind::Rejected,
+    };
+    api::AgentApiError::new(kind, rejection.message.clone())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentActiveRunSummary {
     pub run_id: u64,
     pub status: RunStatus,
     pub submission_id: Option<SubmissionId>,
-    pub output: Option<harness::ContentRef>,
     pub active_turn_id: Option<u64>,
     pub active_tool_batch_id: Option<u64>,
 }
@@ -177,25 +239,25 @@ pub struct AgentQueuedRunSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentCompletedRunSummary {
+pub struct AgentFinishedRunSummary {
     pub run_id: u64,
     pub status: RunStatus,
     pub submission_id: Option<SubmissionId>,
     pub output: Option<harness::ContentRef>,
-    pub failure_message_ref: Option<BlobRef>,
 }
 
 /// Queued outbound emission on the producing side. Transient transport
 /// state: the flush queue gates continue-as-new instead of being carried
-/// through it, so delivery is at-least-once with idempotent receive keyed by
-/// the emission id or the receiver's semantic token.
+/// through it. Delivery reaches a running receiver and can repeat, so receipt
+/// is idempotent, keyed by the emission id or the receiver's semantic token.
+/// A receiver that is not running misses a run terminal.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingEmission {
     pub receiver_workflow_id: String,
     pub envelope: EmissionEnvelope,
     /// Delivery attempts so far. Pushed workflow-tool invocation envelopes
-    /// retry independently; other bodies keep the legacy single-attempt,
-    /// drop-on-missing semantics.
+    /// retry independently; other bodies get one attempt and drop if the
+    /// target is not running.
     #[serde(default)]
     pub attempts: u32,
     /// Earliest workflow time this entry may be (re)sent; `0` is immediate.
@@ -263,7 +325,7 @@ pub struct WorkflowToolStartArgs {
 /// Prefix of every start-on-call recipe fingerprint.
 pub const WORKFLOW_TOOL_RECIPE_FINGERPRINT_PREFIX: &str = "wtr:sha256:";
 
-/// Canonical fingerprint over the raw recipe bytes; trusted managed-session
+/// Canonical fingerprint over the raw recipe bytes; trusted declared-session
 /// creators compute it when declaring a start binding and the start
 /// activity re-verifies it before resolving the recipe.
 pub fn workflow_tool_recipe_fingerprint(recipe_bytes: &[u8]) -> String {
@@ -324,8 +386,11 @@ pub struct WorkflowToolExecutionCancelRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowToolReplyValidationRequest {
-    pub reply_schema_ref: harness::BlobRef,
-    pub payload_ref: Option<harness::BlobRef>,
+    pub resolution: harness::PromiseResolution,
+    /// Checked against a `Resolved` payload, which it then requires.
+    pub reply_schema_ref: Option<harness::BlobRef>,
+    /// The reply becomes a call's result, which providers receive as text.
+    pub text_reply: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -387,9 +452,9 @@ pub struct AwaitPromiseResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PendingToolBatchResume {
+pub struct PendingToolBatchUnpark {
     pub batch_id: ToolBatchId,
-    pub command: harness::ResumeToolBatchCommand,
+    pub command: harness::UnparkToolBatchCommand,
 }
 
 /// Armed while the active run sits in `cancelling`; the workflow forces the
@@ -414,12 +479,58 @@ pub struct SubagentPrepareActivityRequest {
 pub enum SubagentPrepareActivityResult {
     Prepared {
         child: SubagentChildRef,
-        /// Grant deadline for the child's run, in milliseconds.
-        deadline_ms: u64,
+        /// Grant deadline for the child's run, in milliseconds. Absent when
+        /// the run has no time limit.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_timeout_ms: Option<u64>,
+        /// How the execution supervises the wait.
+        wait: SubagentWaitPolicy,
     },
     Rejected {
         error_ref: BlobRef,
     },
+}
+
+/// How an execution supervises its wait on the child, chosen by the worker and
+/// recorded in history through the prepare result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubagentWaitPolicy {
+    /// How often to ask whether the child's session workflow has stopped.
+    pub liveness_check_interval_ms: u64,
+    /// Each check is history, so a long wait rolls over at this length.
+    pub continue_as_new_history_threshold: u32,
+}
+
+impl Default for SubagentWaitPolicy {
+    fn default() -> Self {
+        Self {
+            liveness_check_interval_ms: u64::try_from(
+                crate::SUBAGENT_LIVENESS_CHECK_INTERVAL.as_millis(),
+            )
+            .expect("static duration fits in u64 milliseconds"),
+            continue_as_new_history_threshold: crate::DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD,
+        }
+    }
+}
+
+/// What `SubagentExecutionWorkflow` runs from: the start-on-call arguments, or its
+/// own wait carried across a history rollover.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SubagentExecutionInput {
+    Start(WorkflowToolStartArgs),
+    Resume(SubagentExecutionResume),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubagentExecutionResume {
+    pub start: WorkflowToolStartArgs,
+    pub child: SubagentChildRef,
+    /// Workflow-clock instant the grant deadline falls on, fixed when the wait
+    /// began so that rolling over does not move it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline_at_ms: Option<u64>,
+    pub wait: SubagentWaitPolicy,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -439,6 +550,11 @@ pub enum SubagentTerminal {
         failure_message_ref: Option<BlobRef>,
     },
     Deadline,
+    /// The child's session workflow stopped, so no run terminal will ever come.
+    /// `reason` says how it stopped.
+    SessionStopped {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -452,6 +568,20 @@ pub struct SubagentResolveActivityRequest {
 pub struct SubagentCloseActivityRequest {
     pub universe_id: Uuid,
     pub session_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubagentLivenessActivityRequest {
+    pub universe_id: Uuid,
+    pub session_id: String,
+}
+
+/// Whether the child's session workflow is still there to finish its run.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum SubagentLivenessActivityResult {
+    Running,
+    Stopped { reason: String },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -503,17 +633,13 @@ pub struct CreateOrLoadSessionResult {
     /// Replayed reduced agent state. `None` for a freshly created session with
     /// no persisted events yet (the workflow then opens a new session).
     pub core_state: Option<CoreAgentState>,
-    /// `run_id` -> originating submission id, reconstructed from accepted-run
-    /// events. Empty for a fresh session.
-    #[serde(default)]
-    pub run_submissions: BTreeMap<u64, Option<SubmissionId>>,
-    /// Current durable log head after replay.
-    pub head: Option<SessionPosition>,
     /// True only when the authoritative durable head was empty at bootstrap.
     /// This must not be inferred from tail replay counts because a checkpoint
     /// can make a non-empty session replay zero events.
+    #[serde(default)]
     pub fresh_session: bool,
     /// Number of persisted tail events replayed during this bootstrap.
+    #[serde(default)]
     pub replayed_event_count: u64,
 }
 
@@ -540,6 +666,11 @@ impl std::fmt::Display for SessionBootstrapPayloadTooLarge {
 }
 
 impl std::error::Error for SessionBootstrapPayloadTooLarge {}
+
+/// Application-failure type name for an append the session store refused because of
+/// the data in it. The worker attaches it to a non-retryable `ApplicationFailure`.
+/// Nothing was written, so the session workflow can discard those events and carry on.
+pub const SESSION_DATA_REJECTED_ERROR_TYPE: &str = "session_data_rejected";
 
 /// Application-failure type name for a transient LLM provider error.
 /// The worker attaches it to a retryable `ApplicationFailure`; the session
@@ -647,7 +778,7 @@ pub enum ToolInvokeCallActivityResult {
     /// provisioning or booting. The workflow waits for readiness with
     /// `await_environment_ready` and re-dispatches the same call.
     EnvironmentNotReady { environment_id: String },
-    /// The native MCP call must receive a single-use run-owned decision
+    /// The runtime MCP call must receive a single-use run-owned decision
     /// before the worker performs any MCP wire I/O.
     NeedsApproval { subject: harness::ApprovalSubject },
 }
@@ -714,7 +845,52 @@ pub struct RuntimeProjectionRefreshActivityResult {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
+
+    const STALE_PAYLOAD: &str = "a payload already in Temporal history stopped decoding: give \
+        the new field a serde default rather than changing this test";
+
+    #[test]
+    fn session_start_args_decode_from_their_identity_alone() {
+        let args: AgentSessionArgs = serde_json::from_value(json!({
+            "universe_id": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f",
+            "session_id": "session_mybot",
+            "session_config": {
+                "model": {
+                    "api_kind": "open_ai_responses",
+                    "provider_id": "openai",
+                    "model": "gpt-test",
+                },
+            },
+        }))
+        .expect(STALE_PAYLOAD);
+        assert_eq!(args.session_id, SessionId::new("session_mybot"));
+        assert!(args.continuation_state.is_none());
+    }
+
+    #[test]
+    fn continuation_state_decodes_from_nothing_at_the_current_version() {
+        let state: AgentSessionContinuationState =
+            serde_json::from_value(json!({})).expect(STALE_PAYLOAD);
+        assert_eq!(state, AgentSessionContinuationState::default());
+        assert_eq!(state.version, AgentSessionContinuationState::VERSION);
+    }
+
+    #[test]
+    fn bootstrap_result_decodes_from_its_record_identity_alone() {
+        let result: CreateOrLoadSessionResult = serde_json::from_value(json!({
+            "record": {
+                "session_id": "session_mybot",
+                "retention_root_session_id": "session_mybot",
+            },
+        }))
+        .expect(STALE_PAYLOAD);
+        assert_eq!(result.record.session_id, SessionId::new("session_mybot"));
+        assert_eq!(result.core_state, None);
+        assert!(!result.fresh_session);
+    }
 
     #[test]
     fn workflow_id_composition_round_trips() {
@@ -733,7 +909,7 @@ mod tests {
 
     #[test]
     fn split_workflow_id_rejects_non_composed_ids() {
-        // Legacy ids were the bare session id; they must not silently parse.
+        // A bare session id must not silently parse.
         assert_eq!(split_workflow_id("session_mybot"), None);
         assert_eq!(split_workflow_id("not-a-uuid/session_mybot"), None);
         assert_eq!(

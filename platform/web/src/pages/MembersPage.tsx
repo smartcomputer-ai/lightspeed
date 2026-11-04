@@ -61,7 +61,7 @@ export function MembersPage({ admin: _admin }: { admin: boolean }) {
     return <UniverseNotFound slug={slug} />;
   }
 
-  return <MemberList universeId={universe.id} writable={permissions.can("manage_access")} />;
+  return <MemberList universeId={universe.id} writable={permissions.can("manageAccess")} />;
 }
 
 /// What each role adds, in one line.

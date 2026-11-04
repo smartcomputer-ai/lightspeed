@@ -21,7 +21,7 @@ controller coordinates the session itself, including when to submit new runs
 or replace a closed session. The lifecycle controller and tool receiver can
 be different workflows.
 
-`session/managed/start` creates a session with immutable workflow declarations.
+`session/declared/start` creates a session with immutable workflow declarations.
 The declarations live outside ordinary `SessionConfig`. They identify the
 function the model sees, its schema, its receiver or start recipe, and the
 meaning of completion.
@@ -38,7 +38,10 @@ The current combinations are:
 already accepted tool result into a completed business operation.
 
 `joined` parks the original tool call on one runtime-owned `reply` promise,
-then resumes it when that promise resolves. It requires a positive deadline.
+then resumes it when that promise resolves. A `bound` receiver requires a
+positive deadline, because a receiver that never answers has no recovery path. A
+`start` target may omit it, because the recovery poll detects an execution that
+died.
 The agent experiences a tool call returning its eventual result; this alone
 does not expose model-controlled concurrency tools.
 
@@ -86,15 +89,15 @@ export async function createReviewSession(client: LightspeedClient) {
   const inputSchemaRef = await putJsonBytes(schema);
   const recipeRef = await putJsonBytes(recipe);
 
-  return client.call("session/managed/start", {
-    sessionId: "acorn-managed-review",
+  return client.call("session/declared/start", {
+    sessionId: "acorn-review",
     profile: { kind: "named", profileId: "release-editor" },
     workflowTools: {
       version: 1,
       tools: [{
         definition: {
-          toolId: "request-review",
-          revision: 1,
+          workflowToolId: "request-review",
+          schemaRevision: 1,
           semanticType: "release.review.v1",
           tool: {
             name: "request_review",
@@ -106,7 +109,7 @@ export async function createReviewSession(client: LightspeedClient) {
           type: "start",
           start: {
             recipeFormat: 1,
-            revision: 1,
+            recipeRevision: 1,
             recipeRef,
             recipeFingerprint: recipeFingerprint(recipe),
           },
@@ -163,7 +166,7 @@ export async function ReleaseReviewWorkflow(args: WorkflowToolStartArgs) {
   const invocation = args.invocation;
   if (workflowInfo().workflowId !== args.execution_id ||
       args.universe_id !== invocation.session_universe_id ||
-      invocation.tool_id !== "request-review" ||
+      invocation.workflow_tool_id !== "request-review" ||
       invocation.semantic_type !== "release.review.v1" ||
       invocation.schema_revision !== 1) {
     throw ApplicationFailure.nonRetryable("Unexpected review invocation");
@@ -250,14 +253,13 @@ handler can receive a duplicate invocation; use durable identity rather than
 starting the domain effect again. The parser checks wire shape, not whether
 the sender is authorized for your business operation.
 
-For `bound` + `pull`, consume `workflowToolEmitted` through the public session
+For `bound` + `pull`, consume `workflowToolInvoked` through the public session
 event stream, maintaining a cursor and deduplication state. This mode supports
-`accepted` completion only. There is no public receiver-filtered
-`read_tool_emissions` RPC.
+`accepted` completion only. There is no public receiver-filtered RPC.
 
 ## Add lifecycle coordination when needed
 
-A separate `lifecycleController` can be declared at managed-session creation
+A separate `lifecycleController` can be declared at declared-session creation
 with its `workflowId` and `workflowKind`. It owns the application's policy
 for submitting runs, coordinating other work, and retiring or replacing the
 session. Tool receivers do not acquire that responsibility automatically.
@@ -270,9 +272,13 @@ controller correlate and deduplicate terminal notifications.
 
 Retain the submission ID and the same notification token on retries. Terminal
 emissions include the run status and references to output or failure material.
-Decode the output according to its media type/provider kind. Reconcile current
-run state when a notification is missed; a controller should not depend on
-unbounded notification redelivery.
+Decode the output according to its media type/provider kind.
+
+A terminal notification is delivered to a running controller, which may hear it more
+than once, so deduplicate on the emission ID. A force close sends it too, for every
+run still holding an intent, and a [session restart](../deployment/upgrades-and-recovery.md#restart-a-stopped-session)
+sends the last few again. A controller that was not running to hear one does not get
+it later. Reconcile through `session/runs/read`, and do not depend on redelivery.
 
 A controller waiting for a run must still be able to handle tool calls routed
 back to itself. Otherwise both sides wait on one another. Promise-bearing
@@ -281,15 +287,17 @@ must progress independently of the wait for the run.
 
 ## Preserve declaration and delivery semantics
 
-Managed creation validates tool identities, name collisions, schemas, and
+Declared creation validates tool identities, name collisions, schemas, and
 recipes before admitting the declarations. Retrying the same session ID
 requires the same admitted declaration; changing receiver, schema, recipe,
-or completion behavior requires a new session. An ordinary session cannot be
-upgraded into a managed one through configuration replacement.
+or completion behavior requires a new session. A retry never restarts a stopped
+workflow execution: it answers `sessionExecutionStopped`, and `session/restart` is the
+way back. An undeclared session cannot be upgraded into a declared one through
+configuration replacement.
 
 A tools-only declaration may omit the lifecycle controller. That supplies
 workflow tools without the UI's controller-owned lifecycle designation. The
-managed-start API uses the `session` key group. Lifecycle ownership tells the
+declared-start API uses the `session` key group. Lifecycle ownership tells the
 runtime where to send lifecycle notifications; it does not change which API
 callers can control or close the session. See
 [Agent and tool access](../access-and-security/agent-and-tool-access.md).
@@ -299,8 +307,16 @@ bounded retries; failures become observable delivery/start failures and fail
 outstanding completion promises. An `accepted` result remains admission-only.
 Other outbound notifications do not all have the same retry policy.
 
+A run can have 32 invocations of one workflow tool waiting on a promise at once. A call
+past that fails with a message telling the model to wait for one to finish. `accepted`
+calls do not count, since nothing waits on them.
+
 Promise resolution checks the pinned producer workflow and universe. The first
-terminal resolution wins; duplicate or late replies do not replace it.
+terminal resolution wins; duplicate or late replies do not replace it. A signal the
+session cannot decode, such as a malformed promise ID or blob reference, is logged and
+dropped, so the sender hears nothing and the promise stays pending until its deadline.
+The TypeScript helpers refuse such a value when building the envelope. A reply naming a
+blob that does not exist, or failing the reply schema, fails only that promise.
 `invocation_cancellation` is a best-effort notice that the corresponding
 promise is already canceled. Stop the associated work when practical, while
 accounting for effects that may already have occurred.
@@ -321,7 +337,7 @@ missing completion signal with recovery results available.
 
 | Symptom | What to inspect |
 | --- | --- |
-| Managed creation conflicts | An existing ordinary session or changed immutable declaration. |
+| Declared creation conflicts | An existing undeclared session or changed immutable declaration. |
 | Tool call starts no work | Recipe bytes/fingerprint, workflow registration, namespace, and custom queue pollers. |
 | Joined call never resumes | Deadline, reply promise, producer identity, result reference, and holder ID. |
 | Started workflow completed but the tool failed | Recovery results missing the required completion key or invalid reply data. |

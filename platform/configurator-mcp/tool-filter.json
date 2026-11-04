@@ -1,6 +1,6 @@
 {
   "excludeMethods": [
-    "session/managed/start",
+    "session/declared/start",
     "environments/jobs/create",
     "environments/jobs/read",
     "environments/jobs/cancel",

@@ -1,10 +1,9 @@
-import type { ProfileDocument, ProfileSessionRetention } from "@/api";
+import type { ProfileDocument } from "@/api";
 
 export type SessionProfileFields = {
   config?: Record<string, unknown> | undefined;
   instructions?: { type: "text"; text: string } | undefined;
   metadata?: Record<string, string> | undefined;
-  retention?: ProfileSessionRetention | undefined;
 };
 
 /** Overlay edited fields onto the latest profile while removing view timestamps. */

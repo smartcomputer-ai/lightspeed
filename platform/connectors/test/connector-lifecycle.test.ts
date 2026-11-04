@@ -103,14 +103,14 @@ describe("account lifecycle", () => {
     health.markIngressConnected();
     metrics.recordInbound("bound");
     metrics.recordInbound("bound");
-    metrics.recordInbound("rate_limited");
+    metrics.recordInbound("rateLimited");
 
     const rendered = metrics.render(health.health());
     expect(rendered).toContain(
       `channels_connector_ready{universe_id="${UNIVERSE_A}",provider="telegram",account_id="primary\\"bot"} 1`,
     );
     expect(rendered).toContain('outcome="bound"} 2');
-    expect(rendered).toContain('outcome="rate_limited"} 1');
+    expect(rendered).toContain('outcome="rateLimited"} 1');
 
     const host = hostHealth({
       startedAtMs: 1,

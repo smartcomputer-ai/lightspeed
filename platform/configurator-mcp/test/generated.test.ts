@@ -6,7 +6,7 @@ describe("generated universe tools", () => {
   it("contains the configured universe-method surface and no deployment methods", () => {
     const excluded = new Set([
       "initialize",
-      "session/managed/start",
+      "session/declared/start",
       "environments/jobs/create",
       "environments/jobs/read",
       "environments/jobs/cancel",
@@ -30,7 +30,7 @@ describe("generated universe tools", () => {
     expect(GENERATED_TOOLS.map((tool) => tool.method)).not.toEqual(
       expect.arrayContaining([
         "initialize",
-        "session/managed/start",
+        "session/declared/start",
         "environments/jobs/create",
         "environments/jobs/read",
         "environments/jobs/cancel",

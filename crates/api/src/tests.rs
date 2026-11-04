@@ -56,7 +56,7 @@ fn notification_serializes_as_json_rpc_lite_shape() {
             id: "run_1".to_owned(),
             status: RunStatus::Completed,
             started_at_ms: Some(10),
-            completed_at_ms: Some(20),
+            finished_at_ms: Some(20),
             source: RunViewSource::Input {
                 items: vec![InputItem::Text {
                     provenance_ref: None,
@@ -68,6 +68,8 @@ fn notification_serializes_as_json_rpc_lite_shape() {
             tool_batches: Vec::new(),
             usage: None,
             pending_approvals: Vec::new(),
+            failure: None,
+            earlier_events_omitted: false,
         },
     };
 
@@ -83,7 +85,7 @@ fn notification_serializes_as_json_rpc_lite_shape() {
                     "id": "run_1",
                     "status": "completed",
                     "startedAtMs": 10,
-                    "completedAtMs": 20,
+                    "finishedAtMs": 20,
                     "source": {
                         "type": "input",
                         "items": [{ "type": "text", "text": "hello" }]
@@ -205,7 +207,7 @@ fn request_ids_accept_number_or_string() {
 }
 
 #[test]
-fn public_session_config_rejects_managed_workflow_tool_bindings() {
+fn public_session_config_rejects_declared_workflow_tool_bindings() {
     let config = serde_json::from_value::<SessionConfig>(json!({
         "workflowTools": {
             "lifecycleController": {
@@ -218,7 +220,7 @@ fn public_session_config_rejects_managed_workflow_tool_bindings() {
 
     assert!(
         config.is_err(),
-        "managed workflow-tool bindings must not enter through public session config"
+        "declared workflow-tool bindings must not enter through public session config"
     );
 }
 
@@ -237,8 +239,8 @@ fn public_workflow_tool_input_rejects_runtime_builtin_definitions() {
 }
 
 #[test]
-fn managed_session_creation_exposes_targets_and_completion_contracts() {
-    let params: ManagedSessionStartParams = serde_json::from_value(json!({
+fn declared_session_creation_exposes_targets_and_completion_contracts() {
+    let params: DeclaredSessionStartParams = serde_json::from_value(json!({
         "sessionId": "session_1",
         "workflowTools": {
             "version": 1,
@@ -248,8 +250,8 @@ fn managed_session_creation_exposes_targets_and_completion_contracts() {
             },
             "tools": [{
                 "definition": {
-                    "toolId": "accept-order",
-                    "revision": 1,
+                    "workflowToolId": "accept-order",
+                    "schemaRevision": 1,
                     "semanticType": "orders.accepted.v1",
                     "tool": {
                         "name": "accept_order",
@@ -281,7 +283,7 @@ fn managed_session_creation_exposes_targets_and_completion_contracts() {
             }]
         }
     }))
-    .expect("managed session params");
+    .expect("declared session params");
 
     let workflow_tools = params.workflow_tools;
     assert_eq!(workflow_tools.version, 1);
@@ -311,12 +313,12 @@ fn managed_session_creation_exposes_targets_and_completion_contracts() {
 }
 
 #[test]
-fn managed_session_creation_rejects_legacy_receiver_shortcut_and_tool_targets() {
+fn declared_session_creation_rejects_receiver_shortcut_and_tool_targets() {
     for forbidden in ["receiver", "targetRequirement"] {
         let mut tool = json!({
             "definition": {
-                "toolId": "accept-order",
-                "revision": 1,
+                "workflowToolId": "accept-order",
+                "schemaRevision": 1,
                 "semanticType": "orders.accepted.v1",
                 "tool": {
                     "name": "accept_order",
@@ -337,7 +339,7 @@ fn managed_session_creation_rejects_legacy_receiver_shortcut_and_tool_targets() 
             "completion": {"type": "accepted"}
         });
         tool[forbidden] = json!({});
-        let result = serde_json::from_value::<ManagedSessionStartParams>(json!({
+        let result = serde_json::from_value::<DeclaredSessionStartParams>(json!({
             "workflowTools": {"version": 1, "tools": [tool]}
         }));
         assert!(result.is_err(), "{forbidden} must not be accepted");
@@ -345,14 +347,14 @@ fn managed_session_creation_rejects_legacy_receiver_shortcut_and_tool_targets() 
 }
 
 #[test]
-fn managed_session_creation_rejects_bound_target_without_dispatch() {
-    let result = serde_json::from_value::<ManagedSessionStartParams>(json!({
+fn declared_session_creation_rejects_bound_target_without_dispatch() {
+    let result = serde_json::from_value::<DeclaredSessionStartParams>(json!({
         "workflowTools": {
             "version": 1,
             "tools": [{
                 "definition": {
-                    "toolId": "accept-order",
-                    "revision": 1,
+                    "workflowToolId": "accept-order",
+                    "schemaRevision": 1,
                     "semanticType": "orders.accepted.v1",
                     "tool": {
                         "name": "accept_order",
@@ -378,14 +380,14 @@ fn managed_session_creation_rejects_bound_target_without_dispatch() {
 }
 
 #[test]
-fn managed_session_creation_decodes_joined_completion_with_required_deadline() {
-    let params = serde_json::from_value::<ManagedSessionStartParams>(json!({
+fn declared_session_creation_decodes_joined_completion_with_or_without_a_deadline() {
+    let params = serde_json::from_value::<DeclaredSessionStartParams>(json!({
         "workflowTools": {
             "version": 1,
             "tools": [{
                 "definition": {
-                    "toolId": "send-message",
-                    "revision": 1,
+                    "workflowToolId": "send-message",
+                    "schemaRevision": 1,
                     "semanticType": "channels.receipt.v1",
                     "tool": {
                         "name": "message_send",
@@ -407,25 +409,30 @@ fn managed_session_creation_decodes_joined_completion_with_required_deadline() {
             }]
         }
     }))
-    .expect("Joined managed session declaration");
+    .expect("Joined declared session declaration");
     assert!(matches!(
         params.workflow_tools.tools[0].completion,
         WorkflowToolCompletionInput::Joined {
-            deadline_after_ms: 30_000,
+            deadline_after_ms: Some(30_000),
             ..
         }
     ));
 
-    assert!(
+    // The wire leaves it optional; admission requires it of a bound receiver.
+    assert_eq!(
         serde_json::from_value::<WorkflowToolCompletionInput>(json!({
             "type": "joined"
         }))
-        .is_err()
+        .expect("Joined without a deadline decodes"),
+        WorkflowToolCompletionInput::Joined {
+            reply_schema_ref: None,
+            deadline_after_ms: None,
+        }
     );
 }
 
 #[test]
-fn ordinary_session_start_rejects_managed_creation_fields() {
+fn undeclared_session_start_rejects_declared_creation_fields() {
     assert!(
         serde_json::from_value::<SessionStartParams>(json!({
             "workflowTools": {"version": 1, "tools": []}
@@ -449,8 +456,8 @@ fn session_start_rejects_creation_environment_overrides() {
             .expect_err("ordinary start rejects the removed environment field");
         assert!(error.to_string().contains("unknown field `environment`"));
         request["workflowTools"] = json!({"version": 1, "tools": []});
-        let error = serde_json::from_value::<ManagedSessionStartParams>(request)
-            .expect_err("managed start rejects the removed environment field");
+        let error = serde_json::from_value::<DeclaredSessionStartParams>(request)
+            .expect_err("declared start rejects the removed environment field");
         assert!(error.to_string().contains("unknown field `environment`"));
     }
 }
@@ -509,12 +516,12 @@ fn session_processing_tier_uses_lightspeed_owned_wire_vocabulary() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn dispatch_json_rpc_routes_managed_session_start() {
+async fn dispatch_json_rpc_routes_declared_session_start() {
     let response = dispatch_json_rpc(
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SESSION_MANAGED_START.to_owned(),
+            method: METHOD_SESSION_DECLARED_START.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
                 "workflowTools": {
@@ -621,7 +628,7 @@ async fn dispatch_json_rpc_routes_session_close() {
 
     assert!(response.error.is_none(), "{:?}", response.error);
     assert_eq!(
-        response.result.expect("result")["result"]["session"]["status"],
+        response.result.expect("result")["result"]["session"]["lifecycleStatus"],
         json!("closed")
     );
 }
@@ -969,6 +976,45 @@ async fn environment_create_rejects_unknown_idle_fields() {
         response.error.expect("invalid params").code,
         JsonRpcError::invalid_params("").code
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_refuses_an_unknown_session_list_filter() {
+    for filter in ["createdBy", "visibility"] {
+        let response = dispatch_json_rpc(
+            &TestService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method: METHOD_SESSION_LIST.to_owned(),
+                params: Some(json!({ filter: "someone" })),
+            },
+        )
+        .await;
+        let error = response.error.expect("invalid params");
+        assert_eq!(error.code, JsonRpcError::invalid_params("").code);
+        assert!(error.message.contains(filter), "{}", error.message);
+    }
+
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_SESSION_LIST.to_owned(),
+            params: Some(json!({
+                "cursor": null,
+                "limit": 10,
+                "closed": false,
+                "lifecycleControlled": false,
+                "subagent": false,
+                "parent": "session-parent",
+                "trees": ["session-root"],
+                "metadata": { "team": "core" },
+                "visibleTo": "actor-1"
+            })),
+        },
+    )
+    .await;
+    assert!(response.error.is_none(), "{:?}", response.error);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1522,8 +1568,8 @@ fn session_event_serializes_with_cursor_and_kind() {
         kind: SessionEventKindView::RunCompleted {
             run_id: "run_1".to_owned(),
             output: Some(ContentRefView {
-                content_ref: "sha256:abc".to_owned(),
-                media_type: Some("text/plain".to_owned()),
+                blob_ref: "sha256:abc".to_owned(),
+                mime: Some("text/plain".to_owned()),
                 provider_kind: None,
                 media_handle: None,
             }),
@@ -1548,7 +1594,7 @@ fn session_event_serializes_with_cursor_and_kind() {
                     "kind": {
                         "type": "runCompleted",
                         "runId": "run_1",
-                        "output": { "contentRef": "sha256:abc", "mediaType": "text/plain", "providerKind": null }
+                        "output": { "blobRef": "sha256:abc", "mime": "text/plain", "providerKind": null }
                     }
                 }
             }
@@ -1612,8 +1658,8 @@ fn provider_context_entry_serializes_debug_metadata() {
         key: None,
         kind: ContextEntryKindView::ProviderOpaque,
         content: crate::ContentRefView {
-            content_ref: "sha256:compact".to_owned(),
-            media_type: Some("application/json".to_owned()),
+            blob_ref: "sha256:compact".to_owned(),
+            mime: Some("application/json".to_owned()),
             provider_kind: Some("openai.responses.compaction".to_owned()),
             media_handle: None,
         },
@@ -1641,7 +1687,7 @@ fn provider_context_entry_serializes_debug_metadata() {
         json!({
             "id": "item_42",
             "kind": { "type": "providerOpaque" },
-            "content": { "contentRef": "sha256:compact", "mediaType": "application/json", "providerKind": "openai.responses.compaction" },
+            "content": { "blobRef": "sha256:compact", "mime": "application/json", "providerKind": "openai.responses.compaction" },
             "preview": "OpenAI Responses compaction item",
             "providerItemId": "item_compaction_1",
             "tokenEstimate": {
@@ -1659,8 +1705,8 @@ fn provider_context_entry_serializes_mcp_display() {
         key: None,
         kind: ContextEntryKindView::ProviderOpaque,
         content: crate::ContentRefView {
-            content_ref: "sha256:mcp".to_owned(),
-            media_type: Some("application/json".to_owned()),
+            blob_ref: "sha256:mcp".to_owned(),
+            mime: Some("application/json".to_owned()),
             provider_kind: Some("openai.responses.mcp_call".to_owned()),
             media_handle: None,
         },
@@ -1698,7 +1744,7 @@ fn provider_context_entry_serializes_mcp_display() {
         json!({
             "id": "item_43",
             "kind": { "type": "providerOpaque" },
-            "content": { "contentRef": "sha256:mcp", "mediaType": "application/json", "providerKind": "openai.responses.mcp_call" },
+            "content": { "blobRef": "sha256:mcp", "mime": "application/json", "providerKind": "openai.responses.mcp_call" },
             "preview": "OpenAI Responses MCP tool call: echo.echo",
             "providerItemId": "mcp_1",
             "display": {
@@ -1725,7 +1771,7 @@ fn run_view_can_expose_tool_batches() {
         id: "run_1".to_owned(),
         status: RunStatus::Running,
         started_at_ms: Some(10),
-        completed_at_ms: None,
+        finished_at_ms: None,
         source: RunViewSource::Input { items: Vec::new() },
         entries: Vec::new(),
         tool_batches: vec![ToolBatchView {
@@ -1736,14 +1782,19 @@ fn run_view_can_expose_tool_batches() {
                 attachments: Vec::new(),
                 tool_id: None,
                 started_at_ms: None,
-                completed_at_ms: None,
+                finished_at_ms: None,
                 duration_ms: None,
                 media: Vec::new(),
                 call_id: "call_1".to_owned(),
                 tool_name: "read_file".to_owned(),
                 arguments_ref: "sha256:args".to_owned(),
                 arguments: Some(r#"{"path":"README.md"}"#.to_owned()),
+                arguments_preview_truncated: false,
                 output: Some("ok".to_owned()),
+                output_ref: None,
+                output_preview_truncated: false,
+                output_bytes: None,
+                truncated: false,
                 is_error: false,
                 status: ToolItemStatus::Succeeded,
                 effects: Vec::new(),
@@ -1757,12 +1808,14 @@ fn run_view_can_expose_tool_batches() {
         }],
         usage: None,
         pending_approvals: Vec::new(),
+        failure: None,
+        earlier_events_omitted: false,
     };
 
     let value = serde_json::to_value(run).expect("serialize run");
 
     assert_eq!(value["startedAtMs"], 10);
-    assert!(value.get("completedAtMs").is_none());
+    assert!(value.get("finishedAtMs").is_none());
     assert_eq!(
         value["toolBatches"][0],
         json!({
@@ -1788,11 +1841,72 @@ fn run_view_can_expose_tool_batches() {
 }
 
 #[test]
-fn session_status_serializes_as_string_enum() {
+fn a_workflow_tool_definition_keeps_its_namespace_apart_from_the_registry_id() {
+    let definition = json!({
+        "workflowToolId": "acme.review",
+        "schemaRevision": 1,
+        "semanticType": "acme.review.v1",
+        "tool": {
+            "name": "request_review",
+            "kind": {"type": "function", "inputSchemaRef": "sha256:schema"},
+        },
+    });
+    let input: WorkflowToolDefinitionInput =
+        serde_json::from_value(definition.clone()).expect("definition");
+    assert_eq!(input.workflow_tool_id, "acme.review");
+    assert_eq!(input.tool.name, "request_review");
+
+    let mut legacy = definition;
+    legacy["toolId"] = legacy["workflowToolId"].take();
+    legacy.as_object_mut().unwrap().remove("workflowToolId");
+    assert!(serde_json::from_value::<WorkflowToolDefinitionInput>(legacy).is_err());
+}
+
+#[test]
+fn session_lifecycle_status_serializes_as_string_enum() {
     assert_eq!(
-        serde_json::to_value(SessionStatus::Idle).expect("serialize status"),
-        json!("idle")
+        serde_json::to_value(SessionLifecycleStatus::New).expect("serialize status"),
+        json!("new")
     );
+}
+
+#[test]
+fn a_new_mcp_server_defaults_to_runtime_execution() {
+    let input: McpServerInput = serde_json::from_value(json!({
+        "serverId": "docs",
+        "serverUrl": "https://docs.example.com/mcp",
+        "defaultServerLabel": "docs",
+    }))
+    .expect("minimal server document");
+
+    assert_eq!(input.execution, RemoteMcpExecution::Runtime);
+    assert_eq!(
+        serde_json::to_value(RemoteMcpExecution::Runtime).unwrap(),
+        json!("runtime")
+    );
+}
+
+#[test]
+fn session_execution_failure_serializes_camel_case_and_is_omitted_when_absent() {
+    for (failure, wire) in [
+        (SessionExecutionFailureView::Failed, "failed"),
+        (SessionExecutionFailureView::Terminated, "terminated"),
+        (SessionExecutionFailureView::TimedOut, "timedOut"),
+        (SessionExecutionFailureView::Missing, "missing"),
+    ] {
+        assert_eq!(
+            serde_json::to_value(failure).expect("serialize"),
+            json!(wire)
+        );
+    }
+    let mut session = test_session("session_1".to_owned(), SessionLifecycleStatus::Open);
+    let healthy = serde_json::to_value(&session).expect("serialize session");
+    assert!(healthy.get("executionFailure").is_none());
+    session.execution_failure = Some(SessionExecutionFailureView::TimedOut);
+    let dead = serde_json::to_value(&session).expect("serialize session");
+    assert_eq!(dead["lifecycleStatus"], json!("open"));
+    assert_eq!(dead["activity"], json!("idle"));
+    assert_eq!(dead["executionFailure"], json!("timedOut"));
 }
 
 #[test]
@@ -1917,9 +2031,9 @@ impl AgentApiService for TestService {
         Err(AgentApiError::internal("not implemented"))
     }
 
-    async fn start_managed_session(
+    async fn start_declared_session(
         &self,
-        _params: ManagedSessionStartParams,
+        _params: DeclaredSessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
         Err(AgentApiError::internal("not implemented"))
     }
@@ -1986,7 +2100,7 @@ impl AgentApiService for TestService {
         params: ProfileApplyParams,
     ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(ProfileApplyResponse {
-            session: test_session(params.session_id, SessionStatus::Idle),
+            session: test_session(params.session_id, SessionLifecycleStatus::Open),
             applied: ProfileApplySummary::default(),
         }))
     }
@@ -1996,7 +2110,7 @@ impl AgentApiService for TestService {
         params: SessionConfigPutParams,
     ) -> Result<AgentApiOutcome<SessionConfigPutResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionConfigPutResponse {
-            session: test_session_mutation(params.session_id, SessionStatus::Idle),
+            session: test_session_mutation(params.session_id, SessionLifecycleStatus::Open),
         }))
     }
 
@@ -2021,7 +2135,7 @@ impl AgentApiService for TestService {
                 lifecycle_status: SessionLifecycleStatus::Open,
                 closed_at_ms: None,
                 retention: test_session_retention("session_test"),
-                managed: false,
+                lifecycle_controlled: false,
                 origin: None,
                 created_at_ms: 1,
                 updated_at_ms: 2,
@@ -2044,7 +2158,7 @@ impl AgentApiService for TestService {
                 display_name: params.display_name,
                 lifecycle_status: SessionLifecycleStatus::Open,
                 closed_at_ms: None,
-                managed: false,
+                lifecycle_controlled: false,
                 origin: None,
                 created_at_ms: 1,
                 updated_at_ms: 2,
@@ -2066,7 +2180,7 @@ impl AgentApiService for TestService {
                 metadata: params.metadata,
                 lifecycle_status: SessionLifecycleStatus::Open,
                 closed_at_ms: None,
-                managed: false,
+                lifecycle_controlled: false,
                 origin: None,
                 created_at_ms: 1,
                 updated_at_ms: 2,
@@ -2086,7 +2200,7 @@ impl AgentApiService for TestService {
         params: SessionCloseParams,
     ) -> Result<AgentApiOutcome<SessionCloseResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionCloseResponse {
-            session: test_session_mutation(params.session_id, SessionStatus::Closed),
+            session: test_session_mutation(params.session_id, SessionLifecycleStatus::Closed),
         }))
     }
 
@@ -2104,7 +2218,7 @@ impl AgentApiService for TestService {
                 display_name: None,
                 lifecycle_status: SessionLifecycleStatus::Closed,
                 closed_at_ms: Some(2),
-                managed: false,
+                lifecycle_controlled: false,
                 origin: None,
                 created_at_ms: 1,
                 updated_at_ms: 2,
@@ -2118,7 +2232,7 @@ impl AgentApiService for TestService {
         params: ContextCompactParams,
     ) -> Result<AgentApiOutcome<ContextCompactResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(ContextCompactResponse {
-            session: test_session_mutation(params.session_id, SessionStatus::Idle),
+            session: test_session_mutation(params.session_id, SessionLifecycleStatus::Open),
         }))
     }
 
@@ -2136,8 +2250,6 @@ impl AgentApiService for TestService {
                     status: ContextAppendStatus::Applied,
                     entry: None,
                     failure: None,
-                    activation_text: None,
-                    activation_text_truncated: false,
                 })
                 .collect(),
         }))
@@ -2190,7 +2302,7 @@ impl AgentApiService for TestService {
         assert_eq!(generation.reasoning_effort, Some("high".to_owned()));
         assert_eq!(config.model.expect("model").model, "gpt-5.5");
         Ok(AgentApiOutcome::new(RunStartResponse {
-            run: test_run("run_1".to_owned(), RunStatus::Running),
+            run: test_run_summary("run_1".to_owned(), RunStatus::Running),
         }))
     }
 
@@ -2219,7 +2331,7 @@ impl AgentApiService for TestService {
         params: RunCancelParams,
     ) -> Result<AgentApiOutcome<RunCancelResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(RunCancelResponse {
-            run: test_run(params.run_id, RunStatus::Cancelled),
+            run: test_run_summary(params.run_id, RunStatus::Cancelled),
         }))
     }
 
@@ -2237,7 +2349,7 @@ impl AgentApiService for TestService {
                     failure: None,
                 })
                 .collect(),
-            run: test_run(params.run_id, RunStatus::Running),
+            run: test_run_summary(params.run_id, RunStatus::Running),
         }))
     }
 
@@ -2247,7 +2359,7 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<RunSteerResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(RunSteerResponse {
             steering_id: "steering_1".to_owned(),
-            run: test_run(params.run_id, RunStatus::Running),
+            run: test_run_summary(params.run_id, RunStatus::Running),
         }))
     }
 
@@ -2389,7 +2501,7 @@ impl AgentApiService for TestService {
         params: SessionEnvironmentActivateParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentActivateResponse>, AgentApiError> {
         assert_eq!(params.environment_id, "evi_test");
-        let mut session = test_session("session_1".to_owned(), SessionStatus::Idle);
+        let mut session = test_session("session_1".to_owned(), SessionLifecycleStatus::Open);
         session.active_environment_id = Some(params.environment_id);
         Ok(AgentApiOutcome::new(SessionEnvironmentActivateResponse {
             session,
@@ -2401,7 +2513,7 @@ impl AgentApiService for TestService {
         _params: SessionEnvironmentDeactivateParams,
     ) -> Result<AgentApiOutcome<SessionEnvironmentDeactivateResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionEnvironmentDeactivateResponse {
-            session: test_session("session_1".to_owned(), SessionStatus::Idle),
+            session: test_session("session_1".to_owned(), SessionLifecycleStatus::Open),
         }))
     }
 
@@ -3266,7 +3378,7 @@ fn test_profile(profile_id: ProfileId) -> AgentProfile {
                         max_depth: 2,
                         max_descendants: 16,
                         max_concurrent: 4,
-                        deadline_ms: 3_600_000,
+                        run_timeout_ms: Some(3_600_000),
                     }),
                     ..FeaturesConfig::default()
                 }),
@@ -3295,19 +3407,20 @@ fn test_workspace(workspace_id: String, revision: u64) -> VfsWorkspaceView {
     }
 }
 
-fn test_session(id: SessionId, status: SessionStatus) -> SessionView {
+fn test_session(id: SessionId, lifecycle_status: SessionLifecycleStatus) -> SessionView {
     let retention = test_session_retention(&id);
     SessionView {
+        execution_failure: None,
         access: test_access_summary(),
         activity: SessionActivity::Idle,
         metadata: Default::default(),
         id,
         display_name: Some("Test session".to_owned()),
-        status,
+        lifecycle_status,
         closed_at_ms: None,
         retention,
         active_run: None,
-        managed: false,
+        lifecycle_controlled: false,
         config_revision: 0,
         config: None,
         active_environment_id: None,
@@ -3316,7 +3429,7 @@ fn test_session(id: SessionId, status: SessionStatus) -> SessionView {
         runs: Vec::new(),
         active_context: ContextView::default(),
         active_tools: ActiveToolsView::default(),
-        management: None,
+        declaration: None,
         origin: None,
     }
 }
@@ -3329,10 +3442,14 @@ fn test_session_retention(root_session_id: &str) -> SessionRetentionView {
     }
 }
 
-fn test_session_mutation(id: SessionId, status: SessionStatus) -> SessionMutationView {
+fn test_session_mutation(
+    id: SessionId,
+    lifecycle_status: SessionLifecycleStatus,
+) -> SessionMutationView {
     SessionMutationView {
         id,
-        status,
+        lifecycle_status,
+        activity: SessionActivity::Idle,
         head_cursor: None,
         config_revision: 0,
         context_revision: 0,
@@ -3483,12 +3600,32 @@ fn test_run(id: RunId, status: RunStatus) -> RunView {
         id,
         status,
         started_at_ms: None,
-        completed_at_ms: None,
+        finished_at_ms: None,
         source: RunViewSource::Input { items: Vec::new() },
         entries: Vec::new(),
         tool_batches: Vec::new(),
         usage: None,
         pending_approvals: Vec::new(),
+        failure: None,
+        earlier_events_omitted: false,
+    }
+}
+
+fn test_run_summary(id: RunId, status: RunStatus) -> RunSummaryView {
+    RunSummaryView {
+        id,
+        status,
+        accepted_at_ms: 1,
+        started_at_ms: None,
+        finished_at_ms: None,
+        source: RunSummarySourceView::Input {
+            blob_ref: None,
+            preview: None,
+            preview_truncated: false,
+        },
+        usage: None,
+        pending_approvals: Vec::new(),
+        failure: None,
     }
 }
 

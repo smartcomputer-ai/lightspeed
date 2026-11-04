@@ -34,7 +34,25 @@ pub fn openai_response_message(item: &Value) -> Option<String> {
 pub const OPENAI_COMPLETIONS_MESSAGE_PROVIDER_KIND: &str = "openai.completions.message";
 pub const OPENAI_COMPLETIONS_REASONING_PROVIDER_KIND: &str = "openai.completions.reasoning_state";
 pub const OPENAI_RESPONSES_REASONING_PROVIDER_KIND: &str = "openai.responses.reasoning";
+pub const OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND: &str = "openai.responses.web_search_call";
+/// Exact OpenAI Responses assistant message, including text and annotations.
+pub const OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND: &str = "openai.responses.message";
+pub const OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND: &str = "openai.responses.mcp_list_tools";
+pub const OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND: &str = "openai.responses.mcp_call";
+pub const OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND: &str =
+    "openai.responses.mcp_approval_request";
 pub const ANTHROPIC_THINKING_PROVIDER_KIND: &str = "anthropic.messages.thinking";
+pub const ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND: &str =
+    "anthropic.messages.server_tool_use";
+pub const ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND: &str =
+    "anthropic.messages.server_tool_result";
+/// Exact consecutive Anthropic text blocks of one assistant message, including
+/// citation metadata required for replay.
+pub const ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND: &str = "anthropic.messages.text_blocks";
+pub const ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND: &str = "anthropic.messages.mcp_tool_use";
+pub const ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND: &str =
+    "anthropic.messages.mcp_tool_result";
+
 /// Only provider-exposed text participates in display. Signatures and encrypted
 /// continuation state remain in the payload for replay.
 pub fn anthropic_thinking(raw: &Value) -> Option<String> {

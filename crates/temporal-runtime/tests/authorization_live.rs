@@ -116,9 +116,13 @@ async fn disposable_pool() -> anyhow::Result<(sqlx::PgPool, Uuid)> {
     let pool = sqlx::PgPool::connect(&url).await?;
     PgStore::migrate(&pool).await?;
     let universe = support::live::live_universe_id()?;
-    PgStore::new(pool.clone(), store_pg::PgStoreConfig::new(universe))
-        .ensure_universe()
-        .await?;
+    // `seed_agent_default` also creates the universe. The sessions here omit
+    // the model, and a disposable database has no default until one is set.
+    support::live::seed_agent_default(
+        &PgStore::new(pool.clone(), store_pg::PgStoreConfig::new(universe)),
+        &support::live::openai_live_model(),
+    )
+    .await?;
     Ok((pool, universe))
 }
 
@@ -197,12 +201,14 @@ async fn keys_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
             assert_eq!(read["session"]["access"]["createdBy"]["kind"], "key");
             assert_eq!(read["session"]["access"]["createdBy"]["prefix"], universe_key.record.key_prefix.as_str());
 
-            // Lists filter by each session's root, in one pageable query.
+            // Lists filter by each session's root, in one pageable query. An
+            // actor sees what it created and what is shared, and no one else's
+            // unshared work.
             let visible_to_bob = listed(&success(rpc(&endpoint, &bob, "session/list", json!({"visibleTo": "bob", "limit": 200})).await));
             assert!(visible_to_bob.contains(&team));
             assert!(!visible_to_bob.contains(&draft));
-            let alices = listed(&success(rpc(&endpoint, &alice, "session/list", json!({"createdBy": "alice", "limit": 200})).await));
-            assert!(alices.contains(&draft) && !alices.contains(&team));
+            let visible_to_alice = listed(&success(rpc(&endpoint, &alice, "session/list", json!({"visibleTo": "alice", "limit": 200})).await));
+            assert!(visible_to_alice.contains(&draft) && visible_to_alice.contains(&team));
             let everything = listed(&success(rpc(&endpoint, &alice, "session/list", json!({"limit": 200})).await));
             assert!(everything.contains(&draft) && everything.contains(&team) && everything.contains(&own));
 
@@ -210,7 +216,7 @@ async fn keys_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
             let shared = success(rpc(&endpoint, &alice, "session/share", json!({"sessionId": draft})).await);
             assert_eq!(shared["access"]["visibility"], "universe");
             assert_eq!(kind(&rpc(&endpoint, &alice, "session/share", json!({"sessionId": draft})).await), "rejected");
-            assert_eq!(kind(&rpc(&endpoint, &alice, "session/share", json!({"sessionId": "missing"})).await), "not_found");
+            assert_eq!(kind(&rpc(&endpoint, &alice, "session/share", json!({"sessionId": "missing"})).await), "notFound");
             let visible_to_bob = listed(&success(rpc(&endpoint, &bob, "session/list", json!({"visibleTo": "bob", "limit": 200})).await));
             assert!(visible_to_bob.contains(&draft));
 

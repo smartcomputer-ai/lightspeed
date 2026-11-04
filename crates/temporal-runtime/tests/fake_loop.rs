@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use harness::{
     BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
-    FunctionToolSpec, ModelSelection, ProviderApiKind, SessionId, SubmissionId, ToolChoice,
-    ToolKind, ToolName, ToolParallelism, ToolSpec,
+    FunctionToolSpec, ModelSelection, ProviderApiKind, SessionId, SubmissionId, ToolChoice, ToolId,
+    ToolKind, ToolParallelism, ToolSpec,
     storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
 };
 use temporal_runtime::worker::{
@@ -89,7 +89,7 @@ async fn assert_tool_loop(builtin: bool) {
                         ToolParallelism::ParallelSafe,
                         Default::default(),
                     );
-                    BTreeMap::from([(tool.name.clone(), tool)])
+                    BTreeMap::from([(tool.id.clone(), tool)])
                 } else {
                     fake_tool_set(schema_ref)
                 },
@@ -115,6 +115,7 @@ async fn assert_tool_loop(builtin: bool) {
                     input: user_input(input_ref),
                 },
                 run_config: default_run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(64),
         })
@@ -122,7 +123,7 @@ async fn assert_tool_loop(builtin: bool) {
         .expect("request run");
 
     assert_eq!(outcome.quiescence, RunnerQuiescence::Idle);
-    let completed = outcome.state.runs.completed.last().expect("completed run");
+    let completed = outcome.state.runs.finished.last().expect("completed run");
     let calls = outcome
         .emitted_entries
         .iter()
@@ -143,7 +144,7 @@ async fn assert_tool_loop(builtin: bool) {
     } else {
         (FAKE_TOOL_NAME, FAKE_TOOL_NAME)
     };
-    assert_eq!(calls[0].tool_id.as_ref().map(ToolName::as_str), Some(id));
+    assert_eq!(calls[0].tool_id.as_ref().map(ToolId::as_str), Some(id));
     assert_eq!(calls[0].tool_name.as_str(), name);
     let content = completed.output.as_ref().expect("output content");
     let output = api_projection::project_content_text(blobs.as_ref(), content)
@@ -157,12 +158,12 @@ fn fake_tool_input_schema() -> Vec<u8> {
     br#"{"type":"object","additionalProperties":false,"properties":{"text":{"type":"string"}},"required":["text"]}"#.to_vec()
 }
 
-fn fake_tool_set(input_schema_ref: BlobRef) -> BTreeMap<ToolName, ToolSpec> {
-    let tool_name = ToolName::new(FAKE_TOOL_NAME);
+fn fake_tool_set(input_schema_ref: BlobRef) -> BTreeMap<ToolId, ToolSpec> {
+    let tool_id = ToolId::new(FAKE_TOOL_NAME);
     BTreeMap::from([(
-        tool_name.clone(),
+        tool_id.clone(),
         ToolSpec {
-            name: tool_name.clone(),
+            id: tool_id.clone(),
             execution: Default::default(),
             kind: ToolKind::Function(FunctionToolSpec {
                 description_ref: None,

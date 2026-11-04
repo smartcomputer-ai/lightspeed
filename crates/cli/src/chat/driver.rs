@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -21,10 +21,11 @@ use crate::api_client::{HttpAgentApi, api_error};
 use crate::chat::preview::compact_preview;
 use crate::chat::protocol::{
     ChatCommand, ChatConnectionInfo, ChatDelta, ChatDraftSettings, ChatErrorView, ChatEvent,
-    ChatMessageView, ChatProgressStatus, ChatRunStats, ChatRunView, ChatSessionSummary,
-    ChatSettingsView, ChatStatus, ChatToolCallDisplayView, ChatToolCallView, ChatToolChainView,
-    ChatToolDisplayGroup, ChatTurn, DEFAULT_CHAT_REASONING_EFFORT, GATEWAY_WORLD_ID,
-    ModelPickerPurpose, run_stats_summary, run_status, session_lifecycle,
+    ChatMessageView, ChatProgressStatus, ChatRunStats, ChatRunView, ChatSessionLifecycle,
+    ChatSessionSummary, ChatSettingsView, ChatStatus, ChatToolCallDisplayView, ChatToolCallView,
+    ChatToolChainView, ChatToolDisplayGroup, ChatTurn, DEFAULT_CHAT_REASONING_EFFORT,
+    GATEWAY_WORLD_ID, ModelPickerPurpose, run_stats_summary, run_status, session_lifecycle,
+    session_lifecycle_text,
 };
 use crate::chat::session::{new_session_id, new_submission_id, validate_session_id};
 
@@ -33,10 +34,10 @@ pub(crate) struct ChatArgs {
     /// Session ID to open or create through the configured Lightspeed API.
     #[arg(short = 's', long, conflicts_with_all = ["new", "resume", "list"])]
     session: Option<String>,
-    /// List the 10 most recently updated unmanaged root sessions, then exit.
+    /// List the 10 most recently updated root sessions no controller owns, then exit.
     #[arg(long, conflicts_with_all = ["new", "resume", "message", "workspace_source", "workspace_path", "workspace_access", "profile", "profile_json", "provider", "api_kind", "model", "no_web_search", "no_web_fetch", "bare", "show_tool_details", "show_stats"])]
     list: bool,
-    /// Continue the most recently updated unmanaged root session that is not closed.
+    /// Continue the most recently updated root session no controller owns that is not closed.
     #[arg(long, visible_alias = "continue", conflicts_with_all = ["new", "profile", "profile_json", "bare", "no_web_search", "no_web_fetch"])]
     resume: bool,
     /// Start with a fresh session ID.
@@ -254,6 +255,8 @@ pub(crate) struct ChatSessionDriver {
     /// Model calls and last prompt size per run id, from observed
     /// `turnGenerationCompleted` events; the run views do not carry them.
     generation_stats: BTreeMap<String, GenerationStats>,
+    /// Runs whose failure this client already reported as it happened.
+    observed_failures: BTreeSet<String>,
     pending_run: Option<PendingRunHandle>,
     notice_seq: u64,
 }
@@ -302,7 +305,7 @@ impl ChatSessionDriver {
                 .map_err(api_error)?
                 .result
                 .session;
-            if session.status == api::SessionStatus::Closed {
+            if session.lifecycle_status == api::SessionLifecycleStatus::Closed {
                 anyhow::bail!(
                     "session {session_id} closed before it could be resumed; use `chat --list` to choose another"
                 );
@@ -337,6 +340,7 @@ impl ChatSessionDriver {
             session_model: None,
             transcript_errors: BTreeMap::new(),
             generation_stats: BTreeMap::new(),
+            observed_failures: BTreeSet::new(),
             pending_run: None,
             notice_seq: 0,
         };
@@ -442,7 +446,6 @@ impl ChatSessionDriver {
                         .iter()
                         .map(|session| ChatSessionSummary {
                             session_id: session.id.clone(),
-                            status: None,
                             lifecycle: None,
                             updated_at_ns: Some(session.updated_at_ms.saturating_mul(1_000_000)),
                             run_count: 0,
@@ -650,6 +653,7 @@ impl ChatSessionDriver {
         let response = self
             .api
             .steer_run(api::RunSteerParams {
+                submission_id: None,
                 session_id: self.session_id.clone(),
                 run_id,
                 items: vec![InputItem::Text {
@@ -727,7 +731,7 @@ impl ChatSessionDriver {
         }
         let mut events = vec![self.notice_event(
             "approval",
-            format!("{} {approval_id}", approval_decision_label(decision)),
+            approval_decision_notice(decision, result.status, &approval_id),
         )];
         events.extend(self.drain_event_log().await?);
         Ok(events)
@@ -892,7 +896,7 @@ impl ChatSessionDriver {
         }
         events.push(ChatEvent::StatusChanged(ChatStatus {
             session_id: self.session_id.clone(),
-            status: session_status_text(session.status).to_string(),
+            status: session_lifecycle_text(session_view_lifecycle(&session)).to_string(),
             detail: None,
             settings: self.settings_view(),
         }));
@@ -944,6 +948,18 @@ impl ChatSessionDriver {
                 {
                     Ok(read) => {
                         apply_run_detail(&mut turn, &read.result.run);
+                        if !self.observed_failures.contains(&summary.id) {
+                            apply_run_failure(&mut turn, &read.result.run);
+                        }
+                        if read.result.run.earlier_events_omitted {
+                            events.push(self.notice_event(
+                                "run-events-omitted",
+                                format!(
+                                    "{} is long, so this shows its latest turns; session/events/read has the rest",
+                                    summary.id
+                                ),
+                            ));
+                        }
                         self.finished_turns.insert(summary.id.clone(), turn.clone());
                         self.observed_tool_chains.remove(&summary.id);
                         self.transcript_errors.remove(&summary.id);
@@ -957,7 +973,7 @@ impl ChatSessionDriver {
                         if self.transcript_errors.get(&summary.id) != Some(&message) {
                             events.push(ChatEvent::Error(ChatErrorView {
                                 message: message.clone(),
-                                action: Some("use /refresh to retry; oversized runs can be read through session/events/read".into()),
+                                action: Some("use /refresh to retry".into()),
                             }));
                         }
                         self.transcript_errors.insert(summary.id.clone(), message);
@@ -1008,21 +1024,6 @@ impl ChatSessionDriver {
                 })
                 .await
                 .map_err(api_error)?;
-
-            if let Some(gap) = page.result.gap.as_ref() {
-                emit(ChatEvent::GapObserved {
-                    requested_from: gap
-                        .requested_after
-                        .map(|cursor| cursor.seq.saturating_add(1))
-                        .unwrap_or_default(),
-                    retained_from: gap
-                        .retained_after
-                        .map(|cursor| cursor.seq.saturating_add(1))
-                        .unwrap_or_default(),
-                });
-                needs_snapshot = true;
-                saw_activity = true;
-            }
 
             for event in &page.result.events {
                 needs_snapshot |= event_needs_snapshot(&event.kind);
@@ -1078,6 +1079,7 @@ impl ChatSessionDriver {
                 kind,
                 message,
             } => {
+                self.observed_failures.insert(run_id.clone());
                 events.push(ChatEvent::RunChanged(self.run_view_from_status(
                     run_id,
                     api::RunStatus::Failed,
@@ -1173,6 +1175,7 @@ impl ChatSessionDriver {
                 events.push(self.status_event("waiting for approval"));
             }
             SessionEventKindView::ApprovalDecided { .. }
+            | SessionEventKindView::ApprovalRunUnparked { .. }
             | SessionEventKindView::ApprovalCancelled { .. } => {
                 events.push(self.status_event("approval resolved"));
             }
@@ -1180,7 +1183,7 @@ impl ChatSessionDriver {
             | SessionEventKindView::SessionConfigChanged { .. }
             | SessionEventKindView::WorkflowToolsConfigured { .. }
             | SessionEventKindView::SystemWorkflowToolConfigured { .. }
-            | SessionEventKindView::WorkflowToolEmitted { .. }
+            | SessionEventKindView::WorkflowToolInvoked { .. }
             | SessionEventKindView::WorkflowToolDeliveryFailed { .. }
             | SessionEventKindView::WorkflowToolStartRequested { .. }
             | SessionEventKindView::WorkflowToolStartFailed { .. }
@@ -1190,7 +1193,7 @@ impl ChatSessionDriver {
             | SessionEventKindView::ContextEntriesReplaced { .. }
             | SessionEventKindView::ContextKeysRemoved { .. }
             | SessionEventKindView::ContextKeyPrefixReplaced { .. }
-            | SessionEventKindView::ContextStateReplaced { .. }
+            | SessionEventKindView::ContextCompactionQueued { .. }
             | SessionEventKindView::ContextCompactionRequested { .. }
             | SessionEventKindView::ContextCompactionFinished { .. }
             | SessionEventKindView::SkillCatalogSet { .. }
@@ -1198,8 +1201,8 @@ impl ChatSessionDriver {
             | SessionEventKindView::TurnCancelled { .. }
             | SessionEventKindView::ToolsReplaced { .. }
             | SessionEventKindView::ToolsPatched { .. }
-            | SessionEventKindView::ToolBatchDeferred { .. }
-            | SessionEventKindView::ToolBatchResumed { .. }
+            | SessionEventKindView::ToolBatchParked { .. }
+            | SessionEventKindView::ToolBatchUnparked { .. }
             | SessionEventKindView::ActiveEnvironmentChanged { .. }
             | SessionEventKindView::CodeToolProgress { .. } => {}
         }
@@ -1348,6 +1351,7 @@ impl ChatSessionDriver {
         self.session_model = None;
         self.transcript_errors.clear();
         self.generation_stats.clear();
+        self.observed_failures.clear();
         self.active_tool_chains.clear();
         self.observed_tool_chains.clear();
         self.run_states.clear();
@@ -1402,6 +1406,7 @@ impl ChatSessionDriver {
         self.sync_session_model(&read.result.session)?;
         self.transcript_errors.clear();
         self.generation_stats.clear();
+        self.observed_failures.clear();
         self.active_tool_chains.clear();
         self.observed_tool_chains.clear();
         self.run_states.clear();
@@ -1697,13 +1702,38 @@ fn apply_run_detail(turn: &mut ChatTurn, run: &api::RunView) {
         let stats = &mut view.stats;
         stats.usage = run.usage.clone().or(stats.usage.take());
         stats.duration_ms =
-            run_duration_ms(run.started_at_ms, run.completed_at_ms).or(stats.duration_ms);
-        stats.tool_calls = Some(turn.tool_chains.iter().map(|chain| chain.calls.len()).sum());
+            run_duration_ms(run.started_at_ms, run.finished_at_ms).or(stats.duration_ms);
+        // A long run's chains are only its latest ones, which is no count of its calls.
+        stats.tool_calls = (!run.earlier_events_omitted)
+            .then(|| turn.tool_chains.iter().map(|chain| chain.calls.len()).sum());
     }
 }
 
-fn run_duration_ms(started_at_ms: Option<u64>, completed_at_ms: Option<u64>) -> Option<u64> {
-    Some(completed_at_ms?.saturating_sub(started_at_ms?))
+/// A failure this client did not see happen has no error of its own in the
+/// transcript, so its turn carries the reason.
+fn apply_run_failure(turn: &mut ChatTurn, run: &api::RunView) {
+    let Some(failure) = &run.failure else {
+        return;
+    };
+    let reason = run_failure_message(failure.kind, &failure.message);
+    match turn.assistant.as_mut() {
+        Some(assistant) => {
+            assistant.content.push_str("\n\n");
+            assistant.content.push_str(&reason);
+        }
+        None => {
+            turn.assistant = Some(ChatMessageView {
+                id: format!("{}:failure", run.id),
+                role: "assistant".into(),
+                content: reason,
+                ref_: None,
+            });
+        }
+    }
+}
+
+fn run_duration_ms(started_at_ms: Option<u64>, finished_at_ms: Option<u64>) -> Option<u64> {
+    Some(finished_at_ms?.saturating_sub(started_at_ms?))
 }
 
 fn project_tool_chains(run: &api::RunView) -> Vec<ChatToolChainView> {
@@ -1789,7 +1819,6 @@ fn event_needs_snapshot(kind: &SessionEventKindView) -> bool {
             | SessionEventKindView::ContextEntriesReplaced { .. }
             | SessionEventKindView::ContextKeysRemoved { .. }
             | SessionEventKindView::ContextKeyPrefixReplaced { .. }
-            | SessionEventKindView::ContextStateReplaced { .. }
             | SessionEventKindView::ContextCompactionFinished { .. }
             | SessionEventKindView::RunCompleted { .. }
             | SessionEventKindView::RunFailed { .. }
@@ -1805,6 +1834,20 @@ fn approval_decision_label(decision: api::ApprovalDecisionKind) -> &'static str 
     match decision {
         api::ApprovalDecisionKind::Approve => "approved",
         api::ApprovalDecisionKind::Reject => "rejected",
+    }
+}
+
+fn approval_decision_notice(
+    decision: api::ApprovalDecisionKind,
+    status: api::ApprovalDecisionStatus,
+    approval_id: &str,
+) -> String {
+    let label = approval_decision_label(decision);
+    match status {
+        api::ApprovalDecisionStatus::Pending => {
+            format!("{label} {approval_id}, but the session is busy and has not applied it yet")
+        }
+        _ => format!("{label} {approval_id}"),
     }
 }
 
@@ -1904,8 +1947,7 @@ fn tool_status(status: ToolItemStatus) -> ChatProgressStatus {
 fn summary_from_session(session: &SessionView) -> ChatSessionSummary {
     ChatSessionSummary {
         session_id: session.id.clone(),
-        status: Some(session.status),
-        lifecycle: Some(session_lifecycle(session.status)),
+        lifecycle: Some(session_view_lifecycle(session)),
         updated_at_ns: Some(session.updated_at_ms.saturating_mul(1_000_000)),
         run_count: session.runs.len() as u64,
         provider: session
@@ -1929,8 +1971,11 @@ fn summary_from_session(session: &SessionView) -> ChatSessionSummary {
 fn summary_from_mutation(session: &api::SessionMutationView) -> ChatSessionSummary {
     ChatSessionSummary {
         session_id: session.id.clone(),
-        status: Some(session.status),
-        lifecycle: Some(session_lifecycle(session.status)),
+        lifecycle: Some(session_lifecycle(
+            session.lifecycle_status,
+            session.activity,
+            false,
+        )),
         updated_at_ns: None,
         run_count: 0,
         provider: None,
@@ -1956,13 +2001,13 @@ fn run_event_from_summary(
         output_ref: None,
         started_at_ns: run.started_at_ms.unwrap_or(0).saturating_mul(1_000_000),
         updated_at_ns: run
-            .completed_at_ms
+            .finished_at_ms
             .or(run.started_at_ms)
             .unwrap_or(run.accepted_at_ms)
             .saturating_mul(1_000_000),
         stats: Box::new(ChatRunStats {
             usage: run.usage.clone(),
-            duration_ms: run_duration_ms(run.started_at_ms, run.completed_at_ms),
+            duration_ms: run_duration_ms(run.started_at_ms, run.finished_at_ms),
             ..Default::default()
         }),
     })
@@ -1999,14 +2044,12 @@ fn should_timeout_after_inactivity(
     deadline.expired(now) && !pending_run_in_flight
 }
 
-fn session_status_text(status: api::SessionStatus) -> &'static str {
-    match status {
-        api::SessionStatus::NotLoaded => "not loaded",
-        api::SessionStatus::Idle => "idle",
-        api::SessionStatus::Active => "active",
-        api::SessionStatus::Closed => "closed",
-        api::SessionStatus::Error => "error",
-    }
+fn session_view_lifecycle(session: &SessionView) -> ChatSessionLifecycle {
+    session_lifecycle(
+        session.lifecycle_status,
+        session.activity,
+        session.execution_failure.is_some(),
+    )
 }
 
 fn draft_settings(args: &ChatArgs) -> Result<ChatDraftSettings> {
@@ -2126,13 +2169,19 @@ fn print_event(event: &ChatEvent, show_stats: bool) -> Result<()> {
         }
         ChatEvent::SessionsListed { sessions, .. } => {
             for session in sessions {
-                let status = session.status.map(session_status_text).unwrap_or("unknown");
+                let status = session
+                    .lifecycle
+                    .map(session_lifecycle_text)
+                    .unwrap_or("unknown");
                 println!("{} {status}", session.session_id);
             }
         }
         ChatEvent::SkillsListed { .. } | ChatEvent::ModelsListed { .. } => {}
         ChatEvent::SessionSelected(summary) => {
-            let status = summary.status.map(session_status_text).unwrap_or("unknown");
+            let status = summary
+                .lifecycle
+                .map(session_lifecycle_text)
+                .unwrap_or("unknown");
             println!(
                 "session {} {} runs={}",
                 summary.session_id, status, summary.run_count
@@ -2184,7 +2233,6 @@ fn print_event(event: &ChatEvent, show_stats: bool) -> Result<()> {
         }
         ChatEvent::ToolChainsChanged { .. }
         | ChatEvent::CompactionsChanged { .. }
-        | ChatEvent::GapObserved { .. }
         | ChatEvent::Reconnecting { .. } => {}
         ChatEvent::StatusChanged(status) => {
             eprintln!("status: {}", status.status);
@@ -2234,11 +2282,18 @@ fn run_seq_from_id(id: &str) -> u64 {
 }
 
 /// The error line for a failed run. A provider rejection names the provider
-/// as the source; its message is the provider's own text, shown unchanged.
+/// as the source; its message is the provider's own text, shown unchanged. A
+/// truncated or refused response says which of the two it was.
 fn run_failure_message(kind: api::RunFailureKindView, message: &str) -> String {
     match kind {
         api::RunFailureKindView::RequestRejected => {
             format!("The provider rejected the request: {message}")
+        }
+        api::RunFailureKindView::OutputTruncated => {
+            format!("The response was cut off: {message}")
+        }
+        api::RunFailureKindView::ContentFiltered => {
+            format!("The provider refused the response: {message}")
         }
         _ => message.to_owned(),
     }
@@ -2258,6 +2313,14 @@ mod tests {
             "The provider rejected the request: prompt is too long"
         );
         assert_eq!(
+            run_failure_message(api::RunFailureKindView::OutputTruncated, "at 100"),
+            "The response was cut off: at 100"
+        );
+        assert_eq!(
+            run_failure_message(api::RunFailureKindView::ContentFiltered, "no"),
+            "The provider refused the response: no"
+        );
+        assert_eq!(
             run_failure_message(api::RunFailureKindView::ModelFailure, "boom"),
             "boom"
         );
@@ -2265,8 +2328,8 @@ mod tests {
 
     fn session_fixture(provider: &str, api_kind: &str, model: &str) -> SessionView {
         serde_json::from_value(serde_json::json!({
-            "id": "session_target", "status": "idle", "activity": "idle",
-            "retention": {"rootSessionId": "session_target"}, "managed": false,
+            "id": "session_target", "lifecycleStatus": "open", "activity": "idle",
+            "retention": {"rootSessionId": "session_target"}, "lifecycleControlled": false,
             "access": {"visibility": "restricted"}, "configRevision": 0,
             "createdAtMs": 1, "updatedAtMs": 1, "activeContext": {"revision": 0},
             "config": {"model": {"providerId": provider, "apiKind": api_kind, "model": model}},
@@ -2293,6 +2356,7 @@ mod tests {
             session_model: None,
             transcript_errors: BTreeMap::new(),
             generation_stats: BTreeMap::new(),
+            observed_failures: BTreeSet::new(),
             pending_run: None,
             notice_seq: 0,
         };
@@ -2549,7 +2613,7 @@ mod tests {
             ("session/runs/read", error.clone()), ("session/runs/read", error),
             ("session/runs/read", json!({"result":{"result":{"run":{
                 "id":"run_1","status":"completed","source":{"type":"input","items":[{"type":"text","text":"hello"}]},
-                "entries":[{"id":"item_1","kind":{"type":"message","role":"assistant"},"content":{"contentRef":"sha256:a"},"text":"world"}]
+                "entries":[{"id":"item_1","kind":{"type":"message","role":"assistant"},"content":{"blobRef":"sha256:a"},"text":"world"}]
             }}}})),
         ]).await;
         let mut driver = driver_fixture(&endpoint, "openai", "openai:responses", "gpt-sol");
@@ -2586,7 +2650,7 @@ mod tests {
             "id": "run_2",
             "status": "completed",
             "acceptedAtMs": 1,
-            "completedAtMs": 2,
+            "finishedAtMs": 2,
             "source": { "type": "input", "preview": "Say hel…", "previewTruncated": true },
         }))
         .expect("run summary");
@@ -2598,14 +2662,14 @@ mod tests {
                 {
                     "id": "item_3",
                     "kind": { "type": "message", "role": "assistant" },
-                    "content": { "contentRef": "sha256:a" },
+                    "content": { "blobRef": "sha256:a" },
                     "source": { "type": "assistantOutput", "runId": "run_2", "turnId": "turn_1" },
                     "text": "draft",
                 },
                 {
                     "id": "item_5",
                     "kind": { "type": "message", "role": "assistant" },
-                    "content": { "contentRef": "sha256:b" },
+                    "content": { "blobRef": "sha256:b" },
                     "source": { "type": "assistantOutput", "runId": "run_2", "turnId": "turn_2" },
                     "text": "Hello, world!",
                 },
@@ -2633,13 +2697,56 @@ mod tests {
     }
 
     #[test]
+    fn a_held_approval_decision_does_not_read_as_applied() {
+        let notice = |status| {
+            approval_decision_notice(api::ApprovalDecisionKind::Approve, status, "approval_1")
+        };
+        assert_eq!(
+            notice(api::ApprovalDecisionStatus::Decided),
+            "approved approval_1"
+        );
+        assert!(notice(api::ApprovalDecisionStatus::Pending).contains("has not applied it yet"));
+    }
+
+    #[test]
+    fn a_rehydrated_failed_turn_says_why() {
+        let summary: api::RunSummaryView = serde_json::from_value(serde_json::json!({
+            "id": "run_4",
+            "status": "failed",
+            "acceptedAtMs": 1,
+            "finishedAtMs": 2,
+            "source": { "type": "input", "preview": "hi" },
+            "failure": { "kind": "modelFailure", "message": "the prov…", "messageTruncated": true },
+        }))
+        .expect("run summary");
+        let run: api::RunView = serde_json::from_value(serde_json::json!({
+            "id": "run_4",
+            "status": "failed",
+            "finishedAtMs": 2,
+            "source": { "type": "input", "items": [{ "type": "text", "text": "hi" }] },
+            "failure": { "kind": "modelFailure", "message": "the provider refused" },
+            "earlierEventsOmitted": true,
+        }))
+        .expect("run view");
+
+        let mut turn = turn_from_summary(&summary, &ChatDraftSettings::default());
+        apply_run_detail(&mut turn, &run);
+        assert!(turn.assistant.is_none());
+        apply_run_failure(&mut turn, &run);
+
+        let assistant = turn.assistant.expect("the failure is shown");
+        assert_eq!(assistant.content, "the provider refused");
+        assert_eq!(turn.run.expect("run").stats.tool_calls, None);
+    }
+
+    #[test]
     fn finished_run_turn_collects_usage_duration_and_tool_count() {
         let summary: api::RunSummaryView = serde_json::from_value(serde_json::json!({
             "id": "run_3",
             "status": "completed",
             "acceptedAtMs": 1,
             "startedAtMs": 1_000,
-            "completedAtMs": 13_345,
+            "finishedAtMs": 13_345,
             "source": { "type": "input", "preview": "hi" },
             "usage": { "inputTokens": 900, "outputTokens": 40, "cachedInputTokens": 800 },
         }))
@@ -2648,7 +2755,7 @@ mod tests {
             "id": "run_3",
             "status": "completed",
             "startedAtMs": 1_000,
-            "completedAtMs": 13_345,
+            "finishedAtMs": 13_345,
             "source": { "type": "input", "items": [{ "type": "text", "text": "hi" }] },
             "usage": { "inputTokens": 1_000, "outputTokens": 50, "cachedInputTokens": 800 },
         }))
@@ -2682,7 +2789,7 @@ mod tests {
             id: "run_7".into(),
             status: api::RunStatus::Running,
             started_at_ms: None,
-            completed_at_ms: None,
+            finished_at_ms: None,
             source: api::RunViewSource::Input { items: Vec::new() },
             entries: Vec::new(),
             tool_batches: vec![ToolBatchView {
@@ -2693,14 +2800,19 @@ mod tests {
                     attachments: Vec::new(),
                     tool_id: Some("env.read_file".into()),
                     started_at_ms: None,
-                    completed_at_ms: None,
+                    finished_at_ms: None,
                     duration_ms: None,
                     media: Vec::new(),
                     call_id: "call_1".into(),
                     tool_name: "read_file".into(),
                     arguments_ref: "sha256:args".into(),
                     arguments: Some(r#"{"path":"README.md"}"#.into()),
+                    arguments_preview_truncated: false,
                     output: Some(r#"{"ok":true}"#.into()),
+                    output_ref: None,
+                    output_preview_truncated: false,
+                    output_bytes: None,
+                    truncated: false,
                     is_error: false,
                     status: ToolItemStatus::Succeeded,
                     effects: Vec::new(),
@@ -2714,6 +2826,8 @@ mod tests {
             }],
             usage: None,
             pending_approvals: Vec::new(),
+            failure: None,
+            earlier_events_omitted: false,
         };
 
         let chains = project_tool_chains(&run);
@@ -2748,15 +2862,15 @@ mod tests {
             id: "run_7".into(),
             status: api::RunStatus::Completed,
             started_at_ms: None,
-            completed_at_ms: None,
+            finished_at_ms: None,
             source: api::RunViewSource::Input { items: Vec::new() },
             entries: vec![ContextEntryView {
                 id: "item_43".into(),
                 key: None,
                 kind: ContextEntryKindView::ProviderOpaque,
                 content: api::ContentRefView {
-                    content_ref: "sha256:mcp".into(),
-                    media_type: Some("application/json".into()),
+                    blob_ref: "sha256:mcp".into(),
+                    mime: Some("application/json".into()),
                     provider_kind: Some("openai.responses.mcp_call".into()),
                     media_handle: None,
                 },
@@ -2789,6 +2903,8 @@ mod tests {
             tool_batches: Vec::new(),
             usage: None,
             pending_approvals: Vec::new(),
+            failure: None,
+            earlier_events_omitted: false,
         };
 
         let chains = project_tool_chains(&run);
@@ -3326,19 +3442,11 @@ mod tests {
             }
         ));
         assert!(event_needs_snapshot(
-            &SessionEventKindView::ContextStateReplaced {
-                base_revision: 1,
-                revision: 2,
-                entries: Vec::new(),
-                reason: "pruned".into(),
-            }
-        ));
-        assert!(event_needs_snapshot(
             &SessionEventKindView::ContextEntriesRemoved {
                 base_revision: 2,
                 revision: 3,
                 entry_ids: Vec::new(),
-                reason: "pruned".into(),
+                reason: api::ContextRemovalReason::ProviderCompacted,
             }
         ));
         assert!(event_needs_snapshot(

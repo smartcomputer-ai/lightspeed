@@ -6,7 +6,19 @@ pub fn apply_event(state: &mut CoreAgentState, entry: &CoreAgentEntry) -> Result
     validate_next_position(state, entry)?;
     apply_event_kind(state, entry)?;
     state.reduced_to = Some(entry.position.clone());
+    #[cfg(test)]
+    assert_state_survives_checkpoint(state);
     Ok(())
+}
+
+/// A checkpoint and every workflow bootstrap carry the state as JSON, so a field that does
+/// not survive this changes a session at its next rollover. Every unit test in this crate
+/// that reduces an event checks it; nothing outside them pays for it.
+#[cfg(test)]
+fn assert_state_survives_checkpoint(state: &CoreAgentState) {
+    let encoded = serde_json::to_vec(state).expect("reduced state encodes");
+    let decoded: CoreAgentState = serde_json::from_slice(&encoded).expect("reduced state decodes");
+    assert_eq!(&decoded, state, "reduced state changed crossing JSON");
 }
 
 fn validate_next_position(

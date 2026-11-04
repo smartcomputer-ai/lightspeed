@@ -15,6 +15,7 @@ use crate::{
     JoinedContextPreparationRequest, LlmGenerateActivityRequest, PutBlobRequest, ReadBlobRequest,
     ReadBlobResult, RuntimeProjectionRefreshActivityRequest,
     RuntimeProjectionRefreshActivityResult, SubagentCloseActivityRequest,
+    SubagentLivenessActivityRequest, SubagentLivenessActivityResult,
     SubagentPrepareActivityRequest, SubagentPrepareActivityResult, SubagentResolveActivityRequest,
     ToolInvokeBatchActivityRequest, ToolInvokeCallActivityRequest, ToolInvokeCallActivityResult,
     ToolPreparePromiseControlsActivityRequest, WorkflowToolExecutionCancelRequest,
@@ -56,6 +57,7 @@ pub const ACTIVITY_AWAIT_ENVIRONMENT_READY: &str = "WorkflowActivities::await_en
 pub const ACTIVITY_SUBAGENT_PREPARE: &str = "WorkflowActivities::subagent_prepare";
 pub const ACTIVITY_SUBAGENT_RESOLVE: &str = "WorkflowActivities::subagent_resolve";
 pub const ACTIVITY_SUBAGENT_CLOSE: &str = "WorkflowActivities::subagent_close";
+pub const ACTIVITY_SUBAGENT_LIVENESS: &str = "WorkflowActivities::subagent_liveness";
 pub const ACTIVITY_CODE_PREPARE: &str = "WorkflowActivities::code_prepare";
 pub const ACTIVITY_CODE_RUN: &str = "WorkflowActivities::code_run";
 pub const ACTIVITY_CODE_FINALIZE: &str = "WorkflowActivities::code_finalize";
@@ -345,6 +347,15 @@ impl WorkflowActivities {
         _ctx: ActivityContext,
         _request: SubagentCloseActivityRequest,
     ) -> Result<(), ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    /// Ask whether the child's session workflow has stopped.
+    #[activity(name = ACTIVITY_SUBAGENT_LIVENESS)]
+    pub async fn subagent_liveness(
+        _ctx: ActivityContext,
+        _request: SubagentLivenessActivityRequest,
+    ) -> Result<SubagentLivenessActivityResult, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 }

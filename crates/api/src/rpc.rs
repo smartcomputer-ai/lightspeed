@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum AgentApiErrorKind {
     InvalidRequest,
     NotFound,
@@ -21,6 +21,10 @@ pub enum AgentApiErrorKind {
     /// workflow) so clients/bridges treat it as a session recovery problem
     /// rather than an ordinary "answer this message" failure.
     SessionBootstrapFailed,
+    /// The session is open and its history is intact, but its workflow execution
+    /// has stopped, so nothing can serve it. Nothing restarts it behind the caller:
+    /// `session/restart`, or a retried `session/start` with its id, brings it back.
+    SessionExecutionStopped,
     /// The environment exists but is not reachable yet: it is still
     /// provisioning, its provider is waking or booting it after a data
     /// route dial, or its registered daemon is reconnecting. Distinct from
@@ -30,6 +34,11 @@ pub enum AgentApiErrorKind {
     /// The requested page still exceeds the public serialized response
     /// budget. Callers can retry with a smaller page limit or continuation.
     ResponseTooLarge,
+    /// The wait for this command expired while the session may still be holding it,
+    /// for example behind a compaction. It can still take effect, so this is not a
+    /// failure. Retrying the same request, with the same submission id where it takes
+    /// one, is safe.
+    OperationPending,
     Internal,
 }
 
@@ -39,9 +48,13 @@ pub enum AgentApiErrorKind {
 pub struct AgentApiError {
     pub kind: AgentApiErrorKind,
     pub message: String,
-    /// Present for model_default_unset; clients need not parse the message.
+    /// Present for modelDefaultUnset; clients need not parse the message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_default_slot: Option<ModelDefaultSlot>,
+    /// Present for operationPending on a call that took a submission id, including
+    /// one the server allocated. Retrying with it cannot land the same work twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submission_id: Option<String>,
 }
 
 impl AgentApiError {
@@ -50,6 +63,7 @@ impl AgentApiError {
             kind,
             message: message.into(),
             model_default_slot: None,
+            submission_id: None,
         }
     }
 
@@ -61,6 +75,7 @@ impl AgentApiError {
                 slot.as_str()
             ),
             model_default_slot: Some(slot),
+            submission_id: None,
         }
     }
 
@@ -99,12 +114,20 @@ impl AgentApiError {
         Self::new(AgentApiErrorKind::SessionBootstrapFailed, message)
     }
 
+    pub fn session_execution_stopped(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::SessionExecutionStopped, message)
+    }
+
     pub fn environment_not_ready(message: impl Into<String>) -> Self {
         Self::new(AgentApiErrorKind::EnvironmentNotReady, message)
     }
 
     pub fn response_too_large(message: impl Into<String>) -> Self {
         Self::new(AgentApiErrorKind::ResponseTooLarge, message)
+    }
+
+    pub fn operation_pending(message: impl Into<String>) -> Self {
+        Self::new(AgentApiErrorKind::OperationPending, message)
     }
 
     pub fn internal(message: impl Into<String>) -> Self {
@@ -123,6 +146,8 @@ impl AgentApiError {
             AgentApiErrorKind::EnvironmentNotReady => -32012,
             AgentApiErrorKind::ResponseTooLarge => -32013,
             AgentApiErrorKind::ModelDefaultUnset => -32014,
+            AgentApiErrorKind::OperationPending => -32015,
+            AgentApiErrorKind::SessionExecutionStopped => -32016,
             AgentApiErrorKind::Internal => -32603,
         }
     }
@@ -337,49 +362,51 @@ api_methods! {
     METHOD_INITIALIZE => initialize(InitializeParams) -> InitializeResponse =>
         ["Inspect the Lightspeed protocol", "Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted."], access: MethodAccess::Connection,
     METHOD_SESSION_START => start_session(SessionStartParams) -> SessionStartResponse =>
-        ["Create or reopen a session", "Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience."], access: MethodAccess::Universe(UniverseAction::CreateSession),
-    METHOD_SESSION_MANAGED_START => start_managed_session(ManagedSessionStartParams) -> SessionStartResponse =>
-        ["Create or reopen a managed session", "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded."], access: MethodAccess::Universe(UniverseAction::CreateSession),
+        ["Start a session", "Creates a session, unshared unless access says universe, with optional config/profile setup. Explicit values override profile metadata and retention; the config's default environment attachment becomes active. Retrying an id returns it, keeps its audience, and restarts a stopped workflow execution from its log. Failed setup closes a server-allocated id."], access: MethodAccess::Universe(UniverseAction::CreateSession),
+    METHOD_SESSION_DECLARED_START => start_declared_session(DeclaredSessionStartParams) -> SessionStartResponse =>
+        ["Start a declared session", "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile defaults and attachment selection follow session/start. Retrying an id requires the same declaration; an undeclared session cannot be upgraded. A retry never restarts a stopped workflow execution: it answers sessionExecutionStopped."], access: MethodAccess::Universe(UniverseAction::CreateSession),
     METHOD_SESSION_READ => read_session(SessionReadParams) -> SessionReadResponse =>
-        ["Read a session", "Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript."], access: MethodAccess::Universe(UniverseAction::Read),
+        ["Read a session", "Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_SESSION_LIST => list_sessions(SessionListParams) -> SessionListResponse =>
-        ["List sessions", "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing."], access: MethodAccess::Universe(UniverseAction::Read),
+        ["List sessions", "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by filters such as visibleTo, which keeps sessions whose root is shared with the universe or was created by that actor. An unknown parameter is refused. Pages may shift while sessions are changing."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_SESSION_CONFIG_PUT => put_session_config(SessionConfigPutParams) -> SessionConfigPutResponse =>
-        ["Replace session configuration", "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op."], access: MethodAccess::Universe(UniverseAction::ConfigureSession),
+        ["Replace session configuration", "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs."], access: MethodAccess::Universe(UniverseAction::ConfigureSession),
     METHOD_SESSION_RENAME => rename_session(SessionRenameParams) -> SessionRenameResponse =>
         ["Rename a session", "Sets the display name, or clears it when displayName is omitted."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_METADATA_PUT => put_session_metadata(SessionMetadataPutParams) -> SessionMetadataPutResponse =>
         ["Replace session metadata", "Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched."], access: MethodAccess::Universe(UniverseAction::ConfigureSession),
     METHOD_SESSION_RETENTION_PUT => put_session_retention(SessionRetentionPutParams) -> SessionRetentionPutResponse =>
-        ["Replace session retention", "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history."], access: MethodAccess::Universe(UniverseAction::SetSessionRetention),
+        ["Replace session retention", "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history."], access: MethodAccess::Universe(UniverseAction::SetSessionRetention),
+    METHOD_SESSION_RESTART => restart_session(SessionRestartParams) -> SessionRestartResponse =>
+        ["Restart a stopped session", "Starts a new workflow execution for an open session whose last one stopped, from its log. A run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards. A running session is left alone. Refused for a closed session and for one with no run history."], access: MethodAccess::Universe(UniverseAction::ConfigureSession),
     METHOD_SESSION_CLOSE => close_session(SessionCloseParams) -> SessionCloseResponse =>
-        ["Close a session", "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable."], access: MethodAccess::Universe(UniverseAction::CloseSession),
+        ["Close a session", "Closes an idle session and detaches its environment bindings. Without force, active work of any kind, including a pending detached promise, rejects the call. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable."], access: MethodAccess::Universe(UniverseAction::CloseSession),
     METHOD_SESSION_DELETE => delete_session(SessionDeleteParams) -> SessionDeleteResponse =>
-        ["Delete closed sessions", "Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included."], access: MethodAccess::Universe(UniverseAction::DeleteSession),
+        ["Delete closed sessions", "Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion."], access: MethodAccess::Universe(UniverseAction::DeleteSession),
     METHOD_SESSION_SHARE => share_session(SessionShareParams) -> SessionShareResponse =>
         ["Share a session with the universe", "Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision."], access: MethodAccess::Universe(UniverseAction::ShareSession),
     METHOD_SESSION_EVENTS_READ => read_session_events(SessionEventsReadParams) -> SessionEventsReadResponse =>
         ["Read the session event stream", "Returns chronological events. Forward (default) follows after and supports long-polling. Backward reads the latest window below before (or the head); pass nextCursor as before until complete. Follow live events after the initial backward headCursor. Windows may split runs/tool batches; keep historical reconstruction separate from live controls."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_SESSION_CONTEXT_APPEND => append_context(ContextAppendParams) -> ContextAppendResponse =>
-        ["Append keyed session context", "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries."], access: MethodAccess::Universe(UniverseAction::ControlSession),
+        ["Append keyed session context", "Admits a batch of keyed context entries with per-entry results. The same content under a key is a no-op. Different content replaces the earlier entry, which leaves active context, and goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry without discarding successful entries."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_CONTEXT_REMOVE => remove_context(ContextRemoveParams) -> ContextRemoveResponse =>
         ["Remove keyed session context", "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_CONTEXT_REPLACE => replace_context(ContextReplaceParams) -> ContextReplaceResponse =>
         ["Replace session context entries", "Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_CONTEXT_COMPACT => compact_context(ContextCompactParams) -> ContextCompactResponse =>
-        ["Compact session context", "Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged."], access: MethodAccess::Universe(UniverseAction::ControlSession),
+        ["Compact session context", "Performs one standalone compaction in any automatic mode, including Disabled, and waits for its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves the context unchanged and fails the call with its reason. A wait that runs out fails with operationPending while it can still complete; session events report the outcome."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_RUNS_START => start_run(RunStartParams) -> RunStartResponse =>
-        ["Start an agent run", "Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session."], access: MethodAccess::Universe(UniverseAction::ControlSession),
+        ["Start an agent run", "Returns once the run is accepted — queued behind an active run, or running — not when it finishes. A compacting session holds the request; if the wait runs out the call fails with operationPending and the submission id, and the run still starts later. Retrying with that id cannot start a second run. Follow session events or reread the session."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_RUNS_LIST => list_runs(RunListParams) -> RunListResponse =>
-        ["List session runs", "Returns a newest-first keyset page of bounded run summaries projected from current reducer state."], access: MethodAccess::Universe(UniverseAction::Read),
+        ["List session runs", "Returns a newest-first keyset page of bounded run summaries, from current state for recent runs and from the session's log for older ones."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_SESSION_RUNS_READ => read_run(RunReadParams) -> RunReadResponse =>
-        ["Read one session run", "Reads and projects one run from its bounded event interval, paged by event sequence."], access: MethodAccess::Universe(UniverseAction::Read),
+        ["Read one session run", "Projects one run from its events. A run past the server's detail limit keeps its opening and its most recent turns and sets earlierEventsOmitted; session/events/read has the rest."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_SESSION_RUNS_CANCEL => cancel_run(RunCancelParams) -> RunCancelResponse =>
-        ["Cancel a run", "Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs."], access: MethodAccess::Universe(UniverseAction::StopSession),
+        ["Cancel a run", "Requests cancellation of the named queued or active run and returns its summary; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs."], access: MethodAccess::Universe(UniverseAction::StopSession),
     METHOD_SESSION_RUNS_APPROVALS_DECIDE => decide_run_approvals(RunApprovalsDecideParams) -> RunApprovalsDecideResponse =>
-        ["Decide pending run approvals", "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision."], access: MethodAccess::Universe(UniverseAction::ControlSession),
+        ["Decide pending run approvals", "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision. A decision whose wait runs out reports status pending and can still apply."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_RUNS_STEER => steer_run(RunSteerParams) -> RunSteerResponse =>
-        ["Steer the active run", "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs."], access: MethodAccess::Universe(UniverseAction::ControlSession),
+        ["Steer the active run", "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. A parked run holds it without waking. Rejected for queued, cancelling, or finished runs. Supply submissionId so a retry lands once; a wait that runs out fails with operationPending and the steering can still land."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_SKILLS_LIST => list_skills(SkillListParams) -> SkillListResponse =>
         ["List available session skills", "Returns separate VFS and environment catalogs with source, reference, availability, readable skill paths, and warnings. Refreshes only when open with no active or queued run, without waking environments. Absent catalogs are omitted."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_SESSION_PROFILES_APPLY => apply_profile(ProfileApplyParams) -> ProfileApplyResponse =>
@@ -419,7 +446,7 @@ api_methods! {
     METHOD_ENVIRONMENTS_TEMPLATES_READ => read_environment_template(EnvironmentTemplateReadParams) -> EnvironmentTemplateReadResponse =>
         ["Read an environment template", "Returns one template, read live from a bound provider's controller."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_ENVIRONMENTS_JOBS_CREATE => create_environment_jobs(EnvironmentJobCreateParams) -> EnvironmentJobCreateResponse =>
-        ["Create environment jobs", "Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environment_not_ready while it wakes or reconnects; retry with backoff."], access: MethodAccess::Universe(UniverseAction::UseResource),
+        ["Create environment jobs", "Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environmentNotReady while it wakes or reconnects; retry with backoff."], access: MethodAccess::Universe(UniverseAction::UseResource),
     METHOD_ENVIRONMENTS_JOBS_READ => read_environment_jobs(EnvironmentJobReadParams) -> EnvironmentJobReadResponse =>
         ["Read environment jobs", "Reads selected job handles with bounded output from a byte offset or the output tail; continue from each entry's outputNext and poll on the returned status."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_ENVIRONMENTS_JOBS_CANCEL => cancel_environment_jobs(EnvironmentJobCancelParams) -> EnvironmentJobCancelResponse =>
@@ -479,7 +506,7 @@ api_methods! {
     METHOD_VFS_WORKSPACES_DELETE => delete_vfs_workspace(VfsWorkspaceDeleteParams) -> VfsWorkspaceDeleteResponse =>
         ["Delete a VFS workspace", "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_MCP_SERVERS_PUT => put_mcp_server(McpServerPutParams) -> McpServerPutResponse =>
-        ["Create or replace an MCP server record", "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Create or replace an MCP server record", "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_MCP_SERVERS_AUTH_DISCOVER => discover_mcp_server_auth(McpServerAuthDiscoverParams) -> McpServerAuthDiscoverResponse =>
         ["Discover MCP server authentication", "Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_MCP_SERVERS_TOOLS_DISCOVER => discover_mcp_server_tools(McpServerToolsDiscoverParams) -> McpServerToolsDiscoverResponse =>
@@ -582,7 +609,6 @@ api_methods! {
 /// by the [`AgentNotification`] schema.
 pub const NOTIFICATION_METHODS: &[&str] = &[
     NOTIFY_SESSION_STARTED,
-    NOTIFY_SESSION_STATUS_CHANGED,
     NOTIFY_SESSION_EVENT,
     NOTIFY_SESSION_RUNS_STARTED,
     NOTIFY_SESSION_RUNS_COMPLETED,

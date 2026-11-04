@@ -30,7 +30,7 @@ function Models({ universeId }: { universeId: string }) {
   const defaults = useModelDefaults(universeId);
   const [editingDefaults, setEditingDefaults] = useState<{ defaults: ModelDefaults; slot: DefaultSlot } | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
-  const writable = useActionPermissions(universeId).can("configure_resource");
+  const writable = useActionPermissions(universeId).can("configureResource");
   const requestedKind = parseModelProviderKind(searchParams.get("add"));
   const [addOpen, setAddOpen] = useState(requestedKind !== null);
   const [initialKind, setInitialKind] = useState<ModelProviderKind | null>(requestedKind);

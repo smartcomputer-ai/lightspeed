@@ -47,7 +47,7 @@ import {
   resourceFeatureDisableReasons,
   selectableEnvironments,
 } from "@/lib/sessions/resource-features";
-import { managedSessionOwnerLabel } from "@/lib/sessions/management";
+import { controlledSessionOwnerLabel } from "@/lib/sessions/lifecycle-controller";
 
 export function SessionSettingsDialog({
   universeId,
@@ -64,9 +64,9 @@ export function SessionSettingsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const canConfigure = useActionPermissions(universeId).can("configure_session");
-  const management = session?.management;
-  const managed = session?.managed === true;
+  const canConfigure = useActionPermissions(universeId).can("configureSession");
+  const declaration = session?.declaration;
+  const controlled = session?.lifecycleControlled === true;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -74,8 +74,8 @@ export function SessionSettingsDialog({
         <DialogHeader className="border-b p-6 pr-14">
           <DialogTitle>Session settings</DialogTitle>
           <DialogDescription>
-            {!canConfigure ? "View this session’s configuration. Operator permission is required to change it." : managed
-              ? `Edit configuration directly. Lifecycle and chat delivery remain managed by ${managedSessionOwnerLabel(management)}.`
+            {!canConfigure ? "View this session’s configuration. Operator permission is required to change it." : controlled
+              ? `Edit configuration directly. Lifecycle and chat delivery remain managed by ${controlledSessionOwnerLabel(declaration)}.`
               : "Edit this live session directly, then apply the setup in one operation."}
           </DialogDescription>
         </DialogHeader>
@@ -108,7 +108,7 @@ function LiveSessionSetup({
   /** Called once the whole setup has applied; the dialog closes then. */
   onApplied: () => void;
 }) {
-  const canConfigure = useActionPermissions(universeId).can("configure_session");
+  const canConfigure = useActionPermissions(universeId).can("configureSession");
   const queryClient = useQueryClient();
   const options = useSessionConfigEditorOptions(universeId, enabled);
   const instructions = useQuery({
@@ -128,7 +128,7 @@ function LiveSessionSetup({
   const [originalActiveEnvironmentId, setOriginalActiveEnvironmentId] = useState<string | null>(null);
   const [metadataRows, setMetadataRows] = useState<MetadataRow[]>([]);
   const [originalMetadata, setOriginalMetadata] = useState<Record<string, string>>({});
-  const canSetRetention = useActionPermissions(universeId).can("set_session_retention");
+  const canSetRetention = useActionPermissions(universeId).can("setSessionRetention");
   const [retentionDaysDraft, setRetentionDaysDraft] = useState("");
   const [originalRetentionDays, setOriginalRetentionDays] = useState("");
   const [configError, setConfigError] = useState<string | null>(null);
@@ -232,20 +232,16 @@ function LiveSessionSetup({
         };
       };
 
-      if (activeEnvironmentDirty && originalActiveEnvironmentId) {
-        await api<SessionView>(
-          "POST",
-          `/api/v1/universes/${universeId}/sessions/${sessionId}/environments/deactivate`,
-          {},
-        );
-      }
-
       await putConfig(desiredConfig);
 
-      if (activeEnvironmentDirty && activeEnvironmentDraft) {
+      // After the put, which can itself activate a newly chosen default: what the
+      // draft asks for here is the last word.
+      if (activeEnvironmentDirty) {
         await api<SessionView>(
           "POST",
-          `/api/v1/universes/${universeId}/sessions/${sessionId}/environments/${encodeURIComponent(activeEnvironmentDraft)}/activate`,
+          activeEnvironmentDraft
+            ? `/api/v1/universes/${universeId}/sessions/${sessionId}/environments/${encodeURIComponent(activeEnvironmentDraft)}/activate`
+            : `/api/v1/universes/${universeId}/sessions/${sessionId}/environments/deactivate`,
           {},
         );
       }
@@ -379,7 +375,7 @@ function LiveSessionSetup({
                     disabled={!canConfigure || save.isPending}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Deletes this session, its history forks, and delegated children after the root closes. Leave blank to keep the tree.
+                    Deletes this session and its delegated children after the root closes. Leave blank to keep the tree.
                   </p>
                   {retentionError && <p className="text-xs text-destructive">{retentionError}</p>}
                 </div>
@@ -448,7 +444,7 @@ function ActiveInstructionSources({ value }: { value: SessionInstructionState | 
       <p className="text-xs font-medium">Other active instruction sources</p>
       <ul className="mt-2 grid gap-1.5 text-xs text-muted-foreground">
         {sources.map((source) => (
-          <li key={`${source.key}:${source.contentRef}`} className="flex min-w-0 gap-2">
+          <li key={`${source.key}:${source.blobRef}`} className="flex min-w-0 gap-2">
             <span className="truncate">
               {instructionSourceLabel(source.key, source.preview)}
             </span>
@@ -467,6 +463,8 @@ function instructionSourceLabel(key: string | null, preview: string | null): str
   if (key?.startsWith("instructions.100.prompts")) return preview ?? "Workspace-linked VFS prompt";
   return preview ?? key ?? "Managed instructions";
 }
+
+const ACTIVE_ENVIRONMENT_HELP = "The one universe environment used by process and environment-targeted tools. Selection does not transfer ownership. Saving a new default environment activates it when nothing else stays active.";
 
 function ActiveEnvironmentEditor({
   value,
@@ -538,7 +536,7 @@ function ActiveEnvironmentEditor({
         <div className="grid gap-0.5">
           <p className="text-sm font-medium">Active environment</p>
           <p className="text-xs text-muted-foreground">
-            The one universe environment used by process and environment-targeted tools. Selection does not transfer ownership.
+            {ACTIVE_ENVIRONMENT_HELP}
           </p>
         </div>
         {content}
@@ -549,7 +547,7 @@ function ActiveEnvironmentEditor({
   return (
     <SetupEditorSection
       title="Active environment"
-      description="The one universe environment used by process and environment-targeted tools. Selection does not transfer ownership."
+      description={ACTIVE_ENVIRONMENT_HELP}
     >
       {content}
     </SetupEditorSection>

@@ -334,7 +334,7 @@ pub struct ChannelInbound {
 /// What the connector should do after admission. Pairing replies are the
 /// connector's to send, in the provider's own voice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum ChannelInboundDecision {
     /// The conversation is connected; the message went to its workflow.
     Bound,
@@ -373,7 +373,7 @@ pub struct ChannelInboundAdmitResponse {
 /// How a chat got its route: claimed by an open trigger's first contact,
 /// or paired by code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum ChannelPairedVia {
     Open,
     Code,

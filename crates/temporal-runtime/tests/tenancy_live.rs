@@ -6,8 +6,8 @@ use std::{env, sync::Arc, time::Duration};
 
 use api::{
     AgentApiErrorKind, AgentApiService, AgentProfileInput, ProfileCreateParams, ProfileDocument,
-    ProfileId, ProfileListParams, ProfileReadParams, SessionReadParams, SessionStartParams,
-    SessionStatus,
+    ProfileId, ProfileListParams, ProfileReadParams, SessionLifecycleStatus, SessionReadParams,
+    SessionStartParams,
 };
 use harness::SessionId;
 use support::live::{LIVE_TEST_LOCK, require_storage_live_env};
@@ -62,6 +62,10 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
         let state_b = universes.state_for(universe_b, true).await?;
         let api_a = state_a.api.clone();
         let api_b = state_b.api.clone();
+        // A new universe has no model default, and these sessions omit the model.
+        let model = support::live::openai_live_model();
+        support::live::seed_agent_default(&state_a.store, &model).await?;
+        support::live::seed_agent_default(&state_b.store, &model).await?;
         // Direct service calls carry an explicit caller, one per universe.
         let caller_a = temporal_runtime::gateway::request_context::RequestContext::local(
             api::AccessScope::Universe {
@@ -91,7 +95,11 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
                 }),
             )
             .await?;
-            assert_eq!(started.result.session.status, SessionStatus::Idle);
+            assert_eq!(
+                started.result.session.lifecycle_status,
+                SessionLifecycleStatus::Open
+            );
+            assert_eq!(started.result.session.activity, api::SessionActivity::Idle);
         }
 
         // Distinct workflows: both composed ids are queryable and healthy.
@@ -105,7 +113,7 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
                     WorkflowQueryOptions::default(),
                 )
                 .await?;
-            assert_eq!(status.last_error, None);
+            assert_eq!(status.fatal_error, None);
             assert_eq!(status.session_id, session_id.as_str());
         }
 
@@ -165,7 +173,10 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
             }),
         )
         .await?;
-        assert_eq!(closed_a.result.session.status, SessionStatus::Closed);
+        assert_eq!(
+            closed_a.result.session.lifecycle_status,
+            SessionLifecycleStatus::Closed
+        );
         let open_b = calling(
             caller_b.clone(),
             api_b.read_session(SessionReadParams {
@@ -174,7 +185,11 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
             }),
         )
         .await?;
-        assert_eq!(open_b.result.session.status, SessionStatus::Idle);
+        assert_eq!(
+            open_b.result.session.lifecycle_status,
+            SessionLifecycleStatus::Open
+        );
+        assert_eq!(open_b.result.session.activity, api::SessionActivity::Idle);
 
         // Cleanup: terminate both workflows.
         for universe_id in [universe_a, universe_b] {

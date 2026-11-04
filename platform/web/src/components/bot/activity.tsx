@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { SendEventDialog } from "./send-event-dialog";
+import { outcomeLabel } from "./status";
 
 type OutcomeFilter = "all" | "pending" | "handled" | "ignored" | "deferred" | "failed" | "system";
 
@@ -48,7 +49,7 @@ export function matchesOutcomeFilter(
     case "pending":
       return outcome == null || outcome === "unresolved";
     case "failed":
-      return outcome === "run_failed" || outcome === "blocked";
+      return outcome === "runFailed" || outcome === "blocked";
     case "system":
       return outcome === "steered" || outcome === "appended" || outcome === "archived";
     default:
@@ -339,7 +340,7 @@ function EventRow({
   const batchSize = (active ?? recent)?.seqs.length ?? 1;
   const usage = recent?.usage;
   const hops = event.hops ?? 0;
-  const chip = outcome ? outcome.replaceAll("_", " ") : working ? "working" : "pending";
+  const chip = outcome ? outcomeLabel(outcome) : working ? "working" : "pending";
   return (
     <div className={cn("rounded-md border text-xs", open && "bg-muted/30")}>
       <button
@@ -370,7 +371,7 @@ function EventRow({
             )}
           </span>
           {detail && (
-            <span className={cn("block truncate text-muted-foreground", outcome === "run_failed" && "text-destructive")}>
+            <span className={cn("block truncate text-muted-foreground", outcome === "runFailed" && "text-destructive")}>
               {detail}
             </span>
           )}
@@ -436,7 +437,7 @@ function outcomeVariant(
   outcome: BotEventOutcome | null,
   working: boolean,
 ): "destructive" | "secondary" | "outline" | "default" {
-  if (outcome === "run_failed" || outcome === "blocked") return "destructive";
+  if (outcome === "runFailed" || outcome === "blocked") return "destructive";
   if (outcome === "handled") return "secondary";
   if (outcome === null && working) return "default";
   return "outline";

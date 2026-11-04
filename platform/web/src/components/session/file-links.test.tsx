@@ -214,7 +214,7 @@ it("shows file attachments beside tool output without an Effects tab", async () 
       <ToolGroupTrace group={{ kind: "tool-group", key: "g", status: "succeeded", calls: [{
         callId: "reference", toolName: "vfs_reference", status: "succeeded", isError: false,
         output: "File attachment available", attachments: [{
-          kind: "file", handle: `file:${digest.slice(0, 24)}`, contentRef: `sha256:${digest}`, name: "report.md",
+          handle: `file:${digest.slice(0, 24)}`, blobRef: `sha256:${digest}`, name: "report.md",
         }],
       }] }} />
     </TranscriptLinksContext.Provider>,

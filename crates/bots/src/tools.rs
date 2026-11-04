@@ -541,8 +541,8 @@ pub fn bot_workflow_tool_declarations(
                 .clone();
             Ok(WorkflowToolDeclarationInput {
                 definition: WorkflowToolDefinitionInput {
-                    tool_id: spec.tool_id.to_owned(),
-                    revision: BOT_TOOLS_REVISION,
+                    workflow_tool_id: spec.tool_id.to_owned(),
+                    schema_revision: BOT_TOOLS_REVISION,
                     semantic_type: spec.tool_id.to_owned(),
                     tool: WorkflowToolSpecInput {
                         name: spec.name.to_owned(),
@@ -567,7 +567,7 @@ pub fn bot_workflow_tool_declarations(
                     BotToolCompletion::AcceptedPull => WorkflowToolCompletionInput::Accepted,
                     BotToolCompletion::Joined => WorkflowToolCompletionInput::Joined {
                         reply_schema_ref: None,
-                        deadline_after_ms: BOT_TOOL_REPLY_DEADLINE_MS,
+                        deadline_after_ms: Some(BOT_TOOL_REPLY_DEADLINE_MS),
                     },
                 },
             })
@@ -1174,7 +1174,7 @@ mod tests {
     fn ids(tools: &[WorkflowToolDeclarationInput]) -> BTreeSet<String> {
         tools
             .iter()
-            .map(|tool| tool.definition.tool_id.clone())
+            .map(|tool| tool.definition.workflow_tool_id.clone())
             .collect()
     }
 
@@ -1233,8 +1233,11 @@ mod tests {
         let tools = declarations(true, true);
         assert_eq!(tools.len(), 10);
         for tool in &tools {
-            assert_eq!(tool.definition.revision, BOT_TOOLS_REVISION);
-            assert_eq!(tool.definition.semantic_type, tool.definition.tool_id);
+            assert_eq!(tool.definition.schema_revision, BOT_TOOLS_REVISION);
+            assert_eq!(
+                tool.definition.semantic_type,
+                tool.definition.workflow_tool_id
+            );
             assert_eq!(
                 tool.definition.tool.parallelism,
                 ToolParallelismView::Exclusive
@@ -1253,7 +1256,7 @@ mod tests {
         }
         let resolve = tools
             .iter()
-            .find(|tool| tool.definition.tool_id == BOT_EVENT_RESOLVE_TOOL_ID)
+            .find(|tool| tool.definition.workflow_tool_id == BOT_EVENT_RESOLVE_TOOL_ID)
             .unwrap();
         assert_eq!(
             resolve.target,
@@ -1267,7 +1270,7 @@ mod tests {
         // bot_emit is joined: the model reads the stored #N or the refusal.
         let emit = tools
             .iter()
-            .find(|tool| tool.definition.tool_id == BOT_EMIT_TOOL_ID)
+            .find(|tool| tool.definition.workflow_tool_id == BOT_EMIT_TOOL_ID)
             .unwrap();
         assert!(matches!(
             emit.target,
@@ -1280,7 +1283,7 @@ mod tests {
         let strict: BTreeSet<String> = tools
             .iter()
             .filter(|tool| strict_of(tool) == Some(true))
-            .map(|tool| tool.definition.tool_id.clone())
+            .map(|tool| tool.definition.workflow_tool_id.clone())
             .collect();
         assert_eq!(
             strict,
@@ -1305,7 +1308,7 @@ mod tests {
                 tool.completion,
                 WorkflowToolCompletionInput::Joined {
                     reply_schema_ref: None,
-                    deadline_after_ms: BOT_TOOL_REPLY_DEADLINE_MS,
+                    deadline_after_ms: Some(BOT_TOOL_REPLY_DEADLINE_MS),
                 }
             );
             assert!(matches!(
@@ -1315,7 +1318,7 @@ mod tests {
                     ..
                 }
             ));
-            assert!(is_pushed_tool(&tool.definition.tool_id));
+            assert!(is_pushed_tool(&tool.definition.workflow_tool_id));
         }
         assert!(!is_pushed_tool(BOT_EVENT_RESOLVE_TOOL_ID));
         assert!(!is_pushed_tool("lightspeed.other.v1"));
@@ -1411,7 +1414,7 @@ mod tests {
         );
         // Only the model's decisions: system outcomes are not resolvable.
         assert!(parse_event_resolve_args(&json!({ "outcome": "done", "summary": null })).is_err());
-        assert!(parse_event_resolve_args(&json!({ "outcome": "run_failed" })).is_err());
+        assert!(parse_event_resolve_args(&json!({ "outcome": "runFailed" })).is_err());
         assert!(parse_event_resolve_args(&json!({ "outcome": "archived" })).is_err());
         assert!(parse_event_resolve_args(&json!({ "summary": null })).is_err());
         assert!(parse_event_resolve_args(&json!({ "outcome": "handled", "summary": 7 })).is_err());
@@ -1947,7 +1950,7 @@ mod tests {
     }
 
     #[test]
-    fn session_identity_preserves_quoted_keys_and_does_not_guess_legacy_keys() {
+    fn session_identity_preserves_quoted_keys_and_does_not_guess_missing_keys() {
         let bot = BotId::new("triage");
         let key = "chat:\"ops\"\nSession kind: main";
         let id = crate::ids::bot_keyed_session_id(&bot, key);
@@ -1976,7 +1979,7 @@ mod tests {
             "guidance follows the emit grant"
         );
 
-        let legacy = bot_instructions(
+        let unkeyed = bot_instructions(
             &bot,
             BotSessionInstructions {
                 session_id: &id,
@@ -1986,9 +1989,9 @@ mod tests {
             None,
             true,
         );
-        assert!(legacy.contains("Session kind: keyed"));
-        assert!(!legacy.contains("Routing key:"));
-        assert!(legacy.contains("original routing key is unavailable"));
+        assert!(unkeyed.contains("Session kind: keyed"));
+        assert!(!unkeyed.contains("Routing key:"));
+        assert!(unkeyed.contains("original routing key is unavailable"));
     }
 
     #[test]

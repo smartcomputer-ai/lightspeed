@@ -11,7 +11,7 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
       { "mode": "disabled" } |
       { "compactThresholdTokens": 0, "mode": "providerTriggered" } |
       { "compactThresholdTokens": 0, "mode": "providerStandalone", "targetTokens": 0 },
-    // Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.
+    // Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors. Where a limit is known, a run start or steering holding one text entry over it is refused with \`invalidRequest\`.
     "inputLimitTokens": 0,
   },
   // Capability grants. An absent feature is not granted; \`{}\` grants it with defaults. Every block carries a behavior \`version\` that pins semantics.
@@ -49,7 +49,7 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
         // Per-attachment environment access, an ordered ladder: \`edit\` adds file editing to \`read\`, \`exec\` adds processes, \`jobs\` adds durable jobs. Processes can write files regardless of the file-tool level, so read-only files with commands is deliberately not expressible.
         // (required when this object is present)
         "access": "read" | "edit" | "exec" | "jobs",
-        // Activated when a profile is applied while the session has no active environment; creation is the trivial case. Never overrides a live selection and never applies on a plain \`session/config/put\`.
+        // Activated when a profile is applied while the session has no active environment; creation is the trivial case. A \`session/config/put\` that changes the default activates it when the put leaves nothing active, and refuses a default that cannot be selected. Never overrides a live selection, and an unchanged default never undoes a deliberate deactivation.
         "default": true | false,
         "environmentId": "string",
         "inherit": true | false,
@@ -88,14 +88,14 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
         // (required when this object is present)
         "profileId": "string",
       }],
-      // Per-child run deadline in milliseconds; at most the execution ceiling of 24 hours.
-      "deadlineMs": 0,
       // Open sessions under the root at any time, excluding the root.
       "maxConcurrent": 0,
       // A child at depth \`d\` may spawn only while \`d + 1 <= maxDepth\`.
       "maxDepth": 0,
       // Lifetime total of sessions ever created under the root.
       "maxDescendants": 0,
+      // Per-child run deadline in milliseconds. Omit it for no time limit.
+      "runTimeoutMs": 0,
       "version": 0,
     },
     // Grants timer promises through the sleep tool plus the base concurrency tools (await/cancel/detach).
@@ -155,12 +155,12 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
       { "type": "requiredAny" } |
       { "toolId": "string", "type": "specific" },
   },
-  // Run budget defaults enforced by the harness drive loop.
+  // Limits applied to every run of the session unless the run sets its own.
   "limits": {
-    "maxToolRounds": 0,
+    // Model turns a run may start, at least 1. A run that needs another turn past this fails with \`limitExceeded\` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.
     "maxTurns": 0,
   },
-  // At creation, omission uses the profile model or universe agentRun default. On configuration replacement or profile application to an existing session, omission preserves its current model. Documents read back from a session always carry the model. Provider identity and API kind are fixed for the session lifetime; the model name may change.
+  // At creation, omission uses the profile model or universe agentRun default. On configuration replacement or profile application to an existing session, omission preserves its current model. Documents read back from a session always carry the model. Provider identity and API kind are fixed for the session lifetime. The model name may change at any time: retained reasoning and compaction state goes to the new model unchanged, and the provider keeps or drops it. A combination the provider refuses fails that run as \`requestRejected\`, and the session stays open.
   "model": {
     // (required when this object is present)
     "apiKind": "string",

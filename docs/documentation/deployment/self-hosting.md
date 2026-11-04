@@ -257,7 +257,7 @@ Start all runtime roles in one container:
 docker run -d --name lightspeed-runtime \
   --network lightspeed \
   --restart unless-stopped \
-  --stop-signal SIGINT --stop-timeout 30 \
+  --stop-timeout 30 \
   --env-file runtime.env \
   -p 127.0.0.1:18080:18080 \
   "lightspeed-runtime:$LIGHTSPEED_RELEASE_ID"
@@ -265,8 +265,8 @@ docker run -d --name lightspeed-runtime \
 
 The host mapping is loopback-only. The Platform can reach the runtime by
 container name on the Docker network, and the host proxy can reach its selected
-public routes at `127.0.0.1:18080`. The explicit stop signal lets Docker request
-the runtime's shutdown path.
+public routes at `127.0.0.1:18080`. Docker's stop signal starts the runtime's
+graceful shutdown, and the timeout gives it time to finish.
 
 Wait for the listener; the retries allow time for startup:
 

@@ -515,12 +515,7 @@ impl SessionRunner {
 
     async fn load_drive(&self, session_id: &SessionId) -> Result<CoreAgentDrive, RunnerError> {
         let state = self.load_state(session_id).await?;
-        let head = state.reduced_to.clone();
-        Ok(CoreAgentDrive::from_replayed(
-            session_id.clone(),
-            state,
-            head,
-        ))
+        Ok(CoreAgentDrive::from_replayed(session_id.clone(), state))
     }
 
     async fn fulfill_until_quiescent(
@@ -841,8 +836,8 @@ mod tests {
         ContextCompactionStatus, ContextConfig, ContextEntryInput, ContextEntryKey,
         ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentEvent, FunctionToolSpec,
         LlmFinish, ModelSelection, ObservedToolCall, ProviderApiKind, RunConfig, RunStatus,
-        SessionConfig, SessionId, ToolCallResult, ToolKind, ToolName, ToolParallelism, ToolSpec,
-        TurnEvent, WorkspaceAccess, WorkspaceAttachment, WorkspaceAttachmentTarget,
+        SessionConfig, SessionId, ToolCallResult, ToolId, ToolKind, ToolName, ToolParallelism,
+        ToolSpec, TurnEvent, WorkspaceAccess, WorkspaceAttachment, WorkspaceAttachmentTarget,
         storage::{
             BlobStore, CreateForkedSession, CreateSession, InMemoryBlobStore, InMemorySessionStore,
             SessionStore,
@@ -1074,7 +1069,7 @@ mod tests {
                         approval_requests: Vec::new(),
                         tool_calls: vec![ObservedToolCall {
                             call_id: harness::ToolCallId::new("call-1"),
-                            tool_id: Some(ToolName::new("test_tool")),
+                            tool_id: Some(ToolId::new("test_tool")),
                             tool_name: ToolName::new("test_tool"),
                             provider_kind: None,
                             arguments_ref: BlobRef::from_bytes(br#"{}"#),
@@ -1130,7 +1125,7 @@ mod tests {
                         approval_requests: Vec::new(),
                         tool_calls: vec![ObservedToolCall {
                             call_id: harness::ToolCallId::new(self.call_id.clone()),
-                            tool_id: Some(ToolName::new("vfs.read_file")),
+                            tool_id: Some(ToolId::new("vfs.read_file")),
                             tool_name: ToolName::new("vfs_read_file"),
                             provider_kind: None,
                             arguments_ref,
@@ -1216,6 +1211,7 @@ mod tests {
                 input: user_input(content_ref),
             },
             run_config: run_config(),
+            input_limit_tokens: None,
         })
     }
 
@@ -1229,7 +1225,6 @@ mod tests {
             generation: Default::default(),
             limits: Default::default(),
             context: ContextConfig {
-                reported_input_limit_tokens: None,
                 input_limit_tokens: None,
                 compaction: None,
             },
@@ -1263,7 +1258,7 @@ mod tests {
         WorkspaceAttachment {
             path: path.to_owned(),
             target: WorkspaceAttachmentTarget::Snapshot {
-                snapshot_ref: snapshot_ref.to_string(),
+                snapshot_ref: snapshot_ref.clone(),
             },
             access: WorkspaceAccess::Read,
         }
@@ -1290,12 +1285,9 @@ mod tests {
 
     fn run_config() -> RunConfig {
         RunConfig {
-            input_limit_tokens: None,
             max_turns: None,
-            max_tool_rounds: None,
             model_override: None,
             max_output_tokens: None,
-            provider_params: None,
             reasoning_effort: None,
             processing_tier: None,
             tool_choice: None,
@@ -1321,12 +1313,12 @@ mod tests {
         (SessionRunner::new(stores, llm), session_id)
     }
 
-    fn tool_set() -> BTreeMap<ToolName, ToolSpec> {
-        let tool_name = ToolName::new("test_tool");
+    fn tool_set() -> BTreeMap<ToolId, ToolSpec> {
+        let tool_id = ToolId::new("test_tool");
         BTreeMap::from([(
-            tool_name.clone(),
+            tool_id.clone(),
             ToolSpec {
-                name: tool_name.clone(),
+                id: tool_id.clone(),
                 execution: Default::default(),
                 kind: ToolKind::Function(FunctionToolSpec {
                     description_ref: None,
@@ -1567,7 +1559,7 @@ mod tests {
             Some(harness::CompactionPolicy::ProviderStandalone { .. })
         ));
         assert!(outcome.state.runs.active.is_none());
-        assert_eq!(outcome.state.runs.completed.len(), 1);
+        assert_eq!(outcome.state.runs.finished.len(), 1);
         assert!(!outcome.state.context.entries.iter().any(|entry| {
             entry
                 .key
@@ -2104,7 +2096,7 @@ mod tests {
             .expect("drive request");
 
         assert_eq!(outcome.quiescence, RunnerQuiescence::Idle);
-        assert_eq!(outcome.state.runs.completed[0].status, RunStatus::Completed);
+        assert_eq!(outcome.state.runs.finished[0].status, RunStatus::Completed);
         assert!(outcome.state.context.entries.iter().any(|entry| {
             matches!(&entry.kind, ContextEntryKind::ToolResult { call_id, is_error: false }
                 if call_id.as_str() == "call-read-skill")
@@ -2431,7 +2423,7 @@ mod tests {
             .await
             .expect("drive request");
 
-        let run = &driven.state.runs.completed[0];
+        let run = &driven.state.runs.finished[0];
         assert_eq!(run.status, RunStatus::Failed);
         let failure = run.failure.as_ref().expect("run failure");
         assert_eq!(failure.kind, harness::RunFailureKind::RequestRejected);
@@ -2472,7 +2464,7 @@ mod tests {
             .expect("drive request");
 
         assert_eq!(failed.quiescence, RunnerQuiescence::Idle);
-        assert_eq!(failed.state.runs.completed[0].status, RunStatus::Failed);
+        assert_eq!(failed.state.runs.finished[0].status, RunStatus::Failed);
         assert!(failed.emitted_entries.iter().any(|entry| {
             matches!(
                 &entry.event,
@@ -2497,7 +2489,7 @@ mod tests {
 
         assert_eq!(completed.quiescence, RunnerQuiescence::Idle);
         assert_eq!(
-            completed.state.runs.completed[1].status,
+            completed.state.runs.finished[1].status,
             RunStatus::Completed
         );
     }
@@ -2541,7 +2533,7 @@ mod tests {
             .expect("drive request");
 
         assert_eq!(outcome.quiescence, RunnerQuiescence::Idle);
-        assert_eq!(outcome.state.runs.completed[0].status, RunStatus::Completed);
+        assert_eq!(outcome.state.runs.finished[0].status, RunStatus::Completed);
         assert!(outcome.emitted_entries.iter().any(|entry| {
             matches!(
                 &entry.event,

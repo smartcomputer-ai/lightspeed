@@ -86,7 +86,7 @@ pub(super) async fn prepare_workflow_tool(
         )));
     }
     let tool_kind = match (
-        start.invocation.tool_id.as_str(),
+        start.invocation.workflow_tool_id.as_str(),
         start.invocation.semantic_type.as_str(),
     ) {
         (JOB_SUBMIT_WORKFLOW_TOOL_ID, JOB_SUBMIT_WORKFLOW_SEMANTIC_TYPE) => {
@@ -96,7 +96,7 @@ pub(super) async fn prepare_workflow_tool(
         _ => {
             return Err(activity_error(anyhow::anyhow!(
                 "unsupported environment job workflow tool {} ({})",
-                start.invocation.tool_id,
+                start.invocation.workflow_tool_id,
                 start.invocation.semantic_type
             )));
         }

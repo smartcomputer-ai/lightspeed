@@ -36,14 +36,6 @@ impl FsBlobStore {
         Ok(store)
     }
 
-    pub fn for_project(project_root: impl AsRef<Path>) -> Self {
-        Self::new(crate::lightspeed_dir(project_root))
-    }
-
-    pub async fn open_project(project_root: impl AsRef<Path>) -> io::Result<Self> {
-        Self::open(crate::lightspeed_dir(project_root)).await
-    }
-
     pub fn root(&self) -> &Path {
         self.root.as_ref().as_path()
     }

@@ -43,7 +43,7 @@ import {
   hex,
   inboxTrigger,
   lineageChild,
-  managedSession,
+  controlledSession,
   mcpCall,
   mcpServer,
   member,
@@ -691,8 +691,8 @@ const SKILLS_RO = link(WORKSPACE.skills, "/skills", "read");
 const BRIEFS_RW = link(WORKSPACE.briefs, "/briefs", "edit");
 const BRIEFS_RO = link(WORKSPACE.briefs, "/briefs", "read");
 
-const ASSISTANT_LIMITS = { maxDepth: 1, maxDescendants: 4, maxConcurrent: 2, deadlineMs: 15 * MINUTE_MS };
-const RESEARCH_LIMITS = { maxDepth: 1, maxDescendants: 6, maxConcurrent: 3, deadlineMs: 10 * MINUTE_MS };
+const ASSISTANT_LIMITS = { maxDepth: 1, maxDescendants: 4, maxConcurrent: 2, runTimeoutMs: 15 * MINUTE_MS };
+const RESEARCH_LIMITS = { maxDepth: 1, maxDescendants: 6, maxConcurrent: 3, runTimeoutMs: 10 * MINUTE_MS };
 
 const GOOGLE_TOOLS = [
   "gmail.search",
@@ -710,7 +710,6 @@ const SLACK_TOOLS = ["search_messages", "get_channel_history", "get_user"];
 const ASSISTANT_CONFIG: Record<string, unknown> = {
   model: OPUS,
   generation: { reasoningEffort: "medium", maxOutputTokens: 8_000 },
-  limits: { maxToolRounds: 16 },
   features: {
     vfs: { workspaces: [MEMORY_RW, SKILLS_RO, BRIEFS_RW], skills: { roots: ["/skills"] } },
     mcp: {
@@ -728,7 +727,6 @@ const ASSISTANT_CONFIG: Record<string, unknown> = {
 const RESEARCHER_CONFIG: Record<string, unknown> = {
   model: SONNET,
   generation: { reasoningEffort: "medium", maxOutputTokens: 12_000 },
-  limits: { maxToolRounds: 30 },
   features: {
     web: { fetch: {}, search: { blockedDomains: ["pinterest.com", "quora.com"] } },
     vfs: { workspaces: [MEMORY_RW] },
@@ -740,7 +738,7 @@ const RESEARCHER_CONFIG: Record<string, unknown> = {
 const METRICS_CONFIG: Record<string, unknown> = {
   model: GPT,
   generation: { reasoningEffort: "low", maxOutputTokens: 6_000 },
-  limits: { maxToolRounds: 10, maxTurns: 8 },
+  limits: { maxTurns: 8 },
   features: {
     mcp: { servers: [{ serverId: MCP.stripe }, { serverId: MCP.hubspot }] },
     vfs: { workspaces: [MEMORY_RO] },
@@ -1539,7 +1537,7 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
   // Sessions: the main one, the Telegram thread (keyed `ada`, where the
   // schedules land too), and the WhatsApp thread.
   const threadTools = [...BOT_TOOLS, ...SELF_CONFIG_TOOLS, EMIT_TOOL, ...MESSAGE_TOOLS];
-  const mainSession = managedSession(store, universe, {
+  const mainSession = controlledSession(store, universe, {
     id: SESSION.assistantMain,
     botId: BOT.assistant,
     displayName: "Ada's Assistant",
@@ -1559,7 +1557,7 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
     ],
   });
 
-  const telegram = managedSession(store, universe, {
+  const telegram = controlledSession(store, universe, {
     id: SESSION.telegram,
     botId: BOT.assistant,
     displayName: TELEGRAM.label,
@@ -1576,7 +1574,7 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
     },
   };
   refreshDemoCompactionView(telegram);
-  const whatsapp = managedSession(store, universe, {
+  const whatsapp = controlledSession(store, universe, {
     id: SESSION.whatsapp,
     botId: BOT.assistant,
     displayName: WHATSAPP.label,
@@ -1988,7 +1986,7 @@ function seedResearch(store: DemoStore, universe: UniverseState): void {
   }
 
   const tools = [...BOT_TOOLS, EMIT_TOOL];
-  const mainSession = managedSession(store, universe, {
+  const mainSession = controlledSession(store, universe, {
     id: SESSION.researchMain,
     botId: BOT.research,
     displayName: "Research",
@@ -2006,7 +2004,7 @@ function seedResearch(store: DemoStore, universe: UniverseState): void {
     ],
   });
 
-  const pricing = managedSession(store, universe, {
+  const pricing = controlledSession(store, universe, {
     id: SESSION.researchPricing,
     botId: BOT.research,
     displayName: "Research · competitor pricing",
@@ -2094,7 +2092,7 @@ function seedResearch(store: DemoStore, universe: UniverseState): void {
   });
   closeAt(orbit, t(10, 28));
 
-  const nudge = managedSession(store, universe, {
+  const nudge = controlledSession(store, universe, {
     id: SESSION.researchNudge,
     botId: BOT.research,
     displayName: "Research · nudge on #1",
@@ -2224,7 +2222,7 @@ function seedMetrics(store: DemoStore, universe: UniverseState): void {
     summary: "subscription sub_1R0aB3 (team-trial, €0/mo) cancelled at trial end",
   });
 
-  const session = managedSession(store, universe, {
+  const session = controlledSession(store, universe, {
     id: SESSION.metricsMain,
     botId: BOT.metrics,
     displayName: "Metrics",

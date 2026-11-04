@@ -468,7 +468,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   /// Paged session summaries, newest activity first (engine keyset
-  /// paging). The filters mirror `session/list`: `closed`, `managed` and
+  /// paging). The filters mirror `session/list`: `closed`, `lifecycleControlled` and
   /// `subagent` are yes/no, absent lists both; `parent` lists direct
   /// sub-agents.
   app.get("/:id/sessions", async (c) => {
@@ -480,7 +480,7 @@ export function gatewayRoutes(ctx: AppContext) {
     const limitRaw = Number(c.req.query("limit") ?? 50);
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, limitRaw), 200) : 50;
     const closed = booleanQuery(c.req.query("closed"));
-    const managed = booleanQuery(c.req.query("managed"));
+    const lifecycleControlled = booleanQuery(c.req.query("lifecycleControlled"));
     const subagent = booleanQuery(c.req.query("subagent"));
     const parent = c.req.query("parent") || null;
     const metadata = metadataQueryFilter(c.req.queries("metadata"));
@@ -490,7 +490,7 @@ export function gatewayRoutes(ctx: AppContext) {
         cursor,
         limit,
         ...(closed !== undefined ? { closed } : {}),
-        ...(managed !== undefined ? { managed } : {}),
+        ...(lifecycleControlled !== undefined ? { lifecycleControlled } : {}),
         ...(subagent !== undefined ? { subagent } : {}),
         ...(parent ? { parent } : {}),
         ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
@@ -551,9 +551,27 @@ export function gatewayRoutes(ctx: AppContext) {
     });
   });
 
+  /// A new execution for an open session whose last one stopped, from its log.
+  app.post("/:id/sessions/:sessionId/restart", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) {
+      return c.json({ error: "not found" }, 404);
+    }
+    return withGateway(c, async () => {
+      const client = engineClientFor(ctx, access);
+      const response = await client.call("session/restart", {
+        sessionId: c.req.param("sessionId"),
+      });
+      const current = await client.call("session/read", {
+        sessionId: response.result.session.id,
+      });
+      return c.json(current.result.session);
+    });
+  });
+
   /// Soft deletion hides retained history and is accepted by Lightspeed only
   /// after the selected sessions are closed. Non-cascade deletion requires a
-  /// leaf; cascade includes history forks and delegated children.
+  /// leaf; cascade includes delegated children.
   app.delete("/:id/sessions/:sessionId", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
@@ -748,13 +766,13 @@ export function gatewayRoutes(ctx: AppContext) {
         .filter((entry) => entry.kind.type === "instructions")
         .map((entry) => ({
           key: entry.key ?? null,
-          contentRef: entry.content.contentRef,
+          blobRef: entry.content.blobRef,
           preview: entry.preview ?? null,
         }));
       const custom = active.find((entry) => entry.key === "instructions.050.profile");
       let text: string | null = null;
       if (custom) {
-        const blob = await client.call("blobs/read", { blobRef: custom.contentRef });
+        const blob = await client.call("blobs/read", { blobRef: custom.blobRef });
         text = Buffer.from(blob.result.bytesBase64, "base64").toString("utf8");
       }
       return c.json({
@@ -903,6 +921,7 @@ export function gatewayRoutes(ctx: AppContext) {
           sessionId: c.req.param("sessionId"),
           runId,
           items: messageInputItems(body.data.text, body.data.attachments, `user:${c.get("session").user.id}`),
+          ...(body.data.submissionId ? { submissionId: body.data.submissionId } : {}),
         });
         const run = response.result.run;
         return c.json({
@@ -912,7 +931,7 @@ export function gatewayRoutes(ctx: AppContext) {
       } catch (error) {
         // The runtime has one rejection kind for both pre-submit checks and
         // admission waits. Only these pre-submit failures prove no steering
-        // was sent. In particular, "run ended before steering was admitted"
+        // was sent. In particular, "run ended before steering reached it"
         // can follow submission and must retain the uncertain-outcome UI.
         if (error instanceof LightspeedRpcError && error.kind === "rejected"
           && (error.message === `run is already terminal: ${runId}`
@@ -1194,7 +1213,7 @@ export function gatewayRoutes(ctx: AppContext) {
         try {
           await client.call("auth/providers/delete", { providerId });
         } catch (error) {
-          if (!(error instanceof LightspeedRpcError && error.kind === "not_found")) {
+          if (!(error instanceof LightspeedRpcError && error.kind === "notFound")) {
             throw error;
           }
         }
@@ -1409,7 +1428,7 @@ export function gatewayRoutes(ctx: AppContext) {
             409,
           );
         } catch (error) {
-          if (!(error instanceof LightspeedRpcError && error.kind === "not_found")) {
+          if (!(error instanceof LightspeedRpcError && error.kind === "notFound")) {
             throw error;
           }
         }
@@ -1453,7 +1472,7 @@ export function gatewayRoutes(ctx: AppContext) {
             409,
           );
         } catch (error) {
-          if (!(error instanceof LightspeedRpcError && error.kind === "not_found")) {
+          if (!(error instanceof LightspeedRpcError && error.kind === "notFound")) {
             throw error;
           }
         }
@@ -2488,7 +2507,7 @@ async function commitHead(
   return { workspace: updated.result.workspace };
 }
 
-/// Maps gateway failures onto API responses: engine not_found/conflict pass
+/// Maps gateway failures onto API responses: engine notFound/conflict pass
 /// through as 404/409, transport or internal errors surface as 502. Only
 /// typed errors carry their message; anything else (a database driver error
 /// includes its SQL and parameters) is logged here and answered generically.
@@ -2510,14 +2529,16 @@ export async function withGateway(
     const code = (error as { cause?: { code?: string } } | null)?.cause?.code;
     if (code === "23505") return c.json({ error: "record already exists" }, 409);
     if (error instanceof LightspeedRpcError) {
-      if (error.kind === "model_default_unset") return c.json({ error: error.message, kind: error.kind, modelDefaultSlot: error.data?.modelDefaultSlot }, 400);
-      if (error.kind === "invalid_request") return c.json({ error: error.message }, 400);
+      if (error.kind === "modelDefaultUnset") return c.json({ error: error.message, kind: error.kind, modelDefaultSlot: error.data?.modelDefaultSlot }, 400);
+      if (error.kind === "operationPending") return c.json({ error: error.message, kind: error.kind, submissionId: error.data?.submissionId }, 409);
+      if (error.kind === "invalidRequest") return c.json({ error: error.message }, 400);
       // Core refusing the Platform means its own key or gate is wrong: the
       // member was already admitted here.
       if (error.kind === "unauthenticated") return c.json({ error: "runtime rejected the Platform key" }, 502);
       if (error.kind === "forbidden") return c.json({ error: "runtime refused the Platform" }, 500);
       if (error.kind === "rejected") return c.json({ error: error.message }, 409);
-      if (error.kind === "not_found") {
+      if (error.kind === "sessionExecutionStopped") return c.json({ error: error.message, kind: error.kind }, 409);
+      if (error.kind === "notFound") {
         return c.json({ error: "not found in engine" }, 404);
       }
       if (error.kind === "conflict") {

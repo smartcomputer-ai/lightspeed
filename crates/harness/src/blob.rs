@@ -1,6 +1,6 @@
 //! Content-addressed blob references.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use sha2::{Digest, Sha256};
 use std::fmt;
 use thiserror::Error;
@@ -9,10 +9,36 @@ const SHA256_PREFIX: &str = "sha256:";
 const SHA256_HEX_LEN: usize = 64;
 const SHA256_REF_LEN: usize = SHA256_PREFIX.len() + SHA256_HEX_LEN;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
+/// The newtype-struct name [`BlobRef`] serializes under. JSON ignores it, so the
+/// wire stays a bare string, and the typed walk in `storage` recognises a ref
+/// by it without any ref-shaped string ever counting as one.
+pub(crate) const BLOB_REF_NEWTYPE: &str = "lightspeed::BlobRef";
+
+// A content-addressed blob reference: `sha256:<64 lowercase hex>`.
+// Every value holds a canonical ref: construction and decode both validate, so a
+// malformed ref can neither be written nor read. A decode failure is the point for
+// this type. Leniency covers missing fields, unknown fields and shape change, not an
+// invalid value of a validated id. Code taking refs from outside drops or refuses
+// what fails to decode at that edge.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(
+    feature = "contract",
+    derive(schemars::JsonSchema),
+    schemars(transparent)
+)]
 pub struct BlobRef(String);
+
+impl Serialize for BlobRef {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_newtype_struct(BLOB_REF_NEWTYPE, &self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for BlobRef {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::parse(String::deserialize(deserializer)?).map_err(de::Error::custom)
+    }
+}
 
 /// Durable content identity and encoding. The payload stays in CAS; consumers
 /// project it outside the harness rather than assuming every output is text.
@@ -57,10 +83,6 @@ impl BlobRef {
 
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-
-    pub fn new_unchecked_for_tests(value: impl Into<String>) -> Self {
-        Self(value.into())
     }
 }
 
@@ -109,5 +131,40 @@ mod tests {
         assert!(BlobRef::parse("blob://payload").is_err());
         assert!(BlobRef::parse("sha256:ABCDEF").is_err());
         assert!(BlobRef::parse("sha256:1234").is_err());
+    }
+
+    #[test]
+    fn blob_ref_decode_validates_like_parse() {
+        for value in [
+            "not-a-ref",
+            "sha256:1234",
+            "sha256:\u{e9}\u{e9}\u{e9}",
+            &format!("sha256:{}", "A".repeat(64)),
+            &format!("SHA256:{}", "a".repeat(64)),
+            &format!("sha256:{}\n", "a".repeat(64)),
+        ] {
+            assert!(BlobRef::parse(value).is_err());
+            assert!(
+                serde_json::from_value::<BlobRef>(serde_json::json!(value)).is_err(),
+                "{value:?} decoded"
+            );
+        }
+        assert!(serde_json::from_value::<BlobRef>(serde_json::json!(1)).is_err());
+    }
+
+    #[test]
+    fn blob_ref_stays_a_bare_string_on_the_wire_and_as_a_map_key() {
+        let blob_ref = BlobRef::from_bytes(b"payload");
+        assert_eq!(
+            serde_json::to_value(&blob_ref).unwrap(),
+            serde_json::Value::String(blob_ref.as_str().to_owned())
+        );
+        let map = std::collections::BTreeMap::from([(blob_ref.clone(), 1)]);
+        let encoded = serde_json::to_value(&map).unwrap();
+        assert_eq!(encoded[blob_ref.as_str()], 1);
+        assert_eq!(
+            serde_json::from_value::<std::collections::BTreeMap<BlobRef, u32>>(encoded).unwrap(),
+            map
+        );
     }
 }

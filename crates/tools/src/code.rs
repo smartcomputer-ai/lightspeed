@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use harness::{BlobRef, CodeModeLimits, ToolName};
+use harness::{BlobRef, CodeModeLimits, ToolId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -70,7 +70,7 @@ pub struct CodeExecutionContextV1 {
     pub source_ref: BlobRef,
     pub limits: CodeModeLimits,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_tools: Option<BTreeSet<ToolName>>,
+    pub allowed_tools: Option<BTreeSet<ToolId>>,
 }
 
 impl CodeExecutionContextV1 {
@@ -82,9 +82,6 @@ impl CodeExecutionContextV1 {
                 message: "invalid code execution context version or parent identity".to_owned(),
             });
         }
-        BlobRef::parse(self.source_ref.as_str()).map_err(|error| ToolError::InvalidRequest {
-            message: format!("invalid code execution source reference: {error}"),
-        })?;
         self.limits
             .validate()
             .map_err(|error| ToolError::InvalidRequest {
@@ -116,7 +113,7 @@ pub fn code_execute_tool_definition() -> ToolResult<crate::runtime::FunctionDefi
             "type": "object",
             "properties": {
                 "code": {"type": "string", "minLength": 1, "description": "JavaScript async function body; use await and return directly."},
-                "timeout_ms": {"type": "integer", "minimum": 1, "maximum": harness::CODE_MODE_TIMEOUT_CEILING_MS, "description": "Optional total attempt limit including input loading, interpreter capacity waits, JavaScript evaluation, and tool waits; may only narrow the session's configured limit."}
+                "timeout_ms": {"type": "integer", "minimum": 1, "description": "Optional total attempt limit including input loading, interpreter capacity waits, JavaScript evaluation, and tool waits. It can only narrow the session's configured limit, and a larger value is refused, so omit it unless the script should stop sooner."}
             },
             "required": ["code"],
             "additionalProperties": false
@@ -170,6 +167,14 @@ pub fn code_execution_output_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timeout_schema_states_no_number_the_session_limit_could_contradict() {
+        let definition = code_execute_tool_definition().unwrap();
+        let timeout = &definition.input_schema["properties"]["timeout_ms"];
+        assert!(timeout.is_object());
+        assert!(timeout.get("maximum").is_none(), "{timeout}");
+    }
 
     #[test]
     fn output_schema_accepts_legacy_text_and_typed_media_file_selections() {
@@ -248,7 +253,7 @@ mod tests {
             .allowed_tools
             .as_mut()
             .unwrap()
-            .insert(ToolName::new(CODE_EXECUTE_TOOL_NAME));
+            .insert(ToolId::new(CODE_EXECUTE_TOOL_NAME));
         assert!(context.validate().is_err());
     }
 }

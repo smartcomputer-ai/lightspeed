@@ -8,16 +8,20 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result, anyhow, bail};
 use api::{ContextEntryKindView, ContextEntryView, ContextMessageRoleView, RunStatus};
 use api_projection::{
-    CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectRun, read_all_session_entries, started_run_id,
+    CoreAgentProjector, MAX_EVENT_PAGE_LIMIT, ProjectRun, decode_stored_entry,
+    map_session_store_error, started_run_id,
 };
 use async_trait::async_trait;
 use casefile::{EvalCase, FileExpectation, SetupFile, load_cases};
 use clap::{Parser, Subcommand};
 use harness::{
     ContextConfig, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole,
-    CoreAgentCommand, GenerationConfig, LimitsConfig, ModelSelection, ProviderApiKind, RunConfig,
-    SessionConfig, SessionId, ToolName, ToolSpec,
-    storage::{BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, SessionStore},
+    CoreAgentCodec, CoreAgentCommand, CoreAgentEntry, GenerationConfig, LimitsConfig,
+    ModelSelection, ProviderApiKind, RunConfig, SessionConfig, SessionId, ToolId, ToolSpec,
+    storage::{
+        BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore, ReadSessionEvents,
+        SessionStore,
+    },
 };
 use llm_clients::openai::{completions as oai_c, responses as oai};
 use llm_clients::{ApiResponse, anthropic::messages as anthropic};
@@ -568,7 +572,7 @@ struct EvalRuntime {
     blobs: Arc<InMemoryBlobStore>,
     config: SessionConfig,
     instructions_ref: harness::BlobRef,
-    tool_set: BTreeMap<ToolName, ToolSpec>,
+    tool_set: BTreeMap<ToolId, ToolSpec>,
     tool_id_by_name: BTreeMap<String, String>,
     diagnostics: Arc<LlmDiagnostics>,
 }
@@ -579,7 +583,7 @@ struct EvalRunProjection<'a> {
     status: harness::RunStatus,
     source: &'a harness::RunSource,
     started_at_ms: Option<u64>,
-    completed_at_ms: Option<u64>,
+    finished_at_ms: Option<u64>,
     usage: Option<&'a harness::LlmUsage>,
 }
 
@@ -642,24 +646,20 @@ impl EvalRuntime {
                     source: harness::RunRequestSource::Input {
                         input: user_input(input_ref),
                     },
-                    run_config: RunConfig {
-                        input_limit_tokens: None,
-                        max_turns: self.config.limits.max_turns,
-                        max_tool_rounds: self.config.limits.max_tool_rounds,
-                        ..Default::default()
-                    },
+                    run_config: RunConfig::default(),
+                    input_limit_tokens: None,
                 }),
                 20,
             )
             .await?;
         let run_id = started_run_id(&outcome.emitted_entries)
-            .or_else(|| outcome.state.runs.completed.last().map(|run| run.run_id))
+            .or_else(|| outcome.state.runs.finished.last().map(|run| run.run_id))
             .or_else(|| outcome.state.runs.active.as_ref().map(|run| run.run_id))
             .ok_or_else(|| anyhow!("eval request did not start a run"))?;
         let projection = if let Some(run) = outcome
             .state
             .runs
-            .completed
+            .finished
             .iter()
             .find(|run| run.run_id == run_id)
         {
@@ -668,7 +668,7 @@ impl EvalRuntime {
                 status: run.status,
                 source: &run.source,
                 started_at_ms: run.started_at_ms,
-                completed_at_ms: Some(run.completed_at_ms),
+                finished_at_ms: Some(run.finished_at_ms),
                 output: run.output.as_ref(),
                 usage: run.usage.as_ref(),
             }
@@ -684,7 +684,7 @@ impl EvalRuntime {
                 status: run.status,
                 source: &run.source,
                 started_at_ms: run.started_at_ms,
-                completed_at_ms: None,
+                finished_at_ms: None,
                 output: None,
                 usage: run.usage.as_ref(),
             }
@@ -748,13 +748,9 @@ impl EvalRuntime {
         session_id: &SessionId,
         projection: EvalRunProjection<'_>,
     ) -> Result<api::RunView> {
-        let entries = read_all_session_entries(
-            self.sessions.as_ref(),
-            session_id,
-            MAX_EVENT_PAGE_LIMIT as usize,
-        )
-        .await
-        .map_err(api_error)?;
+        let entries = read_all_session_entries(self.sessions.as_ref(), session_id)
+            .await
+            .map_err(api_error)?;
         CoreAgentProjector::new(self.blobs.as_ref())
             .project_run_with_metadata(ProjectRun {
                 entries: &entries,
@@ -763,11 +759,40 @@ impl EvalRuntime {
                 output: projection.output,
                 source: projection.source,
                 started_at_ms: projection.started_at_ms,
-                completed_at_ms: projection.completed_at_ms,
+                finished_at_ms: projection.finished_at_ms,
                 usage: projection.usage,
+                failure: None,
+                earlier_events_omitted: false,
             })
             .await
             .map_err(api_error)
+    }
+}
+
+/// The whole log of an eval session, which is small and lives in memory.
+async fn read_all_session_entries(
+    sessions: &dyn SessionStore,
+    session_id: &SessionId,
+) -> Result<Vec<CoreAgentEntry>, api::AgentApiError> {
+    let mut after = None;
+    let mut entries = Vec::new();
+    let codec = CoreAgentCodec;
+    loop {
+        let page = sessions
+            .read_after(ReadSessionEvents {
+                session_id: session_id.clone(),
+                after,
+                limit: MAX_EVENT_PAGE_LIMIT as usize,
+            })
+            .await
+            .map_err(map_session_store_error)?;
+        after = page.next_after;
+        for entry in &page.entries {
+            entries.push(decode_stored_entry(&codec, entry)?);
+        }
+        if page.complete {
+            return Ok(entries);
+        }
     }
 }
 
@@ -927,11 +952,9 @@ fn session_config(case: &EvalCase, model: ModelSelection) -> SessionConfig {
             ..Default::default()
         },
         limits: LimitsConfig {
-            max_turns: Some(case.run.max_turns.unwrap_or(12)),
-            max_tool_rounds: Some(case.run.max_tool_rounds.unwrap_or(8)),
+            max_turns: case.run.max_turns,
         },
         context: ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: None,
             compaction: None,
         },
@@ -1348,8 +1371,8 @@ mod tests {
             key: None,
             kind,
             content: api::ContentRefView {
-                content_ref: "sha256:entry".to_owned(),
-                media_type: None,
+                blob_ref: "sha256:entry".to_owned(),
+                mime: None,
                 provider_kind: None,
                 media_handle: None,
             },

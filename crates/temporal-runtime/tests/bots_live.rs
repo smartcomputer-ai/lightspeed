@@ -26,7 +26,7 @@ use api::{
     BotPutParams, BotReadParams, BotSessionRotateParams, BotSetupStatus, BotStateReadParams,
     BotTriggerDeleteParams, BotTriggerDocument, BotTriggerId, BotTriggerInput, BotTriggerPutParams,
     BotTriggerSpec, ProfileCreateParams, ProfileDocument, ProfileId, ProfileInstructions,
-    SessionReadParams, SessionStatus, WebhookVerification,
+    SessionLifecycleStatus, SessionReadParams, WebhookVerification,
 };
 use bots::ids::{bot_controller_workflow_id, bot_main_session_id, bot_schedule_id};
 use harness::{CoreAgentLlm, CoreAgentTools, storage::BlobStore};
@@ -43,7 +43,7 @@ use temporal_runtime::{
     },
 };
 use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
-use temporalio_client::{Client, WorkflowDescribeOptions};
+use temporalio_client::{Client, WorkflowDescribeOptions, WorkflowTerminateOptions};
 
 const WAIT: Duration = Duration::from_secs(90);
 
@@ -354,7 +354,8 @@ async fn bots_live_manual_event_runs_and_records_outcome() -> anyhow::Result<()>
             .await?
             .result
             .session;
-        assert_eq!(session.status, SessionStatus::Idle);
+        assert_eq!(session.lifecycle_status, SessionLifecycleStatus::Open);
+        assert_eq!(session.activity, api::SessionActivity::Idle);
         assert!(
             session.active_tools.tools.iter().any(|tool| {
                 tool.tool_id == "bot_event_resolve"
@@ -432,7 +433,8 @@ async fn bots_live_reset_main_recovers_a_missing_session_row() -> anyhow::Result
             .await?
             .result
             .session;
-        assert_eq!(session.status, SessionStatus::Idle);
+        assert_eq!(session.lifecycle_status, SessionLifecycleStatus::Open);
+        assert_eq!(session.activity, api::SessionActivity::Idle);
         let first_workflow = client.get_workflow_handle::<temporal_workflow::AgentSessionWorkflow>(
             temporal_workflow::compose_workflow_id(
                 live_universe_id()?,
@@ -877,7 +879,7 @@ async fn bots_live_close_and_delete_preserve_history_and_recreate() -> anyhow::R
             .await?
             .result
             .session;
-        assert_eq!(session.status, SessionStatus::Closed);
+        assert_eq!(session.lifecycle_status, SessionLifecycleStatus::Closed);
 
         // Events admitted after close are refused on the row.
         let refused = api
@@ -912,7 +914,7 @@ async fn bots_live_close_and_delete_preserve_history_and_recreate() -> anyhow::R
             .await?
             .result
             .session;
-        assert_eq!(retained.status, SessionStatus::Closed);
+        assert_eq!(retained.lifecycle_status, SessionLifecycleStatus::Closed);
         assert_eq!(retained.access.visibility, api::Visibility::Universe);
         api.create_bot(BotCreateParams {
             bot: BotInput {
@@ -938,6 +940,149 @@ async fn bots_live_close_and_delete_preserve_history_and_recreate() -> anyhow::R
             .session;
         assert_ne!(successor.id, retained.id);
         api.delete_bot(BotDeleteParams { bot_id }).await?;
+        Ok(())
+    })
+    .await
+}
+
+/// What a breaking release leaves behind, as a new Temporal namespace on the same
+/// database would: an open main row with no workflow and no controller state. The
+/// next event starts a controller past that row, and a bot delete still closes it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires the local Temporal + PostgreSQL stack (source scripts/dev/env.sh)"]
+async fn bots_live_controller_without_state_rolls_past_an_open_main_session() -> anyhow::Result<()>
+{
+    run_bots_live(Llm::Fake, |api, client| async move {
+        let profile_id = create_profile(&api, "You are a live-test bot.").await?;
+        let bot_id = create_bot(&api, &profile_id, |_| {}, Vec::new()).await?;
+        api.admit_bot_event(BotEventAdmitParams {
+            bot_id: bot_id.clone(),
+            event: manual_event("before the release"),
+        })
+        .await?;
+        wait_for_outcomes(&api, &bot_id, 1).await?;
+
+        let universe = live_universe_id()?;
+        let first = bot_main_session_id(&bot_id, 1);
+        client
+            .get_workflow_handle::<temporal_workflow::BotControllerWorkflow>(
+                bot_controller_workflow_id(universe, &bot_id),
+            )
+            .terminate(WorkflowTerminateOptions::default())
+            .await?;
+        client
+            .get_workflow_handle::<temporal_workflow::AgentSessionWorkflow>(
+                temporal_workflow::compose_workflow_id(
+                    universe,
+                    &harness::session::SessionId::new(first.clone()),
+                ),
+            )
+            .terminate(WorkflowTerminateOptions::default())
+            .await?;
+
+        api.admit_bot_event(BotEventAdmitParams {
+            bot_id: bot_id.clone(),
+            event: manual_event("after the release"),
+        })
+        .await?;
+        let events = wait_for_outcomes(&api, &bot_id, 2).await?;
+        assert!(
+            events
+                .iter()
+                .all(|event| event.outcome == Some(BotEventOutcome::Unresolved)),
+            "the second event reaches a run on the next generation: {events:#?}"
+        );
+        let successor = api
+            .read_session(SessionReadParams {
+                session_id: bot_main_session_id(&bot_id, 2),
+                run_limit: None,
+            })
+            .await?
+            .result
+            .session;
+        assert_eq!(successor.lifecycle_status, SessionLifecycleStatus::Open);
+        assert_eq!(successor.activity, api::SessionActivity::Idle);
+
+        api.delete_bot(BotDeleteParams { bot_id }).await?;
+        let retained = api
+            .read_session(SessionReadParams {
+                session_id: first,
+                run_limit: None,
+            })
+            .await?
+            .result
+            .session;
+        assert_eq!(retained.lifecycle_status, SessionLifecycleStatus::Closed);
+        Ok(())
+    })
+    .await
+}
+
+/// No lane is waiting when the main session's workflow goes away, so nothing notices
+/// until the next event. That event must run on the next generation instead of failing,
+/// as must every event after it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires the local Temporal + PostgreSQL stack (source scripts/dev/env.sh)"]
+async fn bots_live_dead_main_session_rolls_forward_with_no_lane_waiting() -> anyhow::Result<()> {
+    run_bots_live(Llm::Fake, |api, client| async move {
+        let profile_id = create_profile(&api, "You are a live-test bot.").await?;
+        let bot_id = create_bot(&api, &profile_id, |_| {}, Vec::new()).await?;
+        api.admit_bot_event(BotEventAdmitParams {
+            bot_id: bot_id.clone(),
+            event: manual_event("before the session died"),
+        })
+        .await?;
+        wait_for_outcomes(&api, &bot_id, 1).await?;
+
+        let first = bot_main_session_id(&bot_id, 1);
+        client
+            .get_workflow_handle::<temporal_workflow::AgentSessionWorkflow>(
+                temporal_workflow::compose_workflow_id(
+                    live_universe_id()?,
+                    &harness::session::SessionId::new(first.clone()),
+                ),
+            )
+            .terminate(WorkflowTerminateOptions::default())
+            .await?;
+
+        api.admit_bot_event(BotEventAdmitParams {
+            bot_id: bot_id.clone(),
+            event: manual_event("after the session died"),
+        })
+        .await?;
+        let events = wait_for_outcomes(&api, &bot_id, 2).await?;
+        assert!(
+            events
+                .iter()
+                .all(|event| event.outcome == Some(BotEventOutcome::Unresolved)),
+            "the second event reaches a run on the next generation: {events:#?}"
+        );
+        let second = bot_main_session_id(&bot_id, 2);
+        wait_for_controller_settled(&api, &client, &bot_id, |controller| {
+            controller.setup_status == BotSetupStatus::Ready && controller.main_session_id == second
+        })
+        .await?;
+
+        let read = |session_id: String| {
+            let api = api.clone();
+            async move {
+                anyhow::Ok(
+                    api.read_session(SessionReadParams {
+                        session_id,
+                        run_limit: None,
+                    })
+                    .await?
+                    .result
+                    .session,
+                )
+            }
+        };
+        let dead = read(first).await?;
+        assert_eq!(dead.lifecycle_status, SessionLifecycleStatus::Closed);
+        assert!(!dead.runs.is_empty(), "the old transcript stays readable");
+        let second = read(second).await?;
+        assert_eq!(second.lifecycle_status, SessionLifecycleStatus::Open);
+        assert_eq!(second.activity, api::SessionActivity::Idle);
         Ok(())
     })
     .await

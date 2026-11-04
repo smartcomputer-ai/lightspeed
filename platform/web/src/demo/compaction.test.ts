@@ -50,7 +50,7 @@ describe("demo compaction conversations", () => {
     expect(removed.entryIds.every((id) => !session.activeContext.entries.some((entry) => entry.id === id))).toBe(true);
     const replacement = appliedEntries(operation)[0]!;
     expect(replacement).toMatchObject({ kind: { type: "providerOpaque" }, source: { type: "runtime", label: "standalone_compaction_prefix" } });
-    expect(store.readText(replacement.content!.contentRef)).toContain("#482");
+    expect(store.readText(replacement.content!.blobRef)).toContain("#482");
 
     const following = session.events.slice(requestedIndex + 4).filter((event) => event.joins?.runId === runId);
     expect(following.some((event) => event.kind.type === "toolBatchCompleted")).toBe(true);
@@ -80,7 +80,7 @@ describe("demo compaction conversations", () => {
     const replacement = appliedEntries(session.events).find((entry) => entry.kind.type === "providerOpaque"
       && entry.content?.providerKind === "anthropic.messages.compaction")!;
     expect(replacement.source?.type).toBe("assistantOutput");
-    const payload = store.readText(replacement.content!.contentRef)!;
+    const payload = store.readText(replacement.content!.blobRef)!;
     expect(payload).toContain("cohort retention cut and three cleared references");
     const removed = session.events.find((event) => event.kind.type === "contextEntriesRemoved" && event.kind.reason === "providerCompacted")!;
     expect(removed.kind.type).toBe("contextEntriesRemoved");

@@ -17,10 +17,10 @@ export function pairingReplyFor(decision: ChannelInboundDecision): string | null
   switch (decision) {
     case "paired":
       return PAIRING_CONFIRMED_REPLY;
-    case "pairing_required":
+    case "pairingRequired":
       return PAIRING_REQUIRED_REPLY;
     case "bound":
-    case "pairing_pending":
+    case "pairingPending":
     case "unbound":
       return null;
   }
@@ -47,9 +47,9 @@ export function createInboundGate(options: InboundGateOptions): InboundGate {
   return {
     async admit(inbound: ChannelInbound): Promise<InboundVerdict> {
       if (!options.rateLimit.allow(`${inbound.chatId}\0${inbound.senderId}`)) {
-        options.metrics.recordInbound("rate_limited");
+        options.metrics.recordInbound("rateLimited");
         log.warn(`connectors: ${options.accountId} ingress rate limited chat ${inbound.chatId}`);
-        return { outcome: "rate_limited", reply: null };
+        return { outcome: "rateLimited", reply: null };
       }
       let decision: ChannelInboundDecision;
       try {

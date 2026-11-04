@@ -13,6 +13,8 @@ pub mod drive;
 pub mod io;
 pub mod planning;
 pub mod session_graph;
+#[cfg(test)]
+mod state_shape;
 pub mod transition;
 
 pub use admit::*;

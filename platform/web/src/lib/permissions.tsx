@@ -13,29 +13,29 @@ export function PermissionIdentityProvider({ userId, platformAdmin, children }: 
   return <IdentityContext.Provider value={{ userId, platformAdmin }}>{children}</IdentityContext.Provider>;
 }
 
-/** What the UI offers; `manage_access` is managing members and keys. */
-export type PermissionAction = UniverseAction | "manage_access";
+/** What the UI offers; `manageAccess` is managing members and keys. */
+export type PermissionAction = UniverseAction | "manageAccess";
 
 /** The least role each action needs, as the core manifest recommends it. */
 const ACTION_ROLES: Record<PermissionAction, UniverseRole> = {
   read: "viewer",
-  create_session: "contributor",
-  control_session: "contributor",
-  configure_session: "operator",
-  stop_session: "contributor",
-  close_session: "contributor",
-  delete_session: "operator",
-  set_session_retention: "admin",
-  share_session: "contributor",
-  invoke_bot: "contributor",
-  use_resource: "contributor",
-  create_workspace: "operator",
-  create_profile: "operator",
-  manage_profile: "operator",
-  create_bot: "operator",
-  manage_bot: "operator",
-  configure_resource: "operator",
-  manage_access: "admin",
+  createSession: "contributor",
+  controlSession: "contributor",
+  configureSession: "operator",
+  stopSession: "contributor",
+  closeSession: "contributor",
+  deleteSession: "operator",
+  setSessionRetention: "admin",
+  shareSession: "contributor",
+  invokeBot: "contributor",
+  useResource: "contributor",
+  createWorkspace: "operator",
+  createProfile: "operator",
+  manageProfile: "operator",
+  createBot: "operator",
+  manageBot: "operator",
+  configureResource: "operator",
+  manageAccess: "admin",
 };
 
 /** Whether `role` may take `action`. */

@@ -141,11 +141,11 @@ impl Drop for Runtime {
     }
 }
 fn session(config: Value) -> Value {
-    json!({"id":"s1","status":"idle","activity":"idle","retention":{"rootSessionId":"s1"},"managed":false,"configRevision":7,"contextRevision":0,"createdAtMs":1,"updatedAtMs":1,"access":{"visibility":"restricted"},"activeContext":{"revision":0},"config":config})
+    json!({"id":"s1","lifecycleStatus":"open","activity":"idle","retention":{"rootSessionId":"s1"},"lifecycleControlled":false,"configRevision":7,"contextRevision":0,"createdAtMs":1,"updatedAtMs":1,"access":{"visibility":"restricted"},"activeContext":{"revision":0},"config":config})
 }
 
 fn session_summary(id: &str) -> Value {
-    json!({"id":id,"displayName":"Review changes","lifecycleStatus":"open","activity":"idle","retention":{"rootSessionId":id},"managed":false,"access":{"visibility":"restricted"},"createdAtMs":1,"updatedAtMs":1})
+    json!({"id":id,"displayName":"Review changes","lifecycleStatus":"open","activity":"idle","retention":{"rootSessionId":id},"lifecycleControlled":false,"access":{"visibility":"restricted"},"createdAtMs":1,"updatedAtMs":1})
 }
 
 #[test]
@@ -175,11 +175,11 @@ fn session_delete_is_permanent_unless_soft_delete_is_requested() {
 }
 
 #[test]
-fn chat_list_requests_only_ten_unmanaged_roots_and_shows_status_without_starting_chat() {
+fn chat_list_requests_only_ten_uncontrolled_roots_and_shows_status_without_starting_chat() {
     let runtime = Runtime::start(|method, params| {
         assert_eq!(method, "session/list");
         assert_eq!(params["limit"], 10);
-        assert_eq!(params["managed"], false);
+        assert_eq!(params["lifecycleControlled"], false);
         assert_eq!(params["subagent"], false);
         assert!(params.get("closed").is_none());
         assert!(params.get("cursor").is_none());
@@ -212,11 +212,11 @@ fn chat_list_requests_only_ten_unmanaged_roots_and_shows_status_without_starting
 }
 
 #[test]
-fn chat_resume_aliases_select_the_latest_open_unmanaged_root_without_starting_a_session() {
+fn chat_resume_aliases_select_the_latest_open_uncontrolled_root_without_starting_a_session() {
     let runtime = Runtime::start(|method, params| match method {
         "session/list" => {
             assert_eq!(params["limit"], 1);
-            assert_eq!(params["managed"], false);
+            assert_eq!(params["lifecycleControlled"], false);
             assert_eq!(params["subagent"], false);
             assert_eq!(params["closed"], false);
             json!({"sessions":[session_summary("s1")]})
@@ -245,11 +245,11 @@ fn chat_resume_reports_empty_closed_or_deleted_sessions_without_creating_replace
             ),
             "session/read" if state == "closed" => {
                 let mut session = session(json!({}));
-                session["status"] = json!("closed");
+                session["lifecycleStatus"] = json!("closed");
                 Ok(json!({"session":session,"hasOlderRuns":false}))
             }
             "session/read" if state == "deleted" => Err(
-                json!({"code":-32000,"message":"session deleted","data":{"kind":"not_found","message":"session deleted"}}),
+                json!({"code":-32000,"message":"session deleted","data":{"kind":"notFound","message":"session deleted"}}),
             ),
             _ => panic!("resume must not create a replacement: {method}"),
         });
@@ -268,7 +268,7 @@ fn chat_resume_reports_empty_closed_or_deleted_sessions_without_creating_replace
             assert!(
                 runtime
                     .success(&["chat", "--list"])
-                    .contains("No unmanaged chat sessions")
+                    .contains("No chat sessions")
             );
             assert_eq!(runtime.json(&["chat", "--list", "--json"]), json!([]));
         }
@@ -287,7 +287,7 @@ fn session_read_accepts_a_name_and_renders_human_and_json_output() {
     assert!(output.contains("idle"));
     let output = runtime.json(&["session", "read", "test1", "--json"]);
     assert_eq!(output["id"], "s1");
-    assert_eq!(output["status"], "idle");
+    assert_eq!(output["lifecycleStatus"], "open");
 }
 
 #[test]
@@ -655,7 +655,7 @@ fn config_replacement_checks_the_requested_revision_and_outputs_one_document() {
         "session/config/put" => {
             assert_eq!(params["config"], json!({"limits":{"maxTurns":11}}));
             assert_eq!(params["expectedConfigRevision"], 42);
-            json!({"session":{"id":"s1","status":"idle","configRevision":43,"contextRevision":9}})
+            json!({"session":{"id":"s1","lifecycleStatus":"open","activity":"idle","configRevision":43,"contextRevision":9}})
         }
         _ => panic!("unexpected request {method}"),
     });

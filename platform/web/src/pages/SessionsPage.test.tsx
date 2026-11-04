@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   scrollToEnd: vi.fn(),
   compactions: [] as { status: string; error: Error | null }[],
   session: undefined as SessionView | undefined,
+  sessionRefetchInterval: undefined as unknown,
 }));
 
 vi.mock("@/api", async (original) => ({
@@ -28,15 +29,18 @@ vi.mock("@/api", async (original) => ({
 vi.mock("@/lib/sessions/tail", () => ({ useSessionTail: mocks.tail }));
 vi.mock("@/lib/permissions", () => ({
   useActionPermissions: () => ({ can: (action: string) => mocks.permissions.has(action), isLoading: mocks.permissionLoading }),
-  useSessionDeletePermission: () => () => mocks.permissions.has("delete_session"),
-  useSessionClosePermission: () => () => mocks.permissions.has("close_session"),
+  useSessionDeletePermission: () => () => mocks.permissions.has("deleteSession"),
+  useSessionClosePermission: () => () => mocks.permissions.has("closeSession"),
   usePermissionIdentity: () => "user",
   useUniverseRole: () => "contributor",
 }));
 // Keep queries and unrelated settings out of these composer/transcript tests.
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({}),
-  useQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === "session" ? mocks.session : undefined, refetch: vi.fn() }),
+  useQuery: ({ queryKey, refetchInterval }: { queryKey: string[]; refetchInterval?: unknown }) => {
+    if (queryKey[0] === "session" && refetchInterval) mocks.sessionRefetchInterval = refetchInterval;
+    return { data: queryKey[0] === "session" ? mocks.session : undefined, refetch: vi.fn() };
+  },
   useInfiniteQuery: () => ({ data: undefined, refetch: vi.fn() }),
   useMutation: () => ({ isPending: false }),
   useMutationState: () => mocks.compactions,
@@ -70,7 +74,7 @@ let transcript = emptyTranscript();
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   window.localStorage.clear();
-  mocks.permissions = new Set(["read", "control_session", "stop_session", "delete_session", "invoke_bot", "manage_bot"]);
+  mocks.permissions = new Set(["read", "controlSession", "stopSession", "deleteSession", "invokeBot", "manageBot"]);
   mocks.permissionLoading = false;
   mocks.compactions = [];
   mocks.session = undefined;
@@ -126,7 +130,7 @@ describe("queued message steering", () => {
     expect(mocks.api.mock.calls).toEqual([
       ["GET", `${base}/runs/queued-run`],
       ["POST", `${base}/runs/queued-run/cancel`, {}],
-      ["POST", `${base}/runs/active-run/steer`, { text, attachments: [attachment] }],
+      ["POST", `${base}/runs/active-run/steer`, expect.objectContaining({ text, attachments: [attachment], submissionId: expect.any(String) })],
     ]);
     expect(container.querySelector('[aria-label="Queued messages"]')).toBeNull();
     expect(container.textContent).toContain(text);
@@ -223,7 +227,7 @@ describe("queued message steering", () => {
 
   it.each([
     new Error("Connection lost"),
-    new ApiError(409, { error: "run ended before steering was admitted: active-run" }),
+    new ApiError(409, { error: "run ended before steering reached it: active-run" }),
     new ApiError(502, { error: "Runtime unavailable" }),
   ])("does not automatically resend an uncertain steering outcome: %s", async (error) => {
     prepare();
@@ -313,7 +317,7 @@ describe("queued message steering", () => {
     transcript.activeRun = { runId: "next-active-run", label: "thinking", cancelling: false };
     await show("session");
     await act(async () => cancelled({ run: { id: "queued-run", status: "cancelled" } }));
-    expect(mocks.api).toHaveBeenLastCalledWith("POST", `${base}/runs/active-run/steer`, { text, attachments: [attachment] });
+    expect(mocks.api).toHaveBeenLastCalledWith("POST", `${base}/runs/active-run/steer`, expect.objectContaining({ text, attachments: [attachment] }));
   });
 
   it("does not cancel after navigating away during the input read", async () => {
@@ -357,7 +361,7 @@ describe("queued message steering", () => {
     expect(steerButton()!.disabled).toBe(true);
   });
 
-  it.each([["read"], ["read", "stop_session"], ["read", "control_session"]])("requires both control and stop permission: %j", async (...permissions) => {
+  it.each([["read"], ["read", "stopSession"], ["read", "controlSession"]])("requires both control and stop permission: %j", async (...permissions) => {
     prepare();
     mocks.permissions = new Set(permissions);
     await show("session");
@@ -366,7 +370,7 @@ describe("queued message steering", () => {
 
   it("respects the managed session direct input gate", async () => {
     prepare();
-    mocks.session = { id: "session", managed: true, status: "active" } as SessionView;
+    mocks.session = { id: "session", lifecycleControlled: true, lifecycleStatus: "open", activity: "working" } as SessionView;
     await show("session");
     expect(steerButton()).toBeNull();
   });
@@ -477,7 +481,19 @@ describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer", (pat
     expect(mocks.api).toHaveBeenCalledWith("POST", expect.stringContaining("/messages"), expect.objectContaining({ text: "after compaction" }));
     await type("adjust the current run");
     await enter({ ctrlKey: true });
-    expect(mocks.api).toHaveBeenCalledWith("POST", expect.stringContaining("/runs/active-run/steer"), { text: "adjust the current run" });
+    expect(mocks.api).toHaveBeenCalledWith("POST", expect.stringContaining("/runs/active-run/steer"), expect.objectContaining({ text: "adjust the current run" }));
+  });
+
+  it("follows a held steering with the same submission id", async () => {
+    transcript.activeRun = { runId: "active-run", label: "running", cancelling: false };
+    mocks.api.mockRejectedValueOnce(new ApiError(409, { error: "held", kind: "operationPending" }))
+      .mockResolvedValueOnce({ steeringId: "steering_1", run: { id: "active-run", status: "running" } });
+    await show(pathway);
+    await type("adjust the current run");
+    await enter({ ctrlKey: true });
+    const steers = mocks.api.mock.calls.filter(([, url]) => String(url).endsWith("/runs/active-run/steer"));
+    expect(steers).toHaveLength(2);
+    expect(steers[1]![2]).toEqual(steers[0]![2]);
   });
 
   it.each(["message", "queue", "steer"] as const)("clears a submitted %s and resumes following only after acceptance", async (mode) => {
@@ -494,7 +510,7 @@ describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer", (pat
     expect(mocks.api).toHaveBeenCalledWith(
       "POST",
       `/api/v1/universes/universe/sessions/session/${mode === "steer" ? "runs/active-run/steer" : "messages"}`,
-      mode === "steer" ? { text: "send this" } : { text: "send this", submissionId: expect.any(String) },
+      { text: "send this", submissionId: expect.any(String) },
     );
     expect(mocks.scrollToEnd).not.toHaveBeenCalled();
     const messageSelector = mode === "queue" ? '[aria-label="Queued messages"] li' : '[data-slot="bubble"]';
@@ -679,6 +695,43 @@ it.each([false, true])("keeps a backend-loaded run mounted through history prepe
 });
 
 
+describe("dead session execution", () => {
+  it("says the workflow stopped instead of showing the stored activity", async () => {
+    mocks.session = { id: "session", lifecycleControlled: false, lifecycleStatus: "open", activity: "working", executionFailure: "timedOut" } as SessionView;
+    await show("session");
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("This session's workflow timed out.");
+    expect(container.textContent).toContain("Stopped");
+  });
+
+  it("offers a restart to whoever may configure the session", async () => {
+    mocks.session = { id: "session", lifecycleControlled: false, lifecycleStatus: "open", activity: "idle", executionFailure: "failed" } as SessionView;
+    mocks.permissions = new Set(["read", "configureSession"]);
+    await show("session");
+    const restart = [...container.querySelectorAll('[role="alert"] button')].find((button) => button.textContent === "Restart");
+    expect(restart).toBeDefined();
+
+    mocks.permissions = new Set(["read"]);
+    await show("session");
+    expect(container.querySelector('[role="alert"] button')).toBeNull();
+  });
+
+  it("stays quiet for a healthy session", async () => {
+    mocks.session = { id: "session", lifecycleControlled: false, lifecycleStatus: "open", activity: "idle" } as SessionView;
+    await show("session");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.textContent).not.toContain("Stopped");
+  });
+
+  it("keeps re-reading a working session, because a dead workflow emits nothing", async () => {
+    await show("session");
+    const interval = mocks.sessionRefetchInterval as (query: { state: { data?: Partial<SessionView> } }) => number | false;
+    expect(interval({ state: { data: { lifecycleStatus: "open", activity: "working" } } })).toBeGreaterThan(0);
+    expect(interval({ state: { data: { lifecycleStatus: "open", activity: "idle" } } })).toBe(false);
+    expect(interval({ state: { data: { lifecycleStatus: "open", activity: "working", executionFailure: "failed" } } })).toBe(false);
+  });
+});
+
 describe("session action permissions", () => {
   it("invites whoever can write to an empty session, and tells a reader it is empty", async () => {
     await show("session");
@@ -706,7 +759,7 @@ describe("session action permissions", () => {
   });
 
   it("lets an operator stop another user's run without enabling steering or settings", async () => {
-    mocks.permissions = new Set(["read", "stop_session"]);
+    mocks.permissions = new Set(["read", "stopSession"]);
     transcript.activeRun = { runId: "active-run", label: "running", cancelling: false };
     mocks.api.mockResolvedValue({ run: { id: "active-run", status: "cancelled" } });
     await show("session");

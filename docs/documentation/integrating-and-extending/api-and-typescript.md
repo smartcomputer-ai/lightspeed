@@ -87,11 +87,6 @@ console.log({ sessionId, runId, status: accepted.result.run.status });
 
 await client.awaitRun(sessionId, runId, {
   signal: AbortSignal.timeout(5 * 60_000),
-  onPage(page) {
-    if (page.result.gap) {
-      throw new Error("Event history has a gap; reconcile this run before continuing");
-    }
-  },
   onEvent(event) {
     console.log(event.cursor.seq, event.kind.type);
   },
@@ -114,7 +109,8 @@ The start response means the run was admitted. It can be queued behind
 existing work or already running; it does not mean generation finished.
 `awaitRun` follows session events until it sees a completed, failed, or canceled
 event for the requested run. The final read returns that run's projection,
-including its complete visible terminal text in `outputText` when present.
+including its complete visible terminal text in `outputText` when present, and a
+`failure` with `kind` and `message` when it failed.
 
 The example creates a session shared with the universe so teammates can inspect
 it in the Platform. Omitting `access` creates private work; because this key
@@ -171,14 +167,18 @@ with the same identifiers and contents.
 the creation profile or replace its configuration. Reusing a session ID for a
 different business operation can therefore reconnect to old state. Creation
 retries can still validate supplied profile/configuration references, so an
-invalid or deleted referenced profile can prevent a retry. Once IDs are saved,
-read the known session/run directly during recovery instead of unnecessarily
-repeating creation.
+invalid or deleted referenced profile can prevent a retry. A retry also
+[restarts a stopped workflow execution](../deployment/upgrades-and-recovery.md#restart-a-stopped-session)
+from the log. Once IDs are saved, read the known session/run directly during recovery
+instead of unnecessarily repeating creation. If a start fails during setup, a
+server-allocated ID is closed and a client-supplied one reports the same error on retry.
 
 `session/runs/start` deduplicates by submission ID within the session. The
 same ID and source/configuration/terminal notification return the original
 run. Reusing the ID with changed inputs is rejected. Allocate a new submission
-ID when asking for another run.
+ID when asking for another run. The session remembers the last 256 finished runs for
+this, so a retry much later than that starts a new run. `session/runs/steer` takes a
+`submissionId` too, and remembers the active run's last 64 steering batches.
 
 The `startRun` helper generates an ID if you omit one, but calling the helper
 again generates another ID. That default does not provide retry safety across
@@ -209,8 +209,6 @@ the beginning. If a saved cursor might already be past the target's terminal
 event, read the run before waiting again; the helper looks for terminal events
 after its cursor and does not independently check current run state.
 
-Check `gap` when reconstructing history. The helper exposes it through
-`onPage` but does not implement application recovery for missing events.
 `complete` means the requested direction has no more events at the instant
 of the read; it does not mean the session is closed.
 
@@ -222,10 +220,16 @@ projection state to join their pieces.
 
 ## Read content through the public projection
 
-`session/read` returns current session state and a bounded recent run-summary
-page. Follow its run cursor through `session/runs/list` for older summaries.
-`session/runs/read` provides one run's detail; unusually large run histories can
-exceed its detail ceiling and require event-stream reconstruction instead.
+`session/read` returns stored session state and a bounded recent run-summary page,
+and needs no worker. `lifecycleStatus` is `new`, `open` or `closed`, `activity` says what
+the session is doing, and `executionFailure` appears when an open session's workflow
+has stopped. Follow its run cursor through `session/runs/list` for older summaries;
+those come from the log and have no usage figure. `session/runs/read` provides one
+run's detail. A run past the detail limit keeps its opening and latest whole turns and
+sets `earlierEventsOmitted`, and `session/events/read` serves the rest.
+
+Run start, cancel, steer and decide all return a run summary, including `failure` when
+there is one, so a caller rarely needs a second read.
 
 Use `outputText` for visible terminal text. A `ContentRefView` retains the
 authoritative content reference, media type, and provider kind. To retrieve
@@ -234,9 +238,9 @@ the bytes of a known reference:
 ```ts
 const output = result.run.output;
 if (output) {
-  const blob = await client.call("blobs/read", { blobRef: output.contentRef });
+  const blob = await client.call("blobs/read", { blobRef: output.blobRef });
   const bytes = Buffer.from(blob.result.bytesBase64, "base64");
-  console.log({ bytes: bytes.length, mediaType: output.mediaType,
+  console.log({ bytes: bytes.length, mime: output.mime,
     providerKind: output.providerKind });
 }
 ```
@@ -257,18 +261,29 @@ durable session event stream.
 
 `LightspeedRpcError` preserves `code`, `message`, `kind`, and structured `data`.
 Inspect those fields for conflicts, rejected operations, missing records, or
-an environment that is not ready. `LightspeedTransportError` reports failures
-such as HTTP errors, invalid responses, or network interruption. A transport
-failure after submission can leave acceptance unknown; reconcile with stable
-IDs before retrying mutations.
+an environment that is not ready. Every `kind` is camelCase, such as `invalidRequest`
+or `notFound`. `LightspeedTransportError` reports failures such as HTTP errors, invalid
+responses, or network interruption. A transport failure after submission can leave
+acceptance unknown; reconcile with stable IDs before retrying mutations.
+
+Two kinds need particular handling:
+
+| Kind | Meaning | What to do |
+| --- | --- | --- |
+| `operationPending` | The wait expired while the session may still be holding the command, for example behind a compaction. It is not a failure, and the command can still land. | Retry the same request. Run start and steering put the submission ID in `data`, including one the server allocated, so a retry cannot land twice. Session events report the outcome. |
+| `sessionExecutionStopped` | The session is open and its history intact, but its workflow execution has stopped. | Call `session/restart`, or decide to close the session. Nothing restarts it behind the caller. |
+
+An approval decision whose wait runs out reports `status: pending` for that decision
+rather than failing the call.
 
 | Action | Method and follow-up |
 | --- | --- |
 | Cancel queued or active work | `session/runs/cancel`, then observe terminal state. Cancellation cannot undo external effects already performed. |
-| Send steering to active work | `session/runs/steer`; the next model turn consumes accepted input. |
+| Send steering to active work | `session/runs/steer` with a stable `submissionId`; the next model turn consumes accepted input. A parked run holds it without waking. |
 | Decide tool approvals | `session/runs/approvals/decide`; inspect per-decision results and resolve all pending approvals. |
 | Update session setup | Read the current revision, then `session/config/put` while idle. It replaces the sparse configuration, including feature grants. |
 | Finish the conversation | `session/close`; ordinary close requires an idle session. Closure and deletion are separate decisions. |
+| Bring back a stopped session | `session/restart`; a run that was executing fails, and a parked run keeps waiting. |
 
 The [API reference](../../../crates/api/contract/api-reference.md) describes
 each operation. The client's generated `rpc` helpers and `METHOD_INFO` expose

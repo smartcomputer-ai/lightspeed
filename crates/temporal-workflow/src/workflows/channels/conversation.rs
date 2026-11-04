@@ -43,13 +43,14 @@ use channels::state::{
     ReceiptEffect, ReceivedMessage,
 };
 use futures::future::{join_all, poll_fn};
-use futures::{pin_mut, select};
+use futures::{pin_mut, select_biased};
 use harness::{
     BlobRef, EmissionBody, EmissionEnvelope, EmissionProducer, PromiseId, PromiseResolution,
     REPLY_COMPLETION_KEY, WorkflowEndpointRef, WorkflowToolInvocation,
 };
 use serde::{Deserialize, Serialize};
 use temporalio_common::ActivityDefinition;
+use temporalio_common::data_converters::RawValue;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityExecutionError, ActivityOptions, CancellableFuture, ContinueAsNewOptions,
@@ -67,6 +68,7 @@ use super::{
     connector_typing_options,
 };
 use crate::AgentSessionWorkflow;
+use crate::workflows::fail_task_if_undecodable;
 
 /// Start argument: the conversation this workflow fronts and, after a
 /// continue-as-new, what the previous execution carried over.
@@ -161,12 +163,10 @@ impl ChannelConversationWorkflow {
     /// Pushed `message_*` invocations and their cancellations from the
     /// bot's routed sessions.
     #[signal(name = "deliver_emission")]
-    pub fn deliver_emission(
-        &mut self,
-        _ctx: &mut SyncWorkflowContext<Self>,
-        envelope: EmissionEnvelope,
-    ) {
-        self.emission_inbox.push_back(envelope);
+    pub fn deliver_emission(&mut self, ctx: &mut SyncWorkflowContext<Self>, emission: RawValue) {
+        if let Ok(envelope) = crate::workflows::receive_emission(ctx, &emission) {
+            self.emission_inbox.push_back(envelope);
+        }
     }
 
     /// The bot controller's `started` / `finished` word on a delivery this
@@ -273,7 +273,7 @@ async fn park(ctx: &Ctx, lanes: &mut Vec<LaneFuture>) -> Result<(), WorkflowTerm
     let cancelled = ctx.cancelled();
     with_lanes(lanes, async move {
         pin_mut!(wait, cancelled);
-        select! {
+        select_biased! {
             _ = wait => Ok(()),
             _ = cancelled => Err(WorkflowTermination::cancelled()),
         }
@@ -335,8 +335,7 @@ async fn activity<AD: ActivityDefinition>(
     input: AD::Input,
     options: ActivityOptions,
 ) -> Result<AD::Output, String> {
-    ctx.execute_activity(definition, input, options)
-        .await
+    fail_task_if_undecodable(ctx.execute_activity(definition, input, options).await)
         .map_err(|error| error.to_string())
 }
 
@@ -371,8 +370,7 @@ where
     F: CancellableFuture<Output = Result<T, ActivityExecutionError>>,
 {
     let Some(invocation_id) = watch else {
-        return start()
-            .await
+        return fail_task_if_undecodable(start().await)
             .map_err(|error| StepError::Failed(error.to_string()));
     };
     if ctx.state(|wf| wf.state.is_cancelled(invocation_id)) {
@@ -381,8 +379,11 @@ where
     let activity = start();
     let cancelled = ctx.wait_for_state(|wf| wf.state.is_cancelled(invocation_id));
     pin_mut!(activity, cancelled);
-    select! {
-        result = activity => result.map_err(|error| StepError::Failed(error.to_string())),
+    // A finished activity comes first, so a send the workflow saw acknowledged is
+    // always archived even when a cancel landed with it.
+    select_biased! {
+        result = activity => fail_task_if_undecodable(result)
+            .map_err(|error| StepError::Failed(error.to_string())),
         _ = cancelled => {
             activity.cancel();
             let _ = activity.await;
@@ -491,7 +492,7 @@ async fn resolve_promise(
         .external_workflow(holder_workflow_id.to_owned(), None)
         .signal(
             AgentSessionWorkflow::deliver_emission,
-            envelope,
+            crate::workflows::emission_signal_input(&envelope),
             crate::workflows::signal_options(),
         )
         .await
@@ -636,7 +637,7 @@ async fn prepare_message_media(
                             ctx.timer_with_manual_cancellation(std::time::Duration::from_secs(2));
                         let cancelled = ctx.cancelled();
                         pin_mut!(timer, cancelled);
-                        select! { _ = timer => false, _ = cancelled => true }
+                        select_biased! { _ = cancelled => true, _ = timer => false }
                     };
                     if cancelled {
                         let _ = ctx
@@ -706,7 +707,7 @@ async fn prepare_media(
     prepared
         .into_iter()
         .map(|result| {
-            result
+            fail_task_if_undecodable(result)
                 .map(|result| result.item)
                 .map_err(|error| error.to_string())
         })
@@ -993,7 +994,7 @@ async fn run_invocation(ctx: Ctx, pushed: PushedInvocation, reply_promise_id: Pr
     };
     tracing::info!(
         %invocation_id,
-        tool_id = %pushed.invocation.tool_id,
+        tool_id = %pushed.invocation.workflow_tool_id,
         outcome = match &end {
             LaneEnd::Resolved { .. } => "resolved",
             LaneEnd::Failed(_) => "failed",
@@ -1030,8 +1031,9 @@ async fn run_invocation(ctx: Ctx, pushed: PushedInvocation, reply_promise_id: Pr
 }
 
 /// The steps up to and including the provider delivery are cancellable;
-/// once the provider acknowledged a send, archiving it (so it has a
-/// number) is not.
+/// once the workflow has seen the provider acknowledge a send, archiving it
+/// (so it has a number) is not. A send cancelled while in flight is abandoned
+/// and can still reach the provider unarchived.
 async fn deliver_invocation(
     ctx: &Ctx,
     invocation: &WorkflowToolInvocation,
@@ -1051,8 +1053,8 @@ async fn deliver_invocation(
         )
     })
     .await?;
-    let requested =
-        parse_tool_operation(invocation.tool_id.as_str(), &arguments).map_err(StepError::Failed)?;
+    let requested = parse_tool_operation(invocation.workflow_tool_id.as_str(), &arguments)
+        .map_err(StepError::Failed)?;
     let target = match referenced_handle(&requested) {
         Some(seq) => Some(resolve_handle(ctx, watch, seq).await?),
         None => None,
@@ -1207,8 +1209,8 @@ async fn run_typing(ctx: Ctx, delivery_id: String) {
     );
     let finished = ctx.wait_for_state(|wf| !typing_wanted(&wf.state, &delivery_id));
     pin_mut!(typing, finished);
-    select! {
-        result = typing => match result {
+    select_biased! {
+        result = typing => match fail_task_if_undecodable(result) {
             Ok(()) | Err(ActivityExecutionError::Cancelled(_)) => {}
             Err(error) => ctx.state_mut(|wf| {
                 wf.state
@@ -1480,7 +1482,7 @@ fn project_emission(
             ConversationEmissionBody::ToolInvocation {
                 holder_workflow_id: holder_workflow_id.clone(),
                 invocation_id: invocation.invocation_id.as_str().to_owned(),
-                tool_id: invocation.tool_id.as_str().to_owned(),
+                tool_id: invocation.workflow_tool_id.as_str().to_owned(),
                 arguments_ref: invocation.arguments_ref.as_str().to_owned(),
             },
             Some(PushedInvocation {
@@ -1707,6 +1709,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn conversation_args_decode_a_start_and_an_empty_carry() {
+        let args: ChannelConversationArgs = serde_json::from_value(serde_json::json!({
+            "start": {
+                "universeId": UNIVERSE.to_string(),
+                "botId": "concierge",
+                "triggerId": "tg",
+                "accountId": "primary",
+                "provider": "telegram",
+                "conversation": { "accountId": "primary", "chatId": "123" },
+                "scope": "direct",
+                "activation": {},
+                "access": {},
+                "label": "telegram dm",
+                "connectorTaskQueue": "lightspeed-connector-telegram-test",
+            },
+            "carry": {},
+        }))
+        .expect("a payload already in Temporal history stopped decoding: give the new field a serde default");
+        assert_eq!(args.start.bot_id.as_str(), "concierge");
+        assert_eq!(
+            args.carry.expect("carry").version,
+            channels::state::CONVERSATION_CARRY_VERSION
+        );
+    }
+
     fn inbound(
         text: &str,
         is_direct: bool,
@@ -1752,7 +1780,7 @@ mod tests {
     ) -> WorkflowToolInvocation {
         WorkflowToolInvocation {
             invocation_id: WorkflowToolInvocationId::new(format!("wti:sha256:{}", "a".repeat(64))),
-            tool_id: WorkflowToolId::new(CHANNEL_SEND_TOOL_ID),
+            workflow_tool_id: WorkflowToolId::new(CHANNEL_SEND_TOOL_ID),
             semantic_type: "channels.message.send.v1".to_owned(),
             schema_revision: 3,
             binding_fingerprint: "binding".to_owned(),

@@ -188,8 +188,7 @@ lightspeed chat --provider my-provider --api-kind openai:completions --model MOD
 Without those flags, a new session uses its profile's model, if supplied, then
 the universe's agent-run default. Configure that default below or select a
 route explicitly. Provider identity and API kind are fixed for each session;
-`/model` can choose another compatible model within that route. Retained native
-state can restrict that choice. The TUI footer shows the connection name and universe slug
+`/model` can choose any other model within that route. The TUI footer shows the connection name and universe slug
 for saved or explicit runtime connections; generated local-development
 connections omit this label. The footer also shows the current session ID,
 shortening UUIDs while preserving readable IDs. If the universe slug is
@@ -262,7 +261,7 @@ read. All three commands support `--json`.
 
 An explicit session model takes precedence over a profile model, followed by
 the `agent-run` default. Without any of these, creation fails with
-`model_default_unset`. Changing or clearing defaults leaves existing sessions
+`modelDefaultUnset`. Changing or clearing defaults leaves existing sessions
 and admitted transcription jobs unchanged. A resumed chat uses its stored
 model. See [Models and credentials](models-and-credentials.md#choose-universe-defaults).
 

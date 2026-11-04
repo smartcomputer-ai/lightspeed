@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    CoreAgentState, DomainError, ModelSelection, ProviderApiKind, ProviderParams, ToolChoice,
-};
+use crate::{CoreAgentState, DomainError, ModelSelection, ProviderApiKind, ToolChoice};
 
 const MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD: u32 = 1000;
 const MIN_ANTHROPIC_MESSAGES_COMPACT_THRESHOLD: u32 = 50_000;
@@ -35,6 +33,7 @@ pub struct SessionConfig {
 
 impl SessionConfig {
     pub fn validate(&self) -> Result<(), DomainError> {
+        validate_max_turns(self.limits.max_turns)?;
         validate_generation(&self.generation, &self.model)?;
         validate_context_config(&self.context, &self.model.api_kind)?;
         validate_features(&self.features, &self.model.api_kind)
@@ -46,22 +45,19 @@ pub(crate) fn validate_config_update_for_state(
     config: &SessionConfig,
 ) -> Result<(), DomainError> {
     validate_recorded_config_update(state, config)?;
-    validate_retained_native_model(state, &config.model)
+    config.validate()
 }
 
-/// Replay keeps structural invariants, but does not reapply a newer admission
-/// policy to model changes already recorded in the log.
+/// The reducer's half of a config update. A recorded document already passed
+/// the admission policy of its day, so replay keeps only the structure the rest
+/// of the log depends on and never reapplies a newer policy.
 pub(crate) fn validate_recorded_config_update(
     state: &CoreAgentState,
     config: &SessionConfig,
 ) -> Result<(), DomainError> {
     let current = current_config(state)?;
     validate_session_is_idle_for_config_update(state)?;
-    config.validate()?;
-    validate_session_provider_is_pinned(&current.model, &config.model)?;
-    validate_active_context_api_kind(state, &config.model.api_kind)?;
-    validate_tool_choice_for_active_tools(state, config.generation.tool_choice.as_ref())?;
-    Ok(())
+    validate_session_provider_is_pinned(&current.model, &config.model)
 }
 
 /// Turn-shaping defaults applied to every LLM generation. Per-run overrides
@@ -107,10 +103,9 @@ impl GenerationConfig {
 /// Run budget defaults. Per-run overrides ride [`RunConfig`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LimitsConfig {
+    /// Model turns a run may start. Unset means unbounded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tool_rounds: Option<u32>,
 }
 
 impl LimitsConfig {
@@ -121,9 +116,6 @@ impl LimitsConfig {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextConfig {
-    /// Provider-reported capacity resolved at admission, independent of the user override.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reported_input_limit_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -228,7 +220,7 @@ pub struct WorkspaceAttachment {
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum WorkspaceAttachmentTarget {
     Workspace { workspace_id: String },
-    Snapshot { snapshot_ref: String },
+    Snapshot { snapshot_ref: crate::BlobRef },
 }
 
 /// Per-attachment VFS access. Ordered: `edit` implies `read`.
@@ -463,18 +455,14 @@ pub struct SubagentLimits {
     /// Open sessions under the root, excluding the root itself.
     #[serde(default = "default_subagent_max_concurrent")]
     pub max_concurrent: u32,
-    /// Per-child run deadline; bounded by the execution binding's ceiling.
-    #[serde(default = "default_subagent_deadline_ms")]
-    pub deadline_ms: u64,
+    /// Per-child run deadline. `None` means a child's run has no time limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_timeout_ms: Option<u64>,
 }
 
 pub const SUBAGENT_DEFAULT_MAX_DEPTH: u32 = 2;
 pub const SUBAGENT_DEFAULT_MAX_DESCENDANTS: u32 = 16;
 pub const SUBAGENT_DEFAULT_MAX_CONCURRENT: u32 = 4;
-pub const SUBAGENT_DEFAULT_DEADLINE_MS: u64 = 60 * 60 * 1_000;
-/// Hard bound the execution binding enforces; a grant's `deadline_ms` may
-/// not exceed it.
-pub const SUBAGENT_DEADLINE_CEILING_MS: u64 = 24 * 60 * 60 * 1_000;
 
 impl Default for SubagentLimits {
     fn default() -> Self {
@@ -482,19 +470,23 @@ impl Default for SubagentLimits {
             max_depth: SUBAGENT_DEFAULT_MAX_DEPTH,
             max_descendants: SUBAGENT_DEFAULT_MAX_DESCENDANTS,
             max_concurrent: SUBAGENT_DEFAULT_MAX_CONCURRENT,
-            deadline_ms: SUBAGENT_DEFAULT_DEADLINE_MS,
+            run_timeout_ms: None,
         }
     }
 }
 
 impl SubagentLimits {
-    /// Element-wise minimum: the effective limits of a nested grant.
+    /// Element-wise minimum: the effective limits of a nested grant. An unset
+    /// run timeout is no limit, so the other side's value stands.
     pub fn attenuated_by(self, outer: SubagentLimits) -> Self {
         Self {
             max_depth: self.max_depth.min(outer.max_depth),
             max_descendants: self.max_descendants.min(outer.max_descendants),
             max_concurrent: self.max_concurrent.min(outer.max_concurrent),
-            deadline_ms: self.deadline_ms.min(outer.deadline_ms),
+            run_timeout_ms: match (self.run_timeout_ms, outer.run_timeout_ms) {
+                (Some(inner), Some(outer)) => Some(inner.min(outer)),
+                (inner, outer) => inner.or(outer),
+            },
         }
     }
 }
@@ -509,10 +501,6 @@ fn default_subagent_max_descendants() -> u32 {
 
 fn default_subagent_max_concurrent() -> u32 {
     SUBAGENT_DEFAULT_MAX_CONCURRENT
-}
-
-fn default_subagent_deadline_ms() -> u64 {
-    SUBAGENT_DEFAULT_DEADLINE_MS
 }
 
 /// Grants timer promises through the sleep tool plus the base concurrency
@@ -729,17 +717,12 @@ pub enum CompactionPolicy {
 // ---------------------------------------------------------------------------
 
 /// Per-run overrides carried on run requests. Not part of [`SessionConfig`]:
-/// session-level defaults live in [`GenerationConfig`] and [`LimitsConfig`];
-/// this is the runs/start escape hatch, including raw provider params.
+/// session-level defaults live in [`GenerationConfig`] and [`LimitsConfig`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunConfig {
-    /// Input capacity resolved outside the reducer for this run’s effective model.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input_limit_tokens: Option<u32>,
+    /// Model turns this run may start, in place of the session's limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tool_rounds: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_override: Option<ModelSelection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -748,8 +731,6 @@ pub struct RunConfig {
     pub reasoning_effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processing_tier: Option<ModelProcessingTier>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_params: Option<ProviderParams>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -785,7 +766,6 @@ impl RunConfig {
                 "processing tier is supported only by the built-in openai provider".to_owned(),
             ));
         }
-        validate_provider_params(self.provider_params.as_ref(), api_kind)?;
         Ok(())
     }
 }
@@ -794,35 +774,43 @@ pub(crate) fn validate_run_config_for_state(
     state: &CoreAgentState,
     run_config: &RunConfig,
 ) -> Result<(), DomainError> {
-    validate_recorded_run_config(state, run_config)?;
+    validate_max_turns(run_config.max_turns)?;
     let config = current_config(state)?;
-    validate_retained_native_model(
-        state,
-        run_config.model_override.as_ref().unwrap_or(&config.model),
-    )
+    run_config.validate_provider_compatibility(&config.model)?;
+    let model = run_config.model_override.as_ref().unwrap_or(&config.model);
+    // Only what this request itself names is the caller's to correct. A session's
+    // own choice can dangle because a tool went away, and a run nobody is waiting on
+    // would be lost if refused here: that run starts and fails with this message.
+    validate_tool_choice_for_tools(&state.tooling.tools, run_config.tool_choice.as_ref())?;
+    crate::validate_tools_for_api_kind(state.tooling.tools.values(), &model.api_kind)
 }
 
-/// A committed run has already passed admission. Preserve its model selection
-/// even if the current native-state admission policy would refuse it now.
+/// The reducer's half of a run request. A committed run has already passed
+/// admission, so replay preserves its configuration and only keeps the session
+/// on the provider its retained context belongs to.
 pub(crate) fn validate_recorded_run_config(
     state: &CoreAgentState,
     run_config: &RunConfig,
 ) -> Result<(), DomainError> {
-    if run_config.input_limit_tokens == Some(0) {
-        return Err(DomainError::ProviderCompatibility(
-            "input_limit_tokens must be positive".into(),
-        ));
-    }
     let config = current_config(state)?;
-    run_config.validate_provider_compatibility(&config.model)?;
-    validate_active_context_api_kind(state, &config.model.api_kind)?;
-    validate_tool_choice_for_active_tools(state, run_config.tool_choice.as_ref())?;
-    Ok(())
+    match run_config.model_override.as_ref() {
+        Some(model) => validate_session_provider_is_pinned(&config.model, model),
+        None => Ok(()),
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
+
+fn validate_max_turns(max_turns: Option<u32>) -> Result<(), DomainError> {
+    if max_turns == Some(0) {
+        return Err(DomainError::InvariantViolation(
+            "maxTurns must be at least 1; leave it unset for no limit".to_owned(),
+        ));
+    }
+    Ok(())
+}
 
 fn validate_generation(
     generation: &GenerationConfig,
@@ -949,10 +937,10 @@ fn validate_subagents_feature(subagents: &SubagentsFeature) -> Result<(), Domain
                 .to_owned(),
         ));
     }
-    if limits.deadline_ms == 0 || limits.deadline_ms > SUBAGENT_DEADLINE_CEILING_MS {
-        return Err(DomainError::InvariantViolation(format!(
-            "subagents deadlineMs must be between 1 and {SUBAGENT_DEADLINE_CEILING_MS}"
-        )));
+    if limits.run_timeout_ms == Some(0) {
+        return Err(DomainError::InvariantViolation(
+            "subagents runTimeoutMs must be at least 1 when set".to_owned(),
+        ));
     }
     Ok(())
 }
@@ -1017,12 +1005,7 @@ fn validate_workspace_attachments(
                     ));
                 }
             }
-            WorkspaceAttachmentTarget::Snapshot { snapshot_ref } => {
-                if snapshot_ref.trim().is_empty() {
-                    return Err(DomainError::InvariantViolation(
-                        "workspace attachment snapshot_ref must not be empty".to_owned(),
-                    ));
-                }
+            WorkspaceAttachmentTarget::Snapshot { .. } => {
                 if attachment.access != WorkspaceAccess::Read {
                     return Err(DomainError::InvariantViolation(format!(
                         "snapshot workspace attachment at {path:?} must be read"
@@ -1196,49 +1179,30 @@ fn validate_mcp_feature(mcp: &McpFeature) -> Result<(), DomainError> {
     Ok(())
 }
 
-fn validate_tool_choice_for_active_tools(
-    state: &CoreAgentState,
+/// A specific tool choice has to name one of these tools. Hosts check this while
+/// preparing a toolset, so the caller hears it before a run depends on it.
+pub fn validate_tool_choice_for_tools(
+    tools: &std::collections::BTreeMap<crate::ToolId, crate::ToolSpec>,
     tool_choice: Option<&ToolChoice>,
 ) -> Result<(), DomainError> {
-    let Some(ToolChoice::Specific { tool_name }) = tool_choice else {
+    let Some(ToolChoice::Specific { tool_id }) = tool_choice else {
         return Ok(());
     };
-    if state.tooling.tools.contains_key(tool_name) {
+    if tools.contains_key(tool_id) {
         Ok(())
     } else {
         Err(DomainError::InvariantViolation(format!(
             "tool_choice references missing active tool {}",
-            tool_name
+            tool_id
         )))
     }
-}
-
-fn validate_provider_params(
-    params: Option<&ProviderParams>,
-    api_kind: &ProviderApiKind,
-) -> Result<(), DomainError> {
-    let Some(params) = params else {
-        return Ok(());
-    };
-    if &params.api_kind != api_kind {
-        return Err(DomainError::ProviderCompatibility(format!(
-            "provider params api kind {:?} do not match provider api kind {:?}",
-            params.api_kind, api_kind
-        )));
-    }
-    if !params.body.is_object() {
-        return Err(DomainError::ProviderCompatibility(
-            "provider params body must be a JSON object".to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 fn validate_context_config(
     context: &ContextConfig,
     api_kind: &ProviderApiKind,
 ) -> Result<(), DomainError> {
-    if context.input_limit_tokens == Some(0) || context.reported_input_limit_tokens == Some(0) {
+    if context.input_limit_tokens == Some(0) {
         return Err(DomainError::ProviderCompatibility(
             "input_limit_tokens must be positive".into(),
         ));
@@ -1357,36 +1321,6 @@ fn validate_session_provider_is_pinned(
     Ok(())
 }
 
-fn validate_retained_native_model(
-    state: &CoreAgentState,
-    model: &ModelSelection,
-) -> Result<(), DomainError> {
-    let current = state
-        .context
-        .last_generation_model()
-        .or_else(|| state.lifecycle.config.as_ref().map(|config| &config.model));
-    if current.is_some_and(|current| current != model)
-        && state.context.entries.iter().any(|entry| {
-            matches!(entry.kind, crate::ContextEntryKind::ReasoningState)
-                || entry.content.provider_kind.as_deref().is_some_and(|kind| {
-                    kind == crate::OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND
-                        || kind == crate::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND
-                })
-        })
-    {
-        return Err(DomainError::ProviderCompatibility("model cannot change while native compaction or reasoning state is retained; use a new session".into()));
-    }
-    Ok(())
-}
-
-fn validate_active_context_api_kind(
-    state: &CoreAgentState,
-    api_kind: &ProviderApiKind,
-) -> Result<(), DomainError> {
-    let _ = (state, api_kind);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1401,7 +1335,6 @@ mod tests {
             generation: GenerationConfig::default(),
             limits: LimitsConfig::default(),
             context: ContextConfig {
-                reported_input_limit_tokens: None,
                 input_limit_tokens: None,
                 compaction,
             },
@@ -1410,13 +1343,13 @@ mod tests {
     }
 
     #[test]
-    fn recorded_native_model_changes_replay_but_new_changes_are_rejected() {
+    fn native_state_does_not_pin_the_model_within_a_route() {
         use crate::{
-            AcceptedRunEvent, BlobRef, CommandError, CommandRejectionKind, ContentRef,
-            ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource,
-            ContextEvent, ContextMessageRole, CoreAgentCommand, CoreAgentEntry, CoreAgentEvent,
-            CoreAgentLifecycleEvent, EventSeq, RunEvent, RunId, RunRequestCommand,
-            RunRequestSource, RunSource, SessionPosition, admit_command, apply_event,
+            AcceptedRunEvent, BlobRef, ContentRef, ContextEntry, ContextEntryId, ContextEntryInput,
+            ContextEntryKind, ContextEntrySource, ContextEvent, ContextMessageRole,
+            CoreAgentCommand, CoreAgentEntry, CoreAgentEvent, CoreAgentLifecycleEvent, EventSeq,
+            RunEvent, RunId, RunRequestCommand, RunRequestSource, RunSource, SessionPosition,
+            admit_command, apply_event,
         };
         for (api_kind, kind, provider_kind) in [
             (
@@ -1508,12 +1441,14 @@ mod tests {
                         input: input.clone(),
                     },
                     run_config: run_config.clone(),
+                    input_limit_tokens: None,
                     notify_on_terminal: vec![],
                     requested_by: None,
                 }),
             ] {
-                assert!(matches!(admit_command(&state, command, 3),
-                    Err(CommandError::Rejected(rejection)) if rejection.kind == CommandRejectionKind::ProviderCompatibility));
+                let proposals = admit_command(&state, command, 3)
+                    .expect("native state goes to the new model, which keeps or drops it");
+                assert_eq!(proposals.len(), 1);
             }
             for recorded in [
                 CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::ConfigChanged {
@@ -1525,6 +1460,7 @@ mod tests {
                     submission_id: None,
                     source: RunSource::Input { input },
                     run_config,
+                    input_limit_tokens: None,
                     config_revision: 0,
                     notify_on_terminal: vec![],
                     requested_by: None,
@@ -1632,7 +1568,6 @@ mod tests {
                     validate_run_config_for_state(
                         pinned_state,
                         &RunConfig {
-                            input_limit_tokens: None,
                             model_override: Some(changed),
                             ..Default::default()
                         }
@@ -1662,7 +1597,6 @@ mod tests {
                 validate_run_config_for_state(
                     pinned_state,
                     &RunConfig {
-                        input_limit_tokens: None,
                         model_override: Some(ModelSelection {
                             model: model.into(),
                             ..original.model.clone()
@@ -1932,22 +1866,28 @@ mod tests {
     }
 
     #[test]
-    fn subagent_deadline_accepts_24_hours_and_rejects_larger_values() {
+    fn subagent_run_timeout_is_unset_by_default_unbounded_when_set_and_never_zero() {
+        assert_eq!(SubagentLimits::default().run_timeout_ms, None);
+
         let mut config = config(ProviderApiKind::OpenAiResponses, None);
         config.features.subagents = Some(SubagentsFeature {
             agents: vec![SubagentAgentConfig {
                 profile_id: "reviewer".to_owned(),
             }],
-            limits: SubagentLimits {
-                deadline_ms: SUBAGENT_DEADLINE_CEILING_MS,
-                ..SubagentLimits::default()
-            },
             ..SubagentsFeature::default()
         });
+        config.validate().expect("no time limit is the default");
 
+        let limits = &mut config
+            .features
+            .subagents
+            .as_mut()
+            .expect("subagents feature")
+            .limits;
+        limits.run_timeout_ms = Some(30 * 24 * 60 * 60 * 1_000);
         config
             .validate()
-            .expect("24-hour deadline must be accepted");
+            .expect("no ceiling applies to a set value");
 
         config
             .features
@@ -1955,11 +1895,33 @@ mod tests {
             .as_mut()
             .expect("subagents feature")
             .limits
-            .deadline_ms = SUBAGENT_DEADLINE_CEILING_MS + 1;
+            .run_timeout_ms = Some(0);
         assert!(matches!(
             config.validate(),
             Err(DomainError::InvariantViolation(_))
         ));
+    }
+
+    #[test]
+    fn subagent_run_timeout_attenuates_as_a_minimum_where_unset_is_no_limit() {
+        let with = |run_timeout_ms| SubagentLimits {
+            run_timeout_ms,
+            ..SubagentLimits::default()
+        };
+        let cases = [
+            (None, None, None),
+            (Some(5), None, Some(5)),
+            (None, Some(7), Some(7)),
+            (Some(5), Some(7), Some(5)),
+            (Some(9), Some(7), Some(7)),
+        ];
+        for (inner, outer, expected) in cases {
+            assert_eq!(
+                with(inner).attenuated_by(with(outer)).run_timeout_ms,
+                expected,
+                "inner {inner:?} outer {outer:?}"
+            );
+        }
     }
 
     #[test]
@@ -2116,7 +2078,7 @@ mod tests {
         config.features.vfs.as_mut().unwrap().workspaces = vec![WorkspaceAttachment {
             path: "/skills".to_owned(),
             target: WorkspaceAttachmentTarget::Snapshot {
-                snapshot_ref: format!("sha256:{}", "a".repeat(64)),
+                snapshot_ref: crate::BlobRef::from_bytes(b"snapshot"),
             },
             access: WorkspaceAccess::Edit,
         }];
@@ -2443,5 +2405,29 @@ mod tests {
         let decoded: SessionConfig = serde_json::from_value(value).expect("deserialize");
 
         assert_eq!(decoded, config);
+    }
+
+    #[test]
+    fn a_tool_choice_names_the_registry_identity_and_not_the_workflow_tool_namespace() {
+        let tool = crate::ToolSpec {
+            id: crate::ToolId::new("request_review"),
+            kind: crate::ToolKind::Function(crate::FunctionToolSpec {
+                description_ref: None,
+                input_schema_ref: crate::BlobRef::from_bytes(b"{}"),
+                output_schema_ref: None,
+                strict: None,
+                provider_options_ref: None,
+            }),
+            parallelism: crate::ToolParallelism::Exclusive,
+            execution: Default::default(),
+        };
+        let tools = std::collections::BTreeMap::from([(tool.id.clone(), tool)]);
+        let choice = |id: &str| ToolChoice::Specific {
+            tool_id: crate::ToolId::new(id),
+        };
+        validate_tool_choice_for_tools(&tools, Some(&choice("request_review")))
+            .expect("the registry identity is what a choice names");
+        validate_tool_choice_for_tools(&tools, Some(&choice("acme.review")))
+            .expect_err("a declared workflow tool id is another namespace");
     }
 }

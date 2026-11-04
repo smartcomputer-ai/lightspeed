@@ -42,6 +42,166 @@ async fn temporal_live_profile_selection_leaves_environment_lifecycle_independen
     run_with_live_worker(activities, run_profile_environment_selection_live_client).await
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_a_put_can_swap_the_default_and_refuses_one_it_cannot_select()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_default_environment_put_live_client).await
+}
+
+async fn run_default_environment_put_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    use temporal_runtime::environments::fake_controller::{FAKE_TEMPLATE_ID, FakeController};
+
+    let store = pg_store_from_env().await?;
+    let model = support::live::openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
+    let api = GatewayAgentApi::builder(client.clone(), store.clone())
+        .with_task_queue(task_queue)
+        .build();
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let provider_id = format!("fake-default-put-{suffix}");
+    let controller = FakeController::start().await?;
+    register_fake_provider(&store, &controller, &provider_id).await?;
+    let create = async |name: &str| -> anyhow::Result<String> {
+        Ok(api
+            .create_environment(api::EnvironmentCreateParams {
+                request_id: format!("{name}-{suffix}"),
+                provider_id: provider_id.clone(),
+                template_id: FAKE_TEMPLATE_ID.into(),
+                display_name: None,
+                metadata: Default::default(),
+                idle: None,
+            })
+            .await?
+            .result
+            .environment
+            .environment_id
+            .to_string())
+    };
+    let close = async |environment_id: &str| -> anyhow::Result<()> {
+        api.close_environment(api::EnvironmentCloseParams {
+            environment_id: environment_id.into(),
+        })
+        .await?;
+        wait_for_environment_state(&api, environment_id, api::EnvironmentStateView::Closed).await?;
+        Ok(())
+    };
+    let first = create("first").await?;
+    let second = create("second").await?;
+    let closed = create("closed").await?;
+    close(&closed).await?;
+
+    let attaching = |attachments: &[(&str, bool)]| SessionConfig {
+        model: Some(model_to_api(&model)),
+        features: Some(api::FeaturesConfig {
+            environments: Some(api::EnvironmentsFeature {
+                version: api::CURRENT_FEATURE_VERSION,
+                selection: false,
+                prompts: None,
+                skills: None,
+                environments: attachments
+                    .iter()
+                    .map(|(environment_id, default)| api::EnvironmentAttachment {
+                        environment_id: Some((*environment_id).into()),
+                        inherit: false,
+                        default: *default,
+                        access: api::EnvironmentAccess::Read,
+                        working_directory: None,
+                    })
+                    .collect(),
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let start = |session_id: Option<String>, config| SessionStartParams {
+        access: None,
+        session_id,
+        display_name: None,
+        metadata: Default::default(),
+        config: Some(config),
+        delete_after_close_ms: None,
+        profile: None,
+    };
+    let put = |config| api::SessionConfigPutParams {
+        session_id: session_id.to_string(),
+        expected_config_revision: None,
+        config,
+    };
+    let active = async || -> anyhow::Result<Option<String>> {
+        Ok(read_session_view(&api, &session_id)
+            .await?
+            .active_environment_id
+            .map(|id| id.to_string()))
+    };
+
+    let refused = api
+        .start_session(start(None, attaching(&[(&closed, true)])))
+        .await
+        .expect_err("start names a closed default");
+    assert_eq!(refused.kind, api::AgentApiErrorKind::InvalidRequest);
+
+    api.start_session(start(
+        Some(session_id.to_string()),
+        attaching(&[(&first, true)]),
+    ))
+    .await?;
+    assert_eq!(active().await?.as_deref(), Some(first.as_str()));
+
+    // A swap lands on the new default in one call, on a machine that may well still
+    // be provisioning.
+    api.put_session_config(put(attaching(&[(&second, true)])))
+        .await?;
+    assert_eq!(active().await?.as_deref(), Some(second.as_str()));
+
+    // A default that cannot be selected is the caller's mistake, missing or closed.
+    for default in [closed.as_str(), "env-that-does-not-exist"] {
+        let refused = api
+            .put_session_config(put(attaching(&[(&second, false), (default, true)])))
+            .await
+            .expect_err("the put changes the default to an unselectable machine");
+        assert_eq!(
+            refused.kind,
+            api::AgentApiErrorKind::InvalidRequest,
+            "{refused:?}"
+        );
+    }
+
+    // An unchanged default never reactivates after a deliberate deactivation.
+    api.deactivate_session_environment(api::SessionEnvironmentDeactivateParams {
+        session_id: session_id.to_string(),
+    })
+    .await?;
+    api.put_session_config(put(attaching(&[(&second, true), (&first, false)])))
+        .await?;
+    assert_eq!(active().await?, None);
+
+    // A save beside a default that has since closed still goes through.
+    close(&second).await?;
+    let mut edited = attaching(&[(&second, true), (&first, false)]);
+    edited.limits = Some(api::LimitsConfig {
+        max_turns: Some(50),
+    });
+    api.put_session_config(put(edited)).await?;
+
+    api.close_session(api::SessionCloseParams {
+        session_id: session_id.to_string(),
+        force: true,
+    })
+    .await?;
+    close(&first).await?;
+    delete_fake_provider(&store, &provider_id).await
+}
+
 /// Registers the fake controller as a provider bound to this universe,
 /// directly through the store: the deployment API is deployment-scoped and
 /// these tests drive one universe's gateway.

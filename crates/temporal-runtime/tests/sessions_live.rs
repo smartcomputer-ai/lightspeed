@@ -1,4 +1,4 @@
-//! Live coverage for managed-session lifecycle, admission, context, checkpoints,
+//! Live coverage for declared-session lifecycle, admission, context, checkpoints,
 //! and provider-backed happy paths.
 
 mod support;
@@ -9,7 +9,7 @@ use api::{
     InitializeParams, InlineAgentProfile, InputItem, ProfileDocument, ProfileInstructions,
     ProfileSource, RunListParams, RunStartParams, RunStartSource, SessionConfig,
     SessionConfigPutParams, SessionDeleteParams, SessionEventsReadParams, SessionLifecycleStatus,
-    SessionListParams, SessionReadParams, SessionStartParams, SessionStatus, TimersFeature,
+    SessionListParams, SessionReadParams, SessionStartParams, SkillListParams, TimersFeature,
 };
 use api_projection::model_to_api;
 use base64::Engine as _;
@@ -21,13 +21,107 @@ use support::live::{
     LIVE_TEST_LOCK, fake_worker_activities, final_assistant_text, live_workflow_handle,
     openai_completions_live_model, openai_live_model, read_session_view, require_openai_live_env,
     require_storage_live_env, run_with_live_worker, start_text_run, wait_for_admission_failure,
-    wait_for_session_status, wait_for_terminal_run,
+    wait_for_session_lifecycle, wait_for_terminal_run,
 };
 use temporal_runtime::{gateway::GatewayAgentApi, pg_store_from_env, worker::WorkerActivities};
 use temporal_workflow::{AgentAdmission, AgentAdmissionFailureKind, AgentSessionWorkflow};
 use temporalio_client::{
     Client, WorkflowDescribeOptions, WorkflowSignalOptions, WorkflowTerminateOptions,
 };
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_a_failed_start_leaves_nothing_live() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, |client, task_queue, session_id| async move {
+        let store = pg_store_from_env().await?;
+        let model = openai_live_model();
+        support::live::seed_agent_default(&store, &model).await?;
+        let api = GatewayAgentApi::builder(client, store)
+            .with_task_queue(task_queue)
+            .build();
+
+        // Only preparing the toolset shows that this choice names no tool, and that
+        // happens during setup, after the workflow has opened the session.
+        let job = std::collections::BTreeMap::from([(
+            "failed-start".to_owned(),
+            uuid::Uuid::new_v4().simple().to_string(),
+        )]);
+        let params = |id: Option<String>| SessionStartParams {
+            access: None,
+            metadata: job.clone(),
+            session_id: id,
+            display_name: None,
+            config: Some(SessionConfig {
+                model: Some(model_to_api(&model)),
+                generation: Some(api::GenerationConfig {
+                    tool_choice: Some(api::ToolChoice::Specific {
+                        tool_id: "typo".to_owned(),
+                    }),
+                    ..Default::default()
+                }),
+                ..SessionConfig::default()
+            }),
+            profile: None,
+            delete_after_close_ms: None,
+        };
+        let listed = async || -> anyhow::Result<Vec<api::SessionSummaryView>> {
+            Ok(api
+                .list_sessions(SessionListParams {
+                    metadata: job.clone(),
+                    ..Default::default()
+                })
+                .await?
+                .result
+                .sessions)
+        };
+
+        // A server-allocated id the caller never learns: the real reason comes back
+        // and the session is closed.
+        let error = api
+            .start_session(params(None))
+            .await
+            .expect_err("setup fails");
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest, "{error:?}");
+        assert!(
+            error.message.contains("missing active tool typo"),
+            "{error:?}"
+        );
+        let rows = listed().await?;
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].lifecycle_status, SessionLifecycleStatus::Closed);
+        assert!(rows[0].access.created_by.is_some(), "{:?}", rows[0].access);
+
+        // A client-supplied id keeps its retry path and the caller can see it.
+        let error = api
+            .start_session(params(Some(session_id.as_str().to_owned())))
+            .await
+            .expect_err("setup fails");
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest, "{error:?}");
+        let row = listed()
+            .await?
+            .into_iter()
+            .find(|row| row.id == session_id.as_str())
+            .expect("the session stays");
+        assert_eq!(row.lifecycle_status, SessionLifecycleStatus::Open);
+        assert!(row.access.created_by.is_some(), "{:?}", row.access);
+        let error = api
+            .start_session(params(Some(session_id.as_str().to_owned())))
+            .await
+            .expect_err("the retry fails the same way");
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest, "{error:?}");
+        api.close_session(api::SessionCloseParams {
+            session_id: session_id.as_str().to_owned(),
+            force: true,
+        })
+        .await?;
+        Ok(())
+    })
+    .await
+}
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local Temporal + Postgres + object store and OPENAI_API_KEY (costs real money)"]
@@ -141,7 +235,7 @@ async fn run_compaction_live_client(
             .as_ref()
             .unwrap()
             .effective_mode,
-        "disabled"
+        api::ContextCompactionMode::Disabled
     );
     let run = start_text_run(
         &api,
@@ -157,7 +251,8 @@ async fn run_compaction_live_client(
             .contains("ZEPHYR-42")
     );
 
-    // Proactive compaction uses the same hosted activity after token usage is observed.
+    // Proactive compaction uses the same hosted activity after token usage is observed,
+    // when the next run starts.
     config.context.as_mut().unwrap().compaction = Some(api::CompactionPolicy::ProviderStandalone {
         compact_threshold_tokens: Some(500),
         target_tokens: None,
@@ -187,6 +282,9 @@ async fn run_compaction_live_client(
             .unwrap_or_default()
             .contains("ZEPHYR-42")
     );
+    let next_run = start_text_run(&api, &session_id, "Reply with the word done.").await?;
+    let next_run = wait_for_terminal_run(&api, &session_id, &next_run.id).await?;
+    assert_eq!(next_run.status, api::RunStatus::Completed);
     support::live::wait_until(
         "hosted proactive compaction to finish",
         std::time::Duration::from_secs(60),
@@ -230,7 +328,13 @@ async fn run_compaction_live_client(
         .await?
         .result
         .events;
-    assert!(events.iter().any(|event| matches!(&event.kind, api::SessionEventKindView::ContextCompactionRequested { trigger, .. } if trigger == "highWatermark")));
+    assert!(events.iter().any(|event| matches!(
+        &event.kind,
+        api::SessionEventKindView::ContextCompactionRequested {
+            trigger: api::ContextCompactionTrigger::HighWatermark,
+            ..
+        }
+    )));
     let finished: Vec<_> = events
         .iter()
         .filter_map(|event| match &event.kind {
@@ -248,7 +352,7 @@ async fn run_compaction_live_client(
         "manual and proactive compaction must both finish"
     );
     for (status, calls, usage) in finished {
-        assert_eq!(status, "succeeded");
+        assert_eq!(*status, api::ContextCompactionStatus::Succeeded);
         assert!(*calls >= 1);
         assert!(
             usage
@@ -302,6 +406,98 @@ async fn temporal_live_session_lifecycle_list_and_closed_only_delete() -> anyhow
 
     let activities = fake_worker_activities().await?;
     run_with_live_worker(activities, run_lifecycle_delete_live_client).await
+}
+
+/// `session/read` is served from the store and asks the Temporal server, not a
+/// worker, whether the execution is alive. The worker is gone for all of this.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_session_read_needs_no_worker_and_reports_a_dead_execution()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let started = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let captured = started.clone();
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, |client, task_queue, session_id| async move {
+        let store = pg_store_from_env().await?;
+        support::live::seed_agent_default(&store, &openai_live_model()).await?;
+        let api = GatewayAgentApi::builder(client.clone(), store)
+            .with_task_queue(task_queue)
+            .build();
+        api.start_session(SessionStartParams {
+            access: None,
+            metadata: Default::default(),
+            session_id: Some(session_id.as_str().to_owned()),
+            display_name: None,
+            config: None,
+            profile: None,
+            delete_after_close_ms: None,
+        })
+        .await?;
+        captured.replace(Some((client, api, session_id)));
+        Ok(())
+    })
+    .await?;
+    let (client, api, session_id) = started.take().expect("session started");
+
+    temporal_runtime::gateway::request_context::with_request_context(
+        support::live::local_request_context().await?,
+        async {
+            let running = read_session_view(&api, &session_id).await?;
+            assert_eq!(running.lifecycle_status, SessionLifecycleStatus::Open);
+            assert_eq!(running.activity, api::SessionActivity::Idle);
+            assert_eq!(running.execution_failure, None);
+
+            live_workflow_handle(&client, &session_id)?
+                .terminate(WorkflowTerminateOptions::default())
+                .await?;
+            let dead = read_session_view(&api, &session_id).await?;
+            assert_eq!(dead.lifecycle_status, SessionLifecycleStatus::Open);
+            assert_eq!(
+                dead.execution_failure,
+                Some(api::SessionExecutionFailureView::Terminated)
+            );
+
+            // A list stays on the stored projection, so it does not notice.
+            let listed = api
+                .list_sessions(SessionListParams {
+                    limit: Some(100),
+                    ..Default::default()
+                })
+                .await?;
+            let row = listed
+                .result
+                .sessions
+                .iter()
+                .find(|session| session.id == session_id.as_str())
+                .expect("listed");
+            assert_eq!(row.lifecycle_status, SessionLifecycleStatus::Open);
+
+            // Force close reconciles the store, and a closed row skips the check.
+            api.close_session(api::SessionCloseParams {
+                session_id: session_id.as_str().to_owned(),
+                force: true,
+            })
+            .await?;
+            let closed = read_session_view(&api, &session_id).await?;
+            assert_eq!(closed.lifecycle_status, SessionLifecycleStatus::Closed);
+            assert_eq!(closed.execution_failure, None);
+
+            let missing = api
+                .read_session(SessionReadParams {
+                    session_id: format!("{}-missing", session_id.as_str()),
+                    run_limit: None,
+                })
+                .await
+                .expect_err("no row and no execution");
+            assert_eq!(missing.kind, AgentApiErrorKind::NotFound);
+            Ok(())
+        },
+    )
+    .await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -556,7 +752,10 @@ async fn run_checkpoint_and_bounded_reads_live_client(
         .load_checkpoint(&session_id)
         .await?
         .expect("full replay repairs a rejected checkpoint");
-    assert_eq!(repaired.format_version, 1);
+    assert_eq!(
+        repaired.format_version,
+        harness::SESSION_CHECKPOINT_FORMAT_VERSION
+    );
     assert_eq!(
         repaired.through_seq,
         fallback_record.head.as_ref().expect("fallback head").seq
@@ -578,8 +777,7 @@ async fn run_checkpoint_and_bounded_reads_live_client(
         after_one_more_run.through_seq < repaired_record.head.as_ref().expect("repaired head").seq
     );
 
-    // Run detail is a single complete projection: partial pages would lose
-    // cross-event state such as tool batches and approval pairs.
+    // A run this short projects whole.
     let detail = api
         .read_run(api::RunReadParams {
             session_id: session_id.as_str().to_owned(),
@@ -590,7 +788,7 @@ async fn run_checkpoint_and_bounded_reads_live_client(
     assert_eq!(detail.run.id, repair_run.id);
     assert_eq!(detail.run.status, api::RunStatus::Completed);
     assert!(detail.run.started_at_ms.is_some());
-    assert!(detail.run.completed_at_ms.is_some());
+    assert!(detail.run.finished_at_ms.is_some());
     assert!(matches!(
         detail.run.source,
         api::RunViewSource::Input { .. }
@@ -609,7 +807,7 @@ async fn run_checkpoint_and_bounded_reads_live_client(
         force: false,
     })
     .await?;
-    wait_for_session_status(&api, &session_id, SessionStatus::Closed).await?;
+    wait_for_session_lifecycle(&api, &session_id, SessionLifecycleStatus::Closed).await?;
     api.delete_session(SessionDeleteParams {
         shared_only: false,
         soft_delete: false,
@@ -1134,6 +1332,31 @@ async fn run_continue_as_new_live_client(
         "projected session should include runs committed before and after continue-as-new"
     );
 
+    // A no-op operation appends nothing and still grew the history. It must earn a
+    // rollover, or an execution doing only such work grows to the server's limit.
+    let before_noop_run_id = live_workflow_handle(&client, &session_id)?
+        .describe(WorkflowDescribeOptions::default())
+        .await?
+        .run_id()
+        .to_owned();
+    api.list_skills(SkillListParams {
+        session_id: session_id.as_str().to_owned(),
+    })
+    .await?;
+    let waited = std::time::Instant::now();
+    while live_workflow_handle(&client, &session_id)?
+        .describe(WorkflowDescribeOptions::default())
+        .await?
+        .run_id()
+        == before_noop_run_id
+    {
+        anyhow::ensure!(
+            waited.elapsed() < std::time::Duration::from_secs(30),
+            "a no-op operation did not roll the execution over"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
     let handle = live_workflow_handle(&client, &session_id)?;
     let _ = handle
         .terminate(
@@ -1325,7 +1548,8 @@ async fn run_context_append_live_client(
     );
     assert_eq!(replayed.result.context_revision, first_revision);
 
-    // Same key with different content upserts in place.
+    // Same key with different content replaces the entry, which moves to the
+    // end under a new id.
     let edited = api
         .append_context(ContextAppendParams {
             session_id: session_id.as_str().to_owned(),
@@ -1437,6 +1661,7 @@ async fn run_admission_failure_live_client(
                 // No run is active, so admission rejects this command; the
                 // session must keep serving later admissions regardless.
                 command: CoreAgentCommand::RequestRunSteering {
+                    submission_id: harness::SubmissionId::new("steer-1"),
                     requested_by: None,
                     run_id: harness::RunId::new(1),
                     input: Vec::new(),
@@ -1482,7 +1707,7 @@ async fn run_admission_failure_live_client(
             WorkflowSignalOptions::default(),
         )
         .await?;
-    wait_for_session_status(&api, &session_id, SessionStatus::Closed).await?;
+    wait_for_session_lifecycle(&api, &session_id, SessionLifecycleStatus::Closed).await?;
 
     let error = api
         .start_run(RunStartParams {
@@ -1507,7 +1732,10 @@ async fn run_admission_failure_live_client(
             run_limit: None,
         })
         .await?;
-    assert_eq!(session.result.session.status, SessionStatus::Closed);
+    assert_eq!(
+        session.result.session.lifecycle_status,
+        SessionLifecycleStatus::Closed
+    );
 
     let _ = handle
         .terminate(
@@ -1754,7 +1982,7 @@ async fn run_builtin_tool_live_client(
         })
         .expect("completed run output descriptor");
     if model.api_kind == harness::ProviderApiKind::OpenAiCompletions {
-        assert_eq!(content.media_type.as_deref(), Some("application/json"));
+        assert_eq!(content.mime.as_deref(), Some("application/json"));
         assert_eq!(
             content.provider_kind.as_deref(),
             Some("openai.completions.message")
@@ -1938,7 +2166,7 @@ async fn run_session_metadata_live_client(
 
 /// An image the provider cannot process: admission sees a PNG signature, the
 /// runtime cannot read its header and sends it unchanged, and the provider
-/// rejects the whole request. The run fails as `request_rejected` and its
+/// rejects the whole request. The run fails as `requestRejected` and its
 /// message is the provider's own text, not a runtime wrapper.
 async fn run_provider_rejection_live_client(
     client: Client,

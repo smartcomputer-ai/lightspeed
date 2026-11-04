@@ -70,7 +70,7 @@ export function ChannelsPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
   if (isLoading) return <LoadingNote />;
-  if (!universe || !permissions.can("configure_resource")) return <UniverseNotFound slug={slug} />;
+  if (!universe || !permissions.can("configureResource")) return <UniverseNotFound slug={slug} />;
   return <Channels universeId={universe.id} slug={universe.slug} />;
 }
 

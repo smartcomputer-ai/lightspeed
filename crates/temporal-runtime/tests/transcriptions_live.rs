@@ -159,10 +159,7 @@ async fn run_audio_transcription_live_client(
             entry.provenance_ref.as_deref() == Some(audio.result.blobs[0].blob_ref.as_str())
         })
         .expect("text with source provenance");
-    assert_eq!(
-        transcript_entry.content.media_type.as_deref(),
-        Some("text/plain")
-    );
+    assert_eq!(transcript_entry.content.mime.as_deref(), Some("text/plain"));
     assert_eq!(
         transcript_entry.provenance_ref.as_deref(),
         Some(audio.result.blobs[0].blob_ref.as_str())
@@ -278,10 +275,7 @@ async fn run_transcodable_audio_transcription_live_client(
             entry.provenance_ref.as_deref() == Some(audio.result.blobs[0].blob_ref.as_str())
         })
         .expect("text with source provenance");
-    assert_eq!(
-        transcript_entry.content.media_type.as_deref(),
-        Some("text/plain")
-    );
+    assert_eq!(transcript_entry.content.mime.as_deref(), Some("text/plain"));
     assert_eq!(
         transcript_entry.provenance_ref.as_deref(),
         Some(audio.result.blobs[0].blob_ref.as_str())

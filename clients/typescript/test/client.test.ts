@@ -21,8 +21,10 @@ function decodeBody(init: RequestInit | undefined): Record<string, unknown> {
 
 describe("LightspeedClient", () => {
   it("classifies missing model defaults and retains the affected slot", () => {
-    const error = new LightspeedRpcError({ code: -32014, message: "Choose a model", data: { kind: "model_default_unset", message: "Choose a model", modelDefaultSlot: "agentRun" } });
-    expect(error.kind).toBe("model_default_unset");
+    const error = new LightspeedRpcError({ code: -32014, message: "Choose a model", data: { kind: "modelDefaultUnset", message: "Choose a model", modelDefaultSlot: "agentRun" } });
+    expect(error.kind).toBe("modelDefaultUnset");
+    expect(new LightspeedRpcError({ code: -32015, message: "still held" }).kind).toBe("operationPending");
+    expect(new LightspeedRpcError({ code: -32016, message: "stopped" }).kind).toBe("sessionExecutionStopped");
     expect(error.data?.modelDefaultSlot).toBe("agentRun");
   });
 
@@ -43,10 +45,10 @@ describe("LightspeedClient", () => {
   it("ships canonical method documentation from the Rust manifest", () => {
     expect(METHOD_INFO["session/config/put"]).toEqual({
       scope: "universe",
-      access: { kind: "universe", action: "configure_session" },
+      access: { kind: "universe", action: "configureSession" },
       summary: "Replace session configuration",
       description:
-        "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.",
+        "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.",
     });
     expect(METHOD_INFO["deployment/api-keys/create"]).toMatchObject({
       scope: "deployment",
@@ -198,7 +200,7 @@ describe("LightspeedClient", () => {
       kind: {
         type: "runCompleted",
         runId: "run_1",
-        output: { contentRef: "blob_output", mediaType: "application/json", providerKind: "anthropic.messages.text_blocks" },
+        output: { blobRef: "blob_output", mime: "application/json", providerKind: "anthropic.messages.text_blocks" },
       },
     };
     const pages = [
@@ -208,7 +210,6 @@ describe("LightspeedClient", () => {
           headCursor: { seq: 2 } satisfies EventCursor,
           nextCursor: null,
           complete: true,
-          gap: null,
         },
         notifications: [],
       },
@@ -227,7 +228,6 @@ describe("LightspeedClient", () => {
           headCursor: { seq: 3 },
           nextCursor: null,
           complete: true,
-          gap: null,
         },
         notifications: [],
       },
@@ -250,7 +250,7 @@ describe("LightspeedClient", () => {
 
     expect(result.state).toMatchObject({
       status: "completed",
-      output: { contentRef: "blob_output", mediaType: "application/json", providerKind: "anthropic.messages.text_blocks" },
+      output: { blobRef: "blob_output", mime: "application/json", providerKind: "anthropic.messages.text_blocks" },
     });
     expect(result.cursor).toEqual({ seq: 3 });
     expect(requests.map((request) => request.params)).toEqual([

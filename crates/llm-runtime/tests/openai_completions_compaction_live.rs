@@ -8,16 +8,15 @@ use harness::{
     storage::InMemoryBlobStore,
 };
 use llm_runtime::{
-    LlmCompactionAdapter, LlmGenerationAdapter, OpenAiCompletionsLlmAdapter,
-    OpenAiCompletionsParams, ResolvedEndpoint, ResolvedModelProvider, ResolvedProviderAuth,
-    StaticModelProviders,
+    LlmCompactionAdapter, LlmGenerationAdapter, OpenAiCompletionsLlmAdapter, ResolvedEndpoint,
+    ResolvedModelProvider, ResolvedProviderAuth, StaticModelProviders,
 };
 
 mod support;
 
 use support::{
     deepseek_completions_live_model, env_or_dotenv_var, openai_completions_live_client,
-    openai_completions_live_model, openai_completions_params, retrying_openai_completions_client,
+    openai_completions_live_model, retrying_openai_completions_client,
 };
 
 fn model() -> ModelSelection {
@@ -137,12 +136,6 @@ async fn standalone_compaction_preserves_facts(
         "standalone compaction: provider={}, model={}",
         model.provider_id, model.model
     );
-    let params = (model.provider_id == "openai").then(|| {
-        openai_completions_params(&OpenAiCompletionsParams {
-            store: Some(false),
-            ..Default::default()
-        })
-    });
     let task = ContextCompactionTask {
         covered_entry_ids: Vec::new(),
         tools: Vec::new(),
@@ -151,7 +144,6 @@ async fn standalone_compaction_preserves_facts(
         request_fingerprint: "openai-completions-live-compact".to_owned(),
         context: conversation(&blobs).await,
         target_tokens: Some(256),
-        params,
     };
 
     let result = adapter
@@ -213,7 +205,6 @@ async fn compacted_summary_continues_conversation(
         request_fingerprint: "openai-completions-live-compact-continue".to_owned(),
         context: conversation(&blobs).await,
         target_tokens: Some(192),
-        params: None,
     };
     let compacted = adapter
         .compact_context(ContextCompactionRequest {
@@ -265,7 +256,6 @@ async fn compacted_summary_continues_conversation(
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: None,
         },

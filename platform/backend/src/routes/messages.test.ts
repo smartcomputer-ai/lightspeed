@@ -114,8 +114,8 @@ it.each([
 });
 
 it.each([
-  { code: -32010, message: "run ended before steering was admitted: run_1" },
-  { code: -32603, message: "timed out waiting for steering admission: run_1" },
+  { code: -32010, message: "run ended before steering reached it: run_1" },
+  { code: -32015, message: "steering has not been admitted yet and can still land on run_1" },
   { code: -32009, message: "run is already terminal: run_1" },
 ])("does not label an uncertain steering outcome as unsubmitted: %j", async (error) => {
   const f = fixture(error);

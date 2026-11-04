@@ -3,40 +3,46 @@ import type { AgentApiError, JsonRpcError as ApiJsonRpcError } from "./generated
 export type JsonRpcErrorPayload = ApiJsonRpcError;
 
 export type LightspeedRpcErrorKind =
-  | "invalid_request"
-  | "method_not_found"
+  | "invalidRequest"
+  | "methodNotFound"
   | "unauthenticated"
   | "forbidden"
-  | "not_found"
+  | "notFound"
   | "conflict"
   | "rejected"
-  | "environment_not_ready"
-  | "model_default_unset"
+  | "environmentNotReady"
+  | "modelDefaultUnset"
+  | "operationPending"
+  | "sessionExecutionStopped"
   | "internal"
   | "unknown";
 
 export function lightspeedRpcErrorKind(code: number): LightspeedRpcErrorKind {
   switch (code) {
     case -32602:
-      return "invalid_request";
+      return "invalidRequest";
     case -32601:
-      return "method_not_found";
+      return "methodNotFound";
     case -32001:
       return "unauthenticated";
     case -32003:
       return "forbidden";
     case -32004:
-      return "not_found";
+      return "notFound";
     case -32009:
       return "conflict";
     case -32010:
       return "rejected";
     case -32012:
-      return "environment_not_ready";
+      return "environmentNotReady";
     case -32603:
       return "internal";
     case -32014:
-      return "model_default_unset";
+      return "modelDefaultUnset";
+    case -32015:
+      return "operationPending";
+    case -32016:
+      return "sessionExecutionStopped";
     default:
       return "unknown";
   }

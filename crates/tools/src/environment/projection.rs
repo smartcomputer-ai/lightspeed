@@ -180,11 +180,7 @@ fn fs_route_from_workspace_attachment(
             let source = match declared_target {
                 WorkspaceAttachmentTarget::Snapshot { snapshot_ref } => {
                     FsRouteSource::VfsSnapshot {
-                        snapshot_ref: BlobRef::parse(snapshot_ref.clone()).map_err(|error| {
-                            EnvironmentProjectionError::Encode {
-                                message: error.to_string(),
-                            }
-                        })?,
+                        snapshot_ref: snapshot_ref.clone(),
                     }
                 }
                 WorkspaceAttachmentTarget::Workspace { workspace_id } => {

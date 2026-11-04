@@ -150,7 +150,7 @@ export function SubscriptionDetails({
   grant: SecretGrant;
   onDisconnected: () => void;
 }) {
-  const writable = useActionPermissions(universeId).can("configure_resource");
+  const writable = useActionPermissions(universeId).can("configureResource");
   const disconnect = useMutation({
     mutationFn: () =>
       api<SecretGrant>(

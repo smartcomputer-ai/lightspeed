@@ -12,7 +12,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use async_trait::async_trait;
-use harness::SecretRef;
 use thiserror::Error;
 
 pub const SECRET_NAMESPACE_ENV: &str = "env";
@@ -64,12 +63,18 @@ pub enum SecretResolveError {
     },
 }
 
+/// Names a credential a [`SecretResolver`] can resolve. It holds no secret value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SecretRef {
+    pub namespace: String,
+    pub id: String,
+}
+
 /// Resolves a [`SecretRef`] to a secret value at provider-send time.
 ///
-/// A present `auth_ref` identifies the resource whose live credential should
-/// be resolved. Optional-auth callers may omit authorization only for
-/// [`SecretResolveError::CredentialAbsent`]; missing resources and broken
-/// bindings remain errors.
+/// The ref identifies the resource whose live credential should be resolved.
+/// [`SecretResolveError::CredentialAbsent`] means the resource may be used
+/// without one; missing resources and broken bindings remain errors.
 /// `audience` carries the resource the value will be sent to (for remote MCP,
 /// the server URL) so audience-enforcing resolvers can refuse mismatches.
 #[async_trait]
@@ -79,6 +84,24 @@ pub trait SecretResolver: Send + Sync {
         secret_ref: &SecretRef,
         audience: Option<&str>,
     ) -> Result<ResolvedSecretValue, SecretResolveError>;
+}
+
+/// The live credential of one MCP server, or `None` when its record lets it be
+/// used without one. The record decides that, read here at each use.
+pub async fn resolve_mcp_bearer(
+    secrets: &dyn SecretResolver,
+    server_id: &str,
+    server_url: &str,
+) -> Result<Option<ResolvedSecretValue>, SecretResolveError> {
+    let secret_ref = SecretRef {
+        namespace: SECRET_NAMESPACE_MCP_SERVER.to_owned(),
+        id: server_id.to_owned(),
+    };
+    match secrets.resolve(&secret_ref, Some(server_url)).await {
+        Ok(value) => Ok(Some(value)),
+        Err(SecretResolveError::CredentialAbsent { .. }) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// Default resolver: fails every resolution. Adapters constructed without an
@@ -103,8 +126,7 @@ impl SecretResolver for UnconfiguredSecretResolver {
 }
 
 /// Resolver that reports an existing resource with no configured credential.
-/// Useful for adapters and hosts that explicitly model an optional unbound
-/// credential; required-auth callers still treat this as a resolution error.
+/// Useful for adapters and hosts that explicitly model an unbound credential.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AbsentSecretResolver;
 

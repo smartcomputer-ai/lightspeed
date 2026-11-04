@@ -110,8 +110,8 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
     }
 
     // The environment baseline is folded into one migration; the ledger
-    // ends at revision 11.
-    if REQUIRED_SCHEMA_REVISION != 11 {
+    // ends at revision 14.
+    if REQUIRED_SCHEMA_REVISION != 14 {
         return Err(format!(
             "unexpected required schema revision {REQUIRED_SCHEMA_REVISION}"
         ));
@@ -246,6 +246,26 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
     if incarnations.is_some() {
         return Err("the environment baseline must not create incarnations".to_owned());
+    }
+
+    // The sweep position names a digest without holding the blob: its only
+    // foreign key is to the universe, so deleting the blob leaves the row valid.
+    let cursor_references: Vec<String> = sqlx::query_scalar(
+        "SELECT target.relname::text
+         FROM pg_constraint AS constraint_row
+         JOIN pg_class AS source ON source.oid = constraint_row.conrelid
+         JOIN pg_class AS target ON target.oid = constraint_row.confrelid
+         WHERE source.relnamespace = current_schema()::regnamespace
+           AND source.relname = 'cas_sweep_cursors'
+           AND constraint_row.contype = 'f'",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    if cursor_references != ["universes"] {
+        return Err(format!(
+            "the sweep cursor must reference only its universe: {cursor_references:?}"
+        ));
     }
 
     let rows: Vec<(i64, String, String)> =

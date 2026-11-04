@@ -1,14 +1,17 @@
 # Upgrades and recovery
 
-A Lightspeed upgrade has to preserve work already in progress. That includes
-database records, Temporal histories, encrypted credentials, stored content,
-and machines created by earlier runs. Keep a recovery copy of that state and
-check whether the new release can read it before replacing the running code.
+A Lightspeed upgrade touches state that outlives the running code: database
+records, Temporal histories, encrypted credentials, stored content, and machines
+created by earlier runs. Keep a recovery copy of that state, and settle before
+you deploy whether the new release can keep the open work in its Temporal
+histories. Lightspeed has no tool that replays histories against a new build, so
+that compatibility exists only when a release says it does.
 
 The procedure below continues the [single-host installation](self-hosting.md)
-and uses a planned maintenance window. The current runtime does not configure
-Temporal worker version routing, so use a coordinated rollout unless the target
-release documents another supported procedure.
+and uses a planned maintenance window. The runtime does not configure Temporal
+worker version routing, so stop every old worker before the first new one starts.
+On Kubernetes that means the `Recreate` deployment strategy: with the default
+rolling update, both builds poll one task queue during the overlap.
 
 ## Retain a coherent release
 
@@ -31,6 +34,69 @@ a fresh installation and an upgrade from the baseline named in
 `LIGHTSPEED_PLATFORM_UPGRADE_FROM`. They do not test every historical schema.
 A database from another baseline needs its own validated migration.
 
+## Decide whether the release breaks open work
+
+Temporal rebuilds a workflow by replaying its history through the current code.
+If a release changes the commands that code issues, or the types recorded in
+history, an open execution cannot replay past that point. So each release is one
+of two kinds, and nothing at runtime tells them apart. Compare the deployed
+release with the target before the maintenance window, from a source checkout:
+
+```bash
+scripts/release/workflow-compat.sh <deployed-tag> [<target-ref>]
+```
+
+The script prints the changes it found, then one word. It compares
+`temporal-workflow`, the workspace crates that crate depends on (`harness`, `api`,
+`bots`, `channels`), and the `temporalio` packages in `Cargo.lock`.
+
+| Result | Meaning | What to do |
+| --- | --- | --- |
+| `restart-in-place` | None of that changed, so open executions replay on the new code. | Keep the current namespace. Open work carries on after the restart. |
+| `breaking` | Something changed, and retained histories may no longer replay. | Drain first, then start on a new Temporal namespace. |
+
+This is a diff and not a replay check, and it errs both ways. Any change to those
+crates prints `breaking`, including one to a test or a generated file, and a false
+alarm only costs you the namespace change. It sees no other third-party version,
+so read the `Cargo.lock` diff before trusting `restart-in-place`: a dependency
+bump that changes workflow behaviour would still print it.
+
+Release notes state which kind a release is. If the call turns out wrong, `/health`
+stays `ok` and affected executions fail one at a time as they are touched: their
+workflow tasks keep failing, commands to them fail or time out, and the Temporal UI
+shows a nondeterminism error, or a panic saying an activity payload does not convert
+with this build. Stored reads keep working. Moving to a new namespace afterwards heals
+this the same way as if the release had been called breaking.
+
+### Move a breaking release to a new namespace
+
+Create the namespace in your Temporal service. Set `TEMPORAL_NAMESPACE` to it on every
+runtime process, on the connector host, and on any custom worker running your workflow
+tools, in the same step as the release change. No history replays on changed code, so
+no ordering between old and new builds matters, and the old namespace stays available
+for inspection until you retire it. Bot schedules left behind in it start workflows
+that nothing runs, so retire it once you are done with it.
+
+Keep the runtime database unless the release notes require otherwise. The session
+log lives there, so transcripts, session reads and force close keep working, and
+Temporal schedules come back when the runtime starts. Workflows do not come back on
+their own:
+
+| Open work | What happens on the new namespace |
+| --- | --- |
+| Session | Reads report `executionFailure: missing`, and runs are refused with `sessionExecutionStopped`, until someone [restarts it](#restart-a-stopped-session). |
+| Run that was executing | Fails at restart with a message saying its workflow stopped, so no tool call runs twice. |
+| Run parked on an approval, promise or workflow | Keeps waiting after restart. A reply its receiver sent in the meantime is lost, so that wait lasts until the promise's deadline or a cancel. |
+| Sub-agent, environment job and other started workflows | Do not continue. The parent's promise ends at its deadline or on a cancel. The job's process on its machine is not stopped by this. |
+| Transcription job | Lost, along with its idempotency key, so a retry starts a new job. |
+| Bot controller | Starts again at the bot's next event, moving past every retained main and per-key generation, so its conversations carry on in new sessions with no earlier context. |
+| Undelivered bot events | Not rescanned. They stay stored without being delivered, and need replaying from Activity. |
+| Bot dedupe tails, daily budget counts | Reset. |
+| Group `/activation` changes in a chat | Revert. |
+
+Old main sessions stay open until someone closes them. Drain first, as the procedure
+below describes: everything in this table is much smaller on an idle installation.
+
 <a id="upgrade-from-v02-to-v03"></a>
 
 ## Check compatibility before reusing state
@@ -41,13 +107,21 @@ core identity directory, resource grants, or execution identities. A migration
 number or product version alone cannot identify a compatible database: the
 runtime also compares applied migration names and checksums.
 
+The current development code also renames stored event kinds, status values,
+wire values and bot columns, and bounds what reduced state keeps. It has no
+conversion for any of that: a log written by an earlier build does not decode,
+and earlier bot rows fail the new constraints at `migrate`. Moving to it takes a
+fresh runtime database and a new Temporal namespace. Every API enum and error kind
+is now camelCase, so clients and dashboards reading the old values need updating.
+
 For disposable development state, stop the launcher and use `./dev.sh reset`
 to recreate the local databases and clear the development object-store prefix.
-Retained Temporal histories may still contain old payloads; create fresh work
-with the new code. For an installation whose data must survive, preserve the
-old executable and recovery set and validate a conversion against copies before
-starting new workers. The maintenance procedure below assumes the target
-release supports the retained state; it does not supply that conversion.
+Retained Temporal histories still hold the old payloads, so also point
+`TEMPORAL_NAMESPACE` at a new namespace. For an installation whose data must
+survive, preserve the old executable and recovery set and validate a conversion
+against copies before starting new workers. The maintenance procedure below
+assumes the target release supports the retained state; it does not supply that
+conversion.
 
 When installing a tagged release, use the upgrade notes shipped with that tag.
 Instructions for an older release's migrations do not apply to this development
@@ -67,12 +141,11 @@ provider/API/model route in each universe's **Agent runs** default using
 Deployment provider credentials remain supported, but do not choose a model.
 See [Configure universe model defaults](../using-lightspeed/cli.md#configure-universe-model-defaults).
 
-Existing sessions retain their stored model. Historical sessions with an
-omitted compaction policy also retain their disabled replay behavior. New
-sessions and configuration replacements resolve omission to automatic
-standalone compaction; preserve an explicit Disabled setting when automatic
-compaction and context-limit recovery should stay off. Review these settings
-when applying a profile or replacing configuration during an upgrade.
+Existing sessions retain their stored model. New sessions and configuration
+replacements resolve an omitted compaction policy to automatic standalone
+compaction; preserve an explicit Disabled setting when automatic compaction and
+context-limit recovery should stay off. Review these settings when applying a
+profile or replacing configuration during an upgrade.
 See [Manage long conversations](../using-lightspeed/sessions-and-runs.md#manage-long-conversations).
 
 Audio integrations must transcribe before session admission. Run start,
@@ -113,7 +186,7 @@ record how their recovery points fit together.
 | --- | --- |
 | Runtime PostgreSQL database and migration ledger | Universe records, sessions/events, checkpoints, profiles, workspace references, blob catalog and inline content, credentials, keys, bots, channels, and environment state. |
 | Platform PostgreSQL database and migration ledger | Login accounts and sessions, external login records, universe memberships and roles, universe display/routing metadata, and durable access history. |
-| Temporal persistence and namespace configuration | Workflow histories, timers, schedules, and in-flight orchestration. Runtime PostgreSQL records are not a documented replacement for lost Temporal state. |
+| Temporal persistence and namespace configuration | Workflow histories, timers, schedules, and in-flight orchestration. Without it, open sessions can [restart from the runtime database](#restart-a-stopped-session), with [these losses](#move-a-breaking-release-to-a-new-namespace). Nothing rebuilds the rest. |
 | Configured object-store content | The bytes referenced by object-backed blobs. Restoring their database catalog does not reconstruct missing objects. |
 | Runtime master key | Existing encrypted secret values and grant tokens need the same `LIGHTSPEED_SECRETS_MASTER_KEY`. |
 | Deployment configuration and other stable secrets | Platform authentication secret, environment routing token, service addresses, task queues, provider configuration, and credentials. |
@@ -160,21 +233,27 @@ Use the retained `runtime.env` and `platform.env` from self-hosting, and set
 `LIGHTSPEED_RELEASE_ID` to the already-built target image tag. Keep the old tag
 and configuration in the deployment record.
 
-1. Restrict incoming user and webhook traffic. Stop connector ingress and
+1. [Decide whether the release is breaking](#decide-whether-the-release-breaks-open-work).
+2. Restrict incoming user and webhook traffic. Stop connector ingress and
    other clients that submit work. Remember that runtime timers and schedules
    can produce work independently of the public HTTP listener.
-2. Inspect active runs, environment jobs, bot activity, and channel deliveries.
-   Let important work finish, or cancel it and inspect effects
-   already performed. Closing a session is a permanent lifecycle operation,
-   so do not use it as a temporary maintenance pause.
-3. Stop all application writers and workers, including separately deployed
+3. Drain. Inspect active runs, environment jobs, bot activity, and channel
+   deliveries. Let important work finish, or cancel it and inspect effects
+   already performed. Answer pending approvals you care about. This matters most
+   for a breaking release, which loses what is still in flight. Closing a session
+   is a permanent lifecycle operation, so do not use it as a temporary maintenance
+   pause.
+4. Stop all application writers and workers, including separately deployed
    connectors and Configurator services. Keep the durable infrastructure
    available for the migration and backup procedure.
-4. Capture or confirm the coordinated recovery set described above.
-5. Apply runtime migrations with the target image, then recreate the
-   application containers from that same release.
-6. Verify existing data and useful work before reopening ingress. Inspect
-   delayed bot and channel work as processing resumes.
+5. Capture or confirm the coordinated recovery set described above.
+6. Apply runtime migrations with the target image. For a breaking release, create
+   the new namespace and set `TEMPORAL_NAMESPACE` on the runtime, the connector host
+   and any custom worker.
+   Then recreate the application containers from that same release.
+7. Verify existing data and useful work before reopening ingress. Inspect
+   delayed bot and channel work as processing resumes. After a breaking release,
+   restart the open sessions you still want.
 
 For the two application containers in the self-hosting recipe:
 
@@ -182,10 +261,14 @@ For the two application containers in the self-hosting recipe:
 docker stop lightspeed-platform lightspeed-runtime
 ```
 
-The runtime container's configured stop signal is SIGINT. Its worker shutdown
-has a bounded wait, so a completed `docker stop` does not prove every external
-effect finished. Machine processes can also outlive a runtime stop; inspect
-and manage them as part of the maintenance plan.
+The runtime shuts down gracefully on SIGTERM, which Docker and Kubernetes both send
+by default, and on SIGINT. Give it time to finish: the self-hosting recipe sets
+`--stop-timeout 30`, and Kubernetes' default termination grace period is the same.
+Its worker shutdown has a bounded wait, so a completed `docker stop` does not prove
+every external effect finished. A foreground command whose tool call is dropped by
+the shutdown is sent a terminate if the runtime lives long enough to send it, and
+one that had already returned a handle keeps running. Inspect and manage machine
+processes as part of the maintenance plan.
 
 Once the recovery set is confirmed, run the target runtime's migration and
 diagnostic commands from the deployment directory:
@@ -227,6 +310,46 @@ health and logs, sign in, open an existing session, read existing content, and
 complete a small run. Verify resumed workflow processing, machine access, and
 connector account readiness where used. Reopen ingress after those checks and
 observe the deferred work that follows.
+
+## Restart a stopped session
+
+A session whose workflow execution has stopped keeps its log and can come back. This
+is how open sessions return after a breaking release, and also after an operator
+terminates a workflow, a store rejection ends one, or Temporal data is lost. Nothing
+does it for you: a stopped session stays stopped until someone asks.
+
+`session/read` reports the stop in `executionFailure` (`failed`, `terminated`,
+`timedOut` or `missing`), and a run start answers `sessionExecutionStopped`. Choose
+**Restart** on the session's banner, or run:
+
+```bash
+lightspeed session restart "<session-id>"
+```
+
+Direct clients can call `session/restart`, which needs the Operator role. Retrying
+`session/start` with the session's ID does the same for an ordinary session, for a
+Contributor who can see it. Bot and sub-agent sessions take `session/restart` only,
+and a retried `session/declared/start` answers `sessionExecutionStopped` rather
+than restarting. Restart is safe to repeat: a session already running answers
+`restarted: false`.
+
+A new execution loads the session from the log. Then:
+
+- A run that was not parked fails with a message saying its workflow stopped. A
+  generation or tool call cut off by the stop may have finished and been paid for,
+  and this is the accepted price of not repeating a paid call or a `git push`.
+- A pending code tool call that is not safe to retry fails.
+- A parked run keeps waiting, and queued runs start afterwards.
+- Terminal notifications for the last 8 finished runs go out again, as do pushed
+  invocations with a promise still pending. Receivers deduplicate them.
+
+A restart does not recover what only the stopped execution held. A reply sent to a
+parked run during the outage is lost. Pending promise cancellations are lost, so a
+receiver may not hear of a cancel and a started execution may run until it ends by
+itself. A session with no
+run history cannot restart, because it may never have finished setup: force close it
+and create a new one. A force close is permanent, so do not use it on a session you
+want back.
 
 <a id="upgrade-environment-daemons-deliberately"></a>
 
@@ -288,8 +411,9 @@ machine update around active work.
 Keep ingress and workers stopped while deciding whether to repair the target
 release or restore the recorded recovery set. Preserve the exact error and
 the old and new manifests. A configuration error may be corrected without
-restoring data; a schema or workflow compatibility failure needs a different
-decision.
+restoring data. A schema failure needs a repaired or restored database. A workflow
+that cannot replay needs [a new namespace](#move-a-breaking-release-to-a-new-namespace),
+which leaves the database as it is.
 
 The runtime migration ledger rejects schemas newer than its executable, gaps,
 and changed migration names or checksums. There is no general downgrade
@@ -312,9 +436,10 @@ mappings.
 
 A restored database does not undo messages already sent, remote API changes,
 or machine commands already executed. Inspect those effects before resubmitting
-work. Similarly, the promise reaper does not automatically restart an arbitrary
-failed session workflow. Investigate its Temporal history and stored state
-before choosing to close it and create replacement work.
+work. The promise reaper reports a failed session workflow and does not restart
+it. Investigate its Temporal history and stored state, then
+[restart the session](#restart-a-stopped-session) or close it and create
+replacement work.
 
 | Failure | Next step |
 | --- | --- |
@@ -325,3 +450,5 @@ before choosing to close it and create replacement work.
 | Sessions load but attachments fail | Verify object-store data and physical locations as well as the database catalog. |
 | Daemon upgrade cannot find a download | Verify deployment discovery, target archive URL, checksum metadata, and executable permissions. |
 | Restored listeners are healthy but work stalls | Verify namespace, workflows, role pollers, retained blobs, and optional service state through a complete test task. |
+| Workflow tasks keep failing after an upgrade, with a nondeterminism error or an activity payload that does not convert | The release was breaking. Move to [a new namespace](#move-a-breaking-release-to-a-new-namespace). A payload error also heals under a build that reads the payload. |
+| A session reads fine but reports `executionFailure` | Its workflow has stopped. [Restart it](#restart-a-stopped-session). |

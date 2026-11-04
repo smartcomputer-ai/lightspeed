@@ -9,7 +9,15 @@ pub struct SessionView {
     /// Descriptive key/value metadata; empty when none was set.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
-    pub status: SessionStatus,
+    /// Whether the session has opened or closed. What it is doing while open is
+    /// `activity`, and whether its workflow is still there is `executionFailure`.
+    pub lifecycle_status: SessionLifecycleStatus,
+    /// Set by `session/read` when the session is still open but its workflow
+    /// execution has stopped. Nothing is running and the rest of the view is
+    /// the stored log, so `activity` can still say what it last did. Lists do not check
+    /// the execution, so a list and a read of the same session can differ.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_failure: Option<SessionExecutionFailureView>,
     /// What the session is doing now: idle, working on a run, or waiting for
     /// an approval. Lists carry the same value.
     pub activity: SessionActivity,
@@ -19,9 +27,8 @@ pub struct SessionView {
     /// The audience of the session's root: whether it is shared with the
     /// universe, and who created it.
     pub access: ResourceAccessSummary,
-    /// True only when immutable lifecycle ownership was admitted with a
-    /// lifecycle controller at managed-session creation.
-    pub managed: bool,
+    /// True only when the session's declaration names a lifecycle controller.
+    pub lifecycle_controlled: bool,
     pub config_revision: u64,
     /// The stored sparse config document, exactly as last put (model and
     /// feature versions materialized at admission). Effective tool reality
@@ -46,7 +53,7 @@ pub struct SessionView {
     /// Immutable workflow-backed tool declaration. A lifecycle controller
     /// indicates external session ownership; tool-only declarations do not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub management: Option<SessionManagementView>,
+    pub declaration: Option<SessionDeclarationView>,
     /// Sub-agent lineage; absent for root sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<SessionOriginView>,
@@ -64,12 +71,29 @@ pub struct RunSummaryView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub completed_at_ms: Option<u64>,
+    pub finished_at_ms: Option<u64>,
     pub source: RunSummarySourceView,
+    /// Provider usage so far. A summary of a run old enough to be read back from the
+    /// session's log has none; `session/runs/read` still totals it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<LlmUsageView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_approvals: Vec<PendingApprovalView>,
+    /// Why a failed run failed. The message is cut to a preview here, and
+    /// `session/runs/read` has all of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<RunFailureView>,
+}
+
+/// Why a run failed. `kind` is the harness's classification; `message` is free text
+/// for display, and the provider's own message for `requestRejected`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RunFailureView {
+    pub kind: RunFailureKindView,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub message_truncated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -81,7 +105,7 @@ pub struct RunSummaryView {
 pub enum RunSummarySourceView {
     Input {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        content_ref: Option<String>,
+        blob_ref: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         preview: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -89,9 +113,9 @@ pub enum RunSummarySourceView {
     },
 }
 
-/// Managed-session reads use the same immutable declaration document accepted
+/// Declared-session reads use the same immutable declaration document accepted
 /// at creation. Per-invocation diagnostics remain in `session/events/read`.
-pub type SessionManagementView = ManagedSessionWorkflowToolsInput;
+pub type SessionDeclarationView = DeclaredSessionWorkflowToolsInput;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -107,13 +131,18 @@ pub struct ContextView {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextCompactionView {
-    pub requested_mode: String,
-    pub effective_mode: String,
+    pub requested_mode: ContextCompactionMode,
+    /// Standalone when the context already holds a window from a native standalone
+    /// compaction, whatever was requested.
+    pub effective_mode: ContextCompactionMode,
     /// Native APIs are preferred where supported; summaries use the same model route.
-    pub effective_strategy: String,
-    pub threshold_source: String,
+    pub effective_strategy: ContextCompactionStrategy,
+    pub threshold_source: ContextCompactionThresholdSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_threshold_tokens: Option<u32>,
+    /// The active run's input capacity, or the declared limit. While idle with none
+    /// declared, what the last generation recorded, so a session that has not run yet
+    /// shows no reported capacity: that is resolved for each run as it is prepared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_limit_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -125,12 +154,51 @@ pub struct ContextCompactionView {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum SessionStatus {
-    NotLoaded,
-    Idle,
-    Active,
-    Closed,
-    Error,
+pub enum ContextCompactionMode {
+    Disabled,
+    ProviderTriggered,
+    ProviderStandalone,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextCompactionStrategy {
+    Disabled,
+    ProviderTriggered,
+    ModelSummary,
+    NativePreferred,
+}
+
+/// Where `compactThresholdTokens` came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextCompactionThresholdSource {
+    Disabled,
+    /// The session's own `compactThresholdTokens`.
+    Override,
+    /// The provider decides, and no threshold is known.
+    ProviderDefault,
+    /// Four fifths of the input capacity.
+    InputCapacity,
+    /// No capacity is known, so compaction waits for the provider's overflow error.
+    ContextLengthError,
+}
+
+/// How an open session's workflow execution stopped. A session that closed
+/// normally never reports one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionExecutionFailureView {
+    /// The execution failed; its error is in the Temporal workflow history.
+    Failed,
+    /// The execution was ended from outside, or ended without closing the
+    /// session.
+    Terminated,
+    /// The execution ran past a Temporal timeout.
+    TimedOut,
+    /// Temporal has no execution for this session, for example because a dead
+    /// one has passed namespace retention.
+    Missing,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -152,7 +220,7 @@ pub struct RunView {
     /// When the run reached a terminal state, derived from its committed
     /// completed, failed, or cancelled event. Absent for non-terminal runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub completed_at_ms: Option<u64>,
+    pub finished_at_ms: Option<u64>,
     pub source: RunViewSource,
     #[serde(default)]
     pub entries: Vec<ContextEntryView>,
@@ -165,6 +233,14 @@ pub struct RunView {
     pub usage: Option<LlmUsageView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_approvals: Vec<PendingApprovalView>,
+    /// Why a failed run failed, with its whole message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<RunFailureView>,
+    /// This run is past the server's detail limit: `entries` and `toolBatches` hold
+    /// its opening and its most recent turns. `session/events/read` has the turns
+    /// between them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub earlier_events_omitted: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -244,16 +320,33 @@ pub struct ToolCallView {
     pub tool_id: Option<String>,
     pub tool_name: String,
     pub arguments_ref: String,
+    /// Bounded preview; `argumentsRef` has the full body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arguments: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub arguments_preview_truncated: bool,
+    /// Bounded preview of the model-visible result; `outputRef` has the full body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub output_preview_truncated: bool,
+    /// Bytes of model-visible text the tool produced before the runtime applied its
+    /// budget, from the call's `toolCallCompleted` event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_bytes: Option<u64>,
+    /// The runtime cut the model-visible text to its budget, from the call's
+    /// `toolCallCompleted` event. This is separate from the preview bound above.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
     #[serde(default)]
     pub is_error: bool,
     pub status: ToolItemStatus,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<ToolEffectView>,
-    /// Immutable attachments available from this call; files do not imply model input.
+    /// Files the call linked, which the model does not get as input. Media it supplied
+    /// is in `media`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<ToolAttachmentView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -265,7 +358,7 @@ pub struct ToolCallView {
     /// When the call's terminal result was committed. The window to
     /// `startedAtMs` includes runtime scheduling overhead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub completed_at_ms: Option<u64>,
+    pub finished_at_ms: Option<u64>,
     /// Execution milliseconds measured by the runtime around the call body;
     /// the remainder of the started/completed window is overhead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -282,7 +375,7 @@ pub struct ToolCallView {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallMediaView {
-    /// `media:` plus the first twelve hex characters of `blob_ref`; what the
+    /// `media:` plus the first twelve hex characters of `blobRef`; what the
     /// model calls this item.
     pub handle: String,
     pub blob_ref: String,
@@ -326,7 +419,7 @@ pub enum ToolCallDisplayGroup {
     /// Orchestrates tool calls in a code-mode script.
     Code,
     /// Calls a tool on an MCP server, through the builtin bridge or a
-    /// provider-native MCP block.
+    /// provider-hosted MCP block.
     Mcp,
     /// Delegates to a sub-agent or waits on one.
     Agent,
@@ -377,6 +470,10 @@ pub enum RunStatus {
     Cancelled,
 }
 
+/// The longest media name run input accepts. A media name stays on its run's record
+/// after the run ends, so it has to stay small.
+pub const MAX_MEDIA_NAME_CHARS: usize = 256;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
@@ -386,7 +483,7 @@ pub enum RunStatus {
 pub enum InputItem {
     Text {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        /// Application-supplied display provenance (1–200 nonblank bytes).
+        /// Application-supplied display provenance (1–200 nonblank bytes, no NUL).
         /// The platform uses `user:<id>` for direct human input and `event` for
         /// bot deliveries; other values are allowed. Omitted means unknown.
         /// This metadata is not an authorization identity or model input text.
@@ -399,7 +496,7 @@ pub enum InputItem {
     },
     TextRef {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        /// Application-supplied display provenance (1–200 nonblank bytes).
+        /// Application-supplied display provenance (1–200 nonblank bytes, no NUL).
         /// The platform uses `user:<id>` for direct human input and `event` for
         /// bot deliveries; other values are allowed. Omitted means unknown.
         /// This metadata is not an authorization identity or model input text.
@@ -412,7 +509,7 @@ pub enum InputItem {
     },
     Media {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        /// Application-supplied display provenance (1–200 nonblank bytes).
+        /// Application-supplied display provenance (1–200 nonblank bytes, no NUL).
         /// The platform uses `user:<id>` for direct human input and `event` for
         /// bot deliveries; other values are allowed. Omitted means unknown.
         /// This metadata is not an authorization identity or model input text.
@@ -420,6 +517,7 @@ pub enum InputItem {
         blob_ref: String,
         mime: String,
         kind: MediaKind,
+        /// Shown as the item's preview; at most 256 characters, with no NUL.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
@@ -432,6 +530,7 @@ pub enum InputItem {
     /// context rewrite or beyond a per-key cap.
     Catalog {
         /// Short name shown as the catalog's heading, e.g. "Bot directory".
+        /// Cannot contain NUL.
         title: String,
         /// The catalog body, plain text or Markdown.
         text: String,
@@ -520,7 +619,7 @@ pub enum TokenEstimateQualityView {
 /// A session context entry, faithful to the stored harness entry: keyed,
 /// kind-tagged, ref-backed. Keys are a stable extension point — clients
 /// reconstruct derived surfaces (e.g. the prompted instruction set via the
-/// `prompt_instructions/` key prefix) by filtering on `key` and fetching
+/// `instructions.100.prompts` key prefix) by filtering on `key` and fetching
 /// original bytes through `blobs/read`. `text` contains complete message and
 /// visible reasoning text; tool and catalog bodies use bounded text previews.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -626,28 +725,20 @@ pub enum ToolItemStatus {
     Unavailable,
 }
 
-/// A portable immutable asset supplied by a completed tool call.
+/// A file a completed tool call supplied, linked by name rather than shown to the
+/// model. Media a call supplied is in `media` on the call and in context entries.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolAttachmentView {
-    pub kind: ToolAttachmentKind,
     /// Model-facing alias, resolved against recorded attachments.
     pub handle: String,
     /// Full immutable blob identity; read through the universe-scoped blob API.
-    pub content_ref: String,
+    pub blob_ref: String,
+    pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub media_type: Option<String>,
+    pub mime: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<AttachmentSourceView>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolAttachmentKind {
-    Media,
-    File,
 }
 
 /// Descriptive source, independent of the attachment's immutable content identity.

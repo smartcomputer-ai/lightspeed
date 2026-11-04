@@ -3,9 +3,7 @@
 //! API reference:
 //! - <https://developers.openai.com/api/reference/audio/createTranscription>
 
-use crate::error::{
-    ConfigurationError, DecodeError, LlmApiError, ProviderHttpError, TransportError,
-};
+use crate::error::{ConfigurationError, DecodeError, LlmApiError, ProviderHttpError};
 use crate::transport::http::{join_url, normalize_base_url};
 use crate::transport::{
     ApiResponse, EndpointOverride, HeaderSnapshot, HttpClient, HttpClientConfig,
@@ -187,7 +185,7 @@ impl Client {
             .multipart(form)
             .send()
             .await
-            .map_err(|err| map_reqwest_error(err, self.http.config().request_timeout))?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
@@ -195,7 +193,7 @@ impl Client {
         while let Some(chunk) = response
             .chunk()
             .await
-            .map_err(|err| map_reqwest_error(err, self.http.config().request_timeout))?
+            .map_err(|err| self.http.transport_error(err))?
         {
             if bytes.len().saturating_add(chunk.len()) > 2 * 1024 * 1024 {
                 return Err(
@@ -316,24 +314,6 @@ fn parse_provider_http_error(
         raw_json,
         Some(body),
     )
-}
-
-fn map_reqwest_error(err: reqwest::Error, timeout: Duration) -> LlmApiError {
-    let retryable = err.is_timeout() || err.is_connect() || err.is_request();
-    let message = if err.is_timeout() {
-        format!("request timed out after {}", format_duration(timeout))
-    } else {
-        err.to_string()
-    };
-    TransportError::new(message, retryable).into()
-}
-
-fn format_duration(duration: Duration) -> String {
-    if duration.subsec_nanos() == 0 {
-        format!("{}s", duration.as_secs())
-    } else {
-        format!("{duration:?}")
-    }
 }
 
 #[cfg(test)]

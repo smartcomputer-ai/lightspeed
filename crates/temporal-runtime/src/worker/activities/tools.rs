@@ -1,13 +1,9 @@
 use std::collections::BTreeMap;
 
-use futures::{StreamExt, stream};
 use harness::{
-    NativeMcpApprovalRequest, PromiseControlArgumentCallFacts, PromiseControlArgumentFacts,
-    PromiseControlArgumentRequest, PromiseControlKind, ToolBatchOutcome, ToolCallStatus,
-    ToolExecutionClass, ToolExecutionSpec, ToolInvocationBatchRequest, ToolInvocationBatchResult,
-    ToolInvocationResult, storage::BlobStore,
+    PromiseControlArgumentCallFacts, PromiseControlArgumentFacts, PromiseControlArgumentRequest,
+    PromiseControlKind, ToolBatchOutcome, ToolCallStatus, ToolInvocationResult, storage::BlobStore,
 };
-use temporal_workflow::MAX_CONCURRENT_TOOL_CALLS_PER_BATCH;
 use temporalio_sdk::activities::ActivityError;
 use tools::concurrency::{CancelArgs, DetachArgs};
 
@@ -72,8 +68,8 @@ pub(super) async fn prepare_code_tool_scope(
         .map_err(activity_error)?;
     let mut bindings = BTreeMap::new();
     let mut names = std::collections::BTreeSet::new();
-    let mut native_count = 0;
-    let mut insert = |tool_id: harness::ToolName, tool_name: harness::ToolName| {
+    let mut runtime_tool_count = 0;
+    let mut insert = |tool_id: harness::ToolId, tool_name: harness::ToolName| {
         if !names.insert(tool_name.clone()) {
             return Err(activity_error(anyhow::anyhow!(
                 "duplicate exposed code tool name {tool_name}"
@@ -86,14 +82,14 @@ pub(super) async fn prepare_code_tool_scope(
     };
     for tool in resolved {
         if let tools::callable::ResolvedToolKind::RemoteMcp(spec) = &tool.kind {
-            if spec.execution == harness::RemoteMcpExecution::Native
+            if spec.execution == harness::RemoteMcpExecution::Runtime
                 && spec.exposure == harness::RemoteMcpExposure::Inject
             {
-                let native = deps.native_mcp.as_ref().ok_or_else(|| {
-                    activity_error(anyhow::anyhow!("native MCP inventory is unavailable"))
+                let executor = deps.runtime_mcp.as_ref().ok_or_else(|| {
+                    activity_error(anyhow::anyhow!("runtime MCP inventory is unavailable"))
                 })?;
-                for (name, _) in native
-                    .injected_tools(spec, &tool.name, &mut native_count)
+                for (name, _) in executor
+                    .injected_tools(spec, &tool.name, &mut runtime_tool_count)
                     .await
                     .map_err(activity_error)?
                 {
@@ -107,144 +103,14 @@ pub(super) async fn prepare_code_tool_scope(
     Ok(temporal_workflow::CodeToolPrepareScopeActivityResult { bindings })
 }
 
-/// Execute an admitted tool batch as one unit.
-///
-/// Native MCP calls never reach the tool runtime behind `deps.tools`: this
-/// wrapper owns their dispatch on both the per-call and the batch-unit path.
-/// A batch that mixes workflow tools or `await` with injected MCP calls
-/// therefore still executes as one logical batch in one activity: the
-/// runtime receives the batch minus its MCP calls, the MCP calls run here
-/// concurrently under the remote operation deadline, and the results merge
-/// back in batch order. Approval gating follows the per-call contract: every
-/// ungated call completes, the gated calls stay pending, and the outcome
-/// carries the full set of approval subjects so the run parks exactly once.
+/// Execute the calls of a batch that must commit together: workflow-tool calls
+/// and `await`. A runtime failure becomes an ordinary failed result for each of
+/// them.
 pub(super) async fn invoke_batch(
     deps: &ToolActivityDeps,
     request: ToolInvokeBatchActivityRequest,
 ) -> Result<ToolBatchOutcome, ActivityError> {
     let request = request.request;
-    let native_indices = request
-        .calls
-        .iter()
-        .enumerate()
-        .filter(|(_, call)| call.remote_mcp.is_some())
-        .map(|(index, _)| index)
-        .collect::<Vec<_>>();
-    if native_indices.is_empty() {
-        return invoke_runtime_batch(deps, request).await;
-    }
-
-    let runtime_request = ToolInvocationBatchRequest {
-        calls: request
-            .calls
-            .iter()
-            .filter(|call| call.remote_mcp.is_none())
-            .cloned()
-            .collect(),
-        ..request.clone()
-    };
-    let runtime = async {
-        if runtime_request.calls.is_empty() {
-            return Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
-                run_id: request.run_id,
-                turn_id: request.turn_id,
-                batch_id: request.batch_id,
-                results: Vec::new(),
-            }));
-        }
-        invoke_runtime_batch(deps, runtime_request).await
-    };
-    let native = stream::iter(native_indices)
-        .map(|index| {
-            let request = &request;
-            async move {
-                (
-                    index,
-                    invoke_native_mcp_batch_call(deps, request, index).await,
-                )
-            }
-        })
-        .buffer_unordered(MAX_CONCURRENT_TOOL_CALLS_PER_BATCH)
-        .collect::<Vec<_>>();
-    let (runtime_outcome, native_outcomes) = futures::future::join(runtime, native).await;
-    let runtime_outcome = runtime_outcome?;
-
-    let mut approvals = Vec::new();
-    let mut native_results = BTreeMap::new();
-    let mut native_outcomes = native_outcomes;
-    native_outcomes.sort_by_key(|(index, _)| *index);
-    for (index, outcome) in native_outcomes {
-        match outcome? {
-            NativeMcpCallOutcome::Completed(result) => {
-                native_results.insert(index, result);
-            }
-            NativeMcpCallOutcome::NeedsApproval { subject } => {
-                approvals.push(NativeMcpApprovalRequest {
-                    call_id: request.calls[index].call_id.clone(),
-                    subject,
-                });
-            }
-        }
-    }
-    let merge = |runtime_results: Vec<ToolInvocationResult>| {
-        merge_in_batch_order(&request, runtime_results, native_results)
-    };
-
-    if !approvals.is_empty() {
-        let runtime_results = match runtime_outcome {
-            ToolBatchOutcome::Completed { result } => result.results,
-            // An `await` never defers while a sibling waits on a decision:
-            // the deferral is dropped, the await stays pending, and it runs
-            // again with the gated calls once the run unparks.
-            ToolBatchOutcome::Deferred {
-                completed_results, ..
-            } => completed_results,
-            ToolBatchOutcome::AwaitingApproval { .. } => {
-                return Err(runtime_approval_invariant_error());
-            }
-        };
-        return Ok(ToolBatchOutcome::AwaitingApproval {
-            batch_id: request.batch_id,
-            completed_results: merge(runtime_results),
-            approvals,
-        });
-    }
-    Ok(match runtime_outcome {
-        ToolBatchOutcome::Completed { result } => ToolBatchOutcome::Completed {
-            result: ToolInvocationBatchResult {
-                results: merge(result.results),
-                ..result
-            },
-        },
-        ToolBatchOutcome::Deferred {
-            batch_id,
-            call_id,
-            completed_results,
-            spec,
-        } => ToolBatchOutcome::Deferred {
-            batch_id,
-            call_id,
-            completed_results: merge(completed_results),
-            spec,
-        },
-        ToolBatchOutcome::AwaitingApproval { .. } => {
-            return Err(runtime_approval_invariant_error());
-        }
-    })
-}
-
-fn runtime_approval_invariant_error() -> ActivityError {
-    activity_error(anyhow::anyhow!(
-        "tool runtime reported an approval outcome for a batch without native MCP calls"
-    ))
-}
-
-/// Hand a batch without native MCP calls to the tool runtime; a runtime
-/// failure becomes an ordinary failed result for every call it covered.
-async fn invoke_runtime_batch(
-    deps: &ToolActivityDeps,
-    request: ToolInvocationBatchRequest,
-) -> Result<ToolBatchOutcome, ActivityError> {
     match deps.tools.invoke_batch(request.clone()).await {
         Ok(outcome) => Ok(outcome),
         Err(error) => failed_tool_batch_result(deps.blobs.as_ref(), &request, error.to_string())
@@ -254,49 +120,8 @@ async fn invoke_runtime_batch(
     }
 }
 
-/// Order merged results by their call's position in the original batch.
-/// Results the runtime returned for calls this batch never scheduled keep
-/// their relative order at the end; the harness rejects them on resume.
-fn merge_in_batch_order(
-    request: &ToolInvocationBatchRequest,
-    runtime_results: Vec<ToolInvocationResult>,
-    native_results: BTreeMap<usize, ToolInvocationResult>,
-) -> Vec<ToolInvocationResult> {
-    let position = |call_id: &harness::ToolCallId| {
-        request
-            .calls
-            .iter()
-            .position(|call| call.call_id == *call_id)
-            .unwrap_or(usize::MAX)
-    };
-    let mut results = native_results.into_iter().collect::<Vec<_>>();
-    results.extend(
-        runtime_results
-            .into_iter()
-            .map(|result| (position(&result.call_id), result)),
-    );
-    results.sort_by_key(|(index, _)| *index);
-    results.into_iter().map(|(_, result)| result).collect()
-}
-
-/// One native MCP call of a batch-unit dispatch, executed exactly as the
-/// per-call activity would execute it.
-async fn invoke_native_mcp_batch_call(
-    deps: &ToolActivityDeps,
-    request: &ToolInvocationBatchRequest,
-    index: usize,
-) -> Result<NativeMcpCallOutcome, ActivityError> {
-    let call_request = request
-        .call_request(
-            index,
-            ToolExecutionSpec::new(ToolExecutionClass::RemoteInteractive, false),
-        )
-        .expect("native MCP indices come from this batch request");
-    invoke_native_mcp_call(deps, &call_request).await
-}
-
-/// Outcome of one native MCP call executed by this activity wrapper.
-enum NativeMcpCallOutcome {
+/// Outcome of one runtime MCP call executed by this activity wrapper.
+enum RuntimeMcpCallOutcome {
     Completed(ToolInvocationResult),
     /// The call must receive a single-use run-owned decision before the
     /// worker performs any MCP wire I/O.
@@ -305,18 +130,14 @@ enum NativeMcpCallOutcome {
     },
 }
 
-/// Execute one native MCP call under the remote operation deadline. Shared by
-/// per-call and batch-unit execution so both paths apply the same target
-/// validation, approval gate, asset storage, result projection, deadline, and
-/// failure conversion. Tool-level failures and an elapsed deadline become an
-/// ordinary terminal failed result; only blob-store failures fail the
-/// activity.
-async fn invoke_native_mcp_call(
+/// Execute one runtime MCP call under its class operation deadline. Tool-level
+/// failures and an elapsed deadline become an ordinary terminal failed result;
+/// only blob-store failures fail the activity.
+async fn invoke_runtime_mcp_call(
     deps: &ToolActivityDeps,
     request: &harness::ToolInvocationCallRequest,
-) -> Result<NativeMcpCallOutcome, ActivityError> {
-    let deadline =
-        temporal_workflow::tool_call_operation_timeout(ToolExecutionClass::RemoteInteractive);
+) -> Result<RuntimeMcpCallOutcome, ActivityError> {
+    let deadline = temporal_workflow::tool_call_operation_timeout(request.execution.class);
     let started = std::time::Instant::now();
     let stamp = |mut result: ToolInvocationResult| {
         result.duration_ms = Some(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX));
@@ -325,12 +146,12 @@ async fn invoke_native_mcp_call(
     let failed = |message: String| async move {
         super::common::failed_tool_call_result(deps.blobs.as_ref(), request, message)
             .await
-            .map(|result| NativeMcpCallOutcome::Completed(stamp(result)))
+            .map(|result| RuntimeMcpCallOutcome::Completed(stamp(result)))
             .map_err(activity_error)
     };
-    match tokio::time::timeout(deadline, execute_native_mcp_call(deps, request)).await {
-        Ok(Ok(NativeMcpCallOutcome::Completed(result))) => {
-            Ok(NativeMcpCallOutcome::Completed(stamp(result)))
+    match tokio::time::timeout(deadline, execute_runtime_mcp_call(deps, request)).await {
+        Ok(Ok(RuntimeMcpCallOutcome::Completed(result))) => {
+            Ok(RuntimeMcpCallOutcome::Completed(stamp(result)))
         }
         Ok(Ok(outcome)) => Ok(outcome),
         Ok(Err(error)) => failed(error.to_string()).await,
@@ -344,125 +165,146 @@ async fn invoke_native_mcp_call(
     }
 }
 
-async fn execute_native_mcp_call(
+async fn execute_runtime_mcp_call(
     deps: &ToolActivityDeps,
     request: &harness::ToolInvocationCallRequest,
-) -> Result<NativeMcpCallOutcome, harness::CoreAgentIoError> {
-    let native = deps
-        .native_mcp
+) -> Result<RuntimeMcpCallOutcome, harness::CoreAgentIoError> {
+    let executor = deps
+        .runtime_mcp
         .as_ref()
         .ok_or_else(|| harness::CoreAgentIoError::Failed {
-            message: "native MCP execution is unavailable on this worker".to_owned(),
+            message: "runtime MCP execution is unavailable on this worker".to_owned(),
         })?;
     let argument_bytes = deps
         .blobs
         .read_bytes(&request.call.arguments_ref)
         .await
         .map_err(|error| harness::CoreAgentIoError::Failed {
-            message: format!("read native MCP arguments: {error}"),
+            message: format!("read runtime MCP arguments: {error}"),
         })?;
     let arguments = serde_json::from_slice(&argument_bytes).map_err(|error| {
         harness::CoreAgentIoError::Failed {
-            message: format!("native MCP arguments are invalid JSON: {error}"),
+            message: format!("runtime MCP arguments are invalid JSON: {error}"),
         }
     })?;
-    match native.execute(request, arguments).await {
-        Ok(crate::worker::mcp::NativeMcpExecutionOutcome::NeedsApproval { subject }) => {
-            Ok(NativeMcpCallOutcome::NeedsApproval { subject })
+    match executor.execute(request, arguments).await {
+        Ok(crate::worker::mcp::RuntimeMcpExecutionOutcome::NeedsApproval { subject }) => {
+            Ok(RuntimeMcpCallOutcome::NeedsApproval { subject })
         }
-        Ok(crate::worker::mcp::NativeMcpExecutionOutcome::Completed {
-            mut output,
+        Ok(crate::worker::mcp::RuntimeMcpExecutionOutcome::Completed {
+            output,
             visible,
             is_error,
             assets,
             media,
-        }) => {
-            let mut asset_refs = Vec::with_capacity(assets.len());
-            for asset in assets {
-                let blob_ref = deps.blobs.put_bytes(asset.bytes).await.map_err(|error| {
-                    harness::CoreAgentIoError::Failed {
-                        message: format!(
-                            "store native MCP {} asset ({}): {error}",
-                            asset.kind,
-                            asset.media_type.as_deref().unwrap_or("unknown media type")
-                        ),
-                    }
-                })?;
-                asset_refs.push(blob_ref);
-            }
-            crate::worker::mcp::attach_mcp_asset_refs(&mut output, &asset_refs);
-            let output_ref = deps
-                .blobs
-                .put_bytes(serde_json::to_vec(&output).map_err(|error| {
-                    harness::CoreAgentIoError::Failed {
-                        message: format!("encode native MCP result: {error}"),
-                    }
-                })?)
-                .await
-                .map_err(|error| harness::CoreAgentIoError::Failed {
-                    message: format!("store native MCP result: {error}"),
-                })?;
-            // The output embeds the asset refs it was just given; the edges
-            // keep the assets alive as long as the output.
-            harness::storage::record_contains_edges(
-                deps.blob_graph.as_deref(),
-                &output_ref,
-                asset_refs.iter().cloned(),
-            )
+        }) => store_runtime_mcp_result(deps, request, output, visible, is_error, assets, media)
             .await
-            .map_err(|error| harness::CoreAgentIoError::Failed {
-                message: format!("record native MCP asset edges: {error}"),
-            })?;
-            let visible = visible.into_bytes();
-            let output_bytes = visible.len() as u64;
-            let visible_ref = deps.blobs.put_bytes(visible).await.map_err(|error| {
-                harness::CoreAgentIoError::Failed {
-                    message: format!("store native MCP visible result: {error}"),
-                }
-            })?;
-            let status = if is_error {
-                ToolCallStatus::Failed
-            } else {
-                ToolCallStatus::Succeeded
-            };
-            // Admitted media follows the tool result as ordinary user-role
-            // media entries, in the order the visible text announces them.
-            let mut model_visible_context_entries = Vec::with_capacity(1 + media.len());
-            model_visible_context_entries.push(ToolInvocationResult::tool_result_context_entry(
-                &request.call.call_id,
-                status,
-                visible_ref.clone(),
-            ));
-            let mut attachments = Vec::with_capacity(media.len());
-            for item in media {
-                let Some(blob_ref) = asset_refs.get(item.asset_index) else {
-                    continue;
-                };
-                let descriptor = harness::media::MediaDescriptor {
-                    handle: harness::media::media_handle(blob_ref),
-                    content_ref: blob_ref.clone(),
-                    media_type: item.media_type,
-                    kind: item.kind,
-                    name: item.name,
-                };
-                model_visible_context_entries.push(descriptor.context_entry());
-                attachments.push(harness::Attachment::Media(descriptor));
-            }
-            Ok(NativeMcpCallOutcome::Completed(ToolInvocationResult {
-                attachments,
-                duration_ms: None,
-                output_bytes: Some(output_bytes),
-                truncated: false,
-                call_id: request.call.call_id.clone(),
-                status,
-                output_ref: Some(output_ref),
-                model_visible_context_entries,
-                error_ref: is_error.then_some(visible_ref),
-                effects: Vec::new(),
-            }))
-        }
+            .map(RuntimeMcpCallOutcome::Completed),
         Err(message) => Err(harness::CoreAgentIoError::Failed { message }),
     }
+}
+
+/// Store a completed runtime MCP result: its assets and full output by reference,
+/// and its model-visible text under the projection budget every inline tool uses.
+async fn store_runtime_mcp_result(
+    deps: &ToolActivityDeps,
+    request: &harness::ToolInvocationCallRequest,
+    mut output: serde_json::Value,
+    visible: String,
+    is_error: bool,
+    assets: Vec<crate::worker::mcp::RuntimeMcpAsset>,
+    media: Vec<crate::worker::mcp::RuntimeMcpMedia>,
+) -> Result<ToolInvocationResult, harness::CoreAgentIoError> {
+    let mut asset_refs = Vec::with_capacity(assets.len());
+    for asset in assets {
+        let blob_ref = deps.blobs.put_bytes(asset.bytes).await.map_err(|error| {
+            harness::CoreAgentIoError::Failed {
+                message: format!(
+                    "store runtime MCP {} asset ({}): {error}",
+                    asset.kind,
+                    asset.media_type.as_deref().unwrap_or("unknown media type")
+                ),
+            }
+        })?;
+        asset_refs.push(blob_ref);
+    }
+    crate::worker::mcp::attach_mcp_asset_refs(&mut output, &asset_refs);
+    let output_ref = deps
+        .blobs
+        .put_bytes(serde_json::to_vec(&output).map_err(|error| {
+            harness::CoreAgentIoError::Failed {
+                message: format!("encode runtime MCP result: {error}"),
+            }
+        })?)
+        .await
+        .map_err(|error| harness::CoreAgentIoError::Failed {
+            message: format!("store runtime MCP result: {error}"),
+        })?;
+    // The output embeds the asset refs it was just given; the edges
+    // keep the assets alive as long as the output.
+    harness::storage::record_contains_edges(
+        deps.blob_graph.as_deref(),
+        &output_ref,
+        asset_refs.iter().cloned(),
+    )
+    .await
+    .map_err(|error| harness::CoreAgentIoError::Failed {
+        message: format!("record runtime MCP asset edges: {error}"),
+    })?;
+    // The server decides the size of its text, and an oversized result would sit
+    // in context beyond the reach of compaction. Only the visible text is cut:
+    // the full output stays behind `output_ref`.
+    let projection = tools::limits::projected(
+        visible.into_bytes(),
+        tools::limits::ToolLimits::default().max_model_visible_output_bytes,
+    );
+    let visible_ref = deps
+        .blobs
+        .put_bytes(projection.bytes)
+        .await
+        .map_err(|error| harness::CoreAgentIoError::Failed {
+            message: format!("store runtime MCP visible result: {error}"),
+        })?;
+    let status = if is_error {
+        ToolCallStatus::Failed
+    } else {
+        ToolCallStatus::Succeeded
+    };
+    // Admitted media follows the tool result as ordinary user-role
+    // media entries, in the order the visible text announces them.
+    let mut model_visible_context_entries = Vec::with_capacity(1 + media.len());
+    model_visible_context_entries.push(ToolInvocationResult::tool_result_context_entry(
+        &request.call.call_id,
+        status,
+        visible_ref.clone(),
+    ));
+    let mut attachments = Vec::with_capacity(media.len());
+    for item in media {
+        let Some(blob_ref) = asset_refs.get(item.asset_index) else {
+            continue;
+        };
+        let descriptor = harness::media::MediaDescriptor {
+            handle: harness::media::media_handle(blob_ref),
+            content_ref: blob_ref.clone(),
+            media_type: item.media_type,
+            kind: item.kind,
+            name: item.name,
+        };
+        model_visible_context_entries.push(descriptor.context_entry());
+        attachments.push(harness::Attachment::Media(descriptor));
+    }
+    Ok(ToolInvocationResult {
+        attachments,
+        duration_ms: None,
+        output_bytes: Some(projection.output_bytes),
+        truncated: projection.truncated,
+        call_id: request.call.call_id.clone(),
+        status,
+        output_ref: Some(output_ref),
+        model_visible_context_entries,
+        error_ref: is_error.then_some(visible_ref),
+        effects: Vec::new(),
+    })
 }
 
 /// Execute one call of an admitted tool batch under its class operation
@@ -477,11 +319,11 @@ pub(super) async fn invoke_call(
 ) -> Result<ToolInvokeCallActivityResult, ActivityError> {
     let request = request.request;
     if request.call.remote_mcp.is_some() {
-        return Ok(match invoke_native_mcp_call(deps, &request).await? {
-            NativeMcpCallOutcome::Completed(result) => {
+        return Ok(match invoke_runtime_mcp_call(deps, &request).await? {
+            RuntimeMcpCallOutcome::Completed(result) => {
                 ToolInvokeCallActivityResult::Completed { result }
             }
-            NativeMcpCallOutcome::NeedsApproval { subject } => {
+            RuntimeMcpCallOutcome::NeedsApproval { subject } => {
                 ToolInvokeCallActivityResult::NeedsApproval { subject }
             }
         });
@@ -554,7 +396,7 @@ pub(super) async fn invoke_code_tool(
         });
     }
     // A prior model-call approval must never authorize a code tool invocation.
-    // The native adapter reports NeedsApproval before performing the call;
+    // The runtime MCP executor reports NeedsApproval before performing the call;
     // below that becomes a terminal failed result, with no approval lifecycle.
     if let Some(remote) = &mut request.call.remote_mcp {
         match remote {
@@ -573,7 +415,7 @@ pub(super) async fn invoke_code_tool(
             .call
             .tool_id
             .as_ref()
-            .is_some_and(|id| id.as_str() == "concurrency.await");
+            .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID);
     if !special || request.call.remote_mcp.is_some() {
         return Ok(
             match invoke_call(
@@ -668,7 +510,7 @@ fn validate_code_tool_presentation(call: &harness::ToolInvocationRequest) -> Res
                 "code tool name is absent from its pinned callable presentation".to_owned()
             });
     }
-    if call.tool_name != *id {
+    if call.tool_name.as_str() != id.as_str() {
         return Err("code tool function name does not match its admitted binding".to_owned());
     }
     Ok(())
@@ -703,17 +545,18 @@ mod tests {
 
     use async_trait::async_trait;
     use harness::{
-        AwaitMode, AwaitSpec, BlobRef, CoreAgentIoError, CoreAgentTools,
-        PromiseControlArgumentCall, RemoteMcpApprovalPolicy, RemoteMcpCallRuntime,
-        RemoteMcpCallTarget, RunId, SessionId, ToolBatchId, ToolCallId, ToolInvocationRequest,
-        ToolName, TurnId, storage::InMemoryBlobStore,
+        BlobRef, CoreAgentIoError, CoreAgentTools, PromiseControlArgumentCall,
+        RemoteMcpApprovalPolicy, RemoteMcpCallRuntime, RemoteMcpCallTarget, RunId, SessionId,
+        ToolBatchId, ToolCallId, ToolExecutionClass, ToolExecutionSpec, ToolId,
+        ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationRequest, ToolName,
+        TurnId, storage::InMemoryBlobStore,
     };
     use llm_runtime::secrets::{AbsentSecretResolver, SecretResolver};
 
     use super::*;
     use crate::{
         gateway::service::mcp_discovery::ConfiguratorTrustedHeaderPolicy,
-        worker::mcp::{McpPrivateNetworkPolicy, NativeMcpInventoryResolver, NativeMcpRuntime},
+        worker::mcp::{McpPrivateNetworkPolicy, RuntimeMcpExecutor, RuntimeMcpInventoryResolver},
     };
 
     #[tokio::test(flavor = "current_thread")]
@@ -776,15 +619,12 @@ mod tests {
     #[derive(Clone, Copy)]
     enum RuntimeScript {
         Complete,
-        /// The runtime defers on the batch's last call, as the hosted runtime
-        /// does for an `await` sibling.
-        DeferOnLastCall,
         Fail,
     }
 
-    /// Tool runtime double: records every batch it receives and completes,
-    /// defers, or fails it by script. It never understands native MCP calls,
-    /// exactly like the hosted runtime.
+    /// Tool runtime double: records every batch it receives and completes or
+    /// fails it by script. It never understands runtime MCP calls, exactly like
+    /// the hosted runtime.
     struct RecordingTools {
         script: RuntimeScript,
         received: Mutex<Vec<ToolInvocationBatchRequest>>,
@@ -811,22 +651,6 @@ mod tests {
                         batch_id: request.batch_id,
                         results: request.calls.iter().map(succeeded).collect(),
                     }))
-                }
-                RuntimeScript::DeferOnLastCall => {
-                    let (deferred, completed) = request
-                        .calls
-                        .split_last()
-                        .expect("deferring batch has calls");
-                    Ok(ToolBatchOutcome::Deferred {
-                        batch_id: request.batch_id,
-                        call_id: deferred.call_id.clone(),
-                        completed_results: completed.iter().map(succeeded).collect(),
-                        spec: AwaitSpec {
-                            promise_ids: Vec::new(),
-                            mode: AwaitMode::All,
-                            deadline_at_ms: None,
-                        },
-                    })
                 }
             }
         }
@@ -856,7 +680,7 @@ mod tests {
         ToolInvocationRequest {
             builtin: None,
             call_id: ToolCallId::new(call_id),
-            tool_id: Some(ToolName::new(tool_name)),
+            tool_id: Some(ToolId::new(tool_name)),
             tool_name: ToolName::new(tool_name),
             arguments_ref: BlobRef::from_bytes(b"{}"),
             workflow_tool: None,
@@ -865,7 +689,7 @@ mod tests {
         }
     }
 
-    async fn native_call(
+    async fn mcp_call(
         blobs: &dyn BlobStore,
         call_id: &str,
         approval_decision: Option<bool>,
@@ -873,11 +697,11 @@ mod tests {
         let arguments_ref = blobs
             .put_bytes(b"{}".to_vec())
             .await
-            .expect("native MCP arguments");
+            .expect("runtime MCP arguments");
         ToolInvocationRequest {
             builtin: None,
             call_id: ToolCallId::new(call_id),
-            tool_id: Some(ToolName::new("mcp_echo")),
+            tool_id: Some(ToolId::new("mcp_echo")),
             tool_name: ToolName::new("mcp_echo__hello"),
             arguments_ref,
             workflow_tool: None,
@@ -887,12 +711,8 @@ mod tests {
                     server_id: "echo".to_owned(),
                     record_revision: 1,
                     server_label: "echo".to_owned(),
-                    server_url: "https://echo.example.com/mcp".to_owned(),
                     allowed_tools: None,
                     approval: RemoteMcpApprovalPolicy::Always,
-                    auth_ref: None,
-                    auth_required: false,
-                    allow_private_network: false,
                 },
                 remote_tool_name: "hello".to_owned(),
                 approval_decision,
@@ -919,23 +739,26 @@ mod tests {
         }
     }
 
-    /// A native runtime over an empty registry: approval gating and rejection
+    /// A runtime MCP executor over an empty registry: approval gating and rejection
     /// happen before any registry or network access, and an approved call
     /// fails at record validation instead of reaching the wire.
-    fn native_runtime() -> Arc<NativeMcpRuntime> {
+    fn runtime_mcp_executor() -> Arc<RuntimeMcpExecutor> {
         let secrets: Arc<dyn SecretResolver> = Arc::new(AbsentSecretResolver);
         let private_networks =
             McpPrivateNetworkPolicy::parse(None).expect("private network policy");
         let trusted_header = ConfiguratorTrustedHeaderPolicy;
         let universe_id = uuid::Uuid::from_u128(7);
-        let inventory = Arc::new(NativeMcpInventoryResolver::new(
+        let servers: Arc<dyn mcp::McpRegistryStore> =
+            Arc::new(mcp::InMemoryMcpRegistryStore::new());
+        let inventory = Arc::new(RuntimeMcpInventoryResolver::new(
+            servers.clone(),
             secrets.clone(),
             private_networks.clone(),
             trusted_header.clone(),
             universe_id,
         ));
-        Arc::new(NativeMcpRuntime::new(
-            Arc::new(mcp::InMemoryMcpRegistryStore::new()),
+        Arc::new(RuntimeMcpExecutor::new(
+            servers,
             secrets,
             inventory,
             private_networks,
@@ -947,7 +770,7 @@ mod tests {
     fn deps(
         script: RuntimeScript,
         blobs: Arc<dyn BlobStore>,
-        native_mcp: Option<Arc<NativeMcpRuntime>>,
+        runtime_mcp: Option<Arc<RuntimeMcpExecutor>>,
     ) -> (ToolActivityDeps, Arc<RecordingTools>) {
         let tools = Arc::new(RecordingTools {
             script,
@@ -959,7 +782,7 @@ mod tests {
                 blobs,
                 blob_graph: None,
                 hosted: None,
-                native_mcp,
+                runtime_mcp,
             },
             tools,
         )
@@ -1006,10 +829,10 @@ mod tests {
         let (deps, tools) = deps(
             RuntimeScript::Complete,
             blobs.clone(),
-            Some(native_runtime()),
+            Some(runtime_mcp_executor()),
         );
         for decision in [None, Some(true), Some(false)] {
-            let call = native_call(blobs.as_ref(), "code-tool:mcp", decision).await;
+            let call = mcp_call(blobs.as_ref(), "code-tool:mcp", decision).await;
             let request = batch(vec![call])
                 .request
                 .call_request(
@@ -1043,7 +866,7 @@ mod tests {
         let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
         let (deps, tools) = deps(RuntimeScript::Complete, blobs, None);
         let mut call = runtime_call("code-tool:read", "Read");
-        call.tool_id = Some(ToolName::new("env.read_file"));
+        call.tool_id = Some(ToolId::new("env.read_file"));
         call.builtin = Some(harness::BuiltinToolCallRuntime {
             spec: harness::BuiltinToolSpec::default(),
             model: harness::ModelSelection {
@@ -1116,7 +939,7 @@ mod tests {
         let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
         let (deps, tools) = deps(RuntimeScript::Complete, blobs.clone(), None);
         let mut call = runtime_call("code-tool:wrong-name", "read_file");
-        call.tool_id = Some(ToolName::new("env.read_file"));
+        call.tool_id = Some(ToolId::new("env.read_file"));
         call.builtin = Some(harness::BuiltinToolCallRuntime {
             spec: Default::default(),
             model: harness::ModelSelection {
@@ -1148,9 +971,9 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn batches_without_native_calls_reach_the_runtime_unchanged() {
+    async fn batches_reach_the_runtime_unchanged() {
         let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
-        let (deps, tools) = deps(RuntimeScript::Complete, blobs, Some(native_runtime()));
+        let (deps, tools) = deps(RuntimeScript::Complete, blobs, Some(runtime_mcp_executor()));
         let request = batch(vec![
             runtime_call("call_a", "tool_a"),
             runtime_call("call_b", "tool_b"),
@@ -1167,205 +990,270 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn mixed_batches_run_ungated_calls_and_park_once_for_every_gated_call() {
+    async fn a_runtime_failure_becomes_a_failed_result_for_each_call() {
+        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
+        let (deps, _tools) = deps(RuntimeScript::Fail, blobs.clone(), None);
+        let request = batch(vec![
+            runtime_call("call_a", "tool_a"),
+            runtime_call("call_b", "tool_b"),
+        ]);
+
+        let outcome = invoke_batch(&deps, request).await.expect("batch");
+
+        let ToolBatchOutcome::Completed { result } = outcome else {
+            panic!("expected a completed batch, got {outcome:?}");
+        };
+        assert_eq!(call_ids(&result.results), vec!["call_a", "call_b"]);
+        for failed in &result.results {
+            assert_eq!(failed.status, ToolCallStatus::Failed);
+            assert!(
+                error_text(blobs.as_ref(), failed)
+                    .await
+                    .contains("scripted runtime failure")
+            );
+        }
+    }
+
+    async fn invoke_runtime_call(
+        deps: &ToolActivityDeps,
+        blobs: &dyn BlobStore,
+        approval_decision: Option<bool>,
+    ) -> ToolInvokeCallActivityResult {
+        let call = mcp_call(blobs, "call_m", approval_decision).await;
+        let request = batch(vec![call])
+            .request
+            .call_request(
+                0,
+                ToolExecutionSpec::new(ToolExecutionClass::RemoteInteractive, false),
+            )
+            .expect("single call");
+        invoke_call(
+            deps,
+            crate::worker::ToolInvokeCallActivityRequest { request },
+        )
+        .await
+        .expect("call activity")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_undecided_gated_call_reports_its_subject_before_any_mcp_io() {
         let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
         let (deps, tools) = deps(
             RuntimeScript::Complete,
             blobs.clone(),
-            Some(native_runtime()),
+            Some(runtime_mcp_executor()),
         );
-        let request = batch(vec![
-            runtime_call("call_a", "work_report"),
-            native_call(blobs.as_ref(), "call_m1", None).await,
-            native_call(blobs.as_ref(), "call_m2", None).await,
-        ]);
 
-        let outcome = invoke_batch(&deps, request.clone()).await.expect("batch");
+        let outcome = invoke_runtime_call(&deps, blobs.as_ref(), None).await;
 
-        // The runtime saw one batch: the same dispatch minus its MCP calls.
-        let received = tools.received.lock().expect("recording lock");
-        assert_eq!(received.len(), 1);
-        assert_eq!(received[0].batch_id, request.request.batch_id);
-        assert_eq!(received[0].promise_id_base, request.request.promise_id_base);
-        assert_eq!(received[0].calls, vec![request.request.calls[0].clone()]);
-        drop(received);
-        let ToolBatchOutcome::AwaitingApproval {
-            batch_id,
-            completed_results,
-            approvals,
-        } = outcome
-        else {
-            panic!("expected an approval-gated batch, got {outcome:?}");
+        let ToolInvokeCallActivityResult::NeedsApproval { subject } = outcome else {
+            panic!("expected an approval outcome, got {outcome:?}");
         };
-        assert_eq!(batch_id, request.request.batch_id);
-        assert_eq!(call_ids(&completed_results), vec!["call_a"]);
-        assert_eq!(
-            approvals
-                .iter()
-                .map(|approval| approval.call_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["call_m1", "call_m2"]
+        let harness::ApprovalSubject::McpToolCall {
+            server_id,
+            tool_name,
+            ..
+        } = subject;
+        assert_eq!(server_id, "echo");
+        assert_eq!(tool_name, "hello");
+        assert!(received_call_ids(&tools).is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_decided_gated_call_completes_without_reaching_the_runtime() {
+        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
+        let (deps, tools) = deps(
+            RuntimeScript::Complete,
+            blobs.clone(),
+            Some(runtime_mcp_executor()),
         );
-        for approval in &approvals {
-            let harness::ApprovalSubject::McpToolCall {
-                server_id,
-                tool_name,
-                ..
-            } = &approval.subject;
-            assert_eq!(server_id, "echo");
-            assert_eq!(tool_name, "hello");
+
+        let rejected = invoke_runtime_call(&deps, blobs.as_ref(), Some(false)).await;
+        let ToolInvokeCallActivityResult::Completed { result } = rejected else {
+            panic!("expected a completed call, got {rejected:?}");
+        };
+        assert_eq!(result.status, ToolCallStatus::Failed);
+        assert!(
+            error_text(blobs.as_ref(), &result)
+                .await
+                .contains("rejected")
+        );
+
+        // The approved call reached the executor and failed there (no such
+        // server record); it never fell through to the inline runtime.
+        let approved = invoke_runtime_call(&deps, blobs.as_ref(), Some(true)).await;
+        let ToolInvokeCallActivityResult::Completed { result } = approved else {
+            panic!("expected a completed call, got {approved:?}");
+        };
+        assert_eq!(result.status, ToolCallStatus::Failed);
+        assert!(result.duration_ms.is_some());
+        let approved_error = error_text(blobs.as_ref(), &result).await;
+        assert!(!approved_error.contains("unknown tool"), "{approved_error}");
+        assert!(received_call_ids(&tools).is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_large_runtime_result_is_cut_for_the_model_and_kept_whole_by_reference() {
+        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
+        let (deps, _tools) = deps(RuntimeScript::Complete, blobs.clone(), None);
+        let call = mcp_call(blobs.as_ref(), "call_m", None).await;
+        let request = batch(vec![call])
+            .request
+            .call_request(
+                0,
+                ToolExecutionSpec::new(ToolExecutionClass::RemoteInteractive, false),
+            )
+            .expect("single call");
+        let budget = tools::limits::ToolLimits::default().max_model_visible_output_bytes as usize;
+        let text = "x".repeat(3 * 512 * 1024);
+        // The announcement of the image falls past the cut; the entry stays.
+        let visible = format!("{text}\n[image 1]");
+        let image = harness::BlobRef::from_bytes(b"png");
+
+        for is_error in [false, true] {
+            let result = store_runtime_mcp_result(
+                &deps,
+                &request,
+                serde_json::json!({"content": [{"type": "text", "text": text}]}),
+                visible.clone(),
+                is_error,
+                vec![crate::worker::mcp::RuntimeMcpAsset {
+                    bytes: b"png".to_vec(),
+                    blob_ref: image.clone(),
+                    media_type: Some("image/png".to_owned()),
+                    kind: "image".to_owned(),
+                    uri: None,
+                }],
+                vec![crate::worker::mcp::RuntimeMcpMedia {
+                    asset_index: 0,
+                    kind: harness::media::MediaKind::Image,
+                    media_type: "image/png".to_owned(),
+                    name: None,
+                }],
+            )
+            .await
+            .expect("stored result");
+
+            assert!(result.truncated);
+            assert_eq!(result.output_bytes, Some(visible.len() as u64));
+            assert_eq!(result.model_visible_context_entries.len(), 2);
+            let shown = blobs
+                .read_text(&result.model_visible_context_entries[0].content.content_ref)
+                .await
+                .expect("visible text");
+            assert!(shown.len() <= budget + "\n[truncated]".len());
+            assert!(shown.ends_with("\n[truncated]"));
+            assert_eq!(
+                result.error_ref.as_ref(),
+                is_error.then_some(&result.model_visible_context_entries[0].content.content_ref)
+            );
+            let kept: serde_json::Value = serde_json::from_slice(
+                &blobs
+                    .read_bytes(result.output_ref.as_ref().expect("full output"))
+                    .await
+                    .expect("full output blob"),
+            )
+            .expect("output JSON");
+            assert_eq!(kept["content"][0]["text"], text.as_str());
         }
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn decided_native_calls_complete_inside_the_batch_in_batch_order() {
-        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
-        let (deps, _tools) = deps(
-            RuntimeScript::Complete,
-            blobs.clone(),
-            Some(native_runtime()),
-        );
-        let request = batch(vec![
-            native_call(blobs.as_ref(), "call_m1", Some(false)).await,
-            runtime_call("call_a", "work_report"),
-            native_call(blobs.as_ref(), "call_m2", Some(true)).await,
-        ]);
-
-        let outcome = invoke_batch(&deps, request).await.expect("batch");
-
-        let ToolBatchOutcome::Completed { result } = outcome else {
-            panic!("expected a completed batch, got {outcome:?}");
-        };
-        assert_eq!(
-            call_ids(&result.results),
-            vec!["call_m1", "call_a", "call_m2"]
-        );
-        assert_eq!(result.results[0].status, ToolCallStatus::Failed);
-        assert!(
-            error_text(blobs.as_ref(), &result.results[0])
-                .await
-                .contains("rejected")
-        );
-        assert_eq!(result.results[1].status, ToolCallStatus::Succeeded);
-        // The approved call reached the executor and failed there (no such
-        // server record); it never fell through to the inline runtime.
-        assert_eq!(result.results[2].status, ToolCallStatus::Failed);
-        let approved_error = error_text(blobs.as_ref(), &result.results[2]).await;
-        assert!(!approved_error.contains("unknown tool"), "{approved_error}");
-        assert!(result.results[2].duration_ms.is_some());
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn await_stays_pending_while_a_sibling_waits_on_approval() {
-        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
-        let (deps, tools) = deps(
-            RuntimeScript::DeferOnLastCall,
-            blobs.clone(),
-            Some(native_runtime()),
-        );
-        let request = batch(vec![
-            runtime_call("call_a", "work_report"),
-            native_call(blobs.as_ref(), "call_m1", None).await,
-            runtime_call("call_await", "concurrency.await"),
-        ]);
-
-        let outcome = invoke_batch(&deps, request).await.expect("batch");
-
-        assert_eq!(
-            received_call_ids(&tools),
-            vec![vec!["call_a".to_owned(), "call_await".to_owned()]]
-        );
-        let ToolBatchOutcome::AwaitingApproval {
-            completed_results,
-            approvals,
-            ..
-        } = outcome
-        else {
-            panic!("expected an approval-gated batch, got {outcome:?}");
-        };
-        assert_eq!(call_ids(&completed_results), vec!["call_a"]);
-        assert_eq!(approvals.len(), 1);
-        assert_eq!(approvals[0].call_id.as_str(), "call_m1");
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn deferred_batches_carry_native_results_in_batch_order() {
-        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
-        let (deps, _tools) = deps(
-            RuntimeScript::DeferOnLastCall,
-            blobs.clone(),
-            Some(native_runtime()),
-        );
-        let request = batch(vec![
-            native_call(blobs.as_ref(), "call_m1", Some(false)).await,
-            runtime_call("call_a", "work_report"),
-            runtime_call("call_await", "concurrency.await"),
-        ]);
-
-        let outcome = invoke_batch(&deps, request).await.expect("batch");
-
-        let ToolBatchOutcome::Deferred {
-            call_id,
-            completed_results,
-            ..
-        } = outcome
-        else {
-            panic!("expected a deferred batch, got {outcome:?}");
-        };
-        assert_eq!(call_id.as_str(), "call_await");
-        assert_eq!(call_ids(&completed_results), vec!["call_m1", "call_a"]);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn runtime_failures_fail_only_the_runtime_calls() {
-        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
-        let (deps, _tools) = deps(RuntimeScript::Fail, blobs.clone(), Some(native_runtime()));
-        let request = batch(vec![
-            runtime_call("call_a", "work_report"),
-            native_call(blobs.as_ref(), "call_m1", Some(false)).await,
-        ]);
-
-        let outcome = invoke_batch(&deps, request).await.expect("batch");
-
-        let ToolBatchOutcome::Completed { result } = outcome else {
-            panic!("expected a completed batch, got {outcome:?}");
-        };
-        assert_eq!(call_ids(&result.results), vec!["call_a", "call_m1"]);
-        assert_eq!(result.results[0].status, ToolCallStatus::Failed);
-        assert!(
-            error_text(blobs.as_ref(), &result.results[0])
-                .await
-                .contains("scripted runtime failure")
-        );
-        assert_eq!(result.results[1].status, ToolCallStatus::Failed);
-        assert!(
-            error_text(blobs.as_ref(), &result.results[1])
-                .await
-                .contains("rejected")
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn native_calls_fail_as_tool_failures_when_the_worker_has_no_native_runtime() {
+    async fn a_small_runtime_result_passes_through_uncut() {
         let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
         let (deps, _tools) = deps(RuntimeScript::Complete, blobs.clone(), None);
-        let request = batch(vec![
-            runtime_call("call_a", "work_report"),
-            native_call(blobs.as_ref(), "call_m1", None).await,
-        ]);
+        let call = mcp_call(blobs.as_ref(), "call_m", None).await;
+        let request = batch(vec![call])
+            .request
+            .call_request(
+                0,
+                ToolExecutionSpec::new(ToolExecutionClass::RemoteInteractive, false),
+            )
+            .expect("single call");
 
-        let outcome = invoke_batch(&deps, request).await.expect("batch");
+        let result = store_runtime_mcp_result(
+            &deps,
+            &request,
+            serde_json::json!({"content": []}),
+            "short".to_owned(),
+            false,
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .expect("stored result");
 
-        let ToolBatchOutcome::Completed { result } = outcome else {
-            panic!("expected a completed batch, got {outcome:?}");
-        };
-        assert_eq!(call_ids(&result.results), vec!["call_a", "call_m1"]);
-        assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
-        assert_eq!(result.results[1].status, ToolCallStatus::Failed);
-        assert!(
-            error_text(blobs.as_ref(), &result.results[1])
+        assert!(!result.truncated);
+        assert_eq!(result.output_bytes, Some(5));
+        assert_eq!(
+            blobs
+                .read_text(&result.model_visible_context_entries[0].content.content_ref)
                 .await
-                .contains("native MCP execution is unavailable on this worker")
+                .expect("visible text"),
+            "short"
+        );
+    }
+
+    /// An argument error quotes the tool's input schema, which a third-party server
+    /// can make up to 512 KiB, so a failure is cut like a result.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_large_failure_message_is_cut_for_the_model() {
+        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
+        let call = mcp_call(blobs.as_ref(), "call_m", None).await;
+        let request = batch(vec![call])
+            .request
+            .call_request(
+                0,
+                ToolExecutionSpec::new(ToolExecutionClass::RemoteInteractive, false),
+            )
+            .expect("single call");
+        let budget = tools::limits::ToolLimits::default().max_model_visible_output_bytes as usize;
+        let message = "é".repeat(256 * 1024);
+
+        let result = crate::worker::activities::common::failed_tool_call_result(
+            blobs.as_ref(),
+            &request,
+            &message,
+        )
+        .await
+        .expect("failed result");
+
+        assert_eq!(result.status, ToolCallStatus::Failed);
+        assert!(result.truncated);
+        assert_eq!(result.output_bytes, Some(message.len() as u64));
+        let shown = blobs
+            .read_text(&result.model_visible_context_entries[0].content.content_ref)
+            .await
+            .expect("visible text");
+        assert!(shown.len() < budget + 256, "{}", shown.len());
+        assert!(shown.contains("\n[truncated]\nrun_id="));
+
+        let short = crate::worker::activities::common::failed_tool_call_result(
+            blobs.as_ref(),
+            &request,
+            "short",
+        )
+        .await
+        .expect("failed result");
+        assert!(!short.truncated);
+        assert_eq!(short.output_bytes, None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_runtime_call_fails_as_a_tool_failure_when_the_worker_has_no_runtime_mcp_executor() {
+        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
+        let (deps, _tools) = deps(RuntimeScript::Complete, blobs.clone(), None);
+
+        let outcome = invoke_runtime_call(&deps, blobs.as_ref(), None).await;
+
+        let ToolInvokeCallActivityResult::Completed { result } = outcome else {
+            panic!("expected a completed call, got {outcome:?}");
+        };
+        assert_eq!(result.status, ToolCallStatus::Failed);
+        assert!(
+            error_text(blobs.as_ref(), &result)
+                .await
+                .contains("runtime MCP execution is unavailable on this worker")
         );
     }
 }

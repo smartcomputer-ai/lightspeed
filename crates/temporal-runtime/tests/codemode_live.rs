@@ -14,7 +14,7 @@ use serde_json::json;
 use support::live::{LIVE_TEST_LOCK, live_universe_id, require_storage_live_env};
 use temporal_runtime::code::{CodeRunError, CodeRunReport, CodeRunner, CodeToolCatalog};
 use temporal_workflow::{
-    CodeExecutionDescriptor, CodeExecutionLimits, CodeToolCallStatus, compose_workflow_id,
+    CodeExecutionDescriptor, CodeExecutionLimits, CodeToolCallOutcomeStatus, compose_workflow_id,
 };
 
 fn limits() -> CodeExecutionLimits {
@@ -145,7 +145,7 @@ async fn javascript_loops_parallel_calls_and_durable_waits_use_session_tools() -
                         && scope
                             .calls
                             .values()
-                            .any(|call| call.status == CodeToolCallStatus::Waiting))
+                            .any(|call| call.status == CodeToolCallOutcomeStatus::Waiting))
                 },
             )
             .await?;
@@ -181,7 +181,7 @@ async fn javascript_loops_parallel_calls_and_durable_waits_use_session_tools() -
             scope
                 .calls
                 .values()
-                .filter(|call| call.status == CodeToolCallStatus::Failed)
+                .filter(|call| call.status == CodeToolCallOutcomeStatus::Failed)
                 .count(),
             1
         );
@@ -189,7 +189,7 @@ async fn javascript_loops_parallel_calls_and_durable_waits_use_session_tools() -
             scope
                 .calls
                 .values()
-                .filter(|call| call.status == CodeToolCallStatus::Succeeded)
+                .filter(|call| call.status == CodeToolCallOutcomeStatus::Succeeded)
                 .count(),
             9
         );
@@ -244,9 +244,9 @@ async fn javascript_failure_keeps_successes_and_cancels_unfinished_siblings() ->
         let scope = report.scope.unwrap();
         assert_eq!(scope.calls.len(), 3);
         for status in [
-            CodeToolCallStatus::Succeeded,
-            CodeToolCallStatus::Failed,
-            CodeToolCallStatus::Cancelled,
+            CodeToolCallOutcomeStatus::Succeeded,
+            CodeToolCallOutcomeStatus::Failed,
+            CodeToolCallOutcomeStatus::Cancelled,
         ] {
             assert_eq!(
                 scope
@@ -299,7 +299,7 @@ async fn javascript_cancellation_reconciles_pending_durable_calls() -> anyhow::R
             scope
                 .calls
                 .values()
-                .filter(|call| call.status == CodeToolCallStatus::Succeeded)
+                .filter(|call| call.status == CodeToolCallOutcomeStatus::Succeeded)
                 .count(),
             1
         );
@@ -307,7 +307,7 @@ async fn javascript_cancellation_reconciles_pending_durable_calls() -> anyhow::R
             scope
                 .calls
                 .values()
-                .filter(|call| call.status == CodeToolCallStatus::Cancelled)
+                .filter(|call| call.status == CodeToolCallOutcomeStatus::Cancelled)
                 .count(),
             1
         );
@@ -352,7 +352,7 @@ async fn javascript_result_limit_preserves_successful_authoritative_outcome() ->
         let scope = report.scope.unwrap();
         assert_eq!(scope.calls.len(), 1);
         let call = scope.calls.values().next().unwrap();
-        assert_eq!(call.status, CodeToolCallStatus::Succeeded);
+        assert_eq!(call.status, CodeToolCallOutcomeStatus::Succeeded);
         assert_eq!(fixture.value(call).await?, payload);
         fixture.finish().await
     })
@@ -482,7 +482,7 @@ async fn dropped_runner_caller_still_closes_and_reconciles_the_scope() -> anyhow
             scope
                 .calls
                 .values()
-                .filter(|call| call.status == CodeToolCallStatus::Succeeded)
+                .filter(|call| call.status == CodeToolCallOutcomeStatus::Succeeded)
                 .count(),
             1
         );
@@ -490,7 +490,7 @@ async fn dropped_runner_caller_still_closes_and_reconciles_the_scope() -> anyhow
             scope
                 .calls
                 .values()
-                .filter(|call| call.status == CodeToolCallStatus::Cancelled)
+                .filter(|call| call.status == CodeToolCallOutcomeStatus::Cancelled)
                 .count(),
             1
         );

@@ -1320,20 +1320,20 @@ fn parse_trigger_id(value: String) -> Result<BotTriggerId, BotError> {
 fn disabled_reason_to_str(value: BotTriggerDisabledReason) -> &'static str {
     match value {
         BotTriggerDisabledReason::Breaker => "breaker",
-        BotTriggerDisabledReason::PollFailed => "poll_failed",
-        BotTriggerDisabledReason::OneShot => "one_shot",
+        BotTriggerDisabledReason::PollFailed => "pollFailed",
+        BotTriggerDisabledReason::OneShot => "oneShot",
         BotTriggerDisabledReason::Operator => "operator",
-        BotTriggerDisabledReason::BotClosed => "bot_closed",
+        BotTriggerDisabledReason::BotClosed => "botClosed",
     }
 }
 
 fn disabled_reason_from_str(value: &str) -> Result<BotTriggerDisabledReason, BotError> {
     match value {
         "breaker" => Ok(BotTriggerDisabledReason::Breaker),
-        "poll_failed" => Ok(BotTriggerDisabledReason::PollFailed),
-        "one_shot" => Ok(BotTriggerDisabledReason::OneShot),
+        "pollFailed" => Ok(BotTriggerDisabledReason::PollFailed),
+        "oneShot" => Ok(BotTriggerDisabledReason::OneShot),
         "operator" => Ok(BotTriggerDisabledReason::Operator),
-        "bot_closed" => Ok(BotTriggerDisabledReason::BotClosed),
+        "botClosed" => Ok(BotTriggerDisabledReason::BotClosed),
         other => Err(store_message(format!(
             "unsupported trigger disabled reason '{other}'"
         ))),
@@ -1347,7 +1347,7 @@ fn outcome_from_str(value: &str) -> Result<BotEventOutcome, BotError> {
         "ignored" => Ok(BotEventOutcome::Ignored),
         "blocked" => Ok(BotEventOutcome::Blocked),
         "unresolved" => Ok(BotEventOutcome::Unresolved),
-        "run_failed" => Ok(BotEventOutcome::RunFailed),
+        "runFailed" => Ok(BotEventOutcome::RunFailed),
         "steered" => Ok(BotEventOutcome::Steered),
         "appended" => Ok(BotEventOutcome::Appended),
         "archived" => Ok(BotEventOutcome::Archived),
@@ -1435,5 +1435,48 @@ fn bot_sql_error(action: &str, error: sqlx::Error) -> BotError {
 fn store_message(message: impl Into<String>) -> BotError {
     BotError::Store {
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MIGRATION: &str = include_str!("../migrations/013_camel_case_bot_values.sql");
+
+    #[test]
+    fn stored_trigger_reasons_are_the_api_spelling_and_pass_the_check() {
+        for reason in [
+            BotTriggerDisabledReason::Breaker,
+            BotTriggerDisabledReason::PollFailed,
+            BotTriggerDisabledReason::OneShot,
+            BotTriggerDisabledReason::Operator,
+            BotTriggerDisabledReason::BotClosed,
+        ] {
+            let stored = disabled_reason_to_str(reason);
+            assert_eq!(serde_json::to_value(reason).unwrap(), stored);
+            assert_eq!(disabled_reason_from_str(stored).unwrap(), reason);
+            assert!(MIGRATION.contains(&format!("'{stored}'")), "{stored}");
+        }
+    }
+
+    #[test]
+    fn stored_event_outcomes_are_the_api_spelling_and_pass_the_check() {
+        for outcome in [
+            BotEventOutcome::Handled,
+            BotEventOutcome::Deferred,
+            BotEventOutcome::Ignored,
+            BotEventOutcome::Blocked,
+            BotEventOutcome::Unresolved,
+            BotEventOutcome::RunFailed,
+            BotEventOutcome::Steered,
+            BotEventOutcome::Appended,
+            BotEventOutcome::Archived,
+        ] {
+            let stored = outcome.as_str();
+            assert_eq!(serde_json::to_value(outcome).unwrap(), stored);
+            assert_eq!(outcome_from_str(stored).unwrap(), outcome);
+            assert!(MIGRATION.contains(&format!("'{stored}'")), "{stored}");
+        }
     }
 }

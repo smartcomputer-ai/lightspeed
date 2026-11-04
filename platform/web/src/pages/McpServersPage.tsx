@@ -70,7 +70,7 @@ export function McpServersPage({ admin: _admin }: { admin: boolean }) {
 const APPROVALS = ["always", "never"] as const;
 
 function ServerList({ universeId }: { universeId: string }) {
-  const writable = useActionPermissions(universeId).can("configure_resource");
+  const writable = useActionPermissions(universeId).can("configureResource");
   const queryClient = useQueryClient();
   const servers = useQuery({
     queryKey: ["mcp-servers", universeId],
@@ -157,7 +157,7 @@ function ServerDetails({ universeId, server, authGrants, authGrantsLoading, onCh
   onChanged: () => void;
   onDeleted: () => void;
 }) {
-  const writable = useActionPermissions(universeId).can("configure_resource");
+  const writable = useActionPermissions(universeId).can("configureResource");
   const [editing, setEditing] = useState<McpServer | null>(null);
   const [oauthOpen, setOAuthOpen] = useState(false);
   const remove = useMutation({
@@ -175,10 +175,10 @@ function ServerDetails({ universeId, server, authGrants, authGrantsLoading, onCh
         {server.authPolicy.type !== "none" && <ResourceDetail label="Credential">
           {grant ? authGrantLabel(grant) : server.credential?.grantId ?? "No credential connected"}
         </ResourceDetail>}
-        <ResourceDetail label="Connection handled by">{server.execution === "native" ? "Lightspeed" : "Model provider"}</ResourceDetail>
+        <ResourceDetail label="Connection handled by">{server.execution === "runtime" ? "Lightspeed" : "Model provider"}</ResourceDetail>
         <ResourceDetail label="Tool access">{server.allowedTools?.length ? `${server.allowedTools.length} selected tools` : "All advertised tools"}</ResourceDetail>
         <ResourceDetail label="Approval">{server.approval === "always" ? "Ask before each call" : "No approval required"}</ResourceDetail>
-        {server.execution === "native" && <ResourceDetail label="Tool discovery">{server.exposure === "search" ? "Search when needed" : "Available directly"}</ResourceDetail>}
+        {server.execution === "runtime" && <ResourceDetail label="Tool discovery">{server.exposure === "search" ? "Search when needed" : "Available directly"}</ResourceDetail>}
         <ResourceDetail label="Private network">{server.allowPrivateNetwork ? "Allowed" : "Blocked"}</ResourceDetail>
         <ResourceDetail label="Created">{resourceTimestamp(server.createdAtMs)}</ResourceDetail>
         <ResourceDetail label="Updated">{resourceTimestamp(server.updatedAtMs)}</ResourceDetail>
@@ -194,7 +194,7 @@ function ServerDetails({ universeId, server, authGrants, authGrantsLoading, onCh
       {remove.error && <p role="alert" className="text-sm text-destructive">{remove.error.message}</p>}
       {writable && <ResourceActions>
         <ConfirmDangerButton label="Delete server" title={`Delete ${serverName(server)}?`}
-          description={<>Profiles referencing <code>{server.serverId}</code> will lose access to this server in new sessions.</>}
+          description={<>Sessions and profiles attaching <code>{server.serverId}</code> keep working without it: their next run leaves its tools out and tells the model why.</>}
           pending={remove.isPending} onConfirm={() => remove.mutate()} />
         <div className="ml-auto flex flex-wrap gap-2">
           {isOAuthPolicy(server.authPolicy.type) && <Button variant="outline" size="sm" onClick={() => setOAuthOpen(true)}>
@@ -261,7 +261,7 @@ function ServerDialog({
   const [idTouched, setIdTouched] = useState(false);
   const [serverUrl, setServerUrl] = useState(server?.serverUrl ?? "");
   const [execution, setExecution] = useState<McpServer["execution"]>(
-    server?.execution ?? "provider",
+    server?.execution ?? "runtime",
   );
   const [exposure, setExposure] = useState<McpServer["exposure"]>(
     server?.exposure ?? "inject",
@@ -376,7 +376,7 @@ function ServerDialog({
           serverUrl,
           defaultServerLabel: serverId,
           execution,
-          exposure: execution === "native" ? exposure : "inject",
+          exposure: execution === "runtime" ? exposure : "inject",
           approval: approval,
           allowPrivateNetwork,
           authPolicy: policy,
@@ -395,7 +395,7 @@ function ServerDialog({
           serverUrl,
           defaultServerLabel: server.defaultServerLabel,
           execution,
-          exposure: execution === "native" ? exposure : "inject",
+          exposure: execution === "runtime" ? exposure : "inject",
           revision: server.revision,
           approval: approval,
           authPolicy: policy,
@@ -665,17 +665,17 @@ function ServerDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="runtime">Lightspeed connects</SelectItem>
                 <SelectItem value="provider">Model provider connects directly</SelectItem>
-                <SelectItem value="native">Lightspeed connects</SelectItem>
               </SelectContent>
             </Select>
             <FieldDescription>
-              {execution === "native"
-                ? "Use this for private servers and models without provider-hosted MCP. Credentials and tool traffic stay between Lightspeed and the server."
-                : "The model provider lists and calls the server directly. The endpoint must be publicly reachable."}
+              {execution === "runtime"
+                ? "Works with private servers and every model. Credentials and tool traffic stay between Lightspeed and the server, and each call runs once."
+                : "The model provider lists and calls the server directly. The endpoint must be publicly reachable, and a retried generation can run a tool again."}
             </FieldDescription>
           </Field>
-          {execution === "native" && (
+          {execution === "runtime" && (
             <Field>
               <FieldLabel>Tool exposure</FieldLabel>
               <Select
@@ -720,7 +720,7 @@ function ServerDialog({
             <span>
               <span className="block text-sm font-medium">Allow private-network egress</span>
               <span className="block text-xs text-muted-foreground">
-                Enables live discovery and native execution only for hosts or CIDRs in the deployment-level MCP private-network allowlist.
+                Enables live discovery and execution by Lightspeed only for hosts or CIDRs in the deployment-level MCP private-network allowlist.
               </span>
             </span>
           </Label>
@@ -1151,8 +1151,8 @@ export function mcpConnectionSummary({
   customOAuthSettings: number;
 }): string {
   return [
-    execution === "native" ? "Lightspeed connects" : "Model provider connects",
-    execution === "native" &&
+    execution === "runtime" ? "Lightspeed connects" : "Model provider connects",
+    execution === "runtime" &&
       (exposure === "search" ? "tools searched on demand" : "tools shown up front"),
     approval === "always" ? "approval: always ask" : "no approval",
     allowPrivateNetwork && "private network allowed",
@@ -1172,7 +1172,7 @@ function mcpStatusText(status: McpServer["status"]): string {
     case "unverified":
       return "Unverified: enable it once you have confirmed the connection.";
     default:
-      return "Disabled. It stays configured but cannot be linked into new sessions.";
+      return "Disabled. It stays configured but cannot be newly attached, and sessions attaching it run without its tools until it is enabled.";
   }
 }
 

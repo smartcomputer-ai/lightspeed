@@ -52,12 +52,10 @@ export type ToolKindView =
   | {
       allowedTools?: string[] | null;
       approval?: RemoteMcpApprovalPolicy & string;
-      authRequired?: boolean;
       deferLoading?: boolean | null;
       descriptionRef?: string | null;
       serverId: string;
       serverLabel: string;
-      serverUrl: string;
       type: "remoteMcp";
     };
 /**
@@ -80,14 +78,16 @@ export type ToolParallelismView = "exclusive" | "parallelSafe";
  * via the `definition` "AgentApiErrorKind".
  */
 export type AgentApiErrorKind =
-  | ("invalid_request" | "not_found" | "conflict" | "audio_blob_too_large" | "internal")
+  | ("invalidRequest" | "notFound" | "conflict" | "audioBlobTooLarge" | "internal")
   | "rejected"
   | "unauthenticated"
   | "forbidden"
-  | "model_default_unset"
-  | "session_bootstrap_failed"
-  | "environment_not_ready"
-  | "response_too_large";
+  | "modelDefaultUnset"
+  | "sessionBootstrapFailed"
+  | "sessionExecutionStopped"
+  | "environmentNotReady"
+  | "responseTooLarge"
+  | "operationPending";
 /**
  * A universe's model selection for a particular use. Protocol and purpose
  * are separate: several purposes may use the same provider API.
@@ -105,13 +105,6 @@ export type AgentNotification =
       method: "session/started";
       params: {
         session: SessionView;
-      };
-    }
-  | {
-      method: "session/status/changed";
-      params: {
-        sessionId: string;
-        status: SessionStatus;
       };
     }
   | {
@@ -165,6 +158,25 @@ export type Attribution =
       component: string;
       kind: "internal";
     };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextCompactionMode".
+ */
+export type ContextCompactionMode = "disabled" | "providerTriggered" | "providerStandalone";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextCompactionStrategy".
+ */
+export type ContextCompactionStrategy =
+  "disabled" | "providerTriggered" | "modelSummary" | "nativePreferred";
+/**
+ * Where `compactThresholdTokens` came from.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextCompactionThresholdSource".
+ */
+export type ContextCompactionThresholdSource =
+  "disabled" | "override" | "providerDefault" | "inputCapacity" | "contextLengthError";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolItemStatus".
@@ -272,6 +284,20 @@ export type ContextEntrySourceView =
  */
 export type TokenEstimateQualityView = "exact" | "providerCounted" | "estimated";
 /**
+ * Why a run failed, as the harness classified it.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "RunFailureKindView".
+ */
+export type RunFailureKindView =
+  | "contextFailure"
+  | "modelFailure"
+  | "requestRejected"
+  | "outputTruncated"
+  | "contentFiltered"
+  | "limitExceeded"
+  | "internal";
+/**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ApprovalSubjectView".
  */
@@ -288,7 +314,7 @@ export type ApprovalSubjectView = {
  * via the `definition` "RunSummarySourceView".
  */
 export type RunSummarySourceView = {
-  contentRef?: string | null;
+  blobRef?: string | null;
   preview?: string | null;
   previewTruncated?: boolean;
   type: "input";
@@ -384,7 +410,13 @@ export type WorkflowToolCompletionInput =
       type: "accepted";
     }
   | {
-      deadlineAfterMs: number;
+      /**
+       * Hard deadline for the reply, in milliseconds. Required for a bound
+       * receiver, which has no other way to free a caller it never answers.
+       * A started execution may omit it, because the recovery poll detects
+       * an execution that died.
+       */
+      deadlineAfterMs?: number | null;
       replySchemaRef?: string | null;
       type: "joined";
     }
@@ -457,15 +489,23 @@ export type WorkflowToolTargetInput =
  */
 export type BoundWorkflowToolDispatchInput = "pull" | "push";
 /**
+ * How an open session's workflow execution stopped. A session that closed
+ * normally never reports one.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionExecutionFailureView".
+ */
+export type SessionExecutionFailureView = "failed" | "terminated" | "timedOut" | "missing";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionLifecycleStatus".
+ */
+export type SessionLifecycleStatus = "new" | "open" | "closed";
+/**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionOriginKind".
  */
 export type SessionOriginKind = "subagent";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionStatus".
- */
-export type SessionStatus = "notLoaded" | "idle" | "active" | "closed" | "error";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionEventKindView".
@@ -483,13 +523,13 @@ export type SessionEventKindView =
   | {
       creationFingerprint: string;
       lifecycleControllerWorkflowKind?: string | null;
-      toolIds: string[];
       type: "workflowToolsConfigured";
+      workflowToolIds: string[];
     }
   | {
       bindingFingerprint: string;
-      toolId: string;
       type: "systemWorkflowToolConfigured";
+      workflowToolId: string;
     }
   | {
       argumentsRef: string;
@@ -498,7 +538,7 @@ export type SessionEventKindView =
       callId: string;
       /**
        * Keyed completion promises created atomically with the
-       * invocation; absent for notify-only (accepted) invocations.
+       * invocation; absent for accepted invocations.
        */
       completionPromises?: {
         [k: string]: string;
@@ -507,9 +547,9 @@ export type SessionEventKindView =
       runId: string;
       schemaRevision: number;
       semanticType: string;
-      toolId: string;
       turnId: string;
-      type: "workflowToolEmitted";
+      type: "workflowToolInvoked";
+      workflowToolId: string;
     }
   | {
       errorRef: string;
@@ -537,9 +577,9 @@ export type SessionEventKindView =
       runId: string;
       schemaRevision: number;
       semanticType: string;
-      toolId: string;
       turnId: string;
       type: "workflowToolStartRequested";
+      workflowToolId: string;
     }
   | {
       errorRef: string;
@@ -592,6 +632,10 @@ export type SessionEventKindView =
       type: "approvalRunParked";
     }
   | {
+      runId: string;
+      type: "approvalRunUnparked";
+    }
+  | {
       approvalId: string;
       decidedBy?: Attribution | null;
       decision: ApprovalDecisionKind;
@@ -626,7 +670,7 @@ export type SessionEventKindView =
     }
   | {
       promiseId: string;
-      source: string;
+      source: PromiseSourceKind;
       type: "promiseCreated";
     }
   | {
@@ -664,7 +708,7 @@ export type SessionEventKindView =
     }
   | {
       runId: string;
-      status: string;
+      status: TurnGenerationStatus;
       turnId: string;
       type: "turnGenerationCompleted";
       /**
@@ -691,7 +735,7 @@ export type SessionEventKindView =
   | {
       baseRevision: number;
       entryIds: string[];
-      reason: string;
+      reason: ContextRemovalReason;
       revision: number;
       type: "contextEntriesRemoved";
     }
@@ -716,15 +760,12 @@ export type SessionEventKindView =
     }
   | {
       baseRevision: number;
-      entries: ContextEntryView[];
-      reason: string;
-      revision: number;
-      type: "contextStateReplaced";
+      type: "contextCompactionQueued";
     }
   | {
       baseRevision: number;
       revision: number;
-      trigger: string;
+      trigger: ContextCompactionTrigger;
       type: "contextCompactionRequested";
     }
   | {
@@ -732,7 +773,7 @@ export type SessionEventKindView =
       calls?: number;
       failureRef?: string | null;
       revision: number;
-      status: string;
+      status: ContextCompactionStatus;
       type: "contextCompactionFinished";
       usage?: LlmUsageView | null;
     }
@@ -772,7 +813,7 @@ export type SessionEventKindView =
     }
   | {
       /**
-       * Portable immutable assets, separate from effects and native media input.
+       * Files the call linked. Media it supplied arrives as context entries.
        */
       attachments?: ToolAttachmentView[];
       batchId: string;
@@ -789,13 +830,13 @@ export type SessionEventKindView =
       batchId: string;
       runId: string;
       turnId: string;
-      type: "toolBatchDeferred";
+      type: "toolBatchParked";
     }
   | {
       batchId: string;
       runId: string;
       turnId: string;
-      type: "toolBatchResumed";
+      type: "toolBatchUnparked";
     }
   | {
       batchId: string;
@@ -824,26 +865,38 @@ export type RunAcceptedSourceView = {
  */
 export type ApprovalDecisionKind = "approve" | "reject";
 /**
- * Why a run failed, as the harness classified it.
+ * Where a promise's answer comes from.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "RunFailureKindView".
+ * via the `definition` "PromiseSourceKind".
  */
-export type RunFailureKindView =
-  | (
-      | "model_failure"
-      | "tool_failure"
-      | "context_failure"
-      | "limit_exceeded"
-      | "cancelled"
-      | "internal"
-    )
-  | "request_rejected";
+export type PromiseSourceKind = "timer" | "workflow";
+/**
+ * How a generation ended.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "TurnGenerationStatus".
+ */
+export type TurnGenerationStatus = ("succeeded" | "failed" | "cancelled") | "rejected";
+/**
+ * Why entries left the active context.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextRemovalReason".
+ */
+export type ContextRemovalReason = "providerCompacted";
+/**
+ * What asked for a compaction.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextCompactionTrigger".
+ */
+export type ContextCompactionTrigger = "manual" | "highWatermark" | "contextLimit";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ToolAttachmentKind".
+ * via the `definition` "ContextCompactionStatus".
  */
-export type ToolAttachmentKind = "media" | "file";
+export type ContextCompactionStatus = "succeeded" | "failed";
 /**
  * Bounded lifecycle telemetry for a session-owned code tool execution.
  *
@@ -867,7 +920,7 @@ export type RunViewSource = {
 export type InputItem =
   | {
       /**
-       * Application-supplied display provenance (1–200 nonblank bytes).
+       * Application-supplied display provenance (1–200 nonblank bytes, no NUL).
        * The platform uses `user:<id>` for direct human input and `event` for
        * bot deliveries; other values are allowed. Omitted means unknown.
        * This metadata is not an authorization identity or model input text.
@@ -884,7 +937,7 @@ export type InputItem =
   | {
       blobRef: string;
       /**
-       * Application-supplied display provenance (1–200 nonblank bytes).
+       * Application-supplied display provenance (1–200 nonblank bytes, no NUL).
        * The platform uses `user:<id>` for direct human input and `event` for
        * bot deliveries; other values are allowed. Omitted means unknown.
        * This metadata is not an authorization identity or model input text.
@@ -901,9 +954,12 @@ export type InputItem =
       blobRef: string;
       kind: MediaKind;
       mime: string;
+      /**
+       * Shown as the item's preview; at most 256 characters, with no NUL.
+       */
       name?: string | null;
       /**
-       * Application-supplied display provenance (1–200 nonblank bytes).
+       * Application-supplied display provenance (1–200 nonblank bytes, no NUL).
        * The platform uses `user:<id>` for direct human input and `event` for
        * bot deliveries; other values are allowed. Omitted means unknown.
        * This metadata is not an authorization identity or model input text.
@@ -918,6 +974,7 @@ export type InputItem =
       text: string;
       /**
        * Short name shown as the catalog's heading, e.g. "Bot directory".
+       * Cannot contain NUL.
        */
       title: string;
       type: "catalog";
@@ -1059,7 +1116,7 @@ export type BotWhenBusy = "queue" | "steer" | "append";
  * via the `definition` "BotTriggerDisabledReason".
  */
 export type BotTriggerDisabledReason =
-  "breaker" | "poll_failed" | "one_shot" | "operator" | "bot_closed";
+  "breaker" | "pollFailed" | "oneShot" | "operator" | "botClosed";
 /**
  * Which session a trigger's events are delivered to; absent means the
  * bot's main session.
@@ -1259,7 +1316,7 @@ export type BotEventOutcome =
   | "ignored"
   | "blocked"
   | "unresolved"
-  | "run_failed"
+  | "runFailed"
   | "steered"
   | "appended"
   | "archived";
@@ -1271,8 +1328,8 @@ export type BotControllerStatus =
   | "initializing"
   | "degraded"
   | "idle"
-  | "delivering_event"
-  | "budget_exhausted"
+  | "deliveringEvent"
+  | "budgetExhausted"
   | "closing"
   | "closed";
 /**
@@ -1285,11 +1342,6 @@ export type BotSessionKind = "main" | "perKey" | "perEvent";
  * via the `definition` "BotSetupStatus".
  */
 export type BotSetupStatus = "initializing" | "degraded" | "ready";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionLifecycleStatus".
- */
-export type SessionLifecycleStatus = "new" | "open" | "closed";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ChannelAccountId".
@@ -1308,7 +1360,7 @@ export type ChannelProvider = string;
  * via the `definition` "ChannelInboundDecision".
  */
 export type ChannelInboundDecision =
-  "bound" | "paired" | "pairing_required" | "pairing_pending" | "unbound";
+  "bound" | "paired" | "pairingRequired" | "pairingPending" | "unbound";
 /**
  * How a chat got its route: claimed by an open trigger's first contact,
  * or paired by code.
@@ -1596,10 +1648,16 @@ export type McpServerCredential = {
   type: "authGrant";
 };
 /**
+ * Who connects to the server and runs its tools. `runtime`, the default, means
+ * Lightspeed does: each call runs once, under the approval policy, and is recorded.
+ * With `provider` the model provider does, so the endpoint must be publicly reachable
+ * and tools run at least once: a retried generation re-sends the request, so a tool
+ * can run again with its side effects, and the transcript shows at most one run.
+ *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RemoteMcpExecution".
  */
-export type RemoteMcpExecution = "provider" | "native";
+export type RemoteMcpExecution = "provider" | "runtime";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RemoteMcpExposure".
@@ -1680,19 +1738,22 @@ export type ProfileInstructions =
  * via the `definition` "ApprovalDecisionFailureKind".
  */
 export type ApprovalDecisionFailureKind =
-  | "invalidId"
-  | "unknown"
-  | "foreignRun"
-  | "alreadyDecided"
-  | "cancelled"
-  | "duplicate"
-  | "invalidNote"
-  | "rejected";
+  | (
+      | "invalidId"
+      | "unknown"
+      | "foreignRun"
+      | "alreadyDecided"
+      | "cancelled"
+      | "duplicate"
+      | "invalidNote"
+      | "rejected"
+    )
+  | "internal";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ApprovalDecisionStatus".
  */
-export type ApprovalDecisionStatus = "decided" | "failed";
+export type ApprovalDecisionStatus = ("decided" | "failed") | "pending";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SkillCatalogAvailability".
@@ -1839,16 +1900,6 @@ export type BotTriggerInput1 =
 export type ChannelMediaKind = "image" | "audio" | "document";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobCancelScopeView".
- */
-export type SessionJobCancelScopeView = "job" | "dependents";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionJobDependencyPolicyView".
- */
-export type SessionJobDependencyPolicyView = "allSucceeded" | "allTerminal";
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ProfileSource".
  */
 export type ProfileSource =
@@ -1860,6 +1911,16 @@ export type ProfileSource =
       kind: "inline";
       profile: InlineAgentProfile;
     };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobCancelScopeView".
+ */
+export type SessionJobCancelScopeView = "job" | "dependents";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionJobDependencyPolicyView".
+ */
+export type SessionJobDependencyPolicyView = "allSucceeded" | "allTerminal";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "MethodAccess".
@@ -1889,23 +1950,23 @@ export type MethodAccess =
 export type UniverseAction =
   | (
       | "read"
-      | "create_session"
-      | "control_session"
-      | "configure_session"
-      | "stop_session"
-      | "close_session"
-      | "delete_session"
-      | "set_session_retention"
-      | "create_profile"
-      | "manage_profile"
-      | "create_bot"
-      | "manage_bot"
-      | "invoke_bot"
-      | "create_workspace"
+      | "createSession"
+      | "controlSession"
+      | "configureSession"
+      | "stopSession"
+      | "closeSession"
+      | "deleteSession"
+      | "setSessionRetention"
+      | "createProfile"
+      | "manageProfile"
+      | "createBot"
+      | "manageBot"
+      | "invokeBot"
+      | "createWorkspace"
     )
-  | "share_session"
-  | "use_resource"
-  | "configure_resource";
+  | "shareSession"
+  | "useResource"
+  | "configureResource";
 /**
  * Where a method names the session it acts on, so a gate can decide per
  * session without a hand-written table. A creation method may name one that
@@ -1980,9 +2041,14 @@ export interface AgentApiError {
   kind: AgentApiErrorKind;
   message: string;
   /**
-   * Present for model_default_unset; clients need not parse the message.
+   * Present for modelDefaultUnset; clients need not parse the message.
    */
   modelDefaultSlot?: ModelDefaultSlot | null;
+  /**
+   * Present for operationPending on a call that took a submission id, including
+   * one the server allocated. Retrying with it cannot land the same work twice.
+   */
+  submissionId?: string | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2028,18 +2094,29 @@ export interface SessionView {
   config?: SessionConfig | null;
   configRevision: number;
   createdAtMs: number;
-  displayName?: string | null;
-  id: string;
-  /**
-   * True only when immutable lifecycle ownership was admitted with a
-   * lifecycle controller at managed-session creation.
-   */
-  managed: boolean;
   /**
    * Immutable workflow-backed tool declaration. A lifecycle controller
    * indicates external session ownership; tool-only declarations do not.
    */
-  management?: ManagedSessionWorkflowToolsInput | null;
+  declaration?: DeclaredSessionWorkflowToolsInput | null;
+  displayName?: string | null;
+  /**
+   * Set by `session/read` when the session is still open but its workflow
+   * execution has stopped. Nothing is running and the rest of the view is
+   * the stored log, so `activity` can still say what it last did. Lists do not check
+   * the execution, so a list and a read of the same session can differ.
+   */
+  executionFailure?: SessionExecutionFailureView | null;
+  id: string;
+  /**
+   * True only when the session's declaration names a lifecycle controller.
+   */
+  lifecycleControlled: boolean;
+  /**
+   * Whether the session has opened or closed. What it is doing while open is
+   * `activity`, and whether its workflow is still there is `executionFailure`.
+   */
+  lifecycleStatus: SessionLifecycleStatus;
   /**
    * Descriptive key/value metadata; empty when none was set.
    */
@@ -2052,7 +2129,6 @@ export interface SessionView {
   origin?: SessionOriginView | null;
   retention: SessionRetentionView;
   runs?: RunSummaryView[];
-  status: SessionStatus;
   updatedAtMs: number;
 }
 /**
@@ -2087,24 +2163,33 @@ export interface ContextView {
  */
 export interface ContextCompactionView {
   compactThresholdTokens?: number | null;
-  effectiveMode: string;
+  /**
+   * Standalone when the context already holds a window from a native standalone
+   * compaction, whatever was requested.
+   */
+  effectiveMode: ContextCompactionMode;
   /**
    * Native APIs are preferred where supported; summaries use the same model route.
    */
-  effectiveStrategy: string;
+  effectiveStrategy: ContextCompactionStrategy;
+  /**
+   * The active run's input capacity, or the declared limit. While idle with none
+   * declared, what the last generation recorded, so a session that has not run yet
+   * shows no reported capacity: that is resolved for each run as it is prepared.
+   */
   inputLimitTokens?: number | null;
   observedTokens?: number | null;
   pending: boolean;
   queued: boolean;
   recoveryAttempts: number;
-  requestedMode: string;
-  thresholdSource: string;
+  requestedMode: ContextCompactionMode;
+  thresholdSource: ContextCompactionThresholdSource;
 }
 /**
  * A session context entry, faithful to the stored harness entry: keyed,
  * kind-tagged, ref-backed. Keys are a stable extension point — clients
  * reconstruct derived surfaces (e.g. the prompted instruction set via the
- * `prompt_instructions/` key prefix) by filtering on `key` and fetching
+ * `instructions.100.prompts` key prefix) by filtering on `key` and fetching
  * original bytes through `blobs/read`. `text` contains complete message and
  * visible reasoning text; tool and catalog bodies use bounded text previews.
  *
@@ -2183,16 +2268,16 @@ export interface CitationView {
  * via the `definition` "ContentRefView".
  */
 export interface ContentRefView {
-  contentRef: string;
+  blobRef: string;
   /**
    * The model-facing name of provider-native media (an admitted image or
-   * PDF): `media:` plus the first twelve hex characters of `content_ref`.
+   * PDF): `media:` plus the first twelve hex characters of `blobRef`.
    * The model writes it as a URL (`![…](media:3f9a2c1d4e7b)`) to refer to
    * media it was shown; resolve it against the media of the same session.
    * Absent for text and other content.
    */
   mediaHandle?: string | null;
-  mediaType?: string | null;
+  mime?: string | null;
   providerKind?: string | null;
 }
 /**
@@ -2236,13 +2321,34 @@ export interface TokenEstimateView {
  */
 export interface RunSummaryView {
   acceptedAtMs: number;
-  completedAtMs?: number | null;
+  /**
+   * Why a failed run failed. The message is cut to a preview here, and
+   * `session/runs/read` has all of it.
+   */
+  failure?: RunFailureView | null;
+  finishedAtMs?: number | null;
   id: string;
   pendingApprovals?: PendingApprovalView[];
   source: RunSummarySourceView;
   startedAtMs?: number | null;
   status: RunStatus;
+  /**
+   * Provider usage so far. A summary of a run old enough to be read back from the
+   * session's log has none; `session/runs/read` still totals it.
+   */
   usage?: LlmUsageView | null;
+}
+/**
+ * Why a run failed. `kind` is the harness's classification; `message` is free text
+ * for display, and the provider's own message for `requestRejected`.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "RunFailureView".
+ */
+export interface RunFailureView {
+  kind: RunFailureKindView;
+  message: string;
+  messageTruncated?: boolean;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2298,7 +2404,10 @@ export interface SessionConfig {
    * default. On configuration replacement or profile application to an
    * existing session, omission preserves its current model. Documents read
    * back from a session always carry the model. Provider identity and API
-   * kind are fixed for the session lifetime; the model name may change.
+   * kind are fixed for the session lifetime. The model name may change at
+   * any time: retained reasoning and compaction state goes to the new model
+   * unchanged, and the provider keeps or drops it. A combination the provider
+   * refuses fails that run as `requestRejected`, and the session stays open.
    */
   model?: ModelConfig | null;
 }
@@ -2312,7 +2421,7 @@ export interface ContextConfig {
    */
   compaction?: CompactionPolicy | null;
   /**
-   * Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.
+   * Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors. Where a limit is known, a run start or steering holding one text entry over it is refused with `invalidRequest`.
    */
   inputLimitTokens?: number | null;
 }
@@ -2440,8 +2549,10 @@ export interface EnvironmentAttachment {
   access: EnvironmentAccess;
   /**
    * Activated when a profile is applied while the session has no active
-   * environment; creation is the trivial case. Never overrides a live
-   * selection and never applies on a plain `session/config/put`.
+   * environment; creation is the trivial case. A `session/config/put` that
+   * changes the default activates it when the put leaves nothing active, and
+   * refuses a default that cannot be selected. Never overrides a live selection,
+   * and an unchanged default never undoes a deliberate deactivation.
    */
   default?: boolean;
   environmentId?: string | null;
@@ -2500,7 +2611,11 @@ export interface McpFeature {
 /**
  * A selected universe MCP server. Its catalog record owns connection,
  * execution, exposure, approval, and auth; the attachment may only narrow the
- * record's tool allowlist for this session.
+ * record's tool allowlist for this session. A request that newly names a
+ * server it cannot resolve is refused. Once attached, or when brought in by a
+ * profile, a server that is disabled, deleted, or otherwise unusable is left out
+ * of later runs and the model is told, so a catalog action never stops the
+ * session.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "McpServerAttachment".
@@ -2531,11 +2646,6 @@ export interface SubagentsFeature {
    */
   agents: SubagentAgentRef[];
   /**
-   * Per-child run deadline in milliseconds; at most the execution
-   * ceiling of 24 hours.
-   */
-  deadlineMs?: number;
-  /**
    * Open sessions under the root at any time, excluding the root.
    */
   maxConcurrent?: number;
@@ -2547,6 +2657,10 @@ export interface SubagentsFeature {
    * Lifetime total of sessions ever created under the root.
    */
   maxDescendants?: number;
+  /**
+   * Per-child run deadline in milliseconds. Omit it for no time limit.
+   */
+  runTimeoutMs?: number | null;
   version?: number;
 }
 /**
@@ -2695,13 +2809,15 @@ export interface GenerationConfig {
   toolChoice?: ToolChoice | null;
 }
 /**
- * Run budget defaults enforced by the harness drive loop.
+ * Limits applied to every run of the session unless the run sets its own.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "LimitsConfig".
  */
 export interface LimitsConfig {
-  maxToolRounds?: number | null;
+  /**
+   * Model turns a run may start, at least 1. A run that needs another turn past this fails with `limitExceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.
+   */
   maxTurns?: number | null;
 }
 /**
@@ -2715,9 +2831,9 @@ export interface ModelConfig {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ManagedSessionWorkflowToolsInput".
+ * via the `definition` "DeclaredSessionWorkflowToolsInput".
  */
-export interface ManagedSessionWorkflowToolsInput {
+export interface DeclaredSessionWorkflowToolsInput {
   lifecycleController?: WorkflowEndpointInput | null;
   tools: WorkflowToolDeclarationInput[];
   version: number;
@@ -2744,10 +2860,14 @@ export interface WorkflowToolDeclarationInput {
  * via the `definition` "WorkflowToolDefinitionInput".
  */
 export interface WorkflowToolDefinitionInput {
-  revision: number;
+  schemaRevision: number;
   semanticType: string;
   tool: WorkflowToolSpecInput;
-  toolId: string;
+  /**
+   * The workflow-tool namespace: what invocations and bindings are keyed on. The
+   * registry identity the model sees through `activeTools` is `tool.name`.
+   */
+  workflowToolId: string;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2773,7 +2893,7 @@ export interface WorkflowStartRefInput {
   recipeFingerprint: string;
   recipeFormat: number;
   recipeRef: string;
-  revision: number;
+  recipeRevision: number;
 }
 /**
  * Typed provenance of a delegated (sub-agent) session: who created it,
@@ -2818,14 +2938,17 @@ export interface SubagentAgentPin {
  * via the `definition` "SubagentLimitsView".
  */
 export interface SubagentLimitsView {
-  deadlineMs: number;
   maxConcurrent: number;
   maxDepth: number;
   maxDescendants: number;
+  /**
+   * Absent when a child's run has no time limit.
+   */
+  runTimeoutMs?: number | null;
 }
 /**
- * Effective tree-owned retention for a session. Forks and delegated children
- * name their owning root and project that root's policy and deadline.
+ * Effective tree-owned retention for a session. Delegated children name their
+ * owning root and project that root's policy and deadline.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionRetentionView".
@@ -2858,7 +2981,6 @@ export interface EventCursor {
  * via the `definition` "EventJoinsView".
  */
 export interface EventJoinsView {
-  correlationId?: string | null;
   runId?: string | null;
   submissionId?: string | null;
   toolBatchId?: string | null;
@@ -2901,7 +3023,8 @@ export interface ToolCallEventView {
   toolName: string;
 }
 /**
- * A portable immutable asset supplied by a completed tool call.
+ * A file a completed tool call supplied, linked by name rather than shown to the
+ * model. Media a call supplied is in `media` on the call and in context entries.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolAttachmentView".
@@ -2910,14 +3033,13 @@ export interface ToolAttachmentView {
   /**
    * Full immutable blob identity; read through the universe-scoped blob API.
    */
-  contentRef: string;
+  blobRef: string;
   /**
    * Model-facing alias, resolved against recorded attachments.
    */
   handle: string;
-  kind: ToolAttachmentKind;
-  mediaType?: string | null;
-  name?: string | null;
+  mime?: string | null;
+  name: string;
   source?: AttachmentSourceView | null;
 }
 /**
@@ -2947,11 +3069,21 @@ export interface ToolEffectView {
  */
 export interface RunView {
   /**
+   * This run is past the server's detail limit: `entries` and `toolBatches` hold
+   * its opening and its most recent turns. `session/events/read` has the turns
+   * between them.
+   */
+  earlierEventsOmitted?: boolean;
+  entries?: ContextEntryView[];
+  /**
+   * Why a failed run failed, with its whole message.
+   */
+  failure?: RunFailureView | null;
+  /**
    * When the run reached a terminal state, derived from its committed
    * completed, failed, or cancelled event. Absent for non-terminal runs.
    */
-  completedAtMs?: number | null;
-  entries?: ContextEntryView[];
+  finishedAtMs?: number | null;
   id: string;
   /**
    * Authoritative terminal output, retained independently of active context.
@@ -2993,18 +3125,18 @@ export interface ToolBatchView {
  * via the `definition` "ToolCallView".
  */
 export interface ToolCallView {
+  /**
+   * Bounded preview; `argumentsRef` has the full body.
+   */
   arguments?: string | null;
+  argumentsPreviewTruncated?: boolean;
   argumentsRef: string;
   /**
-   * Immutable attachments available from this call; files do not imply model input.
+   * Files the call linked, which the model does not get as input. Media it supplied
+   * is in `media`.
    */
   attachments?: ToolAttachmentView[];
   callId: string;
-  /**
-   * When the call's terminal result was committed. The window to
-   * `startedAtMs` includes runtime scheduling overhead.
-   */
-  completedAtMs?: number | null;
   display?: ToolCallDisplayView | null;
   /**
    * Execution milliseconds measured by the runtime around the call body;
@@ -3012,6 +3144,11 @@ export interface ToolCallView {
    */
   durationMs?: number | null;
   effects?: ToolEffectView[];
+  /**
+   * When the call's terminal result was committed. The window to
+   * `startedAtMs` includes runtime scheduling overhead.
+   */
+  finishedAtMs?: number | null;
   isError?: boolean;
   /**
    * Media the call handed the model (MCP images and documents, file
@@ -3020,7 +3157,17 @@ export interface ToolCallView {
    * `blobs/read`.
    */
   media?: ToolCallMediaView[];
+  /**
+   * Bounded preview of the model-visible result; `outputRef` has the full body.
+   */
   output?: string | null;
+  /**
+   * Bytes of model-visible text the tool produced before the runtime applied its
+   * budget, from the call's `toolCallCompleted` event.
+   */
+  outputBytes?: number | null;
+  outputPreviewTruncated?: boolean;
+  outputRef?: string | null;
   /**
    * When the call was dispatched for execution, from the committed
    * `toolCallStarted` event. Absent until dispatch.
@@ -3032,6 +3179,11 @@ export interface ToolCallView {
    */
   toolId?: string | null;
   toolName: string;
+  /**
+   * The runtime cut the model-visible text to its budget, from the call's
+   * `toolCallCompleted` event. This is separate from the preview bound above.
+   */
+  truncated?: boolean;
 }
 /**
  * One media item a tool call handed the model.
@@ -3042,7 +3194,7 @@ export interface ToolCallView {
 export interface ToolCallMediaView {
   blobRef: string;
   /**
-   * `media:` plus the first twelve hex characters of `blob_ref`; what the
+   * `media:` plus the first twelve hex characters of `blobRef`; what the
    * model calls this item.
    */
   handle: string;
@@ -4202,12 +4354,11 @@ export interface SessionSummaryView {
   createdAtMs: number;
   displayName?: string | null;
   id: string;
-  lifecycleStatus: SessionLifecycleStatus;
   /**
-   * True only when immutable lifecycle ownership was admitted with a
-   * lifecycle controller at managed-session creation.
+   * True only when the session's declaration names a lifecycle controller.
    */
-  managed: boolean;
+  lifecycleControlled: boolean;
+  lifecycleStatus: SessionLifecycleStatus;
   /**
    * Descriptive key/value metadata; empty when none was set.
    */
@@ -4522,12 +4673,6 @@ export interface ContextAppendResponse {
  * via the `definition` "ContextAppendResult".
  */
 export interface ContextAppendResult {
-  activationText?: string | null;
-  /**
-   * True when `activation_text` was cut off at the server-side length cap.
-   * The committed context entry always holds the full text.
-   */
-  activationTextTruncated?: boolean;
   entry?: ContextEntryInputView | null;
   failure?: InputAdmissionFailureView | null;
   key: string;
@@ -4564,11 +4709,12 @@ export interface ContextCompactResponse {
  * via the `definition` "SessionMutationView".
  */
 export interface SessionMutationView {
+  activity: SessionActivity;
   configRevision: number;
   contextRevision: number;
   headCursor?: EventCursor | null;
   id: string;
-  status: SessionStatus;
+  lifecycleStatus: SessionLifecycleStatus;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -4906,7 +5052,7 @@ export interface AgentApiOutcomeOfDeploymentSessionPurgeResponse {
  */
 export interface DeploymentSessionPurgeResponse {
   /**
-   * Includes soft-deleted history forks and delegated descendants.
+   * Includes soft-deleted delegated descendants.
    * Empty when the target has already been permanently deleted.
    */
   deletedSessionIds: string[];
@@ -6219,7 +6365,7 @@ export interface AgentApiOutcomeOfRunApprovalsDecideResponse {
  */
 export interface RunApprovalsDecideResponse {
   results: ApprovalDecisionResult[];
-  run: RunView;
+  run: RunSummaryView;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -6251,7 +6397,7 @@ export interface AgentApiOutcomeOfRunCancelResponse {
  * via the `definition` "RunCancelResponse".
  */
 export interface RunCancelResponse {
-  run: RunView;
+  run: RunSummaryView;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -6279,12 +6425,11 @@ export interface AgentApiOutcomeOfRunReadResponse {
   result: RunReadResponse;
 }
 /**
- * The complete projection of one run. Run projection is stateful across the
- * run's events, so partial pages would silently lose cross-event state; a
- * run whose interval exceeds the server's detail ceiling is rejected with a
- * typed error and remains readable through `session/events/read`. Inline
- * message and reasoning text is complete. Tool and catalog previews are bounded;
- * their full bodies remain available through `blobs/read`.
+ * The projection of one run. A run past the server's detail limit keeps its opening
+ * events, so its input renders, and its most recent whole turns, and reports the gap
+ * in `earlierEventsOmitted`; `session/events/read` has the rest. Inline message and
+ * reasoning text is complete. Tool and catalog previews are bounded; their full bodies
+ * remain available through `blobs/read`.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunReadResponse".
@@ -6305,7 +6450,7 @@ export interface AgentApiOutcomeOfRunStartResponse {
  * via the `definition` "RunStartResponse".
  */
 export interface RunStartResponse {
-  run: RunView;
+  run: RunSummaryView;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -6320,7 +6465,7 @@ export interface AgentApiOutcomeOfRunSteerResponse {
  * via the `definition` "RunSteerResponse".
  */
 export interface RunSteerResponse {
-  run: RunView;
+  run: RunSummaryView;
   /**
    * Identifier of the accepted steering batch within the session.
    */
@@ -6425,7 +6570,6 @@ export interface SessionEventsReadResponse {
    * begin inside a run or tool batch; clients must retain continuation state.
    */
   events?: SessionEventView[];
-  gap?: EventLogGap | null;
   /**
    * Backward reads fence the head before reading. The initial backward
    * page's head is the starting `after` cursor for live forward reads.
@@ -6438,15 +6582,6 @@ export interface SessionEventsReadResponse {
    * continuation to advance a forward live cursor.
    */
   nextCursor?: EventCursor | null;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EventLogGap".
- */
-export interface EventLogGap {
-  nextCursor?: EventCursor | null;
-  requestedAfter?: EventCursor | null;
-  retainedAfter?: EventCursor | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -6517,6 +6652,25 @@ export interface AgentApiOutcomeOfSessionRenameResponse {
  */
 export interface SessionRenameResponse {
   session: SessionSummaryView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfSessionRestartResponse".
+ */
+export interface AgentApiOutcomeOfSessionRestartResponse {
+  notifications?: AgentNotification[];
+  result: SessionRestartResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionRestartResponse".
+ */
+export interface SessionRestartResponse {
+  /**
+   * A new execution started. False when one was already running.
+   */
+  restarted: boolean;
+  session: SessionMutationView;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -7444,8 +7598,11 @@ export interface ClientInfo {
 export interface ContextAppendEntry {
   item: InputItem;
   /**
-   * Stable client-chosen context key. Re-sending the same key with the
-   * same content is a no-op, so the key doubles as the idempotency handle.
+   * Stable client-chosen context key, which names one entry. Re-sending
+   * the key with the same content is a no-op, so a retry lands once. With
+   * different content the earlier entry leaves active context and the new
+   * one goes last under a new id; a catalog keeps the earlier version
+   * rendered and supersedes it instead.
    * `run`, `run.*`, `runtime`, and `runtime.*` are reserved for the runtime.
    */
   key: string;
@@ -7499,6 +7656,69 @@ export interface ContextReplaceEntry {
 export interface ContextReplaceParams {
   entries: ContextReplaceEntry[];
   sessionId: string;
+}
+/**
+ * Creation request for a session with immutable workflow ownership and
+ * workflow-backed tools.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeclaredSessionStartParams".
+ */
+export interface DeclaredSessionStartParams {
+  /**
+   * Audience of the new session, as for `session/start`.
+   */
+  access?: AccessInput | null;
+  config?: SessionConfig | null;
+  /**
+   * Root-owned automatic deletion measured from close. Absent inherits a
+   * profile default, explicit null keeps the tree, and a duration overrides
+   * the profile.
+   */
+  deleteAfterCloseMs?: number | null;
+  /**
+   * Cannot contain NUL.
+   */
+  displayName?: string | null;
+  /**
+   * Descriptive key/value metadata with the same bounds as
+   * `session/start`; applied only when the session is first created.
+   */
+  metadata?: {
+    [k: string]: string;
+  };
+  profile?: ProfileSource | null;
+  sessionId?: string | null;
+  /**
+   * Immutable workflow tools admitted only when the session is first
+   * created. This document is not part of `SessionConfig` and cannot be
+   * changed through `session/config/put`.
+   */
+  workflowTools: DeclaredSessionWorkflowToolsInput;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "InlineAgentProfile".
+ */
+export interface InlineAgentProfile {
+  config?: SessionConfig | null;
+  description?: string | null;
+  displayName?: string | null;
+  instructions?: ProfileInstructions | null;
+  /**
+   * Descriptive metadata defaults copied to a session when it is created
+   * from this profile. Explicit `session/start` metadata wins key by key.
+   * Applying the profile to an existing session does not change metadata.
+   */
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * Creation-time session retention default. Absence keeps the tree until
+   * manual deletion. Applying a profile to an existing session does not
+   * change retention.
+   */
+  retention?: ProfileSessionRetention | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -8068,72 +8288,12 @@ export interface InitializeParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "InlineAgentProfile".
- */
-export interface InlineAgentProfile {
-  config?: SessionConfig | null;
-  description?: string | null;
-  displayName?: string | null;
-  instructions?: ProfileInstructions | null;
-  /**
-   * Descriptive metadata defaults copied to a session when it is created
-   * from this profile. Explicit `session/start` metadata wins key by key.
-   * Applying the profile to an existing session does not change metadata.
-   */
-  metadata?: {
-    [k: string]: string;
-  };
-  /**
-   * Creation-time session retention default. Absence keeps the tree until
-   * manual deletion. Applying a profile to an existing session does not
-   * change retention.
-   */
-  retention?: ProfileSessionRetention | null;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "JsonRpcError".
  */
 export interface JsonRpcError {
   code: number;
   data?: AgentApiError | null;
   message: string;
-}
-/**
- * Creation request for a session with immutable workflow ownership and
- * workflow-backed tools.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ManagedSessionStartParams".
- */
-export interface ManagedSessionStartParams {
-  /**
-   * Audience of the new session, as for `session/start`.
-   */
-  access?: AccessInput | null;
-  config?: SessionConfig | null;
-  /**
-   * Root-owned automatic deletion measured from close. Absent inherits a
-   * profile default, explicit null keeps the tree, and a duration overrides
-   * the profile.
-   */
-  deleteAfterCloseMs?: number | null;
-  displayName?: string | null;
-  /**
-   * Descriptive key/value metadata with the same bounds as
-   * `session/start`; applied only when the session is first created.
-   */
-  metadata?: {
-    [k: string]: string;
-  };
-  profile?: ProfileSource | null;
-  sessionId?: string | null;
-  /**
-   * Immutable workflow tools admitted only when the session is first
-   * created. This document is not part of `SessionConfig` and cannot be
-   * changed through `session/config/put`.
-   */
-  workflowTools: ManagedSessionWorkflowToolsInput;
 }
 /**
  * Read-only authentication discovery for a prospective MCP endpoint. A
@@ -8325,7 +8485,9 @@ export interface RunCancelParams {
  * via the `definition` "RunLimitsConfig".
  */
 export interface RunLimitsConfig {
-  maxToolRounds?: number | null;
+  /**
+   * Model turns this run may start, at least 1, in place of the session's `maxTurns`.
+   */
   maxTurns?: number | null;
 }
 /**
@@ -8358,6 +8520,7 @@ export interface RunStartConfig {
   /**
    * Optional model override within the session's provider identity and API
    * kind. Changing either requires a new session, even before the first run.
+   * Any model on that route is allowed, whatever context the session retains.
    */
   model?: ModelConfig | null;
 }
@@ -8368,9 +8531,11 @@ export interface RunStartConfig {
 export interface RunStartParams {
   config?: RunStartConfig | null;
   /**
-   * Request an at-least-once terminal emission to the managed session's
-   * immutable lifecycle controller. The destination is derived by the
-   * gateway; callers supply only the controller's opaque dedup token.
+   * Request a terminal emission to the session's immutable
+   * lifecycle controller. It is delivered to a running controller, which may
+   * hear it more than once; others reconcile through `session/runs/read`.
+   * The destination is derived by the gateway; callers supply only the
+   * controller's opaque dedup token.
    */
   notifyOnTerminal?: RunTerminalNotificationInput | null;
   sessionId: string;
@@ -8380,7 +8545,9 @@ export interface RunStartParams {
    * `session/runs/start` with the same submission id and the same
    * source/config/terminal notification returns the original run instead
    * of starting a second one; reusing a submission id with any of those
-   * inputs changed is rejected.
+   * inputs changed is rejected. The session recognizes it against queued and
+   * active runs and its most recent 256 terminal runs, so a retry older than
+   * that starts a new run.
    */
   submissionId?: string | null;
 }
@@ -8399,16 +8566,24 @@ export interface RunSteerParams {
   /**
    * Steering input, same vocabulary as run input. Delivered to the model
    * at the next turn boundary of the run; it does not interrupt the
-   * in-flight turn or wake a parked await.
+   * in-flight turn or wake a parked run. If the run fails before that
+   * boundary, the input still enters context and the next run sees it as
+   * history. Cancelling the run drops it.
    */
   items: InputItem[];
   /**
-   * The run to steer. Must be the session's current active run (running
-   * or parked on an await); a finished or cancelling run is rejected so a
-   * late steer never lands on the next run.
+   * The run to steer. Must be the session's current active run, running or
+   * parked; a queued, finished or cancelling run is rejected so a late steer
+   * never lands on the next run.
    */
   runId: string;
   sessionId: string;
+  /**
+   * Client-supplied idempotency key. Retrying with the same id and the same items
+   * lands the steering once and returns its original id; reusing the id with other
+   * items is rejected. The run recognizes it among its most recent steering batches.
+   */
+  submissionId?: string | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -8418,7 +8593,9 @@ export interface SessionCloseParams {
   /**
    * Cancel the active run and drop queued runs instead of rejecting on
    * active work. Recovers sessions whose workflow no longer exists (e.g.
-   * after an operator terminate) by reconciling the session log directly.
+   * after an operator terminate) by reconciling the session log directly. A
+   * session that never opened has no log to close, so it is removed and the
+   * call answers `notFound`.
    */
   force?: boolean;
   sessionId: string;
@@ -8447,8 +8624,8 @@ export interface SessionConfigPutParams {
  */
 export interface SessionDeleteParams {
   /**
-   * Delete history forks and delegated descendants too. False requires the
-   * target to be a closed retention-tree leaf.
+   * Delete delegated descendants too. False requires the target to be a
+   * closed retention-tree leaf.
    */
   cascade?: boolean;
   sessionId: string;
@@ -8505,6 +8682,9 @@ export interface SessionEventsReadParams {
   waitMs?: number | null;
 }
 /**
+ * Filters for `session/list`. An unknown field is refused, so a misspelled
+ * filter fails rather than returning a wider list.
+ *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionListParams".
  */
@@ -8519,13 +8699,13 @@ export interface SessionListParams {
    * Opaque cursor from the previous page's `nextCursor`.
    */
   cursor?: string | null;
-  limit?: number | null;
   /**
-   * Only work whose root a lifecycle controller manages (`true`), or
-   * work nobody manages (`false`); sub-agents follow their root. Absent
-   * lists both.
+   * Only work whose root a lifecycle controller owns (`true`), or work no
+   * controller owns (`false`); sub-agents follow their root. Absent lists
+   * both.
    */
-  managed?: boolean | null;
+  lifecycleControlled?: boolean | null;
+  limit?: number | null;
   /**
    * Only sessions matching every entry (AND semantics). A non-empty value
    * requires an exact key/value pair; an empty value requires key presence.
@@ -8587,9 +8767,16 @@ export interface SessionReadParams {
  */
 export interface SessionRenameParams {
   /**
-   * New display name; absent clears it.
+   * New display name; absent clears it. Cannot contain NUL.
    */
   displayName?: string | null;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionRestartParams".
+ */
+export interface SessionRestartParams {
   sessionId: string;
 }
 /**
@@ -8627,6 +8814,9 @@ export interface SessionStartParams {
    * the profile.
    */
   deleteAfterCloseMs?: number | null;
+  /**
+   * Cannot contain NUL.
+   */
   displayName?: string | null;
   /**
    * Descriptive key/value metadata, applied only when the session is

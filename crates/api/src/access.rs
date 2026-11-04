@@ -18,7 +18,7 @@ use uuid::Uuid;
 )]
 #[serde(
     tag = "kind",
-    rename_all = "snake_case",
+    rename_all = "camelCase",
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
@@ -223,7 +223,7 @@ impl MethodGroup {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
-    rename_all = "snake_case",
+    rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
 pub enum Attribution {
@@ -250,7 +250,7 @@ impl Attribution {
 
 /// A resource a method names.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "id", rename_all = "camelCase")]
 pub enum ResourceRef {
     Session(String),
     Bot(String),
@@ -269,7 +269,7 @@ impl ResourceRef {
             Self::Profile(_) => "profile",
             Self::Workspace(_) => "workspace",
             Self::Environment(_) => "environment",
-            Self::McpServer(_) => "mcp_server",
+            Self::McpServer(_) => "mcpServer",
         }
     }
 
@@ -296,7 +296,7 @@ impl ResourceRef {
 /// Who sees a root's tree. Sessions start unshared (`restricted`) and are
 /// shared with the universe once, one way; everything else is shared.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum Visibility {
     Universe,
     Restricted,
@@ -335,7 +335,7 @@ pub struct ResourceAccessSummary {
 /// gated by their key's groups; this classifies what the runtime's own work
 /// may do and which role a gate built on the contract should require.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum UniverseAction {
     Read,
     CreateSession,
@@ -361,7 +361,7 @@ pub enum UniverseAction {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", content = "action", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "action", rename_all = "camelCase")]
 pub enum MethodAccess {
     /// Connection discovery, authenticated independently of universe selection.
     Connection,
@@ -411,7 +411,7 @@ impl MethodAccess {
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum RecommendedRole {
     Viewer,
     Contributor,

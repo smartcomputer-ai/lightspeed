@@ -91,7 +91,7 @@ export function SessionComposer({
   stopping?: boolean;
   disabled?: boolean;
   disabledReason?: string;
-  /// Rendered above the capsule (e.g. the managed-session direct-input
+  /// Rendered above the capsule (e.g. the controlled-session direct-input
   /// override).
   banner?: ReactNode;
   error: string | null;

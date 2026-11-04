@@ -11,16 +11,15 @@ use auth::{
     AuthBrokerError, AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore,
     AuthRegistryError, AuthTokenBroker, SecretStore, TokenAudience, model_auth_provider_id,
 };
-use harness::SecretRef;
 use llm_runtime::provider_keys::{
     ModelProviderResolver, ProviderKeyError, ResolvedEndpoint, ResolvedModelProvider,
     ResolvedProviderAuth,
 };
 use llm_runtime::secrets::{
     EnvSecretResolver, ResolvedSecretValue, SECRET_NAMESPACE_ENV, SECRET_NAMESPACE_MCP_SERVER,
-    SecretResolveError, SecretResolver,
+    SecretRef, SecretResolveError, SecretResolver,
 };
-use mcp::{McpRegistryError, McpRegistryStore, McpServerId, McpServerStatus};
+use mcp::{McpRegistryError, McpRegistryStore, McpServerAuthPolicy, McpServerId, McpServerStatus};
 
 /// Dispatches on `SecretRef.namespace`: `mcp_server` loads the configured
 /// universe server's current grant and resolves it through the token broker;
@@ -82,10 +81,7 @@ impl SecretResolver for BrokerSecretResolver {
                     return Err(SecretResolveError::Backend {
                         namespace: secret_ref.namespace.clone(),
                         id: secret_ref.id.clone(),
-                        message: format!(
-                            "MCP server URL changed from admitted audience {audience} to {}",
-                            server.server_url
-                        ),
+                        message: "MCP server URL changed while resolving its credential".to_owned(),
                     });
                 }
                 if matches!(
@@ -101,7 +97,24 @@ impl SecretResolver for BrokerSecretResolver {
                         ),
                     });
                 }
-                let Some(grant_id) = server.auth_grant_id else {
+                let (grant_id, required) = match server.auth_policy {
+                    McpServerAuthPolicy::None => (None, false),
+                    McpServerAuthPolicy::OptionalBearer
+                    | McpServerAuthPolicy::OptionalOAuth { .. } => (server.auth_grant_id, false),
+                    McpServerAuthPolicy::RequiredBearer
+                    | McpServerAuthPolicy::RequiredOAuth { .. } => (server.auth_grant_id, true),
+                };
+                let Some(grant_id) = grant_id else {
+                    if required {
+                        return Err(SecretResolveError::Backend {
+                            namespace: secret_ref.namespace.clone(),
+                            id: secret_ref.id.clone(),
+                            message: format!(
+                                "MCP server {} requires an auth grant",
+                                server.server_id
+                            ),
+                        });
+                    }
                     return Err(SecretResolveError::CredentialAbsent {
                         namespace: secret_ref.namespace.clone(),
                         id: secret_ref.id.clone(),
@@ -269,6 +282,12 @@ fn broker_error_to_resolve_error(
             namespace: secret_ref.namespace.clone(),
             id: secret_ref.id.clone(),
             message: "MCP server is bound to an auth grant that no longer exists".to_owned(),
+        },
+        // This text can reach the model, so it names the grant and not the URL.
+        AuthBrokerError::AudienceMismatch { grant_id, .. } => SecretResolveError::Backend {
+            namespace: secret_ref.namespace.clone(),
+            id: secret_ref.id.clone(),
+            message: format!("auth grant {grant_id} does not cover this MCP server's URL"),
         },
         other => SecretResolveError::Backend {
             namespace: secret_ref.namespace.clone(),
@@ -446,6 +465,114 @@ mod tests {
         ));
     }
 
+    /// Rewrites the fixture's record, leaving everything else as it stands.
+    async fn edit_crm_server(
+        fixture: &McpResolverFixture,
+        edit: impl FnOnce(&mut PutMcpServerRecord),
+    ) {
+        let current = fixture
+            .mcp_servers
+            .read_server(&McpServerId::new("crm"))
+            .await
+            .expect("read MCP server");
+        let revision = current.revision;
+        let mut record = PutMcpServerRecord {
+            server_id: current.server_id,
+            display_name: current.display_name,
+            server_url: current.server_url,
+            transport: current.transport,
+            default_server_label: current.default_server_label,
+            description: current.description,
+            allowed_tools: current.allowed_tools,
+            execution: current.execution,
+            exposure: current.exposure,
+            approval: current.approval,
+            defer_loading: current.defer_loading,
+            allow_private_network: current.allow_private_network,
+            auth_policy: current.auth_policy,
+            auth_grant_id: current.auth_grant_id,
+            status: current.status,
+            now_ms: 20,
+        };
+        edit(&mut record);
+        fixture
+            .mcp_servers
+            .put_server(record, Some(revision))
+            .await
+            .expect("edit MCP server");
+    }
+
+    #[tokio::test]
+    async fn the_record_decides_whether_a_credential_is_needed() {
+        let fixture = resolver_with_grant(None).await;
+        let secret_ref = mcp_server_ref("crm");
+        let audience = "https://crm.example.com/mcp";
+
+        edit_crm_server(&fixture, |record| {
+            record.auth_policy = McpServerAuthPolicy::RequiredBearer;
+            record.auth_grant_id = None;
+        })
+        .await;
+        let required = fixture
+            .resolver
+            .resolve(&secret_ref, Some(audience))
+            .await
+            .expect_err("a required credential must be there");
+        assert!(matches!(required, SecretResolveError::Backend { .. }));
+
+        edit_crm_server(&fixture, |record| {
+            record.auth_policy = McpServerAuthPolicy::OptionalBearer;
+        })
+        .await;
+        let optional = fixture
+            .resolver
+            .resolve(&secret_ref, Some(audience))
+            .await
+            .expect_err("no credential is bound");
+        assert!(matches!(
+            optional,
+            SecretResolveError::CredentialAbsent { .. }
+        ));
+
+        edit_crm_server(&fixture, |record| {
+            record.auth_policy = McpServerAuthPolicy::None;
+        })
+        .await;
+        let none = fixture
+            .resolver
+            .resolve(&secret_ref, Some(audience))
+            .await
+            .expect_err("the policy takes no credential");
+        assert!(matches!(none, SecretResolveError::CredentialAbsent { .. }));
+    }
+
+    #[tokio::test]
+    async fn resolution_errors_never_echo_a_url_that_may_hold_a_token() {
+        let fixture = resolver_with_grant(Some("https://crm.example.com/allowed")).await;
+        let secret_ref = mcp_server_ref("crm");
+        let token_url = "https://other.example.com/s/SECRET/mcp?api_key=SECRET";
+        edit_crm_server(&fixture, |record| {
+            record.server_url = token_url.to_owned();
+        })
+        .await;
+
+        // The grant does not cover the record's new URL.
+        let uncovered = fixture
+            .resolver
+            .resolve(&secret_ref, Some(token_url))
+            .await
+            .expect_err("audience mismatch");
+        assert!(!uncovered.to_string().contains("SECRET"), "{uncovered}");
+
+        // The record moved between the caller's read and this one.
+        let moved = fixture
+            .resolver
+            .resolve(&secret_ref, Some("https://crm.example.com/s/SECRET"))
+            .await
+            .expect_err("URL moved");
+        assert!(!moved.to_string().contains("SECRET"), "{moved}");
+    }
+
     #[tokio::test]
     async fn mcp_server_rebinding_is_observed_without_changing_the_runtime_reference() {
         let fixture = resolver_with_grant(Some("https://crm.example.com")).await;
@@ -492,36 +619,10 @@ mod tests {
             .await
             .expect("put replacement secret");
 
-        let current = fixture
-            .mcp_servers
-            .read_server(&McpServerId::new("crm"))
-            .await
-            .expect("read MCP server");
-        fixture
-            .mcp_servers
-            .put_server(
-                PutMcpServerRecord {
-                    server_id: current.server_id,
-                    display_name: current.display_name,
-                    server_url: current.server_url,
-                    transport: current.transport,
-                    default_server_label: current.default_server_label,
-                    description: current.description,
-                    allowed_tools: current.allowed_tools,
-                    execution: current.execution,
-                    exposure: current.exposure,
-                    approval: current.approval,
-                    defer_loading: current.defer_loading,
-                    allow_private_network: current.allow_private_network,
-                    auth_policy: current.auth_policy,
-                    auth_grant_id: Some(AuthGrantId::new("authgrant_2")),
-                    status: current.status,
-                    now_ms: 20,
-                },
-                Some(current.revision),
-            )
-            .await
-            .expect("rebind MCP server");
+        edit_crm_server(&fixture, |record| {
+            record.auth_grant_id = Some(AuthGrantId::new("authgrant_2"));
+        })
+        .await;
 
         let rotated = fixture
             .resolver

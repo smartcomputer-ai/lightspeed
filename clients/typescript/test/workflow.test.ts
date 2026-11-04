@@ -121,6 +121,37 @@ describe("generated workflow contract", () => {
     expect(envelope).toEqual(WORKFLOW_CONTRACT_VECTORS.envelopes[1]);
   });
 
+  it("refuses a promise id the holder could not decode", () => {
+    for (const promiseId of ["reply", "promise_", "promise_01", "promise_x"]) {
+      expect(() =>
+        sourceResolutionEnvelope({
+          universeId: inputs.universeId,
+          producerWorkflowId: inputs.producerWorkflowId,
+          holderWorkflowId: inputs.holderWorkflowId,
+          promiseId,
+          resolution: { kind: "resolved", payload_ref: null },
+        }),
+      ).toThrow(/promiseId has an invalid format/);
+    }
+    const envelope = WORKFLOW_CONTRACT_VECTORS.envelopes[1] as EmissionEnvelope;
+    expect(() =>
+      parseEmissionEnvelope({
+        ...envelope,
+        body: { ...envelope.body, promise_id: "reply" },
+      }),
+    ).toThrow(/promise_id has an invalid format/);
+  });
+
+  it("accepts the contract's run statuses and nothing else", () => {
+    const envelope = WORKFLOW_CONTRACT_VECTORS.envelopes[0] as EmissionEnvelope;
+    const withStatus = (status: string) =>
+      parseEmissionEnvelope({ ...envelope, body: { ...envelope.body, status } });
+    for (const status of ["running", "parked", "cancelling", "completed", "failed", "cancelled"]) {
+      expect(() => withStatus(status)).not.toThrow();
+    }
+    expect(() => withStatus("active")).toThrow(/invalid run status/);
+  });
+
   it("rejects unknown bodies and non-canonical ids", () => {
     const envelope = WORKFLOW_CONTRACT_VECTORS.envelopes[0] as EmissionEnvelope;
     expect(() =>

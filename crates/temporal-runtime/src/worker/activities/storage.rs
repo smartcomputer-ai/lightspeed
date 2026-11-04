@@ -1,8 +1,9 @@
 use harness::{
-    BlobRef, RunId, SessionId, SessionPosition, WorkflowEndpointRef, WorkflowToolInvocation,
+    BlobRef, SessionId, SessionPosition,
     storage::{
-        AppendSessionEvents, AppendSessionEventsResult, BlobEdge, CreateSession, ReadSessionEvents,
-        SessionStore, SessionStoreError, StoredSessionEntry, UncommittedStoredEvent,
+        AppendSessionEvents, AppendSessionEventsResult, BlobEdge, BlobStoreError, CreateSession,
+        ReadSessionEvents, SessionStore, SessionStoreError, StoredSessionEntry,
+        UncommittedStoredEvent,
     },
 };
 use temporal_workflow::{DEFAULT_BOOTSTRAP_PAYLOAD_BUDGET_BYTES, SessionBootstrapPayloadTooLarge};
@@ -13,7 +14,10 @@ use crate::worker::{
     ReadBlobRequest, ReadBlobResult,
 };
 
-use super::{common::activity_error, state::StorageActivityDeps};
+use super::{
+    common::{activity_error, non_retryable_activity_error, session_store_failure},
+    state::StorageActivityDeps,
+};
 
 pub(super) async fn create_or_load_session(
     deps: &StorageActivityDeps,
@@ -39,14 +43,14 @@ pub(super) async fn create_or_load_session(
             .sessions
             .load_session(&request.session_id)
             .await
-            .map_err(activity_error)?
+            .map_err(session_store_failure)?
             .ok_or_else(|| {
-                activity_error(anyhow::anyhow!(
+                non_retryable_activity_error(anyhow::anyhow!(
                     "session disappeared after create conflict: {}",
                     request.session_id
                 ))
             })?,
-        Err(error) => return Err(activity_error(error)),
+        Err(error) => return Err(session_store_failure(error)),
     };
 
     // Reduce checkpoint + authoritative tail *inside the activity* and return
@@ -55,10 +59,9 @@ pub(super) async fn create_or_load_session(
     let loaded =
         crate::checkpoint::load_reduction(deps.sessions.as_ref(), deps.blobs.as_ref(), &record)
             .await
-            .map_err(activity_error)?;
+            .map_err(reduction_failure)?;
     let checkpoint_due = crate::checkpoint::checkpoint_due(&loaded);
     let reduced = loaded.reduced;
-    let head = record.head.clone();
     let fresh_session = loaded.fresh_session;
     if checkpoint_due
         && let Err(error) = crate::checkpoint::write_checkpoint(
@@ -85,14 +88,21 @@ pub(super) async fn create_or_load_session(
     let result = CreateOrLoadSessionResult {
         record,
         core_state,
-        run_submissions: reduced.run_submissions,
-        head,
         fresh_session,
         replayed_event_count,
     };
 
     guard_bootstrap_payload_size(&request.session_id, &result)?;
     Ok(result)
+}
+
+/// Reducing the log fails for one of two reasons. The store did not answer, which a
+/// retry can outlast, or the stored log does not decode or apply, which it cannot.
+fn reduction_failure(error: anyhow::Error) -> ActivityError {
+    match error.downcast::<SessionStoreError>() {
+        Ok(error) => session_store_failure(error),
+        Err(error) => non_retryable_activity_error(error),
+    }
 }
 
 /// Fail with a typed, diagnosable error if the compact bootstrap result would
@@ -118,12 +128,14 @@ fn guard_bootstrap_payload_size_with_budget(
     let serialized = serde_json::to_vec(result).map_err(activity_error)?;
     let reduced_state_bytes = serialized.len() as u64;
     if reduced_state_bytes > budget_bytes {
-        return Err(activity_error(SessionBootstrapPayloadTooLarge {
-            session_id: session_id.clone(),
-            reduced_state_bytes,
-            budget_bytes,
-            replayed_event_count: result.replayed_event_count,
-        }));
+        return Err(non_retryable_activity_error(
+            SessionBootstrapPayloadTooLarge {
+                session_id: session_id.clone(),
+                reduced_state_bytes,
+                budget_bytes,
+                replayed_event_count: result.replayed_event_count,
+            },
+        ));
     }
     Ok(())
 }
@@ -255,8 +267,7 @@ struct PreparedAttachments {
 }
 
 /// Materialize typed result attachments. Only media is model input; file
-/// references become completion metadata. Accept the former media-only envelope
-/// for already persisted workflow results.
+/// references become completion metadata.
 async fn prepare_payload_context(
     deps: &StorageActivityDeps,
     payload_ref: &BlobRef,
@@ -272,24 +283,12 @@ async fn prepare_payload_context(
     let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         return Ok(PreparedAttachments::default());
     };
-    let attachments: Vec<Attachment> = if let Some(listed) = payload
+    let attachments = payload
         .get("attachments")
         .and_then(serde_json::Value::as_array)
-    {
-        listed
-            .iter()
-            .filter_map(|item| serde_json::from_value(item.clone()).ok())
-            .collect()
-    } else {
-        payload
-            .get("media")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|item| serde_json::from_value(item.clone()).ok())
-            .map(Attachment::Media)
-            .collect()
-    };
+        .into_iter()
+        .flatten()
+        .filter_map(|item| serde_json::from_value::<Attachment>(item.clone()).ok());
     let mut prepared = PreparedAttachments::default();
     for attachment in attachments {
         match attachment {
@@ -341,8 +340,8 @@ async fn prepare_payload_context(
                 if *file_budget == 0 || !file.is_valid() {
                     continue;
                 }
-                match deps.blobs.stat_blob(&file.content_ref).await {
-                    Ok(_) => (),
+                match deps.blobs.retain_blob(&file.content_ref).await {
+                    Ok(()) => (),
                     Err(harness::storage::BlobStoreError::NotFound { .. }) => {
                         prepared
                             .entries
@@ -351,26 +350,8 @@ async fn prepare_payload_context(
                     }
                     Err(error) => return Err(activity_error(error)),
                 }
-                let attachment = Attachment::File(file);
-                let mut retained = true;
-                for reference in attachment.blob_refs() {
-                    match deps.blobs.retain_blob(&reference).await {
-                        Ok(()) => (),
-                        Err(harness::storage::BlobStoreError::NotFound { .. }) => {
-                            prepared.entries.push(
-                                unavailable_attachment_note(deps, attachment.handle()).await?,
-                            );
-                            retained = false;
-                            break;
-                        }
-                        Err(error) => return Err(activity_error(error)),
-                    }
-                }
-                if !retained {
-                    continue;
-                }
                 *file_budget -= 1;
-                prepared.attachments.push(attachment);
+                prepared.attachments.push(Attachment::File(file));
             }
         }
     }
@@ -467,26 +448,17 @@ pub(super) async fn prepare_joined_context(
     Ok(prepared)
 }
 
-/// Bounded CAS load + JSON Schema check of one keyed reply payload against
-/// the binding's immutable reply schema. Invalid payloads become a stable
-/// CAS-backed error the workflow uses to fail the promise; only I/O and
-/// schema-compilation problems are activity errors.
+/// The ingest check of a producer's reply, before it can reach the log. A ref that is
+/// not a ref, a blob that is not there, or a payload that fails the binding's schema or
+/// cannot be its call's text result all become a stable CAS-backed error the workflow
+/// fails that promise with. Only a store that did not answer is an activity error, and
+/// waiting that out is correct.
 pub(super) async fn validate_workflow_tool_reply(
     deps: &StorageActivityDeps,
     request: temporal_workflow::WorkflowToolReplyValidationRequest,
 ) -> Result<temporal_workflow::WorkflowToolReplyValidationResult, ActivityError> {
+    use harness::PromiseResolution;
     use temporal_workflow::WorkflowToolReplyValidationResult as ValidationResult;
-
-    let schema_bytes = deps
-        .blobs
-        .read_bytes(&request.reply_schema_ref)
-        .await
-        .map_err(activity_error)?;
-    let schema: serde_json::Value = serde_json::from_slice(&schema_bytes).map_err(|error| {
-        activity_error(anyhow::anyhow!("reply schema is not valid JSON: {error}"))
-    })?;
-    let validator = jsonschema::validator_for(&schema)
-        .map_err(|error| activity_error(anyhow::anyhow!("reply schema is unsupported: {error}")))?;
 
     let invalid = |message: String| async {
         let error_ref = deps
@@ -497,15 +469,69 @@ pub(super) async fn validate_workflow_tool_reply(
         Ok(ValidationResult::Invalid { error_ref })
     };
 
-    let Some(payload_ref) = request.payload_ref else {
-        return invalid("reply payload is required by the binding's reply schema".to_owned()).await;
+    let (what, reply_ref, reply_schema_ref) = match request.resolution {
+        PromiseResolution::Resolved { payload_ref } => {
+            ("payload", payload_ref, request.reply_schema_ref)
+        }
+        PromiseResolution::Failed { error_ref } => ("error", error_ref, None),
+        PromiseResolution::Cancelled => return Ok(ValidationResult::Valid),
     };
-    let payload_bytes = deps
-        .blobs
-        .read_bytes(&payload_ref)
-        .await
-        .map_err(activity_error)?;
-    let payload: serde_json::Value = match serde_json::from_slice(&payload_bytes) {
+    let Some(reply_ref) = reply_ref else {
+        return match reply_schema_ref {
+            Some(_) => {
+                invalid("reply payload is required by the binding's reply schema".to_owned()).await
+            }
+            None => Ok(ValidationResult::Valid),
+        };
+    };
+    // Renews the blob's grace period, so a collection sweep cannot take it before the
+    // append that follows roots it.
+    match deps.blobs.retain_blob(&reply_ref).await {
+        Ok(()) => {}
+        Err(BlobStoreError::NotFound { .. }) => {
+            return invalid(format!("reply {what} {reply_ref} does not exist")).await;
+        }
+        Err(error) => return Err(activity_error(error)),
+    }
+    if reply_schema_ref.is_none() && !request.text_reply {
+        return Ok(ValidationResult::Valid);
+    }
+    let bytes = match deps.blobs.read_bytes(&reply_ref).await {
+        Ok(bytes) => bytes,
+        Err(BlobStoreError::NotFound { .. }) => {
+            return invalid(format!("reply {what} {reply_ref} does not exist")).await;
+        }
+        Err(error) => return Err(activity_error(error)),
+    };
+    let Some(reply_schema_ref) = reply_schema_ref else {
+        return match std::str::from_utf8(&bytes) {
+            Ok(_) => Ok(ValidationResult::Valid),
+            Err(_) => {
+                invalid(format!(
+                    "reply {what} {reply_ref} is not text, and this tool's result must be"
+                ))
+                .await
+            }
+        };
+    };
+    // Admission checked the schema, so a problem with it here belongs to this binding
+    // and fails its reply. It must not block the session.
+    let schema_bytes = match deps.blobs.read_bytes(&reply_schema_ref).await {
+        Ok(bytes) => bytes,
+        Err(BlobStoreError::NotFound { .. }) => {
+            return invalid(format!("reply schema {reply_schema_ref} does not exist")).await;
+        }
+        Err(error) => return Err(activity_error(error)),
+    };
+    let schema: serde_json::Value = match serde_json::from_slice(&schema_bytes) {
+        Ok(schema) => schema,
+        Err(error) => return invalid(format!("reply schema is not valid JSON: {error}")).await,
+    };
+    let validator = match jsonschema::validator_for(&schema) {
+        Ok(validator) => validator,
+        Err(error) => return invalid(format!("reply schema is unsupported: {error}")).await,
+    };
+    let payload: serde_json::Value = match serde_json::from_slice(&bytes) {
         Ok(payload) => payload,
         Err(error) => {
             return invalid(format!("reply payload is not valid JSON: {error}")).await;
@@ -534,34 +560,6 @@ pub(super) async fn read_blob(
     Ok(ReadBlobResult { bytes })
 }
 
-/// Read one run's workflow-tool emissions from this worker state's
-/// universe-scoped session store. Exact receiver authorization is evaluated
-/// against the durable binding facts by the harness projection.
-// Work-cycle reconciliation is the first production caller.
-#[allow(dead_code)]
-pub(super) async fn read_tool_emissions(
-    deps: &StorageActivityDeps,
-    receiver_endpoint: &WorkflowEndpointRef,
-    session_id: &SessionId,
-    run_id: RunId,
-) -> Result<Vec<WorkflowToolInvocation>, ActivityError> {
-    read_tool_emissions_with_page_limit(deps, receiver_endpoint, session_id, run_id, 512).await
-}
-
-async fn read_tool_emissions_with_page_limit(
-    deps: &StorageActivityDeps,
-    receiver_endpoint: &WorkflowEndpointRef,
-    session_id: &SessionId,
-    run_id: RunId,
-    page_limit: usize,
-) -> Result<Vec<WorkflowToolInvocation>, ActivityError> {
-    let entries =
-        read_all_session_events_with_page_limit(deps.sessions.as_ref(), session_id, page_limit)
-            .await?;
-    harness::read_tool_emissions(&entries, receiver_endpoint, session_id, run_id)
-        .map_err(activity_error)
-}
-
 pub(super) async fn append_events(
     deps: &StorageActivityDeps,
     request: AppendEventsRequest,
@@ -581,9 +579,9 @@ pub(super) async fn append_events(
         {
             confirm_existing_append(deps.sessions.as_ref(), &request, error)
                 .await
-                .map_err(activity_error)
+                .map_err(session_store_failure)
         }
-        Err(error) => Err(activity_error(error)),
+        Err(error) => Err(session_store_failure(error)),
     }
 }
 
@@ -687,7 +685,6 @@ async fn confirm_existing_append(
     }
 
     Ok(AppendSessionEventsResult {
-        head: page.entries.last().map(|entry| entry.position.clone()),
         entries: page.entries,
     })
 }
@@ -721,14 +718,6 @@ async fn read_all_session_events(
     store: &dyn SessionStore,
     session_id: &SessionId,
 ) -> Result<Vec<StoredSessionEntry>, ActivityError> {
-    read_all_session_events_with_page_limit(store, session_id, 512).await
-}
-
-async fn read_all_session_events_with_page_limit(
-    store: &dyn SessionStore,
-    session_id: &SessionId,
-    page_limit: usize,
-) -> Result<Vec<StoredSessionEntry>, ActivityError> {
     let mut after = None;
     let mut entries = Vec::new();
     loop {
@@ -736,7 +725,7 @@ async fn read_all_session_events_with_page_limit(
             .read_after(ReadSessionEvents {
                 session_id: session_id.clone(),
                 after,
-                limit: page_limit,
+                limit: 512,
             })
             .await
             .map_err(activity_error)?;
@@ -761,7 +750,7 @@ mod tests {
     use harness::{
         CoreAgentIoError, CoreAgentLlm, CoreAgentTools, LlmFinish, LlmGenerationFacts,
         LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, ObservedToolCall,
-        StoredEvent, ToolBatchOutcome, ToolCallStatus, ToolInvocationBatchRequest,
+        ToolBatchOutcome, ToolCallStatus, ToolId, ToolInvocationBatchRequest,
         ToolInvocationBatchResult, ToolInvocationResult, ToolName, WorkflowToolBinding,
         WorkflowToolInvocation, WorkflowToolInvocationId,
         storage::{BlobStore, InMemoryBlobStore, InMemorySessionStore, SessionPage, SessionRecord},
@@ -773,7 +762,7 @@ mod tests {
     fn test_event(
         observed_at_ms: u64,
         joins: impl IntoIterator<Item = (&'static str, &'static str)>,
-        payload: serde_json::Value,
+        value: &str,
     ) -> UncommittedStoredEvent {
         UncommittedStoredEvent {
             observed_at_ms,
@@ -781,7 +770,13 @@ mod tests {
                 .into_iter()
                 .map(|(key, value)| (key.to_owned(), value.to_owned()))
                 .collect::<BTreeMap<_, _>>(),
-            event: StoredEvent::new("lightspeed.test.event", 1, payload),
+            event: harness::CoreAgentCodec
+                .encode_event(&harness::CoreAgentEvent::Environment(
+                    harness::EnvironmentEvent::ActiveEnvironmentSet {
+                        environment_id: harness::EnvironmentId::new(value),
+                    },
+                ))
+                .expect("encode event"),
         }
     }
 
@@ -867,7 +862,7 @@ mod tests {
 
     struct WorkflowToolTools {
         universe_id: uuid::Uuid,
-        bindings: BTreeMap<ToolName, WorkflowToolBinding>,
+        bindings: BTreeMap<ToolId, WorkflowToolBinding>,
     }
 
     #[async_trait::async_trait]
@@ -882,7 +877,7 @@ mod tests {
                 .map(|call| {
                     let binding = self
                         .bindings
-                        .get(&call.tool_name)
+                        .get(call.tool_id.as_ref().expect("admitted tool id"))
                         .expect("test tool call must have a durable workflow-tool binding");
                     let invocation = WorkflowToolInvocation {
                         invocation_id: WorkflowToolInvocationId::for_call(
@@ -894,9 +889,9 @@ mod tests {
                             &call.call_id,
                             &binding.binding_fingerprint,
                         ),
-                        tool_id: binding.definition.tool_id.clone(),
+                        workflow_tool_id: binding.definition.workflow_tool_id.clone(),
                         semantic_type: binding.definition.semantic_type.clone(),
-                        schema_revision: binding.definition.revision,
+                        schema_revision: binding.definition.schema_revision,
                         binding_fingerprint: binding.binding_fingerprint.clone(),
                         session_universe_id: self.universe_id,
                         session_id: request.session_id.clone(),
@@ -924,7 +919,7 @@ mod tests {
                             ),
                         ],
                         error_ref: None,
-                        effects: vec![harness::workflow_tool_emit_effect(&invocation)],
+                        effects: vec![harness::workflow_tool_invoke_effect(&invocation)],
                     }
                 })
                 .collect();
@@ -1063,6 +1058,20 @@ mod tests {
         assert!((result_bytes as u64) < temporal_workflow::DEFAULT_BOOTSTRAP_PAYLOAD_BUDGET_BYTES,);
     }
 
+    #[test]
+    fn a_log_that_will_not_reduce_is_final_and_a_store_outage_is_not() {
+        let is_final = |error: anyhow::Error| match reduction_failure(error) {
+            ActivityError::Application(failure) => failure.is_non_retryable(),
+            other => panic!("expected application failure, got {other:?}"),
+        };
+        assert!(is_final(anyhow::anyhow!(
+            "effective session log has a gap after seq 3"
+        )));
+        assert!(!is_final(anyhow::Error::new(SessionStoreError::Store {
+            message: "connection refused".to_owned(),
+        })));
+    }
+
     /// The size guard fires with a typed error when the reduced result would
     /// exceed the budget, instead of letting Temporal reject it opaquely.
     #[test]
@@ -1080,7 +1089,7 @@ mod tests {
                 retention_root_session_id: session_id.clone(),
                 delete_after_close_ms: None,
                 delete_at_ms: None,
-                managed: false,
+                lifecycle_controlled: false,
                 head: None,
                 source_session_id: None,
                 source_seq: None,
@@ -1089,8 +1098,6 @@ mod tests {
                 updated_at_ms: 1,
             },
             core_state: Some(harness::CoreAgentState::new()),
-            run_submissions: Default::default(),
-            head: None,
             fresh_session: true,
             replayed_event_count: 0,
         };
@@ -1107,6 +1114,7 @@ mod tests {
             .expect_err("oversized result should be rejected");
         match err {
             ActivityError::Application(failure) => {
+                assert!(failure.is_non_retryable());
                 let typed = failure
                     .source_error()
                     .downcast_ref::<SessionBootstrapPayloadTooLarge>()
@@ -1281,6 +1289,39 @@ mod tests {
         assert_eq!(no_files.entries.len(), 1);
     }
 
+    /// A producer writes reply payloads, so what it lists is untrusted: a ref that
+    /// does not decode drops that one attachment and leaves the rest of the reply.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_listed_attachment_with_a_malformed_ref_is_dropped_on_its_own() {
+        use tools::attachments::Attachment;
+        let deps = storage_deps(Arc::new(InMemorySessionStore::new()));
+        let blob = deps.blobs.put_bytes(b"%PDF report".to_vec()).await.unwrap();
+        let reference = harness::FileAttachment::new(blob, "report.pdf".into(), None);
+        let malformed = |content_ref: &str| {
+            json!({
+                "kind": "file",
+                "data": { "handle": "file:x", "content_ref": content_ref, "name": "n" },
+            })
+        };
+        let payload = deps
+            .blobs
+            .put_bytes(
+                serde_json::to_vec(&json!({"attachments": [
+                    malformed("short"),
+                    malformed(&format!("sha256:{}", "A".repeat(64))),
+                    Attachment::File(reference.clone()),
+                ]}))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let prepared = prepare_payload_context(&deps, &payload, &mut 1, &mut 8)
+            .await
+            .unwrap();
+        assert_eq!(prepared.attachments, vec![Attachment::File(reference)]);
+        assert!(prepared.entries.is_empty());
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn joined_context_keeps_admitted_listed_blobs_in_order() {
         let deps = storage_deps(Arc::new(InMemorySessionStore::new()));
@@ -1296,13 +1337,13 @@ mod tests {
             .expect("pdf");
         let missing = harness::BlobRef::from_bytes(b"never stored");
         let describe = |blob_ref: &harness::BlobRef, media_type: &str, name: &str| {
-            json!({
+            json!({"kind": "media", "data": {
                 "handle": harness::media::media_handle(blob_ref),
                 "content_ref": blob_ref,
                 "media_type": media_type,
                 "kind": if media_type == "application/pdf" { "document" } else { "image" },
                 "name": name,
-            })
+            }})
         };
         let payload = deps
             .blobs
@@ -1310,7 +1351,7 @@ mod tests {
                 serde_json::to_vec(&json!({
                     "status": "completed",
                     "output": "see the render",
-                    "media": [
+                    "attachments": [
                         describe(&pdf, "application/pdf", "report.pdf"),
                         describe(&missing, "image/png", "gone.png"),
                         describe(&png, "image/svg+xml", "vector.svg"),
@@ -1395,18 +1436,19 @@ mod tests {
                     .put_bytes(vec![0x89, b'P', b'N', b'G', promise, index])
                     .await
                     .expect("png");
-                media.push(json!({
+                media.push(json!({"kind": "media", "data": {
                     "handle": harness::media::media_handle(&blob),
                     "content_ref": blob,
                     "media_type": "image/png",
                     "kind": "image",
                     "name": format!("p{promise}-{index}.png"),
-                }));
+                }}));
             }
             let payload = deps
                 .blobs
                 .put_bytes(
-                    serde_json::to_vec(&json!({"status": "completed", "media": media})).unwrap(),
+                    serde_json::to_vec(&json!({"status": "completed", "attachments": media}))
+                        .unwrap(),
                 )
                 .await
                 .expect("payload");
@@ -1444,6 +1486,270 @@ mod tests {
         );
         let note = &materialized.additional_context[8];
         assert_eq!(note.content.media_type.as_deref(), Some("text/plain"));
+    }
+
+    /// A detached promise's run input is built from this result, so what it shows and
+    /// what it keeps out decide whether the session can generate afterwards.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_single_promise_result_carries_its_image_and_keeps_binary_bytes_out() {
+        let deps = storage_deps(Arc::new(InMemorySessionStore::new()));
+        let image = deps
+            .blobs
+            .put_bytes(vec![0x89, b'P', b'N', b'G'])
+            .await
+            .unwrap();
+        let envelope = deps
+            .blobs
+            .put_bytes(
+                serde_json::to_vec(&json!({
+                    "status": "completed",
+                    "attachments": [{"kind": "media", "data": {
+                        "handle": harness::media::media_handle(&image),
+                        "content_ref": image,
+                        "media_type": "image/png",
+                        "kind": "image",
+                        "name": "chart.png",
+                    }}],
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let binary = deps.blobs.put_bytes(vec![0xff, 0x00, 0xfe]).await.unwrap();
+        let materialize = |payload_ref: BlobRef| {
+            materialize_await_result(
+                &deps,
+                temporal_workflow::AwaitMaterializationRequest {
+                    outcome: temporal_workflow::AwaitOutcome::Terminal,
+                    results: vec![temporal_workflow::AwaitPromiseResult {
+                        promise_id: "promise_1".to_owned(),
+                        status: "resolved".to_owned(),
+                        payload_ref: Some(payload_ref),
+                        error_ref: None,
+                    }],
+                },
+            )
+        };
+
+        let with_image = materialize(envelope).await.unwrap();
+        assert_eq!(with_image.additional_context.len(), 1);
+        let media = &with_image.additional_context[0];
+        assert_eq!(media.content.content_ref, image);
+        assert_eq!(media.content.media_type.as_deref(), Some("image/png"));
+
+        let with_binary = materialize(binary.clone()).await.unwrap();
+        assert!(with_binary.additional_context.is_empty());
+        let text = String::from_utf8(
+            deps.blobs
+                .read_bytes(&with_binary.result_ref)
+                .await
+                .unwrap(),
+        )
+        .expect("the result a later request lowers is text");
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["results"][0]["output"]["blob_ref"], binary.as_str());
+    }
+
+    async fn check_reply(
+        blobs: Arc<InMemoryBlobStore>,
+        resolution: harness::PromiseResolution,
+        reply_schema_ref: Option<BlobRef>,
+        text_reply: bool,
+    ) -> Result<Option<String>, ActivityError> {
+        let deps = StorageActivityDeps {
+            sessions: Arc::new(InMemorySessionStore::new()),
+            blobs: blobs.clone(),
+            blob_graph: None,
+        };
+        let validation = validate_workflow_tool_reply(
+            &deps,
+            temporal_workflow::WorkflowToolReplyValidationRequest {
+                resolution,
+                reply_schema_ref,
+                text_reply,
+            },
+        )
+        .await?;
+        Ok(match validation {
+            temporal_workflow::WorkflowToolReplyValidationResult::Valid => None,
+            temporal_workflow::WorkflowToolReplyValidationResult::Invalid { error_ref } => {
+                Some(String::from_utf8(blobs.read_bytes(&error_ref).await.unwrap()).unwrap())
+            }
+        })
+    }
+
+    fn resolved(payload_ref: BlobRef) -> harness::PromiseResolution {
+        harness::PromiseResolution::Resolved {
+            payload_ref: Some(payload_ref),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_reply_naming_a_missing_blob_is_that_replys_failure() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let schema = blobs
+            .put_bytes(br#"{"type":"object"}"#.to_vec())
+            .await
+            .expect("schema");
+        let missing = BlobRef::from_bytes(b"never stored");
+        for reply_schema_ref in [None, Some(schema)] {
+            let problem = check_reply(
+                blobs.clone(),
+                resolved(missing.clone()),
+                reply_schema_ref,
+                false,
+            )
+            .await
+            .expect("the activity does not fail for it")
+            .expect("invalid");
+            assert_eq!(problem, format!("reply payload {missing} does not exist"));
+        }
+        let problem = check_reply(
+            blobs,
+            harness::PromiseResolution::Failed {
+                error_ref: Some(missing.clone()),
+            },
+            None,
+            false,
+        )
+        .await
+        .expect("the activity does not fail for it")
+        .expect("invalid");
+        assert_eq!(problem, format!("reply error {missing} does not exist"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_joined_reply_must_be_text_and_a_promise_reply_need_not_be() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let binary = blobs.put_bytes(vec![0xff, 0xfe, 0x00]).await.expect("put");
+        let problem = check_reply(blobs.clone(), resolved(binary.clone()), None, true)
+            .await
+            .expect("the activity does not fail for it")
+            .expect("invalid");
+        assert!(problem.contains("is not text"), "{problem}");
+        let failed = harness::PromiseResolution::Failed {
+            error_ref: Some(binary.clone()),
+        };
+        assert!(
+            check_reply(blobs.clone(), failed, None, true)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        // An await reports opaque bytes by reference, so they are a fine promise reply.
+        assert_eq!(
+            check_reply(blobs.clone(), resolved(binary), None, false)
+                .await
+                .unwrap(),
+            None
+        );
+        let text = blobs.put_bytes(b"plain".to_vec()).await.expect("put");
+        assert_eq!(
+            check_reply(blobs, resolved(text), None, true)
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_reply_schema_still_decides_a_readable_payload() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let schema = blobs
+            .put_bytes(br#"{"type":"object"}"#.to_vec())
+            .await
+            .expect("schema");
+        let object = blobs.put_bytes(br#"{"a":1}"#.to_vec()).await.expect("put");
+        let number = blobs.put_bytes(b"1".to_vec()).await.expect("put");
+        assert_eq!(
+            check_reply(blobs.clone(), resolved(object), Some(schema.clone()), true)
+                .await
+                .unwrap(),
+            None
+        );
+        let mismatch = check_reply(blobs.clone(), resolved(number), Some(schema.clone()), false)
+            .await
+            .unwrap()
+            .expect("invalid");
+        assert!(mismatch.contains("does not match"), "{mismatch}");
+        let required = check_reply(
+            blobs,
+            harness::PromiseResolution::Resolved { payload_ref: None },
+            Some(schema),
+            false,
+        )
+        .await
+        .unwrap()
+        .expect("invalid");
+        assert!(required.contains("is required"), "{required}");
+    }
+
+    /// A schema that cannot be read or compiled fails the reply. It never turns into
+    /// an activity failure on the session's one loop.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_broken_reply_schema_fails_the_reply_and_not_the_activity() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let payload = blobs.put_bytes(br#"{"a":1}"#.to_vec()).await.expect("put");
+        let not_json = blobs.put_bytes(b"not json".to_vec()).await.expect("put");
+        for schema in [not_json, BlobRef::from_bytes(b"never stored")] {
+            let problem = check_reply(
+                blobs.clone(),
+                resolved(payload.clone()),
+                Some(schema),
+                false,
+            )
+            .await
+            .expect("the activity does not fail for it")
+            .expect("invalid");
+            assert!(problem.contains("reply schema"), "{problem}");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_store_that_does_not_answer_is_waited_out() {
+        struct Down;
+        #[async_trait::async_trait]
+        impl harness::storage::BlobStore for Down {
+            async fn put_bytes(&self, _: Vec<u8>) -> Result<BlobRef, BlobStoreError> {
+                Err(down())
+            }
+            async fn read_bytes(&self, _: &BlobRef) -> Result<Vec<u8>, BlobStoreError> {
+                Err(down())
+            }
+            async fn has_blob(&self, _: &BlobRef) -> Result<bool, BlobStoreError> {
+                Err(down())
+            }
+            async fn stat_blob(
+                &self,
+                _: &BlobRef,
+            ) -> Result<harness::storage::BlobInfo, BlobStoreError> {
+                Err(down())
+            }
+        }
+        fn down() -> BlobStoreError {
+            BlobStoreError::Store {
+                message: "connection refused".to_owned(),
+            }
+        }
+        let deps = StorageActivityDeps {
+            sessions: Arc::new(InMemorySessionStore::new()),
+            blobs: Arc::new(Down),
+            blob_graph: None,
+        };
+        let error = validate_workflow_tool_reply(
+            &deps,
+            temporal_workflow::WorkflowToolReplyValidationRequest {
+                resolution: resolved(BlobRef::from_bytes(b"payload")),
+                reply_schema_ref: None,
+                text_reply: false,
+            },
+        )
+        .await
+        .expect_err("the store did not answer");
+        let ActivityError::Application(failure) = error else {
+            panic!("expected application failure");
+        };
+        assert!(!failure.is_non_retryable());
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1545,8 +1851,8 @@ mod tests {
             session_id: session_id.clone(),
             expected_head: None,
             events: vec![
-                test_event(10, [("turn", "1")], json!({"value": "first"})),
-                test_event(11, [("turn", "1")], json!({"value": "second"})),
+                test_event(10, [("turn", "1")], "first"),
+                test_event(11, [("turn", "1")], "second"),
             ],
         };
 
@@ -1588,8 +1894,7 @@ mod tests {
             }],
             ..EnvironmentsFeature::default()
         });
-        let mut staged =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut staged = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         let mut events = Vec::new();
         for command in [
             open,
@@ -1658,22 +1963,33 @@ mod tests {
         assert_eq!(append_events(&deps, request).await.unwrap(), committed);
         let durable = read_all(store.as_ref(), &session_id).await;
         assert_eq!(durable.entries, committed.entries);
-        let mut replay = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut replay = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         replay.resume_appended(durable.entries).unwrap();
         assert_eq!(replay.state(), staged.state());
         assert_eq!(replay.state().lifecycle.config_revision, 1);
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn tool_emission_retry_and_restarted_reads_are_complete_across_pages() {
+    async fn duplicate_tool_result_append_does_not_duplicate_invocations() {
         use harness::{
             ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
-            FunctionToolSpec, ManagedSessionWorkflowTools, RunConfig, RunRequestCommand,
+            DeclaredSessionWorkflowTools, FunctionToolSpec, RunConfig, RunRequestCommand,
             RunRequestSource, ToolKind, ToolParallelism, ToolSpec, WorkflowEndpointRef,
             WorkflowToolDeclaration, WorkflowToolDefinition, WorkflowToolId,
         };
         use test_support::{DriveCommand, RunnerStores, SessionRunner};
         use uuid::Uuid;
+
+        let notify_declaration = |definition, receiver| {
+            WorkflowToolDeclaration::new(
+                definition,
+                harness::WorkflowToolTarget::Bound {
+                    receiver,
+                    dispatch: harness::BoundWorkflowToolDispatch::Pull,
+                },
+                harness::WorkflowToolCompletion::Accepted,
+            )
+        };
 
         let store = Arc::new(InMemorySessionStore::new());
         let session_id = create_test_session(store.as_ref()).await;
@@ -1686,16 +2002,16 @@ mod tests {
             workflow_id: "approval-plugin".to_owned(),
             workflow_kind: "approval".to_owned(),
         };
-        let declaration = ManagedSessionWorkflowTools::v1(
+        let declaration = DeclaredSessionWorkflowTools::v1(
             Some(controller_receiver.clone()),
             vec![
-                WorkflowToolDeclaration::bound_notify(
+                notify_declaration(
                     WorkflowToolDefinition {
-                        tool_id: WorkflowToolId::new("work-report"),
-                        revision: 1,
+                        workflow_tool_id: WorkflowToolId::new("work-report"),
+                        schema_revision: 1,
                         semantic_type: "lightspeed.work.report.v1".to_owned(),
                         tool: ToolSpec {
-                            name: ToolName::new("work_report"),
+                            id: ToolId::new("work_report"),
                             execution: Default::default(),
                             kind: ToolKind::Function(FunctionToolSpec {
                                 description_ref: None,
@@ -1709,13 +2025,13 @@ mod tests {
                     },
                     controller_receiver.clone(),
                 ),
-                WorkflowToolDeclaration::bound_notify(
+                notify_declaration(
                     WorkflowToolDefinition {
-                        tool_id: WorkflowToolId::new("approval-request"),
-                        revision: 1,
+                        workflow_tool_id: WorkflowToolId::new("approval-request"),
+                        schema_revision: 1,
                         semantic_type: "lightspeed.approval.request.v1".to_owned(),
                         tool: ToolSpec {
-                            name: ToolName::new("request_approval"),
+                            id: ToolId::new("request_approval"),
                             execution: Default::default(),
                             kind: ToolKind::Function(FunctionToolSpec {
                                 description_ref: None,
@@ -1743,7 +2059,7 @@ mod tests {
                 tool_calls: vec![
                     ObservedToolCall {
                         call_id: harness::ToolCallId::new("report-call"),
-                        tool_id: Some(ToolName::new("work_report")),
+                        tool_id: Some(ToolId::new("work_report")),
                         tool_name: ToolName::new("work_report"),
                         provider_kind: None,
                         arguments_ref: BlobRef::from_bytes(b"{\"outcome\":\"complete\"}"),
@@ -1751,7 +2067,7 @@ mod tests {
                     },
                     ObservedToolCall {
                         call_id: harness::ToolCallId::new("approval-call"),
-                        tool_id: Some(ToolName::new("request_approval")),
+                        tool_id: Some(ToolId::new("request_approval")),
                         tool_name: ToolName::new("request_approval"),
                         provider_kind: None,
                         arguments_ref: BlobRef::from_bytes(b"{\"reason\":\"ship it\"}"),
@@ -1765,7 +2081,7 @@ mod tests {
             bindings: admitted
                 .bindings
                 .iter()
-                .map(|binding| (binding.definition.tool.name.clone(), binding.clone()))
+                .map(|binding| (binding.definition.tool.id.clone(), binding.clone()))
                 .collect(),
         }));
 
@@ -1773,7 +2089,7 @@ mod tests {
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
                 observed_at_ms: 10,
-                command: CoreAgentCommand::OpenManagedSession {
+                command: CoreAgentCommand::OpenDeclaredSession {
                     config: volume_session_config(),
                     session_universe_id: universe_id,
                     workflow_tools: declaration,
@@ -1781,7 +2097,7 @@ mod tests {
                 max_steps: None,
             })
             .await
-            .expect("open managed session");
+            .expect("open declared session");
         runner
             .drive_command(DriveCommand {
                 session_id: session_id.clone(),
@@ -1793,7 +2109,7 @@ mod tests {
                         .iter()
                         .map(|binding| {
                             (
-                                binding.definition.tool.name.clone(),
+                                binding.definition.tool.id.clone(),
                                 binding.definition.tool.clone(),
                             )
                         })
@@ -1828,35 +2144,19 @@ mod tests {
                         }],
                     },
                     run_config: RunConfig::default(),
+                    input_limit_tokens: None,
                 }),
                 max_steps: None,
             })
             .await
-            .expect("complete run with workflow-tool emission");
-        let run = completed.state.runs.completed.last().expect("terminal run");
-        let run_id = run.run_id;
-        let expected = completed
-            .state
-            .workflow_tools
-            .emissions
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        assert_eq!(expected.len(), 2);
-        let expected_report = expected
-            .iter()
-            .find(|invocation| invocation.tool_id.as_str() == "work-report")
-            .cloned()
-            .expect("durable work report");
-        let expected_approval = expected
-            .iter()
-            .find(|invocation| invocation.tool_id.as_str() == "approval-request")
-            .cloned()
-            .expect("durable approval request");
+            .expect("complete run with workflow-tool invocation");
+        // Neither takes a reply, so both left reduced state with their batch. The log
+        // below holds them.
+        assert!(completed.state.workflow_tools.bound_invocations.is_empty());
 
         // Re-submit the exact committed tool-result append as an activity
         // retry. The activity must return the existing entries rather than
-        // append a second copy of either emission.
+        // append a second copy of either invocation.
         let durable_entries = read_all_session_events(store.as_ref(), &session_id)
             .await
             .expect("read durable run log");
@@ -1866,7 +2166,8 @@ mod tests {
             .filter_map(|(index, entry)| {
                 matches!(
                     entry.event.kind.as_str(),
-                    "lightspeed.core.tool.call_completed" | "lightspeed.core.workflow_tool.emitted"
+                    harness::event_kind::TOOL_CALL_COMPLETED
+                        | harness::event_kind::WORKFLOW_TOOL_INVOKED
                 )
                 .then_some(index)
             })
@@ -1877,7 +2178,7 @@ mod tests {
         assert_eq!(
             tool_result_indices,
             (first_tool_result..=last_tool_result).collect::<Vec<_>>(),
-            "the two successful calls and emissions must be one atomic append"
+            "the two successful calls and invocations must be one atomic append"
         );
         let expected_head = first_tool_result
             .checked_sub(1)
@@ -1891,9 +2192,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        // A fresh dependency bundle represents a restarted worker process:
-        // the pull result is reconstructed only from the durable, paginated
-        // session log and carries no workflow-local cursor or cache.
+        // A fresh dependency bundle represents a restarted worker process.
         let deps = storage_deps(store.clone());
         let retried = append_events(
             &deps,
@@ -1910,45 +2209,17 @@ mod tests {
             durable_entries[first_tool_result..=last_tool_result]
         );
 
-        let reports = read_tool_emissions_with_page_limit(
-            &deps,
-            &controller_receiver,
-            &session_id,
-            run_id,
-            2,
-        )
-        .await
-        .expect("read controller emissions after terminal boundary");
-        let approvals =
-            read_tool_emissions_with_page_limit(&deps, &approval_receiver, &session_id, run_id, 2)
-                .await
-                .expect("read approval emissions after terminal boundary");
-
-        assert_eq!(reports, vec![expected_report]);
-        assert_eq!(approvals, vec![expected_approval]);
         let after_retry = read_all_session_events(store.as_ref(), &session_id)
             .await
             .expect("read log after retry");
         assert_eq!(
             after_retry
                 .iter()
-                .filter(|entry| { entry.event.kind == "lightspeed.core.workflow_tool.emitted" })
+                .filter(|entry| { entry.event.kind == harness::event_kind::WORKFLOW_TOOL_INVOKED })
                 .count(),
             2,
-            "duplicate tool-result admission must not duplicate emissions"
+            "duplicate tool-result admission must not duplicate invocations"
         );
-        read_tool_emissions_with_page_limit(
-            &deps,
-            &WorkflowEndpointRef {
-                workflow_id: "unrelated-plugin".to_owned(),
-                workflow_kind: "unrelated".to_owned(),
-            },
-            &session_id,
-            run_id,
-            2,
-        )
-        .await
-        .expect_err("unbound receiver must not read session emissions");
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1959,7 +2230,7 @@ mod tests {
         let first = AppendEventsRequest {
             session_id: session_id.clone(),
             expected_head: None,
-            events: vec![test_event(10, [("turn", "1")], json!({"value": "first"}))],
+            events: vec![test_event(10, [("turn", "1")], "first")],
         };
         append_events(&deps, first)
             .await
@@ -1970,11 +2241,7 @@ mod tests {
             AppendEventsRequest {
                 session_id,
                 expected_head: None,
-                events: vec![test_event(
-                    10,
-                    [("turn", "1")],
-                    json!({"value": "different"}),
-                )],
+                events: vec![test_event(10, [("turn", "1")], "different")],
             },
         )
         .await
@@ -1991,7 +2258,7 @@ mod tests {
         let first = AppendEventsRequest {
             session_id: session_id.clone(),
             expected_head: None,
-            events: vec![test_event(10, [("turn", "1")], json!({"value": "same"}))],
+            events: vec![test_event(10, [("turn", "1")], "same")],
         };
         append_events(&deps, first)
             .await
@@ -2002,7 +2269,7 @@ mod tests {
             AppendEventsRequest {
                 session_id,
                 expected_head: None,
-                events: vec![test_event(11, [("turn", "2")], json!({"value": "same"}))],
+                events: vec![test_event(11, [("turn", "2")], "same")],
             },
         )
         .await
@@ -2029,7 +2296,6 @@ mod tests {
         .expect("empty append");
 
         assert!(result.entries.is_empty());
-        assert_eq!(result.head, None);
         assert!(
             read_all(store.as_ref(), &session_id)
                 .await
@@ -2042,6 +2308,8 @@ mod tests {
         let ActivityError::Application(failure) = error else {
             panic!("expected application failure");
         };
+        // A conflict the log cannot confirm as this very append never clears on retry.
+        assert!(failure.is_non_retryable());
         assert!(matches!(
             failure.source_error().downcast_ref::<SessionStoreError>(),
             Some(SessionStoreError::ExpectedHeadMismatch { .. })

@@ -14,7 +14,8 @@ use api_projection::model_to_api;
 use harness::{ModelSelection, SessionId};
 use support::live::{
     LIVE_TEST_LOCK, fake_worker_activities_for_run_control,
-    fake_worker_activities_with_parallel_tool_calls, fake_worker_activities_with_tool_rounds,
+    fake_worker_activities_with_parallel_tool_calls,
+    fake_worker_activities_with_refused_generations, fake_worker_activities_with_tool_rounds,
     fake_worker_activities_with_transient_llm_failures, final_assistant_text, live_workflow_handle,
     read_run, require_storage_live_env, run_with_live_worker, start_text_run,
     terminate_live_session, wait_for_terminal_run, wait_until,
@@ -89,6 +90,21 @@ async fn temporal_live_exhausted_llm_retries_fail_the_run_not_the_session() -> a
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_harness_refusal_fails_the_run_and_the_session_serves_the_next()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    // The first generation's result is refused by the reducer's dry run. That used
+    // to fail the workflow for good; now the run fails with the refusal's text on
+    // the same execution and the next run completes.
+    let activities = fake_worker_activities_with_refused_generations(1).await?;
+    run_with_live_worker(activities, run_harness_refusal_live_client).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
 async fn temporal_live_cancel_mid_generation_aborts_the_provider_call() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -141,6 +157,40 @@ async fn temporal_live_steering_lands_at_next_turn_boundary() -> anyhow::Result<
         fake_worker_activities_for_run_control(Duration::from_secs(4), Duration::ZERO, 1).await?;
     run_with_live_worker(activities, move |client, task_queue, session_id| {
         run_steering_live_client(client, task_queue, session_id, counters)
+    })
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_text_over_a_declared_window_is_refused_at_the_door() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    // Text that alone exceeds the window would fail every later run from context, so
+    // a start and a steer refuse it, and the run in flight and the session carry on.
+    let (activities, counters) =
+        fake_worker_activities_for_run_control(Duration::from_secs(4), Duration::ZERO, 1).await?;
+    run_with_live_worker(activities, move |client, task_queue, session_id| {
+        run_oversized_text_live_client(client, task_queue, session_id, counters)
+    })
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_command_waits_answer_from_their_own_outcome() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    // A refused command answers at once and only its own caller hears it, and a
+    // retried steering lands once.
+    let (activities, counters) =
+        fake_worker_activities_for_run_control(Duration::from_secs(4), Duration::ZERO, 1).await?;
+    run_with_live_worker(activities, move |client, task_queue, session_id| {
+        run_command_waits_live_client(client, task_queue, session_id, counters)
     })
     .await
 }
@@ -457,6 +507,7 @@ async fn run_steering_live_client(
 
     let steered = api
         .steer_run(RunSteerParams {
+            submission_id: None,
             session_id: session_id.as_str().to_owned(),
             run_id: run.id.clone(),
             items: vec![InputItem::Text {
@@ -491,6 +542,7 @@ async fn run_steering_live_client(
 
     let late = api
         .steer_run(RunSteerParams {
+            submission_id: None,
             session_id: session_id.as_str().to_owned(),
             run_id: run.id.clone(),
             items: vec![InputItem::Text {
@@ -504,6 +556,163 @@ async fn run_steering_live_client(
     assert_eq!(late.kind, AgentApiErrorKind::Rejected);
 
     terminate_live_session(&client, &session_id, "steering live test cleanup").await;
+    Ok(())
+}
+
+async fn run_oversized_text_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+    counters: temporal_runtime::worker::FakeRuntimeCounters,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = support::live::openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
+    let api = GatewayAgentApi::builder(client.clone(), store)
+        .with_task_queue(task_queue)
+        .build();
+    let workspace = api
+        .create_vfs_workspace(api::VfsWorkspaceCreateParams::default())
+        .await?
+        .result
+        .workspace;
+    let mut config = run_control_session_config(&model, &workspace.workspace_id);
+    config.context = Some(api::ContextConfig {
+        input_limit_tokens: Some(4_000),
+        compaction: None,
+    });
+    api.start_session(SessionStartParams {
+        access: None,
+        metadata: Default::default(),
+        session_id: Some(session_id.as_str().to_owned()),
+        display_name: None,
+        config: Some(config),
+        profile: None,
+        delete_after_close_ms: None,
+    })
+    .await?;
+    let oversized = || {
+        vec![InputItem::Text {
+            provenance_ref: None,
+            origin: None,
+            text: "x".repeat(40_000),
+        }]
+    };
+
+    let refused = api
+        .start_run(RunStartParams {
+            session_id: session_id.as_str().to_owned(),
+            source: RunStartSource::Input { items: oversized() },
+            submission_id: None,
+            config: None,
+            notify_on_terminal: None,
+        })
+        .await
+        .expect_err("text over the window is refused");
+    assert_eq!(refused.kind, AgentApiErrorKind::InvalidRequest);
+
+    let run = start_text_run(&api, &session_id, "do the task").await?;
+    wait_until(
+        "the first generation to start",
+        Duration::from_secs(10),
+        async || Ok(counters.generations_started() >= 1),
+    )
+    .await?;
+    let refused = api
+        .steer_run(RunSteerParams {
+            submission_id: None,
+            session_id: session_id.as_str().to_owned(),
+            run_id: run.id.clone(),
+            items: oversized(),
+        })
+        .await
+        .expect_err("steering over the window is refused");
+    assert_eq!(refused.kind, AgentApiErrorKind::InvalidRequest);
+
+    let terminal = wait_for_terminal_run_with_timeout(&api, &session_id, &run.id, 40).await?;
+    assert_eq!(terminal.status, api::RunStatus::Completed);
+    assert!(
+        !terminal.entries.iter().any(|entry| matches!(
+            entry.source,
+            Some(api::ContextEntrySourceView::Steering { .. })
+        )),
+        "a refused steering never reached the run"
+    );
+
+    terminate_live_session(&client, &session_id, "oversized text live test cleanup").await;
+    Ok(())
+}
+
+async fn run_command_waits_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+    counters: temporal_runtime::worker::FakeRuntimeCounters,
+) -> anyhow::Result<()> {
+    let api = run_control_api(&client, task_queue, &session_id, true).await?;
+
+    let run = start_text_run(&api, &session_id, "do the task").await?;
+    wait_until(
+        "the first generation to start",
+        Duration::from_secs(10),
+        async || Ok(counters.generations_started() >= 1),
+    )
+    .await?;
+
+    let refused_at = std::time::Instant::now();
+    let refused = api
+        .close_session(api::SessionCloseParams {
+            session_id: session_id.as_str().to_owned(),
+            force: false,
+        })
+        .await
+        .expect_err("a plain close is refused while a run is active");
+    assert_eq!(refused.kind, AgentApiErrorKind::Rejected);
+    assert!(refused_at.elapsed() < Duration::from_secs(3));
+
+    let steer = |submission_id: &str, text: &str| {
+        api.steer_run(RunSteerParams {
+            submission_id: Some(submission_id.to_owned()),
+            session_id: session_id.as_str().to_owned(),
+            run_id: run.id.clone(),
+            items: vec![InputItem::Text {
+                provenance_ref: None,
+                origin: None,
+                text: text.to_owned(),
+            }],
+        })
+    };
+    let first = steer("delivery-1", "also mention the moon").await?.result;
+    let retried = steer("delivery-1", "also mention the moon").await?.result;
+    assert_eq!(retried.steering_id, first.steering_id);
+    let conflicting = steer("delivery-1", "something else")
+        .await
+        .expect_err("an id names one input");
+    assert_eq!(conflicting.kind, AgentApiErrorKind::Rejected);
+
+    let terminal = wait_for_terminal_run_with_timeout(&api, &session_id, &run.id, 40).await?;
+    assert_eq!(terminal.status, api::RunStatus::Completed);
+    assert_eq!(
+        terminal
+            .entries
+            .iter()
+            .filter(|entry| matches!(
+                entry.source,
+                Some(api::ContextEntrySourceView::Steering { .. })
+            ))
+            .count(),
+        1,
+        "a retried steering lands once"
+    );
+
+    // Nothing is left to refuse the close, and the earlier refusal is not taken for this.
+    api.close_session(api::SessionCloseParams {
+        session_id: session_id.as_str().to_owned(),
+        force: false,
+    })
+    .await?;
+
+    terminate_live_session(&client, &session_id, "command waits live test cleanup").await;
     Ok(())
 }
 
@@ -525,6 +734,7 @@ async fn run_steering_final_turn_live_client(
     .await?;
     let steered = api
         .steer_run(RunSteerParams {
+            submission_id: None,
             session_id: session_id.as_str().to_owned(),
             run_id: run.id.clone(),
             items: vec![InputItem::Text {
@@ -627,6 +837,7 @@ async fn run_queue_live_client(
     // Steering a queued run is rejected; it has no turn yet.
     let steer_queued = api
         .steer_run(RunSteerParams {
+            submission_id: None,
             session_id: session_id.as_str().to_owned(),
             run_id: second.id.clone(),
             items: vec![InputItem::Text {
@@ -936,6 +1147,116 @@ async fn run_transient_llm_retry_live_client(
                 .build(),
         )
         .await;
+    Ok(())
+}
+
+async fn run_harness_refusal_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = support::live::openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
+    let api = GatewayAgentApi::builder(client.clone(), store)
+        .with_task_queue(task_queue)
+        .build();
+
+    // A choice naming no tool is refused while the caller can still change it,
+    // before any run depends on it.
+    let dangling = SessionConfig {
+        generation: Some(api::GenerationConfig {
+            tool_choice: Some(api::ToolChoice::Specific {
+                tool_id: "typo".to_owned(),
+            }),
+            ..Default::default()
+        }),
+        ..SessionConfig::default()
+    };
+    let refused_session = SessionId::new(format!("{session_id}-dangling"));
+    let refused = api
+        .start_session(SessionStartParams {
+            access: None,
+            metadata: Default::default(),
+            session_id: Some(refused_session.as_str().to_owned()),
+            display_name: None,
+            config: Some(dangling.clone()),
+            profile: None,
+            delete_after_close_ms: None,
+        })
+        .await
+        .expect_err("session start refuses a dangling tool choice");
+    assert_eq!(refused.kind, AgentApiErrorKind::InvalidRequest, "{refused}");
+    assert!(refused.message.contains("typo"), "{refused}");
+    terminate_live_session(&client, &refused_session, "refusal live test cleanup").await;
+
+    api.start_session(SessionStartParams {
+        access: None,
+        metadata: Default::default(),
+        session_id: Some(session_id.as_str().to_owned()),
+        display_name: None,
+        config: None,
+        profile: None,
+        delete_after_close_ms: None,
+    })
+    .await?;
+    let temporal_run_id = live_workflow_handle(&client, &session_id)?
+        .describe(WorkflowDescribeOptions::default())
+        .await?
+        .run_id()
+        .to_owned();
+
+    let put = api
+        .put_session_config(api::SessionConfigPutParams {
+            session_id: session_id.as_str().to_owned(),
+            expected_config_revision: None,
+            config: dangling,
+        })
+        .await
+        .expect_err("config put refuses a dangling tool choice");
+    assert_eq!(put.kind, AgentApiErrorKind::InvalidRequest, "{put}");
+
+    let first = start_text_run(&api, &session_id, "this one is refused").await?;
+    let first = wait_for_terminal_run(&api, &session_id, &first.id).await?;
+    assert_eq!(first.status, api::RunStatus::Failed);
+    let events = api
+        .read_session_events(SessionEventsReadParams {
+            direction: Default::default(),
+            before: None,
+            session_id: session_id.as_str().to_owned(),
+            after: None,
+            limit: Some(500),
+            wait_ms: None,
+        })
+        .await?
+        .result
+        .events;
+    let failure = events
+        .iter()
+        .find_map(|event| match &event.kind {
+            api::SessionEventKindView::RunFailed { kind, message, .. } => Some((kind, message)),
+            _ => None,
+        })
+        .expect("the run has a failure event");
+    assert_eq!(*failure.0, api::RunFailureKindView::Internal);
+    assert!(
+        failure.1.contains("duplicate approval continuation"),
+        "the failure carries the real message: {failure:?}"
+    );
+
+    let second = start_text_run(&api, &session_id, "this one works").await?;
+    let second = wait_for_terminal_run(&api, &session_id, &second.id).await?;
+    assert_eq!(second.status, api::RunStatus::Completed);
+    assert_eq!(
+        live_workflow_handle(&client, &session_id)?
+            .describe(WorkflowDescribeOptions::default())
+            .await?
+            .run_id(),
+        temporal_run_id,
+        "the same execution served both runs"
+    );
+
+    terminate_live_session(&client, &session_id, "refusal live test cleanup").await;
     Ok(())
 }
 

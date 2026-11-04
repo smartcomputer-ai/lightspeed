@@ -13,21 +13,22 @@ use harness::{
     ContextMessageRole, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
     LlmGenerationStatus, LlmRequest, LlmUsage, OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND,
     ObservedToolCall, ProviderApiKind, RemoteMcpExecution, RemoteMcpExposure, TokenEstimate,
-    TokenEstimateQuality, ToolCallId, ToolChoice, ToolKind, ToolName, storage::BlobStore,
+    TokenEstimateQuality, ToolCallId, ToolId, ToolKind, ToolName, storage::BlobStore,
 };
 use llm_clients::{ApiResponse, openai::completions as oai_c};
 use serde_json::{Value, json};
 
+use crate::tool_catalog::LoweredToolChoice;
 use crate::{
     blob_io::{put_json, put_text, read_json, read_text},
     error::{LlmAdapterError, LlmAdapterResult},
     executor::{LlmCompactionAdapter, LlmGenerationAdapter},
-    mcp::{McpInventoryResolver, UnconfiguredMcpInventoryResolver, injected_native_tools},
+    mcp::{McpInventoryResolver, UnconfiguredMcpInventoryResolver, injected_runtime_tools},
     params::{openai_completions_params, validate_openai_reasoning_effort},
     provider_keys::{ModelProviderResolver, NoStoredModelProviders, resolve_model_provider},
     result::{
-        LlmGenerationExecution, RequestPositions, debug_dump_request, log_request_rejection,
-        partial_output_entries, store_debug_dumps, truncation_failure_text,
+        LlmGenerationExecution, RequestPositions, debug_dump_request, fail_on_invalid_response,
+        log_request_rejection, partial_output_entries, store_debug_dumps, truncation_failure_text,
     },
 };
 
@@ -229,7 +230,15 @@ impl LlmGenerationAdapter for OpenAiCompletionsLlmAdapter {
             }
         };
         reject_failure_finish(&response)?;
-        let mut result = result_from_response(self.blobs.as_ref(), &request, &response).await?;
+        let parsed = result_from_response(self.blobs.as_ref(), &request, &response).await;
+        let mut result = fail_on_invalid_response(
+            parsed,
+            self.blobs.as_ref(),
+            &request,
+            &response.parsed.id,
+            response.parsed.usage.as_ref().map(llm_usage),
+        )
+        .await?;
         catalog.normalize(&mut result);
         let debug_dumps = store_debug_dumps(
             self.blobs.as_ref(),
@@ -306,12 +315,6 @@ async fn materialize_request_with_catalog(
     request: &LlmRequest,
     catalog: &mut crate::tool_catalog::ToolCatalog,
 ) -> LlmAdapterResult<oai_c::CreateCompletionRequest> {
-    if request.provider_response_id.is_some() {
-        return Err(LlmAdapterError::InvalidProviderRequest {
-            message: "Chat Completions has no provider response continuation; provider_response_id must be empty"
-                .to_owned(),
-        });
-    }
     if matches!(
         request.compaction,
         Some(CompactionPolicy::ProviderTriggered { .. })
@@ -697,10 +700,7 @@ async fn materialize_message(
                         ),
                     ])
                 }
-            } else if let Some(document) = crate::blob_io::document_entry(
-                entry.content.media_type.as_deref(),
-                entry.preview.as_deref(),
-            ) {
+            } else if let Some(document) = crate::blob_io::document_entry(entry) {
                 if document.is_pdf && drop_media {
                     oai_c::CompletionMessageContent::Text(crate::blob_io::text_only_omission(entry))
                 } else if document.is_pdf {
@@ -808,7 +808,7 @@ async fn materialize_tools(
     catalog: &mut crate::tool_catalog::ToolCatalog,
 ) -> LlmAdapterResult<Option<Vec<oai_c::CompletionTool>>> {
     let mut materialized = Vec::new();
-    let mut native_mcp_tool_count = 0usize;
+    let mut runtime_mcp_tool_count = 0usize;
     for tool in &catalog.tools {
         match &tool.kind {
             crate::tool_catalog::ResolvedToolKind::Function(function) => {
@@ -836,26 +836,31 @@ async fn materialize_tools(
                 });
             }
             crate::tool_catalog::ResolvedToolKind::RemoteMcp(spec)
-                if spec.execution == RemoteMcpExecution::Native
+                if spec.execution == RemoteMcpExecution::Runtime
                     && spec.exposure == RemoteMcpExposure::Search => {}
             crate::tool_catalog::ResolvedToolKind::RemoteMcp(spec)
-                if spec.execution == RemoteMcpExecution::Native
+                if spec.execution == RemoteMcpExecution::Runtime
                     && spec.exposure == RemoteMcpExposure::Inject =>
             {
-                let native =
-                    injected_native_tools(inventory, spec, &tool.name, &mut native_mcp_tool_count)
-                        .await?;
-                for (name, native_tool) in native {
+                let runtime_tools = injected_runtime_tools(
+                    inventory,
+                    spec,
+                    &tool.name,
+                    &mut runtime_mcp_tool_count,
+                )
+                .await?;
+                for (name, runtime_tool) in runtime_tools {
                     catalog
                         .names
                         .insert(ToolName::new(name.clone()), Some(tool.id.clone()))?;
-                    let description = catalog.native_mcp_description(&tool.id, &name, &native_tool);
+                    let description =
+                        catalog.runtime_mcp_description(&tool.id, &name, &runtime_tool);
                     materialized.push(oai_c::CompletionTool {
                         r#type: oai_c::CompletionToolType::Function,
                         function: oai_c::CompletionFunction {
                             name,
                             description,
-                            parameters: Some(native_tool.input_schema),
+                            parameters: Some(runtime_tool.input_schema),
                             // MCP accepts general JSON Schema. OpenAI strict
                             // functions accept only a narrower subset.
                             strict: Some(false),
@@ -906,11 +911,7 @@ fn validate_dialect_capabilities(
         }
         let is_image =
             crate::blob_io::image_media_type(entry.content.media_type.as_deref()).is_some();
-        let is_pdf = crate::blob_io::document_entry(
-            entry.content.media_type.as_deref(),
-            entry.preview.as_deref(),
-        )
-        .is_some_and(|document| document.is_pdf);
+        let is_pdf = crate::blob_io::document_entry(entry).is_some_and(|document| document.is_pdf);
         if is_image || is_pdf {
             return Err(LlmAdapterError::InvalidProviderRequest {
                 message: format!(
@@ -1010,18 +1011,20 @@ fn is_openai_reasoning_model(model: &str) -> bool {
         || model.starts_with("o4")
 }
 
-fn openai_tool_choice(choice: &ToolChoice) -> oai_c::CompletionToolChoice {
+fn openai_tool_choice(choice: &LoweredToolChoice) -> oai_c::CompletionToolChoice {
     match choice {
-        ToolChoice::Auto => {
+        LoweredToolChoice::Auto => {
             oai_c::CompletionToolChoice::Mode(oai_c::CompletionToolChoiceMode::Auto)
         }
-        ToolChoice::None => {
+        LoweredToolChoice::None => {
             oai_c::CompletionToolChoice::Mode(oai_c::CompletionToolChoiceMode::None)
         }
-        ToolChoice::RequiredAny => {
+        LoweredToolChoice::RequiredAny => {
             oai_c::CompletionToolChoice::Mode(oai_c::CompletionToolChoiceMode::Required)
         }
-        ToolChoice::Specific { tool_name } => oai_c::CompletionToolChoice::Function {
+        LoweredToolChoice::Specific {
+            wire_name: tool_name,
+        } => oai_c::CompletionToolChoice::Function {
             r#type: oai_c::CompletionToolType::Function,
             function: oai_c::CompletionToolChoiceFunction {
                 name: tool_name.as_str().to_owned(),
@@ -1031,13 +1034,13 @@ fn openai_tool_choice(choice: &ToolChoice) -> oai_c::CompletionToolChoice {
 }
 
 fn materialize_tool_choice(
-    choice: Option<&ToolChoice>,
+    choice: Option<&LoweredToolChoice>,
     dialect: CompletionDialect,
     extra: &BTreeMap<String, Value>,
 ) -> LlmAdapterResult<Option<oai_c::CompletionToolChoice>> {
     if dialect == CompletionDialect::DeepSeek && deepseek_thinking_enabled(extra) {
         return match choice {
-            None | Some(ToolChoice::Auto) => Ok(None),
+            None | Some(LoweredToolChoice::Auto) => Ok(None),
             Some(_) => Err(LlmAdapterError::InvalidProviderRequest {
                 message: "DeepSeek thinking mode does not accept the tool_choice parameter; use auto or disable thinking"
                     .to_owned(),
@@ -1060,19 +1063,16 @@ pub async fn result_from_response(
     request: &LlmGenerationRequest,
     response: &ApiResponse<oai_c::Completion>,
 ) -> LlmAdapterResult<LlmGenerationResult> {
-    let choice =
-        response
-            .parsed
-            .choices
-            .first()
-            .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
-                message: format!("Chat completion {} has no choices", response.parsed.id),
-            })?;
+    let choice = response.parsed.choices.first().ok_or_else(|| {
+        LlmAdapterError::InvalidProviderResponse {
+            message: format!("Chat completion {} has no choices", response.parsed.id),
+        }
+    })?;
     let message =
         choice
             .message
             .as_ref()
-            .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+            .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
                 message: format!("Chat completion {} has no message", response.parsed.id),
             })?;
 
@@ -1080,7 +1080,7 @@ pub async fn result_from_response(
     // native message fields together, including unknown response metadata.
     let mut payload = raw_assistant_message(&response.raw_json)
         .cloned()
-        .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+        .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
             message: "Chat Completions response has no raw assistant message".to_owned(),
         })?;
     let reasoning_state = ["reasoning_content", "reasoning", "reasoning_details"]
@@ -1245,14 +1245,14 @@ pub async fn result_from_compact_response(
     if response.parsed.choices.len() != 1
         || response.parsed.choices[0].finish_reason.as_deref() != Some("stop")
     {
-        return Err(LlmAdapterError::InvalidProviderRequest {
+        return Err(LlmAdapterError::InvalidProviderResponse {
             message: "Chat Completions compaction did not finish with a complete summary".into(),
         });
     }
     let summary = response.parsed.output_text();
     let summary = summary.trim();
     if summary.is_empty() {
-        return Err(LlmAdapterError::InvalidProviderRequest {
+        return Err(LlmAdapterError::InvalidProviderResponse {
             message: format!(
                 "Chat Completions compaction response {} did not include summary text",
                 response.parsed.id
@@ -1300,7 +1300,7 @@ fn raw_tool_call(
     {
         return Ok(raw.clone());
     }
-    serde_json::to_value(call).map_err(|error| LlmAdapterError::InvalidProviderRequest {
+    serde_json::to_value(call).map_err(|error| LlmAdapterError::InvalidProviderResponse {
         message: format!("failed to encode Chat Completions tool call: {error}"),
     })
 }
@@ -1359,28 +1359,29 @@ async fn tool_call_context(
     let id = call
         .id
         .as_deref()
-        .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+        .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
             message: "Chat Completions tool call is missing id".to_owned(),
         })?;
     let call_id = ToolCallId::try_new(id.to_owned()).map_err(|error| {
-        LlmAdapterError::InvalidProviderRequest {
+        LlmAdapterError::InvalidProviderResponse {
             message: format!("invalid Chat Completions tool call id {id:?}: {error}"),
         }
     })?;
     let function =
         call.function
             .as_ref()
-            .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+            .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
                 message: format!("Chat Completions tool call {id} has no function"),
             })?;
-    let name = function
-        .name
-        .as_deref()
-        .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
-            message: format!("Chat Completions tool call {id} has no function name"),
-        })?;
+    let name =
+        function
+            .name
+            .as_deref()
+            .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
+                message: format!("Chat Completions tool call {id} has no function name"),
+            })?;
     let tool_name = ToolName::try_new(name.to_owned()).map_err(|error| {
-        LlmAdapterError::InvalidProviderRequest {
+        LlmAdapterError::InvalidProviderResponse {
             message: format!("invalid Chat Completions tool name {name:?}: {error}"),
         }
     })?;
@@ -1407,7 +1408,7 @@ async fn tool_call_context(
         },
         ObservedToolCall {
             call_id,
-            tool_id: Some(tool_name.clone()),
+            tool_id: Some(ToolId::new(tool_name.as_str())),
             tool_name,
             provider_kind: Some(OPENAI_COMPLETIONS_TOOL_CALL_PROVIDER_KIND.to_owned()),
             arguments_ref,
@@ -1465,6 +1466,7 @@ fn u64_to_u32(value: u64) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use harness::ToolChoice;
     use harness::ToolSpec;
     use std::sync::{Arc, Mutex};
 
@@ -1485,8 +1487,8 @@ mod tests {
         async fn list_tools(
             &self,
             _spec: &harness::RemoteMcpToolSpec,
-        ) -> Result<Vec<crate::NativeMcpTool>, crate::McpInventoryError> {
-            Ok(vec![crate::NativeMcpTool {
+        ) -> Result<Vec<crate::RuntimeMcpTool>, crate::McpInventoryError> {
+            Ok(vec![crate::RuntimeMcpTool {
                 remote_name: "lookup".to_owned(),
                 description: Some("Lookup".to_owned()),
                 input_schema: json!({"type": "object"}),
@@ -1496,6 +1498,10 @@ mod tests {
                 annotations: None,
             }])
         }
+
+        async fn server_url(&self, _: &str) -> Result<Option<String>, crate::McpInventoryError> {
+            Ok(None)
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1503,21 +1509,17 @@ mod tests {
         let blobs = InMemoryBlobStore::new();
         let mut request = request(Vec::new());
         request.tools = vec![ToolSpec {
-            name: ToolName::new("mcp_schema"),
+            id: ToolId::new("mcp_schema"),
             kind: ToolKind::RemoteMcp(harness::RemoteMcpToolSpec {
                 server_id: "schema".into(),
                 record_revision: 1,
                 server_label: "schema".into(),
-                server_url: "https://example.com/mcp".into(),
                 description_ref: None,
                 allowed_tools: None,
-                execution: RemoteMcpExecution::Native,
+                execution: RemoteMcpExecution::Runtime,
                 exposure: RemoteMcpExposure::Inject,
                 approval: harness::RemoteMcpApprovalPolicy::Never,
                 defer_loading: None,
-                auth_ref: None,
-                auth_required: false,
-                allow_private_network: false,
             }),
             execution: Default::default(),
             parallelism: ToolParallelism::ParallelSafe,
@@ -1531,7 +1533,7 @@ mod tests {
         for allowed in [true, false] {
             request.code_mode = Some(harness::CodeModePresentation {
                 allowed_tools: if allowed {
-                    [ToolName::new("mcp_schema")].into_iter().collect()
+                    [ToolId::new("mcp_schema")].into_iter().collect()
                 } else {
                     Default::default()
                 },
@@ -1568,7 +1570,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn native_mcp_is_available_on_openai_compatible_completions() {
+    async fn runtime_mcp_is_available_on_openai_compatible_completions() {
         let blobs = InMemoryBlobStore::new();
         let tools = materialize_tools(
             &StaticMcpInventory,
@@ -1576,21 +1578,17 @@ mod tests {
                 &blobs,
                 &tools::runtime::ToolTarget::api_kind(ProviderApiKind::OpenAiCompletions),
                 &[ToolSpec {
-                    name: ToolName::try_new("mcp_internal").expect("name"),
+                    id: ToolId::try_new("mcp_internal").expect("name"),
                     kind: ToolKind::RemoteMcp(harness::RemoteMcpToolSpec {
                         server_id: "internal".to_owned(),
                         record_revision: 2,
                         server_label: "internal".to_owned(),
-                        server_url: "https://example.com/mcp".to_owned(),
                         description_ref: None,
                         allowed_tools: None,
-                        execution: RemoteMcpExecution::Native,
+                        execution: RemoteMcpExecution::Runtime,
                         exposure: RemoteMcpExposure::Inject,
                         approval: harness::RemoteMcpApprovalPolicy::Never,
                         defer_loading: None,
-                        auth_ref: None,
-                        auth_required: false,
-                        allow_private_network: false,
                     }),
                     execution: Default::default(),
                     parallelism: ToolParallelism::ParallelSafe,
@@ -1600,7 +1598,7 @@ mod tests {
             .expect("catalog"),
         )
         .await
-        .expect("materialize native MCP");
+        .expect("materialize runtime MCP");
         let value = serde_json::to_value(tools).expect("tools json");
         assert_eq!(value[0]["function"]["name"], "mcp_internal__lookup");
         assert_eq!(value[0]["function"]["strict"], false);
@@ -1690,7 +1688,6 @@ mod tests {
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: None,
         }
@@ -1897,7 +1894,6 @@ mod tests {
             request_fingerprint: "sha256:deepseek-compact".to_owned(),
             context: deepseek_request.context,
             target_tokens: Some(128),
-            params: None,
         };
         let compact = materialize_compact_request(&blobs, &task)
             .await
@@ -1945,7 +1941,7 @@ mod tests {
         let mut strict_request = request(Vec::new());
         strict_request.model = model_for("deepseek", "deepseek-v4-flash");
         strict_request.tools.push(ToolSpec {
-            name: ToolName::new("strict_tool"),
+            id: ToolId::new("strict_tool"),
             kind: ToolKind::Function(FunctionToolSpec {
                 description_ref: None,
                 input_schema_ref: schema_ref,
@@ -2738,7 +2734,6 @@ mod tests {
             )])
             .context,
             target_tokens: Some(256),
-            params: None,
         };
         let materialized = materialize_compact_request(&blobs, &task)
             .await

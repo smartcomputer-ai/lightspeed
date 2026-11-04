@@ -1212,7 +1212,6 @@ mod tests {
                 sessions: vec![
                     ChatSessionSummary {
                         session_id: app.options.session_id.clone(),
-                        status: None,
                         lifecycle: None,
                         updated_at_ns: Some(2),
                         run_count: 1,
@@ -1222,7 +1221,6 @@ mod tests {
                     },
                     ChatSessionSummary {
                         session_id: target_session.clone(),
-                        status: None,
                         lifecycle: None,
                         updated_at_ns: Some(1),
                         run_count: 0,

@@ -728,7 +728,7 @@ async fn run_content_case(
             })
             .await?;
         for entry in page.entries {
-            if entry.event.kind != "lightspeed.core.tool.call_completed" {
+            if entry.event.kind != harness::event_kind::TOOL_CALL_COMPLETED {
                 continue;
             }
             let harness::CoreAgentEvent::Tool(harness::ToolEvent::CallCompleted { result, .. }) =
@@ -1004,7 +1004,7 @@ impl CoreAgentLlm for TransferLlm {
                 .request
                 .tools
                 .iter()
-                .find(|tool| tool.name == tool_id)
+                .find(|tool| tool.id == tool_id)
                 .unwrap();
             let harness::ToolKind::Builtin(specification) = &spec.kind else {
                 panic!("scripted transfer uses ordinary builtin tools")

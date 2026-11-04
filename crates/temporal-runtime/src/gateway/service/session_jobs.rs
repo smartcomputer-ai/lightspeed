@@ -168,8 +168,8 @@ impl GatewayAgentApi {
         let started = Instant::now();
         loop {
             if started.elapsed() > self.operation_timeout {
-                return Err(AgentApiError::internal(
-                    "timed out waiting for environment job start",
+                return Err(AgentApiError::operation_pending(
+                    "environment job has not started yet and can still start",
                 ));
             }
             match handle
@@ -359,7 +359,7 @@ impl GatewayAgentApi {
 
     /// Resolve the environment through the shared use gate, so a
     /// provisioning environment or a reconnecting daemon fails typed
-    /// `environment_not_ready` for the caller to retry — the shape polling
+    /// `environmentNotReady` for the caller to retry — the shape polling
     /// automations lean on — and a closed or failed one is refused.
     async fn read_job_instance(
         &self,
@@ -390,7 +390,7 @@ impl GatewayAgentApi {
         .await
         .map_err(|error| {
             // A powered-down environment wakes on this dial; its typed
-            // refusal is `environment_not_ready`, like the gate's waits.
+            // refusal is `environmentNotReady`, like the gate's waits.
             match crate::environments::resolver::route_refusal_error(instance, &error) {
                 Some(refusal) => super::environments::map_environment_resolve_error(refusal),
                 None => map_environment_client_api_error(error),

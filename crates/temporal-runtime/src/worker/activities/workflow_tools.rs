@@ -4,6 +4,8 @@
 //! execution. No plugin workflow type or activity is compiled into this
 //! worker; the recipe is data.
 
+use std::time::Duration;
+
 use harness::PromiseSourceCheckResult;
 use temporal_workflow::{
     WORKFLOW_TOOL_RECIPE_FORMAT_V1, WORKFLOW_TOOL_RECOVERY_QUERY,
@@ -12,9 +14,12 @@ use temporal_workflow::{
     split_workflow_id, workflow_tool_recipe_fingerprint,
 };
 use temporalio_client::WorkflowExecutionStatus;
+use temporalio_client::errors::{
+    WorkflowGetResultError, WorkflowInteractionError, WorkflowQueryError,
+};
 use temporalio_client::{
-    UntypedWorkflow, WorkflowCancelOptions, WorkflowDescribeOptions, WorkflowIdReusePolicy,
-    WorkflowQueryOptions, WorkflowStartOptions,
+    RpcOptions, UntypedWorkflow, WorkflowCancelOptions, WorkflowDescribeOptions,
+    WorkflowGetResultOptions, WorkflowIdReusePolicy, WorkflowQueryOptions, WorkflowStartOptions,
 };
 use temporalio_common::data_converters::PayloadConverter;
 use temporalio_common::data_converters::RawValue;
@@ -113,11 +118,28 @@ fn execution_start_options(task_queue: String, execution_id: String) -> Workflow
         .build()
 }
 
+/// A query waits for a poller on the execution's queue, and the poll blocks the
+/// session's outer loop. A hung query should read as a failed one and ask again on the
+/// next poll, well inside the activity's start-to-close.
+const RECOVERY_QUERY_RPC_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Whether asking again cannot change this answer. A handler that failed or does not
+/// exist comes back as `InvalidArgument`. Everything else, such as no recent poller
+/// on the queue during a deploy, a timeout or a transport failure, can pass, and the
+/// promise's deadline or its run still bound the wait.
+fn recovery_query_failure_is_final(error: &WorkflowQueryError) -> bool {
+    match error {
+        WorkflowQueryError::Rejected { .. } | WorkflowQueryError::PayloadConversion(_) => true,
+        WorkflowQueryError::Rpc(status) => status.code() == tonic::Code::InvalidArgument,
+        _ => false,
+    }
+}
+
 /// Recovery check for one keyed promise of a started execution. Running (or
 /// not-yet-visible) executions stay pending; a closed execution either
 /// yields its keyed terminal resolution through the fixed recovery query,
 /// or fails the promise — completion without a valid keyed result is a
-/// contract violation.
+/// contract violation. A query that may answer differently later stays pending.
 pub(super) async fn check_execution(
     deps: Option<&WorkflowToolExecutionDeps>,
     storage: &StorageActivityDeps,
@@ -152,58 +174,114 @@ pub(super) async fn check_execution(
             Ok(PromiseSourceCheckResult::Pending)
         }
         WorkflowExecutionStatus::Completed => {
-            let recovered: Result<WorkflowToolRecoveryResult, _> = handle
+            let raw = match handle
                 .query(
                     temporalio_client::UntypedQuery::new(WORKFLOW_TOOL_RECOVERY_QUERY),
                     RawValue::from_value(&(), &PayloadConverter::default()),
-                    WorkflowQueryOptions::default(),
+                    WorkflowQueryOptions::builder()
+                        .rpc_options(
+                            RpcOptions::builder()
+                                .timeout(RECOVERY_QUERY_RPC_TIMEOUT)
+                                .build(),
+                        )
+                        .build(),
                 )
                 .await
-                .map_err(|error| error.to_string())
-                .and_then(|raw| decode_recovery_result(raw).map_err(|error| error.to_string()));
-            match recovered {
-                Ok(result) => match result.resolutions.get(&request.completion_key) {
-                    Some(harness::PromiseResolution::Resolved { payload_ref }) => {
-                        Ok(PromiseSourceCheckResult::Resolved {
-                            payload_ref: payload_ref.clone(),
-                        })
-                    }
-                    Some(harness::PromiseResolution::Failed { error_ref }) => {
-                        Ok(PromiseSourceCheckResult::Failed {
-                            error_ref: error_ref.clone(),
-                        })
-                    }
-                    Some(harness::PromiseResolution::Cancelled) => {
-                        failed(format!(
-                            "started execution {} reported completion key `{}` as cancelled",
-                            request.execution_id, request.completion_key
-                        ))
-                        .await
-                    }
-                    None => {
-                        failed(format!(
-                            "started execution {} completed without a terminal result for completion key `{}` (contract violation)",
-                            request.execution_id, request.completion_key
-                        ))
-                        .await
-                    }
-                },
+            {
+                Ok(raw) => raw,
+                Err(error) if !recovery_query_failure_is_final(&error) => {
+                    return Ok(PromiseSourceCheckResult::Pending);
+                }
                 Err(error) => {
-                    failed(format!(
+                    return failed(format!(
                         "started execution {} completed but its recovery query failed: {error}",
                         request.execution_id
+                    ))
+                    .await;
+                }
+            };
+            let result = match decode_recovery_result(raw) {
+                Ok(result) => result,
+                Err(error) => {
+                    return failed(format!(
+                        "started execution {} completed but its recovery query failed: {error}",
+                        request.execution_id
+                    ))
+                    .await;
+                }
+            };
+            match result.resolutions.get(&request.completion_key) {
+                Some(harness::PromiseResolution::Resolved { payload_ref }) => {
+                    Ok(PromiseSourceCheckResult::Resolved {
+                        payload_ref: payload_ref.clone(),
+                    })
+                }
+                Some(harness::PromiseResolution::Failed { error_ref }) => {
+                    Ok(PromiseSourceCheckResult::Failed {
+                        error_ref: error_ref.clone(),
+                    })
+                }
+                Some(harness::PromiseResolution::Cancelled) => {
+                    failed(format!(
+                        "started execution {} reported completion key `{}` as cancelled",
+                        request.execution_id, request.completion_key
+                    ))
+                    .await
+                }
+                None => {
+                    failed(format!(
+                        "started execution {} completed without a terminal result for completion key `{}` (contract violation)",
+                        request.execution_id, request.completion_key
                     ))
                     .await
                 }
             }
         }
         status => {
-            failed(format!(
-                "started execution {} reached terminal status {status:?} without resolving completion key `{}`",
-                request.execution_id, request.completion_key
+            let cause = match status {
+                WorkflowExecutionStatus::Failed => execution_failure_message(&handle).await,
+                _ => None,
+            };
+            failed(unresolved_terminal_message(
+                &request,
+                status,
+                cause.as_deref(),
             ))
             .await
         }
+    }
+}
+
+/// Why an execution failed, in its own words. A closed execution answers at once,
+/// and the promise fails with or without this.
+async fn execution_failure_message(
+    handle: &temporalio_client::WorkflowHandle<temporalio_client::Client, UntypedWorkflow>,
+) -> Option<String> {
+    let options = WorkflowGetResultOptions::builder()
+        .rpc_options(
+            RpcOptions::builder()
+                .timeout(RECOVERY_QUERY_RPC_TIMEOUT)
+                .build(),
+        )
+        .build();
+    match handle.get_result(options).await {
+        Err(WorkflowGetResultError::Failed(failure)) => Some(failure.to_string()),
+        _ => None,
+    }
+}
+
+fn unresolved_terminal_message(
+    request: &WorkflowToolExecutionCheckRequest,
+    status: WorkflowExecutionStatus,
+    cause: Option<&str>,
+) -> String {
+    let message = format!(
+        "started execution {} reached terminal status {status:?} without resolving completion key `{}`",
+        request.execution_id, request.completion_key
+    );
+    match cause {
+        Some(cause) => format!("{message}: {cause}"),
+        None => message,
     }
 }
 
@@ -232,7 +310,7 @@ pub(super) async fn cancel_execution(
     // no-op; other failures surface so the workflow can record them.
     match handle.cancel(WorkflowCancelOptions::default()).await {
         Ok(()) => Ok(()),
-        Err(error) if error.to_string().contains("not found") => Ok(()),
+        Err(WorkflowInteractionError::NotFound(_)) => Ok(()),
         Err(error) => Err(activity_error(anyhow::anyhow!(
             "cancel workflow execution: {error}"
         ))),
@@ -252,5 +330,47 @@ mod tests {
         );
         assert_eq!(options.workflow_id, "wte:execution");
         assert_eq!(options.task_queue, "workflow-tools");
+    }
+
+    #[test]
+    fn an_unresolved_terminal_reports_why_the_execution_failed() {
+        let request = WorkflowToolExecutionCheckRequest {
+            execution_id: "wte:execution".into(),
+            completion_key: "reply".into(),
+        };
+        let message = unresolved_terminal_message(
+            &request,
+            WorkflowExecutionStatus::Failed,
+            Some("sub-agent resolve failed: blob missing"),
+        );
+        assert!(message.contains("wte:execution"), "{message}");
+        assert!(
+            message.ends_with("sub-agent resolve failed: blob missing"),
+            "{message}"
+        );
+        assert!(
+            !unresolved_terminal_message(&request, WorkflowExecutionStatus::Terminated, None)
+                .ends_with(':')
+        );
+    }
+
+    #[test]
+    fn only_a_recovery_query_failure_a_retry_cannot_change_is_final() {
+        let rpc = |code| WorkflowQueryError::Rpc(tonic::Status::new(code, "query"));
+        for error in [
+            WorkflowQueryError::Rejected { status: None },
+            rpc(tonic::Code::InvalidArgument),
+        ] {
+            assert!(recovery_query_failure_is_final(&error), "{error}");
+        }
+        for error in [
+            rpc(tonic::Code::FailedPrecondition),
+            rpc(tonic::Code::DeadlineExceeded),
+            rpc(tonic::Code::Unavailable),
+            rpc(tonic::Code::ResourceExhausted),
+            WorkflowQueryError::NotFound(tonic::Status::not_found("gone")),
+        ] {
+            assert!(!recovery_query_failure_is_final(&error), "{error}");
+        }
     }
 }

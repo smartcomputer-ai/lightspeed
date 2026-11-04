@@ -4,7 +4,7 @@ use harness::{
     BlobRef, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
     ContextMessageRole, ContextSnapshot, FunctionToolSpec, LlmFinish, LlmGenerationRequest,
     LlmGenerationStatus, LlmRequest, ModelSelection, ProviderApiKind, RunId, SessionId, ToolChoice,
-    ToolExecutionSpec, ToolKind, ToolName, ToolParallelism, ToolSpec, TurnId,
+    ToolExecutionSpec, ToolId, ToolKind, ToolParallelism, ToolSpec, TurnId,
     storage::{BlobStore, InMemoryBlobStore},
 };
 use llm_runtime::{
@@ -79,7 +79,6 @@ fn generation_request(entries: Vec<ContextEntry>) -> LlmGenerationRequest {
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: Some(openai_completions_params(&OpenAiCompletionsParams {
                 store: Some(false),
@@ -525,7 +524,7 @@ async fn weather_tool(blobs: &InMemoryBlobStore) -> ToolSpec {
     .await
     .expect("schema");
     ToolSpec {
-        name: ToolName::try_new("lookup_temperature").expect("tool name"),
+        id: ToolId::try_new("lookup_temperature").expect("tool name"),
         kind: ToolKind::Function(FunctionToolSpec {
             description_ref: Some(text_blob(blobs, "Look up a city's temperature").await),
             input_schema_ref: schema_ref,
@@ -561,7 +560,7 @@ async fn openai_completions_runtime_live_tool_call_and_result_round_trip() {
     )]);
     first_request.request.tools = vec![weather_tool(&blobs).await];
     first_request.request.tool_choice = Some(ToolChoice::Specific {
-        tool_name: ToolName::try_new("lookup_temperature").expect("tool name"),
+        tool_id: ToolId::try_new("lookup_temperature").expect("tool name"),
     });
     let adapter = live_adapter(blobs.clone());
     let first = adapter
@@ -790,7 +789,7 @@ async fn deepseek_completions_runtime_live_v4_reasoning_tool_round_trip() {
     .await
     .expect("schema");
     let tool = ToolSpec {
-        name: ToolName::new("lookup_temperature"),
+        id: ToolId::new("lookup_temperature"),
         kind: ToolKind::Function(FunctionToolSpec {
             description_ref: Some(text_blob(&blobs, "Look up a city's temperature").await),
             input_schema_ref: schema_ref,
@@ -913,7 +912,7 @@ async fn openai_completions_runtime_live_sees_tool_media() {
     )]);
     first_request.request.tools = vec![tool.clone()];
     first_request.request.tool_choice = Some(ToolChoice::Specific {
-        tool_name: ToolName::try_new("view_images").expect("tool name"),
+        tool_id: ToolId::try_new("view_images").expect("tool name"),
     });
     first_request.request.output_limit = Some(2048);
     let adapter = live_adapter(blobs.clone());

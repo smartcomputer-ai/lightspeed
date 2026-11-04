@@ -97,7 +97,7 @@ export function CredentialsPage({ admin: _admin }: { admin: boolean }) {
   if (isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !permissions.can("configure_resource")) {
+  if (!universe || !permissions.can("configureResource")) {
     return <UniverseNotFound slug={slug} />;
   }
 

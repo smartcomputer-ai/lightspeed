@@ -41,7 +41,7 @@ export function BotChat({
   const sessionHref = (id: string) => (id === main ? base : `${base}/chat/${encodeURIComponent(id)}`);
   const ready = controller?.setupStatus === "ready";
   const permissions = useActionPermissions(universeId);
-  const controlMain = !!main && permissions.can("control_session");
+  const controlMain = !!main && permissions.can("controlSession");
 
   useIntroduction(universeId, bot, controller, isMain, controlMain);
 
@@ -54,7 +54,7 @@ export function BotChat({
   }
   if (isMain && !ready) {
     // Not ready is either "still starting" or "could not start": say which,
-    // and say why — a degraded controller waits for the next Setup change.
+    // and say why. A degraded controller keeps retrying on its own.
     const degraded = controller?.setupStatus === "degraded" || Boolean(controller?.lastError);
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
@@ -65,7 +65,7 @@ export function BotChat({
           <>
             <span className="font-medium text-destructive">The main conversation could not be set up.</span>
             <span className="max-w-xl wrap-anywhere">{controller?.lastError ?? "The controller reported a problem."}</span>
-            <span>Fix the cause in Bot settings and save; the bot tries again on the next change.</span>
+            <span>The bot keeps trying on its own, and its other conversations keep working. If the cause is in Bot settings, fix it and save to try again now.</span>
           </>
         ) : (
           `Starting ${botLabel(bot)}'s main conversation…`

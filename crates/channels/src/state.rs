@@ -462,7 +462,7 @@ pub enum ReceiptEffect {
 
 /// Everything the conversation workflow remembers.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConversationState {
     pub bot_id: String,
     pub trigger_id: String,
@@ -542,10 +542,19 @@ impl Default for ConversationState {
 
 /// What continue-as-new carries: the compacted state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConversationCarry {
     pub version: u32,
     pub state: ConversationState,
+}
+
+impl Default for ConversationCarry {
+    fn default() -> Self {
+        Self {
+            version: CONVERSATION_CARRY_VERSION,
+            state: ConversationState::default(),
+        }
+    }
 }
 
 /// Dedup key of an inbound message: provider, account, chat, thread, and

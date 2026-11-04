@@ -117,9 +117,10 @@ import {
 } from "@/lib/sessions/transcript";
 import type { SentAttachment } from "@/lib/composer-attachments";
 import type { RunView } from "@lightspeed-ai/sdk";
+import { postUntilAccepted } from "@/lib/sessions/held-request";
 import { queuedMessage, queuedRecoverySubmissionId, readQueuedRecovery, steeringWasNotSubmitted, storeQueuedRecovery, type QueuedMessageRecovery } from "@/lib/sessions/queued-message";
 import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
-import { managedSessionBotId, managedSessionOwnerLabel } from "@/lib/sessions/management";
+import { controlledSessionBotId, controlledSessionOwnerLabel } from "@/lib/sessions/lifecycle-controller";
 import {
   resourceFeatureDisableReasons,
   setupResourceFeatureError,
@@ -145,13 +146,23 @@ import { ListPane } from "@/components/list-pane";
 /// New session (sub-agent tree expansion arrives with engine D1 parent
 /// linkage); detail = live transcript (long-poll tail) with a composer.
 const SESSION_LIST_REFRESH_MS = 5_000;
+/// A dead workflow emits nothing, so a working session is re-read to notice it.
+const SESSION_LIVENESS_REFRESH_MS = 15_000;
+const sessionMayBeRunning = (session?: Pick<SessionView, "lifecycleStatus" | "activity" | "executionFailure">) =>
+  session?.lifecycleStatus !== "closed" && session?.activity !== undefined && session.activity !== "idle" && !session.executionFailure;
 const INLINE_SUBAGENT_LIMIT = 5;
+const EXECUTION_FAILURE_TEXT: Record<NonNullable<SessionView["executionFailure"]>, string> = {
+  failed: "This session's workflow failed.",
+  terminated: "This session's workflow was stopped.",
+  timedOut: "This session's workflow timed out.",
+  missing: "This session's workflow no longer exists.",
+};
 
 export function SessionsPage({ admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const { sessionId } = useParams<{ sessionId: string }>();
   const location = useLocation();
-  const canCreate = useActionPermissions(universe?.id).can("create_session");
+  const canCreate = useActionPermissions(universe?.id).can("createSession");
   const [, setCreateOpen] = useCreateParam("session");
 
   if (isLoading) {
@@ -210,16 +221,16 @@ function SessionList({
   const [metadataKeyDraft, setMetadataKeyDraft] = useState("");
   const filterEntries = Object.entries(metadataFilter);
   const [preferences, setPreferences] = useState(() => readSessionListPreferences(universeId));
-  const { showClosed, showSubagents, showManagedSessions, showSessionIds, metadataKeys } = preferences;
+  const { showClosed, showSubagents, showControlledSessions, showSessionIds, metadataKeys } = preferences;
   const listQuery = new URLSearchParams({ limit: "50" });
   if (!showClosed) listQuery.set("closed", "false");
-  if (!showManagedSessions) listQuery.set("managed", "false");
+  if (!showControlledSessions) listQuery.set("lifecycleControlled", "false");
   if (!showSubagents) listQuery.set("subagent", "false");
   for (const [key, value] of filterEntries) {
     listQuery.append("metadata", value ? `${key}=${value}` : key);
   }
   const pages = useInfiniteQuery({
-    queryKey: ["sessions", universeId, metadataFilter, { showClosed, showManagedSessions, showSubagents }],
+    queryKey: ["sessions", universeId, metadataFilter, { showClosed, showControlledSessions, showSubagents }],
     queryFn: ({ pageParam }) =>
       api<SessionListPage>(
         "GET",
@@ -247,9 +258,9 @@ function SessionList({
   const permissions = useActionPermissions(universeId);
   const mayClose = useSessionClosePermission(universeId);
   const mayDelete = useSessionDeletePermission(universeId);
-  const canCreate = permissions.can("create_session");
-  const canSelect = sessions.some((session) => session.lifecycleStatus === "closed" ? mayDelete(session.access) : (!session.managed || permissions.role === "admin") && mayClose(session.access));
-  const selectedOpen = selectedSessions.filter((session) => (!session.managed || permissions.role === "admin") && session.lifecycleStatus !== "closed" && mayClose(session.access));
+  const canCreate = permissions.can("createSession");
+  const canSelect = sessions.some((session) => session.lifecycleStatus === "closed" ? mayDelete(session.access) : (!session.lifecycleControlled || permissions.role === "admin") && mayClose(session.access));
+  const selectedOpen = selectedSessions.filter((session) => (!session.lifecycleControlled || permissions.role === "admin") && session.lifecycleStatus !== "closed" && mayClose(session.access));
   const selectedClosed = selectedSessions.filter((session) => session.lifecycleStatus === "closed" && mayDelete(session.access));
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   // Only metadata filters count; which sessions the list includes is its scope.
@@ -346,7 +357,7 @@ function SessionList({
   /// primitive and the client loops, a few requests at a time.
   const bulk = useMutation({
     mutationFn: async ({ action, ids }: { action: "close" | "delete"; ids: string[] }) => {
-      const actionName = action === "close" ? "close_session" : "delete_session";
+      const actionName = action === "close" ? "closeSession" : "deleteSession";
       if (!permissions.can(actionName)) throw new Error("Session permissions changed. Review the selection.");
       const results = await runBatched(ids, 6, (id): Promise<unknown> =>
         action === "close"
@@ -429,10 +440,10 @@ function SessionList({
               </label>
               <label className="flex cursor-pointer items-center gap-2 text-sm">
                 <Checkbox
-                  checked={showManagedSessions}
+                  checked={showControlledSessions}
                   onCheckedChange={(checked) => setPreferences((current) => ({
                     ...current,
-                    showManagedSessions: checked === true,
+                    showControlledSessions: checked === true,
                   }))}
                 />
                 Managed sessions
@@ -830,7 +841,7 @@ function SessionListItem({
   active: boolean;
   depth?: number;
 } & SessionRowControls) {
-  const botManaged = session.managed && session.id.startsWith("bot:v1:");
+  const botControlled = session.lifecycleControlled && session.id.startsWith("bot:v1:");
   const origin = session.origin ?? null;
   const isSelected = selected.has(session.id);
   const displayName = session.displayName?.trim();
@@ -858,10 +869,10 @@ function SessionListItem({
             sub-agent
           </Badge>
         )}
-        {session.managed && (
-          <Badge className="shrink-0" variant="secondary" title={botManaged ? "Bot-managed session" : undefined}>
-            {botManaged && <BotFaceIcon />}
-            {botManaged ? "Bot" : "Managed"}
+        {session.lifecycleControlled && (
+          <Badge className="shrink-0" variant="secondary" title={botControlled ? "Bot-managed session" : undefined}>
+            {botControlled && <BotFaceIcon />}
+            {botControlled ? "Bot" : "Managed"}
           </Badge>
         )}
         {session.lifecycleStatus === "closed" && (
@@ -933,10 +944,10 @@ function NewSessionDialog({
   onOpenChange: (open: boolean) => void;
   search: string;
 }) {
-  const canSetRetention = useActionPermissions(universeId).can("set_session_retention");
+  const canSetRetention = useActionPermissions(universeId).can("setSessionRetention");
   const [displayName, setDisplayName] = useState("");
   const [profileId, setProfileId] = useState("");
-  const canConfigure = useActionPermissions(universeId).can("configure_session");
+  const canConfigure = useActionPermissions(universeId).can("configureSession");
   const [step, setStep] = useState<"basics" | "setup">("basics");
   const [inlineProfile, setInlineProfile] = useState<InlineProfile | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
@@ -1316,7 +1327,7 @@ export function SessionDetail({
   backTo?: string;
   /**
    * Rendered inside another surface (a bot's Chat tab): no back link, and a
-   * managed session takes plain input — the bot page is where its operator
+   * controlled session takes plain input — the bot page is where its operator
    * talks to it, so there is nothing to override.
    */
   embedded?: boolean;
@@ -1335,6 +1346,7 @@ export function SessionDetail({
         "GET",
         `/api/v1/universes/${universeId}/sessions/${sessionId}`,
       ),
+    refetchInterval: (query) => sessionMayBeRunning(query.state.data) ? SESSION_LIVENESS_REFRESH_MS : false,
   });
   const compaction = useSessionCompaction(universeId, sessionId, session.data);
   const owner = useSessionOwner(universeId, session.data?.access);
@@ -1368,9 +1380,9 @@ export function SessionDetail({
   const permissions = useActionPermissions(universeId);
   const mayClose = useSessionClosePermission(universeId);
   const mayDelete = useSessionDeletePermission(universeId);
-  const canControl = permissions.can("control_session");
-  const canConfigure = permissions.can("configure_session");
-  const canStop = permissions.can("stop_session");
+  const canControl = permissions.can("controlSession");
+  const canConfigure = permissions.can("configureSession");
+  const canStop = permissions.can("stopSession");
   const canClose = mayClose(session.data?.access);
   const canDelete = mayDelete(session.data?.access);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1598,12 +1610,12 @@ export function SessionDetail({
         steering: message.runId !== null && steeringQueued === message.runId,
       })),
   ];
-  const closed = session.data?.status === "closed";
-  const management = session.data?.management;
-  const managed = session.data?.managed === true;
-  const managerLabel = managedSessionOwnerLabel(management);
-  const owningBotId = managedSessionBotId(management, session.data?.metadata);
-  // With bots switched off, a bot's session reads as managed, with no way
+  const closed = session.data?.lifecycleStatus === "closed";
+  const declaration = session.data?.declaration;
+  const controlled = session.data?.lifecycleControlled === true;
+  const managerLabel = controlledSessionOwnerLabel(declaration);
+  const owningBotId = controlledSessionBotId(declaration, session.data?.metadata);
+  // With bots switched off, a bot's session reads as controlled, with no way
   // into the hidden bot page.
   const botsOn = useFeature("bots");
   const owningBotHref = owningBotId && botsOn
@@ -1653,14 +1665,14 @@ export function SessionDetail({
       },
     };
   }, [botRoster, sessionHref, slug, sessionId, navigate, loadMedia, transcriptMedia, transcriptFiles, universeId]);
-  // Operator override: the engine happily admits direct runs on a managed
+  // Operator override: the engine happily admits direct runs on a controlled
   // session (they queue like any client run), so the gate here is policy,
   // not capability. Off by default because direct input bypasses the
   // manager's ingress; resets when the operator navigates away.
-  const managedGate = managed && !embedded;
+  const controlledGate = controlled && !embedded;
   const [directInput, setDirectInput] = useState(false);
   const queueSteerTarget = useRef<string | null>(null);
-  queueSteerTarget.current = canSteer && canStop && !closed && (!managedGate || directInput) ? steerTargetRunId : null;
+  queueSteerTarget.current = canSteer && canStop && !closed && (!controlledGate || directInput) ? steerTargetRunId : null;
   useEffect(() => {
     setDirectInput(false);
   }, [sessionId]);
@@ -1694,16 +1706,20 @@ export function SessionDetail({
       { id: submissionId, text, media, runId: null, status: "sending", expectQueued },
     ]);
     try {
-      const accepted = await api<SessionRunAccepted>(
-        "POST",
-        `/api/v1/universes/${universeId}/sessions/${sessionId}/messages`,
-        {
-          text,
-          submissionId,
-          ...(message.attachments.length ? { attachments: message.attachments.map(wireAttachment) } : {}),
-          ...(canConfigure && message.options ? { options: message.options } : {}),
-        },
+      const accepted = await postUntilAccepted(
+        () => api<SessionRunAccepted>(
+          "POST",
+          `/api/v1/universes/${universeId}/sessions/${sessionId}/messages`,
+          {
+            text,
+            submissionId,
+            ...(message.attachments.length ? { attachments: message.attachments.map(wireAttachment) } : {}),
+            ...(canConfigure && message.options ? { options: message.options } : {}),
+          },
+        ),
+        () => currentScope.current === submissionScope,
       );
+      if (!accepted) return true;
       if (currentScope.current === submissionScope) setFollowRequest((request) => request + 1);
       setLocalSubmissions((previous) => new Map(previous).set(
         submissionScope, new Map(previous.get(submissionScope)).set(submissionId, accepted.run.id),
@@ -1744,10 +1760,17 @@ export function SessionDetail({
       setPendingSteers((prev) => [...prev, { id, runId, text, media: echoMedia(attachments) }]);
     }
     try {
-      await api<SessionRunSteered>(
-        "POST",
-        `/api/v1/universes/${universeId}/sessions/${sessionId}/runs/${runId}/steer`,
-        attachments.length ? { text, attachments: attachments.map(wireAttachment) } : { text },
+      await postUntilAccepted(
+        () => api<SessionRunSteered>(
+          "POST",
+          `/api/v1/universes/${universeId}/sessions/${sessionId}/runs/${runId}/steer`,
+          {
+            text,
+            submissionId: id,
+            ...(attachments.length ? { attachments: attachments.map(wireAttachment) } : {}),
+          },
+        ),
+        () => currentScope.current === submissionScope,
       );
       if (currentScope.current === submissionScope) setFollowRequest((request) => request + 1);
       return { ok: true };
@@ -1836,7 +1859,7 @@ export function SessionDetail({
 
   const steerQueued = async (runId: string) => {
     const target = steerTargetRunId;
-    if (!canSteer || !canStop || closed || (managedGate && !directInput)
+    if (!canSteer || !canStop || closed || (controlledGate && !directInput)
       || !target || target === runId || queueActions.current.size > 0) return;
     queueActions.current.add(runId);
     setSteeringQueued(runId);
@@ -1949,6 +1972,9 @@ export function SessionDetail({
       if (!result || result.status === "failed") {
         throw new Error(result?.failure?.message ?? "The approval decision was not accepted");
       }
+      if (result.status === "pending") {
+        setApprovalError({ approvalId, message: "The session is busy, so this decision has not applied yet. It can still apply." });
+      }
       queryClient.setQueryData<SessionView>(
         ["session", universeId, sessionId],
         (current) => current
@@ -1989,6 +2015,19 @@ export function SessionDetail({
     onError: (error) => setCloseError(error.message),
   });
 
+  const restartSession = useMutation({
+    mutationFn: () =>
+      api<SessionView>(
+        "POST",
+        `/api/v1/universes/${universeId}/sessions/${sessionId}/restart`,
+        {},
+      ),
+    onSuccess: async (restarted) => {
+      queryClient.setQueryData(["session", universeId, sessionId], restarted);
+      await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
+    },
+  });
+
   const onSessionDeleted = async () => {
     setDeleteOpen(false);
     queryClient.setQueriesData<InfiniteData<SessionListPage>>(
@@ -2010,6 +2049,25 @@ export function SessionDetail({
   return (
     <>
       <ProviderReadinessBanner universeId={universeId} slug={slug} model={modelFromConfig(session.data?.config)} enabled={Boolean(session.data)} />
+      {session.data?.executionFailure && (
+        <div role="alert" className="flex items-center gap-3 border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">
+          <span className="min-w-0 flex-1">
+            {EXECUTION_FAILURE_TEXT[session.data.executionFailure]} Its history is intact, but nothing is running and new messages will fail.
+            {restartSession.error && ` Restart failed: ${restartSession.error.message}`}
+          </span>
+          {canConfigure && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0"
+              disabled={restartSession.isPending}
+              onClick={() => restartSession.mutate()}
+            >
+              {restartSession.isPending ? "Restarting…" : "Restart"}
+            </Button>
+          )}
+        </div>
+      )}
       {!embedded && (
         <>
         <header className="flex h-12 min-w-0 shrink-0 items-center gap-3 overflow-hidden border-b px-4">
@@ -2022,7 +2080,7 @@ export function SessionDetail({
               {session.data?.displayName ?? sessionId.slice(0, 24)}
             </h1>
             <SharingMark access={session.data?.access} />
-            {managed && (owningBotHref ? (
+            {controlled && (owningBotHref ? (
               <NavLink
                 to={owningBotHref}
                 className="hidden shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground sm:flex"
@@ -2048,6 +2106,10 @@ export function SessionDetail({
               <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                 Closed
               </span>
+            ) : session.data?.executionFailure ? (
+              <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-xs text-destructive">
+                Stopped
+              </span>
             ) : activityLabel(session.data?.activity) && (
               <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
                 <ActivityDot activity={session.data?.activity} />
@@ -2066,7 +2128,7 @@ export function SessionDetail({
               onCompact={canControl && session.data && !closed ? compaction.compact : undefined}
               compactionLabel={compaction.label}
               onShare={canShare ? () => setShareOpen(true) : undefined}
-              lifecycle={((!managed || permissions.role === "admin") && canClose && !closed) || (canDelete && closed) ? (
+              lifecycle={((!controlled || permissions.role === "admin") && canClose && !closed) || (canDelete && closed) ? (
                 closed ? (
                   <DropdownMenuItem
                     variant="destructive"
@@ -2179,7 +2241,7 @@ export function SessionDetail({
                 entries.length === 0 &&
                 pendingInTranscript.length === 0 && (
                   <SessionWelcome
-                    state={closed ? "closed" : !canControl ? "readOnly" : managedGate && !directInput ? "managed" : "open"}
+                    state={closed ? "closed" : !canControl ? "readOnly" : controlledGate && !directInput ? "controlled" : "open"}
                     unshared={owner && session.data?.access.visibility === "restricted" && !session.data?.origin}
                   />
                 )}
@@ -2253,7 +2315,7 @@ export function SessionDetail({
         <QueuedRunsBar
           items={queuedItems}
           onCancel={canStop ? (runId) => void cancelQueued(runId) : undefined}
-          onSteer={canControl && canStop && (!managedGate || directInput) ? (runId) => void steerQueued(runId) : undefined}
+          onSteer={canControl && canStop && (!controlledGate || directInput) ? (runId) => void steerQueued(runId) : undefined}
           canSteer={canSteer && steeringQueued === null}
         />
       )}
@@ -2268,7 +2330,7 @@ export function SessionDetail({
             </details>
             <div className="flex gap-2">
               <Button size="xs" variant="outline"
-                disabled={item.sending || !canControl || closed || (managedGate && !directInput)}
+                disabled={item.sending || !canControl || closed || (controlledGate && !directInput)}
                 onClick={() => void requeueRecovered(item.id, item.message)}>Queue again</Button>
               <Button size="xs" variant="ghost" disabled={item.sending}
                 onClick={() => dismissRecoveredMessage(item.scope, item.id)}>Dismiss</Button>
@@ -2284,13 +2346,13 @@ export function SessionDetail({
         canSteer={canSteer}
         stopping={stopping}
         canStop={canStop && !closed}
-        disabled={!canControl || closed || (managedGate && !directInput)}
+        disabled={!canControl || closed || (controlledGate && !directInput)}
         disabledReason={!canControl
           ? "You have read-only access to this session."
-          : managedGate && !directInput
+          : controlledGate && !directInput
           ? `Managed by ${managerLabel} — flip Direct input to message this session anyway.`
           : undefined}
-        banner={canControl && managedGate && !closed ? (
+        banner={canControl && controlledGate && !closed ? (
           <div className="flex min-w-0 items-center gap-2 pb-2 text-xs">
             <Switch
               className="shrink-0"
@@ -2523,11 +2585,11 @@ export function SessionLineage({
             <span className={cn("truncate", !parentName && "font-mono font-normal")}>
               {parentLabel}
             </span>
-            {parent.data?.status && (
+            {parent.data?.lifecycleStatus && (
               <span
                 className={cn(
                   "size-1.5 shrink-0 rounded-full",
-                  parent.data.status === "closed" ? "bg-muted-foreground/50" : "bg-foreground",
+                  parent.data.lifecycleStatus === "closed" ? "bg-muted-foreground/50" : "bg-foreground",
                 )}
                 aria-hidden="true"
               />
@@ -2642,7 +2704,7 @@ function SessionWelcome({
   state,
   unshared,
 }: {
-  state: "open" | "closed" | "readOnly" | "managed";
+  state: "open" | "closed" | "readOnly" | "controlled";
   unshared: boolean;
 }) {
   const [title, body] = {
@@ -2650,7 +2712,7 @@ function SessionWelcome({
       "What should we work on?",
       "Ask a question or hand over a task. The agent works through it here, step by step, and you can steer it while it runs.",
     ],
-    managed: [
+    controlled: [
       "Nothing here yet",
       "This session is driven by its manager; its work will appear here.",
     ],

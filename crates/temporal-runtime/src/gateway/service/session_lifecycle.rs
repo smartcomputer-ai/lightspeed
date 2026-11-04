@@ -1,6 +1,7 @@
 //! Session creation, recovery, and preparation at the gateway boundary.
 use super::*;
-use harness::AdmittedManagedSessionWorkflowTools;
+use harness::AdmittedDeclaredSessionWorkflowTools;
+use temporalio_client::WorkflowIdReusePolicy;
 
 // Only the effects needed to recover and await session creation. Keeping this
 // boundary small lets the same recovery logic run against scripted offline I/O.
@@ -13,6 +14,19 @@ trait SessionLifecycleIo: Sync {
         &self,
         session_id: &SessionId,
     ) -> Result<Option<AgentSessionStatus>, AgentApiError>;
+    async fn stamp_creator(
+        &self,
+        session_id: &SessionId,
+        visibility: Option<Visibility>,
+    ) -> Result<(), AgentApiError>;
+    async fn force_close(&self, session_id: &SessionId) -> Result<(), AgentApiError>;
+    /// Start a new execution for a session whose last one stopped. Losing a race
+    /// to another caller's restart is success.
+    async fn start_restart(
+        &self,
+        session_id: &SessionId,
+        loaded: &LoadedSession,
+    ) -> Result<(), AgentApiError>;
 }
 
 #[async_trait]
@@ -22,15 +36,7 @@ impl SessionLifecycleIo for GatewayAgentApi {
     }
 
     async fn is_running(&self, session_id: &SessionId) -> Result<bool, AgentApiError> {
-        match self
-            .workflow_handle(session_id)
-            .describe(WorkflowDescribeOptions::default())
-            .await
-        {
-            Ok(description) => Ok(description.status() == WorkflowExecutionStatus::Running),
-            Err(WorkflowInteractionError::NotFound(_)) => Ok(false),
-            Err(error) => Err(map_workflow_interaction_error(error)),
-        }
+        Ok(self.execution_liveness(session_id).await? == ExecutionLiveness::Running)
     }
 
     async fn retry_setup(&self, session_id: &SessionId) -> Result<(), AgentApiError> {
@@ -50,19 +56,89 @@ impl SessionLifecycleIo for GatewayAgentApi {
     ) -> Result<Option<AgentSessionStatus>, AgentApiError> {
         self.query_status_optional(session_id).await
     }
+
+    async fn stamp_creator(
+        &self,
+        session_id: &SessionId,
+        visibility: Option<Visibility>,
+    ) -> Result<(), AgentApiError> {
+        self.record_session_creator(session_id, visibility).await
+    }
+
+    async fn force_close(&self, session_id: &SessionId) -> Result<(), AgentApiError> {
+        self.force_close_session(session_id).await
+    }
+
+    async fn start_restart(
+        &self,
+        session_id: &SessionId,
+        loaded: &LoadedSession,
+    ) -> Result<(), AgentApiError> {
+        let session_config = loaded.state.lifecycle.config.clone().ok_or_else(|| {
+            AgentApiError::internal(format!("session {session_id} has no configuration"))
+        })?;
+        // The row exists, so the store ignores name, metadata and retention, and the
+        // log holds the config and declaration. Only a sub-agent's row says what the
+        // caller would have passed: it has nobody to ask for approvals.
+        let mut args = self.workflow_args(
+            session_id.clone(),
+            None,
+            BTreeMap::new(),
+            None,
+            session_config,
+            None,
+            false,
+            loaded.record.origin.is_some(),
+        );
+        args.restart = true;
+        let started = self
+            .client
+            .start_workflow(
+                AgentSessionWorkflow::run,
+                args,
+                WorkflowStartOptions::new(
+                    self.task_queue.clone(),
+                    self.workflow_id_for(session_id),
+                )
+                .id_reuse_policy(WorkflowIdReusePolicy::AllowDuplicate)
+                .build(),
+            )
+            .await
+            .map_err(map_workflow_start_error);
+        match started {
+            Err(error) if !matches!(error.kind, AgentApiErrorKind::Conflict) => Err(error),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// What a start does when an open session's execution turns out to have stopped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StoppedExecution {
+    /// A client retrying its own session/start is asking for that session.
+    Restart,
+    /// The runtime's own callers decide what a dead session means for them, and
+    /// their retries must not bring it back behind an operator.
+    Report,
 }
 
 struct SessionLifecycle<'a, T> {
     io: &'a T,
     operation_timeout: Duration,
     poll_interval: Duration,
+    /// The audience a failed setup's creator stamp records.
+    visibility: Option<Visibility>,
+    /// The caller never learns a server-allocated id, so a failed setup on one
+    /// cannot be retried or repaired and must not stay live.
+    server_allocated_id: bool,
+    stopped_execution: StoppedExecution,
 }
 
 impl<T: SessionLifecycleIo> SessionLifecycle<'_, T> {
     async fn recover_existing(
         &self,
         session_id: &SessionId,
-        admitted: Option<&AdmittedManagedSessionWorkflowTools>,
+        admitted: Option<&AdmittedDeclaredSessionWorkflowTools>,
     ) -> Result<Option<LoadedSession>, AgentApiError> {
         match self.io.load(session_id).await {
             Ok(loaded)
@@ -90,7 +166,7 @@ impl<T: SessionLifecycleIo> SessionLifecycle<'_, T> {
     async fn recover_conflict(
         &self,
         session_id: &SessionId,
-        admitted: Option<&AdmittedManagedSessionWorkflowTools>,
+        admitted: Option<&AdmittedDeclaredSessionWorkflowTools>,
     ) -> Result<LoadedSession, AgentApiError> {
         // Preserve the start-conflict boundary: a missing row is still an
         // error here, rather than silently changing the recovery policy.
@@ -102,21 +178,88 @@ impl<T: SessionLifecycleIo> SessionLifecycle<'_, T> {
         &self,
         session_id: &SessionId,
         known: Option<LoadedSession>,
-        admitted: Option<&AdmittedManagedSessionWorkflowTools>,
+        admitted: Option<&AdmittedDeclaredSessionWorkflowTools>,
     ) -> Result<LoadedSession, AgentApiError> {
         let validate_after_wait = known.is_none();
-        if let Some(loaded) = known {
-            validate_managed_session_retry(&loaded.state, admitted)?;
-            if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
-                return Ok(loaded);
+        let known = match known {
+            Some(loaded) => {
+                validate_declared_session_retry(&loaded.state, admitted)?;
+                if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
+                    return Ok(loaded);
+                }
+                Some(loaded)
             }
+            None => None,
+        };
+        match self.io.retry_setup(session_id).await {
+            Ok(()) => {}
+            Err(error) if is_not_found(&error) => {
+                return match known {
+                    Some(loaded) => self.recover_stopped(session_id, loaded, error).await,
+                    None => Err(error),
+                };
+            }
+            Err(error) => return Err(error),
         }
-        self.io.retry_setup(session_id).await?;
         let loaded = self.wait_for_open_session(session_id).await?;
         if validate_after_wait {
-            validate_managed_session_retry(&loaded.state, admitted)?;
+            validate_declared_session_retry(&loaded.state, admitted)?;
         }
         Ok(loaded)
+    }
+
+    /// An open row's execution would not take a signal. If it is really gone, this
+    /// start's policy decides; if it is running, the signal only missed it.
+    async fn recover_stopped(
+        &self,
+        session_id: &SessionId,
+        loaded: LoadedSession,
+        not_found: AgentApiError,
+    ) -> Result<LoadedSession, AgentApiError> {
+        if self.io.is_running(session_id).await? {
+            return Err(not_found);
+        }
+        match self.stopped_execution {
+            StoppedExecution::Report => Err(session_execution_stopped_error(session_id)),
+            StoppedExecution::Restart => self.restart(session_id, &loaded).await,
+        }
+    }
+
+    /// Restart on an operator's request. The answer says whether a new execution
+    /// started, because one that is running is left alone.
+    async fn restart_requested(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<(LoadedSession, bool), AgentApiError> {
+        let loaded = self.io.load(session_id).await?;
+        if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        if self.io.is_running(session_id).await? {
+            return Ok((loaded, false));
+        }
+        Ok((self.restart(session_id, &loaded).await?, true))
+    }
+
+    /// `ready` lives only in workflow state, so the log cannot say that setup finished,
+    /// and a restart would mark the session ready without its profile. Runs are refused
+    /// until setup finishes, so run history is what proves it did.
+    async fn restart(
+        &self,
+        session_id: &SessionId,
+        loaded: &LoadedSession,
+    ) -> Result<LoadedSession, AgentApiError> {
+        let runs = &loaded.state.runs;
+        if runs.active.is_none() && runs.queued.is_empty() && runs.finished.is_empty() {
+            return Err(AgentApiError::rejected(format!(
+                "session {session_id} has no run history and may never have finished setup, so it \
+                 cannot be restarted. Close it with force and start a new one"
+            )));
+        }
+        self.io.start_restart(session_id, loaded).await?;
+        self.wait_for_open_session(session_id).await
     }
 
     async fn wait_for_open_session(
@@ -126,15 +269,16 @@ impl<T: SessionLifecycleIo> SessionLifecycle<'_, T> {
         let started = Instant::now();
         loop {
             if started.elapsed() > self.operation_timeout {
-                return Err(AgentApiError::internal(format!(
-                    "timed out waiting for agent session to open: {session_id}"
+                return Err(AgentApiError::operation_pending(format!(
+                    "agent session has not opened yet and can still open: {session_id}"
                 )));
             }
             if let Some(status) = self.io.status(session_id).await? {
                 if let Some(error) = status.setup_error {
+                    self.settle_failed_setup(session_id).await;
                     return Err(error);
                 }
-                if let Some(error) = status.last_error {
+                if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(error));
                 }
                 if status.ready {
@@ -142,6 +286,21 @@ impl<T: SessionLifecycleIo> SessionLifecycle<'_, T> {
                 }
             }
             tokio::time::sleep(self.poll_interval).await;
+        }
+    }
+
+    /// A client-supplied id keeps its retry path, stamped so the caller can see
+    /// and close the session it holds. A server-allocated one leaves nothing
+    /// live behind. Either step failing must not replace the setup error the
+    /// caller is about to hear.
+    async fn settle_failed_setup(&self, session_id: &SessionId) {
+        if let Err(error) = self.io.stamp_creator(session_id, self.visibility).await {
+            tracing::warn!(%session_id, %error, "failed to stamp a session whose setup failed");
+        }
+        if self.server_allocated_id
+            && let Err(error) = self.io.force_close(session_id).await
+        {
+            tracing::warn!(%session_id, %error, "failed to close a session whose setup failed");
         }
     }
 }
@@ -159,7 +318,7 @@ impl GatewayAgentApi {
         metadata: BTreeMap<String, String>,
         delete_after_close_ms: Option<u64>,
         session_config: SessionConfig,
-        workflow_tools: Option<ManagedSessionWorkflowTools>,
+        workflow_tools: Option<DeclaredSessionWorkflowTools>,
         close_on_terminal: bool,
         auto_reject_approvals: bool,
     ) -> AgentSessionArgs {
@@ -172,10 +331,10 @@ impl GatewayAgentApi {
             delete_after_close_ms,
             session_config,
             workflow_tools,
-            legacy_max_steps_per_input: None,
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
             close_on_terminal,
             auto_reject_approvals,
+            restart: false,
             continuation_state: None,
         }
     }
@@ -204,6 +363,7 @@ impl GatewayAgentApi {
             false,
             true,
             None,
+            StoppedExecution::Report,
         )
         .await?;
         Ok(())
@@ -211,12 +371,12 @@ impl GatewayAgentApi {
 
     /// Trusted in-process workflow-plugin entry point. The main API exposes
     /// the same immutable target and completion vocabulary through wire DTOs.
-    pub async fn start_managed_session_for_workflow_with_profile(
+    pub async fn start_declared_session_for_workflow_with_profile(
         &self,
         session_id: &SessionId,
         close_on_terminal: bool,
         profile: Option<ProfileSource>,
-        workflow_tools: ManagedSessionWorkflowTools,
+        workflow_tools: DeclaredSessionWorkflowTools,
     ) -> Result<(), AgentApiError> {
         self.start_session_internal(
             SessionStartParams {
@@ -231,9 +391,30 @@ impl GatewayAgentApi {
             close_on_terminal,
             false,
             Some(workflow_tools),
+            StoppedExecution::Report,
         )
         .await?;
         Ok(())
+    }
+
+    /// Bring back a session whose execution stopped, on an operator's request.
+    pub(super) async fn restart_session_from_log(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<AgentApiOutcome<SessionRestartResponse>, AgentApiError> {
+        let lifecycle = SessionLifecycle {
+            io: self,
+            operation_timeout: self.operation_timeout,
+            poll_interval: self.poll_interval,
+            visibility: None,
+            server_allocated_id: false,
+            stopped_execution: StoppedExecution::Restart,
+        };
+        let (loaded, restarted) = lifecycle.restart_requested(session_id).await?;
+        Ok(AgentApiOutcome::new(SessionRestartResponse {
+            session: self.session_mutation_view(&loaded),
+            restarted,
+        }))
     }
 
     pub(super) async fn start_session_internal(
@@ -241,7 +422,8 @@ impl GatewayAgentApi {
         params: SessionStartParams,
         close_on_terminal: bool,
         auto_reject_approvals: bool,
-        trusted_workflow_tools: Option<ManagedSessionWorkflowTools>,
+        trusted_workflow_tools: Option<DeclaredSessionWorkflowTools>,
+        stopped_execution: StoppedExecution,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
         self.authorize_method(METHOD_SESSION_START, None).await?;
         let SessionStartParams {
@@ -254,6 +436,9 @@ impl GatewayAgentApi {
             access,
         } = params;
         validate_caller_metadata(&metadata)?;
+        if let Some(display_name) = &display_name {
+            input::reject_nul("displayName", display_name)?;
+        }
         let workflow_tools = trusted_workflow_tools;
         let client_supplied_id = session_id.is_some();
         let session_id = match session_id {
@@ -297,7 +482,7 @@ impl GatewayAgentApi {
             .map(|declaration| {
                 declaration.admit(self.universe_id()).map_err(|error| {
                     AgentApiError::invalid_request(format!(
-                        "invalid managed-session workflow-tool declaration: {error}"
+                        "invalid declared-session workflow-tool declaration: {error}"
                     ))
                 })
             })
@@ -306,6 +491,9 @@ impl GatewayAgentApi {
             io: self,
             operation_timeout: self.operation_timeout,
             poll_interval: self.poll_interval,
+            visibility,
+            server_allocated_id: !client_supplied_id,
+            stopped_execution,
         };
         if self
             .store
@@ -349,17 +537,24 @@ impl GatewayAgentApi {
         {
             return Err(AgentApiError::forbidden());
         }
+        // Explicit features replace the profile's whole, so they are all the
+        // caller's own; anything else in the document came from a profile.
+        let request_names_features = config
+            .as_ref()
+            .is_some_and(|config| config.features.is_some());
         let start_config = Self::merge_profile_start_config(
             resolved_profile
                 .as_ref()
                 .and_then(|profile| profile.config.clone()),
             config,
         );
-        let session_config = self.session_config_for_start(start_config).await?;
+        let session_config = self
+            .session_config_for_start(start_config, request_names_features)
+            .await?;
         let setup_environment = profiles::default_environment_id(&session_config.features)?;
 
         if let Some(admitted) = admitted.as_ref() {
-            self.validate_managed_session_materialization(&session_config, admitted)
+            self.validate_declared_session_materialization(&session_config, admitted)
                 .await?;
         }
         let mut args = self.workflow_args(
@@ -412,7 +607,7 @@ impl GatewayAgentApi {
             Err(error) => return Err(error),
         }
         let loaded = lifecycle.wait_for_open_session(&session_id).await?;
-        validate_managed_session_retry(&loaded.state, admitted.as_ref())?;
+        validate_declared_session_retry(&loaded.state, admitted.as_ref())?;
         // The workflow created the row; the stamp is first-wins, so a retry
         // keeps the audience the session was created with.
         self.record_session_creator(&session_id, visibility).await?;
@@ -428,10 +623,10 @@ impl GatewayAgentApi {
         })
     }
 
-    async fn validate_managed_session_materialization(
+    async fn validate_declared_session_materialization(
         &self,
         session_config: &SessionConfig,
-        admitted: &AdmittedManagedSessionWorkflowTools,
+        admitted: &AdmittedDeclaredSessionWorkflowTools,
     ) -> Result<(), AgentApiError> {
         for binding in &admitted.bindings {
             validate_workflow_tool_definition_documents(self.store.as_ref(), &binding.definition)
@@ -439,7 +634,7 @@ impl GatewayAgentApi {
                 .map_err(|error| {
                     AgentApiError::invalid_request(format!(
                         "invalid workflow tool {} documents: {error}",
-                        binding.definition.tool_id
+                        binding.definition.workflow_tool_id
                     ))
                 })?;
             if let WorkflowToolCompletion::Joined {
@@ -456,13 +651,16 @@ impl GatewayAgentApi {
                     .map_err(|error| {
                         AgentApiError::invalid_request(format!(
                             "invalid workflow tool {} reply schema: {error}",
-                            binding.definition.tool_id
+                            binding.definition.workflow_tool_id
                         ))
                     })?;
             }
             if let WorkflowToolTarget::Start { start } = &binding.target {
-                self.validate_workflow_tool_start_recipe(&binding.definition.tool_id, start)
-                    .await?;
+                self.validate_workflow_tool_start_recipe(
+                    &binding.definition.workflow_tool_id,
+                    start,
+                )
+                .await?;
             }
         }
 
@@ -482,12 +680,15 @@ impl GatewayAgentApi {
                 AgentApiError::invalid_request(format!("materialize workflow tool tools: {error}"))
             },
         )?;
-        let desired_mcp = self.desired_mcp_tools(&session_config.features).await?;
+        let inventory = self
+            .preparation_service()
+            .mcp_inventory(&session_config.features)
+            .await?;
         if let Some(colliding) = materialized_bindings
             .iter()
             .copied()
-            .map(|binding| &binding.definition.tool.name)
-            .find(|tool_name| desired_mcp.contains_key(*tool_name))
+            .map(|binding| &binding.definition.tool.id)
+            .find(|tool_name| inventory.tools.contains_key(*tool_name))
         {
             return Err(AgentApiError::invalid_request(format!(
                 "workflow tool tool name {colliding} collides with a remote MCP tool"
@@ -552,19 +753,28 @@ impl GatewayAgentApi {
             .receipt()
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
         self.refresh_input_blob_grace(&request).await?;
-        self.workflow_handle(session_id)
+        match self
+            .workflow_handle(session_id)
             .signal(
                 AgentSessionWorkflow::prepare_session,
                 request.clone(),
                 WorkflowSignalOptions::default(),
             )
             .await
-            .map_err(map_workflow_interaction_error)?;
+        {
+            Ok(()) => {}
+            Err(WorkflowInteractionError::NotFound(_)) => {
+                return Err(self
+                    .classify_workflow_interaction_not_found(session_id)
+                    .await);
+            }
+            Err(error) => return Err(map_workflow_interaction_error(error)),
+        }
         let started = Instant::now();
         loop {
             if started.elapsed() > self.operation_timeout {
-                return Err(AgentApiError::internal(format!(
-                    "timed out waiting for session preparation: {}",
+                return Err(AgentApiError::operation_pending(format!(
+                    "session preparation has not finished yet and can still apply: {}",
                     request.operation_id
                 )));
             }
@@ -585,7 +795,7 @@ impl GatewayAgentApi {
                 if let Some(error) = status.setup_error {
                     return Err(error);
                 }
-                if let Some(error) = status.last_error {
+                if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(error));
                 }
             }
@@ -594,16 +804,19 @@ impl GatewayAgentApi {
     }
 }
 
-fn validate_managed_session_retry(
+fn validate_declared_session_retry(
     state: &harness::CoreAgentState,
-    admitted: Option<&AdmittedManagedSessionWorkflowTools>,
+    admitted: Option<&AdmittedDeclaredSessionWorkflowTools>,
 ) -> Result<(), AgentApiError> {
     let Some(admitted) = admitted else {
         return Ok(());
     };
     match (
         state.workflow_tools.session_universe_id,
-        state.workflow_tools.managed_creation_fingerprint.as_deref(),
+        state
+            .workflow_tools
+            .declared_creation_fingerprint
+            .as_deref(),
     ) {
         (Some(actual_universe), Some(actual))
             if actual_universe == admitted.session_universe_id
@@ -612,10 +825,10 @@ fn validate_managed_session_retry(
             Ok(())
         }
         (Some(_), Some(_)) => Err(AgentApiError::conflict(
-            "managed-session controller, receiver, or tool declaration conflicts with durable creation state",
+            "declared-session controller, receiver, or tool declaration conflicts with durable creation state",
         )),
         _ => Err(AgentApiError::conflict(
-            "existing standalone session cannot be reopened as a managed session",
+            "existing undeclared session cannot be reopened as a declared session",
         )),
     }
 }
@@ -630,6 +843,9 @@ mod tests {
         Running(Result<bool, AgentApiError>),
         Retry(Result<(), AgentApiError>),
         Status(Result<Option<Box<AgentSessionStatus>>, AgentApiError>),
+        Stamp(Result<(), AgentApiError>),
+        ForceClose(Result<(), AgentApiError>),
+        StartRestart(Result<(), AgentApiError>),
     }
 
     struct ScriptedIo(Mutex<VecDeque<Step>>);
@@ -659,6 +875,16 @@ mod tests {
                 io: self,
                 operation_timeout: Duration::from_secs(5),
                 poll_interval: Duration::ZERO,
+                visibility: None,
+                server_allocated_id: false,
+                stopped_execution: StoppedExecution::Report,
+            }
+        }
+
+        fn restarting(&self) -> SessionLifecycle<'_, Self> {
+            SessionLifecycle {
+                stopped_execution: StoppedExecution::Restart,
+                ..self.lifecycle()
             }
         }
     }
@@ -689,23 +915,50 @@ mod tests {
             };
             result.map(|status| status.map(|status| *status))
         }
+        async fn stamp_creator(
+            &self,
+            _: &SessionId,
+            _: Option<Visibility>,
+        ) -> Result<(), AgentApiError> {
+            let Step::Stamp(result) = self.next() else {
+                panic!("expected creator stamp");
+            };
+            result
+        }
+        async fn force_close(&self, _: &SessionId) -> Result<(), AgentApiError> {
+            let Step::ForceClose(result) = self.next() else {
+                panic!("expected force close");
+            };
+            result
+        }
+        async fn start_restart(
+            &self,
+            _: &SessionId,
+            _: &LoadedSession,
+        ) -> Result<(), AgentApiError> {
+            let Step::StartRestart(result) = self.next() else {
+                panic!("expected restart");
+            };
+            result
+        }
     }
 
-    fn admitted() -> AdmittedManagedSessionWorkflowTools {
-        ManagedSessionWorkflowTools::v1(None, Vec::new())
+    fn admitted() -> AdmittedDeclaredSessionWorkflowTools {
+        DeclaredSessionWorkflowTools::v1(None, Vec::new())
             .admit(uuid::Uuid::from_u128(1))
             .unwrap()
     }
 
-    fn loaded(status: CoreAgentStatus, revision: u64, managed: bool) -> Box<LoadedSession> {
+    fn loaded(status: CoreAgentStatus, revision: u64, declared: bool) -> Box<LoadedSession> {
         let session_id = SessionId::new("session-lifecycle");
         let mut state = harness::CoreAgentState::new();
         state.lifecycle.status = status;
         state.lifecycle.config_revision = revision;
-        if managed {
+        if declared {
             let admitted = admitted();
             state.workflow_tools.session_universe_id = Some(admitted.session_universe_id);
-            state.workflow_tools.managed_creation_fingerprint = Some(admitted.creation_fingerprint);
+            state.workflow_tools.declared_creation_fingerprint =
+                Some(admitted.creation_fingerprint);
         }
         Box::new(LoadedSession {
             state,
@@ -720,7 +973,7 @@ mod tests {
                 retention_root_session_id: session_id,
                 delete_after_close_ms: None,
                 delete_at_ms: None,
-                managed,
+                lifecycle_controlled: declared,
                 head: None,
                 source_session_id: None,
                 source_seq: None,
@@ -738,14 +991,16 @@ mod tests {
             ready,
             setup_error: None,
             pending_admissions: 0,
-            pending_tool_batch_resumes: 0,
+            pending_submission_ids: Vec::new(),
+            pending_tool_batch_unparks: 0,
             active_waits: 0,
             pending_emissions: 0,
             active_run: None,
             queued_runs: Vec::new(),
-            completed_runs: Vec::new(),
+            finished_runs: Vec::new(),
             admission_failures: Vec::new(),
-            last_error: None,
+            fatal_error: None,
+            last_warning: None,
             bootstrap_failed: false,
         })
     }
@@ -754,14 +1009,14 @@ mod tests {
     async fn stored_sessions_validate_before_retry_and_reuse_the_loaded_response_state() {
         let session_id = SessionId::new("session-lifecycle");
         for closed in [false, true] {
-            for managed_matches in [false, true] {
+            for declared_matches in [false, true] {
                 let initial_status = if closed {
                     CoreAgentStatus::Closed
                 } else {
                     CoreAgentStatus::Open
                 };
-                let mut steps = vec![Step::Load(Ok(loaded(initial_status, 1, managed_matches)))];
-                if managed_matches && !closed {
+                let mut steps = vec![Step::Load(Ok(loaded(initial_status, 1, declared_matches)))];
+                if declared_matches && !closed {
                     steps.extend([
                         Step::Retry(Ok(())),
                         Step::Status(Ok(Some(status(true)))),
@@ -773,7 +1028,7 @@ mod tests {
                     .lifecycle()
                     .recover_existing(&session_id, Some(&admitted()))
                     .await;
-                if managed_matches {
+                if declared_matches {
                     let loaded = result.unwrap().expect("recovered session");
                     assert_eq!(
                         loaded.state.lifecycle.config_revision,
@@ -794,7 +1049,7 @@ mod tests {
     async fn running_workflow_recovers_without_fresh_creation_and_validates_after_readiness() {
         let session_id = SessionId::new("session-lifecycle");
         for row_exists in [false, true] {
-            for managed_matches in [false, true] {
+            for declared_matches in [false, true] {
                 let initial = if row_exists {
                     Ok(loaded(CoreAgentStatus::New, 0, false))
                 } else {
@@ -807,14 +1062,14 @@ mod tests {
                     Step::Status(Ok(None)),
                     Step::Status(Ok(Some(status(false)))),
                     Step::Status(Ok(Some(status(true)))),
-                    Step::Load(Ok(loaded(CoreAgentStatus::Open, 7, managed_matches))),
+                    Step::Load(Ok(loaded(CoreAgentStatus::Open, 7, declared_matches))),
                 ]);
                 // The recovered value makes the caller return before profile resolution.
                 let result = io
                     .lifecycle()
                     .recover_existing(&session_id, Some(&admitted()))
                     .await;
-                if managed_matches {
+                if declared_matches {
                     assert_eq!(
                         result
                             .unwrap()
@@ -901,18 +1156,24 @@ mod tests {
         let setup_error = AgentApiError::invalid_request("setup failed");
         let mut setup = status(true);
         setup.setup_error = Some(setup_error.clone());
-        setup.last_error = Some("secondary error".into());
+        setup.fatal_error = Some("secondary error".into());
         let mut failed = status(true);
-        failed.last_error = Some("workflow failed".into());
-        for (query, expected) in [
-            (Ok(Some(setup)), setup_error),
-            (Ok(Some(failed)), AgentApiError::internal("workflow failed")),
+        failed.fatal_error = Some("workflow failed".into());
+        for (steps, expected) in [
             (
-                Err(AgentApiError::not_found("query failed")),
+                vec![Step::Status(Ok(Some(setup))), Step::Stamp(Ok(()))],
+                setup_error,
+            ),
+            (
+                vec![Step::Status(Ok(Some(failed)))],
+                AgentApiError::internal("workflow failed"),
+            ),
+            (
+                vec![Step::Status(Err(AgentApiError::not_found("query failed")))],
                 AgentApiError::not_found("query failed"),
             ),
         ] {
-            let io = ScriptedIo::new([Step::Status(query)]);
+            let io = ScriptedIo::new(steps);
             assert_eq!(
                 io.lifecycle()
                     .wait_for_open_session(&session_id)
@@ -923,6 +1184,19 @@ mod tests {
             );
             io.assert_drained();
         }
+        // A warning describes something the session survived: it neither fails
+        // nor delays the wait.
+        let mut warned = status(true);
+        warned.last_warning = Some("unauthorized producer".into());
+        let io = ScriptedIo::new([
+            Step::Status(Ok(Some(warned))),
+            Step::Load(Ok(loaded(CoreAgentStatus::Open, 9, false))),
+        ]);
+        io.lifecycle()
+            .wait_for_open_session(&session_id)
+            .await
+            .expect("a warning is not a failure");
+        io.assert_drained();
         let io = ScriptedIo::new([
             Step::Status(Ok(Some(status(true)))),
             Step::Load(Ok(loaded(CoreAgentStatus::Open, 9, false))),
@@ -936,6 +1210,63 @@ mod tests {
                 .lifecycle
                 .config_revision,
             9
+        );
+        io.assert_drained();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_failed_setup_on_a_server_allocated_id_leaves_nothing_live() {
+        let session_id = SessionId::new("session-lifecycle");
+        let setup_error = AgentApiError::invalid_request("the real reason");
+        let failed = || {
+            let mut failed = status(false);
+            failed.setup_error = Some(setup_error.clone());
+            Step::Status(Ok(Some(failed)))
+        };
+
+        let io = ScriptedIo::new([failed(), Step::Stamp(Ok(())), Step::ForceClose(Ok(()))]);
+        let mut lifecycle = io.lifecycle();
+        lifecycle.server_allocated_id = true;
+        assert_eq!(
+            lifecycle.wait_for_open_session(&session_id).await.err(),
+            Some(setup_error.clone())
+        );
+        io.assert_drained();
+
+        // Neither step failing replaces the reason the caller hears.
+        let outage = AgentApiError::internal("outage");
+        let io = ScriptedIo::new([
+            failed(),
+            Step::Stamp(Err(outage.clone())),
+            Step::ForceClose(Err(outage)),
+        ]);
+        let mut lifecycle = io.lifecycle();
+        lifecycle.server_allocated_id = true;
+        assert_eq!(
+            lifecycle.wait_for_open_session(&session_id).await.err(),
+            Some(setup_error.clone())
+        );
+        io.assert_drained();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_failed_setup_on_a_client_supplied_id_is_stamped_and_stays_retryable() {
+        let session_id = SessionId::new("session-lifecycle");
+        let setup_error = AgentApiError::invalid_request("the real reason");
+        let mut failed = status(false);
+        failed.setup_error = Some(setup_error.clone());
+        let io = ScriptedIo::new([
+            Step::Load(Ok(loaded(CoreAgentStatus::Open, 1, false))),
+            Step::Retry(Ok(())),
+            Step::Status(Ok(Some(failed))),
+            Step::Stamp(Ok(())),
+        ]);
+        assert_eq!(
+            io.lifecycle()
+                .recover_existing(&session_id, None)
+                .await
+                .err(),
+            Some(setup_error)
         );
         io.assert_drained();
     }
@@ -967,6 +1298,176 @@ mod tests {
         }
     }
 
+    fn with_run_history(mut loaded: Box<LoadedSession>) -> Box<LoadedSession> {
+        loaded.state.runs.finished.push(harness::RunRecord {
+            run_id: harness::RunId::new(1),
+            status: harness::RunStatus::Completed,
+            submission_id: None,
+            submission_digest: 0,
+            source: harness::RunSource::Input { input: Vec::new() },
+            first_seq: harness::EventSeq::new(1),
+            terminal_seq: harness::EventSeq::new(2),
+            accepted_at_ms: 0,
+            started_at_ms: None,
+            finished_at_ms: 0,
+            usage: None,
+            output: None,
+            failure: None,
+            notify_on_terminal: Vec::new(),
+        });
+        loaded
+    }
+
+    fn signal_not_found() -> AgentApiError {
+        AgentApiError::not_found("agent workflow not found")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_retried_start_brings_back_a_session_whose_execution_stopped() {
+        let session_id = SessionId::new("session-lifecycle");
+        let io = ScriptedIo::new([
+            Step::Load(Ok(with_run_history(loaded(
+                CoreAgentStatus::Open,
+                3,
+                false,
+            )))),
+            Step::Retry(Err(signal_not_found())),
+            Step::Running(Ok(false)),
+            Step::StartRestart(Ok(())),
+            Step::Status(Ok(Some(status(true)))),
+            Step::Load(Ok(with_run_history(loaded(
+                CoreAgentStatus::Open,
+                4,
+                false,
+            )))),
+        ]);
+        let recovered = io
+            .restarting()
+            .recover_existing(&session_id, None)
+            .await
+            .unwrap()
+            .expect("recovered");
+        assert_eq!(recovered.state.lifecycle.config_revision, 4);
+        io.assert_drained();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_declared_path_reports_a_stopped_execution_and_never_restarts() {
+        let session_id = SessionId::new("session-lifecycle");
+        let io = ScriptedIo::new([
+            Step::Load(Ok(with_run_history(loaded(CoreAgentStatus::Open, 3, true)))),
+            Step::Retry(Err(signal_not_found())),
+            Step::Running(Ok(false)),
+        ]);
+        let error = io
+            .lifecycle()
+            .recover_existing(&session_id, Some(&admitted()))
+            .await
+            .err()
+            .expect("reported");
+        assert_eq!(error.kind, AgentApiErrorKind::SessionExecutionStopped);
+        io.assert_drained();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_signal_that_missed_a_running_execution_restarts_nothing() {
+        let session_id = SessionId::new("session-lifecycle");
+        let io = ScriptedIo::new([
+            Step::Load(Ok(with_run_history(loaded(
+                CoreAgentStatus::Open,
+                3,
+                false,
+            )))),
+            Step::Retry(Err(signal_not_found())),
+            Step::Running(Ok(true)),
+        ]);
+        let error = io
+            .restarting()
+            .recover_existing(&session_id, None)
+            .await
+            .err()
+            .expect("still not found");
+        assert_eq!(error.kind, AgentApiErrorKind::NotFound);
+        io.assert_drained();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_session_with_no_run_history_is_not_restarted() {
+        let session_id = SessionId::new("session-lifecycle");
+        let io = ScriptedIo::new([
+            Step::Load(Ok(loaded(CoreAgentStatus::Open, 3, false))),
+            Step::Retry(Err(signal_not_found())),
+            Step::Running(Ok(false)),
+        ]);
+        let error = io
+            .restarting()
+            .recover_existing(&session_id, None)
+            .await
+            .err()
+            .expect("refused");
+        assert_eq!(error.kind, AgentApiErrorKind::Rejected);
+        assert!(error.message.contains("no run history"), "{error}");
+        io.assert_drained();
+
+        let io = ScriptedIo::new([
+            Step::Load(Ok(loaded(CoreAgentStatus::New, 0, false))),
+            Step::Running(Ok(false)),
+        ]);
+        let error = io
+            .restarting()
+            .restart_requested(&session_id)
+            .await
+            .err()
+            .expect("refused");
+        assert_eq!(error.kind, AgentApiErrorKind::Rejected);
+        io.assert_drained();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_operator_restart_says_what_it_did() {
+        let session_id = SessionId::new("session-lifecycle");
+        let io = ScriptedIo::new([
+            Step::Load(Ok(with_run_history(loaded(CoreAgentStatus::Open, 3, true)))),
+            Step::Running(Ok(false)),
+            Step::StartRestart(Ok(())),
+            Step::Status(Ok(Some(status(true)))),
+            Step::Load(Ok(with_run_history(loaded(CoreAgentStatus::Open, 3, true)))),
+        ]);
+        let (_, restarted) = io
+            .restarting()
+            .restart_requested(&session_id)
+            .await
+            .unwrap();
+        assert!(restarted);
+        io.assert_drained();
+
+        let io = ScriptedIo::new([
+            Step::Load(Ok(with_run_history(loaded(CoreAgentStatus::Open, 3, true)))),
+            Step::Running(Ok(true)),
+        ]);
+        let (_, restarted) = io
+            .restarting()
+            .restart_requested(&session_id)
+            .await
+            .unwrap();
+        assert!(!restarted);
+        io.assert_drained();
+
+        let io = ScriptedIo::new([Step::Load(Ok(with_run_history(loaded(
+            CoreAgentStatus::Closed,
+            3,
+            true,
+        ))))]);
+        let error = io
+            .restarting()
+            .restart_requested(&session_id)
+            .await
+            .err()
+            .expect("refused");
+        assert_eq!(error.kind, AgentApiErrorKind::Rejected);
+        io.assert_drained();
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn readiness_timeout_does_not_load_session_state() {
         // At most one query if the first elapsed-time reading is exactly zero.
@@ -975,23 +1476,22 @@ mod tests {
             io: &io,
             operation_timeout: Duration::ZERO,
             poll_interval: Duration::from_millis(1),
+            visibility: None,
+            server_allocated_id: false,
+            stopped_execution: StoppedExecution::Report,
         };
         let error = lifecycle
             .wait_for_open_session(&SessionId::new("session-lifecycle"))
             .await
             .err()
             .unwrap();
-        assert_eq!(error.kind, AgentApiErrorKind::Internal);
-        assert!(
-            error
-                .message
-                .contains("timed out waiting for agent session to open")
-        );
+        assert_eq!(error.kind, AgentApiErrorKind::OperationPending);
+        assert!(error.message.contains("agent session has not opened yet"));
     }
     #[test]
-    fn managed_session_retry_requires_the_durable_creation_fingerprint() {
+    fn declared_session_retry_requires_the_durable_creation_fingerprint() {
         let universe_id = uuid::Uuid::from_u128(1);
-        let declaration = harness::ManagedSessionWorkflowTools::v1(
+        let declaration = harness::DeclaredSessionWorkflowTools::v1(
             Some(harness::WorkflowEndpointRef {
                 workflow_id: "global controller/work-1".to_owned(),
                 workflow_kind: "agent_work".to_owned(),
@@ -1001,14 +1501,14 @@ mod tests {
         let admitted = declaration.admit(universe_id).expect("admit");
         let mut state = harness::CoreAgentState::new();
         state.workflow_tools.session_universe_id = Some(universe_id);
-        state.workflow_tools.managed_creation_fingerprint = Some(
+        state.workflow_tools.declared_creation_fingerprint = Some(
             declaration
                 .creation_fingerprint(universe_id)
                 .expect("creation fingerprint"),
         );
-        validate_managed_session_retry(&state, Some(&admitted)).expect("matching retry");
+        validate_declared_session_retry(&state, Some(&admitted)).expect("matching retry");
 
-        let conflicting = harness::ManagedSessionWorkflowTools::v1(
+        let conflicting = harness::DeclaredSessionWorkflowTools::v1(
             Some(harness::WorkflowEndpointRef {
                 workflow_id: "another controller".to_owned(),
                 workflow_kind: "agent_work".to_owned(),
@@ -1016,14 +1516,14 @@ mod tests {
             Vec::new(),
         );
         assert_eq!(
-            validate_managed_session_retry(&state, Some(&conflicting.admit(universe_id).unwrap()))
+            validate_declared_session_retry(&state, Some(&conflicting.admit(universe_id).unwrap()))
                 .expect_err("conflicting retry")
                 .kind,
             AgentApiErrorKind::Conflict
         );
         assert_eq!(
-            validate_managed_session_retry(&harness::CoreAgentState::new(), Some(&admitted))
-                .expect_err("standalone session cannot become managed")
+            validate_declared_session_retry(&harness::CoreAgentState::new(), Some(&admitted))
+                .expect_err("undeclared session cannot become declared")
                 .kind,
             AgentApiErrorKind::Conflict
         );

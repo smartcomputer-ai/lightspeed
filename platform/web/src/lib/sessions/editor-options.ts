@@ -43,6 +43,6 @@ export function useSessionConfigEditorOptions(
     defaultModelLabel: defaults.data?.agentRun ? `Universe default · ${modelLabel(defaults.data.agentRun)}` : "Universe default",
     profiles: profiles.data,
     environments: environments.data,
-    mcpToolDiscovery: permissions.can("configure_resource") ? mcpToolDiscovery : undefined,
+    mcpToolDiscovery: permissions.can("configureResource") ? mcpToolDiscovery : undefined,
   };
 }

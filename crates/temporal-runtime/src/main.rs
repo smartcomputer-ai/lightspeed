@@ -308,6 +308,7 @@ async fn run_cas_sweep(dry_run: bool) -> anyhow::Result<()> {
     println!("grace_ms: {}", grace.as_millis());
     println!("universes_scanned: {}", stats.universes_scanned);
     println!("rows_scanned: {}", stats.rows_scanned);
+    println!("walks_completed: {}", stats.walks_completed);
     println!("leader_busy: {}", stats.leader_busy);
     println!("candidates: {}", stats.candidates);
     println!("rows_deleted: {}", stats.rows_deleted);
@@ -633,7 +634,9 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
             )?,
         ));
         background.push(tokio::spawn(
-            worker::PromiseReaper::new(client.clone(), reaper_stores.clone()).run_forever(),
+            // Checkpoint reads for a whole universe would evict the workers' hot entries.
+            worker::PromiseReaper::new(client.clone(), reaper_stores.clone().with_blob_cache(None))
+                .run_forever(),
         ));
         background.push(tokio::spawn(
             worker::SessionRetentionReaper::new(reaper_stores.clone()).run_forever(),
@@ -778,9 +781,30 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     }
 }
 
+/// Resolves on SIGINT from a terminal or SIGTERM from a process manager such as
+/// Kubernetes. A signal that cannot be watched leaves the other one in charge
+/// rather than stopping a healthy process.
 async fn shutdown_signal() {
-    if let Err(error) = tokio::signal::ctrl_c().await {
-        tracing::warn!(target: "temporal_runtime", %error, "failed to listen for shutdown signal");
+    let interrupt = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            tracing::warn!(target: "temporal_runtime", %error, "failed to listen for SIGINT");
+            std::future::pending::<()>().await;
+        }
+    };
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                terminate.recv().await;
+            }
+            Err(error) => {
+                tracing::warn!(target: "temporal_runtime", %error, "failed to listen for SIGTERM");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    tokio::select! {
+        () = interrupt => {}
+        () = terminate => {}
     }
 }
 
@@ -817,6 +841,26 @@ fn init_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sigterm_starts_graceful_shutdown() {
+        let shutdown = shutdown_signal();
+        tokio::pin!(shutdown);
+        // The first poll installs the handlers, so the signal below cannot kill
+        // this test process.
+        tokio::time::timeout(Duration::from_millis(1), &mut shutdown)
+            .await
+            .expect_err("no signal was sent yet");
+        let status = tokio::process::Command::new("kill")
+            .args(["-TERM", &std::process::id().to_string()])
+            .status()
+            .await
+            .expect("run kill");
+        assert!(status.success());
+        tokio::time::timeout(Duration::from_secs(10), shutdown)
+            .await
+            .expect("SIGTERM must resolve the shutdown signal");
+    }
 
     #[test]
     fn worker_deployment_is_selected_by_role() {

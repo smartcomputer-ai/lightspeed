@@ -47,7 +47,7 @@ const item = (
   id: string,
   kind: SessionItem["kind"],
   extra: Omit<Partial<SessionItem>, "id" | "kind"> = {},
-): SessionItem => ({ id, kind, content: { contentRef: `sha256:${id}`, mediaType: null, providerKind: null }, ...extra });
+): SessionItem => ({ id, kind, content: { blobRef: `sha256:${id}`, mime: null, providerKind: null }, ...extra });
 
 const runView = (
   id: string,
@@ -73,18 +73,18 @@ describe("transcript history windows", () => {
   it("keeps completion output identity across live pages, missing output, and prepended history", () => {
     const message = (id: string, turnId: string): SessionItem => item(id, { type: "message", role: "assistant" }, {
       text: "Same answer", source: { type: "assistantOutput", runId: "run-test", turnId },
-      content: { contentRef: "sha256:answer", providerKind: "openai.completions.message" },
+      content: { blobRef: "sha256:answer", providerKind: "openai.completions.message" },
     });
     const reasoning = item("thinking", { type: "reasoningState" }, {
       text: "A visible plan", source: { type: "reasoning", runId: "run-test", turnId: "t2" },
-      content: { contentRef: "sha256:thinking", providerKind: "openai.completions.reasoning_state" },
+      content: { blobRef: "sha256:thinking", providerKind: "openai.completions.reasoning_state" },
     });
     const events = [
       event(1, { type: "runStarted" }),
       event(2, { type: "contextEntriesApplied", entries: [message("interim", "t1")] }),
       event(3, { type: "contextEntriesApplied", entries: [message("answer", "t2")] }),
       event(4, { type: "contextEntriesApplied", entries: [reasoning] }),
-      event(5, { type: "runCompleted", output: { contentRef: "sha256:answer" } }),
+      event(5, { type: "runCompleted", output: { blobRef: "sha256:answer" } }),
     ];
     const section = (window: TranscriptWindow) => sectionsByRun(window.state.entries, window.state.activeRun)[0] as RunSection;
     const live = new TranscriptWindow();
@@ -266,7 +266,7 @@ describe("session transcript traces", () => {
         entries: [
           item("message", { type: "message", role: "assistant" }, {
             text,
-            content: { contentRef: "sha256:message", mediaType: "application/json", providerKind: "anthropic.messages.text_blocks" },
+            content: { blobRef: "sha256:message", mime: "application/json", providerKind: "anthropic.messages.text_blocks" },
           }),
           item("tool", { type: "toolCall", callId: "call", name: "read_file" }),
           item("result", { type: "toolResult", callId: "call", isError: false }, {
@@ -317,7 +317,7 @@ describe("session transcript traces", () => {
 
   it("uses full projected reasoning text instead of its preview", () => {
     const text = "Complete projected reasoning 🦀. ".repeat(700) + "Done.";
-    const content = { contentRef: "sha256:reasoning", mediaType: "application/json", providerKind: "anthropic.messages.thinking" };
+    const content = { blobRef: "sha256:reasoning", mime: "application/json", providerKind: "anthropic.messages.thinking" };
     const state = applyEvents(emptyTranscript(), [event(1, {
       type: "contextEntriesApplied",
       entries: [item("reasoning", { type: "reasoningState" }, {
@@ -397,8 +397,8 @@ describe("session transcript traces", () => {
   it.each(["openai.responses.compaction", "anthropic.messages.compaction"])("shows %s once across repeated context events without its payload", (providerKind) => {
     const compacted = item("native-compaction", { type: "providerOpaque" }, {
       content: {
-        contentRef: "sha256:compaction",
-        mediaType: "application/json",
+        blobRef: "sha256:compaction",
+        mime: "application/json",
         providerKind,
       },
       text: '{"encrypted_content":"hidden-encrypted-payload"}',
@@ -407,7 +407,6 @@ describe("session transcript traces", () => {
     const events = [
       event(1, { type: "contextEntriesApplied", entries: [compacted] }),
       event(2, { type: "contextKeyPrefixReplaced", entries: [compacted] }),
-      event(3, { type: "contextStateReplaced", entries: [compacted] }),
     ];
     const state = applyEvents(emptyTranscript(), events);
     const streamed = events.reduce((previous, next) => applyEvents(previous, [next]), emptyTranscript());
@@ -440,7 +439,7 @@ describe("session transcript traces", () => {
         }),
         item("unrelated", { type: "providerOpaque" }, {
           content: {
-            contentRef: "sha256:unrelated", mediaType: "application/json",
+            blobRef: "sha256:unrelated", mime: "application/json",
             providerKind: "unrelated.compaction",
           },
           text: "hidden opaque text", preview: "context compacted",
@@ -672,7 +671,7 @@ describe("session transcript traces", () => {
     };
     const state = applyEvents(emptyTranscript(), [
       event(1, {
-        type: "contextStateReplaced",
+        type: "contextEntriesApplied",
         entries: [
           item("tool", { type: "toolCall", callId: "call", name: "grep" }, {
             display: {
@@ -839,14 +838,14 @@ describe("session transcript run control", () => {
       event(2, { type: "toolBatchStarted", runId: "run_1", calls: [
         { callId: "job", toolId: "env.job_run", toolName: "job_run", argumentsRef: "sha256:args" },
       ] }),
-      event(3, { type: "toolBatchDeferred", runId: "run_1" }),
+      event(3, { type: "toolBatchParked", runId: "run_1" }),
     ]);
     expect(state.activeRun?.label).toBe("waiting for tools");
     state = reconcileRuns(state, [runView("run_1", "parked")]);
     expect(state.activeRun?.label).toBe("waiting for tools");
     expect(state.entries[0]).toMatchObject({ kind: "tool-group", status: "waiting" });
 
-    state = applyEvents(state, [event(4, { type: "toolBatchResumed", runId: "run_1" })]);
+    state = applyEvents(state, [event(4, { type: "toolBatchUnparked", runId: "run_1" })]);
     expect(state.activeRun?.label).toBe("running tools");
     expect(state.entries[0]).toMatchObject({ kind: "tool-group", status: "running" });
   });
@@ -872,9 +871,9 @@ describe("session transcript run control", () => {
         type: "contextEntriesApplied",
         entries: [
           { id: "image", kind: { type: "message", role: "user" }, preview: "[image: screen.png]", source: source(0),
-            content: { contentRef: png, mediaType: "image/png", providerKind: null, mediaHandle: mediaHandleFor(png) } },
+            content: { blobRef: png, mime: "image/png", providerKind: null, mediaHandle: mediaHandleFor(png) } },
           { id: "notes", kind: { type: "message", role: "user" }, preview: "[document: notes.md]", source: source(1),
-            text: "# Raw file contents", content: { contentRef: notes, mediaType: "text/markdown", providerKind: null } },
+            text: "# Raw file contents", content: { blobRef: notes, mime: "text/markdown", providerKind: null } },
           item("text", { type: "message", role: "user" }, { text: "Compare these", source: source(2) }),
         ],
       }),
@@ -962,7 +961,7 @@ describe("standalone compaction", () => {
     window.prepend([
       event(1, { type: "runStarted" }),
       event(2, { type: "turnGenerationCompleted", usage: { inputTokens: 100, outputTokens: 10 } }),
-      event(3, { type: "contextCompactionRequested", trigger: "manualQueued" }),
+      event(3, { type: "contextCompactionQueued" }),
     ]);
     expect(window.state.compaction).toMatchObject({ markerKey: "evt-5", phase: "pending", runId: "run-test" });
     expect(window.state.entries).toEqual([{ kind: "marker", key: "evt-5", text: "compacting context", tone: "muted", pending: true }]);
@@ -982,7 +981,7 @@ describe("standalone compaction", () => {
     let state = applyEvents(emptyTranscript(), [
       event(1, { type: "runStarted" }),
       event(2, { type: "toolBatchStarted", calls: [] }),
-      event(3, { type: "contextCompactionRequested", trigger: "manualQueued" }),
+      event(3, { type: "contextCompactionQueued" }),
     ]);
     expect(state.activeRun?.label).toBe("running tools");
     expect(state.entries.at(-1)).toMatchObject({ kind: "marker", key: "evt-3", text: "context compaction queued" });
@@ -1051,7 +1050,7 @@ describe("standalone compaction", () => {
         event(2, { type: "contextCompactionRequested", trigger: "manual" }),
         event(3, { type: "contextEntriesRemoved", entryIds: ["original-input", "original-output"], reason: "providerCompacted" }),
         event(4, { type: "contextEntriesApplied", entries: [
-          item("replacement-native", { type: "providerOpaque" }, { source, content: { contentRef: "sha256:replacement", providerKind }, text: "Hidden native bytes" }),
+          item("replacement-native", { type: "providerOpaque" }, { source, content: { blobRef: "sha256:replacement", providerKind }, text: "Hidden native bytes" }),
           item("replacement-user", { type: "message", role: "user" }, { source, text: "Synthetic summary" }),
           item("replacement-assistant", { type: "message", role: "assistant" }, { source, text: "Copied old assistant reply" }),
           item("replacement-tool", { type: "toolCall", callId: "old-call", name: "exec" }, { source }),
@@ -1157,13 +1156,13 @@ describe("run statistics", () => {
         source, display: { toolName: "web_search", status: "succeeded", summary: { group: "explore", verb: "Search" } },
       }),
       item("compaction", { type: "providerOpaque" }, {
-        source, content: { contentRef: "sha256:compact", mediaType: null, providerKind: "openai.responses.compaction" },
+        source, content: { blobRef: "sha256:compact", mime: null, providerKind: "openai.responses.compaction" },
       }),
     ];
     const state = applyEvents(emptyTranscript(), [
       event(1, { type: "runStarted" }),
       event(2, { type: "contextEntriesApplied", entries }),
-      event(3, { type: "contextStateReplaced", entries }),
+      event(3, { type: "contextKeyPrefixReplaced", entries }),
       event(4, { type: "runCompleted" }),
     ]);
     expect(state.entries.at(-1)).toMatchObject({ toolCalls: 1 });
@@ -1257,12 +1256,15 @@ describe("run statistics", () => {
     const message = "messages.3.content.1.image.source.base64: image exceeds 2000 pixels";
     const state = applyEvents(emptyTranscript(), [
       event(1, { type: "runStarted" }),
-      event(2, { type: "runFailed", kind: "request_rejected", message }),
+      event(2, { type: "runFailed", kind: "requestRejected", message }),
     ]);
     const [summary] = state.entries;
-    expect(summary).toMatchObject({ kind: "run-summary", failureKind: "request_rejected", error: message });
+    expect(summary).toMatchObject({ kind: "run-summary", failureKind: "requestRejected", error: message });
     expect(runFailureText(summary as TranscriptRunSummary)).toBe(`The provider rejected the request: ${message}`);
-    expect(runFailureText({ failureKind: "model_failure", error: "boom" })).toBe("Run failed: boom");
+    expect(runFailureText({ failureKind: "modelFailure", error: "boom" })).toBe("Run failed: boom");
+    expect(runFailureText({ failureKind: "outputTruncated", error: "at 100" })).toBe("The response was cut off: at 100");
+    expect(runFailureText({ failureKind: "contentFiltered", error: "no" })).toBe("The provider refused the response: no");
+    expect(runFailureText({ failureKind: "limitExceeded", error: "out of turns" })).toBe("Run failed: out of turns");
   });
 
   it.each(["runFailed", "runCancelled"] as const)("retains statistics for %s", (type) => {
@@ -1308,7 +1310,7 @@ describe("run attribution and timing", () => {
     expect(state.entries).toMatchObject([
       { kind: "reasoning", runId: "run_9" },
       { kind: "tool-group", runId: "run_9", calls: [{
-        callId: "c1", startedAtMs: 2_500, completedAtMs: 3_750, durationMs: 1_250, outputBytes: 412,
+        callId: "c1", startedAtMs: 2_500, finishedAtMs: 3_750, durationMs: 1_250, outputBytes: 412,
       }] },
       { kind: "run-summary", runId: "run_9", durationMs: 3_000 },
     ]);
@@ -1320,7 +1322,7 @@ describe("run attribution and timing", () => {
       event(2, { type: "toolCallCompleted", runId: "run_9", batchId: "b1", callId: "c1", status: "succeeded" }, 6_000),
     ]);
     expect(state.activeRun).toMatchObject({ runId: "run_9", startedAtMs: 5_000 });
-    expect(state.entries).toMatchObject([{ kind: "tool-group", runId: "run_9", calls: [{ callId: "c1", completedAtMs: 6_000 }] }]);
+    expect(state.entries).toMatchObject([{ kind: "tool-group", runId: "run_9", calls: [{ callId: "c1", finishedAtMs: 6_000 }] }]);
     const call = (state.entries[0] as Extract<TranscriptEntry, { kind: "tool-group" }>).calls[0]!;
     expect(call.durationMs).toBeUndefined();
     expect(call.startedAtMs).toBeUndefined();

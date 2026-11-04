@@ -140,7 +140,6 @@ fn intent_request(entries: Vec<ContextEntry>) -> LlmRequest {
         reasoning_effort: None,
         parallel_tool_use: None,
         processing_tier: None,
-        provider_response_id: None,
         compaction: None,
         params: Some(openai_params(&OpenAiResponsesParams {
             store: Some(false),

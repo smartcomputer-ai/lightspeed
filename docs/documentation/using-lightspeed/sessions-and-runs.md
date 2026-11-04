@@ -91,15 +91,45 @@ canceled state before treating it as stopped. Other queued runs remain queued
 and can start afterward, so cancel them separately if you want the session to
 remain idle.
 
-For environment commands, canceling a tool activity does not guarantee that
-its remote operating-system process has stopped. Inspect and stop that
-process explicitly as described in
+For environment commands, cancellation terminates a command that has not yet
+returned a handle. One that already yielded keeps running until it is stopped or the
+environment closes. Inspect and stop that process explicitly as described in
 [Processes and jobs](../environments/processes-and-jobs.md#collect-output-and-stop-a-process).
 
 Some tools pause for approval. Review their arguments and choose **Approve**
 or **Reject** for each pending call. The run continues once every pending
-decision has been made. See [Tools and MCP](tools-and-mcp.md) for configuring
-that policy.
+decision has been made. Calls already running beside a gated call finish first, and
+calls later in that batch wait for the decision. See
+[Tools and MCP](tools-and-mcp.md) for configuring that policy.
+
+## When a run fails
+
+A failed run reports its kind and the real message, and the session stays open, so
+you can send the next task. The kinds are:
+
+| Kind | What happened |
+| --- | --- |
+| `contextFailure` | The context would not fit and could not be compacted, or the session is at its [entry limit](#manage-long-conversations). |
+| `modelFailure` | The provider failed, or its response could not be read, after the retries a transient failure gets. |
+| `requestRejected` | The provider refused the request, for example a parameter this model does not accept. |
+| `outputTruncated` | The answer was cut off by the provider's output limit. |
+| `contentFiltered` | The provider refused the response. |
+| `limitExceeded` | The run needed another turn past **Max turns**. |
+| `internal` | Lightspeed refused something it should not have reached. Worth reporting. |
+
+**Max turns** under the model setup's run controls limits the turns a run may start. It
+is unset by default, so a run can take as long as it needs. A set limit counts every
+turn, including recovery turns and turns delivering steering.
+
+## If a session's workflow stops
+
+A banner saying the session's workflow has stopped means its history is intact but
+nothing is running it, so new messages fail. An Operator or Admin can choose
+**Restart**. A run that was in progress fails, with a message saying so, rather than
+repeat work it may already have done. A run waiting on an approval or a result keeps
+waiting, and queued runs start afterwards. See
+[Restart a stopped session](../deployment/upgrades-and-recovery.md#restart-a-stopped-session)
+for what a restart cannot recover.
 
 ## Inspect what happened
 
@@ -138,12 +168,25 @@ important source material in files it can read again.
 ## Manage long conversations
 
 New sessions use automatic standalone compaction by default. It reduces older
-conversation at safe boundaries between model turns, including during a run.
-When input capacity is known, the default trigger is 80% of that capacity;
-otherwise Lightspeed can recover when the provider reports a full context
+conversation at safe boundaries between model turns while a run is active, and at
+the start of a new run. An idle session stays as it is, so your next message can wait
+behind a compaction. When input capacity is known, the default trigger is 80% of that
+capacity; otherwise Lightspeed can recover when the provider reports a full context
 window. Recovery resumes the same run with completed tool results retained.
 It can still fail when the protected input is too large or its bounded
-attempts cannot make enough room.
+attempts cannot make enough room. The failure then names the largest entry, so you
+can [replace it](cli.md#repair-rejected-context) or start a new session. After a
+failed attempt, automatic compaction waits for the context to grow by about 10%
+before trying again.
+
+Compaction also runs at 1,500 active context entries, whatever the token count, on any
+enabled setting. At 2,000 entries a run makes one more attempt and fails if the count
+stays over, because a session much larger than that can no longer load. A session with
+compaction **Disabled** fails each run at that point. Enable compaction or request one
+to continue.
+
+A message that could never fit is refused when you send it, if the limit is known,
+rather than failing every run after it.
 
 As an Operator or Admin, open **Customize run controls → Context compaction**
 in the profile or idle session's model setup. **Engine default** and **Engine managed standalone**
@@ -154,11 +197,8 @@ input capacity; leave it blank to use reported capacity or error-driven recovery
 Session settings show the effective mode, threshold, queued or pending state,
 and recovery attempts.
 
-Older sessions whose saved setup omitted compaction keep their historical
-disabled behavior until configuration is replaced. Applying setup with
-**Engine default** adopts the current default. Explicit Disabled remains
-disabled. An API caller can request one `session/context/compact` operation
-in any mode; active work queues it until a safe boundary.
+An API caller can request one `session/context/compact` operation in any mode;
+active work queues it until a safe boundary.
 
 Compaction can summarize away details, so keep important source material in
 workspaces. It preserves retained history and original blobs. The
@@ -206,11 +246,11 @@ runs. The composer's per-message model and reasoning choices, including saving
 a model choice as the session default, also require an Operator or Admin.
 
 A session keeps its configured provider identity and API kind for its entire
-lifetime, including before its first run. You can switch model names within
+lifetime, including before its first run. You can switch to any model within
 that route, such as between OpenAI models, and switch back later. Changing
 provider or API kind requires a new session because conversation context may
-contain provider-native opaque data. Retained reasoning or native compaction
-state can also prevent an incompatible model change within that route. An
+contain provider-native opaque data. If a provider refuses a particular switch, the
+run fails with its message and the session stays open, so you can switch back. An
 aggregator such as OpenRouter counts as one configured provider; the underlying
 vendor name alone does not determine compatibility.
 
@@ -299,7 +339,9 @@ Applications can use `session/runs/start`, `session/runs/read`,
 `session/runs/steer`, and `session/runs/cancel` from the
 [API reference](../../../crates/api/contract/api-reference.md). Starting a run
 acknowledges admission; follow its state and events to obtain the final result.
-Use a stable `submissionId` when retrying the same submission.
+Use a stable `submissionId` when retrying the same submission. A call that answers
+`operationPending` was held, usually behind a compaction, and can still land, so retry
+it with the same ID rather than a new one.
 
 ## Close and retain a session
 
@@ -307,18 +349,20 @@ Leaving a browser tab or quitting the CLI has no effect on session lifecycle.
 **Close session** is a separate, permanent action: a closed session cannot
 accept more work or be reopened. Its retained history is still inspectable.
 **Force close session** also cancels outstanding work, including queued runs.
+A session whose setup fails when you create it leaves nothing live: an ID the server
+chose is closed, and retrying an ID you chose reports the error again.
 
 Deleting a closed session in Platform **soft-deletes** it: it disappears from
 ordinary session views for everyone, including Admins, while its history remains stored.
-**Also delete forks and delegated children** includes its retention descendants,
-which must also be closed; configuration-only clones are separate. Without
-that option, the session must have no retention descendants. Closing and
-deletion have different [role requirements](../access-and-security/private-and-shared-work.md#what-each-person-may-do).
+**Also delete delegated children** includes its retention descendants, which must
+also be closed. Without that option, the session must have no retention descendants.
+Closing and deletion have different [role requirements](../access-and-security/private-and-shared-work.md#what-each-person-may-do).
 
 Admins can set **Delete after close (days)** to automatically soft-delete a
 closed session tree; a blank value keeps it until manual deletion. The root
 owns this policy for its retention tree, and deletion waits until all descendants
-are closed. This policy never permanently removes stored history.
+are closed. This policy never permanently removes stored history. Bot conversations
+are kept until deleted, whatever their profile sets.
 
 Within Platform, only Platform admins can permanently delete retained session
 history. In the delete dialog, select **Also permanently delete retained history** to soft-delete
@@ -352,3 +396,6 @@ the [bot conversation](bots-and-triggers.md) or connected chat for normal work.
 | Setup changes are refused | Confirm you have an Operator or Admin role. Wait for active work to finish and drain or cancel queued runs. Reload settings if another editor changed them. |
 | A finished child or closed conversation is missing | Under **Filter sessions → Include**, select **Closed sessions** and **Sub-agent sessions**, or follow the child link from the parent transcript. |
 | The agent lost a detail from much earlier | Inspect the retained history and restate the needed fact or point it to the source file. The current model context can be smaller than the transcript. |
+| A banner says the workflow has stopped | [Restart the session](#if-a-sessions-workflow-stops) if you want to continue it. |
+| A run fails with a message about too many context entries | Enable compaction or request one. The session is at its [entry limit](#manage-long-conversations). |
+| Your first message after a long idle takes a while to start | The session may be compacting before the run. |

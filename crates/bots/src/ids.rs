@@ -241,7 +241,9 @@ pub fn delivery_id(event_ids: &[String]) -> String {
     }
 }
 
-/// Run submission id for a delivery: retries converge on one run.
+/// Submission id for a delivery's run or steering: retries converge on one. A delivery
+/// id can hold a caller's event id, which need not be a valid submission id, so this
+/// always hashes it.
 pub fn delivery_submission_id(delivery_id: &str) -> String {
     format!("bot-event-v1-{}", sha256_hex(delivery_id))
 }

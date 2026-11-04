@@ -1,23 +1,23 @@
 use super::*;
 
 /// The parked tool batch, if any, derived from typed core state.
-pub(super) struct ParkedToolBatch {
+pub(super) struct ParkedBatchView {
     pub run_id: harness::RunId,
     pub batch_id: harness::ToolBatchId,
     pub suspension: harness::ToolBatchSuspension,
 }
 
-impl ParkedToolBatch {
+impl ParkedBatchView {
     pub(super) fn spec(&self) -> &harness::AwaitSpec {
         self.suspension.spec()
     }
 }
 
-pub(super) fn parked_tool_batch(core_state: &CoreAgentState) -> Option<ParkedToolBatch> {
+pub(super) fn parked_tool_batch(core_state: &CoreAgentState) -> Option<ParkedBatchView> {
     let active_run = core_state.runs.active.as_ref()?;
     let parked = active_run.parked_tool_batch.as_ref()?;
     let batch = active_run.tool_batches.get(&parked.batch_id)?;
-    Some(ParkedToolBatch {
+    Some(ParkedBatchView {
         run_id: batch.run_id,
         batch_id: parked.batch_id,
         suspension: parked.suspension.clone(),
@@ -25,13 +25,13 @@ pub(super) fn parked_tool_batch(core_state: &CoreAgentState) -> Option<ParkedToo
 }
 
 pub(super) fn has_satisfied_await(state: &AgentSessionWorkflow) -> bool {
-    if code_tools::blocks_parent_resume(state) {
+    if code_tools::blocks_parent_unpark(state) {
         return false;
     }
     if state
-        .pending_tool_batch_resumes
+        .pending_tool_batch_unparks
         .iter()
-        .any(|resume| Some(resume.batch_id) == parked_tool_batch_batch_id(&state.core_state))
+        .any(|unpark| Some(unpark.batch_id) == parked_tool_batch_batch_id(&state.core_state))
     {
         return false;
     }
@@ -50,41 +50,36 @@ fn parked_tool_batch_batch_id(core_state: &CoreAgentState) -> Option<harness::To
 }
 
 pub(super) fn nearest_await_wake_ms(state: &AgentSessionWorkflow) -> Option<u64> {
-    if code_tools::blocks_parent_resume(state) {
+    if code_tools::blocks_parent_unpark(state) {
         return None;
     }
     parked_tool_batch(&state.core_state).and_then(|parked| parked.spec().deadline_at_ms)
 }
 
-/// Resume a parked tool batch when its Promise wait is satisfied. Explicit
-/// await snapshots model-owned Promises into blobs; Joined resumes directly
+/// Unpark a tool batch when its Promise wait is satisfied. Explicit
+/// await snapshots model-owned Promises into blobs; Joined unparks directly
 /// from runtime-owned Promise state.
 pub(super) async fn process_satisfied_await(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
 ) -> anyhow::Result<()> {
-    if ctx.state(code_tools::blocks_parent_resume) {
+    if ctx.state(code_tools::blocks_parent_unpark) {
         return Ok(());
     }
     let now = workflow_time_ms(ctx);
     let resolved = ctx.state(|state| {
         let parked = parked_tool_batch(&state.core_state)?;
         if state
-            .pending_tool_batch_resumes
+            .pending_tool_batch_unparks
             .iter()
-            .any(|resume| resume.batch_id == parked.batch_id)
+            .any(|unpark| unpark.batch_id == parked.batch_id)
         {
             return None;
         }
         let claim = harness::await_wake(&state.core_state, now)?;
-        let outcome = match claim {
-            harness::WakeReason::Cancelled => AwaitOutcome::Cancelled,
-            harness::WakeReason::Timeout => AwaitOutcome::Timeout,
-            harness::WakeReason::Terminal => AwaitOutcome::Terminal,
-        };
         let results = promise_snapshot(parked.spec(), &state.core_state);
-        Some((parked, claim, outcome, results))
+        Some((parked, claim, results))
     });
-    let Some((parked, claim, outcome, results)) = resolved else {
+    let Some((parked, claim, results)) = resolved else {
         return Ok(());
     };
 
@@ -94,9 +89,12 @@ pub(super) async fn process_satisfied_await(
     let has_resolved_payload = results
         .iter()
         .any(|result| result.status == "resolved" && result.payload_ref.is_some());
-    let resume_output = match &parked.suspension {
+    let unpark_output = match &parked.suspension {
         harness::ToolBatchSuspension::AwaitTool { .. } => {
-            let request = AwaitMaterializationRequest { outcome, results };
+            let request = AwaitMaterializationRequest {
+                outcome: claim,
+                results,
+            };
             let materialized = ctx
                 .execute_activity(
                     WorkflowActivities::materialize_await_result,
@@ -105,7 +103,7 @@ pub(super) async fn process_satisfied_await(
                 )
                 .await
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
-            harness::ToolBatchResumeOutput::AwaitTool {
+            harness::ToolBatchUnparkOutput::AwaitTool {
                 result_ref: materialized.result_ref,
                 additional_context: materialized.additional_context,
                 attachments: materialized.attachments,
@@ -123,20 +121,20 @@ pub(super) async fn process_satisfied_await(
             } else {
                 Vec::new()
             };
-            harness::ToolBatchResumeOutput::JoinedWorkflowCalls { additional_context }
+            harness::ToolBatchUnparkOutput::JoinedWorkflowCalls { additional_context }
         }
     };
-    let command = harness::ResumeToolBatchCommand {
+    let command = harness::UnparkToolBatchCommand {
         run_id: parked.run_id,
         batch_id: parked.batch_id,
         claim,
         claim_observed_at_ms: now,
-        output: resume_output,
+        output: unpark_output,
     };
     ctx.state_mut(|state| {
         state
-            .pending_tool_batch_resumes
-            .push(PendingToolBatchResume {
+            .pending_tool_batch_unparks
+            .push(PendingToolBatchUnpark {
                 batch_id: parked.batch_id,
                 command,
             });
@@ -150,23 +148,28 @@ pub(super) fn promise_snapshot(
 ) -> Vec<AwaitPromiseResult> {
     spec.promise_ids
         .iter()
-        .map(
-            |promise_id| match core_state.promises.promises.get(promise_id) {
-                Some(promise) => AwaitPromiseResult {
-                    promise_id: promise_id.as_str().to_owned(),
-                    status: promise_status_name(promise.status).to_owned(),
-                    payload_ref: promise.payload_ref.clone(),
-                    error_ref: promise.error_ref.clone(),
-                },
-                None => AwaitPromiseResult {
-                    promise_id: promise_id.as_str().to_owned(),
-                    status: "unknown".to_owned(),
-                    payload_ref: None,
-                    error_ref: None,
-                },
-            },
-        )
+        .map(|promise_id| promise_result(promise_id, core_state))
         .collect()
+}
+
+pub(super) fn promise_result(
+    promise_id: &harness::PromiseId,
+    core_state: &CoreAgentState,
+) -> AwaitPromiseResult {
+    match core_state.promises.promises.get(promise_id) {
+        Some(promise) => AwaitPromiseResult {
+            promise_id: promise_id.as_str().to_owned(),
+            status: promise_status_name(promise.status).to_owned(),
+            payload_ref: promise.payload_ref.clone(),
+            error_ref: promise.error_ref.clone(),
+        },
+        None => AwaitPromiseResult {
+            promise_id: promise_id.as_str().to_owned(),
+            status: "unknown".to_owned(),
+            payload_ref: None,
+            error_ref: None,
+        },
+    }
 }
 
 pub(super) fn promise_status_name(status: harness::PromiseStatus) -> &'static str {

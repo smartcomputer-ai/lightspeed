@@ -49,6 +49,18 @@ it.each([false, true])("closes with force=%s without writing an audit record", a
   expect(f.rpcCalls).toContain("session/close");
   expect(f.audits).not.toHaveBeenCalled();
 });
+it.each(["operator", "admin"])("%s restarts a stopped session through the runtime", async (role) => {
+  auth.role = role;
+  const f = fixture();
+  expect((await f.call("/universes/universe/sessions/s1/restart")).status).toBe(200);
+  expect(f.rpcParams[f.rpcCalls.indexOf("session/restart")]).toEqual({ sessionId: "s1" });
+});
+it("does not let a contributor restart a session", async () => {
+  auth.role = "contributor";
+  const f = fixture();
+  expect((await f.call("/universes/universe/sessions/s1/restart")).status).toBe(403);
+  expect(f.rpcCalls).not.toContain("session/restart");
+});
 it.each(["operator", "admin"])("%s always soft deletes even if the URL requests permanent deletion", async (role) => {
   auth.role = role;
   const f = fixture();

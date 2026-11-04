@@ -2,7 +2,7 @@
 
 use harness::{
     PromiseControlCallRuntime, PromiseControlStateRuntime, PromiseId, PromiseOwnership,
-    PromiseScope, PromiseStatus, RunId, ToolEffect, ToolName, promise_cancel_effect,
+    PromiseScope, PromiseStatus, RunId, ToolEffect, ToolId, promise_cancel_effect,
     promise_detach_effect,
 };
 use serde::{Deserialize, Serialize};
@@ -55,10 +55,13 @@ impl ConcurrencyToolsetConfig {
     }
 }
 
-pub fn is_concurrency_tool(tool_name: &ToolName) -> bool {
+pub fn is_concurrency_tool(tool_id: &ToolId) -> bool {
     matches!(
-        tool_name.as_str(),
-        "concurrency.await" | "concurrency.cancel" | "concurrency.detach" | "concurrency.sleep"
+        tool_id.as_str(),
+        harness::AWAIT_TOOL_ID
+            | harness::CANCEL_TOOL_ID
+            | harness::DETACH_TOOL_ID
+            | harness::SLEEP_TOOL_ID
     )
 }
 
@@ -547,6 +550,7 @@ fn sleep_input_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use harness::ToolName;
     use serde_json::json;
 
     fn known_control(

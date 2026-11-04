@@ -107,6 +107,21 @@ pub(crate) fn parse_search_attribute_time_ms(data: &[u8]) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::parse_search_attribute_time_ms;
+    use crate::workflows::bots::BotTriggerFireArgs;
+
+    /// A Schedule keeps its start input from the day it was created, so this payload can be
+    /// old however often the schedule's other settings are refreshed.
+    #[test]
+    fn fire_args_decode_from_their_identity_alone() {
+        let args: BotTriggerFireArgs = serde_json::from_value(serde_json::json!({
+            "universe_id": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f",
+            "bot_id": "triage",
+            "trigger_id": "nightly",
+            "kind": "schedule",
+        }))
+        .expect("a stored schedule input stopped decoding: give the new field a serde default");
+        assert_eq!(args.bot_id.as_str(), "triage");
+    }
 
     #[test]
     fn scheduled_start_time_parses_rfc3339_json_payload() {

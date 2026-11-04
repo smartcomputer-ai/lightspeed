@@ -82,13 +82,13 @@ describe("rosterLine", () => {
         bot({
           lastEvent: event({
             seq: 42,
-            outcome: "run_failed",
+            outcome: "runFailed",
             outcomeDetail: "environment suspended",
             resolvedAtMs: Date.parse("2026-08-27T09:01:00Z"),
           }),
         }),
-      ).tone,
-    ).toBe("attention");
+      ),
+    ).toEqual({ text: "#42 run failed · environment suspended", tone: "attention" });
   });
 });
 
@@ -125,7 +125,6 @@ describe("wizard helpers", () => {
       config: { features: { environments: { environments: [{ environmentId: "ops-box", access: "exec", default: true }] } } },
       baseInstructions: "Always cite the incident.",
       metadata: { team: "ops" },
-      retention: 604_800_000,
     })).toEqual({
       profileId: "triage",
       displayName: "Triage",
@@ -133,7 +132,6 @@ describe("wizard helpers", () => {
       config: { features: { environments: { environments: [{ environmentId: "ops-box", access: "exec", default: true }] } } },
       instructions: { type: "text", text: "Always cite the incident." },
       metadata: { team: "ops" },
-      retention: { deleteAfterCloseMs: 604_800_000 },
     });
   });
 });

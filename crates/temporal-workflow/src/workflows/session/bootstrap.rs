@@ -20,16 +20,13 @@ pub(super) async fn initialize(
             expected_workflow_id
         );
     }
-    if ctx.state(|state| state.initialized) {
-        return Ok(());
-    }
     let observed_at_ms = workflow_time_ms(ctx);
     // the activity reduces the durable log internally and returns compact
     // state. The full event log no longer crosses the activity boundary, so this
-    // bootstrap path is bounded by active context plus retained run metadata,
-    // rather than transcript-sized event history.
-    let loaded = ctx
-        .execute_activity(
+    // bootstrap path carries active context plus retained run metadata rather than
+    // transcript-sized event history.
+    let loaded = crate::workflows::fail_task_if_undecodable(
+        ctx.execute_activity(
             WorkflowActivities::create_or_load_session,
             CreateOrLoadSessionRequest {
                 session_id: args.session_id.clone(),
@@ -40,32 +37,33 @@ pub(super) async fn initialize(
             },
             activity_options(),
         )
-        .await
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
+        .await,
+    )
+    .map_err(|error| anyhow::anyhow!(errors::activity_failure_message(&error)))?;
 
     let is_fresh_session = loaded.fresh_session;
     let core_state = loaded.core_state.unwrap_or_else(CoreAgentState::new);
-    validate_session_creation_identity(
-        args.universe_id,
-        &core_state,
-        is_fresh_session,
-        args.workflow_tools.as_ref(),
-    )?;
-    let run_submissions = loaded.run_submissions;
-    let head = loaded.head;
+    if !args.restart {
+        validate_session_creation_identity(
+            args.universe_id,
+            &core_state,
+            is_fresh_session,
+            args.workflow_tools.as_ref(),
+        )?;
+    } else if is_fresh_session {
+        anyhow::bail!("session {} has no log to restart from", args.session_id);
+    }
     ctx.state_mut(|state| {
         state.universe_id = Some(args.universe_id);
         state.session_id = Some(args.session_id.clone());
         state.core_state = core_state;
-        state.head = head;
-        state.run_submissions = run_submissions;
         if let Some(continuation) = args.continuation_state.as_ref() {
             state.admission_failures = continuation.admission_failures.clone();
             state.ready = continuation.ready;
             state.operation_outcomes = continuation.operation_outcomes.clone();
+            state.pending_execution_cancels = continuation.pending_execution_cancels.clone();
         }
         state.initialized = true;
-        state.last_error = None;
     });
 
     if is_fresh_session {
@@ -92,7 +90,7 @@ async fn open_new_session(
 
     let mut drive = drive_from_state(ctx)?;
     let open_command = match args.workflow_tools {
-        Some(workflow_tools) => CoreAgentCommand::OpenManagedSession {
+        Some(workflow_tools) => CoreAgentCommand::OpenDeclaredSession {
             config: session_config,
             session_universe_id: args.universe_id,
             workflow_tools,
@@ -119,7 +117,7 @@ pub(super) fn validate_session_creation_identity(
     universe_id: uuid::Uuid,
     state: &CoreAgentState,
     is_fresh_session: bool,
-    workflow_tools: Option<&harness::ManagedSessionWorkflowTools>,
+    workflow_tools: Option<&harness::DeclaredSessionWorkflowTools>,
 ) -> anyhow::Result<()> {
     let admitted = workflow_tools
         .map(|tools| tools.admit(universe_id))
@@ -129,7 +127,10 @@ pub(super) fn validate_session_creation_identity(
     }
 
     match (
-        state.workflow_tools.managed_creation_fingerprint.as_deref(),
+        state
+            .workflow_tools
+            .declared_creation_fingerprint
+            .as_deref(),
         admitted.as_ref(),
     ) {
         (None, None) => Ok(()),
@@ -140,13 +141,13 @@ pub(super) fn validate_session_creation_identity(
             Ok(())
         }
         (Some(_), None) => {
-            anyhow::bail!("managed session restart is missing its workflow-tool declaration")
+            anyhow::bail!("declared session restart is missing its workflow-tool declaration")
         }
         (None, Some(_)) => {
-            anyhow::bail!("existing standalone session cannot be reopened as a managed session")
+            anyhow::bail!("existing undeclared session cannot be reopened as a declared session")
         }
         (Some(_), Some(_)) => {
-            anyhow::bail!("managed session creation fingerprint conflicts with durable state")
+            anyhow::bail!("declared session creation fingerprint conflicts with durable state")
         }
     }
 }

@@ -160,7 +160,7 @@ fn api_error_code(kind: AgentApiErrorKind) -> &'static str {
 impl From<AgentApiError> for ToolError {
     fn from(error: AgentApiError) -> Self {
         match error.kind {
-            AgentApiErrorKind::Internal => {
+            AgentApiErrorKind::Internal | AgentApiErrorKind::OperationPending => {
                 Self::Infrastructure(anyhow::anyhow!("{}", error.message))
             }
             kind => Self::Failed(ToolFailure::new(api_error_code(kind), error.message)),

@@ -2,6 +2,8 @@
 //! Session admission, code tool effects, the interpreter, and model continuation
 //! all use the production runtime over local Temporal and PostgreSQL.
 
+#[path = "support/code_log.rs"]
+mod code_log;
 #[path = "support/code_media.rs"]
 mod code_media;
 mod support;
@@ -11,7 +13,7 @@ use std::{sync::Arc, time::Duration};
 use api::AgentApiService;
 use api_projection::model_to_api;
 use harness::{
-    BlobRef, ContextEntryKind, CoreAgentState, PromiseResolution, SessionId, WorkflowToolTarget,
+    BlobRef, ContextEntryKind, CoreAgentState, PromiseResolution, SessionId,
     storage::{BlobStore, ReadSessionEvents, SessionStore},
 };
 use serde_json::{Value, json};
@@ -26,7 +28,7 @@ use temporal_runtime::{
     worker::{ActivityState, CodeWorkerActivities, WorkerActivities, code_worker, worker_runtime},
 };
 use temporal_workflow::{
-    CodeExecutionPhase, CodeExecutionWorkflow, CodeToolCallStatus, CodeToolScopeReport,
+    CodeExecutionPhase, CodeExecutionWorkflow, CodeToolCallOutcomeStatus, CodeToolScopeReport,
     ReducedSession, reduce_session_entries_from,
 };
 use temporalio_client::{Client, WorkflowQueryOptions};
@@ -126,10 +128,6 @@ async fn run_model_scenario(
                 reasoning_effort: Some("low".into()),
                 ..Default::default()
             }),
-            limits: Some(api::LimitsConfig {
-                max_turns: Some(3),
-                max_tool_rounds: Some(1),
-            }),
             features: Some(api::FeaturesConfig {
                 code_mode: Some(api::CodeModeFeature {
                     allowed_tools: Some(vec![
@@ -186,22 +184,15 @@ async fn run_model_scenario(
         model_calls == vec![tools::code::CODE_EXECUTE_TOOL_NAME],
         "expected one code_execute model call, got {model_calls:?}"
     );
-    let invocations: Vec<_> = state
-        .workflow_tools
-        .start_requests
-        .values()
-        .filter(|call| call.tool_id.as_str() == tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID)
-        .collect();
-    assert_eq!(invocations.len(), 1, "the model must submit one script");
-    let invocation = invocations[0];
-    let binding = &state.workflow_tools.bindings[&invocation.tool_id];
-    let WorkflowToolTarget::Start { start } = &binding.target else {
-        anyhow::bail!("code tool did not start a workflow")
+    let log = code_log::read_code_log(store, session_id).await?;
+    let [execution_id] = log.execution_ids.as_slice() else {
+        panic!(
+            "the model must submit one script, got {:?}",
+            log.execution_ids
+        );
     };
-    let execution_id =
-        harness::workflow_tool_execution_id(&invocation.invocation_id, &start.recipe_fingerprint);
     let snapshot = client
-        .get_workflow_handle::<CodeExecutionWorkflow>(execution_id)
+        .get_workflow_handle::<CodeExecutionWorkflow>(execution_id.clone())
         .query(
             CodeExecutionWorkflow::snapshot,
             (),
@@ -242,13 +233,12 @@ async fn run_model_scenario(
         scope
             .calls
             .values()
-            .all(|call| call.status == CodeToolCallStatus::Succeeded)
+            .all(|call| call.status == CodeToolCallOutcomeStatus::Succeeded)
     );
-    let durable_scope = &state.code_tools.scopes[&scope.execution_id];
-    let mut code_tool_names: Vec<_> = durable_scope
-        .calls
-        .values()
-        .map(|call| call.spec.tool_id.as_str())
+    let durable_calls = log.calls_in(&scope.execution_id);
+    let mut code_tool_names: Vec<_> = durable_calls
+        .iter()
+        .map(|call| call.tool_id.as_str())
         .collect();
     code_tool_names.sort_unstable();
     assert_eq!(
@@ -260,10 +250,10 @@ async fn run_model_scenario(
         ]
     );
     let mut timer_delays = Vec::new();
-    for call in durable_scope.calls.values() {
-        if call.spec.tool_id.as_str() == "concurrency.sleep" {
+    for call in durable_calls {
+        if call.tool_id.as_str() == "concurrency.sleep" {
             let arguments: tools::concurrency::SleepArgs =
-                serde_json::from_slice(&store.read_bytes(&call.spec.arguments_ref).await?)?;
+                serde_json::from_slice(&store.read_bytes(&call.arguments_ref).await?)?;
             timer_delays.push(arguments.ms);
         }
     }
@@ -289,10 +279,6 @@ async fn run_media_model_scenario(
                 max_output_tokens: Some(2048),
                 reasoning_effort: Some("low".into()),
                 ..Default::default()
-            }),
-            limits: Some(api::LimitsConfig {
-                max_turns: Some(3),
-                max_tool_rounds: Some(1),
             }),
             features: Some(api::FeaturesConfig {
                 code_mode: Some(api::CodeModeFeature {
@@ -362,22 +348,15 @@ async fn run_media_model_scenario(
         .collect::<Vec<_>>();
     assert_eq!(media.len(), 1, "only selected output enters model context");
     assert_eq!(media[0].content.content_ref, image_ref);
-    let invocations = state
-        .workflow_tools
-        .start_requests
-        .values()
-        .filter(|call| call.tool_id.as_str() == tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID)
-        .collect::<Vec<_>>();
-    assert_eq!(invocations.len(), 1);
-    let invocation = invocations[0];
-    let binding = &state.workflow_tools.bindings[&invocation.tool_id];
-    let WorkflowToolTarget::Start { start } = &binding.target else {
-        anyhow::bail!("code tool did not start a workflow")
+    let log = code_log::read_code_log(store, session_id).await?;
+    let [execution_id] = log.execution_ids.as_slice() else {
+        panic!(
+            "expected one code_execute start, got {:?}",
+            log.execution_ids
+        );
     };
-    let execution_id =
-        harness::workflow_tool_execution_id(&invocation.invocation_id, &start.recipe_fingerprint);
     let snapshot = client
-        .get_workflow_handle::<CodeExecutionWorkflow>(execution_id)
+        .get_workflow_handle::<CodeExecutionWorkflow>(execution_id.clone())
         .query(
             CodeExecutionWorkflow::snapshot,
             (),

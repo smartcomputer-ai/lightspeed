@@ -8,7 +8,7 @@ import type {
   Environment,
   EnvironmentProviderBinding,
   EnvironmentTemplate,
-  ManagedWorkflowTool,
+  DeclaredWorkflowTool,
   McpServer,
   Member,
   ModelOption,
@@ -691,30 +691,30 @@ export function modelDiscovery(
 // ---------------------------------------------------------------------------
 
 /// The workflow tools every bot session carries.
-export const BOT_TOOLS: ManagedWorkflowTool[] = [
-  { toolId: "bots.event.read", name: "bot_event_read", semanticType: "bots.event.read.v1", target: "bound", completion: "accepted" },
-  { toolId: "bots.event.list", name: "bot_event_list", semanticType: "bots.event.list.v1", target: "bound", completion: "accepted" },
-  { toolId: "bots.brief.put", name: "bot_brief_put", semanticType: "bots.brief.put.v1", target: "bound", completion: "accepted" },
+export const BOT_TOOLS: DeclaredWorkflowTool[] = [
+  { workflowToolId: "bots.event.read", name: "bot_event_read", semanticType: "bots.event.read.v1", target: "bound", completion: "accepted" },
+  { workflowToolId: "bots.event.list", name: "bot_event_list", semanticType: "bots.event.list.v1", target: "bound", completion: "accepted" },
+  { workflowToolId: "bots.brief.put", name: "bot_brief_put", semanticType: "bots.brief.put.v1", target: "bound", completion: "accepted" },
 ];
 /// Added when the bot may emit.
-export const EMIT_TOOL: ManagedWorkflowTool = {
-  toolId: "bots.emit",
+export const EMIT_TOOL: DeclaredWorkflowTool = {
+  workflowToolId: "bots.emit",
   name: "bot_emit",
   semanticType: "bots.emit.v1",
   target: "bound",
   completion: "accepted",
 };
 /// Added when the bot may change its own triggers (`selfConfig`).
-export const SELF_CONFIG_TOOLS: ManagedWorkflowTool[] = [
-  { toolId: "bots.trigger.put", name: "bot_trigger_put", semanticType: "bots.trigger.put.v1", target: "bound", completion: "accepted" },
-  { toolId: "bots.trigger.delete", name: "bot_trigger_delete", semanticType: "bots.trigger.delete.v1", target: "bound", completion: "accepted" },
+export const SELF_CONFIG_TOOLS: DeclaredWorkflowTool[] = [
+  { workflowToolId: "bots.trigger.put", name: "bot_trigger_put", semanticType: "bots.trigger.put.v1", target: "bound", completion: "accepted" },
+  { workflowToolId: "bots.trigger.delete", name: "bot_trigger_delete", semanticType: "bots.trigger.delete.v1", target: "bound", completion: "accepted" },
 ];
 /// Carried by chat-trigger events into their conversation sessions.
-export const MESSAGE_TOOLS: ManagedWorkflowTool[] = [
-  { toolId: "channels.message.send", name: "message_send", semanticType: "channels.message.send.v1", target: "bound", completion: "accepted" },
-  { toolId: "channels.message.edit", name: "message_edit", semanticType: "channels.message.edit.v1", target: "bound", completion: "accepted" },
-  { toolId: "channels.message.react", name: "message_react", semanticType: "channels.message.react.v1", target: "bound", completion: "accepted" },
-  { toolId: "channels.message.noop", name: "message_noop", semanticType: "channels.message.noop.v1", target: "bound", completion: "accepted" },
+export const MESSAGE_TOOLS: DeclaredWorkflowTool[] = [
+  { workflowToolId: "channels.message.send", name: "message_send", semanticType: "channels.message.send.v1", target: "bound", completion: "accepted" },
+  { workflowToolId: "channels.message.edit", name: "message_edit", semanticType: "channels.message.edit.v1", target: "bound", completion: "accepted" },
+  { workflowToolId: "channels.message.react", name: "message_react", semanticType: "channels.message.react.v1", target: "bound", completion: "accepted" },
+  { workflowToolId: "channels.message.noop", name: "message_noop", semanticType: "channels.message.noop.v1", target: "bound", completion: "accepted" },
 ];
 
 /// The first thing a freshly created bot is asked.
@@ -891,24 +891,24 @@ export function chatTrigger(botId: string, triggerId: string, spec: ChatSpecInit
   } as BotTriggerView;
 }
 
-export interface ManagedInit {
+export interface ControlledInit {
   id: string;
   botId: string;
   displayName: string;
   profile: Pick<ProfileInit, "config" | "instructions" | "metadata">;
-  tools: ManagedWorkflowTool[];
+  tools: DeclaredWorkflowTool[];
   createdAtMs: number;
   environmentId?: string;
 }
 
 /// A bot-owned session: the controller is its lifecycle owner and `tools`
 /// are its caller-declared workflow tools.
-export function managedSession(store: DemoStore, universe: UniverseState, init: ManagedInit): SessionRecord {
+export function controlledSession(store: DemoStore, universe: UniverseState, init: ControlledInit): SessionRecord {
   return newSession(store, universe, {
     id: init.id,
     displayName: init.displayName,
-    managed: true,
-    management: {
+    lifecycleControlled: true,
+    declaration: {
       version: 1,
       lifecycleController: { workflowId: `bot:v1:${init.botId}`, workflowKind: "bot_controller_v1" },
       tools: init.tools,
@@ -1214,9 +1214,9 @@ export function sessionSummaryOf(session: SessionRecord): SessionSummaryView {
     displayName: view.displayName ?? null,
     createdAtMs: view.createdAtMs,
     updatedAtMs: view.updatedAtMs,
-    lifecycleStatus: view.status === "closed" ? "closed" : "open",
+    lifecycleStatus: view.lifecycleStatus === "closed" ? "closed" : "open",
     retention: view.retention,
-    managed: view.managed,
+    lifecycleControlled: view.lifecycleControlled,
     origin: view.origin ?? null,
   };
 }

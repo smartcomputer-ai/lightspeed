@@ -5,8 +5,8 @@ use harness::{ContentRef, storage::BlobStore};
 
 pub fn content_ref_to_api(content: &ContentRef) -> ContentRefView {
     ContentRefView {
-        content_ref: content.content_ref.as_str().to_owned(),
-        media_type: content.media_type.clone(),
+        blob_ref: content.content_ref.as_str().to_owned(),
+        mime: content.media_type.clone(),
         provider_kind: content.provider_kind.clone(),
         media_handle: harness::media::is_media_content(content)
             .then(|| harness::media::media_handle(&content.content_ref)),
@@ -30,10 +30,10 @@ pub async fn project_content_text(
         return Ok(Some(text));
     }
     let project = match content.provider_kind.as_deref() {
-        Some(harness::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND) => {
+        Some(llm_clients::content::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND) => {
             llm_clients::content::anthropic_text_blocks
         }
-        Some(harness::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND) => {
+        Some(llm_clients::content::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND) => {
             llm_clients::content::openai_response_message
         }
         Some(llm_clients::content::OPENAI_COMPLETIONS_MESSAGE_PROVIDER_KIND) => {
@@ -130,7 +130,7 @@ mod tests {
             assert_eq!(
                 summary,
                 api::RunSummarySourceView::Input {
-                    content_ref: Some(reference.as_str().to_owned()),
+                    blob_ref: Some(reference.as_str().to_owned()),
                     preview: Some(expected_preview),
                     preview_truncated: truncated,
                 }
@@ -145,9 +145,9 @@ mod tests {
         let full = "héllo 🦀\n".repeat(2000);
         for (kind, bytes) in [
             (None, full.as_bytes().to_vec()),
-            (Some(harness::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND),
+            (Some(llm_clients::content::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND),
                 serde_json::to_vec(&json!([{"type":"text","text":full,"citations":[]}])).unwrap()),
-            (Some(harness::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND),
+            (Some(llm_clients::content::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND),
                 serde_json::to_vec(&json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":full,"annotations":[]}]})).unwrap()),
             (Some(OPENAI_COMPLETIONS_MESSAGE_PROVIDER_KIND),
                 serde_json::to_vec(&json!({"role":"assistant","content":full,"annotations":[]})).unwrap()),
@@ -178,7 +178,7 @@ mod tests {
             let run = projector.project_run_with_metadata(crate::ProjectRun {
                 entries: &[], run_id: harness::RunId::new(1), status: api::RunStatus::Completed,
                 output: Some(&content), source: &source, started_at_ms: None,
-                completed_at_ms: Some(1), usage: None,
+                finished_at_ms: Some(1), usage: None, failure: None, earlier_events_omitted: false,
             }).await.unwrap();
             assert!(run.entries.is_empty());
             assert_eq!(run.output, Some(content_ref_to_api(&content)));
@@ -206,8 +206,10 @@ mod tests {
                     output,
                     source: &source,
                     started_at_ms: None,
-                    completed_at_ms: Some(1),
+                    finished_at_ms: Some(1),
                     usage: None,
+                    failure: None,
+                    earlier_events_omitted: false,
                 })
                 .await
                 .unwrap();

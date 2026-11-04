@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use harness::{Attachment, BlobRef, ToolCallId, ToolName, WorkflowToolInvocationId};
+use harness::{Attachment, BlobRef, ToolCallId, ToolId, ToolName, WorkflowToolInvocationId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use temporalio_client::{
@@ -32,7 +32,7 @@ pub struct OpenCodeToolScopeRequest {
     /// tools. None selects all currently host-callable tools except the parent
     /// operation. Reopening an existing scope retains its original bindings.
     #[serde(default)]
-    pub allowed_tools: Option<BTreeSet<ToolName>>,
+    pub allowed_tools: Option<BTreeSet<ToolId>>,
     #[schemars(range(min = 1))]
     pub max_calls: u32,
     #[schemars(range(min = 1))]
@@ -51,13 +51,12 @@ pub struct InvokeCodeToolRequest {
     pub arguments_ref: BlobRef,
 }
 
-/// Close admission immediately. Cancellation additionally requests cleanup of
-/// admitted work; closing a scope does not roll back any completed effects.
+/// Close admission immediately and cancel admitted work. Closing a scope does
+/// not roll back any completed effects.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CloseCodeToolScopeRequest {
     pub execution_id: String,
-    pub cancel_pending: bool,
 }
 
 /// Read an authoritative snapshot, including after a runner loses its waiters.
@@ -71,7 +70,6 @@ pub struct CodeToolScopeReportRequest {
 pub struct CodeToolScopeReport {
     pub execution_id: String,
     pub closed: bool,
-    pub cancel_requested: bool,
     /// Exposed names keyed by the opaque handles accepted by invoke requests.
     pub bindings: BTreeMap<String, ToolName>,
     /// Requests are keyed by execution-local request id, never arrival order.
@@ -83,7 +81,6 @@ impl From<&harness::CodeToolScope> for CodeToolScopeReport {
         Self {
             execution_id: scope.spec.execution_id.clone(),
             closed: scope.closed,
-            cancel_requested: scope.cancel_requested,
             bindings: scope
                 .spec
                 .bindings
@@ -105,7 +102,7 @@ impl From<&harness::CodeToolScope> for CodeToolScopeReport {
 pub struct CodeToolCallOutcome {
     pub request_id: String,
     pub call_id: ToolCallId,
-    pub status: CodeToolCallStatus,
+    pub status: CodeToolCallOutcomeStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_ref: Option<BlobRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -119,7 +116,7 @@ impl From<&harness::CodeToolCall> for CodeToolCallOutcome {
         let mut outcome = Self {
             request_id: call.spec.origin.request_id.clone(),
             call_id: call.call_id.clone(),
-            status: CodeToolCallStatus::Pending,
+            status: CodeToolCallOutcomeStatus::Pending,
             output_ref: None,
             error_ref: None,
             attachments: Vec::new(),
@@ -127,14 +124,14 @@ impl From<&harness::CodeToolCall> for CodeToolCallOutcome {
         match &call.status {
             harness::CodeToolCallStatus::Pending => {}
             harness::CodeToolCallStatus::Waiting { .. } => {
-                outcome.status = CodeToolCallStatus::Waiting;
+                outcome.status = CodeToolCallOutcomeStatus::Waiting;
             }
             harness::CodeToolCallStatus::Completed { result } => {
                 outcome.status = match result.status {
-                    harness::ToolCallStatus::Succeeded => CodeToolCallStatus::Succeeded,
-                    harness::ToolCallStatus::Cancelled => CodeToolCallStatus::Cancelled,
-                    harness::ToolCallStatus::Unavailable => CodeToolCallStatus::Unavailable,
-                    _ => CodeToolCallStatus::Failed,
+                    harness::ToolCallStatus::Succeeded => CodeToolCallOutcomeStatus::Succeeded,
+                    harness::ToolCallStatus::Cancelled => CodeToolCallOutcomeStatus::Cancelled,
+                    harness::ToolCallStatus::Unavailable => CodeToolCallOutcomeStatus::Unavailable,
+                    _ => CodeToolCallOutcomeStatus::Failed,
                 };
                 outcome.output_ref = result.output_ref.clone();
                 outcome.error_ref = result.error_ref.clone();
@@ -147,7 +144,7 @@ impl From<&harness::CodeToolCall> for CodeToolCallOutcome {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum CodeToolCallStatus {
+pub enum CodeToolCallOutcomeStatus {
     Pending,
     Waiting,
     Succeeded,
@@ -156,7 +153,7 @@ pub enum CodeToolCallStatus {
     Unavailable,
 }
 
-impl CodeToolCallStatus {
+impl CodeToolCallOutcomeStatus {
     pub fn is_terminal(self) -> bool {
         !matches!(self, Self::Pending | Self::Waiting)
     }

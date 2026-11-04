@@ -146,7 +146,7 @@ describe("demo router", () => {
     expect(cleared.json).toMatchObject({ revision: revision + 1, agentRun: null });
     const missing = await call("POST", `${base}/sessions`, { profile: { kind: "inline", profile: {} } });
     expect(missing.status).toBe(400);
-    expect(missing.json).toMatchObject({ kind: "model_default_unset", modelDefaultSlot: "agentRun" });
+    expect(missing.json).toMatchObject({ kind: "modelDefaultUnset", modelDefaultSlot: "agentRun" });
     const existing = await call("PUT", `${base}/sessions/${session.id}/config`, { config: {}, expectedConfigRevision: session.configRevision });
     expect(existing.status).toBe(200);
     expect(store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.sessions.get(session.id)!.view.config).toMatchObject({ model });
@@ -180,8 +180,8 @@ describe("demo router", () => {
     await call("PUT", `${base}/models/defaults`, { slot: "agentRun", model: null, expectedRevision: universe.modelDefaults.revision });
     const refused = await call("POST", `${base}/bots/inherit-model/sessions/${sessionId}/rotate`);
     expect(refused.status).toBe(400);
-    expect(refused.json).toMatchObject({ kind: "model_default_unset" });
-    expect(universe.sessions.get(sessionId)!.view.status).not.toBe("closed");
+    expect(refused.json).toMatchObject({ kind: "modelDefaultUnset" });
+    expect(universe.sessions.get(sessionId)!.view.lifecycleStatus).not.toBe("closed");
     expect((await call("POST", `${base}/bots`, { bot: { botId: "no-model", profileId: "inherit" } })).status).toBe(400);
     expect(universe.bots.has("no-model")).toBe(false);
   });
@@ -223,7 +223,7 @@ describe("demo router", () => {
           expect(section?.reply, `${universe.universe.slug}/${session.view.id}/${run.id}`).toMatchObject({
             role: "assistant",
             runId: run.id,
-            contentRef: run.output?.contentRef,
+            contentRef: run.output?.blobRef,
             text: run.outputText,
           });
           expect(section?.work).not.toContain(section?.reply);
@@ -605,10 +605,12 @@ describe("demo router", () => {
     expect(userEntrySource).toMatchObject({ type: "runInput", runId });
     expect(userEntryOrigin).toMatch(/^user:.+/);
     const view = (await call("GET", `/api/v1/universes/${universe!.id}/sessions/${sessionId}`)).json as {
-      status: string;
+      lifecycleStatus: string;
+      activity: string;
       runs: Array<{ id: string; status: string }>;
     };
-    expect(view.status).toBe("idle");
+    expect(view.lifecycleStatus).toBe("open");
+    expect(view.activity).toBe("idle");
     expect(view.runs.find((run) => run.id === runId)?.status).toBe("completed");
     const section = sectionsByRun(transcript.entries, null)
       .filter((section) => section.kind === "run")

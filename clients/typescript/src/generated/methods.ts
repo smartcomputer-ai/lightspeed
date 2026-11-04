@@ -8,13 +8,14 @@ export const METHODS = [
   "vfs/workspaces/files/read",
   "initialize",
   "session/start",
-  "session/managed/start",
+  "session/declared/start",
   "session/read",
   "session/list",
   "session/config/put",
   "session/rename",
   "session/metadata/put",
   "session/retention/put",
+  "session/restart",
   "session/close",
   "session/delete",
   "session/share",
@@ -163,67 +164,73 @@ export const METHOD_INFO = {
   },
   "session/start": {
     scope: "universe",
-    access: {"action":"create_session","kind":"universe"},
-    summary: "Create or reopen a session",
-    description: "Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.",
+    access: {"action":"createSession","kind":"universe"},
+    summary: "Start a session",
+    description: "Creates a session, unshared unless access says universe, with optional config/profile setup. Explicit values override profile metadata and retention; the config's default environment attachment becomes active. Retrying an id returns it, keeps its audience, and restarts a stopped workflow execution from its log. Failed setup closes a server-allocated id.",
   },
-  "session/managed/start": {
+  "session/declared/start": {
     scope: "universe",
-    access: {"action":"create_session","kind":"universe"},
-    summary: "Create or reopen a managed session",
-    description: "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.",
+    access: {"action":"createSession","kind":"universe"},
+    summary: "Start a declared session",
+    description: "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile defaults and attachment selection follow session/start. Retrying an id requires the same declaration; an undeclared session cannot be upgraded. A retry never restarts a stopped workflow execution: it answers sessionExecutionStopped.",
   },
   "session/read": {
     scope: "universe",
     access: {"action":"read","kind":"universe"},
     summary: "Read a session",
-    description: "Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
+    description: "Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
   },
   "session/list": {
     scope: "universe",
     access: {"action":"read","kind":"universe"},
     summary: "List sessions",
-    description: "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.",
+    description: "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by filters such as visibleTo, which keeps sessions whose root is shared with the universe or was created by that actor. An unknown parameter is refused. Pages may shift while sessions are changing.",
   },
   "session/config/put": {
     scope: "universe",
-    access: {"action":"configure_session","kind":"universe"},
+    access: {"action":"configureSession","kind":"universe"},
     summary: "Replace session configuration",
-    description: "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.",
+    description: "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.",
   },
   "session/rename": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Rename a session",
     description: "Sets the display name, or clears it when displayName is omitted.",
   },
   "session/metadata/put": {
     scope: "universe",
-    access: {"action":"configure_session","kind":"universe"},
+    access: {"action":"configureSession","kind":"universe"},
     summary: "Replace session metadata",
     description: "Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.",
   },
   "session/retention/put": {
     scope: "universe",
-    access: {"action":"set_session_retention","kind":"universe"},
+    access: {"action":"setSessionRetention","kind":"universe"},
     summary: "Replace session retention",
-    description: "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
+    description: "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
+  },
+  "session/restart": {
+    scope: "universe",
+    access: {"action":"configureSession","kind":"universe"},
+    summary: "Restart a stopped session",
+    description: "Starts a new workflow execution for an open session whose last one stopped, from its log. A run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards. A running session is left alone. Refused for a closed session and for one with no run history.",
   },
   "session/close": {
     scope: "universe",
-    access: {"action":"close_session","kind":"universe"},
+    access: {"action":"closeSession","kind":"universe"},
     summary: "Close a session",
-    description: "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
+    description: "Closes an idle session and detaches its environment bindings. Without force, active work of any kind, including a pending detached promise, rejects the call. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
   },
   "session/delete": {
     scope: "universe",
-    access: {"action":"delete_session","kind":"universe"},
+    access: {"action":"deleteSession","kind":"universe"},
     summary: "Delete closed sessions",
-    description: "Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.",
+    description: "Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.",
   },
   "session/share": {
     scope: "universe",
-    access: {"action":"share_session","kind":"universe"},
+    access: {"action":"shareSession","kind":"universe"},
     summary: "Share a session with the universe",
     description: "Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.",
   },
@@ -235,63 +242,63 @@ export const METHOD_INFO = {
   },
   "session/context/append": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Append keyed session context",
-    description: "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.",
+    description: "Admits a batch of keyed context entries with per-entry results. The same content under a key is a no-op. Different content replaces the earlier entry, which leaves active context, and goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry without discarding successful entries.",
   },
   "session/context/remove": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Remove keyed session context",
     description: "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
   },
   "session/context/replace": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Replace session context entries",
     description: "Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.",
   },
   "session/context/compact": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Compact session context",
-    description: "Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.",
+    description: "Performs one standalone compaction in any automatic mode, including Disabled, and waits for its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves the context unchanged and fails the call with its reason. A wait that runs out fails with operationPending while it can still complete; session events report the outcome.",
   },
   "session/runs/start": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Start an agent run",
-    description: "Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.",
+    description: "Returns once the run is accepted — queued behind an active run, or running — not when it finishes. A compacting session holds the request; if the wait runs out the call fails with operationPending and the submission id, and the run still starts later. Retrying with that id cannot start a second run. Follow session events or reread the session.",
   },
   "session/runs/list": {
     scope: "universe",
     access: {"action":"read","kind":"universe"},
     summary: "List session runs",
-    description: "Returns a newest-first keyset page of bounded run summaries projected from current reducer state.",
+    description: "Returns a newest-first keyset page of bounded run summaries, from current state for recent runs and from the session's log for older ones.",
   },
   "session/runs/read": {
     scope: "universe",
     access: {"action":"read","kind":"universe"},
     summary: "Read one session run",
-    description: "Reads and projects one run from its bounded event interval, paged by event sequence.",
+    description: "Projects one run from its events. A run past the server's detail limit keeps its opening and its most recent turns and sets earlierEventsOmitted; session/events/read has the rest.",
   },
   "session/runs/cancel": {
     scope: "universe",
-    access: {"action":"stop_session","kind":"universe"},
+    access: {"action":"stopSession","kind":"universe"},
     summary: "Cancel a run",
-    description: "Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
+    description: "Requests cancellation of the named queued or active run and returns its summary; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
   },
   "session/runs/approvals/decide": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Decide pending run approvals",
-    description: "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.",
+    description: "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision. A decision whose wait runs out reports status pending and can still apply.",
   },
   "session/runs/steer": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"controlSession","kind":"universe"},
     summary: "Steer the active run",
-    description: "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.",
+    description: "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. A parked run holds it without waking. Rejected for queued, cancelling, or finished runs. Supply submissionId so a retry lands once; a wait that runs out fails with operationPending and the steering can still land.",
   },
   "session/skills/list": {
     scope: "universe",
@@ -301,43 +308,43 @@ export const METHOD_INFO = {
   },
   "session/profiles/apply": {
     scope: "universe",
-    access: {"action":"configure_session","kind":"universe"},
+    access: {"action":"configureSession","kind":"universe"},
     summary: "Apply a profile to a session",
     description: "Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
   },
   "session/environments/activate": {
     scope: "universe",
-    access: {"action":"configure_session","kind":"universe"},
+    access: {"action":"configureSession","kind":"universe"},
     summary: "Activate a session environment",
     description: "Selects an attached, live universe environment for environment-targeted tools while the session is idle.",
   },
   "session/environments/deactivate": {
     scope: "universe",
-    access: {"action":"configure_session","kind":"universe"},
+    access: {"action":"configureSession","kind":"universe"},
     summary: "Deactivate the session environment",
     description: "Clears active environment selection without changing or closing the universe environment.",
   },
   "environments/credentials/bind": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Bind a credential into an environment",
     description: "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
   },
   "environments/credentials/list": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "List environment credential bindings",
     description: "Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.",
   },
   "environments/credentials/unbind": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Unbind an environment credential",
     description: "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
   },
   "environments/create": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Create an environment",
     description: "Creates a provisioned environment, attributed to the caller, from a template of a provider enabled for the universe. Idempotent per requestId: same inputs, same environment; others conflict. Provisioning until the target's first envd handshake, then open; idle overrides the template default.",
   },
@@ -349,7 +356,7 @@ export const METHOD_INFO = {
   },
   "environments/update": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Update an environment",
     description: "Replaces the display name and caller metadata of an environment of any kind. Refused for a closed environment.",
   },
@@ -361,25 +368,25 @@ export const METHOD_INFO = {
   },
   "environments/close": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Close an environment",
     description: "Closes an environment; idempotent. A provisioned environment moves to closing while Lightspeed asks its provider to remove the target, retrying until it is gone, then closed. External and registered environments close at once, and a connected registered daemon is told its environment closed.",
   },
   "environments/external/create": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Register an external environment",
     description: "Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use.",
   },
   "environments/ingress/put": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Configure environment public ingress",
     description: "Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.",
   },
   "environments/power/put": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Set environment power",
     description: "Synchronously moves an open provisioned environment's target to running, paused, suspended, or stopped via its provider and records the observation; the provider may also change power on idle. Rejected without provider power control or when the template lacks the state; an internal error, safe to retry, when the provider is unreachable or times out.",
   },
@@ -409,9 +416,9 @@ export const METHOD_INFO = {
   },
   "environments/jobs/create": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Create environment jobs",
-    description: "Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environment_not_ready while it wakes or reconnects; retry with backoff.",
+    description: "Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environmentNotReady while it wakes or reconnects; retry with backoff.",
   },
   "environments/jobs/read": {
     scope: "universe",
@@ -421,49 +428,49 @@ export const METHOD_INFO = {
   },
   "environments/jobs/cancel": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Cancel environment jobs",
     description: "Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.",
   },
   "environments/registration-keys/create": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Mint an environment registration key",
     description: "Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode (immutable), active limit, disconnect grace, offline close-after, and expiry are the key's policy. Treat the secret like a cluster-join credential.",
   },
   "environments/registration-keys/read": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Read an environment registration key",
     description: "Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.",
   },
   "environments/registration-keys/list": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "List environment registration keys",
     description: "Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted.",
   },
   "environments/registration-keys/update": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Update an environment registration key",
     description: "Replaces a key's editable policy: display name, active limit, disconnect grace, offline close-after, and expiry; an omitted field is unset. The identity mode is immutable. The active limit and expiry apply to later admissions; a changed disconnect grace or offline close-after applies at the next sweep to environments whose daemon is away.",
   },
   "environments/registration-keys/rotate": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Rotate an environment registration key",
     description: "Replaces the key's secret and display prefix and retires the old secret at once. The key keeps its id, group, policy, and the environments it admitted; daemons already registered are unaffected because they never present the key again. Returns the new secret once. Refused for a revoked key.",
   },
   "environments/registration-keys/revoke": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Revoke an environment registration key",
     description: "Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.",
   },
   "transcriptions/start": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Start transcription",
     description: "Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created.",
   },
@@ -475,7 +482,7 @@ export const METHOD_INFO = {
   },
   "transcriptions/cancel": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Cancel transcription",
     description: "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.",
   },
@@ -487,7 +494,7 @@ export const METHOD_INFO = {
   },
   "models/defaults/put": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Set a universe model default",
     description: "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
   },
@@ -499,7 +506,7 @@ export const METHOD_INFO = {
   },
   "profiles/create": {
     scope: "universe",
-    access: {"action":"create_profile","kind":"universe"},
+    access: {"action":"createProfile","kind":"universe"},
     summary: "Create an agent profile",
     description: "Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.",
   },
@@ -517,19 +524,19 @@ export const METHOD_INFO = {
   },
   "profiles/put": {
     scope: "universe",
-    access: {"action":"manage_profile","kind":"universe"},
+    access: {"action":"manageProfile","kind":"universe"},
     summary: "Create or replace an agent profile",
     description: "Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.",
   },
   "profiles/delete": {
     scope: "universe",
-    access: {"action":"manage_profile","kind":"universe"},
+    access: {"action":"manageProfile","kind":"universe"},
     summary: "Delete an agent profile",
     description: "Deletes the catalog document; sessions previously created or configured from it retain their materialized state.",
   },
   "blobs/put": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Store content-addressed blobs",
     description: "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
   },
@@ -547,7 +554,7 @@ export const METHOD_INFO = {
   },
   "vfs/snapshots/commit": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Commit a VFS snapshot",
     description: "Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.",
   },
@@ -559,7 +566,7 @@ export const METHOD_INFO = {
   },
   "vfs/workspaces/create": {
     scope: "universe",
-    access: {"action":"create_workspace","kind":"universe"},
+    access: {"action":"createWorkspace","kind":"universe"},
     summary: "Create a mutable VFS workspace",
     description: "Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.",
   },
@@ -577,31 +584,31 @@ export const METHOD_INFO = {
   },
   "vfs/workspaces/update": {
     scope: "universe",
-    access: {"action":"use_resource","kind":"universe"},
+    access: {"action":"useResource","kind":"universe"},
     summary: "Update a VFS workspace",
     description: "Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.",
   },
   "vfs/workspaces/delete": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Delete a VFS workspace",
     description: "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.",
   },
   "mcp/servers/put": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Create or replace an MCP server record",
-    description: "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.",
+    description: "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.",
   },
   "mcp/servers/auth/discover": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Discover MCP server authentication",
     description: "Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.",
   },
   "mcp/servers/tools/discover": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Discover MCP server tools",
     description: "Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.",
   },
@@ -619,13 +626,13 @@ export const METHOD_INFO = {
   },
   "mcp/servers/delete": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Delete an MCP server record",
     description: "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.",
   },
   "auth/grants/import": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Import a static bearer grant",
     description: "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
   },
@@ -649,13 +656,13 @@ export const METHOD_INFO = {
   },
   "auth/grants/revoke": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Revoke an authentication grant",
     description: "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
   },
   "auth/clients/create": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Register an OAuth client",
     description: "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
   },
@@ -673,25 +680,25 @@ export const METHOD_INFO = {
   },
   "auth/clients/delete": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Delete an OAuth client",
     description: "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
   },
   "auth/flows/start": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Start an OAuth authorization flow",
     description: "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
   },
   "auth/flows/read": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Read OAuth flow status",
     description: "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
   },
   "auth/providers/create": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Register an authentication provider",
     description: "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
   },
@@ -709,31 +716,31 @@ export const METHOD_INFO = {
   },
   "auth/providers/delete": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Delete an authentication provider",
     description: "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
   },
   "auth/github/installations/list": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "List GitHub App installations",
     description: "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
   },
   "auth/github/installations/grant": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Grant access to a GitHub App installation",
     description: "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
   },
   "bots/create": {
     scope: "universe",
-    access: {"action":"create_bot","kind":"universe"},
+    access: {"action":"createBot","kind":"universe"},
     summary: "Create a bot",
     description: "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.",
   },
   "bots/put": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Create or replace a bot document",
     description: "Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.",
   },
@@ -751,13 +758,13 @@ export const METHOD_INFO = {
   },
   "bots/close": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Close a bot",
     description: "Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.",
   },
   "bots/delete": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Delete a bot",
     description: "Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.",
   },
@@ -769,13 +776,13 @@ export const METHOD_INFO = {
   },
   "bots/sessions/rotate": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Rotate a bot session",
     description: "Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.",
   },
   "bots/triggers/put": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Create or replace a trigger",
     description: "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.",
   },
@@ -793,19 +800,19 @@ export const METHOD_INFO = {
   },
   "bots/triggers/delete": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Delete a trigger",
     description: "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.",
   },
   "bots/events/admit": {
     scope: "universe",
-    access: {"action":"invoke_bot","kind":"universe"},
+    access: {"action":"invokeBot","kind":"universe"},
     summary: "Admit an event manually",
     description: "Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.",
   },
   "bots/events/replay": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Replay a stored event",
     description: "Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.",
   },
@@ -823,19 +830,19 @@ export const METHOD_INFO = {
   },
   "bots/filters/test": {
     scope: "universe",
-    access: {"action":"manage_bot","kind":"universe"},
+    access: {"action":"manageBot","kind":"universe"},
     summary: "Test a CEL filter",
     description: "Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.",
   },
   "channels/accounts/create": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Create a channel account",
     description: "Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.",
   },
   "channels/accounts/put": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Create or replace a channel account",
     description: "Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.",
   },
@@ -853,7 +860,7 @@ export const METHOD_INFO = {
   },
   "channels/accounts/delete": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Delete a channel account",
     description: "Removes the account and its pairings; chat triggers that reference it stop serving conversations.",
   },
@@ -871,7 +878,7 @@ export const METHOD_INFO = {
   },
   "channels/pairings/delete": {
     scope: "universe",
-    access: {"action":"configure_resource","kind":"universe"},
+    access: {"action":"configureResource","kind":"universe"},
     summary: "Unpair a conversation",
     description: "Removes one pairing; the conversation must present the pairing code again to reconnect.",
   },
@@ -957,7 +964,7 @@ export const METHOD_INFO = {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Put an environment provider",
-    description: "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalid_request, unreachable is accepted. The provider never calls Lightspeed.",
+    description: "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.",
   },
   "deployment/environment-providers/list": {
     scope: "deployment",
@@ -999,7 +1006,6 @@ export const METHOD_INFO = {
 
 export const NOTIFICATIONS = [
   "session/started",
-  "session/status/changed",
   "session/event",
   "session/runs/started",
   "session/runs/completed",
@@ -1029,27 +1035,27 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfInitializeResponse;
   };
   /**
-   * Create or reopen a session
+   * Start a session
    *
-   * Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.
+   * Creates a session, unshared unless access says universe, with optional config/profile setup. Explicit values override profile metadata and retention; the config's default environment attachment becomes active. Retrying an id returns it, keeps its audience, and restarts a stopped workflow execution from its log. Failed setup closes a server-allocated id.
    */
   "session/start": {
     params: Api.SessionStartParams;
     result: Api.AgentApiOutcomeOfSessionStartResponse;
   };
   /**
-   * Create or reopen a managed session
+   * Start a declared session
    *
-   * Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.
+   * Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile defaults and attachment selection follow session/start. Retrying an id requires the same declaration; an undeclared session cannot be upgraded. A retry never restarts a stopped workflow execution: it answers sessionExecutionStopped.
    */
-  "session/managed/start": {
-    params: Api.ManagedSessionStartParams;
+  "session/declared/start": {
+    params: Api.DeclaredSessionStartParams;
     result: Api.AgentApiOutcomeOfSessionStartResponse;
   };
   /**
    * Read a session
    *
-   * Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
+   * Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
    */
   "session/read": {
     params: Api.SessionReadParams;
@@ -1058,7 +1064,7 @@ export interface MethodMap {
   /**
    * List sessions
    *
-   * Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.
+   * Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by filters such as visibleTo, which keeps sessions whose root is shared with the universe or was created by that actor. An unknown parameter is refused. Pages may shift while sessions are changing.
    */
   "session/list": {
     params: Api.SessionListParams;
@@ -1067,7 +1073,7 @@ export interface MethodMap {
   /**
    * Replace session configuration
    *
-   * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.
+   * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.
    */
   "session/config/put": {
     params: Api.SessionConfigPutParams;
@@ -1094,16 +1100,25 @@ export interface MethodMap {
   /**
    * Replace session retention
    *
-   * Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
+   * Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
    */
   "session/retention/put": {
     params: Api.SessionRetentionPutParams;
     result: Api.AgentApiOutcomeOfSessionRetentionPutResponse;
   };
   /**
+   * Restart a stopped session
+   *
+   * Starts a new workflow execution for an open session whose last one stopped, from its log. A run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards. A running session is left alone. Refused for a closed session and for one with no run history.
+   */
+  "session/restart": {
+    params: Api.SessionRestartParams;
+    result: Api.AgentApiOutcomeOfSessionRestartResponse;
+  };
+  /**
    * Close a session
    *
-   * Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
+   * Closes an idle session and detaches its environment bindings. Without force, active work of any kind, including a pending detached promise, rejects the call. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
    */
   "session/close": {
     params: Api.SessionCloseParams;
@@ -1112,7 +1127,7 @@ export interface MethodMap {
   /**
    * Delete closed sessions
    *
-   * Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.
+   * Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.
    */
   "session/delete": {
     params: Api.SessionDeleteParams;
@@ -1139,7 +1154,7 @@ export interface MethodMap {
   /**
    * Append keyed session context
    *
-   * Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.
+   * Admits a batch of keyed context entries with per-entry results. The same content under a key is a no-op. Different content replaces the earlier entry, which leaves active context, and goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry without discarding successful entries.
    */
   "session/context/append": {
     params: Api.ContextAppendParams;
@@ -1166,7 +1181,7 @@ export interface MethodMap {
   /**
    * Compact session context
    *
-   * Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.
+   * Performs one standalone compaction in any automatic mode, including Disabled, and waits for its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves the context unchanged and fails the call with its reason. A wait that runs out fails with operationPending while it can still complete; session events report the outcome.
    */
   "session/context/compact": {
     params: Api.ContextCompactParams;
@@ -1175,7 +1190,7 @@ export interface MethodMap {
   /**
    * Start an agent run
    *
-   * Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.
+   * Returns once the run is accepted — queued behind an active run, or running — not when it finishes. A compacting session holds the request; if the wait runs out the call fails with operationPending and the submission id, and the run still starts later. Retrying with that id cannot start a second run. Follow session events or reread the session.
    */
   "session/runs/start": {
     params: Api.RunStartParams;
@@ -1184,7 +1199,7 @@ export interface MethodMap {
   /**
    * List session runs
    *
-   * Returns a newest-first keyset page of bounded run summaries projected from current reducer state.
+   * Returns a newest-first keyset page of bounded run summaries, from current state for recent runs and from the session's log for older ones.
    */
   "session/runs/list": {
     params: Api.RunListParams;
@@ -1193,7 +1208,7 @@ export interface MethodMap {
   /**
    * Read one session run
    *
-   * Reads and projects one run from its bounded event interval, paged by event sequence.
+   * Projects one run from its events. A run past the server's detail limit keeps its opening and its most recent turns and sets earlierEventsOmitted; session/events/read has the rest.
    */
   "session/runs/read": {
     params: Api.RunReadParams;
@@ -1202,7 +1217,7 @@ export interface MethodMap {
   /**
    * Cancel a run
    *
-   * Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.
+   * Requests cancellation of the named queued or active run and returns its summary; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.
    */
   "session/runs/cancel": {
     params: Api.RunCancelParams;
@@ -1211,7 +1226,7 @@ export interface MethodMap {
   /**
    * Decide pending run approvals
    *
-   * Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.
+   * Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision. A decision whose wait runs out reports status pending and can still apply.
    */
   "session/runs/approvals/decide": {
     params: Api.RunApprovalsDecideParams;
@@ -1220,7 +1235,7 @@ export interface MethodMap {
   /**
    * Steer the active run
    *
-   * Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.
+   * Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. A parked run holds it without waking. Rejected for queued, cancelling, or finished runs. Supply submissionId so a retry lands once; a wait that runs out fails with operationPending and the steering can still land.
    */
   "session/runs/steer": {
     params: Api.RunSteerParams;
@@ -1400,7 +1415,7 @@ export interface MethodMap {
   /**
    * Create environment jobs
    *
-   * Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environment_not_ready while it wakes or reconnects; retry with backoff.
+   * Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environmentNotReady while it wakes or reconnects; retry with backoff.
    */
   "environments/jobs/create": {
     params: Api.EnvironmentJobCreateParams;
@@ -1670,7 +1685,7 @@ export interface MethodMap {
   /**
    * Create or replace an MCP server record
    *
-   * Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.
+   * Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.
    */
   "mcp/servers/put": {
     params: Api.McpServerPutParams;
@@ -2219,7 +2234,7 @@ export interface MethodMap {
   /**
    * Put an environment provider
    *
-   * Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalid_request, unreachable is accepted. The provider never calls Lightspeed.
+   * Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.
    */
   "deployment/environment-providers/put": {
     params: Api.DeploymentEnvironmentProviderPutParams;
@@ -2306,25 +2321,25 @@ export const rpc = {
     return client.call("initialize", params);
   },
   /**
-   * Create or reopen a session
+   * Start a session
    *
-   * Creates a session, unshared unless access says universe, with optional config/profile setup. Profile metadata and retention supply defaults that explicit values override; the config's default environment attachment becomes active. Retrying an existing id returns that session and keeps its audience.
+   * Creates a session, unshared unless access says universe, with optional config/profile setup. Explicit values override profile metadata and retention; the config's default environment attachment becomes active. Retrying an id returns it, keeps its audience, and restarts a stopped workflow execution from its log. Failed setup closes a server-allocated id.
    */
   sessionStart(client: RpcCaller, params: Api.SessionStartParams): Promise<Api.AgentApiOutcomeOfSessionStartResponse> {
     return client.call("session/start", params);
   },
   /**
-   * Create or reopen a managed session
+   * Start a declared session
    *
-   * Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile metadata, retention, and default environment attachment selection follow session/start semantics. Retrying an id requires the same managed declaration; an ordinary session cannot be upgraded.
+   * Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile defaults and attachment selection follow session/start. Retrying an id requires the same declaration; an undeclared session cannot be upgraded. A retry never restarts a stopped workflow execution: it answers sessionExecutionStopped.
    */
-  sessionManagedStart(client: RpcCaller, params: Api.ManagedSessionStartParams): Promise<Api.AgentApiOutcomeOfSessionStartResponse> {
-    return client.call("session/managed/start", params);
+  sessionDeclaredStart(client: RpcCaller, params: Api.DeclaredSessionStartParams): Promise<Api.AgentApiOutcomeOfSessionStartResponse> {
+    return client.call("session/declared/start", params);
   },
   /**
    * Read a session
    *
-   * Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
+   * Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
    */
   sessionRead(client: RpcCaller, params: Api.SessionReadParams): Promise<Api.AgentApiOutcomeOfSessionReadResponse> {
     return client.call("session/read", params);
@@ -2332,7 +2347,7 @@ export const rpc = {
   /**
    * List sessions
    *
-   * Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing.
+   * Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by filters such as visibleTo, which keeps sessions whose root is shared with the universe or was created by that actor. An unknown parameter is refused. Pages may shift while sessions are changing.
    */
   sessionList(client: RpcCaller, params: Api.SessionListParams): Promise<Api.AgentApiOutcomeOfSessionListResponse> {
     return client.call("session/list", params);
@@ -2340,7 +2355,7 @@ export const rpc = {
   /**
    * Replace session configuration
    *
-   * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.
+   * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.
    */
   sessionConfigPut(client: RpcCaller, params: Api.SessionConfigPutParams): Promise<Api.AgentApiOutcomeOfSessionConfigPutResponse> {
     return client.call("session/config/put", params);
@@ -2364,15 +2379,23 @@ export const rpc = {
   /**
    * Replace session retention
    *
-   * Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
+   * Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
    */
   sessionRetentionPut(client: RpcCaller, params: Api.SessionRetentionPutParams): Promise<Api.AgentApiOutcomeOfSessionRetentionPutResponse> {
     return client.call("session/retention/put", params);
   },
   /**
+   * Restart a stopped session
+   *
+   * Starts a new workflow execution for an open session whose last one stopped, from its log. A run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards. A running session is left alone. Refused for a closed session and for one with no run history.
+   */
+  sessionRestart(client: RpcCaller, params: Api.SessionRestartParams): Promise<Api.AgentApiOutcomeOfSessionRestartResponse> {
+    return client.call("session/restart", params);
+  },
+  /**
    * Close a session
    *
-   * Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
+   * Closes an idle session and detaches its environment bindings. Without force, active work of any kind, including a pending detached promise, rejects the call. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
    */
   sessionClose(client: RpcCaller, params: Api.SessionCloseParams): Promise<Api.AgentApiOutcomeOfSessionCloseResponse> {
     return client.call("session/close", params);
@@ -2380,7 +2403,7 @@ export const rpc = {
   /**
    * Delete closed sessions
    *
-   * Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.
+   * Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.
    */
   sessionDelete(client: RpcCaller, params: Api.SessionDeleteParams): Promise<Api.AgentApiOutcomeOfSessionDeleteResponse> {
     return client.call("session/delete", params);
@@ -2404,7 +2427,7 @@ export const rpc = {
   /**
    * Append keyed session context
    *
-   * Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.
+   * Admits a batch of keyed context entries with per-entry results. The same content under a key is a no-op. Different content replaces the earlier entry, which leaves active context, and goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry without discarding successful entries.
    */
   sessionContextAppend(client: RpcCaller, params: Api.ContextAppendParams): Promise<Api.AgentApiOutcomeOfContextAppendResponse> {
     return client.call("session/context/append", params);
@@ -2428,7 +2451,7 @@ export const rpc = {
   /**
    * Compact session context
    *
-   * Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.
+   * Performs one standalone compaction in any automatic mode, including Disabled, and waits for its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves the context unchanged and fails the call with its reason. A wait that runs out fails with operationPending while it can still complete; session events report the outcome.
    */
   sessionContextCompact(client: RpcCaller, params: Api.ContextCompactParams): Promise<Api.AgentApiOutcomeOfContextCompactResponse> {
     return client.call("session/context/compact", params);
@@ -2436,7 +2459,7 @@ export const rpc = {
   /**
    * Start an agent run
    *
-   * Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session.
+   * Returns once the run is accepted — queued behind an active run, or running — not when it finishes. A compacting session holds the request; if the wait runs out the call fails with operationPending and the submission id, and the run still starts later. Retrying with that id cannot start a second run. Follow session events or reread the session.
    */
   sessionRunsStart(client: RpcCaller, params: Api.RunStartParams): Promise<Api.AgentApiOutcomeOfRunStartResponse> {
     return client.call("session/runs/start", params);
@@ -2444,7 +2467,7 @@ export const rpc = {
   /**
    * List session runs
    *
-   * Returns a newest-first keyset page of bounded run summaries projected from current reducer state.
+   * Returns a newest-first keyset page of bounded run summaries, from current state for recent runs and from the session's log for older ones.
    */
   sessionRunsList(client: RpcCaller, params: Api.RunListParams): Promise<Api.AgentApiOutcomeOfRunListResponse> {
     return client.call("session/runs/list", params);
@@ -2452,7 +2475,7 @@ export const rpc = {
   /**
    * Read one session run
    *
-   * Reads and projects one run from its bounded event interval, paged by event sequence.
+   * Projects one run from its events. A run past the server's detail limit keeps its opening and its most recent turns and sets earlierEventsOmitted; session/events/read has the rest.
    */
   sessionRunsRead(client: RpcCaller, params: Api.RunReadParams): Promise<Api.AgentApiOutcomeOfRunReadResponse> {
     return client.call("session/runs/read", params);
@@ -2460,7 +2483,7 @@ export const rpc = {
   /**
    * Cancel a run
    *
-   * Requests cancellation of the named queued or active run and returns its current projected state; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.
+   * Requests cancellation of the named queued or active run and returns its summary; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.
    */
   sessionRunsCancel(client: RpcCaller, params: Api.RunCancelParams): Promise<Api.AgentApiOutcomeOfRunCancelResponse> {
     return client.call("session/runs/cancel", params);
@@ -2468,7 +2491,7 @@ export const rpc = {
   /**
    * Decide pending run approvals
    *
-   * Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision.
+   * Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision. A decision whose wait runs out reports status pending and can still apply.
    */
   sessionRunsApprovalsDecide(client: RpcCaller, params: Api.RunApprovalsDecideParams): Promise<Api.AgentApiOutcomeOfRunApprovalsDecideResponse> {
     return client.call("session/runs/approvals/decide", params);
@@ -2476,7 +2499,7 @@ export const rpc = {
   /**
    * Steer the active run
    *
-   * Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. Accepted while the run is running or parked on an await; rejected for queued, cancelling, or finished runs.
+   * Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. A parked run holds it without waking. Rejected for queued, cancelling, or finished runs. Supply submissionId so a retry lands once; a wait that runs out fails with operationPending and the steering can still land.
    */
   sessionRunsSteer(client: RpcCaller, params: Api.RunSteerParams): Promise<Api.AgentApiOutcomeOfRunSteerResponse> {
     return client.call("session/runs/steer", params);
@@ -2636,7 +2659,7 @@ export const rpc = {
   /**
    * Create environment jobs
    *
-   * Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environment_not_ready while it wakes or reconnects; retry with backoff.
+   * Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environmentNotReady while it wakes or reconnects; retry with backoff.
    */
   environmentsJobsCreate(client: RpcCaller, params: Api.EnvironmentJobCreateParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobCreateResponse> {
     return client.call("environments/jobs/create", params);
@@ -2876,7 +2899,7 @@ export const rpc = {
   /**
    * Create or replace an MCP server record
    *
-   * Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned.
+   * Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.
    */
   mcpServersPut(client: RpcCaller, params: Api.McpServerPutParams): Promise<Api.AgentApiOutcomeOfMcpServerPutResponse> {
     return client.call("mcp/servers/put", params);
@@ -3364,7 +3387,7 @@ export const rpc = {
   /**
    * Put an environment provider
    *
-   * Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalid_request, unreachable is accepted. The provider never calls Lightspeed.
+   * Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.
    */
   deploymentEnvironmentProvidersPut(client: RpcCaller, params: Api.DeploymentEnvironmentProviderPutParams): Promise<Api.AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse> {
     return client.call("deployment/environment-providers/put", params);

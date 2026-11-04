@@ -246,6 +246,7 @@ mod tests {
             vec!["environment", "binding", "put", "local", "--enabled"],
             vec!["environment", "template", "list", "--provider", "local"],
             vec!["profile", "--json", "read", "reviewer"],
+            vec!["session", "restart", "s1"],
         ] {
             let mut command = vec![
                 "lightspeed",

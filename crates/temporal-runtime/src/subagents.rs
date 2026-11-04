@@ -3,7 +3,8 @@
 //! the root-scoped tree slot by creating the child session row, creates the
 //! child from the pinned profile, and starts its run with a notify intent
 //! back to the execution; resolve builds the result envelope and closes the
-//! child; close force-closes a cancelled child.
+//! child; close force-closes a cancelled child and discards one that never
+//! opened.
 
 use std::sync::Arc;
 
@@ -21,7 +22,9 @@ use harness::{
     },
 };
 use temporal_workflow::{
-    SubagentChildRef, SubagentPrepareActivityResult, SubagentTerminal, WorkflowToolStartArgs,
+    SubagentChildRef, SubagentLivenessActivityResult, SubagentPrepareActivityResult,
+    SubagentTerminal, SubagentWaitPolicy, WorkflowToolStartArgs,
+    subagent_child_session_id as child_session_id,
 };
 use tools::{
     attachments::{Attachment, linked_attachments},
@@ -59,12 +62,27 @@ pub trait SubagentChildRuntime: Send + Sync {
     async fn close_session(&self, session_id: &SessionId, force: bool)
     -> Result<(), AgentApiError>;
 
+    /// How the session's workflow stopped, or `None` while it runs.
+    async fn stopped_reason(&self, session_id: &SessionId)
+    -> Result<Option<String>, AgentApiError>;
+
     /// The media the child's session holds in its active context: what the
     /// child was shown and may therefore hand up by handle.
     async fn session_media(
         &self,
         session_id: &SessionId,
     ) -> Result<Vec<MediaDescriptor>, AgentApiError>;
+}
+
+/// A deleted profile can stay listed in a grant, so a missing one is the ordinary
+/// rejected delegation `prepare` turns it into, not an outage to retry.
+fn profile_read_error(error: profiles::ProfileError) -> AgentApiError {
+    match error {
+        profiles::ProfileError::NotFound { profile_id } => {
+            AgentApiError::not_found(format!("agent profile not found: {profile_id}"))
+        }
+        error => AgentApiError::internal(error.to_string()),
+    }
 }
 
 #[derive(Clone)]
@@ -86,7 +104,7 @@ impl SubagentChildRuntime for AgentApiSubagentRuntime {
             .store()
             .read_agent_profile(&profile_id)
             .await
-            .map_err(|e| AgentApiError::internal(e.to_string()))
+            .map_err(profile_read_error)
     }
 
     async fn start_session(
@@ -137,6 +155,17 @@ impl SubagentChildRuntime for AgentApiSubagentRuntime {
         .await
     }
 
+    async fn stopped_reason(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Option<String>, AgentApiError> {
+        Ok(self
+            .api
+            .execution_liveness(session_id)
+            .await?
+            .stopped_description())
+    }
+
     async fn session_media(
         &self,
         session_id: &SessionId,
@@ -158,10 +187,10 @@ impl SubagentChildRuntime for AgentApiSubagentRuntime {
                 .iter()
                 .filter(|entry| entry.content.media_handle.is_some())
                 .filter_map(|entry| {
-                    let content_ref = BlobRef::parse(entry.content.content_ref.clone()).ok()?;
+                    let content_ref = BlobRef::parse(entry.content.blob_ref.clone()).ok()?;
                     MediaDescriptor::new(
                         content_ref,
-                        entry.content.media_type.as_deref()?,
+                        entry.content.mime.as_deref()?,
                         harness::media::media_preview_name(entry.preview.as_deref()).as_deref(),
                     )
                 })
@@ -177,6 +206,7 @@ pub struct SubagentService {
     blobs: Arc<dyn BlobStore>,
     blob_graph: Option<Arc<dyn BlobGraphStore>>,
     runtime: Arc<dyn SubagentChildRuntime>,
+    wait: SubagentWaitPolicy,
 }
 
 impl SubagentService {
@@ -190,6 +220,7 @@ impl SubagentService {
             blobs,
             blob_graph: None,
             runtime,
+            wait: SubagentWaitPolicy::default(),
         }
     }
 
@@ -200,9 +231,15 @@ impl SubagentService {
         self
     }
 
+    pub fn with_wait_policy(mut self, wait: SubagentWaitPolicy) -> Self {
+        self.wait = wait;
+        self
+    }
+
     /// Step A of the execution. Every expected failure (limit, unlisted
     /// agent, missing profile) is `Rejected` so the parent's `reply`
-    /// promise fails cleanly; only infrastructure failures are errors.
+    /// promise fails cleanly; what comes back as an error fails the execution,
+    /// at once when it cannot be healed and otherwise once retries run out.
     pub async fn prepare(
         &self,
         start: WorkflowToolStartArgs,
@@ -229,14 +266,14 @@ impl SubagentService {
             ));
         };
         if SubagentToolKind::from_binding(
-            invocation.tool_id.as_str(),
+            invocation.workflow_tool_id.as_str(),
             invocation.semantic_type.as_str(),
         )
         .is_none()
         {
             return Err(AgentApiError::invalid_request(format!(
                 "unsupported subagent workflow tool {} ({})",
-                invocation.tool_id, invocation.semantic_type
+                invocation.workflow_tool_id, invocation.semantic_type
             )));
         }
         let args: AgentCallArgs = self.read_json(&invocation.arguments_ref).await?;
@@ -352,9 +389,11 @@ impl SubagentService {
                         .is_some_and(|existing| existing.invocation_id == origin.invocation_id)
                 });
                 if !ours {
-                    return Err(AgentApiError::conflict(format!(
-                        "subagent child session id collides with an unrelated session: {child_session_id}"
-                    )));
+                    return self
+                        .rejected(format!(
+                            "subagent child session id collides with an unrelated session: {child_session_id}"
+                        ))
+                        .await;
                 }
             }
             Err(error @ SessionStoreError::OriginLimitExceeded { .. }) => {
@@ -387,18 +426,17 @@ impl SubagentService {
             .await
         {
             if is_caller_error(&error) {
-                let _ = self.close(child_session_id.as_str()).await;
+                self.close_best_effort(child_session_id.as_str()).await;
                 return self
                     .rejected(format!("agent {profile_id} could not be started: {error}"))
                     .await;
             }
             return Err(error);
         }
-        let submission_id = SubmissionId::new(format!(
-            "subagent_run_{}",
-            digest_suffix(&start.execution_id)
-        ));
-        let run_id = self
+        let submission_id = temporal_workflow::subagent_submission_id(&start.execution_id);
+        // A brief the child refuses, such as one over its model's window, is the
+        // same rejected delegation: no retry changes the answer.
+        let run_id = match self
             .runtime
             .start_run(
                 &child_session_id,
@@ -413,7 +451,17 @@ impl SubagentService {
                     token: reply_promise_id.as_str().to_owned(),
                 }],
             )
-            .await?;
+            .await
+        {
+            Ok(run_id) => run_id,
+            Err(error) if is_caller_error(&error) => {
+                self.close_best_effort(child_session_id.as_str()).await;
+                return self
+                    .rejected(format!("agent {profile_id} could not be started: {error}"))
+                    .await;
+            }
+            Err(error) => return Err(error),
+        };
         let run_id = parse_api_run_id(&run_id)?;
         Ok(SubagentPrepareActivityResult::Prepared {
             child: SubagentChildRef {
@@ -421,7 +469,8 @@ impl SubagentService {
                 run_id,
                 agent_profile_id: profile_id.as_str().to_owned(),
             },
-            deadline_ms: limits.deadline_ms,
+            run_timeout_ms: limits.run_timeout_ms,
+            wait: self.wait,
         })
     }
 
@@ -458,7 +507,7 @@ impl SubagentService {
                     .await
                     .map_err(api_projection::map_session_store_error)?;
                 for entry in page.entries {
-                    if entry.event.kind != "lightspeed.core.tool.call_completed" {
+                    if entry.event.kind != harness::event_kind::TOOL_CALL_COMPLETED {
                         continue;
                     }
                     let event = harness::CoreAgentCodec
@@ -493,7 +542,8 @@ impl SubagentService {
         Ok(linked_attachments(text, available))
     }
 
-    /// Step C: the envelope the parent sees, then the child is closed.
+    /// Step C: the envelope the parent sees, then the child is closed. A failed
+    /// close does not lose the answer already built.
     pub async fn resolve(
         &self,
         child: SubagentChildRef,
@@ -535,7 +585,7 @@ impl SubagentService {
                         Vec::new(),
                     ),
                     RunStatus::Failed
-                    | RunStatus::Active
+                    | RunStatus::Running
                     | RunStatus::Parked
                     | RunStatus::Cancelling => (
                         SubagentResultStatus::Failed,
@@ -549,6 +599,14 @@ impl SubagentService {
                 SubagentResultStatus::Deadline,
                 None,
                 Some("sub-agent run exceeded the grant deadline".to_owned()),
+                Vec::new(),
+            ),
+            SubagentTerminal::SessionStopped { reason } => (
+                SubagentResultStatus::Failed,
+                None,
+                Some(format!(
+                    "the sub-agent's session stopped before its run finished: {reason}"
+                )),
                 Vec::new(),
             ),
         };
@@ -571,11 +629,14 @@ impl SubagentService {
         harness::storage::record_contains_edges(
             self.blob_graph.as_deref(),
             &payload_ref,
-            envelope.attachments.iter().flat_map(Attachment::blob_refs),
+            envelope
+                .attachments
+                .iter()
+                .map(|attachment| attachment.content_ref().clone()),
         )
         .await
         .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        self.close(&child.session_id).await?;
+        self.close_best_effort(&child.session_id).await;
         Ok(match status {
             SubagentResultStatus::Completed => PromiseResolution::Resolved {
                 payload_ref: Some(payload_ref),
@@ -588,14 +649,52 @@ impl SubagentService {
         })
     }
 
-    /// Force-close the child; an already-closed or missing child is fine.
+    /// Ask whether the child's session workflow is still there to finish its run.
+    /// An error says nothing about the child; the caller asks again later.
+    pub async fn liveness(
+        &self,
+        session_id: &str,
+    ) -> Result<SubagentLivenessActivityResult, AgentApiError> {
+        let session_id = SessionId::try_new(session_id.to_owned())
+            .map_err(|error| AgentApiError::internal(format!("invalid child id: {error}")))?;
+        Ok(match self.runtime.stopped_reason(&session_id).await? {
+            Some(reason) => SubagentLivenessActivityResult::Stopped { reason },
+            None => SubagentLivenessActivityResult::Running,
+        })
+    }
+
+    /// Force-close the child; an already-closed or missing child is fine. A child
+    /// that never opened has no log to close, and force close discards its row, but
+    /// only once its execution has stopped: an execution still waiting for a worker
+    /// would otherwise create the row again, with no origin and nobody to close it.
     pub async fn close(&self, session_id: &str) -> Result<(), AgentApiError> {
         let session_id = SessionId::try_new(session_id.to_owned())
             .map_err(|error| AgentApiError::internal(format!("invalid child id: {error}")))?;
         match self.runtime.close_session(&session_id, true).await {
             Ok(()) => Ok(()),
             Err(error) if is_not_found(&error) || is_already_closed(&error) => Ok(()),
+            // Delegated authority is refused for a row that is gone, as well as
+            // for one this execution may not touch.
+            Err(error) if matches!(error.kind, api::AgentApiErrorKind::Forbidden) => {
+                match self
+                    .sessions
+                    .load_session(&session_id)
+                    .await
+                    .map_err(api_projection::map_session_store_error)?
+                {
+                    Some(_) => Err(error),
+                    None => Ok(()),
+                }
+            }
             Err(error) => Err(error),
+        }
+    }
+
+    /// For a path whose own answer matters more than the cleanup. What stays open
+    /// holds a delegation slot until an operator closes it, so it must be seen.
+    async fn close_best_effort(&self, session_id: &str) {
+        if let Err(error) = self.close(session_id).await {
+            tracing::warn!(session_id, %error, "could not close a sub-agent child");
         }
     }
 
@@ -664,21 +763,6 @@ pub fn await_spec_from_args(
     })
 }
 
-pub fn child_session_id(execution_id: &str) -> SessionId {
-    SessionId::new(format!("agent_{}", digest_suffix(execution_id)))
-}
-
-fn digest_suffix(value: &str) -> String {
-    let digest = BlobRef::from_bytes(value.as_bytes());
-    digest
-        .as_str()
-        .strip_prefix("sha256:")
-        .unwrap_or(digest.as_str())
-        .chars()
-        .take(32)
-        .collect()
-}
-
 fn parse_api_run_id(run_id: &str) -> Result<u64, AgentApiError> {
     run_id
         .strip_prefix("run_")
@@ -718,6 +802,8 @@ fn is_caller_error(error: &AgentApiError) -> bool {
             | api::AgentApiErrorKind::Rejected
             | api::AgentApiErrorKind::Conflict
             | api::AgentApiErrorKind::Forbidden
+            | api::AgentApiErrorKind::ModelDefaultUnset
+            | api::AgentApiErrorKind::SessionExecutionStopped
     )
 }
 
@@ -805,11 +891,15 @@ mod tests {
     struct FakeChildRuntime {
         profiles: Mutex<BTreeMap<String, AgentProfile>>,
         start_session_error: Mutex<Option<AgentApiError>>,
+        start_run_error: Mutex<Option<AgentApiError>>,
         close_error: Mutex<Option<AgentApiError>>,
+        liveness_error: Mutex<Option<AgentApiError>>,
+        stopped_reason: Mutex<Option<String>>,
         started_sessions: Mutex<Vec<(String, ProfileSource)>>,
         started_runs: Mutex<Vec<StartedRun>>,
         closed: Mutex<Vec<(String, bool)>>,
         media: Mutex<Vec<MediaDescriptor>>,
+        sessions: Mutex<Option<Arc<InMemorySessionStore>>>,
     }
 
     impl FakeChildRuntime {
@@ -869,6 +959,9 @@ mod tests {
             submission_id: SubmissionId,
             notify_on_terminal: Vec<RunTerminalNotifyIntent>,
         ) -> Result<String, AgentApiError> {
+            if let Some(error) = self.start_run_error.lock().unwrap().clone() {
+                return Err(error);
+            }
             self.started_runs.lock().unwrap().push((
                 session_id.as_str().to_owned(),
                 input,
@@ -876,6 +969,16 @@ mod tests {
                 notify_on_terminal,
             ));
             Ok("run_1".to_owned())
+        }
+
+        async fn stopped_reason(
+            &self,
+            _session_id: &SessionId,
+        ) -> Result<Option<String>, AgentApiError> {
+            if let Some(error) = self.liveness_error.lock().unwrap().clone() {
+                return Err(error);
+            }
+            Ok(self.stopped_reason.lock().unwrap().clone())
         }
 
         async fn close_session(
@@ -887,10 +990,18 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((session_id.as_str().to_owned(), force));
-            match self.close_error.lock().unwrap().clone() {
-                Some(error) => Err(error),
-                None => Ok(()),
+            if let Some(error) = self.close_error.lock().unwrap().clone() {
+                return Err(error);
             }
+            // Force close removes a row that never opened.
+            let sessions = self.sessions.lock().unwrap().clone();
+            if let Some(sessions) = sessions {
+                sessions
+                    .discard_unopened_session(session_id)
+                    .await
+                    .expect("discard");
+            }
+            Ok(())
         }
 
         async fn session_media(
@@ -922,6 +1033,7 @@ mod tests {
             })
             .await
             .expect("create parent");
+        *runtime.sessions.lock().unwrap() = Some(sessions.clone());
         let service = SubagentService::new(
             sessions.clone(),
             blobs.clone(),
@@ -988,7 +1100,7 @@ mod tests {
                         .to_string()
                         .repeat(64)
                 )),
-                tool_id: WorkflowToolId::new(AGENT_RUN_WORKFLOW_TOOL_ID),
+                workflow_tool_id: WorkflowToolId::new(AGENT_RUN_WORKFLOW_TOOL_ID),
                 semantic_type: AGENT_RUN_WORKFLOW_SEMANTIC_TYPE.to_owned(),
                 schema_revision: 1,
                 binding_fingerprint: "binding:v1:test".to_owned(),
@@ -1008,9 +1120,45 @@ mod tests {
         }
     }
 
-    fn prepared(result: SubagentPrepareActivityResult) -> (SubagentChildRef, u64) {
+    fn opened_event() -> harness::CoreAgentEvent {
+        harness::CoreAgentEvent::Lifecycle(harness::CoreAgentLifecycleEvent::Opened {
+            config: temporal_workflow::default_session_config(harness::ModelSelection {
+                api_kind: harness::ProviderApiKind::OpenAiResponses,
+                provider_id: "openai".to_owned(),
+                model: "test-model".to_owned(),
+            }),
+        })
+    }
+
+    async fn append_lifecycle(
+        sessions: &InMemorySessionStore,
+        session_id: &str,
+        events: Vec<harness::CoreAgentEvent>,
+    ) {
+        sessions
+            .append(AppendSessionEvents {
+                session_id: SessionId::new(session_id),
+                expected_head: None,
+                events: events
+                    .iter()
+                    .map(|event| harness::session::UncommittedStoredEvent {
+                        observed_at_ms: 101,
+                        joins: Default::default(),
+                        event: harness::CoreAgentCodec.encode_event(event).unwrap(),
+                    })
+                    .collect(),
+            })
+            .await
+            .unwrap();
+    }
+
+    fn prepared(result: SubagentPrepareActivityResult) -> (SubagentChildRef, Option<u64>) {
         match result {
-            SubagentPrepareActivityResult::Prepared { child, deadline_ms } => (child, deadline_ms),
+            SubagentPrepareActivityResult::Prepared {
+                child,
+                run_timeout_ms,
+                ..
+            } => (child, run_timeout_ms),
             SubagentPrepareActivityResult::Rejected { .. } => panic!("expected a prepared child"),
         }
     }
@@ -1028,6 +1176,33 @@ mod tests {
             }
             SubagentPrepareActivityResult::Prepared { .. } => panic!("expected a rejection"),
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn liveness_reports_a_stopped_child_and_passes_errors_up() {
+        let runtime = FakeChildRuntime::with_profile("reviewer", 1);
+        let h = harness(runtime.clone()).await;
+        assert_eq!(
+            h.service.liveness("agent_child").await.expect("liveness"),
+            SubagentLivenessActivityResult::Running
+        );
+        *runtime.stopped_reason.lock().unwrap() = Some("it stopped".to_owned());
+        assert_eq!(
+            h.service.liveness("agent_child").await.expect("liveness"),
+            SubagentLivenessActivityResult::Stopped {
+                reason: "it stopped".to_owned()
+            }
+        );
+        // An error is no statement about the child: the workflow asks again later.
+        *runtime.liveness_error.lock().unwrap() = Some(AgentApiError::internal("blip"));
+        assert_eq!(
+            h.service
+                .liveness("agent_child")
+                .await
+                .expect_err("the blip is passed up")
+                .kind,
+            api::AgentApiErrorKind::Internal
+        );
     }
 
     #[test]
@@ -1122,12 +1297,12 @@ mod tests {
         let runtime = FakeChildRuntime::with_profile("reviewer", 4);
         let h = harness(runtime).await;
         let limits = SubagentLimits {
-            deadline_ms: 30_000,
+            run_timeout_ms: Some(30_000),
             ..SubagentLimits::default()
         };
         let start = start_args(&h.blobs, "wte:a", "parent", "reviewer", "reviewer", limits).await;
 
-        let (child, deadline_ms) = prepared(
+        let (child, run_timeout_ms) = prepared(
             h.service
                 .prepare(start.clone(), 100)
                 .await
@@ -1136,7 +1311,7 @@ mod tests {
         assert_eq!(child.session_id, child_session_id("wte:a").as_str());
         assert_eq!(child.run_id, 1);
         assert_eq!(child.agent_profile_id, "reviewer");
-        assert_eq!(deadline_ms, 30_000);
+        assert_eq!(run_timeout_ms, Some(30_000));
 
         let record = h
             .sessions
@@ -1319,7 +1494,7 @@ mod tests {
             max_depth: 3,
             max_descendants: 2,
             max_concurrent: 2,
-            deadline_ms: 5_000,
+            run_timeout_ms: Some(5_000),
         };
         h.sessions
             .create_session(CreateSession {
@@ -1363,9 +1538,11 @@ mod tests {
         )
         .await;
 
-        let (child, deadline_ms) = prepared(h.service.prepare(start, 100).await.expect("prepare"));
+        let (child, run_timeout_ms) =
+            prepared(h.service.prepare(start, 100).await.expect("prepare"));
         assert_eq!(
-            deadline_ms, 5_000,
+            run_timeout_ms,
+            Some(5_000),
             "deadline attenuated by the parent's origin"
         );
         let origin = h
@@ -1385,7 +1562,7 @@ mod tests {
                 max_depth: 2,
                 max_descendants: 2,
                 max_concurrent: 2,
-                deadline_ms: 5_000,
+                run_timeout_ms: Some(5_000),
             }
         );
     }
@@ -1415,11 +1592,143 @@ mod tests {
             "{message}"
         );
         assert_eq!(
+            h.sessions
+                .load_session(&child_session_id("wte:a"))
+                .await
+                .unwrap(),
+            None,
+            "the reservation of a child that never opened is gone"
+        );
+        assert_eq!(
             h.runtime.closed.lock().unwrap().clone(),
             vec![(child_session_id("wte:a").as_str().to_owned(), true)],
-            "the half-made child is force-closed"
+            "force close has to stop an execution that may be waiting to open it"
         );
         assert!(h.runtime.started_runs.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn prepare_rejects_a_profile_with_no_model_when_the_universe_has_no_default() {
+        let runtime = FakeChildRuntime::with_profile("reviewer", 1);
+        *runtime.start_session_error.lock().unwrap() = Some(AgentApiError::model_default_unset(
+            api::ModelDefaultSlot::AgentRun,
+        ));
+        let h = harness(runtime).await;
+        let start = start_args(
+            &h.blobs,
+            "wte:a",
+            "parent",
+            "reviewer",
+            "reviewer",
+            SubagentLimits::default(),
+        )
+        .await;
+
+        let result = h.service.prepare(start, 100).await.expect("prepare");
+        let message = rejection_message(&h.blobs, result).await;
+        assert!(message.contains("could not be started"), "{message}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn prepare_turns_a_refused_brief_into_a_rejection_and_closes_the_child() {
+        let runtime = FakeChildRuntime::with_profile("reviewer", 1);
+        *runtime.start_run_error.lock().unwrap() = Some(AgentApiError::invalid_request(
+            "a text input of about 64000 tokens cannot fit this model's window of 32000 tokens",
+        ));
+        let h = harness(runtime).await;
+        let start = start_args(
+            &h.blobs,
+            "wte:a",
+            "parent",
+            "reviewer",
+            "reviewer",
+            SubagentLimits::default(),
+        )
+        .await;
+
+        let result = h.service.prepare(start, 100).await.expect("prepare");
+        let message = rejection_message(&h.blobs, result).await;
+        assert!(message.contains("window of 32000 tokens"), "{message}");
+        assert_eq!(
+            h.sessions
+                .load_session(&child_session_id("wte:a"))
+                .await
+                .unwrap(),
+            None,
+            "the child no run will ever use holds no delegation slot"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn prepare_surfaces_an_infrastructure_error_on_run_start() {
+        let runtime = FakeChildRuntime::with_profile("reviewer", 1);
+        *runtime.start_run_error.lock().unwrap() =
+            Some(AgentApiError::internal("temporal unavailable"));
+        let h = harness(runtime).await;
+        let start = start_args(
+            &h.blobs,
+            "wte:a",
+            "parent",
+            "reviewer",
+            "reviewer",
+            SubagentLimits::default(),
+        )
+        .await;
+
+        let error = h
+            .service
+            .prepare(start, 100)
+            .await
+            .expect_err("infrastructure error");
+        assert_eq!(error.kind, AgentApiErrorKind::Internal);
+        assert!(
+            h.sessions
+                .load_session(&child_session_id("wte:a"))
+                .await
+                .unwrap()
+                .is_some(),
+            "a retryable error keeps the child for the retry"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_rejected_delegation_leaves_the_root_tree_deletable() {
+        let runtime = FakeChildRuntime::with_profile("reviewer", 1);
+        *runtime.start_session_error.lock().unwrap() = Some(AgentApiError::rejected(
+            "inherit requires a parent environment",
+        ));
+        let h = harness(runtime).await;
+        let start = start_args(
+            &h.blobs,
+            "wte:a",
+            "parent",
+            "reviewer",
+            "reviewer",
+            SubagentLimits::default(),
+        )
+        .await;
+        h.service.prepare(start, 100).await.expect("prepare");
+
+        let parent = SessionId::new("parent");
+        append_lifecycle(
+            &h.sessions,
+            "parent",
+            vec![
+                opened_event(),
+                harness::CoreAgentEvent::Lifecycle(harness::CoreAgentLifecycleEvent::Closed),
+            ],
+        )
+        .await;
+        let deleted = h
+            .sessions
+            .delete_closed_sessions(harness::storage::DeleteClosedSessions {
+                session_id: parent,
+                cascade: true,
+                due_at_or_before_ms: None,
+            })
+            .await
+            .expect("nothing open blocks the tree");
+        assert_eq!(deleted.deleted_session_ids.len(), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1732,7 +2041,8 @@ mod tests {
                         content_ref,
                         media_type: Some("application/json".into()),
                         provider_kind: Some(
-                            harness::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND.into(),
+                            llm_clients::content::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND
+                                .into(),
                         ),
                     }),
                     failure_message_ref: None,
@@ -1745,7 +2055,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn resolve_maps_failed_cancelled_and_deadline_terminals_to_failed_envelopes() {
+    async fn resolve_maps_failed_cancelled_stopped_and_deadline_terminals_to_failed_envelopes() {
         let runtime = Arc::new(FakeChildRuntime::default());
         let h = harness(runtime).await;
         let failure_ref = h
@@ -1789,6 +2099,27 @@ mod tests {
             SubagentResultStatus::Cancelled
         );
 
+        let stopped = h
+            .service
+            .resolve(
+                child_ref(),
+                SubagentTerminal::SessionStopped {
+                    reason: "its workflow execution was terminated".to_owned(),
+                },
+            )
+            .await
+            .expect("resolve a stopped session");
+        assert!(matches!(stopped, PromiseResolution::Failed { .. }));
+        let envelope = envelope_of(&h.blobs, &stopped).await;
+        assert_eq!(envelope.status, SubagentResultStatus::Failed);
+        assert_eq!(
+            envelope.error.as_deref(),
+            Some(
+                "the sub-agent's session stopped before its run finished: its workflow execution was terminated"
+            )
+        );
+        assert_eq!(envelope.output, None);
+
         let deadline = h
             .service
             .resolve(child_ref(), SubagentTerminal::Deadline)
@@ -1807,7 +2138,7 @@ mod tests {
         assert_eq!(envelope.output, None);
         assert_eq!(
             h.runtime.closed.lock().unwrap().len(),
-            3,
+            4,
             "every terminal closes the child"
         );
     }
@@ -1828,6 +2159,11 @@ mod tests {
             .close("agent_child")
             .await
             .expect("closed child is fine");
+        *h.runtime.close_error.lock().unwrap() = Some(AgentApiError::forbidden());
+        h.service
+            .close("agent_child")
+            .await
+            .expect("a refusal for a row that is gone is fine");
         *h.runtime.close_error.lock().unwrap() = Some(AgentApiError::internal("store down"));
         let error = h
             .service
@@ -1835,6 +2171,97 @@ mod tests {
             .await
             .expect_err("infrastructure error");
         assert_eq!(error.kind, AgentApiErrorKind::Internal);
+    }
+
+    #[test]
+    fn a_missing_profile_reads_as_not_found_and_a_store_failure_does_not() {
+        assert_eq!(
+            profile_read_error(profiles::ProfileError::NotFound {
+                profile_id: ProfileId::new("reviewer"),
+            })
+            .kind,
+            AgentApiErrorKind::NotFound
+        );
+        assert_eq!(
+            profile_read_error(profiles::ProfileError::Store {
+                message: "store down".to_owned(),
+            })
+            .kind,
+            AgentApiErrorKind::Internal
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn resolve_keeps_the_built_answer_when_the_close_fails() {
+        let runtime = FakeChildRuntime::with_profile("reviewer", 1);
+        *runtime.close_error.lock().unwrap() = Some(AgentApiError::internal("store down"));
+        let h = harness(runtime).await;
+        let child = SubagentChildRef {
+            session_id: "agent_child".to_owned(),
+            run_id: 1,
+            agent_profile_id: "reviewer".to_owned(),
+        };
+        let resolution = h
+            .service
+            .resolve(child, SubagentTerminal::Deadline)
+            .await
+            .expect("the close is best effort");
+        assert!(matches!(
+            resolution,
+            PromiseResolution::Failed { error_ref: Some(_) }
+        ));
+        assert_eq!(h.runtime.closed.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn prepare_rejects_a_child_id_held_by_an_unrelated_session() {
+        let runtime = FakeChildRuntime::with_profile("reviewer", 1);
+        let h = harness(runtime).await;
+        h.sessions
+            .create_session(CreateSession {
+                metadata: Default::default(),
+                session_id: child_session_id("wte:a"),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .unwrap();
+        let start = start_args(
+            &h.blobs,
+            "wte:a",
+            "parent",
+            "reviewer",
+            "reviewer",
+            SubagentLimits::default(),
+        )
+        .await;
+        let result = h.service.prepare(start, 100).await.expect("prepare");
+        let message = rejection_message(&h.blobs, result).await;
+        assert!(message.contains("collides"), "{message}");
+        assert!(
+            h.sessions
+                .load_session(&child_session_id("wte:a"))
+                .await
+                .unwrap()
+                .is_some(),
+            "a rejection leaves a session it does not own alone"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn close_keeps_a_refusal_for_a_child_that_still_exists() {
+        let runtime = Arc::new(FakeChildRuntime::default());
+        let h = harness(runtime).await;
+        *h.runtime.close_error.lock().unwrap() = Some(AgentApiError::forbidden());
+        append_lifecycle(&h.sessions, "parent", vec![opened_event()]).await;
+        let error = h
+            .service
+            .close("parent")
+            .await
+            .expect_err("the row is there and the close was refused");
+        assert_eq!(error.kind, AgentApiErrorKind::Forbidden);
     }
 
     #[tokio::test(flavor = "current_thread")]

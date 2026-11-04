@@ -32,6 +32,7 @@ pub struct BotControllerConfig {
     pub self_config: bool,
     #[serde(default)]
     pub emit: bool,
+    #[serde(default)]
     pub enabled: bool,
     /// Terminal teardown: archive what is pending, force-close every
     /// session, record them on the row, complete instead of continuing as
@@ -115,7 +116,7 @@ pub struct BotEvent {
     pub notify: bool,
 }
 
-/// Operator request to close one managed session and advance its
+/// Operator request to close one controlled session and advance its
 /// generation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BotSessionRotate {

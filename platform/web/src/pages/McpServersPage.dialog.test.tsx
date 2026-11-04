@@ -39,7 +39,7 @@ vi.mock("@/components/ui/select", async () => {
 });
 const saved = {
   serverId: "tools", displayName: "Research tools", serverUrl: "https://example.test/mcp", defaultServerLabel: "tools",
-  execution: "native", exposure: "search", approval: "never", allowPrivateNetwork: false, revision: 4,
+  execution: "runtime", exposure: "search", approval: "never", allowPrivateNetwork: false, revision: 4,
   authPolicy: { type: "none" }, status: "disabled", allowedTools: null, createdAtMs: 1, updatedAtMs: 2,
 };
 let servers: typeof saved[];
@@ -139,13 +139,13 @@ it("names the server first, then confirms the connection with everything else be
   // Step 2: authentication in the open, the rest summarized with its defaults.
   expect(field('select[aria-label="Authentication"]')).not.toBeNull();
   expect(field('select[aria-label="Tool approval"]')).toBeNull();
-  expect(summary()).toBe("Model provider connects · no approval·Customize");
+  expect(summary()).toBe("Lightspeed connects · tools shown up front · no approval·Customize");
   await click(field('[aria-label="Customize connection options"]') as HTMLButtonElement);
   const headings = [...dialog().querySelectorAll('[role="group"][aria-labelledby]')].map(
     (group) => document.getElementById(group.getAttribute("aria-labelledby")!)?.textContent,
   );
   expect(headings).toEqual(["Tools", "Network"]);
-  await choose("MCP execution", "native");
+  await choose("MCP execution", "runtime");
   await choose("MCP tool exposure", "search");
   await choose("Tool approval", "always");
   expect(summary()).toBe(
@@ -154,7 +154,7 @@ it("names the server first, then confirms the connection with everything else be
   // Choosing provider execution resets exposure, and the summary follows.
   await choose("MCP execution", "provider");
   expect(summary()).toContain("Model provider connects · approval: always ask");
-  await choose("MCP execution", "native");
+  await choose("MCP execution", "runtime");
   const submit = dialog().querySelector<HTMLButtonElement>('button[type="submit"]')!;
   expect(submit.textContent).toBe("Add server");
   await click(submit);
@@ -163,7 +163,7 @@ it("names the server first, then confirms the connection with everything else be
     serverId: "github",
     displayName: "GitHub",
     description: "Issues and pull requests",
-    execution: "native",
+    execution: "runtime",
     exposure: "inject",
     approval: "always",
   });
@@ -229,7 +229,7 @@ it("keeps deletion in details, confirms it, and removes the selected server on s
   await click(button("Delete server"));
   expect(mocks.api.mock.calls.some(([method]) => method === "DELETE")).toBe(false);
   const confirmation = document.body.querySelector('[role="alertdialog"]')!;
-  expect(confirmation.textContent).toContain("Profiles referencing");
+  expect(confirmation.textContent).toContain("keep working without it");
   await click([...confirmation.querySelectorAll("button")].find((item) => item.textContent === "Delete server"));
   expect(mocks.api.mock.calls.filter(([method]) => method === "DELETE")).toHaveLength(1);
   expect(document.body.querySelector('[role="dialog"]')).toBeNull();

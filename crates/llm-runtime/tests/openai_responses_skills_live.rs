@@ -30,7 +30,7 @@ use support::{
     openai_responses_live_client as live_client, openai_responses_live_model as live_model,
 };
 
-use support::retrying_openai_responses_client;
+use support::unstored_openai_responses_client;
 
 const LIVE_MARKER: &str = "LIVE-SKILL-MATRIX-7392";
 
@@ -181,7 +181,7 @@ async fn openai_responses_live_selects_and_reads_the_matching_skill() {
     let workspace_attachments = vec![WorkspaceAttachment {
         path: "/skills/system".to_owned(),
         target: WorkspaceAttachmentTarget::Snapshot {
-            snapshot_ref: snapshot.snapshot_ref.to_string(),
+            snapshot_ref: snapshot.snapshot_ref.clone(),
         },
         access: WorkspaceAccess::Read,
     }];
@@ -214,7 +214,7 @@ async fn openai_responses_live_selects_and_reads_the_matching_skill() {
         LlmAdapterRegistry::new().with_generation_adapter(
             ProviderApiKind::OpenAiResponses,
             Arc::new(OpenAiResponsesLlmAdapter::new(
-                retrying_openai_responses_client(live_client()),
+                unstored_openai_responses_client(live_client()),
                 blobs.clone(),
             )),
         ),
@@ -278,6 +278,7 @@ async fn openai_responses_live_selects_and_reads_the_matching_skill() {
                     }],
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(128),
         })
@@ -286,7 +287,7 @@ async fn openai_responses_live_selects_and_reads_the_matching_skill() {
 
     assert_eq!(outcome.quiescence, RunnerQuiescence::Idle);
     assert_eq!(
-        outcome.state.runs.completed[0].status,
+        outcome.state.runs.finished[0].status,
         RunStatus::Completed,
         "{}",
         run_failure_text(blobs.as_ref(), &outcome.state).await
@@ -342,7 +343,6 @@ fn session_config(
         },
         limits: Default::default(),
         context: ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: None,
             compaction: None,
         },
@@ -366,20 +366,12 @@ fn session_config(
 
 fn run_config() -> RunConfig {
     RunConfig {
-        input_limit_tokens: None,
-        max_turns: Some(6),
+        max_turns: None,
         reasoning_effort: None,
         parallel_tool_use: None,
         processing_tier: None,
-        max_tool_rounds: Some(3),
         model_override: None,
         max_output_tokens: None,
-        provider_params: Some(support::openai_params(
-            &llm_runtime::OpenAiResponsesParams {
-                store: Some(false),
-                ..llm_runtime::OpenAiResponsesParams::default()
-            },
-        )),
         tool_choice: None,
     }
 }
@@ -449,7 +441,7 @@ async fn assistant_text(blobs: &dyn BlobStore, entries: &[harness::CoreAgentEntr
 }
 
 async fn run_failure_text(blobs: &dyn BlobStore, state: &harness::CoreAgentState) -> String {
-    let Some(run) = state.runs.completed.first() else {
+    let Some(run) = state.runs.finished.first() else {
         return "run did not complete".to_owned();
     };
     let Some(failure) = run.failure.as_ref() else {
