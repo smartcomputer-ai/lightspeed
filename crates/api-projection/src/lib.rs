@@ -9,16 +9,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use api::{
     ActiveToolsView, AgentApiError, ApprovalDecisionKind, ApprovalSubjectView,
     BoundWorkflowToolDispatchInput, ContextEntryInputView, ContextEntryKindView,
-    ContextEntrySourceView, ContextEntryView, ContextMessageRoleView, ContextView,
-    DeclaredSessionWorkflowToolsInput, EventCursor, EventJoinsView, InputItem, LlmUsageView,
-    MediaKind, ModelConfig, PendingApprovalView, ProviderContextDisplayView,
-    ProviderNativeToolExecutionView, RunAcceptedSourceView, RunFailureKindView,
-    RunStatus as ApiRunStatus, RunSummarySourceView, RunSummaryView, RunView, RunViewSource,
-    SessionDeclarationView, SessionEventKindView, SessionEventView, SessionRetentionView,
-    SessionView, TokenEstimateQualityView, TokenEstimateView, ToolBatchView, ToolCallDisplayGroup,
-    ToolCallDisplayView, ToolCallEventView, ToolCallMediaView, ToolCallView, ToolEffectView,
-    ToolItemStatus, ToolKindView, ToolParallelismView, ToolView, WorkflowEndpointInput,
-    WorkflowStartRefInput, WorkflowToolCompletionInput, WorkflowToolCompletionKeySourceInput,
+    ContextEntrySourceView, ContextEntryView, ContextMessageRoleView, ContextView, EventCursor,
+    EventJoinsView, InputItem, LlmUsageView, MediaKind, ModelConfig, PendingApprovalView,
+    ProviderContextDisplayView, ProviderNativeToolExecutionView, RunAcceptedSourceView,
+    RunFailureKindView, RunStatus as ApiRunStatus, RunSummarySourceView, RunSummaryView, RunView,
+    RunViewSource, SessionDeclarationInput, SessionDeclarationView, SessionEventKindView,
+    SessionEventView, SessionRetentionView, SessionView, TokenEstimateQualityView,
+    TokenEstimateView, ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView,
+    ToolCallMediaView, ToolCallView, ToolEffectView, ToolItemStatus, ToolKindView,
+    ToolParallelismView, ToolView, WorkflowEndpointInput, WorkflowStartRefInput,
+    WorkflowToolCompletionInput, WorkflowToolCompletionKeySourceInput,
     WorkflowToolDeclarationInput, WorkflowToolDefinitionInput, WorkflowToolKindInput,
     WorkflowToolSpecInput, WorkflowToolTargetInput,
 };
@@ -1714,7 +1714,7 @@ fn run_failure_kind_to_api(kind: RunFailureKind) -> RunFailureKindView {
 
 fn session_declaration_to_api(state: &CoreAgentState) -> Option<SessionDeclarationView> {
     let version = state.workflow_tools.declaration_version?;
-    Some(DeclaredSessionWorkflowToolsInput {
+    Some(SessionDeclarationInput {
         version,
         lifecycle_controller: state.workflow_tools.lifecycle_controller.as_ref().map(
             |controller| WorkflowEndpointInput {
@@ -4200,7 +4200,7 @@ mod tests {
 
         assert_eq!(
             session_declaration_to_api(&state),
-            Some(DeclaredSessionWorkflowToolsInput {
+            Some(SessionDeclarationInput {
                 version: 1,
                 lifecycle_controller: Some(WorkflowEndpointInput {
                     workflow_id: "channels/session-1".to_owned(),

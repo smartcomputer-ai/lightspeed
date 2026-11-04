@@ -115,7 +115,7 @@ pub enum RunSummarySourceView {
 
 /// Declared-session reads use the same immutable declaration document accepted
 /// at creation. Per-invocation diagnostics remain in `session/events/read`.
-pub type SessionDeclarationView = DeclaredSessionWorkflowToolsInput;
+pub type SessionDeclarationView = SessionDeclarationInput;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

@@ -209,7 +209,7 @@ fn request_ids_accept_number_or_string() {
 #[test]
 fn public_session_config_rejects_declared_workflow_tool_bindings() {
     let config = serde_json::from_value::<SessionConfig>(json!({
-        "workflowTools": {
+        "declaration": {
             "lifecycleController": {
                 "workflowId": "work/other",
                 "workflowKind": "agent_work"
@@ -242,7 +242,7 @@ fn public_workflow_tool_input_rejects_runtime_builtin_definitions() {
 fn declared_session_creation_exposes_targets_and_completion_contracts() {
     let params: DeclaredSessionStartParams = serde_json::from_value(json!({
         "sessionId": "session_1",
-        "workflowTools": {
+        "declaration": {
             "version": 1,
             "lifecycleController": {
                 "workflowId": "controller-1",
@@ -285,26 +285,26 @@ fn declared_session_creation_exposes_targets_and_completion_contracts() {
     }))
     .expect("declared session params");
 
-    let workflow_tools = params.workflow_tools;
-    assert_eq!(workflow_tools.version, 1);
+    let declaration = params.declaration;
+    assert_eq!(declaration.version, 1);
     assert_eq!(
-        workflow_tools.tools[0].definition.tool.parallelism,
+        declaration.tools[0].definition.tool.parallelism,
         ToolParallelismView::ParallelSafe
     );
     assert_eq!(
-        serde_json::to_value(&workflow_tools).expect("serialize workflow tools")["tools"][0]["definition"]
+        serde_json::to_value(&declaration).expect("serialize declaration")["tools"][0]["definition"]
             ["tool"]["parallelism"],
         json!("parallelSafe")
     );
     assert!(matches!(
-        workflow_tools.tools[0].target,
+        declaration.tools[0].target,
         WorkflowToolTargetInput::Bound {
             dispatch: BoundWorkflowToolDispatchInput::Push,
             ..
         }
     ));
     assert!(matches!(
-        workflow_tools.tools[0].completion,
+        declaration.tools[0].completion,
         WorkflowToolCompletionInput::Promises {
             key_source: WorkflowToolCompletionKeySourceInput::ArrayIndices { .. },
             ..
@@ -340,7 +340,7 @@ fn declared_session_creation_rejects_receiver_shortcut_and_tool_targets() {
         });
         tool[forbidden] = json!({});
         let result = serde_json::from_value::<DeclaredSessionStartParams>(json!({
-            "workflowTools": {"version": 1, "tools": [tool]}
+            "declaration": {"version": 1, "tools": [tool]}
         }));
         assert!(result.is_err(), "{forbidden} must not be accepted");
     }
@@ -349,7 +349,7 @@ fn declared_session_creation_rejects_receiver_shortcut_and_tool_targets() {
 #[test]
 fn declared_session_creation_rejects_bound_target_without_dispatch() {
     let result = serde_json::from_value::<DeclaredSessionStartParams>(json!({
-        "workflowTools": {
+        "declaration": {
             "version": 1,
             "tools": [{
                 "definition": {
@@ -382,7 +382,7 @@ fn declared_session_creation_rejects_bound_target_without_dispatch() {
 #[test]
 fn declared_session_creation_decodes_joined_completion_with_or_without_a_deadline() {
     let params = serde_json::from_value::<DeclaredSessionStartParams>(json!({
-        "workflowTools": {
+        "declaration": {
             "version": 1,
             "tools": [{
                 "definition": {
@@ -411,7 +411,7 @@ fn declared_session_creation_decodes_joined_completion_with_or_without_a_deadlin
     }))
     .expect("Joined declared session declaration");
     assert!(matches!(
-        params.workflow_tools.tools[0].completion,
+        params.declaration.tools[0].completion,
         WorkflowToolCompletionInput::Joined {
             deadline_after_ms: Some(30_000),
             ..
@@ -435,7 +435,7 @@ fn declared_session_creation_decodes_joined_completion_with_or_without_a_deadlin
 fn undeclared_session_start_rejects_declared_creation_fields() {
     assert!(
         serde_json::from_value::<SessionStartParams>(json!({
-            "workflowTools": {"version": 1, "tools": []}
+            "declaration": {"version": 1, "tools": []}
         }))
         .is_err()
     );
@@ -455,7 +455,7 @@ fn session_start_rejects_creation_environment_overrides() {
         let error = serde_json::from_value::<SessionStartParams>(request.clone())
             .expect_err("ordinary start rejects the removed environment field");
         assert!(error.to_string().contains("unknown field `environment`"));
-        request["workflowTools"] = json!({"version": 1, "tools": []});
+        request["declaration"] = json!({"version": 1, "tools": []});
         let error = serde_json::from_value::<DeclaredSessionStartParams>(request)
             .expect_err("declared start rejects the removed environment field");
         assert!(error.to_string().contains("unknown field `environment`"));
@@ -524,7 +524,7 @@ async fn dispatch_json_rpc_routes_declared_session_start() {
             method: METHOD_SESSION_DECLARED_START.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
-                "workflowTools": {
+                "declaration": {
                     "version": 1,
                     "lifecycleController": {
                         "workflowId": "controller-1",

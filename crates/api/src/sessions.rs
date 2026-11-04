@@ -87,15 +87,15 @@ pub struct DeclaredSessionStartParams {
     /// Audience of the new session, as for `session/start`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<AccessInput>,
-    /// Immutable workflow tools admitted only when the session is first
-    /// created. This document is not part of `SessionConfig` and cannot be
-    /// changed through `session/config/put`.
-    pub workflow_tools: DeclaredSessionWorkflowToolsInput,
+    /// Immutable lifecycle controller and workflow tools, admitted only when
+    /// the session is first created. This document is not part of
+    /// `SessionConfig` and cannot be changed through `session/config/put`.
+    pub declaration: SessionDeclarationInput,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DeclaredSessionWorkflowToolsInput {
+pub struct SessionDeclarationInput {
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_controller: Option<WorkflowEndpointInput>,

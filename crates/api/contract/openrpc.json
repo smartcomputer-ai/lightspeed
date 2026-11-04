@@ -8528,6 +8528,14 @@
               }
             ]
           },
+          "declaration": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SessionDeclarationInput"
+              }
+            ],
+            "description": "Immutable lifecycle controller and workflow tools, admitted only when\nthe session is first created. This document is not part of\n`SessionConfig` and cannot be changed through `session/config/put`."
+          },
           "deleteAfterCloseMs": {
             "description": "Root-owned automatic deletion measured from close. Absent inherits a\nprofile default, explicit null keeps the tree, and a duration overrides\nthe profile.",
             "format": "uint64",
@@ -8567,49 +8575,10 @@
               "string",
               "null"
             ]
-          },
-          "workflowTools": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/DeclaredSessionWorkflowToolsInput"
-              }
-            ],
-            "description": "Immutable workflow tools admitted only when the session is first\ncreated. This document is not part of `SessionConfig` and cannot be\nchanged through `session/config/put`."
           }
         },
         "required": [
-          "workflowTools"
-        ],
-        "type": "object"
-      },
-      "DeclaredSessionWorkflowToolsInput": {
-        "additionalProperties": false,
-        "properties": {
-          "lifecycleController": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/WorkflowEndpointInput"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "tools": {
-            "items": {
-              "$ref": "#/components/schemas/WorkflowToolDeclarationInput"
-            },
-            "type": "array"
-          },
-          "version": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "version",
-          "tools"
+          "declaration"
         ],
         "type": "object"
       },
@@ -14473,6 +14442,37 @@
         ],
         "type": "object"
       },
+      "SessionDeclarationInput": {
+        "additionalProperties": false,
+        "properties": {
+          "lifecycleController": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowEndpointInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowToolDeclarationInput"
+            },
+            "type": "array"
+          },
+          "version": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "tools"
+        ],
+        "type": "object"
+      },
       "SessionDeleteParams": {
         "properties": {
           "cascade": {
@@ -17343,7 +17343,7 @@
           "declaration": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/DeclaredSessionWorkflowToolsInput"
+                "$ref": "#/components/schemas/SessionDeclarationInput"
               },
               {
                 "type": "null"

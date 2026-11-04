@@ -13,9 +13,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use api::{
     AgentApiError, AgentApiErrorKind, AgentApiService as _, AgentProfile, ContextAppendEntry,
     ContextAppendParams, ContextAppendResponse, ContextAppendStatus, DeclaredSessionStartParams,
-    DeclaredSessionWorkflowToolsInput, EventCursor, InlineAgentProfile, InputItem,
-    ProfileApplyParams, ProfileDocument, ProfileInstructions, ProfileSource, RunStartParams,
-    RunStartSource, RunStatus, RunSteerParams, RunTerminalNotificationInput, SessionCloseParams,
+    EventCursor, InlineAgentProfile, InputItem, ProfileApplyParams, ProfileDocument,
+    ProfileInstructions, ProfileSource, RunStartParams, RunStartSource, RunStatus, RunSteerParams,
+    RunTerminalNotificationInput, SessionCloseParams, SessionDeclarationInput,
     SessionEventKindView, SessionEventView, SessionEventsReadParams, SessionLifecycleStatus,
     SessionListParams, SessionMutationView, SessionReadParams, SessionRenameParams,
     SessionSummaryView, SessionView, WorkflowEndpointInput, WorkflowToolDeclarationInput,
@@ -461,7 +461,7 @@ fn bot_session_start_params(
         // skips that check. Inheriting would let a profile edit schedule the
         // deletion of bot conversations.
         delete_after_close_ms: Some(None),
-        workflow_tools: DeclaredSessionWorkflowToolsInput {
+        declaration: SessionDeclarationInput {
             version: DECLARED_TOOLS_VERSION,
             lifecycle_controller: Some(controller),
             tools,

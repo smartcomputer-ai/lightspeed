@@ -1264,7 +1264,7 @@ fn run_projection_metadata(
 }
 
 fn declared_workflow_tools_from_api(
-    input: DeclaredSessionWorkflowToolsInput,
+    input: SessionDeclarationInput,
 ) -> Result<DeclaredSessionWorkflowTools, AgentApiError> {
     if input.lifecycle_controller.is_none() && input.tools.is_empty() {
         return Err(AgentApiError::invalid_request(
@@ -2074,9 +2074,9 @@ impl AgentApiService for GatewayAgentApi {
             profile,
             delete_after_close_ms,
             access,
-            workflow_tools,
+            declaration,
         } = params;
-        let workflow_tools = declared_workflow_tools_from_api(workflow_tools)?;
+        let workflow_tools = declared_workflow_tools_from_api(declaration)?;
         // The runtime signals these endpoints on the caller's behalf, so an
         // endpoint inside the runtime's own `{universe}/…` namespace must be
         // in the caller's universe; plugin workflows live outside it.

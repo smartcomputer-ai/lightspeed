@@ -2098,7 +2098,7 @@ export interface SessionView {
    * Immutable workflow-backed tool declaration. A lifecycle controller
    * indicates external session ownership; tool-only declarations do not.
    */
-  declaration?: DeclaredSessionWorkflowToolsInput | null;
+  declaration?: SessionDeclarationInput | null;
   displayName?: string | null;
   /**
    * Set by `session/read` when the session is still open but its workflow
@@ -2827,9 +2827,9 @@ export interface ModelConfig {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeclaredSessionWorkflowToolsInput".
+ * via the `definition` "SessionDeclarationInput".
  */
-export interface DeclaredSessionWorkflowToolsInput {
+export interface SessionDeclarationInput {
   lifecycleController?: WorkflowEndpointInput | null;
   tools: WorkflowToolDeclarationInput[];
   version: number;
@@ -7666,6 +7666,12 @@ export interface DeclaredSessionStartParams {
   access?: AccessInput | null;
   config?: SessionConfig | null;
   /**
+   * Immutable lifecycle controller and workflow tools, admitted only when
+   * the session is first created. This document is not part of
+   * `SessionConfig` and cannot be changed through `session/config/put`.
+   */
+  declaration: SessionDeclarationInput;
+  /**
    * Root-owned automatic deletion measured from close. Absent inherits a
    * profile default, explicit null keeps the tree, and a duration overrides
    * the profile.
@@ -7684,12 +7690,6 @@ export interface DeclaredSessionStartParams {
   };
   profile?: ProfileSource | null;
   sessionId?: string | null;
-  /**
-   * Immutable workflow tools admitted only when the session is first
-   * created. This document is not part of `SessionConfig` and cannot be
-   * changed through `session/config/put`.
-   */
-  workflowTools: DeclaredSessionWorkflowToolsInput;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

@@ -92,7 +92,7 @@ export async function createReviewSession(client: LightspeedClient) {
   return client.call("session/declared/start", {
     sessionId: "acorn-review",
     profile: { kind: "named", profileId: "release-editor" },
-    workflowTools: {
+    declaration: {
       version: 1,
       tools: [{
         definition: {
