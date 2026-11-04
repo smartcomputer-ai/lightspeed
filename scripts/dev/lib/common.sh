@@ -11,7 +11,7 @@ fi
 LIGHTSPEED_DEV_COMMON_DIR="$(cd "$(dirname "${LIGHTSPEED_DEV_COMMON_PATH}")" && pwd)"
 DEV_DIR="$(cd "${LIGHTSPEED_DEV_COMMON_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${DEV_DIR}/../.." && pwd)"
-COMPOSE_FILE="${DEV_DIR}/docker-compose.yaml"
+COMPOSE_FILE="${LIGHTSPEED_DEV_COMPOSE_FILE:-${DEV_DIR}/docker-compose.yaml}"
 
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-lightspeed-dev}"
 

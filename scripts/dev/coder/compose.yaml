@@ -1,0 +1,61 @@
+# Replace the image defaults below with your internal registry references.
+# Images must provide the same executables as the upstream counterparts.
+# Start through ./scripts/dev/coder/dev.sh so databases, bucket and Temporal
+# search attributes are initialized by the normal development launcher.
+name: ${COMPOSE_PROJECT_NAME:-lightspeed-dev}
+
+services:
+  postgres:
+    extends:
+      file: ../docker-compose.yaml
+      service: postgres
+    image: ${POSTGRES_IMAGE:-postgres:17}
+
+  pgadmin:
+    extends:
+      file: ../docker-compose.yaml
+      service: pgadmin
+    image: ${PGADMIN_IMAGE:-dpage/pgadmin4:8}
+
+  minio:
+    extends:
+      file: ../docker-compose.yaml
+      service: minio
+    image: ${MINIO_IMAGE:-chainguard/minio:latest}
+    # Override MINIO_USER if the internal image requires a non-root identity.
+    # That identity must have write access to the minio-data volume.
+    user: ${MINIO_USER:-0:0}
+
+  mc:
+    extends:
+      file: ../docker-compose.yaml
+      service: mc
+    image: ${MINIO_MC_IMAGE:-chainguard/minio-client:latest}
+    entrypoint: ["mc"]
+
+  temporal:
+    extends:
+      file: ../docker-compose.yaml
+      service: temporal
+    image: ${TEMPORAL_IMAGE:-temporalio/admin-tools:latest}
+    # Use an image containing the Temporal CLI, not just temporal-server.
+    # Explicitly replace any image entrypoint; the launcher also invokes
+    # `temporal operator ...` via docker compose exec during initialization.
+    entrypoint: ["temporal"]
+    command:
+      - server
+      - start-dev
+      - --ip
+      - 0.0.0.0
+      - --ui-ip
+      - 0.0.0.0
+      - --db-filename
+      - /home/temporal/temporal.db
+    # Adjust the database path and inherited volume mount together if your
+    # internal image uses another writable home. This is a development server.
+
+volumes:
+  postgres-data:
+  pgadmin-data:
+  minio-data:
+  temporal-data:

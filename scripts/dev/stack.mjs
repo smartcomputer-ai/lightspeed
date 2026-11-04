@@ -592,7 +592,7 @@ async function runDevelopmentAction(options, env) {
       "--project-name",
       env.COMPOSE_PROJECT_NAME ?? "lightspeed-dev",
       "-f",
-      path.join(devDir, "docker-compose.yaml"),
+      env.LIGHTSPEED_DEV_COMPOSE_FILE ?? path.join(devDir, "docker-compose.yaml"),
       "ps",
     ],
     env,
