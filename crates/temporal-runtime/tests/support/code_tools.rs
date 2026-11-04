@@ -466,7 +466,7 @@ where
             for (name, joined) in [(OUTER, true), (JOB, true), (AGENT, true), (SUBMIT, false)] {
                 declarations.push(declaration(store.as_ref(), name, &receiver_id, joined).await?);
             }
-            api.start_declared_session_for_workflow_with_profile(
+            api.start_integrated_session_for_workflow_with_profile(
                 &session_id,
                 false,
                 None,

@@ -300,6 +300,7 @@ async fn run_control_api(
         config: Some(config),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
     Ok(api)
@@ -589,6 +590,7 @@ async fn run_oversized_text_live_client(
         config: Some(config),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
     let oversized = || {
@@ -967,6 +969,7 @@ async fn run_parallel_tool_batch_live_client(
         config: Some(run_control_session_config(&model, &workspace.workspace_id)),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 
@@ -1088,6 +1091,7 @@ async fn run_transient_llm_retry_live_client(
         config: None,
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 
@@ -1183,6 +1187,7 @@ async fn run_harness_refusal_live_client(
             config: Some(dangling.clone()),
             profile: None,
             delete_after_close_ms: None,
+            integration: None,
         })
         .await
         .expect_err("session start refuses a dangling tool choice");
@@ -1198,6 +1203,7 @@ async fn run_harness_refusal_live_client(
         config: None,
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
     let temporal_run_id = live_workflow_handle(&client, &session_id)?
@@ -1280,6 +1286,7 @@ async fn run_llm_retry_exhaustion_live_client(
         config: None,
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 
@@ -1403,6 +1410,7 @@ async fn run_unbounded_hosted_run_live_client(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
     let initial_temporal_run_id = live_workflow_handle(&client, &session_id)?

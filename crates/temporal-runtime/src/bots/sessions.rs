@@ -3,21 +3,21 @@
 //! sessions and count descendants, read tool invocations and blobs.
 //!
 //! Everything goes through the universe's in-process `GatewayAgentApi` at
-//! the same boundaries the JSON-RPC methods expose (`session/declared/start`,
+//! the same boundaries the JSON-RPC methods expose (`session/start`,
 //! `session/runs/start`, `session/context/append`, ...), so a bot session is
-//! an ordinary declared session whose lifecycle controller — and the receiver
+//! an ordinary integrated session whose lifecycle controller — and the receiver
 //! of every pushed `bot_*` invocation — is the bot controller workflow.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use api::{
     AgentApiError, AgentApiErrorKind, AgentApiService as _, AgentProfile, ContextAppendEntry,
-    ContextAppendParams, ContextAppendResponse, ContextAppendStatus, DeclaredSessionStartParams,
-    EventCursor, InlineAgentProfile, InputItem, ProfileApplyParams, ProfileDocument,
-    ProfileInstructions, ProfileSource, RunStartParams, RunStartSource, RunStatus, RunSteerParams,
-    RunTerminalNotificationInput, SessionCloseParams, SessionDeclarationInput,
-    SessionEventKindView, SessionEventView, SessionEventsReadParams, SessionLifecycleStatus,
-    SessionListParams, SessionMutationView, SessionReadParams, SessionRenameParams,
+    ContextAppendParams, ContextAppendResponse, ContextAppendStatus, EventCursor,
+    InlineAgentProfile, InputItem, ProfileApplyParams, ProfileDocument, ProfileInstructions,
+    ProfileSource, RunStartParams, RunStartSource, RunStatus, RunSteerParams,
+    RunTerminalNotificationInput, SessionCloseParams, SessionEventKindView, SessionEventView,
+    SessionEventsReadParams, SessionIntegrationInput, SessionLifecycleStatus, SessionListParams,
+    SessionMutationView, SessionReadParams, SessionRenameParams, SessionStartParams,
     SessionSummaryView, SessionView, WorkflowEndpointInput, WorkflowToolDeclarationInput,
 };
 use bots::{
@@ -41,7 +41,7 @@ use temporalio_sdk::activities::ActivityError;
 
 use crate::gateway::{GatewayAgentApi, service::ExecutionLiveness};
 
-/// Declared-session workflow-tool declaration version bot sessions are
+/// Session integration document version bot sessions are
 /// created with (the only version the core admits).
 const DECLARED_TOOLS_VERSION: u32 = 1;
 /// Page size and page bound when walking a session's sub-agent lineage.
@@ -94,9 +94,7 @@ pub(crate) fn activity_error(context: &str, error: AgentApiError) -> ActivityErr
 fn is_declaration_mismatch(error: &AgentApiError) -> bool {
     error.kind == AgentApiErrorKind::Conflict
         && (error.message.contains("fingerprint")
-            || error
-                .message
-                .contains("declared-session controller, receiver, or tool declaration conflicts"))
+            || error.message.contains("session integration conflicts"))
 }
 
 /// The harness refused the profile's config for this session in a way no retry
@@ -445,8 +443,8 @@ fn bot_session_start_params(
     profile: InlineAgentProfile,
     controller: WorkflowEndpointInput,
     tools: Vec<WorkflowToolDeclarationInput>,
-) -> DeclaredSessionStartParams {
-    DeclaredSessionStartParams {
+) -> SessionStartParams {
+    SessionStartParams {
         access: None,
         session_id: Some(request.session_id.clone()),
         display_name: request.display_name.clone(),
@@ -461,11 +459,11 @@ fn bot_session_start_params(
         // skips that check. Inheriting would let a profile edit schedule the
         // deletion of bot conversations.
         delete_after_close_ms: Some(None),
-        declaration: SessionDeclarationInput {
+        integration: Some(SessionIntegrationInput {
             version: DECLARED_TOOLS_VERSION,
             lifecycle_controller: Some(controller),
             tools,
-        },
+        }),
     }
 }
 
@@ -522,7 +520,7 @@ pub async fn ensure_session(
     // The display name rides on creation only: an existing session keeps
     // its label (renames are a separate, label-only operation).
     let started = api
-        .start_declared_session(bot_session_start_params(
+        .start_session(bot_session_start_params(
             &request,
             resolved.clone(),
             controller,
@@ -554,7 +552,7 @@ pub async fn ensure_session(
                 message: error.message,
             });
         }
-        return Err(activity_error("start declared session", error));
+        return Err(activity_error("start integrated session", error));
     }
 
     if request.applied_profile_revision != Some(profile.revision) {
@@ -1034,7 +1032,7 @@ mod tests {
             active_context: Default::default(),
             active_tools: Default::default(),
             active_environment_id: None,
-            declaration: None,
+            integration: None,
             origin: None,
         }
     }
@@ -1340,13 +1338,13 @@ mod tests {
     #[test]
     fn declaration_mismatch_is_a_fingerprint_conflict() {
         assert!(is_declaration_mismatch(&AgentApiError::conflict(
-            "declared-session controller, receiver, or tool declaration conflicts with durable creation state"
+            "session integration conflicts with durable creation state: its controller, a receiver or a tool differs"
         )));
         assert!(is_declaration_mismatch(&AgentApiError::conflict(
             "creation fingerprint differs"
         )));
         assert!(!is_declaration_mismatch(&AgentApiError::conflict(
-            "existing undeclared session cannot be reopened as a declared session"
+            "existing session has no integration and cannot gain one"
         )));
         assert!(!is_declaration_mismatch(&AgentApiError::rejected(
             "fingerprint"

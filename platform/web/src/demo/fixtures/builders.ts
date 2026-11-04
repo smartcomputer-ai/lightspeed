@@ -908,7 +908,7 @@ export function controlledSession(store: DemoStore, universe: UniverseState, ini
     id: init.id,
     displayName: init.displayName,
     lifecycleControlled: true,
-    declaration: {
+    integration: {
       version: 1,
       lifecycleController: { workflowId: `bot:v1:${init.botId}`, workflowKind: "bot_controller_v1" },
       tools: init.tools,

@@ -54,7 +54,7 @@
         "action": "createSession",
         "kind": "universe"
       },
-      "description": "Creates a session, unshared unless access says universe, with optional config/profile setup. Explicit values override profile metadata and retention; the config's default environment attachment becomes active. Retrying an id returns it, keeps its audience, and restarts a stopped workflow execution from its log. Failed setup closes a server-allocated id.",
+      "description": "Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.",
       "group": "session",
       "method": "session/start",
       "params": {
@@ -72,31 +72,6 @@
       "role": "contributor",
       "scope": "universe",
       "summary": "Start a session",
-      "target": "sessionId"
-    },
-    {
-      "access": {
-        "action": "createSession",
-        "kind": "universe"
-      },
-      "description": "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile defaults and attachment selection follow session/start. Retrying an id requires the same declaration; an undeclared session cannot be upgraded. A retry never restarts a stopped workflow execution: it answers sessionExecutionStopped.",
-      "group": "session",
-      "method": "session/declared/start",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/DeclaredSessionStartParams"
-        },
-        "type": "DeclaredSessionStartParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfSessionStartResponse"
-        },
-        "type": "AgentApiOutcome<SessionStartResponse>"
-      },
-      "role": "contributor",
-      "scope": "universe",
-      "summary": "Start a declared session",
       "target": "sessionId"
     },
     {

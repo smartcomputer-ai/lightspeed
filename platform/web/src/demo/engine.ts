@@ -18,7 +18,7 @@ import type {
   ToolCallEventView,
 } from "@lightspeed-ai/sdk";
 import type { MessageAttachment } from "@lightspeed-ai/platform-shared";
-import type { SessionDeclaration, SessionOrigin, SessionView } from "@/api";
+import type { SessionIntegration, SessionOrigin, SessionView } from "@/api";
 import type {
   DemoResponder,
   DemoStore,
@@ -259,7 +259,7 @@ export interface NewSessionInit {
   displayName?: string | null;
   config?: Record<string, unknown>;
   lifecycleControlled?: boolean;
-  declaration?: SessionDeclaration | null;
+  integration?: SessionIntegration | null;
   origin?: SessionOrigin | null;
   activeEnvironmentId?: string | null;
   instructions?: string | null;
@@ -306,7 +306,7 @@ export function newSession(
     activeEnvironmentId: init.activeEnvironmentId ?? null,
     config,
     configRevision: 0,
-    declaration: init.declaration ?? null,
+    integration: init.integration ?? null,
     origin: init.origin ?? null,
     runs: [],
   };

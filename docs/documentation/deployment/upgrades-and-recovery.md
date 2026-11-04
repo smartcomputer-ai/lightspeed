@@ -328,9 +328,9 @@ lightspeed session restart "<session-id>"
 
 Direct clients can call `session/restart`, which needs the Operator role. Retrying
 `session/start` with the session's ID does the same for an ordinary session, for a
-Contributor who can see it. Bot and sub-agent sessions take `session/restart` only,
-and a retried `session/declared/start` answers `sessionExecutionStopped` rather
-than restarting. Restart is safe to repeat: a session already running answers
+Contributor who can see it. Integrated sessions, including bot sessions, and sub-agent
+sessions take `session/restart` only. A retried `session/start` for an integrated session
+answers `sessionExecutionStopped` rather than restarting. Restart is safe to repeat: a session already running answers
 `restarted: false`.
 
 A new execution loads the session from the log. Then:

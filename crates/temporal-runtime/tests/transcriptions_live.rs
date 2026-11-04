@@ -98,6 +98,7 @@ async fn run_audio_transcription_live_client(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 
@@ -216,6 +217,7 @@ async fn run_transcodable_audio_transcription_live_client(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 

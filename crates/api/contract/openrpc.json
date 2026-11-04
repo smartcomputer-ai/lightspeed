@@ -8503,85 +8503,6 @@
         ],
         "type": "object"
       },
-      "DeclaredSessionStartParams": {
-        "additionalProperties": false,
-        "description": "Creation request for a session with immutable workflow ownership and\nworkflow-backed tools.",
-        "properties": {
-          "access": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AccessInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Audience of the new session, as for `session/start`."
-          },
-          "config": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SessionConfig"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "declaration": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/SessionDeclarationInput"
-              }
-            ],
-            "description": "Immutable lifecycle controller and workflow tools, admitted only when\nthe session is first created. This document is not part of\n`SessionConfig` and cannot be changed through `session/config/put`."
-          },
-          "deleteAfterCloseMs": {
-            "description": "Root-owned automatic deletion measured from close. Absent inherits a\nprofile default, explicit null keeps the tree, and a duration overrides\nthe profile.",
-            "format": "uint64",
-            "maximum": 3153600000000,
-            "minimum": 1,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "displayName": {
-            "description": "Cannot contain NUL.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "metadata": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "description": "Descriptive key/value metadata with the same bounds as\n`session/start`; applied only when the session is first created.",
-            "type": "object"
-          },
-          "profile": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ProfileSource"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "sessionId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "declaration"
-        ],
-        "type": "object"
-      },
       "DeletedSessionView": {
         "properties": {
           "deletedAtMs": {
@@ -14350,7 +14271,7 @@
       },
       "SessionConfig": {
         "additionalProperties": false,
-        "description": "Declared session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
+        "description": "Session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
         "properties": {
           "context": {
             "anyOf": [
@@ -14439,37 +14360,6 @@
         },
         "required": [
           "session"
-        ],
-        "type": "object"
-      },
-      "SessionDeclarationInput": {
-        "additionalProperties": false,
-        "properties": {
-          "lifecycleController": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/WorkflowEndpointInput"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "tools": {
-            "items": {
-              "$ref": "#/components/schemas/WorkflowToolDeclarationInput"
-            },
-            "type": "array"
-          },
-          "version": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "version",
-          "tools"
         ],
         "type": "object"
       },
@@ -16135,6 +16025,37 @@
           }
         ]
       },
+      "SessionIntegrationInput": {
+        "additionalProperties": false,
+        "properties": {
+          "lifecycleController": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowEndpointInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowToolDeclarationInput"
+            },
+            "type": "array"
+          },
+          "version": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "tools"
+        ],
+        "type": "object"
+      },
       "SessionJobCancelEntryView": {
         "properties": {
           "error": {
@@ -17138,6 +17059,17 @@
               "null"
             ]
           },
+          "integration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionIntegrationInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable lifecycle controller and workflow tools connecting this session\nto outside workflows, admitted only when it is first created, with bound\ndispatch stated explicitly. This document is not part of `SessionConfig`\nand cannot be changed through `session/config/put`. Retrying an id with an\nintegration requires the same one, and a session started without one\ncannot gain one. Any retry of an integrated session answers\n`sessionExecutionStopped` for a stopped workflow execution instead of\nrestarting it."
+          },
           "metadata": {
             "additionalProperties": {
               "type": "string"
@@ -17216,7 +17148,7 @@
             "type": "string"
           },
           "lifecycleControlled": {
-            "description": "True only when the session's declaration names a lifecycle controller.",
+            "description": "True only when the session's integration names a lifecycle controller.",
             "type": "boolean"
           },
           "lifecycleStatus": {
@@ -17340,17 +17272,6 @@
             "minimum": 0,
             "type": "integer"
           },
-          "declaration": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SessionDeclarationInput"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Immutable workflow-backed tool declaration. A lifecycle controller\nindicates external session ownership; tool-only declarations do not."
-          },
           "displayName": {
             "type": [
               "string",
@@ -17371,8 +17292,19 @@
           "id": {
             "type": "string"
           },
+          "integration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionIntegrationInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable workflow integration. A lifecycle controller indicates external\nsession ownership; a tools-only integration does not."
+          },
           "lifecycleControlled": {
-            "description": "True only when the session's declaration names a lifecycle controller.",
+            "description": "True only when the session's integration names a lifecycle controller.",
             "type": "boolean"
           },
           "lifecycleStatus": {
@@ -19521,7 +19453,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Creates a session, unshared unless access says universe, with optional config/profile setup. Explicit values override profile metadata and retention; the config's default environment attachment becomes active. Retrying an id returns it, keeps its audience, and restarts a stopped workflow execution from its log. Failed setup closes a server-allocated id.",
+      "description": "Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.",
       "name": "session/start",
       "paramStructure": "by-name",
       "params": [
@@ -19540,34 +19472,6 @@
         }
       },
       "summary": "Start a session",
-      "x-lightspeed-access": {
-        "action": "createSession",
-        "kind": "universe"
-      },
-      "x-lightspeed-group": "session",
-      "x-lightspeed-role": "contributor",
-      "x-lightspeed-target": "sessionId"
-    },
-    {
-      "description": "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile defaults and attachment selection follow session/start. Retrying an id requires the same declaration; an undeclared session cannot be upgraded. A retry never restarts a stopped workflow execution: it answers sessionExecutionStopped.",
-      "name": "session/declared/start",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "params",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/DeclaredSessionStartParams"
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfSessionStartResponse"
-        }
-      },
-      "summary": "Start a declared session",
       "x-lightspeed-access": {
         "action": "createSession",
         "kind": "universe"

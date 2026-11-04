@@ -78,7 +78,7 @@ impl SessionLifecycleIo for GatewayAgentApi {
             AgentApiError::internal(format!("session {session_id} has no configuration"))
         })?;
         // The row exists, so the store ignores name, metadata and retention, and the
-        // log holds the config and declaration. Only a sub-agent's row says what the
+        // log holds the config and integration. Only a sub-agent's row says what the
         // caller would have passed: it has nobody to ask for approvals.
         let mut args = self.workflow_args(
             session_id.clone(),
@@ -115,7 +115,8 @@ impl SessionLifecycleIo for GatewayAgentApi {
 /// What a start does when an open session's execution turns out to have stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum StoppedExecution {
-    /// A client retrying its own session/start is asking for that session.
+    /// A client retrying its own session/start is asking for that session. A
+    /// session with an integration still reports, whatever the retry carried.
     Restart,
     /// The runtime's own callers decide what a dead session means for them, and
     /// their retries must not bring it back behind an operator.
@@ -183,7 +184,7 @@ impl<T: SessionLifecycleIo> SessionLifecycle<'_, T> {
         let validate_after_wait = known.is_none();
         let known = match known {
             Some(loaded) => {
-                validate_declared_session_retry(&loaded.state, admitted)?;
+                validate_session_integration_retry(&loaded.state, admitted)?;
                 if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
                     return Ok(loaded);
                 }
@@ -203,7 +204,7 @@ impl<T: SessionLifecycleIo> SessionLifecycle<'_, T> {
         }
         let loaded = self.wait_for_open_session(session_id).await?;
         if validate_after_wait {
-            validate_declared_session_retry(&loaded.state, admitted)?;
+            validate_session_integration_retry(&loaded.state, admitted)?;
         }
         Ok(loaded)
     }
@@ -219,9 +220,19 @@ impl<T: SessionLifecycleIo> SessionLifecycle<'_, T> {
         if self.io.is_running(session_id).await? {
             return Err(not_found);
         }
+        // An integrated session's workflows decide what its death means, so only
+        // `session/restart` brings it back. The stored session decides this,
+        // because a retry may leave out the integration.
+        let integrated = loaded
+            .state
+            .workflow_tools
+            .declared_creation_fingerprint
+            .is_some();
         match self.stopped_execution {
-            StoppedExecution::Report => Err(session_execution_stopped_error(session_id)),
-            StoppedExecution::Restart => self.restart(session_id, &loaded).await,
+            StoppedExecution::Restart if !integrated => self.restart(session_id, &loaded).await,
+            StoppedExecution::Restart | StoppedExecution::Report => {
+                Err(session_execution_stopped_error(session_id))
+            }
         }
     }
 
@@ -359,6 +370,7 @@ impl GatewayAgentApi {
                 // apply a profile's root-session default.
                 delete_after_close_ms: Some(None),
                 access: None,
+                integration: None,
             },
             false,
             true,
@@ -371,7 +383,7 @@ impl GatewayAgentApi {
 
     /// Trusted in-process workflow-plugin entry point. The main API exposes
     /// the same immutable target and completion vocabulary through wire DTOs.
-    pub async fn start_declared_session_for_workflow_with_profile(
+    pub async fn start_integrated_session_for_workflow_with_profile(
         &self,
         session_id: &SessionId,
         close_on_terminal: bool,
@@ -387,6 +399,7 @@ impl GatewayAgentApi {
                 profile,
                 delete_after_close_ms: None,
                 access: None,
+                integration: None,
             },
             close_on_terminal,
             false,
@@ -434,6 +447,8 @@ impl GatewayAgentApi {
             profile,
             delete_after_close_ms,
             access,
+            // The public start already turned this into `trusted_workflow_tools`.
+            integration: _,
         } = params;
         validate_caller_metadata(&metadata)?;
         if let Some(display_name) = &display_name {
@@ -481,9 +496,7 @@ impl GatewayAgentApi {
             .as_ref()
             .map(|declaration| {
                 declaration.admit(self.universe_id()).map_err(|error| {
-                    AgentApiError::invalid_request(format!(
-                        "invalid declared-session workflow-tool declaration: {error}"
-                    ))
+                    AgentApiError::invalid_request(format!("invalid session integration: {error}"))
                 })
             })
             .transpose()?;
@@ -554,7 +567,7 @@ impl GatewayAgentApi {
         let setup_environment = profiles::default_environment_id(&session_config.features)?;
 
         if let Some(admitted) = admitted.as_ref() {
-            self.validate_declared_session_materialization(&session_config, admitted)
+            self.validate_session_integration_materialization(&session_config, admitted)
                 .await?;
         }
         let mut args = self.workflow_args(
@@ -607,7 +620,7 @@ impl GatewayAgentApi {
             Err(error) => return Err(error),
         }
         let loaded = lifecycle.wait_for_open_session(&session_id).await?;
-        validate_declared_session_retry(&loaded.state, admitted.as_ref())?;
+        validate_session_integration_retry(&loaded.state, admitted.as_ref())?;
         // The workflow created the row; the stamp is first-wins, so a retry
         // keeps the audience the session was created with.
         self.record_session_creator(&session_id, visibility).await?;
@@ -623,7 +636,7 @@ impl GatewayAgentApi {
         })
     }
 
-    async fn validate_declared_session_materialization(
+    async fn validate_session_integration_materialization(
         &self,
         session_config: &SessionConfig,
         admitted: &AdmittedDeclaredSessionWorkflowTools,
@@ -804,7 +817,7 @@ impl GatewayAgentApi {
     }
 }
 
-fn validate_declared_session_retry(
+fn validate_session_integration_retry(
     state: &harness::CoreAgentState,
     admitted: Option<&AdmittedDeclaredSessionWorkflowTools>,
 ) -> Result<(), AgentApiError> {
@@ -825,10 +838,10 @@ fn validate_declared_session_retry(
             Ok(())
         }
         (Some(_), Some(_)) => Err(AgentApiError::conflict(
-            "declared-session controller, receiver, or tool declaration conflicts with durable creation state",
+            "session integration conflicts with durable creation state: its controller, a receiver or a tool differs",
         )),
         _ => Err(AgentApiError::conflict(
-            "existing undeclared session cannot be reopened as a declared session",
+            "existing session has no integration and cannot gain one",
         )),
     }
 }
@@ -1352,7 +1365,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn the_declared_path_reports_a_stopped_execution_and_never_restarts() {
+    async fn the_integrated_path_reports_a_stopped_execution_and_never_restarts() {
         let session_id = SessionId::new("session-lifecycle");
         let io = ScriptedIo::new([
             Step::Load(Ok(with_run_history(loaded(CoreAgentStatus::Open, 3, true)))),
@@ -1362,6 +1375,24 @@ mod tests {
         let error = io
             .lifecycle()
             .recover_existing(&session_id, Some(&admitted()))
+            .await
+            .err()
+            .expect("reported");
+        assert_eq!(error.kind, AgentApiErrorKind::SessionExecutionStopped);
+        io.assert_drained();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_retry_without_its_integration_does_not_restart_an_integrated_session() {
+        let session_id = SessionId::new("session-lifecycle");
+        let io = ScriptedIo::new([
+            Step::Load(Ok(with_run_history(loaded(CoreAgentStatus::Open, 3, true)))),
+            Step::Retry(Err(signal_not_found())),
+            Step::Running(Ok(false)),
+        ]);
+        let error = io
+            .restarting()
+            .recover_existing(&session_id, None)
             .await
             .err()
             .expect("reported");
@@ -1489,7 +1520,7 @@ mod tests {
         assert!(error.message.contains("agent session has not opened yet"));
     }
     #[test]
-    fn declared_session_retry_requires_the_durable_creation_fingerprint() {
+    fn integrated_session_retry_requires_the_durable_creation_fingerprint() {
         let universe_id = uuid::Uuid::from_u128(1);
         let declaration = harness::DeclaredSessionWorkflowTools::v1(
             Some(harness::WorkflowEndpointRef {
@@ -1506,7 +1537,7 @@ mod tests {
                 .creation_fingerprint(universe_id)
                 .expect("creation fingerprint"),
         );
-        validate_declared_session_retry(&state, Some(&admitted)).expect("matching retry");
+        validate_session_integration_retry(&state, Some(&admitted)).expect("matching retry");
 
         let conflicting = harness::DeclaredSessionWorkflowTools::v1(
             Some(harness::WorkflowEndpointRef {
@@ -1516,14 +1547,17 @@ mod tests {
             Vec::new(),
         );
         assert_eq!(
-            validate_declared_session_retry(&state, Some(&conflicting.admit(universe_id).unwrap()))
-                .expect_err("conflicting retry")
-                .kind,
+            validate_session_integration_retry(
+                &state,
+                Some(&conflicting.admit(universe_id).unwrap())
+            )
+            .expect_err("conflicting retry")
+            .kind,
             AgentApiErrorKind::Conflict
         );
         assert_eq!(
-            validate_declared_session_retry(&harness::CoreAgentState::new(), Some(&admitted))
-                .expect_err("undeclared session cannot become declared")
+            validate_session_integration_retry(&harness::CoreAgentState::new(), Some(&admitted))
+                .expect_err("a session without an integration cannot gain one")
                 .kind,
             AgentApiErrorKind::Conflict
         );

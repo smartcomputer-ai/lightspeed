@@ -128,7 +128,7 @@ fn admission_failure_mapping_uses_gateway_error_kinds() {
 fn declared_workflow_tools_api_maps_bound_promise_function_tools() {
     let input_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
     let reply_schema_ref = BlobRef::from_bytes(br#"{"type":"string"}"#);
-    let declaration = declared_workflow_tools_from_api(SessionDeclarationInput {
+    let declaration = declared_workflow_tools_from_api(SessionIntegrationInput {
         version: 1,
         lifecycle_controller: Some(WorkflowEndpointInput {
             workflow_id: "controller-1".to_owned(),
@@ -212,7 +212,7 @@ fn declared_workflow_tools_api_maps_bound_promise_function_tools() {
 #[test]
 fn declared_workflow_tools_api_maps_bound_accepted_function_tools() {
     let input_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
-    let declaration = declared_workflow_tools_from_api(SessionDeclarationInput {
+    let declaration = declared_workflow_tools_from_api(SessionIntegrationInput {
         version: 1,
         lifecycle_controller: None,
         tools: vec![WorkflowToolDeclarationInput {
@@ -264,7 +264,7 @@ fn declared_workflow_tools_api_maps_bound_accepted_function_tools() {
 fn declared_workflow_tools_api_maps_joined_completion() {
     let input_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
     let reply_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
-    let declaration = declared_workflow_tools_from_api(SessionDeclarationInput {
+    let declaration = declared_workflow_tools_from_api(SessionIntegrationInput {
         version: 1,
         lifecycle_controller: None,
         tools: vec![WorkflowToolDeclarationInput {
@@ -314,7 +314,7 @@ fn declared_workflow_tools_api_maps_start_targets_and_reply_completion() {
     let recipe_bytes = br#"{"workflowType":"ChannelsSendWorkflow","taskQueue":"channels"}"#;
     let recipe_ref = BlobRef::from_bytes(recipe_bytes);
     let recipe_fingerprint = temporal_workflow::workflow_tool_recipe_fingerprint(recipe_bytes);
-    let declaration = declared_workflow_tools_from_api(SessionDeclarationInput {
+    let declaration = declared_workflow_tools_from_api(SessionIntegrationInput {
         version: 1,
         lifecycle_controller: None,
         tools: vec![WorkflowToolDeclarationInput {
@@ -375,9 +375,9 @@ fn declared_workflow_tools_api_maps_start_targets_and_reply_completion() {
 }
 
 #[test]
-fn declared_workflow_tools_api_rejects_an_empty_declaration_document() {
+fn declared_workflow_tools_api_rejects_an_empty_integration_document() {
     assert_eq!(
-        declared_workflow_tools_from_api(SessionDeclarationInput {
+        declared_workflow_tools_from_api(SessionIntegrationInput {
             version: 1,
             lifecycle_controller: None,
             tools: Vec::new(),

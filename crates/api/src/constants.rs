@@ -16,7 +16,6 @@ pub const METHOD_INITIALIZE: &str = "initialize";
 // ── Sessions: lifecycle ─────────────────────────────────────────────────────
 
 pub const METHOD_SESSION_START: &str = "session/start";
-pub const METHOD_SESSION_DECLARED_START: &str = "session/declared/start";
 pub const METHOD_SESSION_READ: &str = "session/read";
 pub const METHOD_SESSION_LIST: &str = "session/list";
 pub const METHOD_SESSION_CONFIG_PUT: &str = "session/config/put";

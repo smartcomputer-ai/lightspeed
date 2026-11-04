@@ -92,6 +92,7 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
                     config: None,
                     profile: None,
                     delete_after_close_ms: None,
+                    integration: None,
                 }),
             )
             .await?;

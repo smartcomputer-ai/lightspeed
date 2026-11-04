@@ -510,6 +510,7 @@ async fn run_matrix_client(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
     let started = api
@@ -1135,6 +1136,7 @@ async fn run_unavailable_server_live_client(
         config,
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     };
 
     let server_id = format!("degrade_{unique}");
@@ -1678,6 +1680,7 @@ async fn run_approval_live_client(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 
@@ -1865,6 +1868,7 @@ async fn run_runtime_mcp_live_client(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
     let started = api
@@ -2012,6 +2016,7 @@ async fn run_mcp_live_client(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 
@@ -2537,6 +2542,7 @@ async fn run_mixed_batch_live_client(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
     let started = api

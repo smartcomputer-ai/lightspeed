@@ -182,7 +182,7 @@ function botSession(store: DemoStore, universe: UniverseState, bot: BotView, lab
   return newSession(store, universe, {
     displayName: `${bot.botId} · ${label}`,
     lifecycleControlled: true,
-    declaration: {
+    integration: {
       version: 1,
       lifecycleController: { workflowId: `bot:v1:${bot.botId}`, workflowKind: "bot_controller_v1" },
       tools: [],

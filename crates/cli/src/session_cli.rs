@@ -290,6 +290,7 @@ async fn start(args: StartArgs) -> Result<()> {
             profile,
             delete_after_close_ms: args.delete_after_close_ms.map(Some),
             access: None,
+            integration: None,
         })
         .await
         .map_err(api_error)?

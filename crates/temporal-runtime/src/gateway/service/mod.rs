@@ -1264,11 +1264,11 @@ fn run_projection_metadata(
 }
 
 fn declared_workflow_tools_from_api(
-    input: SessionDeclarationInput,
+    input: SessionIntegrationInput,
 ) -> Result<DeclaredSessionWorkflowTools, AgentApiError> {
     if input.lifecycle_controller.is_none() && input.tools.is_empty() {
         return Err(AgentApiError::invalid_request(
-            "declared session requires a lifecycle controller or at least one workflow tool",
+            "session integration requires a lifecycle controller or at least one workflow tool",
         ));
     }
     let lifecycle_controller = input.lifecycle_controller.map(workflow_endpoint_from_api);
@@ -2047,70 +2047,42 @@ impl AgentApiService for GatewayAgentApi {
     /// end to end.
     async fn start_session(
         &self,
-        params: SessionStartParams,
+        mut params: SessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
         self.authorize_method(METHOD_SESSION_START, None).await?;
+        let workflow_tools = params
+            .integration
+            .take()
+            .map(declared_workflow_tools_from_api)
+            .transpose()?;
+        // The runtime signals these endpoints on the caller's behalf, so an
+        // endpoint inside the runtime's own `{universe}/…` namespace must be
+        // in the caller's universe; plugin workflows live outside it.
+        if let Some(workflow_tools) = &workflow_tools {
+            if let Some(controller) = &workflow_tools.lifecycle_controller {
+                self.require_universe_workflow_reference(
+                    "lifecycleController.workflowId",
+                    &controller.workflow_id,
+                )?;
+            }
+            for tool in &workflow_tools.tools {
+                if let Some(receiver) = tool.target.bound_receiver() {
+                    self.require_universe_workflow_reference(
+                        &format!(
+                            "workflow tool {} receiver.workflowId",
+                            tool.definition.workflow_tool_id
+                        ),
+                        &receiver.workflow_id,
+                    )?;
+                }
+            }
+        }
         self.start_session_internal(
             params,
             false,
             false,
-            None,
+            workflow_tools,
             session_lifecycle::StoppedExecution::Restart,
-        )
-        .await
-    }
-
-    async fn start_declared_session(
-        &self,
-        params: DeclaredSessionStartParams,
-    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
-        self.authorize_method(METHOD_SESSION_DECLARED_START, None)
-            .await?;
-        let DeclaredSessionStartParams {
-            session_id,
-            display_name,
-            metadata,
-            config,
-            profile,
-            delete_after_close_ms,
-            access,
-            declaration,
-        } = params;
-        let workflow_tools = declared_workflow_tools_from_api(declaration)?;
-        // The runtime signals these endpoints on the caller's behalf, so an
-        // endpoint inside the runtime's own `{universe}/…` namespace must be
-        // in the caller's universe; plugin workflows live outside it.
-        if let Some(controller) = &workflow_tools.lifecycle_controller {
-            self.require_universe_workflow_reference(
-                "lifecycleController.workflowId",
-                &controller.workflow_id,
-            )?;
-        }
-        for tool in &workflow_tools.tools {
-            if let Some(receiver) = tool.target.bound_receiver() {
-                self.require_universe_workflow_reference(
-                    &format!(
-                        "workflow tool {} receiver.workflowId",
-                        tool.definition.workflow_tool_id
-                    ),
-                    &receiver.workflow_id,
-                )?;
-            }
-        }
-        self.start_session_internal(
-            SessionStartParams {
-                session_id,
-                display_name,
-                metadata,
-                config,
-                profile,
-                delete_after_close_ms,
-                access,
-            },
-            false,
-            false,
-            Some(workflow_tools),
-            session_lifecycle::StoppedExecution::Report,
         )
         .await
     }

@@ -625,7 +625,7 @@ impl DeclaredSessionWorkflowTools {
     ) -> Result<AdmittedDeclaredSessionWorkflowTools, DomainError> {
         if self.version != DECLARED_TOOL_DECLARATION_VERSION {
             return Err(DomainError::InvariantViolation(format!(
-                "unsupported declared-session workflow tool declaration version {}",
+                "unsupported session integration version {}",
                 self.version
             )));
         }
@@ -634,7 +634,7 @@ impl DeclaredSessionWorkflowTools {
         }
         if self.tools.len() > MAX_DECLARED_TOOLS {
             return Err(DomainError::InvariantViolation(format!(
-                "declared-session workflow tool declaration contains {} tools, max {}",
+                "session integration contains {} tools, max {}",
                 self.tools.len(),
                 MAX_DECLARED_TOOLS
             )));
@@ -653,13 +653,13 @@ impl DeclaredSessionWorkflowTools {
             let definition = declaration.definition;
             if !tool_ids.insert(definition.workflow_tool_id.clone()) {
                 return Err(DomainError::InvariantViolation(format!(
-                    "declared-session workflow tool declaration contains duplicate tool id {}",
+                    "session integration contains duplicate tool id {}",
                     definition.workflow_tool_id
                 )));
             }
             if !tool_names.insert(definition.tool.id.clone()) {
                 return Err(DomainError::InvariantViolation(format!(
-                    "declared-session workflow tool declaration contains duplicate tool name {}",
+                    "session integration contains duplicate tool name {}",
                     definition.tool.id
                 )));
             }
@@ -893,7 +893,7 @@ pub(crate) fn apply_config_event(
         } => {
             if state.lifecycle.status != crate::CoreAgentStatus::Open {
                 return Err(DomainError::InvariantViolation(
-                    "declared-session workflow bindings can only be admitted to an open session"
+                    "session integration workflow bindings can only be admitted to an open session"
                         .to_owned(),
                 ));
             }
@@ -903,7 +903,7 @@ pub(crate) fn apply_config_event(
                 || !state.workflow_tools.bindings.is_empty()
             {
                 return Err(DomainError::InvariantViolation(
-                    "declared-session workflow bindings are immutable after session creation"
+                    "session integration workflow bindings are immutable after session creation"
                         .to_owned(),
                 ));
             }
@@ -911,7 +911,7 @@ pub(crate) fn apply_config_event(
             for binding in bindings {
                 if binding.session_universe_id != *session_universe_id {
                     return Err(DomainError::InvariantViolation(format!(
-                        "workflow tool {} source universe does not match the declared session",
+                        "workflow tool {} source universe does not match the integrated session",
                         binding.definition.workflow_tool_id
                     )));
                 }

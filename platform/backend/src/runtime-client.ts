@@ -29,7 +29,7 @@ export interface Member {
 /// Methods only a session's creator, or an admin, may call.
 const CREATOR_METHODS: ReadonlySet<string> = new Set(["session/share"]);
 /// Methods that may name a session that does not exist yet.
-const CREATION_METHODS: ReadonlySet<string> = new Set(["session/start", "session/declared/start"]);
+const CREATION_METHODS: ReadonlySet<string> = new Set(["session/start"]);
 
 /// Deployment methods, with the Platform's deployment key and no universe or
 /// actor. Callers check that the user is a platform admin.
@@ -86,9 +86,6 @@ class MemberClient extends LightspeedClient {
     if (!required) throw new GateRefusal(403, `${method} is not a member method`);
     if (!roleAtLeast(this.member.role, required)) throw new GateRefusal(403, `${required} role required`);
     if (!roleAtLeast(this.member.role, "operator")) {
-      if (method === "session/declared/start") {
-        throw new GateRefusal(403, "operator role required to create declared sessions");
-      }
       if (method === "session/start") requirePreparedSession(params as MethodParams<"session/start">);
       if (method === "session/runs/start" && (params as MethodParams<"session/runs/start">).config != null) {
         throw new GateRefusal(403, "operator role required for run configuration overrides");
@@ -140,6 +137,9 @@ class MemberClient extends LightspeedClient {
 
 /** Contributors choose a saved profile or the universe defaults, without overrides. */
 function requirePreparedSession(params: MethodParams<"session/start">): void {
+  if (params.integration !== undefined) {
+    throw new GateRefusal(403, "operator role required to create integrated sessions");
+  }
   const profile = params.profile;
   const defaultProfile = profile == null || (profile.kind === "inline"
     && profile.profile != null && Object.keys(profile.profile).length === 0

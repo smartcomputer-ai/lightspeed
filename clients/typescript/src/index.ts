@@ -11,8 +11,9 @@ export type {
   LightspeedClientOptions,
   ReadEventsOptions,
   RequestId,
-  RunTerminalState,
   StartRunOptions,
+  TerminalRunStatus,
+  TerminalRunView,
 } from "./client.js";
 export {
   METHODS,

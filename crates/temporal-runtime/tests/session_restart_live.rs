@@ -68,6 +68,7 @@ fn session_start_params(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     }
 }
 
@@ -575,13 +576,23 @@ async fn temporal_live_a_retried_start_restarts_and_the_declared_path_never_does
         // though an operator can still bring the session back.
         let declared = SessionId::new(format!("{session_id}-declared"));
         let declaration = || harness::DeclaredSessionWorkflowTools::v1(None, Vec::new());
-        api.start_declared_session_for_workflow_with_profile(&declared, false, None, declaration())
-            .await?;
+        api.start_integrated_session_for_workflow_with_profile(
+            &declared,
+            false,
+            None,
+            declaration(),
+        )
+        .await?;
         let run = start_text_run(&api, &declared, "finish once").await?;
         wait_for_terminal_run(&api, &declared, &run.id).await?;
         terminate(&client, &declared).await?;
         let stopped = api
-            .start_declared_session_for_workflow_with_profile(&declared, false, None, declaration())
+            .start_integrated_session_for_workflow_with_profile(
+                &declared,
+                false,
+                None,
+                declaration(),
+            )
             .await
             .expect_err("the declared path must not restart");
         assert_eq!(stopped.kind, AgentApiErrorKind::SessionExecutionStopped);

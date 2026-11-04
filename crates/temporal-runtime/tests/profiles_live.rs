@@ -131,6 +131,7 @@ async fn run_default_environment_put_live_client(
         config: Some(config),
         delete_after_close_ms: None,
         profile: None,
+        integration: None,
     };
     let put = |config| api::SessionConfigPutParams {
         session_id: session_id.to_string(),
@@ -345,6 +346,7 @@ async fn run_profile_environment_selection_live_client(
             profile: Some(ProfileSource::Named {
                 profile_id: profile_id.clone(),
             }),
+            integration: None,
         })
     };
     start().await?;
@@ -531,6 +533,7 @@ async fn run_profiles_live_client(
         profile: Some(ProfileSource::Named {
             profile_id: profile_id.clone(),
         }),
+        integration: None,
     })
     .await?;
     let session = read_session_view(&api, &session_id).await?;

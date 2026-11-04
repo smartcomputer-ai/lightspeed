@@ -152,7 +152,7 @@ a route makes for a member goes through one client
   method manifest by `node platform/scripts/generate-method-roles.mjs`, and
   `npm run check` fails when it is stale;
 - limits contributor creation to ordinary sessions with universe defaults or a
-  named profile, without setup overrides; declared creation and run configuration
+  named profile, without setup overrides; integrated creation and run configuration
   overrides require an operator;
 - for a method that names a session, unless the member is an admin, requires the
   session to be shared with the universe or created by the member; sharing

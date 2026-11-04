@@ -321,6 +321,7 @@ impl ChatSessionDriver {
                     profile: options.profile.clone(),
                     delete_after_close_ms: None,
                     access: None,
+                    integration: None,
                 })
                 .await
                 .map_err(api_error)?;
@@ -1364,6 +1365,7 @@ impl ChatSessionDriver {
                 profile: None,
                 delete_after_close_ms: None,
                 access: None,
+                integration: None,
             })
             .await
             .map_err(api_error)?;

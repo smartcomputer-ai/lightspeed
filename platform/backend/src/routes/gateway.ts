@@ -2531,7 +2531,7 @@ export async function withGateway(
     if (error instanceof LightspeedRpcError) {
       if (error.kind === "modelDefaultUnset") return c.json({ error: error.message, kind: error.kind, modelDefaultSlot: error.data?.modelDefaultSlot }, 400);
       if (error.kind === "operationPending") return c.json({ error: error.message, kind: error.kind, submissionId: error.data?.submissionId }, 409);
-      if (error.kind === "invalidRequest") return c.json({ error: error.message }, 400);
+      if (error.kind === "invalidRequest" || error.kind === "audioBlobTooLarge") return c.json({ error: error.message }, 400);
       // Core refusing the Platform means its own key or gate is wrong: the
       // member was already admitted here.
       if (error.kind === "unauthenticated") return c.json({ error: "runtime rejected the Platform key" }, 502);

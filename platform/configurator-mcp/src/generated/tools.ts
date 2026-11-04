@@ -39,7 +39,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/start",
     "group": "session",
     "summary": "Start a session",
-    "description": "Creates a session, unshared unless access says universe, with optional config/profile setup. Explicit values override profile metadata and retention; the config's default environment attachment becomes active. Retrying an id returns it, keeps its audience, and restarts a stopped workflow execution from its log. Failed setup closes a server-allocated id.",
+    "description": "Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.",
     "paramsType": "SessionStartParams",
     "resultType": "AgentApiOutcome<SessionStartResponse>",
     "inputSchema": {
@@ -831,7 +831,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Declared session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
+          "description": "Session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
           "properties": {
             "context": {
               "anyOf": [
@@ -1923,7 +1923,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Declared session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
+          "description": "Session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
           "properties": {
             "context": {
               "anyOf": [
@@ -4495,7 +4495,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Declared session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
+          "description": "Session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
           "properties": {
             "context": {
               "anyOf": [
@@ -6472,7 +6472,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Declared session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
+          "description": "Session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
           "properties": {
             "context": {
               "anyOf": [
@@ -7594,7 +7594,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Declared session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
+          "description": "Session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
           "properties": {
             "context": {
               "anyOf": [

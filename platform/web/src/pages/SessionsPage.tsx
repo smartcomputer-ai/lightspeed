@@ -1611,10 +1611,10 @@ export function SessionDetail({
       })),
   ];
   const closed = session.data?.lifecycleStatus === "closed";
-  const declaration = session.data?.declaration;
+  const integration = session.data?.integration;
   const controlled = session.data?.lifecycleControlled === true;
-  const managerLabel = controlledSessionOwnerLabel(declaration);
-  const owningBotId = controlledSessionBotId(declaration, session.data?.metadata);
+  const managerLabel = controlledSessionOwnerLabel(integration);
+  const owningBotId = controlledSessionBotId(integration, session.data?.metadata);
   // With bots switched off, a bot's session reads as controlled, with no way
   // into the hidden bot page.
   const botsOn = useFeature("bots");

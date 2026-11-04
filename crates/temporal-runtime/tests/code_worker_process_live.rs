@@ -222,6 +222,7 @@ async fn killed_code_worker_recovers_on_another_process_without_replaying_javasc
                     timers: Some(api::TimersFeature { version: api::CURRENT_FEATURE_VERSION }),
                     ..Default::default()
                 }), ..Default::default() }),
+                integration: None,
             }).await?;
             let result = async {
                 let run = start_text_run(&api, &session_id, "run one effect then compute").await?;

@@ -937,13 +937,13 @@ where
 
 use std::future::Future;
 
-async fn start_declared_session_and_run(
+async fn start_integrated_session_and_run(
     api: &GatewayAgentApi,
     session_id: &SessionId,
     declarations: Vec<WorkflowToolDeclaration>,
     call_tool: &str,
 ) -> anyhow::Result<api::RunView> {
-    api.start_declared_session_for_workflow_with_profile(
+    api.start_integrated_session_for_workflow_with_profile(
         session_id,
         false,
         None,
@@ -973,13 +973,13 @@ async fn start_declared_session_and_run(
 
 /// Start a run that calls `call_tool` and then stays in its next generation until
 /// `SECOND_GENERATION_RELEASE`. Returns the run id, with the run still going.
-async fn start_declared_session_and_hold_run(
+async fn start_integrated_session_and_hold_run(
     api: &GatewayAgentApi,
     session_id: &SessionId,
     declarations: Vec<WorkflowToolDeclaration>,
     call_tool: &str,
 ) -> anyhow::Result<String> {
-    api.start_declared_session_for_workflow_with_profile(
+    api.start_integrated_session_for_workflow_with_profile(
         session_id,
         false,
         None,
@@ -1058,7 +1058,7 @@ async fn workflow_tool_bound_request_reply_resolves_via_plugin_worker() -> anyho
             "lightspeed.test.approval.v1",
         )
         .await?;
-        let run = start_declared_session_and_run(
+        let run = start_integrated_session_and_run(
             &api,
             &session_id,
             vec![WorkflowToolDeclaration::new(
@@ -1188,7 +1188,7 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
             "channels.message.send.v1",
         )
         .await?;
-        api.start_declared_session_for_workflow_with_profile(
+        api.start_integrated_session_for_workflow_with_profile(
             &session_id,
             false,
             None,
@@ -1361,7 +1361,7 @@ async fn workflow_tool_pushed_accepted_delivers_after_run_terminal() -> anyhow::
             "channels.message.accepted.v1",
         )
         .await?;
-        let run = start_declared_session_and_run(
+        let run = start_integrated_session_and_run(
             &api,
             &session_id,
             vec![WorkflowToolDeclaration::new(
@@ -1464,7 +1464,7 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
             "channels.message.send.v1",
         )
         .await?;
-        api.start_declared_session_for_workflow_with_profile(
+        api.start_integrated_session_for_workflow_with_profile(
             &session_id,
             false,
             None,
@@ -1640,7 +1640,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
             "lightspeed.test.approval.v1",
         )
         .await?;
-        api.start_declared_session_for_workflow_with_profile(
+        api.start_integrated_session_for_workflow_with_profile(
             &session_id,
             false,
             None,
@@ -2007,7 +2007,7 @@ async fn workflow_tool_start_on_call_resolves_via_plugin_worker() -> anyhow::Res
         )
         .await?;
         let started = std::time::Instant::now();
-        let run = start_declared_session_and_run(
+        let run = start_integrated_session_and_run(
             &api,
             &session_id,
             vec![WorkflowToolDeclaration::new(
@@ -2095,7 +2095,7 @@ async fn workflow_tool_start_recovery_query_resolves_silent_execution() -> anyho
             "lightspeed.test.launch.v1",
         )
         .await?;
-        let run = start_declared_session_and_run(
+        let run = start_integrated_session_and_run(
             &api,
             &session_id,
             vec![WorkflowToolDeclaration::new(
@@ -2155,7 +2155,7 @@ async fn workflow_tool_start_recovery_query_meets_the_reply_schema() -> anyhow::
             "lightspeed.test.launch.v1",
         )
         .await?;
-        let run = start_declared_session_and_run(
+        let run = start_integrated_session_and_run(
             &api,
             &session_id,
             vec![WorkflowToolDeclaration::new(
@@ -2208,7 +2208,7 @@ async fn workflow_tool_dead_receiver_fails_promise_terminally() -> anyhow::Resul
                 "lightspeed.test.approval.v1",
             )
             .await?;
-            api.start_declared_session_for_workflow_with_profile(
+            api.start_integrated_session_for_workflow_with_profile(
                 &session_id,
                 false,
                 None,
@@ -2375,7 +2375,7 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
             "lightspeed.test.approval.v1",
         )
         .await?;
-        api.start_declared_session_for_workflow_with_profile(
+        api.start_integrated_session_for_workflow_with_profile(
             &session_id,
             false,
             None,
@@ -2540,7 +2540,7 @@ async fn workflow_tool_closed_receiver_fails_delivery_terminally() -> anyhow::Re
             "lightspeed.test.approval.v1",
         )
         .await?;
-        let run = start_declared_session_and_run(
+        let run = start_integrated_session_and_run(
             &api,
             &session_id,
             vec![WorkflowToolDeclaration::new(
@@ -2595,7 +2595,7 @@ async fn workflow_tool_start_survives_continue_as_new() -> anyhow::Result<()> {
                 "lightspeed.test.launch.v1",
             )
             .await?;
-            let run = start_declared_session_and_run(
+            let run = start_integrated_session_and_run(
                 &api,
                 &session_id,
                 vec![WorkflowToolDeclaration::new(
@@ -2638,7 +2638,7 @@ async fn workflow_tool_start_survives_continue_as_new() -> anyhow::Result<()> {
             let completion = &session
                 .result
                 .session
-                .declaration
+                .integration
                 .as_ref()
                 .and_then(|declaration| declaration.tools.first())
                 .ok_or_else(|| anyhow::anyhow!("continued Joined declaration was not projected"))?
@@ -2722,7 +2722,7 @@ async fn workflow_tool_run_terminal_auto_cancel_notifies_bound_receiver() -> any
             "lightspeed.test.approval.v1",
         )
         .await?;
-        api.start_declared_session_for_workflow_with_profile(
+        api.start_integrated_session_for_workflow_with_profile(
             &session_id,
             false,
             None,
@@ -2817,7 +2817,7 @@ async fn workflow_tool_start_goes_out_before_the_next_generation_finishes() -> a
             "lightspeed.test.launch.v1",
         )
         .await?;
-        let run_id = start_declared_session_and_hold_run(
+        let run_id = start_integrated_session_and_hold_run(
             &api,
             &session_id,
             vec![WorkflowToolDeclaration::new(
@@ -2895,7 +2895,7 @@ async fn workflow_tool_pushed_accepted_delivers_before_the_next_generation_finis
             "channels.message.accepted.v1",
         )
         .await?;
-        let run_id = start_declared_session_and_hold_run(
+        let run_id = start_integrated_session_and_hold_run(
             &api,
             &session_id,
             vec![WorkflowToolDeclaration::new(
@@ -2962,7 +2962,7 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
         let definition =
             tool_definition(&blobs, "launch", LAUNCH_JOB_TOOL, "lightspeed.test.launch.v1")
                 .await?;
-        api.start_declared_session_for_workflow_with_profile(
+        api.start_integrated_session_for_workflow_with_profile(
             &session_id,
             false,
             None,
@@ -3081,7 +3081,7 @@ async fn workflow_tool_start_deadline_fails_unserved_queue() -> anyhow::Result<(
                 "lightspeed.test.launch.v1",
             )
             .await?;
-            let run = start_declared_session_and_run(
+            let run = start_integrated_session_and_run(
                 &api,
                 &session_id,
                 vec![WorkflowToolDeclaration::new(

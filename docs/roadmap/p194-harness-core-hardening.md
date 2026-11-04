@@ -3294,6 +3294,16 @@ These are the calls most worth your attention. Full detail is under 'Risky calls
 
 The owner dropped the lifetime `maxDescendants`: it stopped long-running agents and protected nothing `maxConcurrent` does not, since a child closes when it finishes. `maxConcurrent` is the safety limit, now defaulting to 8 across the tree. At the limit the call is refused and tells the model to await a running child; it does not queue. A run that spawns one child at a time can go on indefinitely, which matches the rule that limits apply only when set. `job_run` and the LLM call limits stay as they are, by the owner's call.
 
+### Session start, after the final gate
+
+The owner chose to merge `session/declared/start` into `session/start` and to name the wrapper field `integration`, over keeping a separate method. Wherever this document says `session/declared/start`, `declaration` or "declared session" about the public API, read `session/start`, `integration` and "integrated session". The same applies to the `AGENTS.md` wording proposed below, which still needs sign-off.
+
+- **Shape:** `session/start` takes an optional `integration: { version, lifecycleController?, tools }`. A controller alone, tools alone, or both are valid; an empty document is refused. `session.integration` is the read side.
+- **Role gate:** nothing changes for callers. Below operator, the Platform's allowlist on `session/start` already refuses the field, with a clearer message added. The core never distinguished the two methods: both needed `CreateSession`, the contributor role and the `session` key group.
+- **Configurator:** `tool-filter.json` gains `excludeParams`, so the `session/start` tool omits `integration` and refuses it as an unknown field. The generator fails if a listed param is renamed or becomes required.
+- **Retry behaviour changed:** whether a retry restarts a stopped execution now comes from the stored session, not the request. Before, a plain `session/start` retry on a declared session's id restarted it, which a contributor could reach for any session outside the bot and sub-agent id prefixes. Now it answers `sessionExecutionStopped`, and `session/restart` is the way back.
+- **Left alone:** harness and stored names such as `DeclaredSessionWorkflowTools`, `declaration_version`, `declared_creation_fingerprint` and the `lightspeed.declared-session.creation.v1` domain, plus the tool-level `WorkflowToolDeclarationInput`. Renaming stored names buys nothing, and a single tool's declaration is still a declaration.
+
 ### Parallel work
 
 The last two groups ran in one checkout with agents working at once, as you asked. Commits interleave, and some carry a neighbour's edit to a shared file, so cherry-picking a whole package from those groups is harder than from the first ten. For example, the session status removal in H-25 spans commits from two rename packages.

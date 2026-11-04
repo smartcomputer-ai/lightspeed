@@ -2,11 +2,12 @@ import type {
   AgentApiOutcomeOfRunStartResponse,
   AgentApiOutcomeOfSessionEventsReadResponse,
   EventCursor,
-  ContentRefView,
   InputItem,
   RunStartConfig,
   RunStartParams,
   RunStartSource,
+  RunStatus,
+  RunView,
   SessionEventView,
   SessionEventsReadParams,
 } from "./generated/types.js";
@@ -50,21 +51,9 @@ export interface ReadEventsOptions extends CallOptions {
   waitMs?: number | null;
 }
 
-export type RunTerminalState =
-  | {
-      status: "completed";
-      event: SessionEventView;
-      output: ContentRefView | null;
-    }
-  | {
-      status: "failed";
-      event: SessionEventView;
-      message: string;
-    }
-  | {
-      status: "cancelled";
-      event: SessionEventView;
-    };
+export type TerminalRunStatus = Extract<RunStatus, "completed" | "failed" | "cancelled">;
+
+export type TerminalRunView = RunView & { status: TerminalRunStatus };
 
 export interface AwaitRunOptions extends CallOptions {
   after?: EventCursor | null;
@@ -74,15 +63,25 @@ export interface AwaitRunOptions extends CallOptions {
     cursor: EventCursor | null,
     page: AgentApiOutcomeOfSessionEventsReadResponse,
   ) => void | Promise<void>;
+  /** Called for this run's own events. `onPage` sees every event in the session. */
   onEvent?: (event: SessionEventView) => void | Promise<void>;
   onPage?: (page: AgentApiOutcomeOfSessionEventsReadResponse) => void | Promise<void>;
 }
 
 export interface AwaitRunResult {
-  state: RunTerminalState;
-  cursor: EventCursor;
-  page: AgentApiOutcomeOfSessionEventsReadResponse;
+  /** The finished run, as `session/runs/read` projects it. */
+  run: TerminalRunView;
+  /** Where to resume reading the session's events. Null if none were read. */
+  cursor: EventCursor | null;
 }
+
+const AWAIT_RUN_WAIT_MS = 30_000;
+const AWAIT_RUN_MIN_WAIT_MS = 1_000;
+/** Bounds a request beyond its long-poll, so a stalled connection cannot hold a wait open. */
+const AWAIT_RUN_REQUEST_GRACE_MS = 30_000;
+/** Six attempts span about 30 seconds of backoff, enough to outlast a runtime restart. */
+const AWAIT_RUN_READ_ATTEMPTS = 6;
+const AWAIT_RUN_RETRY_BASE_MS = 1_000;
 
 export class LightspeedClient implements RpcCaller {
   private readonly endpoint: string;
@@ -129,16 +128,13 @@ export class LightspeedClient implements RpcCaller {
     try {
       response = await this.fetchImpl(this.endpoint, init);
     } catch (error) {
-      throw new LightspeedTransportError(`Lightspeed API request failed: ${errorMessage(error)}`);
-    }
-
-    const body = await readJson(response);
-    if (!response.ok) {
-      throw new LightspeedTransportError(`Lightspeed API request failed with HTTP ${response.status}`, {
-        status: response.status,
-        body,
+      options.signal?.throwIfAborted();
+      throw new LightspeedTransportError(`Lightspeed API request failed: ${errorMessage(error)}`, {
+        cause: error,
       });
     }
+
+    const body = await this.readBody(response, options.signal);
     if (!isRecord(body)) {
       throw new LightspeedTransportError("Lightspeed API response was not a JSON object", { body });
     }
@@ -200,42 +196,86 @@ export class LightspeedClient implements RpcCaller {
     return this.call("session/events/read", params, options);
   }
 
+  /**
+   * Waits until a run finishes and returns it. Repeats reads that fail on the
+   * network, and rejects with `sessionExecutionStopped` when nothing can finish
+   * the run. Reads the session from its beginning unless given `after`. Giving
+   * up on the wait does not cancel the run.
+   */
   async awaitRun(
     sessionId: string,
     runId: string,
     options: AwaitRunOptions = {},
   ): Promise<AwaitRunResult> {
+    const waitMs = Math.max(options.waitMs ?? AWAIT_RUN_WAIT_MS, AWAIT_RUN_MIN_WAIT_MS);
+    const read = <T>(waited: number, request: (call: CallOptions) => Promise<T>) =>
+      retryTransient(waited + AWAIT_RUN_REQUEST_GRACE_MS, options, request);
+    const readRun = async (): Promise<RunView> => {
+      const { result } = await read(0, (call) =>
+        this.call("session/runs/read", { sessionId, runId }, call),
+      );
+      return result.run;
+    };
+
     let cursor = options.after ?? null;
+    // The first read does not wait, so a run that already ended, or a session
+    // that has stopped, is reported at once.
+    let currentWaitMs = 0;
     for (;;) {
-      throwIfAborted(options.signal);
-      const readOptions: ReadEventsOptions = {
-        after: cursor,
-        waitMs: options.waitMs ?? 30_000,
-      };
+      const readOptions: ReadEventsOptions = { after: cursor, waitMs: currentWaitMs };
       if (options.limit !== undefined) {
         readOptions.limit = options.limit;
       }
-      if (options.signal) {
-        readOptions.signal = options.signal;
-      }
-      if (options.headers) {
-        readOptions.headers = options.headers;
-      }
-      const page = await this.readEvents(sessionId, readOptions);
+      const page = await read(currentWaitMs, (call) =>
+        this.readEvents(sessionId, { ...readOptions, ...call }),
+      );
       await options.onPage?.(page);
 
-      for (const event of page.result.events ?? []) {
+      const events = page.result.events ?? [];
+      let finished = false;
+      for (const event of events) {
         cursor = event.cursor;
-        await options.onEvent?.(event);
-        const state = terminalStateForRun(event, runId);
-        if (state) {
-          await options.heartbeat?.(cursor, page);
-          return { state, cursor, page };
+        if (event.joins.runId === runId) {
+          await options.onEvent?.(event);
+        }
+        if (isTerminalEventFor(event, runId)) {
+          finished = true;
+          break;
         }
       }
-
-      cursor = page.result.nextCursor ?? page.result.headCursor ?? cursor;
+      if (!finished) {
+        // Never advance to `headCursor`: it is read after the page, so an event
+        // landing between the two would be skipped.
+        cursor = page.result.nextCursor ?? cursor;
+      }
       await options.heartbeat?.(cursor, page);
+      if (finished) {
+        return { run: expectTerminal(await readRun()), cursor };
+      }
+
+      if (events.length === 0) {
+        // An empty page says nothing about the run, and the terminal event may
+        // be behind a caller's cursor, so ask for its state.
+        const { result } = await read(0, (call) =>
+          this.call("session/read", { sessionId }, call),
+        );
+        const summary = result.session.runs?.find((run) => run.id === runId);
+        if (!summary || isTerminalStatus(summary.status)) {
+          const run = await readRun();
+          if (isTerminalRun(run)) {
+            return { run, cursor };
+          }
+        }
+        if (result.session.executionFailure) {
+          const message = `session ${sessionId} execution has stopped (${result.session.executionFailure})`;
+          throw new LightspeedRpcError({
+            code: -32016,
+            message,
+            data: { kind: "sessionExecutionStopped", message },
+          });
+        }
+      }
+      currentWaitMs = waitMs;
     }
   }
 
@@ -244,6 +284,44 @@ export class LightspeedClient implements RpcCaller {
       return this.requestId();
     }
     return this.nextNumericRequestId++;
+  }
+
+  private async readBody(response: Response, signal: AbortSignal | undefined): Promise<unknown> {
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (error) {
+      signal?.throwIfAborted();
+      throw new LightspeedTransportError(`Lightspeed API response failed: ${errorMessage(error)}`, {
+        cause: error,
+      });
+    }
+    let body: unknown = null;
+    let parseFailure: unknown;
+    if (text.length > 0) {
+      try {
+        body = JSON.parse(text) as unknown;
+      } catch (error) {
+        parseFailure = error;
+        body = text;
+      }
+    }
+    if (!response.ok) {
+      // A proxy's error page is not JSON, and the status is what explains it.
+      const hint =
+        response.status === 404 ? `: check that ${this.endpoint} is the gateway's /rpc URL` : "";
+      throw new LightspeedTransportError(
+        `Lightspeed API request failed with HTTP ${response.status}${hint}`,
+        { status: response.status, body },
+      );
+    }
+    if (parseFailure !== undefined) {
+      throw new LightspeedTransportError(
+        `Lightspeed API response was not valid JSON: ${errorMessage(parseFailure)}`,
+        { status: response.status, body, cause: parseFailure },
+      );
+    }
+    return body;
   }
 
   private async buildHeaders(callHeaders: HeadersInit | undefined): Promise<Headers> {
@@ -270,20 +348,72 @@ export function generateSubmissionId(): string {
   return `sub_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 }
 
-function terminalStateForRun(event: SessionEventView, runId: string): RunTerminalState | null {
+function isTerminalEventFor(event: SessionEventView, runId: string): boolean {
   const kind = event.kind;
-  switch (kind.type) {
-    case "runCompleted":
-      return kind.runId === runId
-        ? { status: "completed", event, output: kind.output ?? null }
-        : null;
-    case "runFailed":
-      return kind.runId === runId ? { status: "failed", event, message: kind.message } : null;
-    case "runCancelled":
-      return kind.runId === runId ? { status: "cancelled", event } : null;
-    default:
-      return null;
+  return (
+    (kind.type === "runCompleted" || kind.type === "runFailed" || kind.type === "runCancelled") &&
+    kind.runId === runId
+  );
+}
+
+function isTerminalStatus(status: RunStatus): status is TerminalRunStatus {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function isTerminalRun(run: RunView): run is TerminalRunView {
+  return isTerminalStatus(run.status);
+}
+
+function expectTerminal(run: RunView): TerminalRunView {
+  if (!isTerminalRun(run)) {
+    throw new LightspeedTransportError(
+      `Lightspeed API reported run ${run.id} as ${run.status} after its terminal event`,
+    );
   }
+  return run;
+}
+
+/** Repeats a read, which is always safe, through failures that may pass. */
+async function retryTransient<T>(
+  timeoutMs: number,
+  options: CallOptions,
+  request: (call: CallOptions) => Promise<T>,
+): Promise<T> {
+  const { signal } = options;
+  for (let attempt = 1; ; attempt += 1) {
+    signal?.throwIfAborted();
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const call: CallOptions = { signal: signal ? AbortSignal.any([signal, timeout]) : timeout };
+    if (options.headers) {
+      call.headers = options.headers;
+    }
+    try {
+      return await request(call);
+    } catch (error) {
+      signal?.throwIfAborted();
+      const retryable =
+        timeout.aborted || (error instanceof LightspeedTransportError && error.transient);
+      if (!retryable || attempt >= AWAIT_RUN_READ_ATTEMPTS) {
+        throw error;
+      }
+      await sleep(AWAIT_RUN_RETRY_BASE_MS * 2 ** (attempt - 1), signal);
+    }
+  }
+}
+
+function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const done = () => {
+      signal?.removeEventListener("abort", aborted);
+      resolve();
+    };
+    const aborted = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", aborted, { once: true });
+  });
 }
 
 function appendHeaders(headers: Headers, values: HeadersInit | undefined): void {
@@ -293,31 +423,10 @@ function appendHeaders(headers: Headers, values: HeadersInit | undefined): void 
   new Headers(values).forEach((value, key) => headers.set(key, value));
 }
 
-async function readJson(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (text.length === 0) {
-    return null;
-  }
-  try {
-    return JSON.parse(text) as unknown;
-  } catch (error) {
-    throw new LightspeedTransportError(`Lightspeed API response was not valid JSON: ${errorMessage(error)}`, {
-      status: response.status,
-      body: text,
-    });
-  }
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function throwIfAborted(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) {
-    throw signal.reason instanceof Error ? signal.reason : new Error("operation aborted");
-  }
 }

@@ -499,6 +499,7 @@ where
                         code_mode: Some(feature), timers: Some(api::TimersFeature { version: api::CURRENT_FEATURE_VERSION }),
                         ..Default::default()
                     }), ..Default::default() }),
+                    integration: None,
                 }).await?;
                 let run = start_text_run(&api, &session_id, "compose the granted tools using JavaScript").await?;
                 let result = check(Fixture { client, api: api.clone(), store, session_id: session_id.clone(), run_id: run.id, generations, probe }).await;

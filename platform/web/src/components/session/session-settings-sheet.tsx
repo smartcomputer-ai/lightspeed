@@ -65,7 +65,7 @@ export function SessionSettingsDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const canConfigure = useActionPermissions(universeId).can("configureSession");
-  const declaration = session?.declaration;
+  const integration = session?.integration;
   const controlled = session?.lifecycleControlled === true;
 
   return (
@@ -75,7 +75,7 @@ export function SessionSettingsDialog({
           <DialogTitle>Session settings</DialogTitle>
           <DialogDescription>
             {!canConfigure ? "View this session’s configuration. Operator permission is required to change it." : controlled
-              ? `Edit configuration directly. Lifecycle and chat delivery remain managed by ${controlledSessionOwnerLabel(declaration)}.`
+              ? `Edit configuration directly. Lifecycle and chat delivery remain managed by ${controlledSessionOwnerLabel(integration)}.`
               : "Edit this live session directly, then apply the setup in one operation."}
           </DialogDescription>
         </DialogHeader>

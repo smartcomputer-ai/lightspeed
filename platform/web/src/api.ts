@@ -453,7 +453,7 @@ export interface SessionRetention {
   deleteAtMs?: number | null;
 }
 
-export interface SessionDeclaration {
+export interface SessionIntegration {
   version: number;
   lifecycleController?: WorkflowEndpoint | null;
   tools?: DeclaredWorkflowTool[];
@@ -491,7 +491,7 @@ export interface SessionView {
   config?: Record<string, unknown> | null;
   configRevision: number;
   activeContext?: { compaction?: ContextCompactionView | null };
-  declaration?: SessionDeclaration | null;
+  integration?: SessionIntegration | null;
   origin?: SessionOrigin | null;
   /// Bounded newest-first run summary page. Authoritative for recent run
   /// state; the event tail is the live, incremental transcript view.

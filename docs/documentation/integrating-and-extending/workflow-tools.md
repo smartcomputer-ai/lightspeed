@@ -21,8 +21,9 @@ controller coordinates the session itself, including when to submit new runs
 or replace a closed session. The lifecycle controller and tool receiver can
 be different workflows.
 
-`session/declared/start` creates a session with immutable workflow declarations.
-The declarations live outside ordinary `SessionConfig`. They identify the
+`session/start` with an `integration` creates an integrated session, whose
+workflow connections are immutable. The integration lives outside ordinary
+`SessionConfig`. They identify the
 function the model sees, its schema, its receiver or start recipe, and the
 meaning of completion.
 
@@ -89,10 +90,10 @@ export async function createReviewSession(client: LightspeedClient) {
   const inputSchemaRef = await putJsonBytes(schema);
   const recipeRef = await putJsonBytes(recipe);
 
-  return client.call("session/declared/start", {
+  return client.call("session/start", {
     sessionId: "acorn-review",
     profile: { kind: "named", profileId: "release-editor" },
-    declaration: {
+    integration: {
       version: 1,
       tools: [{
         definition: {
@@ -259,7 +260,7 @@ event stream, maintaining a cursor and deduplication state. This mode supports
 
 ## Add lifecycle coordination when needed
 
-A separate `lifecycleController` can be declared at declared-session creation
+A separate `lifecycleController` can be named in the session's integration
 with its `workflowId` and `workflowKind`. It owns the application's policy
 for submitting runs, coordinating other work, and retiring or replacing the
 session. Tool receivers do not acquire that responsibility automatically.
@@ -267,7 +268,7 @@ session. Tool receivers do not acquire that responsibility automatically.
 For a session with that controller, `session/runs/start` can include
 `notifyOnTerminal: { token: "acorn-review-001" }`. Use `client.call` for this
 field; the convenience `startRun` helper does not expose it. The destination
-comes from the immutable controller declaration, while the token lets the
+comes from the session's immutable integration, while the token lets the
 controller correlate and deduplicate terminal notifications.
 
 Retain the submission ID and the same notification token on retries. Terminal
@@ -285,17 +286,18 @@ back to itself. Otherwise both sides wait on one another. Promise-bearing
 calls to the lifecycle controller require a hard deadline, and their handlers
 must progress independently of the wait for the run.
 
-## Preserve declaration and delivery semantics
+## Preserve integration and delivery semantics
 
-Declared creation validates tool identities, name collisions, schemas, and
-recipes before admitting the declarations. Retrying the same session ID
-requires the same admitted declaration; changing receiver, schema, recipe,
-or completion behavior requires a new session. A retry never restarts a stopped
-workflow execution: it answers `sessionExecutionStopped`, and `session/restart` is the
-way back. An undeclared session cannot be upgraded into a declared one through
-configuration replacement.
+Creating an integrated session validates tool identities, name collisions,
+schemas, and recipes before admitting the integration. Retrying the same session ID
+with an integration requires the same admitted integration; changing receiver,
+schema, recipe, or completion behavior requires a new session. A retry never
+restarts an integrated session's stopped workflow execution, even without its
+integration: it answers `sessionExecutionStopped`, and `session/restart` is the
+way back. A session started without an integration cannot gain one, by retrying
+or through configuration replacement.
 
-A tools-only declaration may omit the lifecycle controller. That supplies
+A tools-only integration may omit the lifecycle controller. That supplies
 workflow tools without the UI's controller-owned lifecycle designation. The
 declared-start API uses the `session` key group. Lifecycle ownership tells the
 runtime where to send lifecycle notifications; it does not change which API
@@ -337,7 +339,7 @@ missing completion signal with recovery results available.
 
 | Symptom | What to inspect |
 | --- | --- |
-| Declared creation conflicts | An existing undeclared session or changed immutable declaration. |
+| Integrated creation conflicts | An existing session with no integration, or a changed immutable integration. |
 | Tool call starts no work | Recipe bytes/fingerprint, workflow registration, namespace, and custom queue pollers. |
 | Joined call never resumes | Deadline, reply promise, producer identity, result reference, and holder ID. |
 | Started workflow completed but the tool failed | Recovery results missing the required completion key or invalid reply data. |

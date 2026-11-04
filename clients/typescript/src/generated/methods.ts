@@ -8,7 +8,6 @@ export const METHODS = [
   "vfs/workspaces/files/read",
   "initialize",
   "session/start",
-  "session/declared/start",
   "session/read",
   "session/list",
   "session/config/put",
@@ -166,13 +165,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"createSession","kind":"universe"},
     summary: "Start a session",
-    description: "Creates a session, unshared unless access says universe, with optional config/profile setup. Explicit values override profile metadata and retention; the config's default environment attachment becomes active. Retrying an id returns it, keeps its audience, and restarts a stopped workflow execution from its log. Failed setup closes a server-allocated id.",
-  },
-  "session/declared/start": {
-    scope: "universe",
-    access: {"action":"createSession","kind":"universe"},
-    summary: "Start a declared session",
-    description: "Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile defaults and attachment selection follow session/start. Retrying an id requires the same declaration; an undeclared session cannot be upgraded. A retry never restarts a stopped workflow execution: it answers sessionExecutionStopped.",
+    description: "Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.",
   },
   "session/read": {
     scope: "universe",
@@ -1037,19 +1030,10 @@ export interface MethodMap {
   /**
    * Start a session
    *
-   * Creates a session, unshared unless access says universe, with optional config/profile setup. Explicit values override profile metadata and retention; the config's default environment attachment becomes active. Retrying an id returns it, keeps its audience, and restarts a stopped workflow execution from its log. Failed setup closes a server-allocated id.
+   * Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.
    */
   "session/start": {
     params: Api.SessionStartParams;
-    result: Api.AgentApiOutcomeOfSessionStartResponse;
-  };
-  /**
-   * Start a declared session
-   *
-   * Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile defaults and attachment selection follow session/start. Retrying an id requires the same declaration; an undeclared session cannot be upgraded. A retry never restarts a stopped workflow execution: it answers sessionExecutionStopped.
-   */
-  "session/declared/start": {
-    params: Api.DeclaredSessionStartParams;
     result: Api.AgentApiOutcomeOfSessionStartResponse;
   };
   /**
@@ -2323,18 +2307,10 @@ export const rpc = {
   /**
    * Start a session
    *
-   * Creates a session, unshared unless access says universe, with optional config/profile setup. Explicit values override profile metadata and retention; the config's default environment attachment becomes active. Retrying an id returns it, keeps its audience, and restarts a stopped workflow execution from its log. Failed setup closes a server-allocated id.
+   * Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.
    */
   sessionStart(client: RpcCaller, params: Api.SessionStartParams): Promise<Api.AgentApiOutcomeOfSessionStartResponse> {
     return client.call("session/start", params);
-  },
-  /**
-   * Start a declared session
-   *
-   * Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile defaults and attachment selection follow session/start. Retrying an id requires the same declaration; an undeclared session cannot be upgraded. A retry never restarts a stopped workflow execution: it answers sessionExecutionStopped.
-   */
-  sessionDeclaredStart(client: RpcCaller, params: Api.DeclaredSessionStartParams): Promise<Api.AgentApiOutcomeOfSessionStartResponse> {
-    return client.call("session/declared/start", params);
   },
   /**
    * Read a session

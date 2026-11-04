@@ -143,6 +143,7 @@ async fn run_model_scenario(
             }),
             ..Default::default()
         }),
+        integration: None,
     })
     .await?;
 

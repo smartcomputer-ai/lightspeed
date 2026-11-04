@@ -55,47 +55,21 @@ pub struct SessionStartParams {
     /// means unshared until `session/share`; a retry keeps the original.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<AccessInput>,
-}
-
-/// Creation request for a session with immutable workflow ownership and
-/// workflow-backed tools.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DeclaredSessionStartParams {
-    pub session_id: Option<SessionId>,
-    /// Cannot contain NUL.
+    /// Immutable lifecycle controller and workflow tools connecting this session
+    /// to outside workflows, admitted only when it is first created, with bound
+    /// dispatch stated explicitly. This document is not part of `SessionConfig`
+    /// and cannot be changed through `session/config/put`. Retrying an id with an
+    /// integration requires the same one, and a session started without one
+    /// cannot gain one. Any retry of an integrated session answers
+    /// `sessionExecutionStopped` for a stopped workflow execution instead of
+    /// restarting it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    /// Descriptive key/value metadata with the same bounds as
-    /// `session/start`; applied only when the session is first created.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub metadata: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config: Option<SessionConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile: Option<ProfileSource>,
-    /// Root-owned automatic deletion measured from close. Absent inherits a
-    /// profile default, explicit null keeps the tree, and a duration overrides
-    /// the profile.
-    #[serde(
-        default,
-        deserialize_with = "deserialize_optional_nullable_delete_after_close_ms",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(schema_with = "optional_nullable_delete_after_close_ms_schema")]
-    pub delete_after_close_ms: Option<Option<u64>>,
-    /// Audience of the new session, as for `session/start`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub access: Option<AccessInput>,
-    /// Immutable lifecycle controller and workflow tools, admitted only when
-    /// the session is first created. This document is not part of
-    /// `SessionConfig` and cannot be changed through `session/config/put`.
-    pub declaration: SessionDeclarationInput,
+    pub integration: Option<SessionIntegrationInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SessionDeclarationInput {
+pub struct SessionIntegrationInput {
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_controller: Option<WorkflowEndpointInput>,
@@ -264,7 +238,7 @@ fn default_feature_version() -> u32 {
     CURRENT_FEATURE_VERSION
 }
 
-/// Declared session configuration document.
+/// Session configuration document.
 ///
 /// Sparse and capability-oriented: an omitted section means defaults, an
 /// absent feature is not granted (no tools, no access). The document is
@@ -1073,7 +1047,7 @@ pub struct SessionSummaryView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed_at_ms: Option<u64>,
     pub retention: SessionRetentionView,
-    /// True only when the session's declaration names a lifecycle controller.
+    /// True only when the session's integration names a lifecycle controller.
     pub lifecycle_controlled: bool,
     /// Sub-agent lineage; absent for root sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]

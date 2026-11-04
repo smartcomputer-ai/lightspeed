@@ -841,6 +841,7 @@ async fn start_subagent_parent_with_features(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
     let run = api
@@ -1711,6 +1712,7 @@ async fn run_agent_run_inherit_environment_live_client(
                 },
             }),
         }),
+        integration: None,
     })
     .await?;
     let parent_environment = api

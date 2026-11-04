@@ -169,7 +169,8 @@ different business operation can therefore reconnect to old state. Creation
 retries can still validate supplied profile/configuration references, so an
 invalid or deleted referenced profile can prevent a retry. A retry also
 [restarts a stopped workflow execution](../deployment/upgrades-and-recovery.md#restart-a-stopped-session)
-from the log. Once IDs are saved, read the known session/run directly during recovery
+from the log, except for a session created with an `integration`: that retry reports
+`sessionExecutionStopped`. Once IDs are saved, read the known session/run directly during recovery
 instead of unnecessarily repeating creation. If a start fails during setup, a
 server-allocated ID is closed and a client-supplied one reports the same error on retry.
 

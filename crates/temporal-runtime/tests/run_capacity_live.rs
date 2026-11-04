@@ -86,6 +86,7 @@ async fn temporal_live_anthropic_run_learns_capacity_and_switches_models() -> an
                 }),
                 profile: None,
                 delete_after_close_ms: None,
+                integration: None,
             })
             .await?;
 

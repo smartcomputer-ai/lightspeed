@@ -67,6 +67,7 @@ async fn temporal_live_a_failed_start_leaves_nothing_live() -> anyhow::Result<()
             }),
             profile: None,
             delete_after_close_ms: None,
+            integration: None,
         };
         let listed = async || -> anyhow::Result<Vec<api::SessionSummaryView>> {
             Ok(api
@@ -191,6 +192,7 @@ async fn run_compaction_live_client(
         config: Some(config.clone()),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
     api.append_context(ContextAppendParams {
@@ -435,6 +437,7 @@ async fn temporal_live_session_read_needs_no_worker_and_reports_a_dead_execution
             config: None,
             profile: None,
             delete_after_close_ms: None,
+            integration: None,
         })
         .await?;
         captured.replace(Some((client, api, session_id)));
@@ -645,6 +648,7 @@ async fn run_checkpoint_and_bounded_reads_live_client(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 
@@ -848,6 +852,7 @@ async fn run_fake_live_client(
             }),
             profile: None,
             delete_after_close_ms: None,
+            integration: None,
         })
         .await?;
     assert_eq!(started.result.session.id, session_id.as_str());
@@ -1060,6 +1065,7 @@ async fn run_fake_live_client(
             config: None,
             profile: None,
             delete_after_close_ms: None,
+            integration: None,
         })
         .await?;
     assert_eq!(restarted.result.session.id, session_id.as_str());
@@ -1155,6 +1161,7 @@ async fn run_lifecycle_delete_mode(
         config: None,
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 
@@ -1265,6 +1272,7 @@ async fn run_continue_as_new_live_client(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 
@@ -1423,6 +1431,7 @@ async fn run_context_append_live_client(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 
@@ -1650,6 +1659,7 @@ async fn run_admission_failure_live_client(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 
@@ -1780,6 +1790,7 @@ async fn run_openai_live_client(
             }),
         }),
         delete_after_close_ms: None,
+        integration: None,
     };
     api.start_session(start.clone()).await?;
     let session = read_session_view(&api, &session_id).await?;
@@ -1928,6 +1939,7 @@ async fn run_builtin_tool_live_client(
             }),
         }),
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 
@@ -2074,6 +2086,7 @@ async fn run_session_metadata_live_client(
             config: None,
             profile: None,
             delete_after_close_ms: None,
+            integration: None,
         })
         .await?;
     assert_eq!(started.result.session.id, session_id.as_str());
@@ -2143,6 +2156,7 @@ async fn run_session_metadata_live_client(
             config: None,
             profile: None,
             delete_after_close_ms: None,
+            integration: None,
         })
         .await
         .expect_err("reserved prefix is rejected at start");
@@ -2190,6 +2204,7 @@ async fn run_provider_rejection_live_client(
         }),
         profile: None,
         delete_after_close_ms: None,
+        integration: None,
     })
     .await?;
 

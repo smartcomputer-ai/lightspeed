@@ -398,6 +398,14 @@ export type ToolChoice =
       type: "specific";
     };
 /**
+ * How an open session's workflow execution stopped. A session that closed
+ * normally never reports one.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionExecutionFailureView".
+ */
+export type SessionExecutionFailureView = "failed" | "terminated" | "timedOut" | "missing";
+/**
  * Completion contract for one workflow-tool invocation. Joined tools park
  * the original call on one runtime-owned reply; Promises exposes handles for
  * model-controlled concurrency.
@@ -488,14 +496,6 @@ export type WorkflowToolTargetInput =
  * via the `definition` "BoundWorkflowToolDispatchInput".
  */
 export type BoundWorkflowToolDispatchInput = "pull" | "push";
-/**
- * How an open session's workflow execution stopped. A session that closed
- * normally never reports one.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionExecutionFailureView".
- */
-export type SessionExecutionFailureView = "failed" | "terminated" | "timedOut" | "missing";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionLifecycleStatus".
@@ -1900,19 +1900,6 @@ export type BotTriggerInput1 =
 export type ChannelMediaKind = "image" | "audio" | "document";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "ProfileSource".
- */
-export type ProfileSource =
-  | {
-      kind: "named";
-      profileId: ProfileId;
-    }
-  | {
-      kind: "inline";
-      profile: InlineAgentProfile;
-    };
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionJobCancelScopeView".
  */
 export type SessionJobCancelScopeView = "job" | "dependents";
@@ -1976,6 +1963,19 @@ export type UniverseAction =
  * via the `definition` "MethodTarget".
  */
 export type MethodTarget = "sessionId";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ProfileSource".
+ */
+export type ProfileSource =
+  | {
+      kind: "named";
+      profileId: ProfileId;
+    }
+  | {
+      kind: "inline";
+      profile: InlineAgentProfile;
+    };
 /**
  * Universe roles as gates built on this contract name them. Core holds no
  * roles; this is metadata only.
@@ -2094,11 +2094,6 @@ export interface SessionView {
   config?: SessionConfig | null;
   configRevision: number;
   createdAtMs: number;
-  /**
-   * Immutable workflow-backed tool declaration. A lifecycle controller
-   * indicates external session ownership; tool-only declarations do not.
-   */
-  declaration?: SessionDeclarationInput | null;
   displayName?: string | null;
   /**
    * Set by `session/read` when the session is still open but its workflow
@@ -2109,7 +2104,12 @@ export interface SessionView {
   executionFailure?: SessionExecutionFailureView | null;
   id: string;
   /**
-   * True only when the session's declaration names a lifecycle controller.
+   * Immutable workflow integration. A lifecycle controller indicates external
+   * session ownership; a tools-only integration does not.
+   */
+  integration?: SessionIntegrationInput | null;
+  /**
+   * True only when the session's integration names a lifecycle controller.
    */
   lifecycleControlled: boolean;
   /**
@@ -2384,7 +2384,7 @@ export interface LlmUsageView {
   totalTokens?: number | null;
 }
 /**
- * Declared session configuration document.
+ * Session configuration document.
  *
  * Sparse and capability-oriented: an omitted section means defaults, an
  * absent feature is not granted (no tools, no access). The document is
@@ -2827,9 +2827,9 @@ export interface ModelConfig {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "SessionDeclarationInput".
+ * via the `definition` "SessionIntegrationInput".
  */
-export interface SessionDeclarationInput {
+export interface SessionIntegrationInput {
   lifecycleController?: WorkflowEndpointInput | null;
   tools: WorkflowToolDeclarationInput[];
   version: number;
@@ -4350,7 +4350,7 @@ export interface SessionSummaryView {
   displayName?: string | null;
   id: string;
   /**
-   * True only when the session's declaration names a lifecycle controller.
+   * True only when the session's integration names a lifecycle controller.
    */
   lifecycleControlled: boolean;
   lifecycleStatus: SessionLifecycleStatus;
@@ -7653,69 +7653,6 @@ export interface ContextReplaceParams {
   sessionId: string;
 }
 /**
- * Creation request for a session with immutable workflow ownership and
- * workflow-backed tools.
- *
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "DeclaredSessionStartParams".
- */
-export interface DeclaredSessionStartParams {
-  /**
-   * Audience of the new session, as for `session/start`.
-   */
-  access?: AccessInput | null;
-  config?: SessionConfig | null;
-  /**
-   * Immutable lifecycle controller and workflow tools, admitted only when
-   * the session is first created. This document is not part of
-   * `SessionConfig` and cannot be changed through `session/config/put`.
-   */
-  declaration: SessionDeclarationInput;
-  /**
-   * Root-owned automatic deletion measured from close. Absent inherits a
-   * profile default, explicit null keeps the tree, and a duration overrides
-   * the profile.
-   */
-  deleteAfterCloseMs?: number | null;
-  /**
-   * Cannot contain NUL.
-   */
-  displayName?: string | null;
-  /**
-   * Descriptive key/value metadata with the same bounds as
-   * `session/start`; applied only when the session is first created.
-   */
-  metadata?: {
-    [k: string]: string;
-  };
-  profile?: ProfileSource | null;
-  sessionId?: string | null;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "InlineAgentProfile".
- */
-export interface InlineAgentProfile {
-  config?: SessionConfig | null;
-  description?: string | null;
-  displayName?: string | null;
-  instructions?: ProfileInstructions | null;
-  /**
-   * Descriptive metadata defaults copied to a session when it is created
-   * from this profile. Explicit `session/start` metadata wins key by key.
-   * Applying the profile to an existing session does not change metadata.
-   */
-  metadata?: {
-    [k: string]: string;
-  };
-  /**
-   * Creation-time session retention default. Absence keeps the tree until
-   * manual deletion. Applying a profile to an existing session does not
-   * change retention.
-   */
-  retention?: ProfileSessionRetention | null;
-}
-/**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "DeploymentApiKeyCreateParams".
  */
@@ -8283,6 +8220,30 @@ export interface InitializeParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "InlineAgentProfile".
+ */
+export interface InlineAgentProfile {
+  config?: SessionConfig | null;
+  description?: string | null;
+  displayName?: string | null;
+  instructions?: ProfileInstructions | null;
+  /**
+   * Descriptive metadata defaults copied to a session when it is created
+   * from this profile. Explicit `session/start` metadata wins key by key.
+   * Applying the profile to an existing session does not change metadata.
+   */
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * Creation-time session retention default. Absence keeps the tree until
+   * manual deletion. Applying a profile to an existing session does not
+   * change retention.
+   */
+  retention?: ProfileSessionRetention | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "JsonRpcError".
  */
 export interface JsonRpcError {
@@ -8813,6 +8774,17 @@ export interface SessionStartParams {
    * Cannot contain NUL.
    */
   displayName?: string | null;
+  /**
+   * Immutable lifecycle controller and workflow tools connecting this session
+   * to outside workflows, admitted only when it is first created, with bound
+   * dispatch stated explicitly. This document is not part of `SessionConfig`
+   * and cannot be changed through `session/config/put`. Retrying an id with an
+   * integration requires the same one, and a session started without one
+   * cannot gain one. Any retry of an integrated session answers
+   * `sessionExecutionStopped` for a stopped workflow execution instead of
+   * restarting it.
+   */
+  integration?: SessionIntegrationInput | null;
   /**
    * Descriptive key/value metadata, applied only when the session is
    * first created: at most 32 entries, keys 1..=64 bytes, values 1..=256

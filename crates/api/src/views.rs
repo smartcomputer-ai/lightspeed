@@ -27,7 +27,7 @@ pub struct SessionView {
     /// The audience of the session's root: whether it is shared with the
     /// universe, and who created it.
     pub access: ResourceAccessSummary,
-    /// True only when the session's declaration names a lifecycle controller.
+    /// True only when the session's integration names a lifecycle controller.
     pub lifecycle_controlled: bool,
     pub config_revision: u64,
     /// The stored sparse config document, exactly as last put (model and
@@ -50,10 +50,10 @@ pub struct SessionView {
     /// The universe environment selected by the session event log.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_environment_id: Option<EnvironmentId>,
-    /// Immutable workflow-backed tool declaration. A lifecycle controller
-    /// indicates external session ownership; tool-only declarations do not.
+    /// Immutable workflow integration. A lifecycle controller indicates external
+    /// session ownership; a tools-only integration does not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub declaration: Option<SessionDeclarationView>,
+    pub integration: Option<SessionIntegrationView>,
     /// Sub-agent lineage; absent for root sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<SessionOriginView>,
@@ -113,9 +113,9 @@ pub enum RunSummarySourceView {
     },
 }
 
-/// Declared-session reads use the same immutable declaration document accepted
+/// Integrated-session reads use the same immutable integration document accepted
 /// at creation. Per-invocation diagnostics remain in `session/events/read`.
-pub type SessionDeclarationView = SessionDeclarationInput;
+pub type SessionIntegrationView = SessionIntegrationInput;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

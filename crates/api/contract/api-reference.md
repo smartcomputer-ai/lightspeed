@@ -42,26 +42,13 @@ Returns protocol version, server identity, credential scope and allowed groups b
 
 **Start a session**
 
-Creates a session, unshared unless access says universe, with optional config/profile setup. Explicit values override profile metadata and retention; the config's default environment attachment becomes active. Retrying an id returns it, keeps its audience, and restarts a stopped workflow execution from its log. Failed setup closes a server-allocated id.
+Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.
 
 - Access: `{"kind":"universe","action":"createSession"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
 - Params: `SessionStartParams`
-- Result: `AgentApiOutcome<SessionStartResponse>`
-
-### `session/declared/start`
-
-**Start a declared session**
-
-Creates a session with immutable lifecycle and workflow-tool declarations using explicit bound dispatch. Profile defaults and attachment selection follow session/start. Retrying an id requires the same declaration; an undeclared session cannot be upgraded. A retry never restarts a stopped workflow execution: it answers sessionExecutionStopped.
-
-- Access: `{"kind":"universe","action":"createSession"}`
-- Group: `session`
-- Role: `contributor`
-- Target: `sessionId`
-- Params: `DeclaredSessionStartParams`
 - Result: `AgentApiOutcome<SessionStartResponse>`
 
 ### `session/read`

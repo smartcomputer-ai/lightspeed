@@ -13,8 +13,8 @@ use api::{
     EventJoinsView, InputItem, LlmUsageView, MediaKind, ModelConfig, PendingApprovalView,
     ProviderContextDisplayView, ProviderNativeToolExecutionView, RunAcceptedSourceView,
     RunFailureKindView, RunStatus as ApiRunStatus, RunSummarySourceView, RunSummaryView, RunView,
-    RunViewSource, SessionDeclarationInput, SessionDeclarationView, SessionEventKindView,
-    SessionEventView, SessionRetentionView, SessionView, TokenEstimateQualityView,
+    RunViewSource, SessionEventKindView, SessionEventView, SessionIntegrationInput,
+    SessionIntegrationView, SessionRetentionView, SessionView, TokenEstimateQualityView,
     TokenEstimateView, ToolBatchView, ToolCallDisplayGroup, ToolCallDisplayView, ToolCallEventView,
     ToolCallMediaView, ToolCallView, ToolEffectView, ToolItemStatus, ToolKindView,
     ToolParallelismView, ToolView, WorkflowEndpointInput, WorkflowStartRefInput,
@@ -153,7 +153,7 @@ impl<'a> CoreAgentProjector<'a> {
                 .active_environment_id
                 .as_ref()
                 .map(|id| id.as_str().to_owned()),
-            declaration: session_declaration_to_api(params.state),
+            integration: session_integration_to_api(params.state),
             origin: params
                 .record
                 .origin
@@ -1712,9 +1712,9 @@ fn run_failure_kind_to_api(kind: RunFailureKind) -> RunFailureKindView {
     }
 }
 
-fn session_declaration_to_api(state: &CoreAgentState) -> Option<SessionDeclarationView> {
+fn session_integration_to_api(state: &CoreAgentState) -> Option<SessionIntegrationView> {
     let version = state.workflow_tools.declaration_version?;
-    Some(SessionDeclarationInput {
+    Some(SessionIntegrationInput {
         version,
         lifecycle_controller: state.workflow_tools.lifecycle_controller.as_ref().map(
             |controller| WorkflowEndpointInput {
@@ -4190,7 +4190,7 @@ mod tests {
     }
 
     #[test]
-    fn declared_session_projection_exposes_controller_ownership() {
+    fn integrated_session_projection_exposes_controller_ownership() {
         let mut state = CoreAgentState::new();
         state.workflow_tools.declaration_version = Some(1);
         state.workflow_tools.lifecycle_controller = Some(harness::WorkflowEndpointRef {
@@ -4199,8 +4199,8 @@ mod tests {
         });
 
         assert_eq!(
-            session_declaration_to_api(&state),
-            Some(SessionDeclarationInput {
+            session_integration_to_api(&state),
+            Some(SessionIntegrationInput {
                 version: 1,
                 lifecycle_controller: Some(WorkflowEndpointInput {
                     workflow_id: "channels/session-1".to_owned(),
@@ -4209,11 +4209,11 @@ mod tests {
                 tools: Vec::new(),
             })
         );
-        assert_eq!(session_declaration_to_api(&CoreAgentState::new()), None);
+        assert_eq!(session_integration_to_api(&CoreAgentState::new()), None);
     }
 
     #[test]
-    fn declared_session_projection_reuses_the_joined_declaration_contract() {
+    fn integrated_session_projection_reuses_the_joined_completion_contract() {
         let mut state = CoreAgentState::new();
         state.workflow_tools.declaration_version = Some(1);
         let universe_id = "00000000-0000-0000-0000-000000000001"
@@ -4278,7 +4278,7 @@ mod tests {
             .bindings
             .insert(binding.definition.workflow_tool_id.clone(), binding);
 
-        let projected = session_declaration_to_api(&state).expect("declared projection");
+        let projected = session_integration_to_api(&state).expect("integration projection");
         assert_eq!(projected.tools.len(), 1);
         assert_eq!(
             projected.tools[0].target,
@@ -4409,7 +4409,7 @@ mod tests {
     async fn detailed_session_projects_lifecycle_controlled_catalog_flag() {
         let blobs = InMemoryBlobStore::new();
         let projector = CoreAgentProjector::new(&blobs);
-        let session_id = SessionId::new("declared-session");
+        let session_id = SessionId::new("integrated-session");
         let state = CoreAgentState::new();
         let record = SessionRecord {
             metadata: Default::default(),
@@ -4450,7 +4450,7 @@ mod tests {
                 run_cursor: None,
             })
             .await
-            .expect("project detailed declared session");
+            .expect("project detailed integrated session");
 
         assert!(session.0.lifecycle_controlled);
     }
@@ -4670,7 +4670,7 @@ mod tests {
         let projected = projector
             .project_event_kind(&CoreAgentEvent::WorkflowToolConfig(config_event))
             .await
-            .expect("project declared-session tools");
+            .expect("project integrated-session tools");
 
         assert_eq!(
             projected,

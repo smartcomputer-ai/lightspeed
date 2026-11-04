@@ -58,11 +58,6 @@ pub trait AgentApiService: Send + Sync {
         params: SessionStartParams,
     ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError>;
 
-    async fn start_declared_session(
-        &self,
-        params: DeclaredSessionStartParams,
-    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError>;
-
     async fn create_profile(
         &self,
         params: ProfileCreateParams,

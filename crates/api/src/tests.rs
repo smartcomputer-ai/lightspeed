@@ -207,9 +207,9 @@ fn request_ids_accept_number_or_string() {
 }
 
 #[test]
-fn public_session_config_rejects_declared_workflow_tool_bindings() {
+fn public_session_config_rejects_integration_workflow_tool_bindings() {
     let config = serde_json::from_value::<SessionConfig>(json!({
-        "declaration": {
+        "integration": {
             "lifecycleController": {
                 "workflowId": "work/other",
                 "workflowKind": "agent_work"
@@ -220,7 +220,7 @@ fn public_session_config_rejects_declared_workflow_tool_bindings() {
 
     assert!(
         config.is_err(),
-        "declared workflow-tool bindings must not enter through public session config"
+        "workflow-tool bindings must not enter through public session config"
     );
 }
 
@@ -239,10 +239,10 @@ fn public_workflow_tool_input_rejects_runtime_builtin_definitions() {
 }
 
 #[test]
-fn declared_session_creation_exposes_targets_and_completion_contracts() {
-    let params: DeclaredSessionStartParams = serde_json::from_value(json!({
+fn integrated_session_creation_exposes_targets_and_completion_contracts() {
+    let params: SessionStartParams = serde_json::from_value(json!({
         "sessionId": "session_1",
-        "declaration": {
+        "integration": {
             "version": 1,
             "lifecycleController": {
                 "workflowId": "controller-1",
@@ -283,28 +283,28 @@ fn declared_session_creation_exposes_targets_and_completion_contracts() {
             }]
         }
     }))
-    .expect("declared session params");
+    .expect("integrated session params");
 
-    let declaration = params.declaration;
-    assert_eq!(declaration.version, 1);
+    let integration = params.integration.expect("integration");
+    assert_eq!(integration.version, 1);
     assert_eq!(
-        declaration.tools[0].definition.tool.parallelism,
+        integration.tools[0].definition.tool.parallelism,
         ToolParallelismView::ParallelSafe
     );
     assert_eq!(
-        serde_json::to_value(&declaration).expect("serialize declaration")["tools"][0]["definition"]
+        serde_json::to_value(&integration).expect("serialize integration")["tools"][0]["definition"]
             ["tool"]["parallelism"],
         json!("parallelSafe")
     );
     assert!(matches!(
-        declaration.tools[0].target,
+        integration.tools[0].target,
         WorkflowToolTargetInput::Bound {
             dispatch: BoundWorkflowToolDispatchInput::Push,
             ..
         }
     ));
     assert!(matches!(
-        declaration.tools[0].completion,
+        integration.tools[0].completion,
         WorkflowToolCompletionInput::Promises {
             key_source: WorkflowToolCompletionKeySourceInput::ArrayIndices { .. },
             ..
@@ -313,7 +313,7 @@ fn declared_session_creation_exposes_targets_and_completion_contracts() {
 }
 
 #[test]
-fn declared_session_creation_rejects_receiver_shortcut_and_tool_targets() {
+fn integrated_session_creation_rejects_receiver_shortcut_and_tool_targets() {
     for forbidden in ["receiver", "targetRequirement"] {
         let mut tool = json!({
             "definition": {
@@ -339,17 +339,17 @@ fn declared_session_creation_rejects_receiver_shortcut_and_tool_targets() {
             "completion": {"type": "accepted"}
         });
         tool[forbidden] = json!({});
-        let result = serde_json::from_value::<DeclaredSessionStartParams>(json!({
-            "declaration": {"version": 1, "tools": [tool]}
+        let result = serde_json::from_value::<SessionStartParams>(json!({
+            "integration": {"version": 1, "tools": [tool]}
         }));
         assert!(result.is_err(), "{forbidden} must not be accepted");
     }
 }
 
 #[test]
-fn declared_session_creation_rejects_bound_target_without_dispatch() {
-    let result = serde_json::from_value::<DeclaredSessionStartParams>(json!({
-        "declaration": {
+fn integrated_session_creation_rejects_bound_target_without_dispatch() {
+    let result = serde_json::from_value::<SessionStartParams>(json!({
+        "integration": {
             "version": 1,
             "tools": [{
                 "definition": {
@@ -380,9 +380,9 @@ fn declared_session_creation_rejects_bound_target_without_dispatch() {
 }
 
 #[test]
-fn declared_session_creation_decodes_joined_completion_with_or_without_a_deadline() {
-    let params = serde_json::from_value::<DeclaredSessionStartParams>(json!({
-        "declaration": {
+fn integrated_session_creation_decodes_joined_completion_with_or_without_a_deadline() {
+    let params = serde_json::from_value::<SessionStartParams>(json!({
+        "integration": {
             "version": 1,
             "tools": [{
                 "definition": {
@@ -409,9 +409,9 @@ fn declared_session_creation_decodes_joined_completion_with_or_without_a_deadlin
             }]
         }
     }))
-    .expect("Joined declared session declaration");
+    .expect("Joined integrated session");
     assert!(matches!(
-        params.declaration.tools[0].completion,
+        params.integration.as_ref().expect("integration").tools[0].completion,
         WorkflowToolCompletionInput::Joined {
             deadline_after_ms: Some(30_000),
             ..
@@ -432,16 +432,6 @@ fn declared_session_creation_decodes_joined_completion_with_or_without_a_deadlin
 }
 
 #[test]
-fn undeclared_session_start_rejects_declared_creation_fields() {
-    assert!(
-        serde_json::from_value::<SessionStartParams>(json!({
-            "declaration": {"version": 1, "tools": []}
-        }))
-        .is_err()
-    );
-}
-
-#[test]
 fn session_start_rejects_creation_environment_overrides() {
     for environment in [
         json!({"type": "existing", "environmentId": "workstation"}),
@@ -455,9 +445,9 @@ fn session_start_rejects_creation_environment_overrides() {
         let error = serde_json::from_value::<SessionStartParams>(request.clone())
             .expect_err("ordinary start rejects the removed environment field");
         assert!(error.to_string().contains("unknown field `environment`"));
-        request["declaration"] = json!({"version": 1, "tools": []});
-        let error = serde_json::from_value::<DeclaredSessionStartParams>(request)
-            .expect_err("declared start rejects the removed environment field");
+        request["integration"] = json!({"version": 1, "tools": []});
+        let error = serde_json::from_value::<SessionStartParams>(request)
+            .expect_err("an integration does not admit the removed environment field");
         assert!(error.to_string().contains("unknown field `environment`"));
     }
 }
@@ -516,15 +506,15 @@ fn session_processing_tier_uses_lightspeed_owned_wire_vocabulary() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn dispatch_json_rpc_routes_declared_session_start() {
+async fn dispatch_json_rpc_routes_integrated_session_start() {
     let response = dispatch_json_rpc(
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_SESSION_DECLARED_START.to_owned(),
+            method: METHOD_SESSION_START.to_owned(),
             params: Some(json!({
                 "sessionId": "session_1",
-                "declaration": {
+                "integration": {
                     "version": 1,
                     "lifecycleController": {
                         "workflowId": "controller-1",
@@ -2031,13 +2021,6 @@ impl AgentApiService for TestService {
         Err(AgentApiError::internal("not implemented"))
     }
 
-    async fn start_declared_session(
-        &self,
-        _params: DeclaredSessionStartParams,
-    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
-        Err(AgentApiError::internal("not implemented"))
-    }
-
     async fn create_profile(
         &self,
         params: ProfileCreateParams,
@@ -3428,7 +3411,7 @@ fn test_session(id: SessionId, lifecycle_status: SessionLifecycleStatus) -> Sess
         runs: Vec::new(),
         active_context: ContextView::default(),
         active_tools: ActiveToolsView::default(),
-        declaration: None,
+        integration: None,
         origin: None,
     }
 }
