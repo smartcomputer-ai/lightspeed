@@ -39,6 +39,7 @@ They do not configure the TypeScript Platform backend.
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
 | `LIGHTSPEED_POSTGRES_URL` | **Required**; falls back to `LIGHTSPEED_TEST_POSTGRES_URL` | PostgreSQL connection URL used by the runtime, migration commands, and schema diagnostics. Production must use this name. TLS is supported; use `sslmode=verify-full` for remote databases to verify the certificate and hostname. |
+| `LIGHTSPEED_POSTGRES_AUTH_MODE` | `password` | `password` or `workload_identity`. With `workload_identity`, the Runtime logs in with a Microsoft Entra token using the [`AZURE_*` settings](#object-storage). The URL must name the identity as its user, hold no password, and set `sslmode=verify-full`. |
 | `LIGHTSPEED_PG_UNIVERSE_ID` | **Required in `single` auth mode** | UUID of the sole universe in a single-tenant deployment. Not used to auto-create universes in multi-tenant modes. |
 | `LIGHTSPEED_ROLES` | `gateway,environment-gateway,sessions,bots,channels` | Roles this process runs, a comma-separated subset of `gateway` (JSON-RPC, OAuth callbacks, webhook hooks), `environment-gateway` (worker environment routes, the public daemon registration routes, the lifecycle reconciler that creates and closes provisioned environments, and the registered-environment sweep), `sessions` (session workflows plus the promise-repair reaper, the session-retention reaper, both every five minutes, and the hourly CAS blob sweeper), `bots`, `channels` (also `--roles`). Each worker role polls its own task queue with that subsystem's workflows, activities, and background loops. Run exactly one `environment-gateway` process per deployment. |
 | `LIGHTSPEED_TASK_QUEUE` | `lightspeed-sessions` | Sessions task queue shared by the gateway and the `sessions` role. Deployments sharing a Temporal namespace must use distinct queues. |
@@ -130,12 +131,20 @@ Existing configurations default to S3; Azure must be selected explicitly.
 | `AWS_SECRET_ACCESS_KEY` | Credential-chain dependent | S3 secret key. |
 | `LIGHTSPEED_OBJECT_STORE_AZURE_ACCOUNT` | Required for Azure | Azure storage account name. |
 | `LIGHTSPEED_OBJECT_STORE_AZURE_CONTAINER` | Required for Azure | Existing Blob container name. |
-| `LIGHTSPEED_OBJECT_STORE_AZURE_ACCESS_KEY` | Exactly one Azure credential | Storage account access key. Supply through a Secret. |
-| `LIGHTSPEED_OBJECT_STORE_AZURE_SAS_TOKEN` | Exactly one Azure credential | SAS token, with or without a leading `?`. Supply through a Secret; permit the read/write/list/delete operations the blob store uses. |
+| `LIGHTSPEED_OBJECT_STORE_AZURE_AUTH_MODE` | Inferred from the static credential | `access_key`, `sas_token`, or `workload_identity`. Unset selects whichever single static credential is present. |
+| `LIGHTSPEED_OBJECT_STORE_AZURE_ACCESS_KEY` | Required for `access_key` | Storage account access key. Supply through a Secret. Rejected with `workload_identity`. |
+| `LIGHTSPEED_OBJECT_STORE_AZURE_SAS_TOKEN` | Required for `sas_token` | SAS token, with or without a leading `?`. Supply through a Secret; permit the read/write/list/delete operations the blob store uses. Rejected with `workload_identity`. |
+| `AZURE_CLIENT_ID` | Required for `workload_identity` | Client ID of the federated Microsoft Entra identity. Blob storage and PostgreSQL in one process share these `AZURE_*` settings. |
+| `AZURE_TENANT_ID` | Required for `workload_identity` | Tenant ID or domain name. |
+| `AZURE_FEDERATED_TOKEN_FILE` | Required for `workload_identity` | Absolute path of the projected service account token. Read again for each token exchange, so rotation needs no restart. |
+| `AZURE_AUTHORITY_HOST` | `https://login.microsoftonline.com` | Microsoft Entra authority for `workload_identity`. Must be HTTPS with no path, query, or credentials; a trailing slash is optional. |
 
-Azure requires exactly one of access key or SAS token; it does not fall back to
-managed identity. S3-only bucket, region, and path-style settings are rejected
-with Azure. Both backends use normal HTTPS certificate trust by default; no
+Azure uses only the selected credential and never falls back to another one,
+such as the Azure CLI, a node or VM identity, or a client secret. S3-only bucket,
+region, and path-style settings are rejected with Azure. The `AZURE_*` variables
+are read only where a setting selects `workload_identity`; they do not activate
+object storage, change the backend, or change how a process logs in to PostgreSQL. That mode requires an HTTPS endpoint, even for loopback
+addresses. Both backends use normal HTTPS certificate trust by default; no
 certificate file is required for a server trusted by the container's CA roots.
 Keep the backend, account/container, and existing objects consistent across
 restarts: PostgreSQL records physical keys, not enough information to migrate
@@ -312,6 +321,7 @@ acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-
 | --- | --- | --- |
 | `LIGHTSPEED_PLATFORM_API_KEY` | Unset | The Platform's deployment key: every method group and allowed to assert actors. Create with `lightspeed-runtime api-key create --deployment --assert-actor`. Interactive calls name the universe and assert the signed-in user as the actor after Platform permission checks. Full development provisions a key when omitted. |
 | `LIGHTSPEED_PLATFORM_DATABASE_URL` | **Required** | Platform PostgreSQL connection URL. |
+| `LIGHTSPEED_PLATFORM_DATABASE_AUTH_MODE` | `password` | `password` or `workload_identity`. With `workload_identity`, the Platform logs in with a Microsoft Entra token using the [`AZURE_*` settings](#object-storage). The URL must name the identity as its user, hold no password, and set `sslmode=verify-full`. |
 | `LIGHTSPEED_PLATFORM_AUTH_SECRET` | **Required** | Better Auth signing/encryption secret. Use a strong, stable deployment secret. |
 | `LIGHTSPEED_PLATFORM_BASE_URL` | `http://localhost:3000` | Public Platform origin used by authentication and trusted-origin checks. |
 | `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS` | Empty list | Comma-separated additional browser origins accepted by Better Auth. The development supervisor supplies both `http://127.0.0.1:5173` and `http://localhost:5173`. |

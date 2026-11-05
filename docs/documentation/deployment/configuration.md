@@ -161,9 +161,11 @@ LIGHTSPEED_OBJECT_STORE_AZURE_CONTAINER=lightspeed-content
 LIGHTSPEED_OBJECT_STORE_PREFIX=production
 ```
 
-Supply exactly one of `LIGHTSPEED_OBJECT_STORE_AZURE_ACCESS_KEY` or
+Choose how the Runtime authenticates. With a static credential, supply exactly
+one of `LIGHTSPEED_OBJECT_STORE_AZURE_ACCESS_KEY` or
 `LIGHTSPEED_OBJECT_STORE_AZURE_SAS_TOKEN` through the deployment's secret
-mechanism. Create the container first. Do not carry S3 bucket, region, or
+mechanism. Where account keys and SAS are prohibited, use
+[workload identity](#azure-workload-identity). Create the container first. Do not carry S3 bucket, region, or
 path-style settings into this configuration. The client uses the account's
 standard HTTPS Blob endpoint unless `LIGHTSPEED_OBJECT_STORE_ENDPOINT` is set.
 For an emulator, the endpoint can be a loopback HTTP account URL, such as
@@ -194,6 +196,86 @@ well as newly written content.
 `LIGHTSPEED_BLOB_CACHE_BYTES` controls a per-process cache. Increasing worker
 replicas also increases the aggregate cache budget. Blob collection is a
 separate policy, described in [operations](operations.md#manage-retention-and-blob-collection).
+
+### Azure workload identity
+
+Workload identity authenticates to Blob storage with a projected Kubernetes
+service account token, so the deployment holds no account key, SAS token, or
+client secret. Select it explicitly:
+
+```dotenv
+LIGHTSPEED_OBJECT_STORE_BACKEND=azure
+LIGHTSPEED_OBJECT_STORE_AZURE_AUTH_MODE=workload_identity
+LIGHTSPEED_OBJECT_STORE_AZURE_ACCOUNT=yourstorageaccount
+LIGHTSPEED_OBJECT_STORE_AZURE_CONTAINER=lightspeed-content
+LIGHTSPEED_OBJECT_STORE_PREFIX=production
+
+AZURE_CLIENT_ID=<client-id>
+AZURE_TENANT_ID=<tenant-id>
+AZURE_FEDERATED_TOKEN_FILE=<absolute-path-to-projected-token>
+```
+
+The Azure Workload Identity webhook normally injects the `AZURE_*` values and
+mounts the token. Set `AZURE_AUTHORITY_HOST` only for a cloud other than the
+public one. On the Azure side, add a federated credential to the identity for
+the Runtime's service account, and grant the identity a data-plane role that
+can read, write, list, and delete blobs in the container, such as Storage Blob
+Data Contributor.
+
+The Runtime exchanges the projected token for an Azure Storage access token when
+it first needs one, then renews it as it nears expiry. Each exchange reads the
+token file again, so rotation does not require a restart. Commands that use only
+the database, such as migrations, do not read the file or contact Microsoft
+Entra. Consequently, a wrong token path or a missing federated credential
+appears at the first Blob operation rather than at startup. The error names the
+stage: the token file, the Entra exchange with its `AADSTS` code, or the Blob
+request with its storage error code and request ID.
+
+This mode rejects an access key or SAS token rather than choosing between them,
+and it never falls back to another credential. Existing objects, keys, and
+prefixes stay valid when an account moves to this mode; no data migration is
+needed.
+
+### PostgreSQL workload identity
+
+The Runtime and Platform can log in to Azure Database for PostgreSQL with a
+Microsoft Entra token instead of a stored password. Each selects this separately,
+and the URL names the managed identity as its user and holds no password:
+
+```dotenv
+LIGHTSPEED_POSTGRES_AUTH_MODE=workload_identity
+LIGHTSPEED_POSTGRES_URL=postgres://<identity-name>@<server>.postgres.database.azure.com:5432/lightspeed?sslmode=verify-full
+
+LIGHTSPEED_PLATFORM_DATABASE_AUTH_MODE=workload_identity
+LIGHTSPEED_PLATFORM_DATABASE_URL=postgres://<identity-name>@<server>.postgres.database.azure.com:5432/platform?sslmode=verify-full
+```
+
+The user is the identity's name, not its client ID. Both processes also need
+`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_FEDERATED_TOKEN_FILE`, which
+Blob storage shares in the Runtime. Set `AZURE_AUTHORITY_HOST` only for a cloud
+other than the public one. `sslmode=verify-full` is required because the token is
+sent as a password, so the server's identity must be verified first.
+
+On the database side, an Entra administrator creates a role for each identity and
+gives it the database:
+
+```sql
+SELECT * FROM pgaadauth_create_principal('<identity-name>', false, false);
+GRANT CONNECT ON DATABASE lightspeed TO "<identity-name>";
+ALTER DATABASE lightspeed OWNER TO "<identity-name>";
+```
+
+In an existing database, also reassign the objects the previous role owns with
+`REASSIGN OWNED`. Run the Runtime's migration job with the same identity as the
+Runtime; the Platform migrates at startup.
+
+Only opening a connection needs a current token, and open connections are not
+affected when one expires. The Runtime renews its token at half of its lifetime,
+and the Platform lets the Azure SDK renew its token as it nears expiry. Both
+depend on Microsoft Entra to open a connection at startup. During a later outage
+they can still open connections until the current token expires, and they keep
+using the ones already open. This mode applies only to the Runtime and Platform;
+Temporal is configured separately.
 
 ## Add optional services
 

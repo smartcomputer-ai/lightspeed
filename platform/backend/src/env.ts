@@ -1,3 +1,5 @@
+import { databaseWorkloadIdentityFromEnv, type DatabaseWorkloadIdentity } from "@lightspeed-ai/platform-db";
+
 export interface OidcConfig {
   issuer: string;
   discoveryUrl: string;
@@ -16,6 +18,8 @@ export interface OidcConfig {
 
 export interface ServerEnv {
   databaseUrl: string;
+  /// Set when the database login uses a Microsoft Entra token instead of a password.
+  databaseWorkloadIdentity?: DatabaseWorkloadIdentity | null;
   authSecret: string;
   /// Public origin the platform is served from.
   baseUrl: string;
@@ -81,6 +85,7 @@ export function loadEnv(): ServerEnv {
   }
   return {
     databaseUrl: required("LIGHTSPEED_PLATFORM_DATABASE_URL"),
+    databaseWorkloadIdentity: databaseWorkloadIdentityFromEnv(process.env),
     authSecret: required("LIGHTSPEED_PLATFORM_AUTH_SECRET"),
     baseUrl: process.env.LIGHTSPEED_PLATFORM_BASE_URL ?? "http://localhost:3000",
     trustedOrigins: csv(process.env.LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS),
