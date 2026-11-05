@@ -52,3 +52,39 @@ denied, formatting, and documentation checks passed.
 
 Actual AKS, Azure PostgreSQL, and Azure Blob validation remains part of deployment
 acceptance; emulator tests do not establish bank connectivity.
+
+## Workload identity
+
+**Status:** Implemented and verified against a local TLS fake of Entra and Azure
+Storage, 2026-11-05. Not yet run against a real storage account.
+
+`LIGHTSPEED_OBJECT_STORE_AZURE_AUTH_MODE=workload_identity` selects `object_store`'s
+workload identity provider explicitly, using `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+`AZURE_FEDERATED_TOKEN_FILE`, and an optional `AZURE_AUTHORITY_HOST`. The library
+performs the exchange, caches access tokens, and re-reads the token file for each
+exchange. Its token client and Blob client share one set of client options, so
+they share certificate trust.
+
+Two wrappers in `store-pg` keep credentials private, because the library alone
+does not:
+
+- Its provider's derived `Debug` prints the cached access token, so the store holds
+  it behind a provider whose `Debug` shows only the file path. That provider also
+  labels token failures by stage.
+- Its request errors embed raw response bodies, so a connector reduces every error
+  body to allowlisted identifiers: Entra's error, `AADSTS` code, trace and correlation
+  IDs, and the storage error code and request ID. Free text such as
+  `error_description` and `AuthenticationErrorDetail` is dropped, so diagnosis beyond
+  the code uses those IDs in the service's own logs.
+
+`cargo test -p store-pg --lib azure` runs the real exchange and Blob client against
+the fake over TLS, with certificates generated per test. It covers the wire content,
+rotation through a symlink swap and a file replacement, rejected certificates and
+hostnames on both endpoints, failed authentication, and redaction. Those tests trust
+only their generated CA, so they exercise `webpki` rather than the platform verifier
+that production uses with its default options.
+
+`azure_blob_live` also runs in this mode with
+`LIGHTSPEED_TEST_AZURE_AUTH_MODE=workload_identity` and the `AZURE_*` settings, and
+refuses to start if a test access key or SAS token is set. Run it from a workload with
+a federated identity, against an account with Shared Key access disabled.

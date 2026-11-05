@@ -46,7 +46,7 @@ If the runtime exits before serving, check the error against these dependencies:
 | PostgreSQL connection | The runtime database URL, credentials, network path, and required connection options. Container-local `localhost` is not the database host. |
 | Schema verification | Use the deployed release's `schema-version` diagnostic. The runtime never migrates implicitly; follow the explicit migration procedure. |
 | Temporal connection | The frontend address and an existing namespace, reachable from the process. |
-| Object-store configuration | S3 requires a bucket; `LIGHTSPEED_OBJECT_STORE_BACKEND=azure` requires account, container, and exactly one access key or SAS token. Check for settings mixed between backends and use the intended endpoint. |
+| Object-store configuration | S3 requires a bucket; `LIGHTSPEED_OBJECT_STORE_BACKEND=azure` requires account, container, and exactly one access key or SAS token, or `LIGHTSPEED_OBJECT_STORE_AZURE_AUTH_MODE=workload_identity` with `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and an absolute `AZURE_FEDERATED_TOKEN_FILE`. Check for settings mixed between backends and use the intended endpoint. |
 | Role or environment routing | Valid roles and the internal environment gateway URL/token on every process without that role. |
 | Secret configuration | A base64 master key decoding to 32 bytes, matching the stored encrypted state. |
 | Retired model variables | Remove `LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL`; configure each universe's model defaults through Models or `lightspeed model defaults`. |

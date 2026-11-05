@@ -130,12 +130,20 @@ Existing configurations default to S3; Azure must be selected explicitly.
 | `AWS_SECRET_ACCESS_KEY` | Credential-chain dependent | S3 secret key. |
 | `LIGHTSPEED_OBJECT_STORE_AZURE_ACCOUNT` | Required for Azure | Azure storage account name. |
 | `LIGHTSPEED_OBJECT_STORE_AZURE_CONTAINER` | Required for Azure | Existing Blob container name. |
-| `LIGHTSPEED_OBJECT_STORE_AZURE_ACCESS_KEY` | Exactly one Azure credential | Storage account access key. Supply through a Secret. |
-| `LIGHTSPEED_OBJECT_STORE_AZURE_SAS_TOKEN` | Exactly one Azure credential | SAS token, with or without a leading `?`. Supply through a Secret; permit the read/write/list/delete operations the blob store uses. |
+| `LIGHTSPEED_OBJECT_STORE_AZURE_AUTH_MODE` | Inferred from the static credential | `access_key`, `sas_token`, or `workload_identity`. Unset selects whichever single static credential is present. |
+| `LIGHTSPEED_OBJECT_STORE_AZURE_ACCESS_KEY` | Required for `access_key` | Storage account access key. Supply through a Secret. Rejected with `workload_identity`. |
+| `LIGHTSPEED_OBJECT_STORE_AZURE_SAS_TOKEN` | Required for `sas_token` | SAS token, with or without a leading `?`. Supply through a Secret; permit the read/write/list/delete operations the blob store uses. Rejected with `workload_identity`. |
+| `AZURE_CLIENT_ID` | Required for `workload_identity` | Client ID of the federated Microsoft Entra identity. |
+| `AZURE_TENANT_ID` | Required for `workload_identity` | Tenant ID or domain name. |
+| `AZURE_FEDERATED_TOKEN_FILE` | Required for `workload_identity` | Absolute path of the projected service account token. Read again for each token exchange, so rotation needs no restart. |
+| `AZURE_AUTHORITY_HOST` | `https://login.microsoftonline.com` | Microsoft Entra authority for `workload_identity`. Must be HTTPS with no path, query, or credentials; a trailing slash is optional. |
 
-Azure requires exactly one of access key or SAS token; it does not fall back to
-managed identity. S3-only bucket, region, and path-style settings are rejected
-with Azure. Both backends use normal HTTPS certificate trust by default; no
+Azure uses only the selected credential and never falls back to another one,
+such as the Azure CLI, a node or VM identity, or a client secret. S3-only bucket,
+region, and path-style settings are rejected with Azure. The `AZURE_*` variables
+are read only with `workload_identity`; they do not activate object storage or
+change the backend. That mode requires an HTTPS endpoint, even for loopback
+addresses. Both backends use normal HTTPS certificate trust by default; no
 certificate file is required for a server trusted by the container's CA roots.
 Keep the backend, account/container, and existing objects consistent across
 restarts: PostgreSQL records physical keys, not enough information to migrate

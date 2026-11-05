@@ -1,23 +1,31 @@
 use std::{fmt, sync::Arc};
 
 use object_store::{
-    ObjectStore,
+    ClientOptions, ObjectStore, RetryConfig,
     azure::{AzureConfigKey, MicrosoftAzureBuilder},
 };
 
-/// Static Azure credentials supplied by the deployment. Debug output is redacted.
+mod workload_identity;
+
+pub use workload_identity::{AzureWorkloadIdentity, AzureWorkloadIdentityError};
+
+/// Azure credentials supplied by the deployment. Debug output is redacted.
 #[derive(Clone)]
 pub enum AzureObjectStoreCredential {
     AccessKey(String),
     SasToken(String),
+    WorkloadIdentity(AzureWorkloadIdentity),
 }
 
 impl fmt::Debug for AzureObjectStoreCredential {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::AccessKey(_) => "AccessKey([REDACTED])",
-            Self::SasToken(_) => "SasToken([REDACTED])",
-        })
+        match self {
+            Self::AccessKey(_) => f.write_str("AccessKey([REDACTED])"),
+            Self::SasToken(_) => f.write_str("SasToken([REDACTED])"),
+            Self::WorkloadIdentity(identity) => {
+                f.debug_tuple("WorkloadIdentity").field(identity).finish()
+            }
+        }
     }
 }
 
@@ -46,20 +54,38 @@ impl fmt::Debug for AzureObjectStoreConfig {
 pub fn build_azure_object_store(
     config: AzureObjectStoreConfig,
 ) -> Result<Arc<dyn ObjectStore>, object_store::Error> {
+    build(config, ClientOptions::new(), RetryConfig::default())
+}
+
+fn build(
+    config: AzureObjectStoreConfig,
+    client_options: ClientOptions,
+    retry: RetryConfig,
+) -> Result<Arc<dyn ObjectStore>, object_store::Error> {
     let mut builder = MicrosoftAzureBuilder::new()
         .with_account(config.account)
-        .with_container_name(config.container);
+        .with_container_name(config.container)
+        .with_client_options(client_options)
+        .with_retry(retry);
+    // Bearer tokens never travel in plaintext, even to a loopback endpoint.
+    let bearer = matches!(
+        config.credential,
+        AzureObjectStoreCredential::WorkloadIdentity(_)
+    );
+    if let Some(endpoint) = config.endpoint {
+        builder = builder
+            .with_allow_http(!bearer && endpoint.starts_with("http://"))
+            .with_endpoint(endpoint);
+    }
     builder = match config.credential {
         AzureObjectStoreCredential::AccessKey(key) => builder.with_access_key(key),
         AzureObjectStoreCredential::SasToken(token) => {
             builder.with_config(AzureConfigKey::SasKey, token.trim_start_matches('?'))
         }
+        AzureObjectStoreCredential::WorkloadIdentity(identity) => {
+            workload_identity::configure(builder, identity)?
+        }
     };
-    if let Some(endpoint) = config.endpoint {
-        builder = builder
-            .with_allow_http(endpoint.starts_with("http://"))
-            .with_endpoint(endpoint);
-    }
     Ok(Arc::new(builder.build()?))
 }
 

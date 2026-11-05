@@ -39,7 +39,10 @@ use uuid::Uuid;
 
 pub use access::AccessFilter;
 pub use access::{AccessStoreError, PgAccessStore, ResourceAccess};
-pub use azure::{AzureObjectStoreConfig, AzureObjectStoreCredential, build_azure_object_store};
+pub use azure::{
+    AzureObjectStoreConfig, AzureObjectStoreCredential, AzureWorkloadIdentity,
+    AzureWorkloadIdentityError, build_azure_object_store,
+};
 pub use model_defaults::ModelDefaultsStoreError;
 pub use s3::{S3ObjectStoreConfig, build_s3_object_store};
 

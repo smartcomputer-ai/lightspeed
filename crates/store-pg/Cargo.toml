@@ -28,8 +28,12 @@ sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio",
 thiserror = "2"
 tracing = "0.1"
 tokio = { version = "1", features = ["rt"] }
+url = "2"
 uuid = { version = "1", features = ["v4"] }
 vfs = { path = "../vfs" }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+tempfile = "3"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs"] }
