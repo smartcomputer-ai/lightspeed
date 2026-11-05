@@ -1,5 +1,5 @@
 import { PermissionIdentityProvider } from "@/lib/permissions";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import type { SessionUser } from "./auth.js";
@@ -35,6 +35,10 @@ import { UserPreferencesProvider } from "@/lib/user-preferences";
 import { FeatureGate } from "@/components/feature-gate";
 import { finishAutomaticSignIn } from "@/lib/automatic-sign-in";
 
+// Development-only tool pages. `import.meta.env.DEV` is a build-time
+// constant, so production builds drop this import and its chunk entirely.
+const DebugRoutes = import.meta.env.DEV ? lazy(() => import("@/devtools/DebugRoutes")) : null;
+
 function UniverseIndexRedirect() {
   const { universe } = useActiveUniverse();
   if (!universe) {
@@ -61,6 +65,10 @@ export function App() {
   const me = useQuery({ queryKey: ["me", session.data?.user.id], enabled: !!session.data,
     queryFn: () => api<{ user: SessionUser }>("GET", "/api/v1/me"), retry: false,
   });
+
+  if (DebugRoutes && location.pathname.startsWith("/debug/")) {
+    return <Suspense fallback={null}><DebugRoutes /></Suspense>;
+  }
 
   // While unauthenticated on /login, always render the form and never
   // unmount it: the session hook revalidates on window focus (isPending
