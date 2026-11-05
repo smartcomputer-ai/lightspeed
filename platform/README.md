@@ -299,3 +299,39 @@ and manifest keys stay stable). The connector host serves the providers named
 by `LIGHTSPEED_CONNECTOR_PROVIDERS` for every account the core reports; see
 `connectors/README.md`. The release manifest records one digest for each
 image.
+
+### Testing & Visual Tests
+
+The web UI's tests run in Vitest and are part of `npm test` and `npm run check`.
+Logic tests call page helpers with plain data; component tests mount pages in
+jsdom with the API mocked, click through them, and assert the resulting DOM and
+API calls. They sit next to the code they cover (`*.test.ts`, `*.test.tsx`):
+
+```bash
+npm run test --workspace @lightspeed-ai/platform-web
+npm run test --workspace @lightspeed-ai/platform-web -- src/pages/AccountPage.test.tsx
+```
+
+Visual tests capture the demo build in a real browser with Playwright
+(`web/e2e/`) and compare two versions with
+[screendiff](https://github.com/dankrusi/screendiff). Each screen is captured
+in light and dark at a 1440×900 viewport and 2× pixel density:
+
+```bash
+npx playwright install chromium               # once
+npm run screenshots:demo                      # capture the working tree
+npm run screendiff:demo                       # working tree vs. where the branch left main
+npm run screendiff:demo -- main~3 HEAD        # any two refs
+npm run screendiff:demo -- --theme dark       # one theme
+```
+
+Results go to `platform/web/test-results/`: screenshots, and one
+self-contained `report.html` per comparison. The report embeds every image, so
+a comparison removes its captured PNGs afterwards; pass `--keep-screenshots` to
+keep them. A committed ref is built in a temporary worktree and its build is
+cached by commit.
+
+Visual tests are not part of the automatic test process and should not be added
+to `npm test`, `npm run check`, or CI. Use them as a review tool: to see what a
+change does to the UI and UX, and to show it to others before merging. A
+changed screen is a prompt to look, not a failure.

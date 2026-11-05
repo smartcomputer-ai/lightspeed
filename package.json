@@ -35,7 +35,9 @@
     "test:release-packaging": "npm --prefix clients/typescript ci --ignore-scripts && npm --prefix platform/configurator-mcp ci --ignore-scripts && scripts/release/stage-runtimes.sh",
     "typecheck": "tsc --noEmit && npm run typecheck --workspace @lightspeed-ai/connectors && npm run typecheck --workspace @lightspeed-ai/platform-web && npm run typecheck --workspace @lightspeed-ai/sdk && npm run typecheck --workspace @lightspeed-ai/configurator-mcp",
     "build:demo": "npm run build:demo --workspace @lightspeed-ai/platform-web",
-    "demo": "npm run dev:demo --workspace @lightspeed-ai/platform-web"
+    "demo": "npm run dev:demo --workspace @lightspeed-ai/platform-web",
+    "screenshots:demo": "npm run screenshots:demo --workspace @lightspeed-ai/platform-web --",
+    "screendiff:demo": "npm run screendiff:demo --workspace @lightspeed-ai/platform-web --"
   },
   "devDependencies": {
     "@types/node": "^24.19.1",
