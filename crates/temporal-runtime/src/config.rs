@@ -1,12 +1,15 @@
 use std::{env, sync::Arc, time::Duration};
 
 use object_store::ObjectStore;
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::PgPool;
 use store_pg::{BlobCache, PgStore, PgStoreConfig, PgStoreError, SchemaStatus, SecretsMasterKey};
 use temporal_workflow::{DEFAULT_TASK_QUEUE, bots::DEFAULT_BOTS_TASK_QUEUE};
 use uuid::Uuid;
 
 mod object_storage;
+mod postgres;
+
+pub use postgres::postgres_pool_from_env;
 
 /// Retired deployment model policy must be migrated to universe defaults.
 /// Credentials and provider transport still use their existing configuration.
@@ -364,17 +367,6 @@ fn evaluate_schema_verification(
         }
         Err(error) => Err(error),
     }
-}
-
-/// Connect to the deployment database without inspecting or changing its
-/// schema. Migration and diagnostic commands use this lower-level boundary.
-pub async fn postgres_pool_from_env() -> anyhow::Result<PgPool> {
-    let database_url = env::var("LIGHTSPEED_POSTGRES_URL")
-        .or_else(|_| env::var("LIGHTSPEED_TEST_POSTGRES_URL"))
-        .map_err(|_| {
-            anyhow::anyhow!("LIGHTSPEED_POSTGRES_URL or LIGHTSPEED_TEST_POSTGRES_URL must be set")
-        })?;
-    Ok(PgPoolOptions::new().connect(&database_url).await?)
 }
 
 /// Single-universe store bound to `LIGHTSPEED_PG_UNIVERSE_ID`. Used by
