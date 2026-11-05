@@ -157,7 +157,8 @@ describe("OpenAI processing tier config", () => {
       models: [model],
     }));
     const modelId = html.indexOf("anthropic · anthropic:messages");
-    const capabilities = html.indexOf("1,000,000 input tokens");
+    // The editor formats with the runtime locale, so the expectation does too.
+    const capabilities = html.indexOf(`${(1_000_000).toLocaleString()} input tokens`);
     const reasoning = html.indexOf("Reasoning effort");
 
     expect(modelId).toBeGreaterThanOrEqual(0);
