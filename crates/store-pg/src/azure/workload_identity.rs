@@ -76,7 +76,9 @@ impl AzureWorkloadIdentity {
 
     /// The library joins the authority and tenant with a slash, so a configured
     /// trailing slash must not reach it.
-    fn normalized_authority_host(&self) -> Result<Option<String>, AzureWorkloadIdentityError> {
+    pub(super) fn normalized_authority_host(
+        &self,
+    ) -> Result<Option<String>, AzureWorkloadIdentityError> {
         let Some(authority) = &self.authority_host else {
             return Ok(None);
         };
@@ -132,7 +134,7 @@ fn generic(error: impl StdError + Send + Sync + 'static) -> object_store::Error 
 /// The stage at which an access token could not be obtained. Holds rendered text
 /// rather than the library's error so that nothing else is reachable as a source.
 #[derive(Debug, Error)]
-pub(super) enum TokenAcquisitionError {
+pub enum TokenAcquisitionError {
     #[error(
         "could not read the projected token file '{path}' named by AZURE_FEDERATED_TOKEN_FILE{}",
         reason.map(|kind| format!(": {kind}")).unwrap_or_default()
@@ -195,7 +197,7 @@ fn classify_token_error(error: &object_store::Error, token_file: &str) -> TokenA
 
 /// Keep transport causes such as certificate rejections. Response bodies in this
 /// text have already passed through [`ScrubbingConnector`].
-fn render_chain(error: &(dyn StdError + 'static)) -> String {
+pub(super) fn render_chain(error: &(dyn StdError + 'static)) -> String {
     let mut rendered = error.to_string();
     let mut current = error.source();
     while let Some(source) = current {
@@ -240,7 +242,7 @@ impl HttpService for ScrubbingService {
 /// Reduce an Entra or Azure Storage error to fields that identify the failure
 /// and locate it in the service's logs. Free text is dropped because it can
 /// repeat request content; Entra's `AADSTS` code identifies the same failure.
-fn diagnostic_summary(headers: &HeaderMap, body: &[u8]) -> String {
+pub(super) fn diagnostic_summary(headers: &HeaderMap, body: &[u8]) -> String {
     let mut fields = Vec::new();
     let mut push = |name: &str, value: Option<&str>| {
         if let Some(value) = value.filter(is_diagnostic_value) {

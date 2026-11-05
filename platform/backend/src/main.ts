@@ -7,7 +7,7 @@ import { seedDevelopment } from "./development-seed.js";
 import { loadEnv } from "./env.js";
 
 const env = loadEnv();
-const { db, pool } = createDb(env.databaseUrl);
+const { db, pool } = createDb(env.databaseUrl, env.databaseWorkloadIdentity);
 
 console.log("[main] applying migrations…");
 await migrateDb({ db, pool });

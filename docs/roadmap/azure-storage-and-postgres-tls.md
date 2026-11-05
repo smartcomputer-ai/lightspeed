@@ -88,3 +88,49 @@ that production uses with its default options.
 `LIGHTSPEED_TEST_AZURE_AUTH_MODE=workload_identity` and the `AZURE_*` settings, and
 refuses to start if a test access key or SAS token is set. Run it from a workload with
 a federated identity, against an account with Shared Key access disabled.
+
+## PostgreSQL workload identity
+
+**Status:** Implemented for the Runtime and Platform, 2026-11-05. Not yet run against a
+real Azure server. Temporal stays on password authentication and is planned separately.
+
+`LIGHTSPEED_POSTGRES_AUTH_MODE` and `LIGHTSPEED_PLATFORM_DATABASE_AUTH_MODE` select an
+Entra token as the login password, for the scope
+`https://ossrdbms-aad.database.windows.net/.default`. The URL must name the identity, hold
+no password, and set `sslmode=verify-full`, because the token is sent as a cleartext
+password inside TLS.
+
+- **Runtime:** sqlx has no per-connection credential callback, and the Blob provider's
+  scope is fixed, so `store-pg` performs the exchange. A background task re-reads the
+  projected token and updates the pool's connect options at half of each token's lifetime.
+  It logs and retries every 30 seconds on failure.
+- **Platform:** `pg` accepts a password function, called for each new connection, and
+  `WorkloadIdentityCredential` caches and renews the token. `pg` discards that function when
+  combined with a `connectionString`, so the URL is expanded into fields. The SDK reuses the
+  token file's contents for five minutes, far less than the rotation interval. Failures are
+  rebuilt as new errors holding only identifiers.
+
+Pool settings apply in both authentication modes, so each new connection is less common:
+
+| | Runtime (`sqlx`) | Platform (`pg`) |
+| --- | --- | --- |
+| Connections kept when idle | 2, opened eagerly | up to 2, kept once opened |
+| Idle timeout | 10 minutes (default) | 10 minutes, was 10 seconds |
+| Maximum lifetime | 1 hour, was 30 minutes | 1 hour, was unlimited |
+| Dead connection handling | checked before use (default) | TCP keepalive after 60 seconds, plus an `error` listener |
+
+The Platform's `error` listener is also a correction for both modes: without one, losing an
+idle connection ended the process.
+
+Verification:
+
+- `cargo test -p store-pg --lib azure` covers the exchange against a local TLS fake:
+  wire content, rotation, certificate and hostname rejection, and redaction.
+- An ignored test in the same module rotates a real role's password on the development
+  PostgreSQL, with the fake issuing it as the token. It shows that the old password is
+  refused, new connections use the renewed token, and an open connection keeps working.
+- `npm run test --workspace @lightspeed-ai/platform-db` drives the real Azure credential
+  through a scripted transport.
+- `cargo test -p store-pg --test azure_postgres_live -- --ignored` requires
+  `LIGHTSPEED_TEST_AZURE_POSTGRES_URL` and the `AZURE_*` settings, and must run from a workload
+  with a federated identity.

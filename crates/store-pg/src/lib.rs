@@ -40,8 +40,9 @@ use uuid::Uuid;
 pub use access::AccessFilter;
 pub use access::{AccessStoreError, PgAccessStore, ResourceAccess};
 pub use azure::{
-    AzureObjectStoreConfig, AzureObjectStoreCredential, AzureWorkloadIdentity,
-    AzureWorkloadIdentityError, build_azure_object_store,
+    AzureObjectStoreConfig, AzureObjectStoreCredential, AzurePostgresError, AzureWorkloadIdentity,
+    AzureWorkloadIdentityError, TokenAcquisitionError, build_azure_object_store,
+    connect_postgres_with_workload_identity,
 };
 pub use model_defaults::ModelDefaultsStoreError;
 pub use s3::{S3ObjectStoreConfig, build_s3_object_store};
@@ -143,6 +144,16 @@ impl PgStoreConfig {
         self.secrets_master_key = Some(key);
         self
     }
+}
+
+/// Pool settings for deployment processes. They limit how often connections open,
+/// because each one costs a TLS handshake and server-side authentication. Connections
+/// are still checked before use, so a longer lifetime does not hand out dead ones.
+pub fn postgres_pool_options() -> PgPoolOptions {
+    PgPoolOptions::new()
+        // Stay warm through quiet periods instead of reconnecting for the next query.
+        .min_connections(2)
+        .max_lifetime(std::time::Duration::from_secs(60 * 60))
 }
 
 #[derive(Clone)]

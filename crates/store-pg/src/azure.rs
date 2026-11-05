@@ -5,9 +5,15 @@ use object_store::{
     azure::{AzureConfigKey, MicrosoftAzureBuilder},
 };
 
+mod postgres;
+#[cfg(test)]
+mod test_support;
 mod workload_identity;
 
-pub use workload_identity::{AzureWorkloadIdentity, AzureWorkloadIdentityError};
+pub use postgres::{AzurePostgresError, connect_postgres_with_workload_identity};
+pub use workload_identity::{
+    AzureWorkloadIdentity, AzureWorkloadIdentityError, TokenAcquisitionError,
+};
 
 /// Azure credentials supplied by the deployment. Debug output is redacted.
 #[derive(Clone)]

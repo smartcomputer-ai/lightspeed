@@ -21,13 +21,14 @@ mcp = { path = "../mcp" }
 object_store = { version = "0.14", features = ["aws", "azure"] }
 profiles = { path = "../profiles" }
 rand = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["form", "rustls"] }
 sha2 = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "uuid", "json"] }
 thiserror = "2"
 tracing = "0.1"
-tokio = { version = "1", features = ["rt"] }
+tokio = { version = "1", features = ["fs", "macros", "rt", "time"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 vfs = { path = "../vfs" }

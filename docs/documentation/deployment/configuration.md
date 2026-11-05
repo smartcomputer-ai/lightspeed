@@ -236,6 +236,47 @@ and it never falls back to another credential. Existing objects, keys, and
 prefixes stay valid when an account moves to this mode; no data migration is
 needed.
 
+### PostgreSQL workload identity
+
+The Runtime and Platform can log in to Azure Database for PostgreSQL with a
+Microsoft Entra token instead of a stored password. Each selects this separately,
+and the URL names the managed identity as its user and holds no password:
+
+```dotenv
+LIGHTSPEED_POSTGRES_AUTH_MODE=workload_identity
+LIGHTSPEED_POSTGRES_URL=postgres://<identity-name>@<server>.postgres.database.azure.com:5432/lightspeed?sslmode=verify-full
+
+LIGHTSPEED_PLATFORM_DATABASE_AUTH_MODE=workload_identity
+LIGHTSPEED_PLATFORM_DATABASE_URL=postgres://<identity-name>@<server>.postgres.database.azure.com:5432/platform?sslmode=verify-full
+```
+
+The user is the identity's name, not its client ID. Both processes also need
+`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_FEDERATED_TOKEN_FILE`, which
+Blob storage shares in the Runtime. Set `AZURE_AUTHORITY_HOST` only for a cloud
+other than the public one. `sslmode=verify-full` is required because the token is
+sent as a password, so the server's identity must be verified first.
+
+On the database side, an Entra administrator creates a role for each identity and
+gives it the database:
+
+```sql
+SELECT * FROM pgaadauth_create_principal('<identity-name>', false, false);
+GRANT CONNECT ON DATABASE lightspeed TO "<identity-name>";
+ALTER DATABASE lightspeed OWNER TO "<identity-name>";
+```
+
+In an existing database, also reassign the objects the previous role owns with
+`REASSIGN OWNED`. Run the Runtime's migration job with the same identity as the
+Runtime; the Platform migrates at startup.
+
+Only opening a connection needs a current token, and open connections are not
+affected when one expires. The Runtime renews its token at half of its lifetime,
+and the Platform lets the Azure SDK renew its token as it nears expiry. Both
+depend on Microsoft Entra to open a connection at startup. During a later outage
+they can still open connections until the current token expires, and they keep
+using the ones already open. This mode applies only to the Runtime and Platform;
+Temporal is configured separately.
+
 ## Add optional services
 
 ### Execution environments

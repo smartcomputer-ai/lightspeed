@@ -7,6 +7,7 @@ beforeEach(() => {
   }
   for (const name of [
     "LIGHTSPEED_PLATFORM_DATABASE_URL",
+    "LIGHTSPEED_PLATFORM_DATABASE_AUTH_MODE",
     "LIGHTSPEED_PLATFORM_AUTH_SECRET",
     "LIGHTSPEED_PLATFORM_DEV_SEED",
     "LIGHTSPEED_PLATFORM_BASE_URL",
@@ -26,6 +27,18 @@ afterEach(() => {
 });
 
 describe("platform environment", () => {
+  test("selects database workload identity only when asked", () => {
+    vi.stubEnv("LIGHTSPEED_PLATFORM_DATABASE_URL", "postgres://platform");
+    vi.stubEnv("LIGHTSPEED_PLATFORM_AUTH_SECRET", "platform-secret");
+    vi.stubEnv("AZURE_CLIENT_ID", "client-id");
+    vi.stubEnv("AZURE_TENANT_ID", "tenant-id");
+    vi.stubEnv("AZURE_FEDERATED_TOKEN_FILE", "/var/run/token");
+    expect(loadEnv().databaseWorkloadIdentity).toBeNull();
+
+    vi.stubEnv("LIGHTSPEED_PLATFORM_DATABASE_AUTH_MODE", "workload_identity");
+    expect(loadEnv().databaseWorkloadIdentity).toMatchObject({ clientId: "client-id" });
+  });
+
   test("loads the Lightspeed platform names", () => {
     vi.stubEnv("LIGHTSPEED_PLATFORM_DATABASE_URL", "postgres://platform");
     vi.stubEnv("LIGHTSPEED_PLATFORM_AUTH_SECRET", "platform-secret");

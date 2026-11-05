@@ -112,6 +112,27 @@ fn parse(get: impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<ObjectSt
     Ok(Some(backend))
 }
 
+/// The standard Azure identity settings, shared by every store that selects
+/// workload identity. `selector` names the setting that asked for them.
+pub(super) fn workload_identity_settings(
+    get: &impl Fn(&str) -> Option<String>,
+    selector: &str,
+) -> anyhow::Result<AzureWorkloadIdentity> {
+    let value = |key: &str| get(key).filter(|value| !value.is_empty());
+    let required = |key: &str| {
+        value(key)
+            .ok_or_else(|| anyhow::anyhow!("{key} must be set when {selector}=workload_identity"))
+    };
+    let identity = AzureWorkloadIdentity {
+        client_id: required(CLIENT_ID)?,
+        tenant_id: required(TENANT_ID)?,
+        federated_token_file: required(TOKEN_FILE)?,
+        authority_host: value(AUTHORITY_HOST),
+    };
+    identity.validate()?;
+    Ok(identity)
+}
+
 fn azure_credential(
     get: &impl Fn(&str) -> Option<String>,
 ) -> anyhow::Result<AzureObjectStoreCredential> {
@@ -125,18 +146,7 @@ fn azure_credential(
                     "{key} conflicts with {AUTH_MODE}=workload_identity"
                 );
             }
-            let required = |key: &str| {
-                value(key).ok_or_else(|| {
-                    anyhow::anyhow!("{key} must be set when {AUTH_MODE}=workload_identity")
-                })
-            };
-            let identity = AzureWorkloadIdentity {
-                client_id: required(CLIENT_ID)?,
-                tenant_id: required(TENANT_ID)?,
-                federated_token_file: required(TOKEN_FILE)?,
-                authority_host: value(AUTHORITY_HOST),
-            };
-            identity.validate()?;
+            let identity = workload_identity_settings(get, AUTH_MODE)?;
             Ok(AzureObjectStoreCredential::WorkloadIdentity(identity))
         }
         Some("access_key") => match (access_key, sas_token) {

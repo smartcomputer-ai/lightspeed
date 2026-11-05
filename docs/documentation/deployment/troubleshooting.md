@@ -43,7 +43,7 @@ If the runtime exits before serving, check the error against these dependencies:
 
 | Error area | What to inspect |
 | --- | --- |
-| PostgreSQL connection | The runtime database URL, credentials, network path, and required connection options. Container-local `localhost` is not the database host. |
+| PostgreSQL connection | The runtime database URL, credentials, network path, and required connection options. Container-local `localhost` is not the database host. With workload identity, the error names the stage: the token file, the Entra exchange with its `AADSTS` code, or the login, where the URL user must be the identity's name and that role must exist. |
 | Schema verification | Use the deployed release's `schema-version` diagnostic. The runtime never migrates implicitly; follow the explicit migration procedure. |
 | Temporal connection | The frontend address and an existing namespace, reachable from the process. |
 | Object-store configuration | S3 requires a bucket; `LIGHTSPEED_OBJECT_STORE_BACKEND=azure` requires account, container, and exactly one access key or SAS token, or `LIGHTSPEED_OBJECT_STORE_AZURE_AUTH_MODE=workload_identity` with `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and an absolute `AZURE_FEDERATED_TOKEN_FILE`. Check for settings mixed between backends and use the intended endpoint. |

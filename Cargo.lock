@@ -5161,6 +5161,7 @@ dependencies = [
  "profiles",
  "rand 0.10.3",
  "rcgen",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.11.0",
