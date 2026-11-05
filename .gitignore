@@ -8,6 +8,7 @@ node_modules/
 .aos/
 notes-world/
 .playwright-mcp/
+platform/web/test-results/
 .tmp/
 refs/
 .bridge-state.json
