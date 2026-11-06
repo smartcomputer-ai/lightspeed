@@ -8,6 +8,7 @@ import {
   RADIUS_STEPS,
   SHADOW_STEPS,
   SHADOW_TOKENS,
+  BACKDROP_KEY,
   SURFACE_ROLES,
   applyOverrides,
   exportCss,
@@ -64,12 +65,28 @@ describe("design tokens", () => {
     }
   });
 
+  it("declares the backdrop and the menu effects in index.css", () => {
+    const css = readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
+    const declared = (token: string) => [...css.matchAll(new RegExp(`${token}: ([^;]+);`, "g"))].map((match) => match[1]!);
+    const colors = declared(surfaceToken(BACKDROP_KEY, "background"));
+    expect(colors).toHaveLength(2);
+    for (const value of colors) expect(parseSurfaceColor(value), value).toEqual({ source: "black", percent: 10 });
+    for (const key of [BACKDROP_KEY, ...SURFACE_ROLES.filter((role) => role.effects).map((role) => role.key)]) {
+      expect(declared(surfaceToken(key, "blur"))[0], key).toMatch(/^\d+px$/);
+      expect(declared(surfaceToken(key, "saturate"))[0], key).toMatch(/^\d+%$/);
+    }
+  });
+
   it("round-trips surface colors and leaves other colors custom", () => {
+    expect(surfaceColorValue({ source: "white", percent: 40 })).toBe("color-mix(in oklab, white 40%, transparent)");
+    expect(parseSurfaceColor("black")).toEqual({ source: "black", percent: 100 });
     expect(surfaceColorValue({ source: "--popover", percent: 70 })).toBe("color-mix(in oklab, var(--popover) 70%, transparent)");
     expect(parseSurfaceColor("color-mix(in oklab, var(--popover) 70%, transparent)")).toEqual({ source: "--popover", percent: 70 });
     expect(surfaceColorValue({ source: "--card", percent: 100 })).toBe("var(--card)");
     expect(parseSurfaceColor(" var(--card) ")).toEqual({ source: "--card", percent: 100 });
-    expect(surfaceColorValue({ source: "--card", percent: 0 })).toBe("transparent");
+    expect(surfaceColorValue({ source: "--card", percent: 0 })).toBe("color-mix(in oklab, var(--card) 0%, transparent)");
+    expect(parseSurfaceColor("color-mix(in oklab, var(--card) 0%, transparent)")).toEqual({ source: "--card", percent: 0 });
+    expect(surfaceColorValue({ source: "transparent", percent: 50 })).toBe("transparent");
     expect(parseSurfaceColor("transparent")).toEqual({ source: "transparent", percent: 0 });
     expect(parseSurfaceColor("oklch(0.5 0.1 200)")).toBeNull();
     expect(sameCss("calc(var(--radius) * 0.8)", "calc(var(--radius) * .8)")).toBe(true);

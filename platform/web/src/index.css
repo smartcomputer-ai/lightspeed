@@ -58,6 +58,10 @@
     --color-input: var(--input);
     --color-border: var(--border);
     --color-destructive: var(--destructive);
+    --color-success: var(--success);
+    --color-warning: var(--warning);
+    --color-danger: var(--danger);
+    --color-info: var(--info);
     --color-accent-foreground: var(--accent-foreground);
     --color-accent: var(--accent);
     --color-muted-foreground: var(--muted-foreground);
@@ -107,7 +111,12 @@
     --muted-foreground: oklch(0.552 0.016 285.938);
     --accent: oklch(0.967 0.001 286.375);
     --accent-foreground: oklch(0.21 0.006 285.885);
-    --destructive: oklch(0.577 0.245 27.325);
+    --destructive: #cb2a2a;
+    /* Status colors, the same in both themes. */
+    --success: #4ade80;
+    --warning: #fbbf24;
+    --danger: #f87171;
+    --info: #60a5fa;
     --border: oklch(0.92 0.004 286.32);
     --input: oklch(0.92 0.004 286.32);
     --ring: oklch(0.705 0.015 286.067);
@@ -154,6 +163,13 @@
     --surface-field-border-width: 1px;
     --surface-field-radius: calc(var(--radius) * 0.8);
     --surface-field-shadow: var(--shadow-xs);
+    /* The overlay behind dialogs, alert dialogs and sheets, and the backdrop
+       filters behind it and behind menus. */
+    --surface-backdrop: color-mix(in oklab, black 10%, transparent);
+    --surface-backdrop-blur: 4px;
+    --surface-backdrop-saturate: 100%;
+    --surface-menu-blur: 40px;
+    --surface-menu-saturate: 150%;
 }
 
 .dark {
@@ -171,7 +187,7 @@
     --muted-foreground: oklch(0.705 0.015 286.067);
     --accent: oklch(0.274 0.006 286.033);
     --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
+    --destructive: #cb2a2a;
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.552 0.016 285.938);
@@ -201,6 +217,7 @@
     --surface-menu-border: color-mix(in oklab, var(--foreground) 10%, transparent);
     --surface-field: color-mix(in oklab, var(--input) 30%, transparent);
     --surface-field-border: var(--input);
+    --surface-backdrop: color-mix(in oklab, black 10%, transparent);
 }
 
 @layer base {

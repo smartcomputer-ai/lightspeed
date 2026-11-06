@@ -19,6 +19,7 @@ import {
   RADIUS_STEPS,
   SHADOW_STEPS,
   SHADOW_TOKENS,
+  BACKDROP_KEY,
   SURFACE_COLOR_SOURCES,
   SURFACE_ROLES,
   TEXT_SIZE_TOKENS,
@@ -182,13 +183,23 @@ export function DesignConfigurationPage() {
             <SurfaceEditor
               key={`${colorTheme}${role.key}`}
               role={role}
+              resolve={(name) => valueOf(colorTheme, name)}
               background={token(colorTheme, surfaceToken(role.key, "background"))}
               border={token(colorTheme, surfaceToken(role.key, "border"))}
               borderWidth={token("shared", surfaceToken(role.key, "border-width"))}
               radius={token("shared", surfaceToken(role.key, "radius"))}
               shadow={token("shared", surfaceToken(role.key, "shadow"))}
+              blur={role.effects ? token("shared", surfaceToken(role.key, "blur")) : undefined}
+              saturate={role.effects ? token("shared", surfaceToken(role.key, "saturate")) : undefined}
             />
           ))}
+          <BackdropEditor
+            key={`${colorTheme}backdrop`}
+            resolve={(name) => valueOf(colorTheme, name)}
+            color={token(colorTheme, surfaceToken(BACKDROP_KEY, "background"))}
+            blur={token("shared", surfaceToken(BACKDROP_KEY, "blur"))}
+            saturate={token("shared", surfaceToken(BACKDROP_KEY, "saturate"))}
+          />
         </TabsContent>
 
         <TabsContent value="shape" className="grid content-start gap-6 pt-3">
@@ -419,7 +430,7 @@ function RangeRow({ name, value, changed, onChange, onReset, min, max, step, uni
   min: number;
   max: number;
   step: number;
-  unit: "rem" | "px" | "";
+  unit: "rem" | "px" | "%" | "";
   describe?: (value: number) => string;
   sample?: (value: string) => ReactNode;
 }) {
@@ -474,13 +485,16 @@ type TokenControl = Omit<TokenProps, "name">;
 
 /// One family of components: its background and border color (each a theme
 /// color at an opacity, or any CSS color), border width, radius and shadow.
-function SurfaceEditor({ role, background, border, borderWidth, radius, shadow }: {
+function SurfaceEditor({ role, resolve, background, border, borderWidth, radius, shadow, blur, saturate }: {
   role: SurfaceRole;
+  resolve: (token: string) => string;
   background: TokenControl;
   border: TokenControl;
   borderWidth: TokenControl;
   radius: TokenControl;
   shadow: TokenControl;
+  blur?: TokenControl;
+  saturate?: TokenControl;
 }) {
   return (
     <section className="grid gap-3 rounded-lg border p-3">
@@ -494,8 +508,8 @@ function SurfaceEditor({ role, background, border, borderWidth, radius, shadow }
           aria-hidden
           className="grid h-12 w-20 shrink-0 place-items-center text-xs"
           style={{
-            background: background.value,
-            border: `${borderWidth.value} solid ${border.value}`,
+            background: literalColor(background.value, resolve) ?? background.value,
+            border: `${borderWidth.value} solid ${literalColor(border.value, resolve) ?? border.value}`,
             borderRadius: radius.value,
             boxShadow: shadow.value,
           }}
@@ -503,20 +517,79 @@ function SurfaceEditor({ role, background, border, borderWidth, radius, shadow }
           Aa
         </div>
       </div>
-      <SurfaceColorRow label="Background" name={surfaceToken(role.key, "background")} {...background} />
-      <SurfaceColorRow label="Border" name={surfaceToken(role.key, "border")} {...border} />
+      <SurfaceColorRow label="Background" name={surfaceToken(role.key, "background")} resolve={resolve} {...background} />
+      <SurfaceColorRow label="Border" name={surfaceToken(role.key, "border")} resolve={resolve} {...border} />
       <RangeRow name={surfaceToken(role.key, "border-width")} min={0} max={4} step={0.5} unit="px" {...borderWidth} />
       <StepRow label="Radius" name={surfaceToken(role.key, "radius")} steps={RADIUS_STEPS} {...radius} />
       <StepRow label="Shadow" name={surfaceToken(role.key, "shadow")} steps={SHADOW_STEPS} {...shadow} />
+      {blur && saturate && <EffectRows role={role.key} blur={blur} saturate={saturate} />}
     </section>
   );
 }
 
-function SurfaceColorRow({ label, name, value, changed, onChange, onReset }: TokenProps & { label: string }) {
+/// The backdrop filter behind a translucent surface: how much the content
+/// behind it is blurred and how saturated it stays.
+function EffectRows({ role, blur, saturate }: { role: string; blur: TokenControl; saturate: TokenControl }) {
+  return (
+    <>
+      <RangeRow name={surfaceToken(role, "blur")} min={0} max={64} step={1} unit="px" {...blur} />
+      <RangeRow name={surfaceToken(role, "saturate")} min={0} max={300} step={5} unit="%" {...saturate} />
+    </>
+  );
+}
+
+/// The overlay drawn behind dialogs, alert dialogs and sheets.
+function BackdropEditor({ resolve, color, blur, saturate }: {
+  resolve: (token: string) => string;
+  color: TokenControl;
+  blur: TokenControl;
+  saturate: TokenControl;
+}) {
+  return (
+    <section className="grid gap-3 rounded-lg border p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="grid min-w-0 gap-0.5">
+          <h2 className="text-sm font-medium">Backdrop</h2>
+          <p className="text-xs text-muted-foreground">Behind Dialog, Alert dialog, Sheet</p>
+        </div>
+        <div
+          aria-hidden
+          className="relative h-12 w-20 shrink-0 overflow-hidden rounded-md border text-[10px] leading-tight font-semibold"
+        >
+          <div className="absolute inset-0 grid grid-cols-2 p-1">
+            <span className="text-primary">Aa</span>
+            <span className="text-destructive">Bb</span>
+            <span className="text-info">Cc</span>
+            <span className="text-success">Dd</span>
+          </div>
+          <div
+            className="absolute inset-0"
+            style={{
+              background: literalColor(color.value, resolve) ?? color.value,
+              backdropFilter: `blur(${blur.value}) saturate(${saturate.value})`,
+            }}
+          />
+        </div>
+      </div>
+      <SurfaceColorRow label="Color" name={surfaceToken(BACKDROP_KEY, "background")} resolve={resolve} {...color} />
+      <EffectRows role={BACKDROP_KEY} blur={blur} saturate={saturate} />
+    </section>
+  );
+}
+
+/// A theme color at an opacity, Transparent, or a custom color. Picking a
+/// color on the swatch, or choosing Custom, turns the current color into a
+/// literal one that can then be edited freely.
+function SurfaceColorRow({ label, name, value, changed, onChange, onReset, resolve }: TokenProps & {
+  label: string;
+  resolve: (token: string) => string;
+}) {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
   const parsed = parseSurfaceColor(value);
+  const rgba = surfaceRgba(value, resolve);
   const valid = CSS.supports("color", draft);
+  const percent = parsed ? parsed.percent : rgba ? Math.round(rgba[3] / 2.55) : 100;
   return (
     <div className="grid gap-1.5">
       <div className="flex items-center justify-between gap-2">
@@ -524,22 +597,38 @@ function SurfaceColorRow({ label, name, value, changed, onChange, onReset }: Tok
         <ResetButton changed={changed} onReset={onReset} name={name} />
       </div>
       <div className="grid grid-cols-[2rem_9rem_minmax(0,1fr)_2.5rem] items-center gap-2">
-        <span className="size-8 rounded-md border" style={{ background: value }} title={value} />
+        <span
+          className="relative size-8 overflow-hidden rounded-md border"
+          style={{ background: rgba ? rgbaCss(rgba) : value }}
+          title="Pick a custom color"
+        >
+          <input
+            type="color"
+            aria-label={`Pick ${label.toLowerCase()} color`}
+            value={rgba ? toHex(rgba) : "#000000"}
+            onChange={(event) => onChange(withAlpha(event.target.value, rgba && rgba[3] > 0 ? rgba[3] : 255))}
+            className="absolute inset-0 size-full cursor-pointer opacity-0"
+          />
+        </span>
         <Select
           value={parsed?.source ?? "custom"}
           onValueChange={(source) => {
-            if (!source || source === "custom") return;
-            const percent = source === "transparent" ? 0 : parsed && parsed.source !== "transparent" ? parsed.percent : 100;
-            onChange(surfaceColorValue({ source, percent }));
+            if (!source) return;
+            if (source === "custom") {
+              if (parsed && rgba) onChange(rgbaCss(rgba));
+              return;
+            }
+            const next = source === "transparent" ? 0 : parsed && parsed.source !== "transparent" ? parsed.percent : parsed ? 100 : percent;
+            onChange(surfaceColorValue({ source, percent: next }));
           }}
         >
           <SelectTrigger size="sm" aria-label={`${label} color`}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="transparent">Transparent</SelectItem>
             {SURFACE_COLOR_SOURCES.map((source) => (
-              <SelectItem key={source} value={source}>{source.slice(2)}</SelectItem>
+              <SelectItem key={source} value={source}>{source.replace(/^--/, "")}</SelectItem>
             ))}
-            <SelectItem value="custom" disabled>Custom</SelectItem>
+            <SelectItem value="custom">Custom</SelectItem>
           </SelectContent>
         </Select>
         <input
@@ -548,12 +637,16 @@ function SurfaceColorRow({ label, name, value, changed, onChange, onReset }: Tok
           min={0}
           max={100}
           step={1}
-          disabled={!parsed || parsed.source === "transparent"}
-          value={parsed?.percent ?? 100}
+          disabled={parsed?.source === "transparent" || (!parsed && !rgba)}
+          value={percent}
           className="w-full accent-primary disabled:opacity-40"
-          onChange={(event) => parsed && onChange(surfaceColorValue({ source: parsed.source, percent: Number(event.target.value) }))}
+          onChange={(event) => {
+            const next = Number(event.target.value);
+            if (parsed) onChange(surfaceColorValue({ source: parsed.source, percent: next }));
+            else if (rgba) onChange(next >= 100 ? toHex(rgba) : `rgb(${rgba[0]} ${rgba[1]} ${rgba[2]} / ${next / 100})`);
+          }}
         />
-        <span className="text-right font-mono text-xs tabular-nums">{parsed ? `${parsed.percent}%` : ""}</span>
+        <span className="text-right font-mono text-xs tabular-nums">{parsed?.source === "transparent" ? "" : `${percent}%`}</span>
       </div>
       <Input
         value={draft}
@@ -680,6 +773,39 @@ function toRgba(color: string): [number, number, number, number] | null {
 
 function toHex([r, g, b]: [number, number, number, number]): string {
   return `#${[r, g, b].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+type Rgba = [number, number, number, number];
+
+/// A surface color as sRGB bytes in the edited theme: theme colors are looked
+/// up through `resolve` (this window keeps the stock theme of its own), and
+/// the opacity becomes the alpha.
+function surfaceRgba(value: string, resolve: (token: string) => string): Rgba | null {
+  const parsed = parseSurfaceColor(value);
+  if (parsed?.source === "transparent") return [0, 0, 0, 0];
+  const source = parsed && (parsed.source.startsWith("--") ? `var(${parsed.source})` : parsed.source);
+  const base = toRgba(resolveVars(source || value, resolve));
+  if (!base || !parsed) return base;
+  return [base[0], base[1], base[2], Math.round((base[3] * parsed.percent) / 100)];
+}
+
+function literalColor(value: string, resolve: (token: string) => string): string | null {
+  const rgba = surfaceRgba(value, resolve);
+  return rgba && rgbaCss(rgba);
+}
+
+function rgbaCss(rgba: Rgba): string {
+  return withAlpha(toHex(rgba), rgba[3]);
+}
+
+/// Replaces `var(--x)` with the token's value until none are left.
+function resolveVars(text: string, resolve: (token: string) => string): string {
+  let current = text;
+  for (let depth = 0; depth < 8 && current.includes("var("); depth += 1) {
+    current = current.replace(/var\((--[\w-]+)(?:\s*,\s*([^)]*))?\)/g, (match, token: string, fallback?: string) =>
+      resolve(token) || fallback || match);
+  }
+  return current;
 }
 
 /// The picker's hex, keeping the token's own transparency.

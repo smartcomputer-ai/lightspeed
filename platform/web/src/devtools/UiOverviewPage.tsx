@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { Bell, Bot, ChevronsUpDown, Copy, Inbox, Mail, Monitor, Moon, Plus, Search, Settings, Sun, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -90,6 +90,14 @@ import { EmptyState, PageHeader, SectionHeader } from "@/components/page";
 import { StatusDot, type BotTone } from "@/components/bot/status";
 import { useTheme, type Theme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import * as LucideIcons from "lucide-react";
+import * as TablerIcons from "@tabler/icons-react";
+import * as BotIcons from "@/components/icons/bot";
+import * as LogoIcons from "@/components/icons/logos";
+import { BotFaceIcon } from "@/components/icons/bot";
+import { GROUP_ORDER, StepRow, groupStyle } from "@/components/session/tool-trace";
+import { UNIVERSE_NAV } from "@/components/universe-nav";
+import { collectIconUsage, type IconLibrary, type IconUsage } from "./icon-usage";
 
 /// Every shared UI component and its variations on one page, grouped by
 /// category, for reviewing the design system in both themes. Development
@@ -98,6 +106,8 @@ import { cn } from "@/lib/utils";
 const CATEGORIES = [
   { id: "typography", title: "Typography" },
   { id: "colors", title: "Colors" },
+  { id: "icons", title: "Icons" },
+  { id: "entities", title: "Entities" },
   { id: "buttons", title: "Buttons" },
   { id: "badges", title: "Badges & status" },
   { id: "inputs", title: "Inputs" },
@@ -148,6 +158,8 @@ export function UiOverviewPage() {
           </div>
           <TypographySection />
           <ColorsSection />
+          <IconsSection />
+          <EntitiesSection />
           <ButtonsSection />
           <BadgesSection />
           <InputsSection />
@@ -278,6 +290,22 @@ const COLOR_TOKENS = [
   ["sidebar-accent", "sidebar-accent-foreground"],
 ] as const;
 
+/// Full class names, so Tailwind's source scan generates them.
+const STATUS_COLORS = [
+  { name: "success", label: "Success", message: "Deployment finished.", text: "text-success", tint: "border-success/40 bg-success/15", solid: "bg-success" },
+  { name: "warning", label: "Warning", message: "Quota at 90%.", text: "text-warning", tint: "border-warning/40 bg-warning/15", solid: "bg-warning" },
+  { name: "danger", label: "Danger", message: "Connection lost.", text: "text-danger", tint: "border-danger/40 bg-danger/15", solid: "bg-danger" },
+  { name: "info", label: "Info", message: "A new version is out.", text: "text-info", tint: "border-info/40 bg-info/15", solid: "bg-info" },
+  {
+    name: "destructive",
+    label: "Destructive",
+    message: "Deletes the workspace.",
+    text: "text-destructive",
+    tint: "border-destructive/40 bg-destructive/15",
+    solid: "bg-destructive",
+  },
+] as const;
+
 function ColorsSection() {
   return (
     <Category id="colors" description="Theme tokens from index.css; each swatch shows its paired foreground.">
@@ -291,6 +319,16 @@ function ColorsSection() {
               Aa
             </div>
             <Caption>--{surface}</Caption>
+          </div>
+        ))}
+      </Specimen>
+      <Specimen title="Status" note="Same in both themes: text, tinted surface, solid fill" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {STATUS_COLORS.map((status) => (
+          <div key={status.name} className="grid gap-1.5">
+            <p className={cn("text-sm font-medium", status.text)}>{status.label}</p>
+            <div className={cn("rounded-lg border px-3 py-2 text-sm", status.tint)}>{status.message}</div>
+            <div className={cn("rounded-lg px-3 py-2 text-sm font-medium text-black", status.solid)}>{status.label}</div>
+            <Caption>--{status.name}</Caption>
           </div>
         ))}
       </Specimen>
@@ -935,3 +973,271 @@ function MessagesSection() {
     </Category>
   );
 }
+
+/// The raw source of every app module, read for the icon imports. Vite
+/// inlines it into this development-only chunk.
+const APP_SOURCES = import.meta.glob<string>(
+  ["/src/**/*.{ts,tsx}", "!/src/devtools/**", "!/src/**/*.test.{ts,tsx}", "!/src/**/*.test-double.tsx"],
+  { query: "?raw", import: "default", eager: true },
+);
+
+type IconComponent = ComponentType<{ className?: string; size?: number }>;
+
+const ICON_SETS: Record<IconLibrary, Record<string, unknown>> = {
+  lucide: LucideIcons,
+  tabler: TablerIcons,
+  local: { ...BotIcons, ...LogoIcons },
+};
+
+const LIBRARY_TITLES: Record<IconLibrary, { title: string; note: string }> = {
+  lucide: { title: "Lucide", note: "lucide-react, the app's icon set" },
+  tabler: { title: "Tabler", note: "@tabler/icons-react, inside the shared ui components" },
+  local: { title: "Own marks and logos", note: "src/components/icons" },
+};
+
+function iconComponent(library: IconLibrary, name: string): IconComponent | null {
+  const component = ICON_SETS[library][name];
+  return typeof component === "function" || (typeof component === "object" && component !== null)
+    ? (component as IconComponent)
+    : null;
+}
+
+function IconsSection() {
+  const usage = useMemo(
+    () => collectIconUsage(APP_SOURCES).filter((icon) => iconComponent(icon.library, icon.name)),
+    [],
+  );
+  const [query, setQuery] = useState("");
+  const shown = usage.filter((icon) => icon.name.toLowerCase().includes(query.trim().toLowerCase()));
+  return (
+    <Category
+      id="icons"
+      description={`Every icon the app imports (${usage.length}), read from the source. Click one to see the files that use it.`}
+    >
+      <Input
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Filter icons"
+        aria-label="Filter icons"
+        className="max-w-xs"
+      />
+      {(["lucide", "tabler", "local"] as const).map((library) => {
+        const icons = shown.filter((icon) => icon.library === library);
+        if (icons.length === 0) return null;
+        return (
+          <Specimen
+            key={library}
+            title={`${LIBRARY_TITLES[library].title} (${icons.length})`}
+            note={LIBRARY_TITLES[library].note}
+            className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2"
+          >
+            {icons.map((icon) => (
+              <IconTile key={`${icon.library}:${icon.name}`} icon={icon} />
+            ))}
+          </Specimen>
+        );
+      })}
+    </Category>
+  );
+}
+
+function IconTile({ icon }: { icon: IconUsage }) {
+  const Icon = iconComponent(icon.library, icon.name)!;
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            className="grid min-w-0 justify-items-center gap-1.5 rounded-lg border px-2 py-3 text-center outline-none hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50"
+          />
+        }
+      >
+        <Icon className="size-5" size={20} />
+        <span className="w-full truncate font-mono text-[11px]" title={icon.name}>{icon.name}</span>
+        <span className="text-[11px] text-muted-foreground">
+          {icon.files.length} {icon.files.length === 1 ? "file" : "files"}
+        </span>
+      </PopoverTrigger>
+      <PopoverContent className="grid gap-2 p-3">
+        <p className="flex items-center gap-2 text-sm font-medium">
+          <Icon className="size-4" size={16} />
+          {icon.name}
+        </p>
+        <ul className="grid gap-0.5">
+          {icon.files.map((file) => (
+            <li key={file} className="truncate font-mono text-[11px] text-muted-foreground" title={file}>{file}</li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/// Run steps as the transcript names them: one example per verb the runtime
+/// projects (see the tool display projection in crates/api-projection).
+const STEP_EXAMPLES: Array<{ group: string; entity: string; verb: string; target: string; icon?: IconComponent }> = [
+  { group: "explore", entity: "Read tool", verb: "Read", target: "src/scheduler/queue.ts" },
+  { group: "explore", entity: "Search tool", verb: "Search", target: "\"flaky retry\"" },
+  { group: "explore", entity: "Web fetch", verb: "Fetch", target: "https://docs.example.com/retries" },
+  { group: "edit", entity: "Write tool", verb: "Write", target: "src/scheduler/queue.ts" },
+  { group: "edit", entity: "Edit tool", verb: "Edit", target: "src/scheduler/queue.test.ts" },
+  { group: "execute", entity: "Run tool", verb: "Run", target: "npm test -- queue" },
+  { group: "code", entity: "Code mode", verb: "Run code", target: "summarize(results)" },
+  { group: "mcp", entity: "MCP tool", verb: "GitHub", target: "create_issue" },
+  { group: "agent", entity: "Delegate tool", verb: "Delegate", target: "reviewer" },
+  { group: "agent", entity: "Spawn tool", verb: "Spawn", target: "test-writer" },
+  { group: "agent", entity: "Await sub-agent", verb: "Await", target: "test-writer", icon: LucideIcons.Hourglass },
+  { group: "bot", entity: "Bot emit", verb: "Emit", target: "to implementer" },
+  { group: "bot", entity: "Bot emit to self", verb: "Emit", target: "to self", icon: LucideIcons.Repeat },
+  { group: "bot", entity: "Bot brief", verb: "Update brief", target: "Release planner" },
+  { group: "message", entity: "Channel send", verb: "Send", target: "#releases" },
+  { group: "message", entity: "Channel skip", verb: "Skip", target: "no reply needed" },
+  { group: "other", entity: "Other tool", verb: "Run", target: "custom_tool" },
+];
+
+interface PlainEntity {
+  entity: string;
+  icon: IconComponent;
+  source: string;
+}
+
+/// Session resources as the resource strip and setup editor show them.
+const RESOURCE_ENTITIES: PlainEntity[] = [
+  { entity: "Environment", icon: LucideIcons.Server, source: "session/session-resources.tsx" },
+  { entity: "Workspace", icon: LucideIcons.FolderOpen, source: "session/session-resources.tsx" },
+  { entity: "Tools", icon: LucideIcons.Wrench, source: "session/session-resources.tsx" },
+  { entity: "Sub-agents", icon: LucideIcons.Network, source: "session/session-resources.tsx" },
+  { entity: "Code mode", icon: LucideIcons.Code2, source: "session/session-resources.tsx" },
+  { entity: "Web", icon: LucideIcons.Globe2, source: "session/session-resources.tsx" },
+  { entity: "Timers", icon: LucideIcons.Clock3, source: "session/session-resources.tsx" },
+];
+
+/// Bot trigger kinds, as the trigger picker shows them.
+const TRIGGER_ENTITIES: PlainEntity[] = [
+  { entity: "Schedule", icon: LucideIcons.CalendarClock, source: "bot/triggers.tsx" },
+  { entity: "Webhook", icon: LucideIcons.Webhook, source: "bot/triggers.tsx" },
+  { entity: "Chat account", icon: LucideIcons.MessageCircle, source: "bot/triggers.tsx" },
+  { entity: "Other bots", icon: LucideIcons.Inbox, source: "bot/triggers.tsx" },
+  { entity: "Check a URL", icon: LucideIcons.RefreshCw, source: "bot/triggers.tsx" },
+  { entity: "Run a command", icon: LucideIcons.Terminal, source: "bot/triggers.tsx" },
+];
+
+/// The universe's sections, straight from the sidebar definition.
+const NAV_ENTITIES: PlainEntity[] = UNIVERSE_NAV.flatMap((group) =>
+  group.items.map((item) => ({ entity: item.label, icon: item.icon as IconComponent, source: "universe-nav.tsx" })),
+);
+
+function EntitiesSection() {
+  const Brain = LucideIcons.Brain;
+  return (
+    <Category
+      id="entities"
+      description="The things the app shows with an icon, what each looks like in color, and how it appears in use."
+    >
+      <Specimen title="Run steps" note="Transcript rows: the color comes from the step's tool family" className="block p-0">
+        <EntityTable>
+          <EntityRow
+            entity="Thinking"
+            source="session/tool-trace.tsx"
+            icon={<Brain className="size-5" />}
+            colored={<span className="flex size-8 items-center justify-center rounded-md bg-muted text-muted-foreground"><Brain className="size-4" /></span>}
+            preview={<StepRow icon={<Brain />} tone="text-muted-foreground" verb="Thinking" target="Planning the retry fix" />}
+          />
+          {STEP_EXAMPLES.map((step) => {
+            const style = groupStyle(step.group);
+            const Icon = step.icon ?? (style.icon as IconComponent);
+            return (
+              <EntityRow
+                key={step.entity}
+                entity={step.entity}
+                source={`${step.group} family`}
+                icon={<Icon className="size-5" />}
+                colored={<span className={cn("flex size-8 items-center justify-center rounded-md", style.tile, style.text)}><Icon className="size-4" /></span>}
+                preview={<StepRow icon={<Icon />} tone={style.text} verb={step.verb} target={step.target} right="1.2s" />}
+              />
+            );
+          })}
+        </EntityTable>
+      </Specimen>
+      <Specimen title="Tool families" note={`Folded run strips list them in this order (${GROUP_ORDER.length})`}>
+        {GROUP_ORDER.map((group) => {
+          const style = groupStyle(group);
+          const Icon = style.icon as IconComponent;
+          return (
+            <span key={group} className={cn("inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium", style.tile, style.text)}>
+              <Icon className="size-3.5" />
+              {group}
+            </span>
+          );
+        })}
+      </Specimen>
+      <PlainEntities title="Session resources" note="The resource strip above a session; no color of their own" entities={RESOURCE_ENTITIES} />
+      <PlainEntities title="Bot triggers" note="What starts a bot" entities={TRIGGER_ENTITIES} />
+      <PlainEntities
+        title="Universe sections"
+        note="The sidebar; Bots uses the bot face mark"
+        entities={NAV_ENTITIES.map((item) => (item.entity === "Bots" ? { ...item, icon: BotFaceIcon as IconComponent } : item))}
+      />
+    </Category>
+  );
+}
+
+function PlainEntities({ title, note, entities }: { title: string; note: string; entities: PlainEntity[] }) {
+  return (
+    <Specimen title={title} note={note} className="block p-0">
+      <EntityTable>
+        {entities.map(({ entity, icon: Icon, source }) => (
+          <EntityRow
+            key={entity}
+            entity={entity}
+            source={source}
+            icon={<Icon className="size-5" />}
+            colored={<span className="flex size-8 items-center justify-center rounded-md bg-muted text-foreground/75"><Icon className="size-4" /></span>}
+            preview={
+              <span className="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs">
+                <Icon className="size-3.5 text-muted-foreground" />
+                {entity}
+              </span>
+            }
+          />
+        ))}
+      </EntityTable>
+    </Specimen>
+  );
+}
+
+function EntityTable({ children }: { children: ReactNode }) {
+  return (
+    <div className="grid w-full">
+      <div className="grid grid-cols-[minmax(0,11rem)_3rem_3.5rem_minmax(0,1fr)] items-center gap-3 border-b px-4 py-2 text-xs font-medium text-muted-foreground">
+        <span>Entity</span>
+        <span>Icon</span>
+        <span>Color</span>
+        <span>In use</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function EntityRow({ entity, source, icon, colored, preview }: {
+  entity: string;
+  source: string;
+  icon: ReactNode;
+  colored: ReactNode;
+  preview: ReactNode;
+}) {
+  return (
+    <div className="grid grid-cols-[minmax(0,11rem)_3rem_3.5rem_minmax(0,1fr)] items-center gap-3 border-b px-4 py-2 last:border-b-0">
+      <span className="grid min-w-0">
+        <span className="truncate text-sm">{entity}</span>
+        <span className="truncate" title={source}><Caption>{source}</Caption></span>
+      </span>
+      <span className="flex justify-center">{icon}</span>
+      <span className="flex justify-center">{colored}</span>
+      <div className="min-w-0">{preview}</div>
+    </div>
+  );
+}
+

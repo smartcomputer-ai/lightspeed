@@ -38,9 +38,10 @@ export const COLOR_GROUPS: ColorGroup[] = [
     title: "Actions and emphasis",
     tokens: [
       "--primary", "--primary-foreground", "--secondary", "--secondary-foreground", "--accent", "--accent-foreground",
-      "--muted", "--muted-foreground", "--destructive",
+      "--muted", "--muted-foreground",
     ],
   },
+  { title: "Status", tokens: ["--destructive", "--success", "--warning", "--danger", "--info"] },
   { title: "Borders and focus", tokens: ["--border", "--input", "--ring"] },
   {
     title: "Sidebar",
@@ -87,6 +88,8 @@ export interface SurfaceRole {
   title: string;
   components: string;
   note?: string;
+  /// Also has `-blur` and `-saturate`, the backdrop filter behind it.
+  effects?: boolean;
 }
 
 export const SURFACE_ROLES: SurfaceRole[] = [
@@ -98,20 +101,26 @@ export const SURFACE_ROLES: SurfaceRole[] = [
     title: "Menus",
     components: "Dropdown menu, Select list, Combobox list",
     note: "Menus always render in the dark theme, so their colors take effect under Dark.",
+    effects: true,
   },
   { key: "field", title: "Inputs", components: "Input, Textarea, Select trigger, Input group, Combobox chips" },
 ];
 
-export type SurfacePart = "background" | "border" | "border-width" | "radius" | "shadow";
+export type SurfacePart = "background" | "border" | "border-width" | "radius" | "shadow" | "blur" | "saturate";
 
 export function surfaceToken(role: string, part: SurfacePart): string {
   return part === "background" ? `--surface-${role}` : `--surface-${role}-${part}`;
 }
 
-/// Theme colors a surface background or border can be drawn from.
+/// The overlay behind dialogs, alert dialogs and sheets: `--surface-backdrop`
+/// (color, per theme), `-blur` and `-saturate` (shared).
+export const BACKDROP_KEY = "backdrop";
+
+/// Colors a surface background or border can be drawn from: theme colors,
+/// plus black and white for backdrops.
 export const SURFACE_COLOR_SOURCES = [
   "--background", "--card", "--popover", "--muted", "--secondary", "--accent", "--primary", "--sidebar", "--input",
-  "--border", "--foreground", "--ring",
+  "--border", "--foreground", "--ring", "black", "white",
 ] as const;
 
 /// A surface color as a theme color at an opacity, or transparent.
@@ -125,15 +134,18 @@ export interface SurfaceColor {
 export function parseSurfaceColor(value: string): SurfaceColor | null {
   const text = value.trim().replace(/\s+/g, " ");
   if (text === "transparent") return { source: "transparent", percent: 0 };
-  const plain = /^var\((--[\w-]+)\)$/.exec(text);
-  if (plain) return { source: plain[1]!, percent: 100 };
-  const mixed = /^color-mix\(in oklab, ?var\((--[\w-]+)\) ([\d.]+)%, ?transparent\)$/.exec(text);
-  return mixed ? { source: mixed[1]!, percent: Number(mixed[2]) } : null;
+  const plain = /^(?:var\((--[\w-]+)\)|(black|white))$/.exec(text);
+  if (plain) return { source: (plain[1] ?? plain[2])!, percent: 100 };
+  const mixed = /^color-mix\(in oklab, ?(?:var\((--[\w-]+)\)|(black|white)) ([\d.]+)%, ?transparent\)$/.exec(text);
+  return mixed ? { source: (mixed[1] ?? mixed[2])!, percent: Number(mixed[3]) } : null;
 }
 
+/// Only the Transparent choice writes `transparent`: a theme color at 0%
+/// keeps its source, so raising the opacity again brings it back.
 export function surfaceColorValue({ source, percent }: SurfaceColor): string {
-  if (source === "transparent" || percent <= 0) return "transparent";
-  return percent >= 100 ? `var(${source})` : `color-mix(in oklab, var(${source}) ${percent}%, transparent)`;
+  if (source === "transparent") return "transparent";
+  const color = source.startsWith("--") ? `var(${source})` : source;
+  return percent >= 100 ? color : `color-mix(in oklab, ${color} ${percent}%, transparent)`;
 }
 
 /// The radius scale from index.css's theme, plus square and pill.
