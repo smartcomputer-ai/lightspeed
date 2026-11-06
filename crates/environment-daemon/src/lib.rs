@@ -31,6 +31,9 @@ use environment_protocol::{
             ScanCeilings, SearchCeilings, TransferCeilings,
         },
         idle::GetIdleResponse,
+        platform::{
+            InterruptCapabilities, OperatingSystem, PlatformFacts, ProcessTree, TerminationMode,
+        },
     },
     error::{Capability, ProtocolError},
     handshake::{ImplementationInfo, Plane},
@@ -223,6 +226,15 @@ impl DaemonRuntime {
             plane: Plane::Data,
             daemon_instance_id: self.inner.instance_id.clone(),
             server_info: self.inner.server_info.clone(),
+            platform: PlatformFacts::without_shells(if cfg!(target_os = "windows") {
+                OperatingSystem::Windows
+            } else if cfg!(target_os = "linux") {
+                OperatingSystem::Linux
+            } else if cfg!(target_os = "macos") {
+                OperatingSystem::Macos
+            } else {
+                OperatingSystem::Other
+            }),
             capabilities: self.inner.capabilities.clone(),
             limits: self.inner.limits.clone(),
             default_cwd: self.inner.default_cwd.clone(),
@@ -296,12 +308,28 @@ impl DaemonRuntime {
 const PTY_SUPPORTED: bool = cfg!(unix);
 
 fn data_capabilities(config: &DaemonConfig) -> DataCapabilities {
+    // Windows backends must satisfy the advertised contracts before enabling
+    // these families. Non-Unix lifecycle stubs do not supply capabilities.
+    if !cfg!(unix) {
+        return DataCapabilities::default();
+    }
     DataCapabilities {
         filesystem: Some(FilesystemCapabilities {
             write: !config.read_only_fs,
         }),
-        process: Some(ProcessCapabilities { pty: PTY_SUPPORTED }),
-        job: Some(JobCapabilities {}),
+        process: Some(ProcessCapabilities {
+            pty: PTY_SUPPORTED,
+            tree: ProcessTree::PosixProcessGroup,
+            interrupt: InterruptCapabilities {
+                pipe: true,
+                pty: PTY_SUPPORTED,
+            },
+            termination: TerminationMode::GracefulThenKill,
+        }),
+        job: Some(JobCapabilities {
+            tree: ProcessTree::PosixProcessGroup,
+            termination: TerminationMode::GracefulThenKill,
+        }),
     }
 }
 
@@ -534,6 +562,9 @@ mod tests {
     async fn initialize_reports_the_instance_cwd_and_capability_families() {
         let (_temp, runtime) = runtime();
         let response = runtime.initialize_response();
+        response
+            .validate_platform()
+            .expect("consistent platform facts");
         assert_eq!(response.protocol_version, ENVD_PROTOCOL_VERSION);
         assert_eq!(response.plane, Plane::Data);
         assert_eq!(&response.daemon_instance_id, runtime.instance_id());

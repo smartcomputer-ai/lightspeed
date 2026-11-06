@@ -105,7 +105,7 @@
         "description": "`job/cancel` params.",
         "properties": {
           "force": {
-            "description": "Kill at once instead of `SIGTERM`, `limits.job.cancelGraceMs`, then\n`SIGKILL`.",
+            "description": "Force tree termination at once instead of using the advertised\n`termination` mode and `limits.job.cancelGraceMs`.",
             "type": "boolean"
           },
           "jobIds": {
@@ -252,7 +252,7 @@
             "type": "object"
           },
           "timeoutMs": {
-            "description": "Stop deadline from start. On expiry the daemon terminates the process\ngroup (`SIGTERM`, the advertised grace, then `SIGKILL`) and records\n`stoppedBy: timeout`. Absent means no deadline.",
+            "description": "Stop deadline from start. On expiry the daemon stops the owned tree using\nthe family's advertised `termination` mode and grace, and records\n`stoppedBy: timeout`. Absent means no deadline.",
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
@@ -400,10 +400,10 @@
         "type": "string"
       },
       "EnvironmentPath": {
-        "description": "An absolute, normalized POSIX path in the environment: `/`, or `/` and\none or more segments joined by `/`. Empty, `.` and `..` segments and a\ntrailing `/` are rejected, never rewritten. At most 4096 bytes.\n`defaultCwd`, `homeDirectory`, every `cwd` and every path parameter use\nthis type; see the module's path model and confinement rule.",
+        "description": "An absolute, normalized environment path: `/` or `C:/`, optionally followed\nby segments joined by `/`. Empty, `.` and `..` segments and a trailing `/`\nbelow the root are rejected, never rewritten. At most 4096 UTF-8 bytes.\nEquality and ordering are exact lexical comparisons, not file identity or\nauthorization. Windows confinement must use native handles and identity;\nneither case folding nor these lexical helpers establish confinement.\n`defaultCwd`, `homeDirectory`, every `cwd` and every path parameter use\nthis type; see the module's path model and confinement rule.",
         "maxLength": 4096,
         "minLength": 1,
-        "pattern": "^(/|(/(?!\\.\\.?(/|$))[^/\\u0000]+)+)$",
+        "pattern": "^(/|(/(?!\\.\\.?(/|$))[^/\\u0000]+)+|[A-Z]:/((?!(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9¹²³]|[lL][pP][tT][1-9¹²³]|[cC][oO][nN][iI][nN]\\$|[cC][oO][nN][oO][uU][tT]\\$) *(?:\\.|/|$))[^/\\\\<>:\"|?*\\u0000-\\u001f]*[^/\\\\<>:\"|?*\\u0000-\\u001f .](/(?!(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9¹²³]|[lL][pP][tT][1-9¹²³]|[cC][oO][nN][iI][nN]\\$|[cC][oO][nN][oO][uU][tT]\\$) *(?:\\.|/|$))[^/\\\\<>:\"|?*\\u0000-\\u001f]*[^/\\\\<>:\"|?*\\u0000-\\u001f .])*)?)(?![\\s\\S])",
         "type": "string"
       },
       "ErrorData": {
@@ -746,7 +746,7 @@
         "oneOf": [
           {
             "additionalProperties": false,
-            "description": "`/dev/null`: the command reads end of file. Model-facing tools use\nthis.",
+            "description": "The command reads end of file from the platform's null input.\nModel-facing tools use this.",
             "properties": {
               "kind": {
                 "const": "none",
@@ -813,7 +813,7 @@
         "oneOf": [
           {
             "additionalProperties": false,
-            "description": "Normal exit with this status code.",
+            "description": "Native exit status. Windows preserves all 32 bits by interpreting the\nunsigned process code as signed i32 (for example 0xC0000005 is -1073741819).\nWindows forced termination also uses a native code, never a fake signal.",
             "properties": {
               "code": {
                 "format": "int32",
@@ -1325,6 +1325,14 @@
             ],
             "description": "Always `data`."
           },
+          "platform": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PlatformFacts"
+              }
+            ],
+            "description": "Observations of the execution environment, independent of the client OS."
+          },
           "protocolVersion": {
             "format": "uint32",
             "minimum": 0,
@@ -1339,10 +1347,24 @@
           "plane",
           "daemonInstanceId",
           "serverInfo",
+          "platform",
           "capabilities",
           "limits",
           "defaultCwd"
         ],
+        "type": "object"
+      },
+      "InterruptCapabilities": {
+        "additionalProperties": false,
+        "description": "Interrupt delivery mechanisms, separately for pipes and terminals. Missing\nflags mean `capabilityUnavailable`, never forced kill presented as interrupt.",
+        "properties": {
+          "pipe": {
+            "type": "boolean"
+          },
+          "pty": {
+            "type": "boolean"
+          }
+        },
         "type": "object"
       },
       "InventoryEntry": {
@@ -1389,7 +1411,19 @@
       },
       "JobCapabilities": {
         "additionalProperties": false,
-        "description": "The `job` family: `job/*`. It has no instance facts.",
+        "description": "The `job` family: `job/*`. Root completion always sweeps the owned tree.",
+        "properties": {
+          "termination": {
+            "$ref": "#/components/schemas/TerminationMode"
+          },
+          "tree": {
+            "$ref": "#/components/schemas/ProcessTree"
+          }
+        },
+        "required": [
+          "tree",
+          "termination"
+        ],
         "type": "object"
       },
       "JobDependency": {
@@ -1460,7 +1494,7 @@
         "description": "Ceilings of `job/*`.",
         "properties": {
           "cancelGraceMs": {
-            "description": "Grace between `SIGTERM` and `SIGKILL` for a non-forced cancel and\ntimeouts.",
+            "description": "Grace before forced termination for a non-forced cancel and timeouts;\nzero when `capabilities.job.termination` is `immediateKill`.",
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
@@ -1954,6 +1988,16 @@
           }
         ]
       },
+      "OperatingSystem": {
+        "description": "The remote OS. `other` does not imply Unix execution support.",
+        "enum": [
+          "linux",
+          "macos",
+          "windows",
+          "other"
+        ],
+        "type": "string"
+      },
       "OutputChunk": {
         "additionalProperties": false,
         "description": "Contiguous output bytes from one stream.",
@@ -2057,6 +2101,21 @@
           }
         ]
       },
+      "PathConvention": {
+        "description": "Grammar of an environment's native paths, independent of the client's OS.",
+        "oneOf": [
+          {
+            "const": "posix",
+            "description": "Absolute `/`-separated paths; backslashes are ordinary name characters.",
+            "type": "string"
+          },
+          {
+            "const": "windows",
+            "description": "Drive-absolute Windows paths. Wire separators are `/`; native ones `\\`.",
+            "type": "string"
+          }
+        ]
+      },
       "PermissionReason": {
         "description": "Why a `permissionDenied` request was refused.",
         "oneOf": [
@@ -2111,6 +2170,36 @@
             "type": "string"
           }
         ]
+      },
+      "PlatformFacts": {
+        "additionalProperties": false,
+        "description": "Remote platform discovery. An empty shell catalog means no shell has been\nverified; it is not permission to guess `bash`, `cmd` or PowerShell on PATH.\nThere is at most one selected installation per shell kind. On Windows the\ndefault is PowerShell 7 when verified, otherwise Windows PowerShell; Git Bash\nis available only by explicit selection. No default is allowed when neither\nPowerShell is available. Unix defaults to verified Bash when available.",
+        "properties": {
+          "defaultShell": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShellKind"
+              }
+            ]
+          },
+          "os": {
+            "$ref": "#/components/schemas/OperatingSystem"
+          },
+          "pathConvention": {
+            "$ref": "#/components/schemas/PathConvention"
+          },
+          "shells": {
+            "items": {
+              "$ref": "#/components/schemas/ShellInfo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "os",
+          "pathConvention"
+        ],
+        "type": "object"
       },
       "PreconditionReason": {
         "description": "The state that forbids a `failedPrecondition` request.",
@@ -2236,11 +2325,25 @@
         "additionalProperties": false,
         "description": "The `process` family: `process/*`.",
         "properties": {
+          "interrupt": {
+            "$ref": "#/components/schemas/InterruptCapabilities"
+          },
           "pty": {
             "description": "`process/start` accepts `pty`.",
             "type": "boolean"
+          },
+          "termination": {
+            "$ref": "#/components/schemas/TerminationMode"
+          },
+          "tree": {
+            "$ref": "#/components/schemas/ProcessTree"
           }
         },
+        "required": [
+          "tree",
+          "interrupt",
+          "termination"
+        ],
         "type": "object"
       },
       "ProcessId": {
@@ -2285,7 +2388,7 @@
             "type": "integer"
           },
           "terminateGraceMs": {
-            "description": "Grace between `SIGTERM` and `SIGKILL` for `terminate` and timeouts.",
+            "description": "Grace before forced termination for `terminate` and timeouts; zero\nwhen `capabilities.process.termination` is `immediateKill`.",
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
@@ -2309,21 +2412,36 @@
         "type": "object"
       },
       "ProcessSignal": {
-        "description": "Signal delivered by `process/terminate`.",
+        "description": "Semantic action delivered by `process/terminate`, using advertised mechanisms.",
         "oneOf": [
           {
             "const": "interrupt",
-            "description": "`SIGINT` to the foreground process group (the terminal's under a\nPTY, otherwise the process group). Records nothing; the next read\nshows what the process did.",
+            "description": "Request interruption; requires `capabilities.process.interrupt.pipe`\nor `.pty` for the handle's mode. POSIX delivers `SIGINT` to the foreground\ngroup. Windows requires a verified terminal mechanism; an unsupported\nrequest is `capabilityUnavailable`, not a forced kill. Records nothing.",
             "type": "string"
           },
           {
             "const": "terminate",
-            "description": "`SIGTERM` to the group, then `SIGKILL` after\n`limits.process.terminateGraceMs` if members remain. Records\n`stoppedBy: terminate`.",
+            "description": "Stop the owned tree using `capabilities.process.termination`. POSIX\nsends `SIGTERM`, then `SIGKILL` after `terminateGraceMs`; `immediateKill`\nforces termination without a grace period. Records `stoppedBy: terminate`.",
             "type": "string"
           },
           {
             "const": "kill",
-            "description": "`SIGKILL` to the group. Records `stoppedBy: kill`.",
+            "description": "Force the owned tree to terminate. POSIX uses `SIGKILL`; Windows uses\nJob Object termination. Records `stoppedBy: kill`.",
+            "type": "string"
+          }
+        ]
+      },
+      "ProcessTree": {
+        "description": "Ownership model of a process or job. This describes what tree membership\nmeans; it must not be inferred from a numeric PID or a build target string.",
+        "oneOf": [
+          {
+            "const": "posixProcessGroup",
+            "description": "Own process group. Descendants may escape with setsid. On daemon restart,\nidentify surviving groups using boot/creation identity; adopt process\nleftovers and sweep jobs. No guarantee of cleanup at daemon death.",
+            "type": "string"
+          },
+          {
+            "const": "windowsJobObject",
+            "description": "Non-breakaway Job Object attached before execution, owned by the daemon\nwith non-inheritable handles and kill-on-close. Natural process root exit\nkeeps the job handle and surviving descendants; natural job root exit\nsweeps descendants. Explicit close, timeout, cancellation and daemon death\nterminate the owned tree. Restart never adopts a raw persisted PID.\nRefuse spawn if atomic containment/nested-job constraints cannot be met.",
             "type": "string"
           }
         ]
@@ -3440,6 +3558,40 @@
         "description": "A secret value carried on the wire, such as a `secretEnv` value, a\nregistration key or a stream token. It serializes as a plain string;\n`Debug` is redacted so structured logging never prints it.",
         "type": "string"
       },
+      "ShellInfo": {
+        "additionalProperties": false,
+        "description": "One verified shell installation. Executables use the environment path grammar;\nversions are observed by the daemon, not inferred from executable names.",
+        "properties": {
+          "executable": {
+            "$ref": "#/components/schemas/EnvironmentPath"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ShellKind"
+          },
+          "version": {
+            "description": "Nonempty observed version, at most 256 UTF-8 bytes.",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "executable",
+          "version"
+        ],
+        "type": "object"
+      },
+      "ShellKind": {
+        "description": "A supported shell identity, not an arbitrary executable supplied by a caller.\n`gitBash` means verified Git for Windows Bash, never a WSL launcher.",
+        "enum": [
+          "bash",
+          "powerShell",
+          "windowsPowerShell",
+          "gitBash"
+        ],
+        "type": "string"
+      },
       "SignalName": {
         "description": "A POSIX signal name such as `SIGSEGV` or `SIGRTMIN+3`: `SIG` followed by\n1 to 16 uppercase letters, digits or `+`. Names, not numbers, because\nnumbers differ between platforms.",
         "pattern": "^SIG[A-Z0-9+]{1,16}$",
@@ -3538,7 +3690,7 @@
         "description": "`process/start` response, sent once the process runs.",
         "properties": {
           "pid": {
-            "description": "OS pid of the root process, which is also its process group id.",
+            "description": "OS pid of the root process; a process group id only on POSIX. Never\na durable identity or a Windows Job Object handle.",
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
@@ -3554,17 +3706,17 @@
         "oneOf": [
           {
             "const": "timeout",
-            "description": "`timeoutMs` expired: `SIGTERM`, the grace, then `SIGKILL`.",
+            "description": "`timeoutMs` expired; stopped using the advertised termination mode.",
             "type": "string"
           },
           {
             "const": "terminate",
-            "description": "`process/terminate` with `terminate`, or `job/cancel` without\n`force`: `SIGTERM`, the grace, then `SIGKILL`.",
+            "description": "`process/terminate` with `terminate`, or `job/cancel` without\n`force`: stopped using the advertised termination mode.",
             "type": "string"
           },
           {
             "const": "kill",
-            "description": "`process/terminate` with `kill`, or `job/cancel` with `force`:\n`SIGKILL` at once.",
+            "description": "`process/terminate` with `kill`, or `job/cancel` with `force`:\nforced tree termination at once.",
             "type": "string"
           }
         ]
@@ -3616,6 +3768,21 @@
           }
         },
         "type": "object"
+      },
+      "TerminationMode": {
+        "description": "How semantic termination works. Kill always forces the whole owned group/job.",
+        "oneOf": [
+          {
+            "const": "gracefulThenKill",
+            "description": "Send a graceful request, then force termination after the advertised grace.",
+            "type": "string"
+          },
+          {
+            "const": "immediateKill",
+            "description": "No graceful mechanism; terminate/cancel/timeout immediately force the tree.\nThe advertised grace must be zero. Never claims a Unix signal was sent.",
+            "type": "string"
+          }
+        ]
       },
       "TransferCeilings": {
         "additionalProperties": false,
@@ -4189,7 +4356,7 @@
         "description": "`process/write` params.",
         "properties": {
           "closeInput": {
-            "description": "Close the input after `data`: end of file on a pipe, `VEOF` on a\nPTY. Applied only when every byte of `data` was accepted.",
+            "description": "Close the input after `data`: end of file on a pipe, `VEOF` on a\nPOSIX PTY. A Windows terminal backend must refuse this with\n`capabilityUnavailable` if it cannot deliver EOF without killing the\nterminal. Applied only when every byte of `data` was accepted.",
             "type": "boolean"
           },
           "data": {
@@ -4277,9 +4444,9 @@
     }
   },
   "info": {
-    "description": "JSON-RPC 2.0 over WebSocket text frames of at most 16777216 bytes. Exact-match protocolVersion 4. Errors carry code, message and data.kind; see x-lightspeed-error-kinds.",
+    "description": "JSON-RPC 2.0 over WebSocket text frames of at most 16777216 bytes. Exact-match protocolVersion 5. Errors carry code, message and data.kind; see x-lightspeed-error-kinds.",
     "title": "Lightspeed environment data plane",
-    "version": "4"
+    "version": "5"
   },
   "methods": [
     {
@@ -5402,7 +5569,7 @@
           "name": "closeInput",
           "required": false,
           "schema": {
-            "description": "Close the input after `data`: end of file on a pipe, `VEOF` on a\nPTY. Applied only when every byte of `data` was accepted.",
+            "description": "Close the input after `data`: end of file on a pipe, `VEOF` on a\nPOSIX PTY. A Windows terminal backend must refuse this with\n`capabilityUnavailable` if it cannot deliver EOF without killing the\nterminal. Applied only when every byte of `data` was accepted.",
             "type": "boolean"
           }
         },
@@ -5590,7 +5757,7 @@
           "name": "force",
           "required": false,
           "schema": {
-            "description": "Kill at once instead of `SIGTERM`, `limits.job.cancelGraceMs`, then\n`SIGKILL`.",
+            "description": "Force tree termination at once instead of using the advertised\n`termination` mode and `limits.job.cancelGraceMs`.",
             "type": "boolean"
           }
         },

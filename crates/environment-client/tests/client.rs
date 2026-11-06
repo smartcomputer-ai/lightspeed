@@ -35,9 +35,11 @@ use environment_protocol::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
+#[cfg(unix)]
+use tokio::net::UnixListener;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    net::{TcpListener, UnixListener},
+    net::TcpListener,
     sync::mpsc,
 };
 use tokio_tungstenite::{
@@ -68,6 +70,39 @@ fn options() -> ConnectOptions {
             .and_then(|info| info.with_version("0.0.0"))
             .expect("client info"),
     )
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn inconsistent_platform_facts_are_rejected_at_initialize() {
+    let mut response = fixture("data");
+    response["platform"]["pathConvention"] = json!("windows");
+    let endpoint = server(move |mut socket| async move {
+        let request = next_request(&mut socket).await.expect("initialize");
+        let response = Response::success(request.id, &response);
+        socket
+            .send(Message::Text(response.to_text().into()))
+            .await
+            .expect("reply");
+        while socket.next().await.is_some() {}
+    })
+    .await;
+    let Err(error) = DataClient::connect_initialized(&endpoint, options()).await else {
+        panic!("inconsistent facts must fail");
+    };
+    assert!(matches!(error, ClientError::Decode(_)), "{error:?}");
+}
+
+#[cfg(not(unix))]
+#[tokio::test(flavor = "current_thread")]
+async fn unix_endpoints_are_an_explicit_configuration_error() {
+    let Err(error) = DataClient::connect_initialized("unix:///run/envd.sock", options()).await
+    else {
+        panic!("Unix transport unavailable");
+    };
+    assert!(
+        matches!(error, ClientError::Configuration { .. }),
+        "{error:?}"
+    );
 }
 
 /// Serve one WebSocket connection on a fresh loopback port with `serve`.
@@ -685,6 +720,7 @@ async fn a_silent_server_hits_the_connect_deadline() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
 async fn unix_endpoints_upgrade_over_the_socket() {
     let path = std::path::PathBuf::from(format!(
         "/tmp/lightspeed-client-{}-{}.sock",

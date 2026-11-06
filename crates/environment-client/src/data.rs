@@ -126,7 +126,13 @@ impl DataClient {
                 ENVD_PROTOCOL_VERSION,
                 options.initialize_timeout,
             )
-            .await;
+            .await
+            .and_then(|initialize| {
+                initialize
+                    .validate_platform()
+                    .map_err(|error| ClientError::Decode(error.to_string()))?;
+                Ok(initialize)
+            });
         match initialized {
             Ok(initialize) => Ok((
                 Self {

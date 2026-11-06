@@ -1359,6 +1359,16 @@ mod tests {
         ))
         .unwrap();
         let mut response = fixture["response"].clone();
+        let mut capabilities = capabilities;
+        for family in ["process", "job"] {
+            if let Some(fields) = capabilities.get_mut(family).and_then(Value::as_object_mut) {
+                fields.insert("tree".into(), json!("posixProcessGroup"));
+                fields.insert("termination".into(), json!("gracefulThenKill"));
+                if family == "process" {
+                    fields.insert("interrupt".into(), json!({"pipe": true, "pty": true}));
+                }
+            }
+        }
         response["capabilities"] = capabilities;
         response["defaultCwd"] = json!("/workspace");
         serde_json::from_value(response).unwrap()

@@ -7,10 +7,9 @@ use environment_protocol::{
     limits::MAX_MESSAGE_BYTES,
     routes::{DataRouteRefusal, parse_retry_after_ms},
 };
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    net::UnixStream,
-};
+use tokio::io::{AsyncRead, AsyncWrite};
+#[cfg(unix)]
+use tokio::net::UnixStream;
 use tokio_tungstenite::{
     WebSocketStream, client_async_with_config, connect_async_with_config,
     tungstenite::{
@@ -141,6 +140,7 @@ async fn bounded<T>(
 /// A dialed socket of either transport.
 pub(crate) enum Dialed {
     Tcp(Box<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>),
+    #[cfg(unix)]
     Unix(Box<WebSocketStream<UnixStream>>),
 }
 
@@ -159,21 +159,32 @@ pub(crate) async fn dial(endpoint: &str, options: &ConnectOptions) -> Result<Dia
             .await
         }
         Target::Unix(path) => {
-            let request = upgrade_request(endpoint, "ws://localhost/", options)?;
-            bounded(endpoint, options.connect_timeout, async {
-                let stream =
-                    UnixStream::connect(path)
+            #[cfg(not(unix))]
+            {
+                let _ = path;
+                Err(configuration(
+                    endpoint,
+                    "Unix sockets are unavailable on this host",
+                ))
+            }
+            #[cfg(unix)]
+            {
+                let request = upgrade_request(endpoint, "ws://localhost/", options)?;
+                bounded(endpoint, options.connect_timeout, async {
+                    let stream =
+                        UnixStream::connect(path)
+                            .await
+                            .map_err(|error| ClientError::Connect {
+                                endpoint: endpoint.to_owned(),
+                                message: error.to_string(),
+                            })?;
+                    client_async_with_config(request, stream, Some(websocket_config()))
                         .await
-                        .map_err(|error| ClientError::Connect {
-                            endpoint: endpoint.to_owned(),
-                            message: error.to_string(),
-                        })?;
-                client_async_with_config(request, stream, Some(websocket_config()))
-                    .await
-                    .map(|(socket, _)| Dialed::Unix(Box::new(socket)))
-                    .map_err(|error| dial_error(endpoint, error))
-            })
-            .await
+                        .map(|(socket, _)| Dialed::Unix(Box::new(socket)))
+                        .map_err(|error| dial_error(endpoint, error))
+                })
+                .await
+            }
         }
     }
 }

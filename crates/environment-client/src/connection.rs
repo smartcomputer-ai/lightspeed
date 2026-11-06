@@ -176,6 +176,7 @@ impl Connection {
     ) -> Result<Self, ClientError> {
         Ok(match dial::dial(endpoint, options).await? {
             Dialed::Tcp(socket) => Self::over_socket(*socket, plane, options),
+            #[cfg(unix)]
             Dialed::Unix(socket) => Self::over_socket(*socket, plane, options),
         })
     }

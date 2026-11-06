@@ -6,6 +6,7 @@ pub mod fs;
 pub mod handshake;
 pub mod idle;
 pub mod job;
+pub mod platform;
 pub mod process;
 pub mod scan;
 pub mod transfer;

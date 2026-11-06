@@ -1,13 +1,13 @@
 {
   "params": {
-    "protocolVersion": 4,
+    "protocolVersion": 5,
     "clientInfo": {
       "name": "lightspeed-runtime",
       "version": "0.5.0"
     }
   },
   "response": {
-    "protocolVersion": 4,
+    "protocolVersion": 5,
     "plane": "data",
     "daemonInstanceId": "envd_01jb8x7k2m",
     "serverInfo": {
@@ -16,14 +16,28 @@
       "gitSha": "86f6adf3",
       "target": "x86_64-unknown-linux-musl"
     },
+    "platform": {
+      "os": "linux",
+      "pathConvention": "posix",
+      "shells": [
+        {"kind": "bash", "executable": "/bin/bash", "version": "5.2"}
+      ],
+      "defaultShell": "bash"
+    },
     "capabilities": {
       "filesystem": {
         "write": true
       },
       "process": {
-        "pty": true
+        "pty": true,
+        "tree": "posixProcessGroup",
+        "interrupt": {"pipe": true, "pty": true},
+        "termination": "gracefulThenKill"
       },
-      "job": {}
+      "job": {
+        "tree": "posixProcessGroup",
+        "termination": "gracefulThenKill"
+      }
     },
     "limits": {
       "maxConcurrentRequests": 32,
@@ -87,11 +101,11 @@
   },
   "error": {
     "code": -32005,
-    "message": "protocol version 3 is not supported; this peer speaks 4",
+    "message": "protocol version 4 is not supported; this peer speaks 5",
     "data": {
       "kind": "versionMismatch",
-      "expected": 4,
-      "received": 3
+      "expected": 5,
+      "received": 4
     }
   }
 }

@@ -22,8 +22,9 @@ The protocol has three planes. Each runs over its own WebSocket connection.
 | Controller | The Lightspeed runtime | A provider controller | `CONTROLLER_PROTOCOL_VERSION` | Create, observe, power, and close the provider's targets. |
 | Registration | `lightspeed-envd` | The Lightspeed environment gateway | `ENVD_PROTOCOL_VERSION` | Admit an outbound daemon and ask it for reverse-dialed data streams. |
 
-Both numbers are currently `4`. They are matched exactly. A peer that states
-any other number is refused with `versionMismatch`. There are no version
+Data and registration currently use `5`; the controller uses `4`. They are
+matched exactly. A peer that states any other number is refused with
+`versionMismatch`. There are no version
 ranges and no negotiation. A change to a plane's wire shape, or to the meaning
 of an existing field or method, needs a new number for that plane. The data
 plane and the registration channel share one number, so a data-plane change
@@ -112,6 +113,14 @@ enforces these rules per connection:
 optional `version`, `gitSha`, and `target`, each 1 to 256 bytes without
 control characters. They are descriptive only. Nothing selects, gates, or
 authenticates on them.
+
+Data `initialize` also carries `platform`: the remote `os`, `pathConvention`,
+verified shell catalog and optional default shell. Shell entries identify a
+kind, absolute executable path and observed version. An absent catalog/default
+does not authorize a client to guess a shell. Windows defaults to verified
+PowerShell 7, otherwise Windows PowerShell; Git Bash requires explicit selection.
+Clients validate these facts against cwd/home and execution capabilities before
+using the connection.
 
 ## Decoding
 
@@ -564,7 +573,7 @@ any side effect.
 | `process/start` | Yes | | `process` | Start a process under a caller-chosen `processId`. |
 | `process/read` | Yes | Yes | `process` | Wait for and read a page of output and the process state. |
 | `process/write` | Yes | | `process` | Queue bytes for a pipe or PTY input. |
-| `process/terminate` | Yes | | `process` | Interrupt, terminate, or kill the process group. |
+| `process/terminate` | Yes | | `process` | Interrupt, terminate, or kill the owned group or job using the advertised mechanisms. |
 | `job/start` | Yes | | `job` | Start jobs, or replay an identical earlier start. |
 | `job/read` | Yes | Yes | `job` | Read jobs' summaries and output pages. |
 | `job/cancel` | Yes | | `job` | Cancel jobs and optionally their dependents. |
@@ -594,8 +603,16 @@ One rule applies to every method and to every command's `cwd`:
   lies inside it, and a remove, rename, write, or capture whose subject
   contains it, is `permissionDenied` (`daemonState`). Walks prune it.
 
-Names are UTF-8 and POSIX: `/` is the only separator. An entry whose name is
-not UTF-8 is skipped and counted wherever a method enumerates entries.
+Paths are UTF-8. POSIX spellings remain unchanged; Windows drive paths use an
+uppercase drive and `/` separators (`C:/work`). Native conversion takes the
+remote convention explicitly and renders Windows paths with backslashes.
+UNC, drive-relative and device namespaces, alternate streams, reserved device
+names and trailing dots/spaces are unsupported. Windows names also exclude
+control characters and Win32-reserved punctuation. Path equality and prefixes
+are lexical, not filesystem identity or authorization; confinement needs native
+handles and identity checks. Entries that cannot be represented are skipped
+and counted. Relative transfer paths retain their grammar but must be validated
+against the destination convention before mutation. VFS paths are unchanged.
 
 ### Pattern grammar and walks
 
@@ -616,6 +633,21 @@ never end the walk. A file larger than the remaining byte budget is skipped
 and counted too.
 
 ### Process output
+
+Process and job capabilities advertise `tree` (`posixProcessGroup` or
+`windowsJobObject`) and `termination` (`gracefulThenKill` or `immediateKill`).
+Immediate termination has zero grace. Processes additionally advertise separate
+`interrupt.pipe` and `interrupt.pty` flags; unsupported interruption is
+`capabilityUnavailable`, never a substitute forced kill.
+
+A Windows ownership unit is a non-breakaway Job Object attached before the
+child runs. Normal process root exit keeps descendants; job root exit sweeps
+them. Timeout, cancellation, environment close and daemon death terminate the
+owned tree. The daemon keeps non-inheritable kill-on-close handles while any
+owned descendants survive, independently of retained output. Restart never
+adopts raw Windows PIDs. POSIX group and restart behavior is unchanged.
+Windows returns native exit codes through the signed i32 `code` field, preserving
+all 32 bits; it never represents Windows termination as a Unix signal.
 
 A process has one combined output stream: stdout, stderr, or PTY output
 interleaved in arrival order. Positions are byte offsets into it.
@@ -656,8 +688,8 @@ A job's identity is its `jobId` together with the `requestId` of the
 `succeeded`, `failed`, `timedOut`, `cancelled`, `dependencyFailed`, and
 `interrupted`. Dependencies name a job id or a name within the same request.
 Jobs that share a `queueKey` run one at a time, in start order. At job
-completion, the daemon sweeps the job's process group and reports what it
-stopped as `leftovers` with disposition `swept`.
+completion, the daemon sweeps the job's owned group or Job Object and reports
+what it stopped as `leftovers` with disposition `swept`.
 
 `job/read` takes a list of entries, each reading one job from `after` or the
 last `tailBytes`; a job may appear twice to read its head and tail in one

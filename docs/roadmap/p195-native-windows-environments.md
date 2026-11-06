@@ -1,13 +1,5 @@
 # P195 — Native Windows environments
 
-**Status:** Design agreed in discussion on 2026-11-06; implementation not
-started. The platform and shell choices below are decisions. Proposed protocol
-shapes and the explicitly listed open questions need resolution in the first
-implementation package.
-
-**Branch:** `windows-native-envd`, created from the latest fetched `origin/main`
-at `e6558e3102ec1d67b76a50265aa457902b1bf8ba`.
-
 ## Goal and decisions
 
 Agents must be able to develop, build, test, and run software in real Windows
@@ -166,16 +158,14 @@ conversion setting would change the behavior of otherwise working build tools.
 
 ### Paths and filesystem operations
 
-The current `EnvironmentPath` contract is POSIX-specific. Merely replacing
-backslashes with slashes is insufficient: Windows paths have drive and UNC
-roots, case behavior, aliases, reserved names, and reparse points.
+At the start of the port, `EnvironmentPath` accepted only POSIX paths. Merely
+replacing backslashes with slashes is insufficient: Windows paths have drive
+and UNC roots, case behavior, aliases, reserved names, and reparse points.
 
-The first package must settle a typed cross-platform representation. Codex's
-file-URI approach is the preferred design candidate to evaluate, because it
-keeps remote paths independent of the controller host. Record the selected
-wire grammar, native conversion, equality rules, and compatibility/versioning
-decision before implementing it. Keep Windows-native display paths in model
-context; protocol encoding need not be the syntax an agent types into a shell.
+The selected wire grammar, native conversion, equality rules and version
+boundary are recorded under Contract package decisions below, including the
+assessment of file URIs. Keep Windows-native display paths in model context;
+protocol encoding need not be the syntax an agent types into a shell.
 
 Required boundaries:
 
@@ -261,6 +251,116 @@ checksum and build/protocol verification. Review signing and offline
 distribution requirements for enterprise rollout separately from the first
 development executable.
 
+## Contract package decisions
+
+The contract package selects the following boundaries. It does not enable the
+Windows filesystem or execution backends. The initial validation target
+remains x86_64 Windows Server 2025; Windows support requires native backend
+conformance evidence before being advertised.
+
+### Paths and compatibility
+
+Keep `EnvironmentPath` as a UTF-8 string with two disjoint grammars: existing
+POSIX paths (`/workspace/src`) and uppercase drive-absolute Windows paths
+(`C:/work/src`). File URIs were evaluated but not selected: they would require
+re-encoding every existing POSIX path and introduce percent/authority decoding
+without improving the handle-based confinement boundary. Native conversion
+takes an explicit remote convention; it converts `c:\work` to `C:/work` and
+renders it back as `C:\work`. It never resolves dot segments or strips device
+prefixes. Literal `%` and `#` remain filename characters, not URI syntax.
+
+Initially reject UNC, drive-relative, device/extended namespaces, alternate
+streams, reserved device names, control characters and trailing dots/spaces.
+Keep the existing 4096 UTF-8 byte ceiling. Equality and prefix operations are
+lexical and case-sensitive; they are never proof of filesystem identity or
+confinement. Windows handle/identity checks must account for case, short-name
+aliases and reparse points. `TreePath` and VFS keep their existing domains;
+Windows destinations must validate relative names before creating anything.
+
+The data and registration version becomes **5**, with exact matching; the
+controller remains **4**. Deploy matching runtime/gateway and daemon builds
+together. Existing POSIX path spellings and stored POSIX values remain valid.
+Generated data/registration schemas, OpenRPC, bootstrap/handshake fixtures,
+release metadata and web demo daemon versions are aligned. No public API DTO
+or workflow contract changes in this package.
+
+### Discovery and shell policy
+
+`initialize.platform` contains `os`, `pathConvention`, verified `shells`
+(`kind`, absolute `executable`, observed `version`) and optional `defaultShell`.
+An empty catalog means no shell was verified. Build-target strings are not
+used for selection. Clients reject inconsistent path, shell and lifecycle
+facts at initialization. The daemon currently reports platform facts with an
+empty catalog; installation probing is package 4 work.
+
+The selected model-facing shell contract is an optional enum: `bash`, `powerShell`,
+`windowsPowerShell`, or `gitBash`. Omission selects the discovered default;
+there is no arbitrary executable-path selector or error-triggered fallback.
+On Windows prefer verified PowerShell 7, then Windows PowerShell 5.1; never
+select Git Bash implicitly. Package 4 must provide an operator-configured
+absolute Git Bash path or verify a Git for Windows installation, rather than
+using an arbitrary `bash.exe` from PATH. Missing selections are typed errors.
+
+Omitted `login` preserves Unix Bash's existing login behavior. PowerShell and
+Git Bash default to no profiles; explicit `login: true` loads profiles.
+PowerShell pipes use `-NonInteractive`; terminal requests omit it. Shell
+commands remain one argv argument. The PowerShell adapter sets console/native
+pipeline text to UTF-8 without BOM and preserves a failing native exit code;
+parse failures are nonzero. File cmdlet encodings remain version-specific.
+Direct argv requests never pass through a shell adapter. A separate CMD/batch
+adapter is deferred and must be explicit and tested before it is supported.
+
+### Ownership and termination
+
+Process/job capabilities state their `tree` and `termination` model. Processes
+also report separate `interrupt.pipe` and `interrupt.pty` flags. Missing
+interrupt support is an error, never a forced kill presented as Ctrl-C.
+
+| Event | Windows process | Windows job |
+| --- | --- | --- |
+| Natural root exit | Keep descendants and the Job Object handle; report leftovers and keep the environment active. | Sweep descendants before settled completion. |
+| Timeout, terminate/cancel, kill or environment close | Terminate the owned tree. | Terminate the owned tree. |
+| Connection loss | Continue under daemon ownership. | Continue under daemon ownership. |
+| Daemon death or restart | Non-inheritable kill-on-close ownership terminates the tree; old process handles expire. | Terminate the tree; persisted queued/running jobs become interrupted. |
+
+Attach a non-breakaway Job Object before execution; refuse spawn when nested
+job restrictions or atomic containment cannot satisfy that promise. Keep its
+handle independently of process output retention while descendants survive.
+Do not persist handles or adopt raw PIDs after restart. The initial Windows
+termination mode is `immediateKill`, with zero advertised grace. Advertise
+terminal interruption only after ConPTY delivery works; pipe interruption is
+initially unavailable. A terminal EOF request that cannot preserve the terminal
+must fail explicitly. Existing POSIX group, grace and restart behavior stays
+unchanged and continues to acknowledge that descendants can escape a group.
+
+Windows exit status uses the existing `code` variant, interpreting the native
+32-bit value as signed i32 (0xC0000005 is -1073741819), never inventing a signal.
+Output offsets, draining and settled-exit rules retain their existing meaning.
+
+### Remaining integration and evidence
+
+Packages 2 and 3 implement the native backends and enforce these contracts;
+package 4 probes shells, exposes the selector and updates native cwd/home/model
+rendering. Package 5 must validate Windows transfer names and collisions and
+record journal path conventions before Windows transfers are enabled. Native
+environment-variable handling must preserve required system/home/temp values
+and reject case-insensitive collisions across ordinary and secret overrides.
+Service identity, supervision and replacement upgrades remain package 6 work.
+
+Contract tests cover drive roots, native conversion, unsupported forms, lexical
+boundaries, shell preference/profile rules, inconsistent handshake facts and
+lifecycle wire examples. Windows PowerShell 5.1 is exercised locally for native
+exit codes, Unicode output and parse errors. Native filesystem confinement,
+Job Objects, ConPTY and PowerShell 7 execution remain backend acceptance tests.
+
+On the Windows development VM, the protocol and client suites passed 130 tests
+and 4 doctests, and scoped Clippy passed with all targets and warnings denied.
+The daemon check still reports 27 errors and one warning in the existing
+Unix-specific implementation. The full release metadata script could not run
+because Node.js is absent; a direct check confirmed that both protocol versions
+match `release/metadata.env`. Linux/macOS regression checks and the full CI
+Clippy gate remain required before a Rust PR.
+
 ## Implementation packages
 
 Land reviewable packages on the implementation branch. Keep this document's
@@ -332,12 +432,11 @@ Alternatively, `C:\dev\build-envd.ps1` runs the same build and overwrites the
 build log. On success the artifact is
 `target\x86_64-pc-windows-msvc\release\lightspeed-envd.exe`.
 
-Resolve these details in package 1: the path wire format and version boundary;
-supported UNC/device/alternate-stream forms; PowerShell profile semantics;
-shell-selection configuration and its model-facing schema; tree ownership
-after daemon death; graceful-interrupt capabilities; and the minimum Windows
-versions to claim beyond the tested Server 2025 development machine. Service
-identity and upgrade supervision must be settled before unattended release.
+Use the Contract package decisions above for path grammar, versioning, shell
+selection, profile semantics and tree ownership. Packages 2 through 4 must
+implement and validate those contracts before enabling Windows capabilities.
+Service identity and upgrade supervision remain required before unattended
+release; no Windows version beyond Server 2025 is claimed yet.
 
 ## Progress
 
@@ -347,7 +446,7 @@ identity and upgrade supervision must be settled before unattended release.
 - [x] Codex source and relevant official documentation inspected.
 - [x] Native Windows / PowerShell default / optional Git Bash direction agreed.
 - [x] Implementation branch created from fetched `origin/main`.
-- [ ] Cross-platform protocol and lifecycle decisions finalized.
+- [x] Cross-platform protocol and lifecycle decisions finalized and contract-tested.
 - [ ] Native filesystem, process, and terminal implementations completed.
 - [ ] Model-facing shell selection and Windows context completed.
 - [ ] Transfer/conformance, Windows CI, and unattended release completed.

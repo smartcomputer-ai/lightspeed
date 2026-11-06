@@ -1,6 +1,6 @@
 {
   "params": {
-    "protocolVersion": 4,
+    "protocolVersion": 5,
     "registrationKey": "lsrk_0123456789abcdef",
     "daemonPublicKey": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
     "signature": "9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c",
