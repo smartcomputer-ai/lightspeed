@@ -1,5 +1,5 @@
 /// Describes a clicked element precisely enough to find it again in the page
-/// and in the source: where it is (URL, CSS paths), what it is (tag,
+/// and in the source: where it is (URL, component slots), what it is (tag,
 /// attributes, text, role), and which React components and files rendered
 /// it. The feedback picker turns this into a plain-text block to paste into
 /// an issue or a chat with a coding agent.
@@ -7,10 +7,7 @@
 export interface ElementReport {
   page: string;
   title: string;
-  /// Every ancestor from <html>, like the inspector's "CSS path".
-  cssPath: string;
-  /// The shortest suffix of that path that still matches only this element.
-  selector: string;
+  slots: string[];
   /// The element's opening tag with its attributes.
   element: string;
   text: string;
@@ -32,8 +29,7 @@ export function describeElement(element: Element): ElementReport {
   return {
     page: window.location.href,
     title: document.title,
-    cssPath: cssPath(element),
-    selector: uniqueSelector(element),
+    slots: slotPath(element),
     element: openingTag(element),
     text: elementText(element),
     value: elementValue(element),
@@ -49,13 +45,11 @@ export function describeElement(element: Element): ElementReport {
   };
 }
 
-/// The report as `Label: value` lines, with the person's note first.
-export function formatReport(report: ElementReport, note = ""): string {
+/// The report as `Label: value` lines.
+export function formatReport(report: ElementReport): string {
   const lines: Array<[string, string | undefined]> = [
-    ["Feedback", note.trim() || undefined],
     ["Page", report.page],
-    ["Selector", report.cssPath],
-    ["Unique selector", report.selector],
+    ["Slots", report.slots.length ? report.slots.join(" › ") : undefined],
     ["Element text", report.text || "(none)"],
     ["Value", report.value],
     ["Role", report.role],
@@ -75,53 +69,16 @@ export function formatReport(report: ElementReport, note = ""): string {
     .join("\n");
 }
 
-/// One step of a path: the tag, an id when it has one, the data-slot that
-/// names shared components, and a position among its siblings when the
-/// tag alone is ambiguous. Tailwind class lists are left out: they are long,
-/// change with styling, and need escaping.
-function segment(element: Element): string {
-  const tag = element.tagName.toLowerCase();
-  if (element.id) return `${tag}#${CSS.escape(element.id)}`;
-  let part = tag;
-  const slot = element.getAttribute("data-slot");
-  if (slot) part += `[data-slot="${slot}"]`;
-  const parent = element.parentElement;
-  if (parent && parent.children.length > 1) {
-    part += `:nth-child(${Array.prototype.indexOf.call(parent.children, element) + 1})`;
+/// The `data-slot` names of the element and its ancestors, outermost first.
+/// Shared UI components set them, so they name the building blocks around
+/// the element and stay stable while the surrounding markup changes.
+export function slotPath(element: Element): string[] {
+  const slots: string[] = [];
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    const slot = node.getAttribute("data-slot");
+    if (slot && slots[0] !== slot) slots.unshift(slot);
   }
-  return part;
-}
-
-function ancestry(element: Element): Element[] {
-  const chain: Element[] = [];
-  for (let node: Element | null = element; node; node = node.parentElement) chain.unshift(node);
-  return chain;
-}
-
-export function cssPath(element: Element): string {
-  return ancestry(element)
-    .map((node) => (node === document.documentElement || node === document.body ? node.tagName.toLowerCase() : segment(node)))
-    .join(" > ");
-}
-
-export function uniqueSelector(element: Element): string {
-  const chain = ancestry(element).filter((node) => node !== document.documentElement);
-  const parts: string[] = [];
-  for (let index = chain.length - 1; index >= 0; index--) {
-    const node = chain[index]!;
-    parts.unshift(node === document.body ? "body" : segment(node));
-    const selector = parts.join(" > ");
-    if (node.id || safeCount(selector) === 1) return selector;
-  }
-  return cssPath(element);
-}
-
-function safeCount(selector: string): number {
-  try {
-    return document.querySelectorAll(selector).length;
-  } catch {
-    return Number.POSITIVE_INFINITY;
-  }
+  return slots;
 }
 
 const MAX_TAG_LENGTH = 600;

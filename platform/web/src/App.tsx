@@ -34,10 +34,11 @@ import { BlobPage } from "@/pages/BlobPage";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
 import { FeatureGate } from "@/components/feature-gate";
 import { finishAutomaticSignIn } from "@/lib/automatic-sign-in";
+import { debugModeEnabled } from "@/devtools/debug-mode";
 
-// Development-only tool pages. `import.meta.env.DEV` is a build-time
-// constant, so production builds drop this import and its chunk entirely.
-const DebugRoutes = import.meta.env.DEV ? lazy(() => import("@/devtools/DebugRoutes")) : null;
+// Tool pages under /debug: the UI overview in development builds, the
+// design-token editor in debug mode. Builds with neither never load them.
+const DebugRoutes = import.meta.env.DEV || debugModeEnabled ? lazy(() => import("@/devtools/DebugRoutes")) : null;
 
 function UniverseIndexRedirect() {
   const { universe } = useActiveUniverse();

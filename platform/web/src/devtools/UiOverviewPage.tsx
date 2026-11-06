@@ -135,15 +135,16 @@ export function UiOverviewPage() {
         </ul>
       </nav>
       <main className="min-w-0 flex-1 px-6 py-8 md:px-10">
+        {/* Zero height so it takes no room: the switch floats top-right and stays there while the page scrolls. */}
+        <div className="sticky top-3 z-20 mx-auto flex h-0 max-w-5xl justify-end">
+          <ThemeSwitch />
+        </div>
         <div className="mx-auto grid max-w-5xl gap-14">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="grid gap-1">
-              <h1 className="text-2xl font-semibold tracking-tight">UI overview</h1>
-              <p className="text-sm text-muted-foreground">
-                The shared components in <code className="font-mono text-xs">src/components/ui</code> and their variations.
-              </p>
-            </div>
-            <ThemeSwitch />
+          <div className="grid gap-1 pt-12 sm:pt-0 sm:pr-64">
+            <h1 className="text-2xl font-semibold tracking-tight">UI overview</h1>
+            <p className="text-sm text-muted-foreground">
+              The shared components in <code className="font-mono text-xs">src/components/ui</code> and their variations.
+            </p>
           </div>
           <TypographySection />
           <ColorsSection />
@@ -174,7 +175,7 @@ function ThemeSwitch() {
     { value: "system", label: "System", icon: <Monitor /> },
   ];
   return (
-    <div className="flex gap-1 rounded-lg bg-muted p-1" role="radiogroup" aria-label="Theme">
+    <div className="flex h-fit gap-1 rounded-lg bg-muted p-1 shadow-md ring-1 ring-foreground/10" role="radiogroup" aria-label="Theme">
       {options.map((option) => (
         <Button
           key={option.value}

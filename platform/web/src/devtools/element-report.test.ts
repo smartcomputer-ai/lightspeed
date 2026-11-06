@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { cssPath, describeElement, formatReport, sourceFileFromStack, uniqueSelector } from "./element-report";
+import { describeElement, formatReport, slotPath, sourceFileFromStack } from "./element-report";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -11,29 +11,11 @@ function mount(html: string) {
 }
 
 describe("element report", () => {
-  it("builds a full path from <html> that resolves to the element", () => {
-    mount(`<div id="root"><main><section><button data-slot="button">One</button><button data-slot="button">Two</button></section></main></div>`);
-    const second = document.querySelectorAll("button")[1]!;
-    const path = cssPath(second);
-    expect(path).toBe('html > body > div#root > main > section > button[data-slot="button"]:nth-child(2)');
-    expect(document.querySelectorAll(path)).toHaveLength(1);
-    expect(document.querySelector(path)).toBe(second);
-  });
-
-  it("shortens the unique selector to the first unambiguous suffix", () => {
-    mount(`<div id="root"><ul><li><a>Open</a></li><li><a>Open</a></li></ul><nav><a>Open</a></nav></div>`);
-    const link = document.querySelector("nav a")!;
-    const selector = uniqueSelector(link);
-    expect(document.querySelectorAll(selector)).toHaveLength(1);
-    expect(document.querySelector(selector)).toBe(link);
-    expect(selector.startsWith("html")).toBe(false);
-  });
-
-  it("stops at an id and escapes it", () => {
-    mount(`<div id="panel:1"><span>Inside</span></div>`);
-    const span = document.querySelector("span")!;
-    const selector = uniqueSelector(span);
-    expect(document.querySelector(selector)).toBe(span);
+  it("lists the data-slot names around the element, outermost first", () => {
+    mount(`<div data-slot="card"><div><div data-slot="field"><div data-slot="field"><span>Name</span></div></div></div></div>
+      <p>Plain</p>`);
+    expect(slotPath(document.querySelector("span")!)).toEqual(["card", "field"]);
+    expect(slotPath(document.querySelector("p")!)).toEqual([]);
   });
 
   it("reports text, role, accessible name and value, hiding passwords", () => {
@@ -49,16 +31,14 @@ describe("element report", () => {
     expect(button).toMatchObject({ role: "button", accessibleName: "Close dialog" });
   });
 
-  it("formats labelled lines with the note first and skips empty fields", () => {
-    mount(`<p>Hello <b>world</b></p>`);
-    const text = formatReport(describeElement(document.querySelector("p")!), "  Too much padding  ");
-    const lines = text.split("\n");
-    expect(lines[0]).toBe("Feedback: Too much padding");
-    expect(lines[1]).toMatch(/^Page: /);
-    expect(text).toContain("Selector: html > body > p");
-    expect(text).toContain("Element: <p>");
+  it("formats labelled lines and skips empty fields", () => {
+    mount(`<div data-slot="card"><p data-slot="card-description">Hello <b>world</b></p></div>`);
+    const text = formatReport(describeElement(document.querySelector("p")!));
+    expect(text).toMatch(/^Page: /);
+    expect(text).toContain("Slots: card › card-description");
+    expect(text).not.toContain("Selector:");
+    expect(text).toContain('Element: <p data-slot="card-description">');
     expect(text).not.toContain("Value:");
-    expect(formatReport(describeElement(document.querySelector("p")!))).not.toContain("Feedback:");
   });
 
   it("finds the first application file in Chrome and Firefox stacks", () => {

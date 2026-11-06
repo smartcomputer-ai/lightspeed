@@ -335,3 +335,26 @@ Visual tests are not part of the automatic test process and should not be added
 to `npm test`, `npm run check`, or CI. Use them as a review tool: to see what a
 change does to the UI and UX, and to show it to others before merging. A
 changed screen is a prompt to look, not a failure.
+
+### Debug tools
+
+Development builds serve a component catalogue at `/debug/ui-overview`: every
+component under `web/src/components/ui` with its variants, grouped by category,
+in light and dark. It needs no sign-in, and production builds leave it out.
+
+Debug mode adds tools for reviewing the UI. Enable it in
+`platform/web/.env.local` (git-ignored), then restart the dev server:
+
+```bash
+VITE_ENABLE_DEBUG_MODE=true
+```
+
+Press Ctrl+D to show or hide the debug toolbar in the bottom-right corner:
+
+- **Feedback**: click any element to get a copyable report that identifies it
+  (page, component slots, text, React components).
+- **Design**: edit the design tokens in a separate window with live preview,
+  then export the changes as CSS for `web/src/index.css`.
+
+The tools live in `web/src/devtools/`. The folder is not called `debug` because
+the root `.gitignore` ignores that name, which would also hide it from Tailwind.

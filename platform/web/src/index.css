@@ -26,11 +26,21 @@
     }
 }
 
+/* Fonts and shadows resolve through the variables in :root, like the colors,
+   so they can be changed at runtime (the debug design-token editor does).
+   Tailwind would otherwise compile their values into each utility. */
 @theme inline {
-    --font-heading: 'IBM Plex Sans Variable', system-ui, sans-serif;
-    --font-sans: 'IBM Plex Sans Variable', system-ui, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --font-heading: var(--font-heading);
+    --font-sans: var(--font-sans);
+    --font-mono: var(--font-mono);
     --font-mono--font-feature-settings: "liga" 0, "calt" 0;
+    --shadow-2xs: var(--shadow-2xs);
+    --shadow-xs: var(--shadow-xs);
+    --shadow-sm: var(--shadow-sm);
+    --shadow-md: var(--shadow-md);
+    --shadow-lg: var(--shadow-lg);
+    --shadow-xl: var(--shadow-xl);
+    --shadow-2xl: var(--shadow-2xl);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -72,6 +82,17 @@
 }
 
 :root {
+    --font-heading: 'IBM Plex Sans Variable', system-ui, sans-serif;
+    --font-sans: 'IBM Plex Sans Variable', system-ui, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    /* Tailwind's default shadow scale. */
+    --shadow-2xs: 0 1px rgb(0 0 0 / 0.05);
+    --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+    --shadow-2xl: 0 25px 50px -12px rgb(0 0 0 / 0.25);
     --background: oklch(1 0 0);
     --foreground: oklch(0.141 0.005 285.823);
     --card: oklch(1 0 0);
@@ -104,6 +125,35 @@
     --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
     --sidebar-border: oklch(0.92 0.004 286.32);
     --sidebar-ring: oklch(0.705 0.015 286.067);
+    /* Component surfaces: the background and border color of each family of
+       components. They are declared again under .dark so they re-resolve in
+       popups that carry their own dark class. */
+    --surface-card: var(--card);
+    --surface-card-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --surface-dialog: var(--popover);
+    --surface-dialog-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --surface-popover: var(--popover);
+    --surface-popover-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --surface-menu: color-mix(in oklab, var(--popover) 70%, transparent);
+    --surface-menu-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --surface-field: transparent;
+    --surface-field-border: var(--input);
+    /* Component surfaces: border width, corner radius and shadow. */
+    --surface-card-border-width: 1px;
+    --surface-card-radius: calc(var(--radius) * 1.4);
+    --surface-card-shadow: var(--shadow-xs);
+    --surface-dialog-border-width: 1px;
+    --surface-dialog-radius: calc(var(--radius) * 1.4);
+    --surface-dialog-shadow: 0 0 #0000;
+    --surface-popover-border-width: 1px;
+    --surface-popover-radius: calc(var(--radius) * 1.4);
+    --surface-popover-shadow: var(--shadow-lg);
+    --surface-menu-border-width: 1px;
+    --surface-menu-radius: calc(var(--radius) * 0.8);
+    --surface-menu-shadow: var(--shadow-md);
+    --surface-field-border-width: 1px;
+    --surface-field-radius: calc(var(--radius) * 0.8);
+    --surface-field-shadow: var(--shadow-xs);
 }
 
 .dark {
@@ -138,6 +188,19 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.552 0.016 285.938);
+    /* Component surfaces: the background and border color of each family of
+       components. They are declared again under .dark so they re-resolve in
+       popups that carry their own dark class. */
+    --surface-card: var(--card);
+    --surface-card-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --surface-dialog: var(--popover);
+    --surface-dialog-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --surface-popover: var(--popover);
+    --surface-popover-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --surface-menu: color-mix(in oklab, var(--popover) 70%, transparent);
+    --surface-menu-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --surface-field: color-mix(in oklab, var(--input) 30%, transparent);
+    --surface-field-border: var(--input);
 }
 
 @layer base {

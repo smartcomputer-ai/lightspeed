@@ -2,11 +2,20 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Bug, MessageSquareText, Palette, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Field, FieldLabel } from "@/components/ui/field";
-import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CodeCopy } from "./CodeCopy";
 import { describeElement, formatReport, type ElementReport } from "./element-report";
+import {
+  DESIGN_STORAGE_KEY,
+  DESIGN_WINDOW_NAME,
+  applyOverrides,
+  designConfigurationUrl,
+  isDesignConfigurationWindow,
+  isEmpty,
+  loadOverrides,
+  openChannel,
+  type DesignMessage,
+} from "./design-tokens";
 
 /// Marks the toolbar's own DOM so the picker never selects it.
 const DEVTOOLS_ATTRIBUTE = "data-devtools";
@@ -14,8 +23,15 @@ const OPEN_KEY = "lightspeed:debug-toolbar";
 
 /// The debug toolbar: Ctrl+D shows or hides it in the bottom-right corner.
 /// Feedback picks an element on the page and opens a report about it to
-/// copy. Mounted by main.tsx only when debug mode is enabled.
+/// copy; Design opens the design-token editor window, whose changes every
+/// app window applies live, toolbar shown or not. Mounted by main.tsx only
+/// when debug mode is enabled. The editor window itself gets neither.
 export default function DebugToolbar() {
+  return isDesignConfigurationWindow() ? null : <Toolbar />;
+}
+
+function Toolbar() {
+  const designActive = useDesignOverrides();
   const [open, setOpen] = useState(() => readOpen());
   const [picking, setPicking] = useState(false);
   const [report, setReport] = useState<ElementReport | null>(null);
@@ -64,9 +80,15 @@ export default function DebugToolbar() {
             <MessageSquareText data-icon="inline-start" />
             Feedback
           </Button>
-          <Button size="sm" variant="ghost" disabled title="Design tokens (not available yet)">
+          <Button
+            size="sm"
+            variant="ghost"
+            title={designActive ? "Edit design tokens (overrides active)" : "Edit design tokens"}
+            onClick={() => window.open(designConfigurationUrl(), DESIGN_WINDOW_NAME, "popup,width=600,height=900")?.focus()}
+          >
             <Palette data-icon="inline-start" />
             Design
+            {designActive && <span className="size-1.5 rounded-full bg-blue-500" aria-label="overrides active" />}
           </Button>
           <Button size="icon-sm" variant="ghost" aria-label="Close debug toolbar (Ctrl+D)" title="Close (Ctrl+D)" onClick={() => show(false)}>
             <X />
@@ -93,6 +115,42 @@ export default function DebugToolbar() {
     </>,
     document.body,
   );
+}
+
+/// Applies the saved design-token overrides now and every change the editor
+/// publishes later, and answers the editor's pings so it can show where its
+/// changes land. Returns whether any override is in effect.
+function useDesignOverrides(): boolean {
+  const [active, setActive] = useState(() => !isEmpty(loadOverrides()));
+  useEffect(() => {
+    const id = Math.random().toString(36).slice(2);
+    applyOverrides(loadOverrides());
+    const channel = openChannel();
+    if (channel) {
+      channel.onmessage = (event: MessageEvent<DesignMessage>) => {
+        const message = event.data;
+        if (message.type === "overrides") {
+          applyOverrides(message.overrides);
+          setActive(!isEmpty(message.overrides));
+        } else if (message.type === "ping") {
+          channel.postMessage({ type: "pong", id, href: window.location.href } satisfies DesignMessage);
+        }
+      };
+    }
+    // Another tab of this origin changed or cleared the saved overrides.
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== DESIGN_STORAGE_KEY) return;
+      const overrides = loadOverrides();
+      applyOverrides(overrides);
+      setActive(!isEmpty(overrides));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      channel?.close();
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+  return active;
 }
 
 function readOpen(): boolean {
@@ -197,32 +255,13 @@ function FeedbackDialog({ report, onClose, onPickAnother }: {
   onClose: () => void;
   onPickAnother: () => void;
 }) {
-  const [note, setNote] = useState("");
-  useEffect(() => {
-    if (report) setNote("");
-  }, [report]);
   return (
     <Dialog open={report !== null} onOpenChange={(next) => !next && onClose()}>
       <DialogContent {...{ [DEVTOOLS_ATTRIBUTE]: "" }} className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Element feedback</DialogTitle>
-          <DialogDescription>Everything needed to find this element again. Your note is added at the top.</DialogDescription>
         </DialogHeader>
-        {report && (
-          <div className="grid min-w-0 gap-4">
-            <Field>
-              <FieldLabel htmlFor="debug-feedback-note">Feedback (optional)</FieldLabel>
-              <Textarea
-                id="debug-feedback-note"
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder="What should change?"
-                rows={3}
-              />
-            </Field>
-            <CodeCopy title="Report" code={formatReport(report, note)} />
-          </div>
-        )}
+        {report && <CodeCopy title="Report" code={formatReport(report)} />}
         <DialogFooter>
           <Button variant="outline" onClick={onPickAnother}>Pick another element</Button>
           <Button onClick={onClose}>Done</Button>
