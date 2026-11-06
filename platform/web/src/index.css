@@ -170,6 +170,9 @@
     --surface-backdrop-saturate: 100%;
     --surface-menu-blur: 40px;
     --surface-menu-saturate: 150%;
+    /* Scales every icon (lucide, tabler and the app's own marks) from the
+       size its classes give it. */
+    --icon-scale: 1;
 }
 
 .dark {
@@ -223,6 +226,9 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    }
+  svg:is(.lucide, .tabler-icon, [data-app-icon]) {
+    zoom: var(--icon-scale);
     }
   body {
     @apply bg-background text-foreground;

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Code, RotateCcw } from "lucide-react";
+import { Code, Plus, RotateCcw, Search, Settings, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -234,6 +234,30 @@ export function DesignConfigurationPage() {
               describe={(rem) => `${round(rem * 16)}px`}
               {...token("shared", "--spacing")}
             />
+          </Group>
+          <Group title="Icons" note="Scales every icon from the size its classes give it. Text stays the same size.">
+            <RangeRow
+              name="--icon-scale"
+              min={0.5}
+              max={2}
+              step={0.05}
+              unit=""
+              describe={(scale) => `${round(scale * 16)}px at size-4`}
+              {...token("shared", "--icon-scale")}
+            />
+            <div className="flex flex-wrap items-center gap-4 pt-1 text-sm">
+              {[
+                { Icon: Search, label: "Search" },
+                { Icon: Settings, label: "Settings" },
+                { Icon: Plus, label: "New" },
+                { Icon: Trash2, label: "Delete" },
+              ].map(({ Icon, label }) => (
+                <span key={label} className="flex items-center gap-1.5">
+                  <Icon className="size-4" style={{ zoom: valueOf("shared", "--icon-scale") }} />
+                  {label}
+                </span>
+              ))}
+            </div>
           </Group>
           <Group title="Borders">
             <p className="text-xs text-muted-foreground">
