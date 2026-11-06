@@ -99,7 +99,7 @@ impl InitializeResponse {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DataCapabilities {
-    /// `fs/*` (search, glob and scan included) and `transfer/*`.
+    /// `fs/*` (search, glob and scan included); `transfer/*` needs its own fact.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filesystem: Option<FilesystemCapabilities>,
     /// `process/*`.
@@ -110,11 +110,15 @@ pub struct DataCapabilities {
     pub job: Option<JobCapabilities>,
 }
 
-/// The `filesystem` family: `fs/*` and `transfer/*`.
+/// The `filesystem` family: `fs/*`, with optional `transfer/*` support.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FilesystemCapabilities {
+    /// `transfer/*` supports its journal, recovery and publish guarantees.
+    /// Core file operations do not imply transfer support.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub transfer: bool,
     /// Methods that change the filesystem are served; false on a daemon
     /// started read-only.
     #[serde(default, skip_serializing_if = "is_false")]

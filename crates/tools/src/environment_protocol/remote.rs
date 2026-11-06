@@ -167,6 +167,12 @@ impl RemoteEnvironmentConnection {
         blobs: Arc<dyn BlobStore>,
     ) -> (FsToolContext, EnvironmentToolContext) {
         let has_filesystem = self.initialize_response().capabilities.filesystem.is_some();
+        let has_transfer = self
+            .initialize_response()
+            .capabilities
+            .filesystem
+            .as_ref()
+            .is_some_and(|filesystem| filesystem.transfer);
         let fs = Arc::new(self.file_system());
         let process = self
             .process_executor()
@@ -176,7 +182,7 @@ impl RemoteEnvironmentConnection {
             .map(|executor| Arc::new(executor) as Arc<dyn JobExecutor>);
         let mut fs_ctx = FsToolContext::new(fs, blobs.clone());
         let mut env_ctx = EnvironmentToolContext::new(process, blobs);
-        if has_filesystem {
+        if has_transfer {
             env_ctx.transfer = Some(Arc::new(self.client.clone()));
         }
         if let Some(jobs) = jobs {
@@ -1404,7 +1410,7 @@ mod tests {
     }
 
     fn all() -> Value {
-        json!({"filesystem": {"write": true}, "process": {"pty": true}, "job": {}})
+        json!({"filesystem": {"write": true, "transfer": true}, "process": {"pty": true}, "job": {}})
     }
 
     fn sent(script: &Script) -> Vec<(String, Value)> {
@@ -1965,13 +1971,20 @@ mod tests {
         assert_eq!(fs_ctx.fs.access_policy(), FileAccessPolicy::FullReadOnly);
         assert_eq!(fs_ctx.fs_cwd, Some(FsPath::new("/workspace").unwrap()));
         assert!(env_ctx.filesystem.is_some());
-        assert!(env_ctx.transfer.is_some());
+        assert!(
+            env_ctx.transfer.is_none(),
+            "file access alone does not advertise transfers"
+        );
         assert!(env_ctx.jobs.is_none());
 
         let (client, _) = scripted(json!({}), []);
         let (_, none) = RemoteEnvironmentConnection::new(client)
             .into_contexts(Arc::new(InMemoryBlobStore::new()));
         assert!(none.filesystem.is_none() && none.process.is_none() && none.transfer.is_none());
+        let (client, _) = scripted(json!({"filesystem": {"transfer": true}}), []);
+        let (_, transfer) = RemoteEnvironmentConnection::new(client)
+            .into_contexts(Arc::new(InMemoryBlobStore::new()));
+        assert!(transfer.transfer.is_some());
     }
 
     #[tokio::test(flavor = "current_thread")]

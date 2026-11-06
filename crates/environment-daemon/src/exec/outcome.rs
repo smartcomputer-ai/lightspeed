@@ -1,7 +1,9 @@
 //! How a root process ended, and what its group left behind.
 
+#[cfg(unix)]
+use environment_protocol::data::exec::SignalName;
 use environment_protocol::{
-    data::exec::{ExitStatus, LeftoverDisposition, LeftoverProcess, LeftoverReport, SignalName},
+    data::exec::{ExitStatus, LeftoverDisposition, LeftoverProcess, LeftoverReport},
     limits::{MAX_LEFTOVER_COMMAND_BYTES, MAX_LEFTOVER_PROCESSES},
 };
 
@@ -37,6 +39,7 @@ pub(crate) fn describe_exit(exit: &ExitStatus) -> String {
 
 /// The POSIX name of signal number `raw` on this platform. A number
 /// without a portable name is spelled `SIG<number>`.
+#[cfg(unix)]
 pub(crate) fn signal_name(raw: i32) -> SignalName {
     #[cfg(unix)]
     {

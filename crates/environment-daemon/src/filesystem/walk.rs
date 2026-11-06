@@ -17,7 +17,6 @@
 use std::{
     collections::HashSet,
     ffi::{OsStr, OsString},
-    os::unix::ffi::OsStrExt,
     path::PathBuf,
     sync::Arc,
 };
@@ -165,6 +164,7 @@ impl CompiledFilter {
     }
 
     /// Visit everything: no patterns, hidden and ignored entries included.
+    #[cfg(unix)]
     pub fn everything() -> Self {
         Self {
             include: PatternSet::default(),
@@ -215,10 +215,10 @@ pub(crate) enum Skip {
     NonUtf8Name,
     /// The entry vanished, could not be read, or (a directory) could not be
     /// listed.
-    Unreadable(ProtocolError),
+    Unreadable(#[cfg_attr(windows, allow(dead_code))] ProtocolError),
     /// A followed link left the root, addressed the state directory, looped
     /// or closed a directory cycle.
-    LinkOutsideRoot(ProtocolError),
+    LinkOutsideRoot(#[cfg_attr(windows, allow(dead_code))] ProtocolError),
     /// A followed link whose target does not exist.
     DanglingLink,
 }
@@ -228,6 +228,7 @@ pub(crate) enum Skip {
 pub(crate) struct Entry {
     /// Relative to the walk's root, as walked.
     pub path: TreePath,
+    #[cfg_attr(windows, allow(dead_code))] // Transfer inventories consume depth.
     pub depth: u32,
     /// The directory holding the entry: for a followed link, its target.
     pub parent: Arc<Directory>,
@@ -247,7 +248,7 @@ struct Frame {
     canonical: Vec<OsString>,
     path: TreePath,
     depth: u32,
-    identity: (u64, u64),
+    identity: (u64, u128),
     /// Children left to visit, in reverse order; `None` until listed.
     names: Option<Vec<OsString>>,
     /// Ignore levels pushed when this frame was listed.
@@ -269,7 +270,7 @@ pub(crate) struct Walker {
     base: PathBuf,
     stack: Vec<Frame>,
     ignores: Vec<IgnoreLevel>,
-    identities: HashSet<(u64, u64)>,
+    identities: HashSet<(u64, u128)>,
 }
 
 impl Walker {
@@ -346,7 +347,7 @@ impl Walker {
         }
         match frame.directory.names() {
             Ok(mut names) => {
-                names.sort_by(|left, right| right.as_bytes().cmp(left.as_bytes()));
+                names.sort_by(|left, right| right.as_encoded_bytes().cmp(left.as_encoded_bytes()));
                 frame.names = Some(names);
                 if !self.filter.include_ignored {
                     let directory = frame.directory.clone();
@@ -596,7 +597,6 @@ fn segments_path_tree(path: &TreePath) -> PathBuf {
 mod tests {
     use super::*;
     use crate::filesystem::confinement::Lookup;
-    use environment_protocol::paths::EnvironmentPath;
 
     fn set(patterns: &[&str]) -> PatternSet {
         PatternSet::compile(
@@ -643,10 +643,7 @@ mod tests {
     fn walk(root: &std::path::Path, filter: TreeFilter, links: LinkMode) -> Vec<String> {
         let confinement = Arc::new(Confinement::new(root.into(), root.join(".state")).unwrap());
         let resolved = confinement
-            .lookup(
-                &EnvironmentPath::new(root.to_str().unwrap()).unwrap(),
-                Lookup::FOLLOW,
-            )
+            .lookup(confinement.root_path(), Lookup::FOLLOW)
             .unwrap();
         let mut walker = Walker::new(
             confinement,
@@ -721,6 +718,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn followed_links_stay_inside_the_root_and_cycles_are_skipped() {
         use std::os::unix::fs::symlink;
 

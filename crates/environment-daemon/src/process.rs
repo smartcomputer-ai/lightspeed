@@ -41,6 +41,8 @@ use environment_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
+#[cfg(any(not(windows), test))]
+use crate::process_group;
 use crate::{
     dispatch::{Reply, RequestContext},
     exec::{
@@ -51,7 +53,7 @@ use crate::{
         validate_command,
     },
     filesystem::Confinement,
-    process_group::{self, Group},
+    process_group::Group,
 };
 
 /// How long a tombstone answers `notFound {expired}`.
@@ -85,6 +87,8 @@ pub struct ProcessManager {
 }
 
 struct ManagerInner {
+    #[cfg(windows)]
+    closing: std::sync::atomic::AtomicBool,
     config: ProcessConfig,
     records_dir: PathBuf,
     table: Mutex<Table>,
@@ -92,7 +96,7 @@ struct ManagerInner {
     /// looked at: groups of evicted entries and groups adopted from an
     /// earlier daemon instance. Each remembers its spawn record, deleted
     /// once the group is empty.
-    leftover_groups: Mutex<BTreeMap<u32, (Group, PathBuf)>>,
+    leftover_groups: Mutex<BTreeMap<u64, (Group, PathBuf)>>,
 }
 
 #[derive(Default)]
@@ -149,9 +153,13 @@ impl ProcessManager {
     pub fn new(config: ProcessConfig) -> anyhow::Result<Self> {
         let records_dir = config.state_dir.join("processes");
         std::fs::create_dir_all(&records_dir)?;
+        #[cfg(not(windows))]
         let boot = process_group::boot_id();
         let mut table = Table::default();
+        #[cfg(not(windows))]
         let mut leftover_groups = BTreeMap::new();
+        #[cfg(windows)]
+        let leftover_groups = BTreeMap::new();
         for entry in std::fs::read_dir(&records_dir)? {
             let path = entry?.path();
             let stored = std::fs::read(&path)
@@ -165,19 +173,32 @@ impl ProcessManager {
                 let _ = std::fs::remove_file(&path);
                 continue;
             };
-            if !stored.spawn.same_boot(boot.as_deref()) {
+            #[cfg(windows)]
+            {
+                table.slots.insert(stored.process_id, Slot::Restarted);
                 let _ = std::fs::remove_file(&path);
-                continue;
             }
-            table.slots.insert(stored.process_id, Slot::Restarted);
-            if stored.spawn.group_survives() {
-                leftover_groups.insert(stored.spawn.pgid, (stored.spawn.group(), path));
-            } else {
-                let _ = std::fs::remove_file(&path);
+            #[cfg(not(windows))]
+            {
+                if !stored.spawn.same_boot(boot.as_deref()) {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+                table.slots.insert(stored.process_id, Slot::Restarted);
+                if stored.spawn.group_survives() {
+                    leftover_groups.insert(
+                        stored.spawn.group().ownership_key(),
+                        (stored.spawn.group(), path),
+                    );
+                } else {
+                    let _ = std::fs::remove_file(&path);
+                }
             }
         }
         Ok(Self {
             inner: Arc::new(ManagerInner {
+                #[cfg(windows)]
+                closing: std::sync::atomic::AtomicBool::new(false),
                 config,
                 records_dir,
                 table: Mutex::new(table),
@@ -241,6 +262,17 @@ impl ProcessManager {
             pty,
         } = params;
         let config = &self.inner.config;
+        #[cfg(windows)]
+        if self
+            .inner
+            .closing
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(ProtocolError::failed_precondition(
+                environment_protocol::error::PreconditionReason::EnvironmentClosed,
+                "environment is closing",
+            ));
+        }
         validate_command(&command, "command")?;
         if let Some(size) = pty {
             validate_pty(size, &command.input)?;
@@ -251,10 +283,16 @@ impl ProcessManager {
                 ));
             }
         }
+        #[cfg(not(windows))]
         let cwd = match &command.cwd {
             Some(path) => config.confinement.resolve_directory(path)?,
             None => config.cwd.clone(),
         };
+        #[cfg(windows)]
+        let cwd_guard =
+            crate::exec::pin_cwd(&config.confinement, command.cwd.as_ref(), &config.cwd)?;
+        #[cfg(windows)]
+        let cwd = cwd_guard.path().to_owned();
         self.maintain();
         self.reserve(&process_id)?;
 
@@ -300,7 +338,36 @@ impl ProcessManager {
             );
         }
         execution.start_input();
+        #[cfg(windows)]
+        if self
+            .inner
+            .closing
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            execution.stop(StoppedBy::Kill);
+            return Err(ProtocolError::failed_precondition(
+                environment_protocol::error::PreconditionReason::EnvironmentClosed,
+                "environment is closing",
+            ));
+        }
         Ok(StartProcessResponse { pid })
+    }
+
+    /// Stop Windows ownership units on deliberate close even while other
+    /// runtime/task references retain the managers.
+    #[cfg(windows)]
+    pub fn shutdown(&self) {
+        self.inner
+            .closing
+            .store(true, std::sync::atomic::Ordering::Release);
+        for slot in self.table().slots.values() {
+            if let Slot::Live(entry) = slot {
+                entry.execution.stop(StoppedBy::Kill);
+            }
+        }
+        for (group, _) in lock(&self.inner.leftover_groups).values() {
+            group.signal(crate::process_group::GroupSignal::Kill);
+        }
     }
 
     pub async fn read(
@@ -445,7 +512,7 @@ impl ProcessManager {
         self.maintain();
         let entry = self.lookup(&params.process_id)?;
         let running = match params.signal {
-            ProcessSignal::Interrupt => entry.execution.interrupt(),
+            ProcessSignal::Interrupt => entry.execution.interrupt()?,
             ProcessSignal::Terminate => entry.execution.stop(StoppedBy::Terminate),
             ProcessSignal::Kill => entry.execution.stop(StoppedBy::Kill),
         };
@@ -549,7 +616,7 @@ impl ProcessManager {
             let group = entry.execution.group();
             if entry.execution.group_alive() {
                 lock(&self.inner.leftover_groups)
-                    .insert(group.pgid, (group, entry.record_path.clone()));
+                    .insert(group.ownership_key(), (group, entry.record_path.clone()));
             } else {
                 let _ = std::fs::remove_file(&entry.record_path);
             }
@@ -600,15 +667,18 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
+    use crate::exec::test_script as script;
     use std::collections::BTreeMap;
 
     use environment_protocol::{
         bytes::{ByteChunk, SecretString},
-        data::exec::{CommandSpec, ExitStatus, GapReason, SignalName},
+        data::exec::{CommandSpec, ExitStatus, GapReason},
         error::{ErrorData, PreconditionReason, ProtocolErrorKind},
     };
 
     use super::*;
+    #[cfg(unix)]
+    use environment_protocol::data::exec::SignalName;
 
     fn limits() -> ProcessLimits {
         ProcessLimits {
@@ -631,7 +701,7 @@ mod tests {
 
     fn fixture_with(limits: ProcessLimits) -> Fixture {
         let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
+        let root = temp.path().to_owned();
         let state_dir = root.join("state");
         let manager = manager_at(&root, &state_dir, limits, "envd_first");
         Fixture {
@@ -679,7 +749,7 @@ mod tests {
         StartProcessParams {
             process_id: id(process_id),
             command: CommandSpec {
-                argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), script.to_owned()],
+                argv: crate::exec::test_shell_argv(script),
                 cwd: None,
                 env: BTreeMap::new(),
                 secret_env: BTreeMap::new(),
@@ -777,7 +847,16 @@ mod tests {
         let fixture = fixture();
         let started = fixture
             .manager
-            .start(&ctx(), shell("p1", "printf out; printf err >&2; exit 3"))
+            .start(
+                &ctx(),
+                shell(
+                    "p1",
+                    script(
+                        "printf out; printf err >&2; exit 3",
+                        "[Console]::Out.Write('out'); [Console]::Error.Write('err'); exit 3",
+                    ),
+                ),
+            )
             .await
             .expect("start");
         let (bytes, response) = read_to_end(&fixture.manager, "p1").await;
@@ -800,7 +879,13 @@ mod tests {
         // has read everything: the start must not wait for the input.
         let fixture = fixture();
         let input: Vec<u8> = (0..1024 * 1024u32).map(|i| b'a' + (i % 26) as u8).collect();
-        let mut params = shell("cat", "cat");
+        let mut params = shell(
+            "cat",
+            script(
+                "cat",
+                "[Console]::OpenStandardInput().CopyTo([Console]::OpenStandardOutput())",
+            ),
+        );
         params.command.input = ExecInput::Bytes {
             data: ByteChunk::from(input.clone()),
         };
@@ -821,7 +906,7 @@ mod tests {
         // A PTY child that never reads: a write must not block the runtime
         // thread under the entry lock until the child is killed.
         let fixture = fixture();
-        let mut params = shell("pty", "sleep 30");
+        let mut params = shell("pty", script("sleep 30", "Start-Sleep -Seconds 30"));
         params.pty = Some(PtySize { rows: 24, cols: 80 });
         fixture.manager.start(&ctx(), params).await.expect("start");
         let chunk = vec![b'x'; 16 * 1024];
@@ -867,7 +952,13 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn pipe_input_streams_until_closed() {
         let fixture = fixture();
-        let mut params = shell("pipe", "cat; echo done");
+        let mut params = shell(
+            "pipe",
+            script(
+                "cat; echo done",
+                "[Console]::OpenStandardInput().CopyTo([Console]::OpenStandardOutput()); [Console]::Write(\"done`n\")",
+            ),
+        );
         params.command.input = ExecInput::Pipe {};
         fixture.manager.start(&ctx(), params).await.expect("start");
         let write = |data: &'static [u8], close_input| WriteProcessParams {
@@ -914,7 +1005,16 @@ mod tests {
         let fixture = fixture();
         fixture
             .manager
-            .start(&ctx(), shell("cursor", "printf first; sleep 30"))
+            .start(
+                &ctx(),
+                shell(
+                    "cursor",
+                    script(
+                        "printf first; sleep 30",
+                        "[Console]::Write('first'); Start-Sleep -Seconds 30",
+                    ),
+                ),
+            )
             .await
             .expect("start");
         let lost = fixture
@@ -978,7 +1078,7 @@ mod tests {
                 &ctx(),
                 shell(
                     "build",
-                    "i=0; while [ $i -lt 20000 ]; do echo line-$i; i=$((i+1)); done; echo 'FAILED: 3 tests'",
+                    script("i=0; while [ $i -lt 20000 ]; do echo line-$i; i=$((i+1)); done; echo 'FAILED: 3 tests'", "for ($i=0; $i -lt 20000; $i++) { [Console]::Write(\"line-$i`n\") }; [Console]::Write(\"FAILED: 3 tests`n\")"),
                 ),
             )
             .await
@@ -1012,7 +1112,13 @@ mod tests {
         let fixture = fixture();
         fixture
             .manager
-            .start(&ctx(), shell("pages", "printf abcdefgh"))
+            .start(
+                &ctx(),
+                shell(
+                    "pages",
+                    script("printf abcdefgh", "[Console]::Write('abcdefgh')"),
+                ),
+            )
             .await
             .expect("start");
         let mut params = read_params("pages", ReturnOn::Exit, 10_000);
@@ -1042,15 +1148,18 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn a_duplicate_id_runs_nothing() {
         let fixture = fixture();
-        let script = "echo run >> runs.txt";
+        let command_script = script(
+            "echo run >> runs.txt",
+            "[IO.File]::AppendAllText((Join-Path $pwd 'runs.txt'), \"run`n\")",
+        );
         fixture
             .manager
-            .start(&ctx(), shell("dup", script))
+            .start(&ctx(), shell("dup", command_script))
             .await
             .expect("start");
         let error = fixture
             .manager
-            .start(&ctx(), shell("dup", script))
+            .start(&ctx(), shell("dup", command_script))
             .await
             .unwrap_err();
         assert_eq!(error.kind(), ProtocolErrorKind::AlreadyExists);
@@ -1067,7 +1176,7 @@ mod tests {
         });
         fixture
             .manager
-            .start(&ctx(), shell("old", "true"))
+            .start(&ctx(), shell("old", script("true", "exit 0")))
             .await
             .expect("start");
         for _ in 0..200 {
@@ -1086,7 +1195,7 @@ mod tests {
         assert_eq!(not_found_reason(&error), Some(NotFoundReason::Expired));
         let error = fixture
             .manager
-            .start(&ctx(), shell("old", "true"))
+            .start(&ctx(), shell("old", script("true", "exit 0")))
             .await
             .unwrap_err();
         assert_eq!(
@@ -1257,7 +1366,7 @@ mod tests {
         let orphan = wait_for_pid_file(&fixture.root.join("orphan.pid")).await;
         fixture
             .manager
-            .start(&ctx(), shell("gone", "true"))
+            .start(&ctx(), shell("gone", script("true", "exit 0")))
             .await
             .expect("start");
         read_to_end(&fixture.manager, "survivor").await;
@@ -1292,10 +1401,80 @@ mod tests {
         assert_eq!(records, 0, "records of dead groups are deleted");
     }
 
+    #[cfg(windows)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_spawn_pins_a_working_directory_with_spaces_and_unicode() {
+        let fixture = fixture();
+        let directory = fixture.root.join("work space 雪");
+        std::fs::create_dir(&directory).unwrap();
+        let expected =
+            crate::windows_security::local_drive_path(&directory.canonicalize().unwrap()).unwrap();
+        let wire = environment_protocol::paths::EnvironmentPath::from_native(
+            expected.to_str().unwrap(),
+            environment_protocol::paths::PathConvention::Windows,
+        )
+        .unwrap();
+        let mut params = shell(
+            "cwd",
+            "[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false); [Console]::Write((Get-Location).Path)",
+        );
+        params.command.cwd = Some(wire);
+        fixture.manager.start(&ctx(), params).await.unwrap();
+        let (bytes, response) = read_to_end(&fixture.manager, "cwd").await;
+        assert_eq!(response.exit, Some(ExitStatus::Code { code: 0 }));
+        assert_eq!(
+            String::from_utf8(bytes).unwrap(),
+            expected.to_str().unwrap()
+        );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn restart_records_do_not_adopt_pids_and_shutdown_closes_live_clones() {
+        let fixture = fixture();
+        fixture
+            .manager
+            .start(&ctx(), shell("owned", "Start-Sleep -Seconds 30"))
+            .await
+            .unwrap();
+        let clone = fixture.manager.clone();
+        let restarted = manager_at(&fixture.root, &fixture.state_dir, limits(), "envd_second");
+        let error = restarted
+            .read(&ctx(), read_params("owned", ReturnOn::Exit, 0))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            not_found_reason(&error),
+            Some(NotFoundReason::DaemonRestarted)
+        );
+        assert_eq!(restarted.leftover_group_count(), 0);
+        assert_eq!(
+            clone.running_count().await,
+            1,
+            "a persisted PID confers no authority over an independently live job"
+        );
+        fixture.manager.shutdown();
+        let (_, response) = read_to_end(&clone, "owned").await;
+        assert_eq!(response.stopped_by, Some(StoppedBy::Kill));
+        let error = clone
+            .start(&ctx(), shell("late", "exit 0"))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error.data,
+            ErrorData::FailedPrecondition {
+                reason: PreconditionReason::EnvironmentClosed
+            }
+        ));
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn secrets_are_redacted_and_ptys_need_the_capability() {
         let fixture = fixture();
-        let mut params = shell("secret", "printf \"$TOKEN\"");
+        let mut params = shell(
+            "secret",
+            script("printf \"$TOKEN\"", "[Console]::Write($env:TOKEN)"),
+        );
         params.command.secret_env =
             BTreeMap::from([("TOKEN".to_owned(), SecretString::new("hunter2"))]);
         fixture.manager.start(&ctx(), params).await.expect("start");
@@ -1303,7 +1482,7 @@ mod tests {
         assert_eq!(bytes, b"<redacted>");
 
         let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().canonicalize().unwrap();
+        let root = temp.path().to_owned();
         let confinement = Confinement::new(root.clone(), root.join("state")).unwrap();
         let without_pty = ProcessManager::new(ProcessConfig {
             cwd: root.clone(),
@@ -1316,7 +1495,7 @@ mod tests {
             pty_supported: false,
         })
         .unwrap();
-        let mut pty = shell("pty", "true");
+        let mut pty = shell("pty", script("true", "exit 0"));
         pty.pty = Some(PtySize { rows: 24, cols: 80 });
         let error = without_pty.start(&ctx(), pty).await.unwrap_err();
         assert_eq!(error.kind(), ProtocolErrorKind::CapabilityUnavailable);

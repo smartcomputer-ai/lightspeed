@@ -42,6 +42,8 @@ impl SpawnRecord {
         Group {
             pgid: self.pgid,
             leader_start_time: self.leader_start_time,
+            #[cfg(windows)]
+            job: None,
         }
     }
 
@@ -52,6 +54,7 @@ impl SpawnRecord {
 
     /// The recorded group still has members, and they are the recorded
     /// group's. Only meaningful for a record of the current boot.
+    #[cfg(not(windows))]
     pub fn group_survives(&self) -> bool {
         self.group().alive()
     }
@@ -67,7 +70,7 @@ pub(crate) fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> std::io
     std::fs::rename(&temp, path)
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::*;
 

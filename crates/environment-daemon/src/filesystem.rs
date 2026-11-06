@@ -9,11 +9,23 @@
 //! token between entries.
 
 mod confinement;
+#[cfg(unix)]
+#[path = "filesystem/os_unix.rs"]
+mod os;
+#[cfg(windows)]
+#[path = "filesystem/os_windows.rs"]
 mod os;
 mod scan;
 mod search;
+#[cfg(unix)]
+mod transfer;
+#[cfg(windows)]
+#[path = "filesystem/transfer_windows.rs"]
 mod transfer;
 mod walk;
+#[cfg(all(test, windows))]
+#[path = "filesystem/windows_tests.rs"]
+mod windows_tests;
 
 use std::{
     ffi::OsString,
@@ -25,6 +37,8 @@ use std::{
 
 pub use confinement::Confinement;
 use confinement::Lookup;
+#[cfg(windows)]
+pub(crate) use confinement::PinnedDirectory;
 use environment_protocol::{
     data::{
         fs::{
@@ -49,6 +63,7 @@ use environment_protocol::{
     paths::{EntryName, EnvironmentPath},
 };
 use os::{Directory, EntryStat, RenameMode};
+#[cfg(unix)]
 use rustix::io::Errno;
 use sha2::{Digest, Sha256};
 
@@ -366,6 +381,13 @@ impl Inner {
     /// it.
     fn write_file(&self, params: WriteFileParams) -> Result<WriteFileResponse, ProtocolError> {
         self.ensure_writable()?;
+        #[cfg(windows)]
+        if params.executable {
+            return Err(ProtocolError::capability_unavailable(
+                Capability::FilesystemWrite,
+                "Windows has no Unix executable mode; executable writes are unsupported",
+            ));
+        }
         let ceiling = self.limits.max_write_file_bytes;
         let size = params.data.len() as u64;
         if size > ceiling {
@@ -403,11 +425,33 @@ impl Inner {
         let mut file = parent
             .create_file(&stage, os::PRIVATE_FILE_MODE)
             .map_err(io)?;
-        let staged = file
-            .write_all(params.data.as_slice())
-            .and_then(|()| os::set_mode(&file, mode))
-            .and_then(|()| file.sync_all())
-            .and_then(|()| parent.rename(&stage, parent, &resolved.name, rename));
+        #[cfg(windows)]
+        let permissions = match (|| {
+            // An inherited staging ACL is observed while the file is still empty.
+            // Restrict it before writing bytes, then restore the intended native
+            // ACL before atomic publication. Existing targets keep their DACL.
+            let permissions = if resolved.stat.is_some() {
+                parent.permissions(&resolved.name)?
+            } else {
+                crate::windows_security::FilePermissions::capture(&file)?
+            };
+            crate::windows_security::restrict_private_file(&file)?;
+            Ok::<_, io::Error>(permissions)
+        })() {
+            Ok(permissions) => permissions,
+            Err(error) => {
+                let _ = parent.unlink(&stage);
+                return Err(io(error));
+            }
+        };
+        let staged = (|| {
+            file.write_all(params.data.as_slice())?;
+            os::set_mode(&file, mode)?;
+            #[cfg(windows)]
+            permissions.apply(&file)?;
+            file.sync_all()?;
+            parent.rename(&stage, parent, &resolved.name, rename)
+        })();
         if let Err(error) = staged {
             let _ = parent.unlink(&stage);
             if rename == RenameMode::NoReplace && error.kind() == io::ErrorKind::AlreadyExists {
@@ -752,6 +796,7 @@ pub(crate) fn json_string_len(value: &str) -> u64 {
 pub(crate) fn io_error(error: io::Error, subject: impl Display) -> ProtocolError {
     let message = format!("{subject}: {error}");
     let precondition = |reason| ProtocolError::failed_precondition(reason, message.clone());
+    #[cfg(unix)]
     match Errno::from_io_error(&error) {
         Some(Errno::LOOP) => return precondition(PreconditionReason::SymlinkLoop),
         Some(Errno::NOTDIR) => return precondition(PreconditionReason::NotDirectory),
@@ -764,7 +809,35 @@ pub(crate) fn io_error(error: io::Error, subject: impl Display) -> ProtocolError
         }
         _ => {}
     }
+    #[cfg(windows)]
+    match error.raw_os_error().map(|code| code as u32) {
+        Some(windows_sys::Win32::Foundation::ERROR_CANT_ACCESS_FILE) => {
+            return precondition(PreconditionReason::SymlinkRejected);
+        }
+        Some(windows_sys::Win32::Foundation::ERROR_DIRECTORY) => {
+            return precondition(PreconditionReason::NotDirectory);
+        }
+        Some(windows_sys::Win32::Foundation::ERROR_DIR_NOT_EMPTY) => {
+            return precondition(PreconditionReason::NotEmpty);
+        }
+        Some(
+            windows_sys::Win32::Foundation::ERROR_DISK_FULL
+            | windows_sys::Win32::Foundation::ERROR_HANDLE_DISK_FULL,
+        ) => return precondition(PreconditionReason::NoSpace),
+        Some(windows_sys::Win32::Foundation::ERROR_NOT_SAME_DEVICE) => {
+            return precondition(PreconditionReason::CrossDevice);
+        }
+        Some(
+            windows_sys::Win32::Foundation::ERROR_SHARING_VIOLATION
+            | windows_sys::Win32::Foundation::ERROR_LOCK_VIOLATION,
+        ) => return ProtocolError::unavailable(message),
+        _ => {}
+    }
     match error.kind() {
+        #[cfg(windows)]
+        io::ErrorKind::Unsupported => {
+            ProtocolError::capability_unavailable(Capability::Filesystem, message)
+        }
         io::ErrorKind::NotFound => ProtocolError::not_found(message),
         io::ErrorKind::AlreadyExists => ProtocolError::already_exists(message),
         io::ErrorKind::PermissionDenied => {
@@ -848,7 +921,7 @@ mod cursor {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::os::unix::fs::{PermissionsExt, symlink};
 

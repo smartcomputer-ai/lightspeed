@@ -115,7 +115,13 @@ pub async fn run(runtime: DaemonRuntime) -> DaemonExit {
         .registration
         .as_ref()
         .map_or(OnClosed::Exit, |registration| registration.on_closed);
-    match (serve(runtime).await, on_closed) {
+    let exit = serve(runtime.clone()).await;
+    #[cfg(windows)]
+    {
+        runtime.processes().shutdown();
+        runtime.jobs().shutdown();
+    }
+    match (exit, on_closed) {
         (DaemonExit::EnvironmentClosed, OnClosed::Park) => park(&shutdown).await,
         (exit, _) => exit,
     }
@@ -852,7 +858,7 @@ mod tests {
             &mut client,
             json!({"jsonrpc": "2.0", "id": "start", "method": "process/start", "params": {
                 "processId": "quiet",
-                "command": {"argv": ["/bin/sh", "-c", "sleep 30"], "timeoutMs": 60000},
+                "command": {"argv": crate::test_support::shell("sleep 30", "Start-Sleep -Seconds 30"), "timeoutMs": 60000},
             }}),
         )
         .await;
@@ -902,7 +908,7 @@ mod tests {
             &mut client,
             json!({"jsonrpc": "2.0", "id": "start", "method": "process/start", "params": {
                 "processId": "quiet",
-                "command": {"argv": ["/bin/sh", "-c", "sleep 30"], "timeoutMs": 60000},
+                "command": {"argv": crate::test_support::shell("sleep 30", "Start-Sleep -Seconds 30"), "timeoutMs": 60000},
             }}),
         )
         .await;
@@ -950,7 +956,7 @@ mod tests {
             &mut first,
             json!({"jsonrpc": "2.0", "id": 1, "method": "process/start", "params": {
                 "processId": "late",
-                "command": {"argv": ["/bin/sh", "-c", "printf early; sleep 1; printf late"], "timeoutMs": 60000},
+                "command": {"argv": crate::test_support::shell("printf early; sleep 1; printf late", "[Console]::Write('early'); Start-Sleep -Seconds 1; [Console]::Write('late')"), "timeoutMs": 60000},
             }}),
         )
         .await;
@@ -1022,6 +1028,44 @@ mod tests {
         })
         .await;
         assert!(ended.is_ok(), "the daemon closed the connection");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_terminates_native_work_even_while_the_runtime_is_retained() {
+        let (_temp, runtime) = crate::test_support::runtime_with(|config| {
+            config.listen = Some(ListenAddr::Tcp("127.0.0.1:0".parse().unwrap()));
+        });
+        let server = tokio::spawn(run(runtime.clone()));
+        let context = RequestContext::detached();
+        dispatch::handle_request(&runtime, &context, "process/start", json!({
+            "processId": "shutdown-test",
+            "command": {"argv": crate::test_support::shell("sleep 30", "Start-Sleep -Seconds 30")},
+        })).await.expect("start process");
+        assert_eq!(runtime.idle_report().await.running_process_count, 1);
+        runtime.shutdown().cancel();
+        assert_eq!(server.await.expect("server task").status(), 0);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while runtime.idle_report().await.running_process_count != 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("owned tree stops despite retained runtime");
+        assert!(
+            dispatch::handle_request(
+                &runtime,
+                &context,
+                "process/start",
+                json!({
+                    "processId": "after-shutdown",
+                    "command": {"argv": crate::test_support::shell("true", "exit 0")},
+                })
+            )
+            .await
+            .is_err(),
+            "shutdown prevents new processes"
+        );
     }
 
     #[cfg(unix)]

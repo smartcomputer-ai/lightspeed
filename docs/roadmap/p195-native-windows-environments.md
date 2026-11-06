@@ -355,11 +355,62 @@ Job Objects, ConPTY and PowerShell 7 execution remain backend acceptance tests.
 
 On the Windows development VM, the protocol and client suites passed 130 tests
 and 4 doctests, and scoped Clippy passed with all targets and warnings denied.
-The daemon check still reports 27 errors and one warning in the existing
-Unix-specific implementation. The full release metadata script could not run
+At that contract-package checkpoint, the daemon check reported 27 errors and
+one warning in the existing Unix-specific implementation. The full release metadata script could not run
 because Node.js is absent; a direct check confirmed that both protocol versions
 match `release/metadata.env`. Linux/macOS regression checks and the full CI
 Clippy gate remain required before a Rust PR.
+
+### Native backend implementation
+
+The filesystem and execution packages are implemented together under envd
+protocol 5, selected by the contract package. `filesystem.transfer` separates
+core file access from transfers, so the Windows daemon exposes file operations
+while transfer methods fail explicitly before mutation.
+
+The native filesystem uses handle-relative opens, retained ancestor handles,
+reparse-point inspection and volume/file identity. It supports read/write,
+metadata, enumeration, search, glob and scan. Atomic writes use private staging
+and restore the existing target's DACL, or the inherited DACL for a new file.
+State defaults to the execution account's local application-data directory;
+state and identity keys have protected account/SYSTEM ACLs. Identity installation
+is atomic without transient hard-link aliases, and existing key aliases fail.
+
+Native execution attaches a non-breakaway Job Object during `CreateProcessW`,
+before the child can execute. Pipes preserve raw bytes. ConPTY supplies terminal
+input, UTF-8 output, Ctrl-C and internal resize. Normal process exit preserves
+descendants and terminal ownership; job completion, explicit termination,
+timeouts and daemon death remove the owned tree. Shutdown stops work even if
+connection tasks retain the runtime. Persisted Windows PIDs are never adopted.
+Pinned cwd paths are validated again after symlink resolution, so Win32 cannot
+normalize a literal native name to a different directory at process creation.
+
+Explicit limits for these packages:
+
+- Transfers remain unavailable until native journals, recovery and publication
+  are implemented in package 5.
+- Cross-directory rename is unavailable: Windows reopens its destination for
+  write access, conflicting with the ancestor pin that prevents junction
+  replacement. Same-directory rename and atomic file replacement are supported.
+- Windows executable metadata is false; setting executable bits is unsupported.
+  Directory publication is atomic without a directory crash-durability promise.
+- Pipe interruption and ConPTY input EOF are unavailable. Internal terminal
+  resize is tested, but no public resize method is added.
+- Direct native spawning accepts executables; scripts require an explicit
+  interpreter. Shell discovery, model-facing commands and source-root discovery
+  remain package 4 work. The Windows scan/catalog integration test supplies
+  explicit wire roots to exercise the backend independently of that adapter.
+
+Validation on Windows Server 2025 passed 123 daemon unit tests and 5 client
+round-trip tests, including the shared data conformance suite. The one ignored
+test is a child-process helper invoked explicitly by the native execution tests.
+Protocol/client suites passed 130 tests and 4 doctests; remote-adapter tests
+passed 14 tests. Scoped Clippy passed for environment-daemon,
+environment-client, environment-protocol and tools with `--all-targets --locked
+-- -D warnings`. The native executable's `--print-build` reports
+`x86_64-pc-windows-msvc` and protocol 5. Linux/macOS execution, the full workspace
+Clippy gate and Windows release/service installation remain separate validation
+requirements.
 
 ## Implementation packages
 
@@ -447,7 +498,7 @@ release; no Windows version beyond Server 2025 is claimed yet.
 - [x] Native Windows / PowerShell default / optional Git Bash direction agreed.
 - [x] Implementation branch created from fetched `origin/main`.
 - [x] Cross-platform protocol and lifecycle decisions finalized and contract-tested.
-- [ ] Native filesystem, process, and terminal implementations completed.
+- [x] Native filesystem, process, and terminal backends implemented and tested on Windows, with the explicit limitations above.
 - [ ] Model-facing shell selection and Windows context completed.
 - [ ] Transfer/conformance, Windows CI, and unattended release completed.
 

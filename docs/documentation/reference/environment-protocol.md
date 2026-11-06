@@ -544,11 +544,11 @@ The response carries `protocolVersion`, `plane: data`, `serverInfo`, and:
 | `defaultCwd` | The daemon's working directory, the default `cwd` of commands. |
 | `homeDirectory` | The home directory of the user commands run as, when it lies inside the filesystem root. |
 
-A present capability family means all of its methods exist: `filesystem`
-covers `fs/*` and `transfer/*`, including search, glob, scan, and transfers;
-`process` covers `process/*`; `job` covers `job/*`. Inside a family are only
-facts that vary per instance: `filesystem.write` is false on a daemon started
-read-only, and `process.pty` says whether `process/start` accepts `pty`. A
+A present `filesystem` capability covers `fs/*`, including search, glob and
+scan. `filesystem.transfer` separately enables `transfer/*`; an omitted flag
+means transfers are unavailable. `process` covers `process/*`; `job` covers
+`job/*`. `filesystem.write` is false on a daemon started read-only, and
+`process.pty` says whether `process/start` accepts `pty`. A
 request that needs an absent family or fact is `capabilityUnavailable` before
 any side effect.
 
@@ -569,7 +569,7 @@ any side effect.
 | `fs/searchText` | Yes | Yes | `filesystem` | Search file contents below a root with a regular expression. |
 | `fs/globFiles` | Yes | Yes | `filesystem` | List non-directory entries below a root that match patterns. |
 | `fs/scan` | No | Yes | `filesystem` | Observe small trees below several roots, each reported on its own. |
-| `transfer/begin`, `transfer/advance`, `transfer/getStatus`, `transfer/readInventory`, `transfer/append`, `transfer/listMissing`, `transfer/read`, `transfer/write`, `transfer/commit`, `transfer/abort` | Yes | | `filesystem` (writes also `filesystem.write`) | One capture, materialize, or file write as many bounded calls. |
+| `transfer/begin`, `transfer/advance`, `transfer/getStatus`, `transfer/readInventory`, `transfer/append`, `transfer/listMissing`, `transfer/read`, `transfer/write`, `transfer/commit`, `transfer/abort` | Yes | | `filesystem.transfer` (writes also `filesystem.write`) | One capture, materialize, or file write as many bounded calls. |
 | `process/start` | Yes | | `process` | Start a process under a caller-chosen `processId`. |
 | `process/read` | Yes | Yes | `process` | Wait for and read a page of output and the process state. |
 | `process/write` | Yes | | `process` | Queue bytes for a pipe or PTY input. |
@@ -614,6 +614,16 @@ handles and identity checks. Entries that cannot be represented are skipped
 and counted. Relative transfer paths retain their grammar but must be validated
 against the destination convention before mutation. VFS paths are unchanged.
 
+The native Windows backend opens path components relative to directory handles,
+retains ancestors against rename and junction replacement, and excludes daemon
+state by volume/file identity. Writes stage privately and preserve the target's
+DACL when replacing an existing file. New files retain the destination's inherited
+DACL. Same-directory rename is supported; cross-directory rename and
+`executable: true` are `capabilityUnavailable`. Executable metadata is false on
+Windows. Publication is atomic, but directory crash-durability is not promised.
+Windows advertises `filesystem.transfer: false` until native transfer recovery
+and publication are implemented.
+
 ### Pattern grammar and walks
 
 `fs/searchText`, `fs/globFiles`, `fs/scan`, and transfer captures share one
@@ -648,6 +658,14 @@ owned descendants survive, independently of retained output. Restart never
 adopts raw Windows PIDs. POSIX group and restart behavior is unchanged.
 Windows returns native exit codes through the signed i32 `code` field, preserving
 all 32 bits; it never represents Windows termination as a Unix signal.
+
+Native pipe execution preserves bytes and supports closing stdin. ConPTY uses
+UTF-8 terminal streams and supports Ctrl-C; pipe interruption is unavailable.
+Closing ConPTY input with `close: true` is `capabilityUnavailable`, because
+closing the pseudoconsole would terminate attached processes rather than supply
+EOF. Terminal dimensions are set at start; the backend supports resize, but the
+protocol currently has no resize method. Direct Windows execution requires an
+`.exe`; scripts and batch files require an explicit interpreter.
 
 A process has one combined output stream: stdout, stderr, or PTY output
 interleaved in arrival order. Positions are byte offsets into it.

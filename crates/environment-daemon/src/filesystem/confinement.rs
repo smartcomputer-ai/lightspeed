@@ -17,7 +17,6 @@
 use std::{
     collections::VecDeque,
     ffi::{OsStr, OsString},
-    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
 };
 
@@ -28,7 +27,7 @@ use environment_protocol::{
 
 use super::{
     io_error,
-    os::{DEFAULT_DIRECTORY_MODE, Directory, EntryStat, PRIVATE_DIRECTORY_MODE, SELF},
+    os::{DEFAULT_DIRECTORY_MODE, Directory, EntryStat, SELF},
 };
 
 /// Most symlinks one resolution follows before it is a loop.
@@ -46,10 +45,29 @@ pub struct Confinement {
     state_identity: Identity,
     /// Device and inode of each of its ancestors, its parent first.
     state_ancestors: Vec<Identity>,
+    /// Keep native state identity pinned against rename/replacement while served.
+    #[cfg(windows)]
+    _state_directory: Directory,
 }
 
 /// Device and inode of an entry.
-pub(crate) type Identity = (u64, u64);
+pub(crate) type Identity = (u64, u128);
+
+/// Keep the resolved directory and its ancestry alive until native spawning has
+/// consumed the cwd. The path alone is not a confinement token on Windows.
+#[cfg(windows)]
+#[derive(Debug)]
+pub(crate) struct PinnedDirectory {
+    path: PathBuf,
+    _directory: Directory,
+}
+
+#[cfg(windows)]
+impl PinnedDirectory {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
 
 /// How one lookup treats the final entry and missing entries.
 #[derive(Clone, Copy, Debug, Default)]
@@ -106,6 +124,7 @@ pub(crate) struct Resolved {
     pub stat: Option<EntryStat>,
     /// Canonical segments of the directories this lookup created
     /// (`creating_parents`), outermost first.
+    #[cfg_attr(windows, allow(dead_code))] // Used by transfer publication on Unix.
     pub created: Vec<Vec<OsString>>,
 }
 
@@ -131,9 +150,22 @@ impl Confinement {
         let root = root
             .canonicalize()
             .map_err(|error| io_error(error, root.display()))?;
+        #[cfg(windows)]
+        let root = crate::windows_security::local_drive_path(&root)
+            .map_err(|error| io_error(error, root.display()))?;
         let root_path = root
             .to_str()
-            .and_then(|root| EnvironmentPath::new(root).ok())
+            .and_then(|root| {
+                EnvironmentPath::from_native(
+                    root,
+                    if cfg!(windows) {
+                        environment_protocol::paths::PathConvention::Windows
+                    } else {
+                        environment_protocol::paths::PathConvention::Posix
+                    },
+                )
+                .ok()
+            })
             .ok_or_else(|| {
                 ProtocolError::internal(format!(
                     "filesystem root {} is not a valid environment path",
@@ -142,24 +174,47 @@ impl Confinement {
             })?;
         let root_directory =
             Directory::open_host(&root).map_err(|error| io_error(error, root.display()))?;
+        #[cfg(unix)]
         if !state_dir.exists() {
             use std::os::unix::fs::DirBuilderExt;
             std::fs::DirBuilder::new()
                 .recursive(true)
-                .mode(PRIVATE_DIRECTORY_MODE)
+                .mode(super::os::PRIVATE_DIRECTORY_MODE)
                 .create(&state_dir)
                 .map_err(|error| io_error(error, state_dir.display()))?;
         }
+        #[cfg(windows)]
+        crate::windows_security::prepare_private_directory(&state_dir)
+            .map_err(|error| io_error(error, state_dir.display()))?;
         let state_dir = state_dir
             .canonicalize()
             .map_err(|error| io_error(error, state_dir.display()))?;
+        #[cfg(windows)]
+        let state_dir = crate::windows_security::local_drive_path(&state_dir)
+            .map_err(|error| io_error(error, state_dir.display()))?;
         let identity_of = |path: &Path| {
-            use std::os::unix::fs::MetadataExt;
-            std::fs::metadata(path)
-                .map(|metadata| (metadata.dev(), metadata.ino()))
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                std::fs::metadata(path)
+                    .map(|metadata| (metadata.dev(), metadata.ino() as u128))
+                    .map_err(|error| io_error(error, path.display()))
+            }
+            #[cfg(windows)]
+            Directory::open_host(path)
+                .and_then(|directory| EntryStat::of_directory(&directory))
+                .map(|stat| stat.identity())
                 .map_err(|error| io_error(error, path.display()))
         };
+        #[cfg(unix)]
         let state_identity = identity_of(&state_dir)?;
+        #[cfg(windows)]
+        let state_directory = Directory::open_host(&state_dir)
+            .map_err(|error| io_error(error, state_dir.display()))?;
+        #[cfg(windows)]
+        let state_identity = EntryStat::of_directory(&state_directory)
+            .map_err(|error| io_error(error, state_dir.display()))?
+            .identity();
         let state_ancestors = state_dir
             .ancestors()
             .skip(1)
@@ -180,6 +235,8 @@ impl Confinement {
             state_dir,
             state_identity,
             state_ancestors,
+            #[cfg(windows)]
+            _state_directory: state_directory,
         })
     }
 
@@ -214,6 +271,34 @@ impl Confinement {
             ));
         }
         Ok(self.host_path(&resolved.segments))
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn pin_directory(
+        &self,
+        path: &EnvironmentPath,
+    ) -> Result<PinnedDirectory, ProtocolError> {
+        let resolved = self.lookup(path, Lookup::FOLLOW)?;
+        let directory = resolved
+            .open_directory()
+            .map_err(|error| io_error(error, path))?;
+        let stat = EntryStat::of_directory(&directory).map_err(|error| io_error(error, path))?;
+        if self.is_state(&stat) {
+            return Err(daemon_state(path));
+        }
+        // CreateProcess consumes an ordinary DOS path, whereas the native
+        // resolver can encounter literal names through reparse targets. Reject
+        // names DOS would normalize (such as trailing dots) before spawning.
+        let canonical = self.wire_path(&resolved.segments).ok_or_else(|| {
+            ProtocolError::invalid_field(
+                "cwd",
+                "resolved cwd cannot be represented without Windows path normalization",
+            )
+        })?;
+        Ok(PinnedDirectory {
+            path: PathBuf::from(canonical.to_native()),
+            _directory: directory,
+        })
     }
 
     /// Resolve a wire path under the rule.
@@ -266,6 +351,9 @@ impl Confinement {
 
     /// The wire path of canonical segments, when they are UTF-8.
     pub(crate) fn wire_path(&self, segments: &[OsString]) -> Option<EnvironmentPath> {
+        if segments.is_empty() {
+            return Some(self.root_path.clone());
+        }
         let mut path = self.root_path.as_str().trim_end_matches('/').to_owned();
         for segment in segments {
             path.push('/');
@@ -308,6 +396,7 @@ impl Confinement {
 
     /// Remove directories a lookup created (see [`Resolved::created`])
     /// that are still empty, innermost first. Best effort.
+    #[cfg(unix)]
     pub(crate) fn remove_created(&self, created: &[Vec<OsString>]) {
         for segments in created.iter().rev() {
             let Some((name, parent)) = segments.split_last() else {
@@ -461,12 +550,27 @@ impl Confinement {
 /// Components of a link target, keeping `.` and `..` for the walk to apply
 /// against the open directories.
 fn raw_components(path: &Path) -> Vec<OsString> {
-    path.as_os_str()
-        .as_bytes()
-        .split(|byte| *byte == b'/')
-        .filter(|segment| !segment.is_empty())
-        .map(|segment| OsStr::from_bytes(segment).to_owned())
-        .collect()
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        path.as_os_str()
+            .as_bytes()
+            .split(|byte| *byte == b'/')
+            .filter(|segment| !segment.is_empty())
+            .map(|segment| OsStr::from_bytes(segment).to_owned())
+            .collect()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        path.as_os_str()
+            .encode_wide()
+            .collect::<Vec<_>>()
+            .split(|c| matches!(*c, 47 | 92))
+            .filter(|segment| !segment.is_empty())
+            .map(OsString::from_wide)
+            .collect()
+    }
 }
 
 pub(crate) fn outside_root(subject: &dyn std::fmt::Display) -> ProtocolError {
@@ -483,7 +587,7 @@ pub(crate) fn daemon_state(subject: &dyn std::fmt::Display) -> ProtocolError {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::os::unix::fs::symlink;
 

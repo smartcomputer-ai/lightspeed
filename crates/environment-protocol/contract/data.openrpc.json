@@ -307,7 +307,7 @@
                 "$ref": "#/components/schemas/FilesystemCapabilities"
               }
             ],
-            "description": "`fs/*` (search, glob and scan included) and `transfer/*`."
+            "description": "`fs/*` (search, glob and scan included); `transfer/*` needs its own fact."
           },
           "job": {
             "anyOf": [
@@ -927,8 +927,12 @@
       },
       "FilesystemCapabilities": {
         "additionalProperties": false,
-        "description": "The `filesystem` family: `fs/*` and `transfer/*`.",
+        "description": "The `filesystem` family: `fs/*`, with optional `transfer/*` support.",
         "properties": {
+          "transfer": {
+            "description": "`transfer/*` supports its journal, recovery and publish guarantees.\nCore file operations do not imply transfer support.",
+            "type": "boolean"
+          },
           "write": {
             "description": "Methods that change the filesystem are served; false on a daemon\nstarted read-only.",
             "type": "boolean"

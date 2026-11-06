@@ -26,7 +26,8 @@
     },
     "capabilities": {
       "filesystem": {
-        "write": true
+        "write": true,
+        "transfer": true
       },
       "process": {
         "pty": true,
