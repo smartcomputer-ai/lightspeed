@@ -422,6 +422,11 @@ optional selector. Shell failures do not trigger fallback. PowerShell profile,
 noninteractive, UTF-8 and native-exit behavior uses the contract package's pure
 adapter. Direct program argv and durable jobs bypass shell selection.
 
+Model-facing descriptions distinguish shell command text from direct argv.
+Process/job argv help names the executable and separate arguments, with a short
+explicit-shell example. Shell selectors refer to the environment context for
+available shells and the default, keeping platform-specific guidance there.
+
 File tools, apply-patch, process/job cwd and skill/prompt discovery resolve paths
 using the remote convention. Windows drive paths and backslashes are accepted
 without reinterpreting VFS paths. Active-environment context publishes native

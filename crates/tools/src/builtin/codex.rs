@@ -52,10 +52,10 @@ pub(super) fn description(tool: BuiltinTool, scoped_paths: bool) -> String {
             description
         }
         BuiltinToolOperation::RunProcess if tool.one_shot() => {
-            "Runs a command to completion and returns its output. The process is terminated on timeout or cancellation and cannot be resumed.".to_owned()
+            "Runs command text in the selected environment shell to completion and returns its output. The process is terminated on timeout or cancellation and cannot be resumed.".to_owned()
         }
         BuiltinToolOperation::RunProcess => {
-            "Runs a command in a shell (a PTY when `tty` is true), returning output or a session ID for ongoing interaction. A command may leave services running for later calls; they keep running until stopped or the environment closes.".to_owned()
+            "Runs command text in the selected environment shell (a PTY when `tty` is true), returning output or a session ID for ongoing interaction. A command may leave services running for later calls; they keep running until stopped or the environment closes.".to_owned()
         }
         BuiltinToolOperation::ContinueProcess => {
             "Writes characters to an existing unified exec session and returns recent output. Empty `chars` polls without writing; Ctrl-C (\\u0003) interrupts the session.".to_owned()
@@ -70,11 +70,11 @@ pub(super) fn input_schema(tool: BuiltinTool) -> Value {
             [
                 (
                     "cmd",
-                    string("Shell command to execute using the selected environment shell."),
+                    string("Command text interpreted by the selected shell."),
                 ),
                 (
                     "shell",
-                    serde_json::json!({"type": ["string", "null"], "enum": ["bash", "powerShell", "windowsPowerShell", "gitBash", null], "description": "Select an installed shell. Omission uses the discovered default; Git Bash is explicit."}),
+                    serde_json::json!({"type": ["string", "null"], "enum": ["bash", "powerShell", "windowsPowerShell", "gitBash", null], "description": "Select an installed shell from the environment context. Omission uses its default shell."}),
                 ),
                 (
                     "workdir",
@@ -95,7 +95,7 @@ pub(super) fn input_schema(tool: BuiltinTool) -> Value {
                 (
                     "login",
                     optional_boolean(
-                        "Load shell profiles. Defaults to true for Unix Bash; false for PowerShell and Git Bash.",
+                        "Load shell profiles. Defaults to true for bash, false for other shells.",
                     ),
                 ),
             ],
@@ -105,11 +105,11 @@ pub(super) fn input_schema(tool: BuiltinTool) -> Value {
             [
                 (
                     "cmd",
-                    string("Shell command to execute using the selected environment shell."),
+                    string("Command text interpreted by the selected shell."),
                 ),
                 (
                     "shell",
-                    serde_json::json!({"type": ["string", "null"], "enum": ["bash", "powerShell", "windowsPowerShell", "gitBash", null], "description": "Select an installed shell. Omission uses the discovered default; Git Bash is explicit."}),
+                    serde_json::json!({"type": ["string", "null"], "enum": ["bash", "powerShell", "windowsPowerShell", "gitBash", null], "description": "Select an installed shell from the environment context. Omission uses its default shell."}),
                 ),
                 (
                     "workdir",
@@ -136,7 +136,7 @@ pub(super) fn input_schema(tool: BuiltinTool) -> Value {
                 (
                     "login",
                     optional_boolean(
-                        "Load shell profiles. Defaults to true for Unix Bash; false for PowerShell and Git Bash.",
+                        "Load shell profiles. Defaults to true for bash, false for other shells.",
                     ),
                 ),
             ],

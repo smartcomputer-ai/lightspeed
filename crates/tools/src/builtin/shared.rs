@@ -9,6 +9,8 @@ use crate::{
     error::ToolError,
 };
 
+pub(super) const ARGV_DESCRIPTION: &str = "Executable in argv[0], followed by separate arguments; no shell parsing or expansion. For shell syntax, invoke a shell explicitly, e.g. [\"bash\", \"-c\", \"...\"].";
+
 /// Model-visible marker for a search that stopped at one of its bounds,
 /// naming the bound and how to narrow the search.
 pub(super) fn visible_with_search_stop(

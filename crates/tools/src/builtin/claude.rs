@@ -62,10 +62,10 @@ pub(super) fn description(tool: BuiltinTool, scoped_paths: bool) -> ToolResult<S
         (BuiltinToolOperation::Grep, _) => "Searches file contents with a regular expression.",
         (BuiltinToolOperation::Glob, _) => "Finds files by glob pattern.",
         (BuiltinToolOperation::RunProcess, _) if tool.one_shot() => {
-            "Executes a shell command and waits for it to finish, killing it at `timeout`. A command may leave services running; they keep running until stopped or the environment is closed."
+            "Executes command text in the selected environment shell and waits for it to finish, killing it at `timeout`. A command may leave services running; they keep running until stopped or the environment is closed."
         }
         (BuiltinToolOperation::RunProcess, _) => {
-            "Executes a shell command. Waits for it to finish, killing it at `timeout`, unless `run_in_background` is true, in which case it returns at once with an ID for BashOutput and KillShell. A command may leave services running; they keep running until stopped or the environment is closed."
+            "Executes command text in the selected environment shell. Waits for it to finish, killing it at `timeout`, unless `run_in_background` is true, in which case it returns at once with an ID for BashOutput and KillShell. A command may leave services running; they keep running until stopped or the environment is closed."
         }
         (BuiltinToolOperation::ContinueProcess, BuiltinToolVariant::Primary) => {
             "Wait up to `timeout` for a background command to finish and return the output produced since the last call. Returns at once if it has already exited, with its exit code."
@@ -217,11 +217,11 @@ pub(super) fn input_schema(tool: BuiltinTool) -> ToolResult<Value> {
             [
                 (
                     "command",
-                    string("The command to execute in the discovered default shell."),
+                    string("Command text interpreted by the selected shell."),
                 ),
                 (
                     "shell",
-                    serde_json::json!({"type": ["string", "null"], "enum": ["bash", "powerShell", "windowsPowerShell", "gitBash", null]}),
+                    serde_json::json!({"type": ["string", "null"], "enum": ["bash", "powerShell", "windowsPowerShell", "gitBash", null], "description": "Select an installed shell from the environment context. Omission uses its default shell."}),
                 ),
                 (
                     "timeout",
@@ -242,11 +242,11 @@ pub(super) fn input_schema(tool: BuiltinTool) -> ToolResult<Value> {
             [
                 (
                     "command",
-                    string("The command to execute in the discovered default shell."),
+                    string("Command text interpreted by the selected shell."),
                 ),
                 (
                     "shell",
-                    serde_json::json!({"type": ["string", "null"], "enum": ["bash", "powerShell", "windowsPowerShell", "gitBash", null]}),
+                    serde_json::json!({"type": ["string", "null"], "enum": ["bash", "powerShell", "windowsPowerShell", "gitBash", null], "description": "Select an installed shell from the environment context. Omission uses its default shell."}),
                 ),
                 (
                     "timeout",
