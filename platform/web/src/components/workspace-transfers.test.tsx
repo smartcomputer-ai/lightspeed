@@ -92,6 +92,13 @@ vi.mock("@/components/ui/dropdown-menu", async () => {
       );
     },
     DropdownMenuSeparator: () => <hr />,
+    // The detail header's collapsed ⋯ menu: groups of view choices.
+    DropdownMenuGroup: ({ children }: { children: ReactNode }) => <div role="group">{children}</div>,
+    DropdownMenuLabel: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    DropdownMenuRadioGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    DropdownMenuRadioItem: ({ children }: { children: ReactNode }) => (
+      <button role="menuitemradio">{children}</button>
+    ),
   };
 });
 let root: Root;

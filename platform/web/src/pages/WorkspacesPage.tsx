@@ -2,9 +2,9 @@ import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { NavLink, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { slugify, workspaceCreateSchema, validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
-import { AddIcon, BackIcon, FileIcon, NewTabIcon, WorkspaceIcon } from "@/icons";
+import { AddIcon, FileIcon, NewTabIcon, WorkspaceIcon } from "@/icons";
 import {
   api,
   type BlobContent,
@@ -37,10 +37,10 @@ import { useCreateParam } from "@/lib/create-param";
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { appHref, blobHref } from "@/lib/blob-view";
-import { ListPane } from "@/components/list-pane";
+import { DetailHeader } from "@/components/detail-header";
+import { ListPane, ListPaneHeader, ListPaneToolbar } from "@/components/list-pane";
 import { WorkspaceFileTree } from "@/components/workspace-file-tree";
 import { PdfPreview } from "@/components/pdf-preview";
-import { MarkdownViewToggle } from "@/components/markdown-view-toggle";
 import { MarkdownContent } from "@/components/session/markdown-content";
 import { WorkspaceTransfers, WorkspaceActionsMenu, WorkspaceDropArea } from "@/components/workspace-transfers";
 
@@ -195,21 +195,17 @@ function WorkspacePane({
 
   return (
     <>
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
-        <h1 className="text-sm font-semibold">Workspaces</h1>
-        {canCreate && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="ml-auto"
-            onClick={() => setCreateOpen(true)}
-            aria-label="New workspace"
-          >
+      <ListPaneHeader
+        title="Workspaces"
+        count={workspaces.data?.length}
+        actions={canCreate && (
+          <Button variant="ghost" size="icon-sm" onClick={() => setCreateOpen(true)} aria-label="New workspace">
             <AddIcon />
           </Button>
         )}
-      </div>
-      <div className="flex min-w-0 items-center gap-2 border-b p-3">
+      />
+      {/* Which workspace the tree shows. */}
+      <ListPaneToolbar className="flex-nowrap p-3 text-sm">
         <div className="min-w-0 flex-1">
         {workspaces.data && workspaces.data.length > 0 ? (
           <Select
@@ -241,7 +237,9 @@ function WorkspacePane({
         )}
         </div>
         {tree.data && <WorkspaceActionsMenu kind="workspace" fileCount={tree.data.workspace.files} />}
-      </div>
+      </ListPaneToolbar>
+      {/* The scrolling body is the drop target, so a drop anywhere below the
+          tree lands in the workspace root. */}
       <WorkspaceDropArea className="min-h-0 min-w-0 flex-1 overflow-y-auto p-2">
         {tree.error && (
           <ReadError error={tree.error} loading={!tree.data} className="p-2" />
@@ -496,46 +494,50 @@ function FileDetail({
         if (dirty && !save.isPending && !event.repeat) saveCurrent();
       }}
     >
-      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b px-4 py-2">
-        <NavLink
-          to={`/u/${slug}/workspaces/${workspaceId}`}
-          className="md:hidden"
-        >
-          <BackIcon className="size-4" />
-        </NavLink>
-        <h1 className="min-w-0 flex-1 truncate font-mono text-sm">{filePath}</h1>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {file ? formatBytes(file.size_bytes) : ""}
-        </span>
-        <div className="ml-auto flex shrink-0 basis-full items-center justify-end gap-1.5 sm:basis-auto">
-          {blobLink && (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              nativeButton={false}
-              render={<a href={appHref(blobLink)} target="_blank" rel="noopener noreferrer" />}
-              aria-label="Open in blob viewer (new tab)"
-              title={dirty ? "Open saved version in blob viewer (new tab)" : "Open in blob viewer (new tab)"}
-            >
-              <NewTabIcon />
-            </Button>
-          )}
-          {decoded?.kind === "text" && (
-            <MarkdownViewToggle preview={preview} onPreviewChange={onPreviewChange} />
-          )}
-          {canEditFiles && decoded?.kind === "text" && (
-            <Button
-              size="sm"
-              aria-keyshortcuts="Meta+S Control+S"
-              title="Save (⌘S / Ctrl+S)"
-              disabled={!dirty || save.isPending}
-              onClick={saveCurrent}
-            >
-              {save.isPending ? "Saving…" : dirty ? "Save" : "Saved"}
-            </Button>
-          )}
-        </div>
-      </header>
+      <DetailHeader
+        back={{ to: `/u/${slug}/workspaces/${workspaceId}`, label: "Back to files" }}
+        title={filePath}
+        titleHint={filePath}
+        titleClassName="font-mono font-normal"
+        details={file ? formatBytes(file.size_bytes) : undefined}
+        actions={[
+          ...(blobLink
+            ? [{
+                key: "open",
+                label: "Open in blob viewer (new tab)",
+                hint: dirty ? "Open saved version in blob viewer (new tab)" : "Open in blob viewer (new tab)",
+                icon: <NewTabIcon />,
+                href: appHref(blobLink),
+                external: true,
+              }]
+            : []),
+          ...(decoded?.kind === "text"
+            ? [{
+                kind: "choice" as const,
+                key: "view",
+                label: "Markdown view",
+                value: preview ? "preview" : "source",
+                options: [
+                  { value: "source", label: "Source" },
+                  { value: "preview", label: "Preview", hint: "Preview Markdown" },
+                ],
+                onChange: (value: string) => onPreviewChange(value === "preview"),
+              }]
+            : []),
+          ...(canEditFiles && decoded?.kind === "text"
+            ? [{
+                key: "save",
+                label: "Save",
+                text: save.isPending ? "Saving…" : dirty ? "Save" : "Saved",
+                hint: "Save (⌘S / Ctrl+S)",
+                keyShortcuts: "Meta+S Control+S",
+                primary: true,
+                disabled: !dirty || save.isPending,
+                onSelect: saveCurrent,
+              }]
+            : []),
+        ]}
+      />
       {editor.error && (
         <p className="border-b px-4 py-2 text-sm text-destructive">
           {editor.error}

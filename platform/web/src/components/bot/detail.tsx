@@ -1,8 +1,9 @@
 import { useSessionCompaction } from "@/lib/sessions/compaction";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ActivityIcon, BackIcon, DropdownCaretIcon, GoToIcon, ResetIcon } from "@/icons";
+import { ActivityIcon, DropdownCaretIcon, GoToIcon, ResetIcon } from "@/icons";
 import { NavLink, useNavigate, useSearchParams } from "react-router-dom";
+import { DetailHeader } from "@/components/detail-header";
 import { api, botLabel, type BotControllerSnapshot, type BotStateView, type BotView, type SessionView } from "@/api";
 import {
   AlertDialog,
@@ -178,32 +179,36 @@ export function BotDetail({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex h-12 shrink-0 items-center gap-2.5 border-b px-4">
-        <NavLink to={`/u/${slug}/bots`} className="md:hidden" aria-label="Back to bots">
-          <BackIcon className="size-4" />
-        </NavLink>
-        <BotAvatar botId={bot.botId} size={26} />
-        <span className="min-w-0 truncate text-sm font-semibold">{botLabel(bot)}</span>
-        <span
-          className={cn(
-            "flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground",
-            status.tone === "attention" && "text-destructive",
-          )}
-          title={stateError ?? controller?.lastError ?? undefined}
-        >
-          <StatusDot tone={status.tone} />
-          <span className="truncate">{status.label}</span>
-        </span>
-        <div className="ml-auto flex items-center gap-1">
-          <BotActionsMenu
-            botId={bot.botId}
-            onSettings={() => setSettingsOpen(true)}
-            pause={manage && bot.closedAtMs == null
-              ? { enabled, pending: togglePause.isPending, onToggle: () => togglePause.mutate() }
-              : undefined}
-          />
-        </div>
-      </div>
+      <DetailHeader
+        back={{ to: `/u/${slug}/bots`, label: "Back to bots" }}
+        leading={<BotAvatar botId={bot.botId} size={26} />}
+        title={botLabel(bot)}
+        tags={
+          <span
+            className={cn(
+              "flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground",
+              status.tone === "attention" && "text-destructive",
+            )}
+            title={stateError ?? controller?.lastError ?? undefined}
+          >
+            <StatusDot tone={status.tone} />
+            <span className="truncate">{status.label}</span>
+          </span>
+        }
+        actions={[{
+          kind: "custom",
+          key: "bot",
+          node: (
+            <BotActionsMenu
+              botId={bot.botId}
+              onSettings={() => setSettingsOpen(true)}
+              pause={manage && bot.closedAtMs == null
+                ? { enabled, pending: togglePause.isPending, onToggle: () => togglePause.mutate() }
+                : undefined}
+            />
+          ),
+        }]}
+      />
       {togglePause.error && (
         <p className="border-b bg-destructive/10 px-4 py-1.5 text-xs text-destructive">{togglePause.error.message}</p>
       )}

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import { AddIcon, BotIcon, CopyIcon, DarkThemeIcon, DeleteIcon, EmailIcon, InboxIcon, LightThemeIcon, NotificationIcon, SearchIcon, SettingsIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
+import { AddIcon, BotIcon, CopyIcon, DarkThemeIcon, DeleteIcon, EmailIcon, InboxIcon, LightThemeIcon, NotificationIcon, SearchIcon, SelectModeIcon, SettingsIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -96,6 +96,7 @@ import ROLES_SOURCE from "@/icons/roles.ts?raw";
 import OWN_SOURCE from "./UiOverviewPage.tsx?raw";
 import { GROUP_ORDER, StepRow, groupStyle } from "@/components/session/tool-trace";
 import { UNIVERSE_NAV } from "@/components/universe-nav";
+import { ListGroupLabel, ListPaneBody, ListPaneHeader, ListPaneToolbar, ListRow, ListRowLine, PaneBar } from "@/components/list-pane";
 import { LightspeedLogo, LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { Starscape } from "@/components/starscape/starscape";
 import { UniverseIcon } from "@/components/universe-icon";
@@ -884,8 +885,75 @@ function NavigationSection() {
 }
 
 function CardsSection() {
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(["deploy"]));
+  const toggle = (id: string) =>
+    setPicked((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const rows = [
+    { id: "planner", title: "Release planner", tone: "live" as BotTone, meta: "2m", line: "Working on #12 · message", depth: 0 },
+    { id: "deploy", title: "Deploy checks", tone: "idle" as BotTone, meta: "1h", line: "#9 handled · All green", depth: 1 },
+    { id: "triage", title: "Issue triage", tone: "attention" as BotTone, meta: <Badge variant="secondary">3</Badge>, line: "#4 run failed · Provider error", depth: 0 },
+  ];
   return (
     <Category id="cards">
+      <Specimen
+        title="List pane"
+        note="ListPaneHeader, ListPaneToolbar, ListPaneBody, ListGroupLabel, ListRow, ListRowLine; PaneBar sets the header height"
+        className="block p-0"
+      >
+        <div className="flex h-80 overflow-hidden rounded-xl">
+          <div className="flex w-80 shrink-0 flex-col border-r">
+            <ListPaneHeader
+              title="Bots"
+              count={rows.length}
+              actions={<>
+                <Button variant="ghost" size="icon-sm" className={cn(selecting && "text-primary")} onClick={() => setSelecting(!selecting)} aria-label="Select">
+                  <SelectModeIcon />
+                </Button>
+                <Button variant="ghost" size="icon-sm" aria-label="New"><AddIcon /></Button>
+              </>}
+            />
+            {selecting && (
+              <ListPaneToolbar className="bg-muted/40">
+                <span className="text-muted-foreground">{picked.size} selected</span>
+              </ListPaneToolbar>
+            )}
+            <ListPaneBody>
+              <ListGroupLabel>Active</ListGroupLabel>
+              <ul>
+                {rows.map((row) => (
+                  <ListRow
+                    key={row.id}
+                    to={`#${row.id}`}
+                    active={row.id === "planner"}
+                    selection={selecting ? { checked: picked.has(row.id), onToggle: () => toggle(row.id), label: `Select ${row.title}` } : undefined}
+                    depth={row.depth}
+                    leading={row.depth === 0 ? <Avatar className="size-7"><AvatarFallback>{row.title[0]}</AvatarFallback></Avatar> : undefined}
+                    indicator={<StatusDot tone={row.tone} />}
+                    title={row.title}
+                    badges={row.depth > 0 ? <Badge variant="outline">sub-agent</Badge> : undefined}
+                    meta={row.meta}
+                  >
+                    <ListRowLine tone={row.tone === "attention" ? "destructive" : undefined}>{row.line}</ListRowLine>
+                  </ListRow>
+                ))}
+              </ul>
+            </ListPaneBody>
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <PaneBar as="header">
+              <span className="truncate text-sm font-semibold">Detail header</span>
+              <span className="text-xs text-muted-foreground">same PaneBar height</span>
+            </PaneBar>
+            <p className="p-4 text-sm text-muted-foreground">The detail of the selected row.</p>
+          </div>
+        </div>
+      </Specimen>
       <Specimen title="Card" note="default and sm" className="grid items-start gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader>

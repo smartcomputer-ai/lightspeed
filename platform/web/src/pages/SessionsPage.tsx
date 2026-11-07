@@ -13,7 +13,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { NavLink, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { AddIcon, ArchiveIcon, BackIcon, BotIcon, DeleteIcon, FilterIcon, LoadingIcon, ManagedIcon, RemoveIcon, SelectModeIcon, SessionIcon } from "@/icons";
+import { AddIcon, ArchiveIcon, BotIcon, DeleteIcon, FilterIcon, LoadingIcon, ManagedIcon, RemoveIcon, SelectModeIcon, SessionIcon } from "@/icons";
 import {
   api,
   botLabel,
@@ -102,7 +102,7 @@ import { RunSectionView } from "@/components/session/run-section";
 import { TranscriptEntrance, TranscriptMotionProvider } from "@/components/session/transcript-motion";
 import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/tool-trace";
 import { sectionsByRun, withPendingRunInputs } from "@/lib/sessions/run-sections";
-import { DetailPrompt, ListNote, LoadingNote, UniverseNotFound } from "@/components/page";
+import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
 import { ReadError } from "@/components/read-error";
 import { fetchHistory, useSessionTail } from "@/lib/sessions/tail";
@@ -139,7 +139,17 @@ import {
   writeSessionMetadataFilter,
   writeSessionListPreferences,
 } from "@/lib/sessions/list-preferences";
-import { ListPane } from "@/components/list-pane";
+import { DetailHeader } from "@/components/detail-header";
+import {
+  ListPane,
+  ListPaneBody,
+  ListPaneFooter,
+  ListPaneHeader,
+  ListPaneState,
+  ListPaneToolbar,
+  ListRow,
+  ListRowLine,
+} from "@/components/list-pane";
 
 /// U4a+U4d: master-detail session chat. Pane = paged session list plus
 /// New session (sub-agent tree expansion arrives with engine D1 parent
@@ -387,197 +397,196 @@ function SessionList({
 
   return (
     <>
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
-        <h1 className="text-sm font-semibold">Sessions</h1>
-        <span className="text-xs text-muted-foreground">
-          {sessions.length}
-          {pages.hasNextPage ? "+" : ""}
-        </span>
-        <Popover>
-          <PopoverTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className={cn("relative ml-auto", activeFilterCount > 0 && "text-primary")}
-                aria-label={activeFilterCount > 0
-                  ? `Filter sessions, ${activeFilterCount} active`
-                  : "Filter sessions"}
-              />
-            }
-          >
-            <FilterIcon />
-            {activeFilterCount > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-primary text-[9px] font-semibold text-primary-foreground">
-                {activeFilterCount}
-              </span>
-            )}
-          </PopoverTrigger>
-          <PopoverContent align="end" className="grid gap-4 p-4">
-            <h2 className="text-sm font-semibold">Filter sessions</h2>
-            <div className="grid gap-2">
-              <span className="text-xs font-medium">Include</span>
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <Checkbox
-                  checked={showClosed}
-                  onCheckedChange={(checked) => setPreferences((current) => ({
-                    ...current,
-                    showClosed: checked === true,
-                  }))}
-                />
-                Closed sessions
-              </label>
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <Checkbox
-                  checked={showSubagents}
-                  onCheckedChange={(checked) => setPreferences((current) => ({
-                    ...current,
-                    showSubagents: checked === true,
-                  }))}
-                />
-                Sub-agent sessions
-              </label>
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <Checkbox
-                  checked={showControlledSessions}
-                  onCheckedChange={(checked) => setPreferences((current) => ({
-                    ...current,
-                    showControlledSessions: checked === true,
-                  }))}
-                />
-                Managed sessions
-              </label>
-            </div>
-            <div className="grid gap-2 border-t pt-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-medium">Metadata filters</span>
-                {filterEntries.length > 0 && (
-                  <button
-                    type="button"
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                    onClick={() => updateMetadataFilter({})}
-                  >
-                    Clear all
-                  </button>
+      <ListPaneHeader
+        title="Sessions"
+        count={`${sessions.length}${pages.hasNextPage ? "+" : ""}`}
+        actions={<>
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className={cn("relative", activeFilterCount > 0 && "text-primary")}
+                    aria-label={activeFilterCount > 0
+                      ? `Filter sessions, ${activeFilterCount} active`
+                      : "Filter sessions"}
+                  />
+                }
+              >
+                <FilterIcon />
+                {activeFilterCount > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-primary text-[9px] font-semibold text-primary-foreground">
+                    {activeFilterCount}
+                  </span>
                 )}
-              </div>
-              {filterEntries.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {filterEntries.map(([key, value]) => (
-                    <Badge
-                      key={key}
-                      variant="secondary"
-                      className="max-w-full gap-1 font-mono text-[11px]"
-                    >
-                      <span className="truncate">{value ? `${key}=${value}` : key}</span>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="grid gap-4 p-4">
+                <h2 className="text-sm font-semibold">Filter sessions</h2>
+                <div className="grid gap-2">
+                  <span className="text-xs font-medium">Include</span>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={showClosed}
+                      onCheckedChange={(checked) => setPreferences((current) => ({
+                        ...current,
+                        showClosed: checked === true,
+                      }))}
+                    />
+                    Closed sessions
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={showSubagents}
+                      onCheckedChange={(checked) => setPreferences((current) => ({
+                        ...current,
+                        showSubagents: checked === true,
+                      }))}
+                    />
+                    Sub-agent sessions
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={showControlledSessions}
+                      onCheckedChange={(checked) => setPreferences((current) => ({
+                        ...current,
+                        showControlledSessions: checked === true,
+                      }))}
+                    />
+                    Managed sessions
+                  </label>
+                </div>
+                <div className="grid gap-2 border-t pt-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium">Metadata filters</span>
+                    {filterEntries.length > 0 && (
                       <button
                         type="button"
-                        onClick={() => removeFilter(key)}
-                        aria-label={`Remove filter ${key}`}
-                        className="shrink-0 rounded hover:text-foreground"
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => updateMetadataFilter({})}
                       >
-                        <RemoveIcon className="size-3" />
+                        Clear all
                       </button>
-                    </Badge>
-                  ))}
-                </div>
-              )}
-              <form onSubmit={submitFilter} className="flex gap-2">
-                <Input
-                  value={filterDraft}
-                  onChange={(event) => setFilterDraft(event.target.value)}
-                  placeholder="key or key=value"
-                  aria-label="Metadata filter"
-                  className="h-8 min-w-0 flex-1 font-mono text-xs"
-                />
-                <Button
-                  type="submit"
-                  variant="outline"
-                  size="sm"
-                  disabled={!parseMetadataPair(filterDraft)}
-                >
-                  Add
-                </Button>
-              </form>
-              <p className="text-xs text-muted-foreground">
-                A key alone matches its presence. Key/value pairs match exactly.
-              </p>
-            </div>
-            <div className="grid gap-2 border-t pt-3">
-              <h2 className="text-sm font-semibold">Display</h2>
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <Checkbox
-                  checked={showSessionIds}
-                  onCheckedChange={(checked) => setPreferences((current) => ({
-                    ...current,
-                    showSessionIds: checked === true,
-                  }))}
-                />
-                Show session IDs
-              </label>
-              <span className="mt-1 text-xs font-medium">Metadata keys to show</span>
-              {metadataKeys.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {metadataKeys.map((key) => (
-                    <Badge
-                      key={key}
-                      variant="secondary"
-                      className="max-w-full gap-1 font-mono text-[11px]"
+                    )}
+                  </div>
+                  {filterEntries.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {filterEntries.map(([key, value]) => (
+                        <Badge
+                          key={key}
+                          variant="secondary"
+                          className="max-w-full gap-1 font-mono text-[11px]"
+                        >
+                          <span className="truncate">{value ? `${key}=${value}` : key}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeFilter(key)}
+                            aria-label={`Remove filter ${key}`}
+                            className="shrink-0 rounded hover:text-foreground"
+                          >
+                            <RemoveIcon className="size-3" />
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  <form onSubmit={submitFilter} className="flex gap-2">
+                    <Input
+                      value={filterDraft}
+                      onChange={(event) => setFilterDraft(event.target.value)}
+                      placeholder="key or key=value"
+                      aria-label="Metadata filter"
+                      className="h-8 min-w-0 flex-1 font-mono text-xs"
+                    />
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      size="sm"
+                      disabled={!parseMetadataPair(filterDraft)}
                     >
-                      <span className="truncate">{key}</span>
-                      <button
-                        type="button"
-                        onClick={() => removeMetadataKey(key)}
-                        aria-label={`Stop showing metadata key ${key}`}
-                        className="shrink-0 rounded hover:text-foreground"
-                      >
-                        <RemoveIcon className="size-3" />
-                      </button>
-                    </Badge>
-                  ))}
+                      Add
+                    </Button>
+                  </form>
+                  <p className="text-xs text-muted-foreground">
+                    A key alone matches its presence. Key/value pairs match exactly.
+                  </p>
                 </div>
-              )}
-              <form onSubmit={submitMetadataKey} className="flex gap-2">
-                <Input
-                  value={metadataKeyDraft}
-                  onChange={(event) => setMetadataKeyDraft(event.target.value)}
-                  placeholder="key"
-                  aria-label="Metadata key to show"
-                  className="h-8 min-w-0 flex-1 font-mono text-xs"
-                />
-                <Button
-                  type="submit"
-                  variant="outline"
-                  size="sm"
-                  disabled={!metadataKeyDraft.trim() || metadataKeys.includes(metadataKeyDraft.trim())}
-                >
-                  Add
-                </Button>
-              </form>
-            </div>
-          </PopoverContent>
-        </Popover>
-        {(canSelect || selecting) && <Button
-          variant="ghost"
-          size="icon-sm"
-          className={cn(selecting && "text-primary")}
-          onClick={() => (selecting ? exitSelecting() : setSelecting(true))}
-          aria-label={selecting ? "Exit selection" : "Select sessions"}
-          title={selecting ? "Exit selection" : "Select sessions to close or delete"}
-        >
-          <SelectModeIcon />
-        </Button>}
-        {canCreate && <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={() => setCreateOpen(true)}
-          aria-label="New session"
-        >
-          <AddIcon />
-        </Button>}
-      </div>
+                <div className="grid gap-2 border-t pt-3">
+                  <h2 className="text-sm font-semibold">Display</h2>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={showSessionIds}
+                      onCheckedChange={(checked) => setPreferences((current) => ({
+                        ...current,
+                        showSessionIds: checked === true,
+                      }))}
+                    />
+                    Show session IDs
+                  </label>
+                  <span className="mt-1 text-xs font-medium">Metadata keys to show</span>
+                  {metadataKeys.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {metadataKeys.map((key) => (
+                        <Badge
+                          key={key}
+                          variant="secondary"
+                          className="max-w-full gap-1 font-mono text-[11px]"
+                        >
+                          <span className="truncate">{key}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeMetadataKey(key)}
+                            aria-label={`Stop showing metadata key ${key}`}
+                            className="shrink-0 rounded hover:text-foreground"
+                          >
+                            <RemoveIcon className="size-3" />
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  <form onSubmit={submitMetadataKey} className="flex gap-2">
+                    <Input
+                      value={metadataKeyDraft}
+                      onChange={(event) => setMetadataKeyDraft(event.target.value)}
+                      placeholder="key"
+                      aria-label="Metadata key to show"
+                      className="h-8 min-w-0 flex-1 font-mono text-xs"
+                    />
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      size="sm"
+                      disabled={!metadataKeyDraft.trim() || metadataKeys.includes(metadataKeyDraft.trim())}
+                    >
+                      Add
+                    </Button>
+                  </form>
+                </div>
+              </PopoverContent>
+            </Popover>
+            {(canSelect || selecting) && <Button
+              variant="ghost"
+              size="icon-sm"
+              className={cn(selecting && "text-primary")}
+              onClick={() => (selecting ? exitSelecting() : setSelecting(true))}
+              aria-label={selecting ? "Exit selection" : "Select sessions"}
+              title={selecting ? "Exit selection" : "Select sessions to close or delete"}
+            >
+              <SelectModeIcon />
+            </Button>}
+            {canCreate && <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setCreateOpen(true)}
+              aria-label="New session"
+            >
+              <AddIcon />
+            </Button>}
+        </>}
+      />
       {selecting && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/40 px-4 py-2 text-xs">
+        <ListPaneToolbar className="bg-muted/40">
           <Checkbox
             checked={allVisibleSelected}
             disabled={selectingAll}
@@ -618,10 +627,10 @@ function SessionList({
               }
             />
           </div>
-        </div>
+        </ListPaneToolbar>
       )}
       {bulkNotice && (
-        <p className="flex shrink-0 items-center gap-2 border-b px-4 py-1.5 text-xs text-muted-foreground">
+        <ListPaneToolbar className="py-1.5 text-muted-foreground">
           {bulk.isPending && <LoadingIcon className="size-3 animate-spin" />}
           {bulkNotice}
           <button
@@ -632,22 +641,21 @@ function SessionList({
           >
             <RemoveIcon className="size-3" />
           </button>
-        </p>
+        </ListPaneToolbar>
       )}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {pages.isLoading && <p className="p-4 text-sm text-muted-foreground">Loading…</p>}
-        {pages.error && (
-          <ReadError error={pages.error} loading={!pages.data} className="p-4" />
-        )}
-        {pages.data && sessions.length === 0 && (
-          <ListNote>
-            {filterEntries.length > 0
+      <ListPaneBody>
+        <ListPaneState
+          loading={pages.isLoading}
+          error={pages.error}
+          hasData={Boolean(pages.data)}
+          empty={sessions.length === 0 && (
+            filterEntries.length > 0
               ? "No sessions match this metadata filter."
               : hiddenSessionsNote(preferences)
                 ? `No sessions to show. ${hiddenSessionsNote(preferences)}`
-                : "No sessions yet."}
-          </ListNote>
-        )}
+                : "No sessions yet."
+          )}
+        />
         <ul>
           {tree.map((node) => (
             <SessionTreeItem
@@ -665,9 +673,9 @@ function SessionList({
             />
           ))}
         </ul>
-      </div>
+      </ListPaneBody>
       {pages.hasNextPage && (
-        <div className="shrink-0 border-t p-2">
+        <ListPaneFooter>
           <Button
             variant="outline"
             size="sm"
@@ -677,7 +685,7 @@ function SessionList({
           >
             {pages.isFetchingNextPage ? "Loading…" : "Load more sessions"}
           </Button>
-        </div>
+        </ListPaneFooter>
       )}
       {canCreate && createOpen && <NewSessionDialog
         universeId={universeId}
@@ -849,15 +857,18 @@ function SessionListItem({
     const value = session.metadata?.[key];
     return value === undefined ? [] : [{ key, value }];
   });
-  const indent = depth > 0 ? { paddingLeft: `${1 + depth * 1.25}rem` } : undefined;
-  const summary = (
-    <>
-      <span className="flex min-w-0 items-center gap-2">
-        {depth > 0 && <span className="shrink-0 text-muted-foreground">↳</span>}
-        <ActivityDot activity={session.activity} quiet />
-        <span className="min-w-0 flex-1 truncate font-medium" title={displayName ? undefined : session.id}>
-          {displayName || session.id}
-        </span>
+  return (
+    <ListRow
+      to={`/u/${slug}/sessions/${session.id}${search ? `?${search}` : ""}`}
+      active={active}
+      selection={selecting
+        ? { checked: isSelected, onToggle: () => onToggle(session.id), label: `Select ${session.displayName ?? session.id}` }
+        : undefined}
+      depth={depth}
+      indicator={<ActivityDot activity={session.activity} quiet />}
+      title={displayName || session.id}
+      titleHint={displayName ? undefined : session.id}
+      badges={<>
         {/* Sub-agents follow their root; the root row carries the mark. */}
         {!origin && <SharingMark access={session.access} quiet />}
         {origin && (
@@ -879,54 +890,16 @@ function SessionListItem({
             closed
           </span>
         )}
-        <span className="ml-auto shrink-0 font-sans text-xs text-muted-foreground">
-          {relativeTime(session.updatedAtMs)}
-        </span>
-      </span>
-      {showSecondaryId && (
-        <span className="truncate font-mono text-xs text-muted-foreground" title={session.id}>
-          {session.id}
-        </span>
-      )}
+      </>}
+      meta={relativeTime(session.updatedAtMs)}
+    >
+      {showSecondaryId && <ListRowLine mono title={session.id}>{session.id}</ListRowLine>}
       {visibleMetadata.map(({ key, value }) => (
-        <span
-          key={key}
-          className="truncate font-mono text-[11px] text-muted-foreground"
-          title={`${key}=${value}`}
-        >
+        <ListRowLine key={key} mono className="text-[11px]" title={`${key}=${value}`}>
           {key}={value}
-        </span>
+        </ListRowLine>
       ))}
-    </>
-  );
-  const rowClass = cn(
-    "flex flex-col gap-0.5 border-b px-4 py-2.5 text-sm hover:bg-muted/50",
-    (active || isSelected) && "bg-muted",
-  );
-  return (
-    <li>
-      {selecting ? (
-        <label className={cn(rowClass, "cursor-pointer")} style={indent}>
-          <span className="flex items-start gap-2">
-            <Checkbox
-              checked={isSelected}
-              onCheckedChange={() => onToggle(session.id)}
-              className="mt-0.5"
-              aria-label={`Select ${session.displayName ?? session.id}`}
-            />
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">{summary}</span>
-          </span>
-        </label>
-      ) : (
-        <NavLink
-          to={`/u/${slug}/sessions/${session.id}${search ? `?${search}` : ""}`}
-          className={rowClass}
-          style={indent}
-        >
-          {summary}
-        </NavLink>
-      )}
-    </li>
+    </ListRow>
   );
 }
 
@@ -2069,15 +2042,12 @@ export function SessionDetail({
       )}
       {!embedded && (
         <>
-        <header className="flex h-12 min-w-0 shrink-0 items-center gap-3 overflow-hidden border-b px-4">
-          <NavLink to={backTo} className="shrink-0 md:hidden">
-            <BackIcon className="size-4" />
-          </NavLink>
-          {/* Left is state: what it is, who sees it, who drives it, what it is doing. */}
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <h1 className="min-w-0 truncate text-sm font-semibold">
-              {session.data?.displayName ?? sessionId.slice(0, 24)}
-            </h1>
+        {/* Left is state: what it is, who sees it, who drives it, what it is
+            doing. Right is action, all of it behind ⋯. */}
+        <DetailHeader
+          back={{ to: backTo, label: "Back to sessions" }}
+          title={session.data?.displayName ?? sessionId.slice(0, 24)}
+          tags={<>
             <SharingMark access={session.data?.access} />
             {controlled && (owningBotHref ? (
               <NavLink
@@ -2115,10 +2085,11 @@ export function SessionDetail({
                 <span className="hidden sm:inline">{activityLabel(session.data?.activity)}</span>
               </span>
             )}
-          </div>
-          {/* Right is action, all of it behind ⋯. */}
-          <div className="ml-auto flex shrink-0 items-center gap-1">
-            <SessionActionsMenu
+          </>}
+          actions={[{
+            kind: "custom",
+            key: "session",
+            node: <SessionActionsMenu
               variant="more"
               sessionId={sessionId}
               metadata={session.data?.metadata}
@@ -2147,9 +2118,9 @@ export function SessionDetail({
                   </DropdownMenuItem>
                 )
               ) : undefined}
-            />
-          </div>
-        </header>
+            />,
+          }]}
+        />
 
         <ShareSessionDialog
           universeId={universeId}
