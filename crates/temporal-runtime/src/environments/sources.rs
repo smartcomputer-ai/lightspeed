@@ -45,6 +45,8 @@ pub(crate) struct Discovery<'a> {
     pub feature: Option<&'a EnvironmentsFeature>,
     pub environment_id: Option<&'a EnvironmentId>,
     connection: Option<SourceConnection>,
+    // A failed initial platform handshake applies to every source in this refresh.
+    connection_error: Option<String>,
 }
 
 pub(crate) struct SourceConnection {
@@ -60,6 +62,9 @@ impl SourceConnection {
     /// that probe, and return the response without it. `fs/scan` is an
     /// observation, so discovery never resets the idle clock.
     pub async fn scan(&self, mut query: ScanParams) -> Result<ScanResponse, String> {
+        if self.initialized.capabilities.filesystem.is_none() {
+            return Err("endpoint does not support filesystem source discovery".into());
+        }
         tools::environment::sources::with_working_directory_probe(&mut query, &self.cwd);
         let mut scan = self
             .client
@@ -81,6 +86,9 @@ impl SourceConnection {
 
 impl Discovery<'_> {
     pub async fn connection(&mut self) -> Result<&mut SourceConnection, String> {
+        if let Some(error) = &self.connection_error {
+            return Err(error.clone());
+        }
         if self.connection.is_none() {
             self.connection = Some(
                 connect(
@@ -133,6 +141,7 @@ pub(crate) async fn refresh(
         feature,
         environment_id,
         connection: None,
+        connection_error: None,
     };
     let result = async {
         let platform_entry =
@@ -162,8 +171,14 @@ pub(crate) async fn refresh(
                     entry.origin = Some(format!("runtime.environment:{id}"));
                     Some(entry)
                 }
-                _ => {
+                failure => {
+                    let error = match failure {
+                        Ok(Err(error)) => error,
+                        Err(_) => "environment platform discovery timed out".into(),
+                        Ok(Ok(_)) => unreachable!("successful discovery handled above"),
+                    };
                     discovery.discard_connection();
+                    discovery.connection_error = Some(error);
                     None
                 }
             };
