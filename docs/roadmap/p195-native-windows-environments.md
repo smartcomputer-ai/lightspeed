@@ -70,7 +70,7 @@ already compile while omitting required behavior.
 These paths are under `crates/environment-daemon/src` unless otherwise noted.
 The build log is `C:\dev\logs\envd-windows-build.log`; the verification record
 is `C:\dev\logs\build-tools-verification.json`. Provisioning scripts and the
-RDP helper live in the sibling `ls.bot` repository under
+RDP helper live in the sibling private deployment repository under
 `infra/incus/windows-build` and `infra/scripts/windows-build`. Credentials do
 not belong in this document or in the Lightspeed checkout.
 
