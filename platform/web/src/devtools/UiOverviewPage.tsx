@@ -1059,6 +1059,7 @@ function IconsSection() {
 const LIBRARY_LABELS: Record<string, string> = {
   "lucide-react": "lucide",
   "@tabler/icons-react": "tabler",
+  "@phosphor-icons/react": "phosphor",
   "@/components/icons/bot": "own",
   "@/components/icons/logos": "own",
 };
@@ -1079,7 +1080,7 @@ function IconTile({ icon }: { icon: RoleUsage }) {
         <Icon className="size-5" />
         <span className="w-full truncate font-mono text-[11px]" title={icon.role}>{icon.role.replace(/Icon$/, "")}</span>
         <span className="w-full truncate text-[11px] text-muted-foreground" title={`${icon.glyph} from ${icon.library}`}>
-          {icon.glyph} · {library}
+          {icon.glyph.replace(/Icon$/, "")} · {library}
         </span>
         <span className={cn("text-[11px]", icon.files.length ? "text-muted-foreground" : "text-warning")}>
           {icon.files.length === 0 ? "unused" : `${icon.files.length} ${icon.files.length === 1 ? "file" : "files"}`}

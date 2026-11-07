@@ -1,0 +1,251 @@
+/// Phosphor in its duotone weight: a filled tint behind each outline. Glyphs
+/// with no shape of their own to tint (check, plus, x, carets, arrows, simple
+/// lists) use the regular weight, since Phosphor tints a backing square or
+/// triangle behind them that reads as a filled button. The app's own marks
+/// and the provider logos stay as they are.
+
+import {
+  AnchorIcon, ArchiveIcon, ArrowBendDownRightIcon, ArrowClockwiseIcon, ArrowCounterClockwiseIcon, ArrowDownIcon,
+  ArrowLeftIcon, ArrowSquareOutIcon, ArrowUpIcon, ArrowUpRightIcon, ArrowsClockwiseIcon, ArrowsInSimpleIcon,
+  AtomIcon, BellIcon, BinocularsIcon, BookIcon, BracketsCurlyIcon, BrainIcon, BriefcaseIcon, BroadcastIcon, BugIcon,
+  CalendarDotsIcon, CameraIcon, CaretDownIcon, CaretRightIcon, CaretUpDownIcon, CaretUpIcon, ChatCircleIcon,
+  ChatTextIcon, ChatsIcon, CheckCircleIcon, CheckIcon, CircleNotchIcon, CircuitryIcon, ClockCounterClockwiseIcon,
+  ClockIcon, CloudIcon, CodeIcon, CoffeeIcon, CompassIcon, CopyIcon, CpuIcon, CrownIcon, CubeIcon, DiamondIcon,
+  DotsThreeIcon, DownloadSimpleIcon, EnvelopeIcon, FileCodeIcon, FileDashedIcon, FileIcon, FilePlusIcon,
+  FileTextIcon, FlameIcon, FolderOpenIcon, FolderPlusIcon, FolderSimplePlusIcon, FoldersIcon, FunnelSimpleIcon,
+  GearIcon, GitForkIcon, GlobeHemisphereWestIcon, GlobeIcon, GlobeSimpleIcon, HardDrivesIcon, HeartIcon,
+  HourglassIcon, HouseIcon, ImageBrokenIcon, InfoIcon, KeyIcon, LeafIcon, LightningIcon, LinkIcon, ListChecksIcon,
+  ListPlusIcon, LockIcon, LockKeyIcon, MagnifyingGlassIcon, MicrophoneIcon, MicrophoneSlashIcon, MinusCircleIcon,
+  MonitorIcon, MoonIcon, MountainsIcon, MusicNoteIcon, NotePencilIcon, PackageIcon, PaletteIcon, PaperPlaneTiltIcon,
+  PauseIcon, PencilLineIcon, PencilSimpleIcon, PlanetIcon, PlayIcon, PlugIcon, PlugsIcon, PlusIcon, PowerIcon,
+  PulseIcon, PuzzlePieceIcon, RepeatIcon, RobotIcon, RocketIcon, ScrollIcon, SealQuestionIcon, ShareNetworkIcon,
+  ShieldCheckIcon, ShieldIcon, ShieldSlashIcon, SidebarSimpleIcon, SignInIcon, SignOutIcon, SlidersHorizontalIcon,
+  SparkleIcon, StackIcon, StarIcon, StopIcon, SunIcon, TagIcon, TerminalIcon, TerminalWindowIcon, TimerIcon,
+  TrashIcon, TrayIcon, TreeStructureIcon, UploadSimpleIcon, UserGearIcon, UserIcon, UsersIcon, WarningCircleIcon,
+  WarningIcon, WebhooksLogoIcon, WrenchIcon, XIcon,
+  type Icon as PhosphorIcon,
+} from "@phosphor-icons/react";
+import { BotFaceIcon, BotFace, BotIcon } from "@/components/icons/bot";
+import { GitHubLogo, OpenAiLogo, AnthropicLogo } from "@/components/icons/logos";
+import type { IconComponent, IconLibrary } from "./roles";
+
+/// Draws a Phosphor icon in one weight at Lucide's default 24px, so icons
+/// without a size class keep their footprint.
+function weighted(Glyph: PhosphorIcon, weight: "duotone" | "regular"): IconComponent {
+  const Weighted: IconComponent = ({ size = 24, ...props }) => (
+    <Glyph weight={weight} size={size} {...(props as Record<string, unknown>)} />
+  );
+  Weighted.displayName = Glyph.displayName;
+  return Weighted;
+}
+
+const duotone = (Glyph: PhosphorIcon) => weighted(Glyph, "duotone");
+const regular = (Glyph: PhosphorIcon) => weighted(Glyph, "regular");
+
+export const phosphor = {
+  name: "phosphor",
+  icons: {
+    // Places and things: the sidebar sections and what they list.
+    SessionIcon: duotone(ChatsIcon),
+    WorkspaceIcon: duotone(FoldersIcon),
+    EnvironmentIcon: duotone(CubeIcon),
+    EnvironmentProviderIcon: duotone(CloudIcon),
+    ModelIcon: duotone(CircuitryIcon),
+    McpServerIcon: duotone(HardDrivesIcon),
+    ProfileIcon: duotone(SlidersHorizontalIcon),
+    TemplateIcon: duotone(PackageIcon),
+    ChannelIcon: duotone(BroadcastIcon),
+    CredentialIcon: duotone(LockKeyIcon),
+    ApiKeyIcon: duotone(KeyIcon),
+    MemberIcon: duotone(UsersIcon),
+    UserAdminIcon: duotone(UserGearIcon),
+    AuditLogIcon: duotone(ScrollIcon),
+    UniversesIcon: duotone(GlobeIcon),
+    SettingsIcon: duotone(GearIcon),
+    FeatureOffIcon: duotone(PowerIcon),
+    BotIcon: BotFaceIcon,
+    BotAvatarIcon: BotFace,
+
+    // Account and access.
+    UserIcon: duotone(UserIcon),
+    SecurityIcon: duotone(KeyIcon),
+    SecretIcon: duotone(KeyIcon),
+    AppearanceIcon: duotone(PaletteIcon),
+    AdminIcon: duotone(ShieldCheckIcon),
+    ManagedIcon: duotone(ShieldCheckIcon),
+    PrivateIcon: duotone(LockKeyIcon),
+    SharedIcon: duotone(UsersIcon),
+    SignInIcon: regular(SignInIcon),
+    SignOutIcon: regular(SignOutIcon),
+    RevokeIcon: duotone(ShieldSlashIcon),
+    DisconnectIcon: duotone(PlugsIcon),
+    LightThemeIcon: duotone(SunIcon),
+    DarkThemeIcon: duotone(MoonIcon),
+    SystemThemeIcon: duotone(MonitorIcon),
+    GitHubLogo: GitHubLogo,
+    OpenAiLogo: OpenAiLogo,
+    AnthropicLogo: AnthropicLogo,
+    CompatibleProviderLogo: duotone(SparkleIcon),
+
+    // What a session can use.
+    ToolsIcon: duotone(WrenchIcon),
+    SubAgentIcon: duotone(TreeStructureIcon),
+    CodeModeIcon: duotone(CodeIcon),
+    WebIcon: duotone(GlobeSimpleIcon),
+    TimerIcon: duotone(TimerIcon),
+    MetadataIcon: duotone(TagIcon),
+    RetentionIcon: duotone(ClockCounterClockwiseIcon),
+
+    // Steps in a run, by tool family.
+    ThinkingIcon: duotone(BrainIcon),
+    ExploreToolIcon: duotone(MagnifyingGlassIcon),
+    EditToolIcon: duotone(PencilLineIcon),
+    ExecuteToolIcon: duotone(TerminalWindowIcon),
+    CodeToolIcon: duotone(FileCodeIcon),
+    McpToolIcon: duotone(PlugIcon),
+    DelegateToolIcon: duotone(GitForkIcon),
+    AwaitToolIcon: duotone(HourglassIcon),
+    EmitToSelfIcon: duotone(RepeatIcon),
+    MessageToolIcon: duotone(PaperPlaneTiltIcon),
+    OtherToolIcon: duotone(WrenchIcon),
+    ToolGroupIcon: duotone(StackIcon),
+    BotEventIcon: BotIcon,
+
+    // Bot triggers and what arrives through them.
+    ScheduleIcon: duotone(CalendarDotsIcon),
+    WebhookIcon: duotone(WebhooksLogoIcon),
+    ChatTriggerIcon: duotone(ChatCircleIcon),
+    InboxIcon: duotone(TrayIcon),
+    PollIcon: duotone(ArrowsClockwiseIcon),
+    CommandIcon: regular(TerminalIcon),
+    ActivityIcon: duotone(PulseIcon),
+
+    // Actions.
+    AddIcon: regular(PlusIcon),
+    AttachIcon: regular(PlusIcon),
+    EditIcon: duotone(PencilSimpleIcon),
+    EditFilesIcon: duotone(NotePencilIcon),
+    DeleteIcon: duotone(TrashIcon),
+    ArchiveIcon: duotone(ArchiveIcon),
+    CopyIcon: duotone(CopyIcon),
+    CopyLinkIcon: duotone(LinkIcon),
+    DownloadIcon: regular(DownloadSimpleIcon),
+    UploadIcon: regular(UploadSimpleIcon),
+    UploadFolderIcon: duotone(FolderSimplePlusIcon),
+    NewFileIcon: duotone(FilePlusIcon),
+    NewFolderIcon: duotone(FolderPlusIcon),
+    ShareIcon: duotone(ShareNetworkIcon),
+    CompactIcon: regular(ArrowsInSimpleIcon),
+    ConfigureIcon: duotone(SlidersHorizontalIcon),
+    FilterIcon: regular(FunnelSimpleIcon),
+    SelectModeIcon: regular(ListChecksIcon),
+    SendIcon: duotone(PaperPlaneTiltIcon),
+    SubmitIcon: regular(ArrowUpIcon),
+    QueueIcon: regular(ListPlusIcon),
+    SteerIcon: regular(ArrowBendDownRightIcon),
+    StopIcon: duotone(StopIcon),
+    PauseIcon: duotone(PauseIcon),
+    ResumeIcon: duotone(PlayIcon),
+    RetryIcon: duotone(ArrowClockwiseIcon),
+    RotateSecretIcon: duotone(ArrowClockwiseIcon),
+    ResetIcon: duotone(ArrowCounterClockwiseIcon),
+    ReplayIcon: duotone(ArrowCounterClockwiseIcon),
+    RefreshIcon: duotone(ArrowsClockwiseIcon),
+    GenerateIcon: duotone(SparkleIcon),
+    DictateIcon: duotone(MicrophoneIcon),
+    DictationUnavailableIcon: duotone(MicrophoneSlashIcon),
+    ApproveIcon: regular(CheckIcon),
+    RejectIcon: regular(XIcon),
+    RemoveIcon: regular(XIcon),
+    CancelIcon: regular(XIcon),
+    DismissIcon: regular(XIcon),
+    MoreIcon: regular(DotsThreeIcon),
+    SearchIcon: duotone(MagnifyingGlassIcon),
+
+    // Navigation and disclosure.
+    BackIcon: regular(ArrowLeftIcon),
+    GoToIcon: regular(ArrowUpRightIcon),
+    NewTabIcon: duotone(ArrowSquareOutIcon),
+    ExpandIcon: regular(CaretRightIcon),
+    CollapseIcon: regular(CaretDownIcon),
+    DropdownCaretIcon: regular(CaretDownIcon),
+    ShowMoreIcon: regular(CaretDownIcon),
+    ShowLessIcon: regular(CaretUpIcon),
+    RowLinkIcon: regular(CaretRightIcon),
+    SwitcherIcon: regular(CaretUpDownIcon),
+
+    // States and feedback.
+    LoadingIcon: duotone(CircleNotchIcon),
+    SelectedIcon: regular(CheckIcon),
+    CopiedIcon: regular(CheckIcon),
+    StepDoneIcon: regular(CheckIcon),
+    SuccessIcon: duotone(CheckCircleIcon),
+    WarningIcon: duotone(WarningIcon),
+    InfoIcon: duotone(InfoIcon),
+    FailedIcon: duotone(WarningCircleIcon),
+    CancelledIcon: duotone(MinusCircleIcon),
+    WaitingIcon: duotone(ClockIcon),
+    ApprovalIcon: duotone(SealQuestionIcon),
+    LockedIcon: duotone(LockIcon),
+
+    // Files and media.
+    FileIcon: duotone(FileIcon),
+    FolderIcon: duotone(FolderOpenIcon),
+    DocumentIcon: duotone(FileTextIcon),
+    UnknownFileIcon: duotone(FileDashedIcon),
+    ImageUnavailableIcon: duotone(ImageBrokenIcon),
+
+    // Controls inside the shared ui components (components/ui).
+    CheckedIcon: regular(CheckIcon),
+    FieldCaretIcon: regular(CaretDownIcon),
+    SelectTriggerIcon: regular(CaretUpDownIcon),
+    ScrollUpIcon: regular(CaretUpIcon),
+    ScrollDownIcon: regular(CaretDownIcon),
+    SubmenuIcon: regular(CaretRightIcon),
+    DialogCloseIcon: regular(XIcon),
+    ClearFieldIcon: regular(XIcon),
+    ChipRemoveIcon: regular(XIcon),
+    SidebarToggleIcon: duotone(SidebarSimpleIcon),
+    ScrollToBottomIcon: regular(ArrowDownIcon),
+
+    // Developer tools (debug mode and the UI overview).
+    DebugIcon: duotone(BugIcon),
+    FeedbackIcon: duotone(ChatTextIcon),
+    DesignIcon: duotone(PaletteIcon),
+    ExportCodeIcon: duotone(BracketsCurlyIcon),
+    NotificationIcon: duotone(BellIcon),
+    EmailIcon: duotone(EnvelopeIcon),
+  },
+  universeIcons: {
+    orbit: duotone(PlanetIcon),
+    globe: duotone(GlobeHemisphereWestIcon),
+    rocket: duotone(RocketIcon),
+    star: duotone(StarIcon),
+    sparkles: duotone(SparkleIcon),
+    zap: duotone(LightningIcon),
+    sun: duotone(SunIcon),
+    moon: duotone(MoonIcon),
+    atom: duotone(AtomIcon),
+    compass: duotone(CompassIcon),
+    mountain: duotone(MountainsIcon),
+    leaf: duotone(LeafIcon),
+    flame: duotone(FlameIcon),
+    heart: duotone(HeartIcon),
+    code: duotone(CodeIcon),
+    briefcase: duotone(BriefcaseIcon),
+    house: duotone(HouseIcon),
+    music: duotone(MusicNoteIcon),
+    shield: duotone(ShieldIcon),
+    bot: duotone(RobotIcon),
+    anchor: duotone(AnchorIcon),
+    book: duotone(BookIcon),
+    camera: duotone(CameraIcon),
+    coffee: duotone(CoffeeIcon),
+    crown: duotone(CrownIcon),
+    gem: duotone(DiamondIcon),
+    palette: duotone(PaletteIcon),
+    puzzle: duotone(PuzzlePieceIcon),
+    telescope: duotone(BinocularsIcon),
+    cpu: duotone(CpuIcon),
+  },
+} satisfies IconLibrary;

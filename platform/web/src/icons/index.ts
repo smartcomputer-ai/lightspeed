@@ -10,7 +10,7 @@
 
 import { createElement } from "react";
 import type { IconComponent, IconSet, UniverseIconSet } from "./roles";
-import { lucide as library } from "./lucide";
+import { phosphor as library } from "./phosphor";
 
 export type { IconComponent, IconSet, IconLibrary, UniverseIconSet } from "./roles";
 
