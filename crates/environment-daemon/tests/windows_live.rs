@@ -16,6 +16,57 @@ use environment_protocol::{
 use support::*;
 
 #[tokio::test(flavor = "current_thread")]
+#[ignore = "launches native envd; release builds supply the extracted executable"]
+async fn packaged_release_smoke() {
+    let executable = std::env::var_os("LIGHTSPEED_TEST_ENVD_BINARY")
+        .unwrap_or_else(|| env!("CARGO_BIN_EXE_lightspeed-envd").into());
+    assert!(std::path::Path::new(&executable).is_absolute());
+    let daemon = Daemon::start(false).await;
+    let content = "release smoke ü 空".as_bytes();
+    daemon
+        .client
+        .write_file(&WriteFileParams {
+            path: daemon.path("smoke ü.txt"),
+            data: content.into(),
+            create: WriteCondition::Always,
+            if_match: None,
+            executable: false,
+        })
+        .await
+        .unwrap();
+    let read = daemon
+        .client
+        .read_file(&ReadFileParams {
+            path: daemon.path("smoke ü.txt"),
+            offset: 0,
+            max_bytes: 1024,
+        })
+        .await
+        .unwrap();
+    assert_eq!(read.data.as_slice(), content);
+    let shell = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+        .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    start(
+        &daemon.client,
+        "release-smoke",
+        spec(vec![
+            shell.to_str().unwrap().into(),
+            "-NoLogo".into(),
+            "-NoProfile".into(),
+            "-NonInteractive".into(),
+            "-Command".into(),
+            "Write-Output release-smoke; exit 7".into(),
+        ]),
+        false,
+    )
+    .await;
+    let (output, result) = finished(&daemon.client, "release-smoke").await;
+    assert!(String::from_utf8(output).unwrap().contains("release-smoke"));
+    assert_eq!(result.exit, Some(ExitStatus::Code { code: 7 }));
+    assert!(result.error.is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
 #[ignore = "launches native envd and requires Windows symlink privilege"]
 async fn real_binary_passes_data_conformance_over_websockets() {
     let daemon = Daemon::start(false).await;

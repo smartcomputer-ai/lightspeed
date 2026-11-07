@@ -3,18 +3,16 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { readMetadata, targets, urlKey, validateWindowsBuild } from './envd-artifacts.mjs';
 
 const [version, gitSha] = process.argv.slice(2);
 if (!version || !/^[0-9a-f]{40}$/.test(gitSha ?? "")) {
   throw new Error("usage: create-manifest.mjs <version> <full-git-sha>");
 }
 
-const metadata = Object.fromEntries(
-  fs.readFileSync("release/metadata.env", "utf8")
-    .split("\n")
-    .filter((line) => line && !line.startsWith("#"))
-    .map((line) => line.split(/=(.*)/s).slice(0, 2)),
-);
+const metadata = readMetadata();
+if (version !== metadata.LIGHTSPEED_PRODUCT_VERSION) throw new Error('unexpected product version');
+const partial = process.argv.includes('--partial');
 const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const contractHash = crypto.createHash("sha256");
 for (const file of ["api.schema.json", "methods.json", "openrpc.json", "api-reference.md"]) {
@@ -22,8 +20,9 @@ for (const file of ["api.schema.json", "methods.json", "openrpc.json", "api-refe
 }
 
 const archive = (key, needle) => {
-  const file = fs.readdirSync("dist/archives").find((entry) => entry.includes(needle));
-  if (!file) throw new Error(`missing archive matching ${needle}`);
+  const files = fs.readdirSync("dist/archives").filter((entry) => entry.includes(needle));
+  if (files.length !== 1) throw new Error(`expected exactly one archive matching ${needle}`);
+  const [file] = files;
   return {
     file,
     url: process.env[`LIGHTSPEED_BINARY_URL_${key}`] ?? null,
@@ -44,6 +43,10 @@ if (!clientFile) throw new Error("missing TypeScript client tarball");
 const existingManifest = fs.existsSync("dist/release-manifest.json")
   ? JSON.parse(fs.readFileSync("dist/release-manifest.json", "utf8"))
   : undefined;
+if ((existingManifest?.gitSha && existingManifest.gitSha !== gitSha) ||
+    (existingManifest?.version && existingManifest.version !== version)) {
+  throw new Error('Linux build identity differs from selected release');
+}
 const buildImage = process.env.LIGHTSPEED_RELEASE_BUILD_IMAGE ?? existingManifest?.buildImage;
 if (!/@sha256:[0-9a-f]{64}$/.test(buildImage ?? "")) {
   throw new Error("LIGHTSPEED_RELEASE_BUILD_IMAGE must identify the actual digest-pinned build image");
@@ -63,6 +66,7 @@ if (typeof rustVersion !== "string" || rustVersion.length === 0) {
 // only a tagged release's GitHub asset; a snapshot bundle carries null and the
 // serving deployment fills it in.
 const envdTarget = metadata.LIGHTSPEED_ENVD_TARGET;
+const envdTargets = targets(metadata);
 const envdProtocolVersion = Number(metadata.LIGHTSPEED_ENVD_PROTOCOL_VERSION);
 const controllerProtocolVersion = Number(metadata.LIGHTSPEED_CONTROLLER_PROTOCOL_VERSION);
 if (
@@ -98,6 +102,22 @@ const envdArtifacts = Object.fromEntries(
     ]),
 );
 if (!envdArtifacts[envdTarget]) throw new Error(`missing envd archive for ${envdTarget}`);
+const requiredTargets = partial ? [envdTarget] : envdTargets;
+for (const target of requiredTargets) {
+  if (!envdArtifacts[target]) throw new Error(`missing envd archive for ${target}`);
+}
+for (const target of Object.keys(envdArtifacts)) {
+  if (!envdTargets.includes(target)) throw new Error(`unexpected envd target ${target}`);
+}
+const envdBinaries = Object.fromEntries(Object.entries(envdArtifacts).map(([target, artifact]) => [target, {
+  ...artifact,
+  url: process.env[urlKey(target)] ?? (target === envdTarget ? process.env.LIGHTSPEED_BINARY_URL_ENVD : null) ?? null,
+}]));
+const envdBuilds = { [envdTarget]: { buildImage, rustVersion } };
+if (envdArtifacts['x86_64-pc-windows-msvc']) {
+  envdBuilds['x86_64-pc-windows-msvc'] = validateWindowsBuild(
+    JSON.parse(fs.readFileSync('dist/provenance/windows-envd.json', 'utf8')), metadata, gitSha, 'dist/archives');
+}
 const discovery = {
   version,
   gitSha,
@@ -115,6 +135,9 @@ const manifest = {
   rustVersion,
   target: metadata.LIGHTSPEED_RELEASE_TARGET,
   envdTarget,
+  envdTargets,
+  envdBinaries,
+  envdBuilds,
   buildImage,
   protocolVersion: metadata.LIGHTSPEED_API_PROTOCOL_VERSION,
   envdProtocolVersion,
@@ -132,7 +155,7 @@ const manifest = {
   binaries: {
     runtime: archive("RUNTIME", "-runtime-"),
     providerIncus: archive("PROVIDER_INCUS", "-provider-incus-"),
-    envd: archive("ENVD", "-envd-"),
+    envd: envdBinaries[envdTarget],
     cli: archive("CLI", "-cli-"),
   },
   artifacts: {

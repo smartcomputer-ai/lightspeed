@@ -2,27 +2,43 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { readMetadata, targets, archiveName, validateWindowsBuild } from './envd-artifacts.mjs';
 
 const args = process.argv.slice(2);
 const file = args.find((argument) => !argument.startsWith("--")) ?? "dist/release-manifest.json";
 const published = args.includes("--published");
+const partial = args.includes('--partial');
+if (partial && published) throw new Error('partial builds cannot be published');
 const value = JSON.parse(fs.readFileSync(file, "utf8"));
 const fail = (message) => { throw new Error(`${file}: ${message}`); };
 const sha256 = (filename) => crypto
   .createHash("sha256")
   .update(fs.readFileSync(filename))
   .digest("hex");
-const metadata = Object.fromEntries(
-  fs.readFileSync("release/metadata.env", "utf8")
-    .split("\n")
-    .filter((line) => line && !line.startsWith("#"))
-    .map((line) => line.split(/=(.*)/s).slice(0, 2)),
-);
+const metadata = readMetadata();
 if (value.manifestVersion !== 1) fail("unsupported manifestVersion");
 if (!/^[0-9a-f]{40}$/.test(value.gitSha)) fail("gitSha must be a full SHA");
 if (value.version !== metadata.LIGHTSPEED_PRODUCT_VERSION) fail("unexpected product version");
 if (value.target !== metadata.LIGHTSPEED_RELEASE_TARGET) fail("unexpected target");
 if (value.envdTarget !== metadata.LIGHTSPEED_ENVD_TARGET) fail("unexpected envd target");
+if (JSON.stringify(value.envdTargets) !== JSON.stringify(targets(metadata))) fail('unexpected required envd targets');
+const requiredTargets = partial ? [value.envdTarget] : value.envdTargets;
+const actualTargets = Object.keys(value.envdBinaries ?? {});
+if (requiredTargets.some((t) => !actualTargets.includes(t)) || actualTargets.some((t) => !value.envdTargets.includes(t))) {
+  fail('missing or unexpected envd artifacts');
+}
+if (JSON.stringify(value.binaries?.envd) !== JSON.stringify(value.envdBinaries[value.envdTarget])) fail('Linux envd alias mismatch');
+for (const [target, artifact] of Object.entries(value.envdBinaries)) {
+  if (artifact.file !== archiveName(value.version, target)) fail(`unexpected envd filename for ${target}`);
+}
+const windowsBuild = value.envdBuilds?.['x86_64-pc-windows-msvc'];
+if (actualTargets.includes('x86_64-pc-windows-msvc')) {
+  validateWindowsBuild(windowsBuild, metadata, value.gitSha, 'dist/archives');
+  const recorded = JSON.parse(fs.readFileSync('dist/provenance/windows-envd.json', 'utf8'));
+  if (JSON.stringify(recorded) !== JSON.stringify(windowsBuild)) fail('Windows provenance differs from manifest');
+}
+if (value.envdBuilds?.[value.envdTarget]?.buildImage !== value.buildImage ||
+    value.envdBuilds?.[value.envdTarget]?.rustVersion !== value.rustVersion) fail('Linux provenance differs from manifest');
 if (value.envdProtocolVersion !== Number(metadata.LIGHTSPEED_ENVD_PROTOCOL_VERSION)) {
   fail("unexpected envd protocol version");
 }
@@ -58,7 +74,7 @@ for (const [name, image] of Object.entries(value.images)) {
   if (image !== null && !/@sha256:[0-9a-f]{64}$/.test(image)) fail(`image ${name} is not digest-pinned`);
   if (published && image === null) fail(`published image ${name} is missing`);
 }
-for (const [name, artifact] of Object.entries(value.binaries)) {
+for (const [name, artifact] of Object.entries({ ...value.binaries, ...value.envdBinaries })) {
   if (!/^[0-9a-f]{64}$/.test(artifact.sha256)) fail(`binary ${name} has an invalid checksum`);
   if (path.basename(artifact.file) !== artifact.file) fail(`binary ${name} has an unsafe filename`);
   const archive = `dist/archives/${artifact.file}`;
@@ -102,7 +118,7 @@ if (discovery.protocolVersion !== value.envdProtocolVersion) {
 }
 if (!Number.isInteger(discovery.builtAtMs) || discovery.builtAtMs <= 0) dfail("invalid builtAtMs");
 const discoveryTargets = Object.keys(discovery.artifacts ?? {});
-if (!discoveryTargets.includes(value.envdTarget)) dfail("no artifact for the envd target");
+if (JSON.stringify(discoveryTargets.sort()) !== JSON.stringify(actualTargets.sort())) dfail('envd target set differs from manifest');
 for (const [target, artifact] of Object.entries(discovery.artifacts)) {
   if (!/^[a-z0-9_]+(-[a-z0-9_]+)+$/.test(target)) dfail(`invalid target ${target}`);
   if (path.basename(artifact.file) !== artifact.file) dfail(`artifact ${target} has an unsafe filename`);
@@ -110,6 +126,9 @@ for (const [target, artifact] of Object.entries(discovery.artifacts)) {
   const archive = `dist/archives/${artifact.file}`;
   if (!fs.existsSync(archive)) dfail(`artifact ${target} archive is missing`);
   if (sha256(archive) !== artifact.sha256) dfail(`artifact ${target} checksum mismatch`);
+  if (artifact.sha256 !== value.envdBinaries[target].sha256 || artifact.file !== value.envdBinaries[target].file) {
+    dfail(`artifact ${target} differs from manifest`);
+  }
   const plainDownload = typeof artifact.url === "string"
     && artifact.url.startsWith("https://")
     && artifact.url.endsWith(`/${artifact.file}`);

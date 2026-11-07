@@ -257,3 +257,4 @@ __marimo__/
 
 # local development environment daemon workspace/state (./dev.sh)
 .lightspeed-dev/
+dist-windows/

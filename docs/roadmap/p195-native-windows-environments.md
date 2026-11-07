@@ -46,7 +46,8 @@ The Windows checkout is `C:\dev\lightspeed`. Installed tools are Rust 1.99.0
 with the MSVC host toolchain, Clippy, rustfmt, Rust sources, Git for Windows,
 Visual Studio 2022 C++ Build Tools, Windows SDK, CMake, NASM, and VS Code with
 rust-analyzer. The desktop **Lightspeed** and **Lightspeed terminal** shortcuts
-load the build environment. No Windows CI runner has been registered.
+load the build environment. The protected Windows release runner is now
+registered as `hz01-windows-lightspeed`; its isolated setup is recorded below.
 
 The standalone Rust compile/link/run check passed. The first release build at
 the base commit above compiled dependencies, then failed with **27 errors and
@@ -558,6 +559,48 @@ provider account or model credentials. See the
 for prerequisites and commands. Service installation, upgrades and a Linux-hosted
 controller remain separate acceptance checks.
 
+### Distribution build integration
+
+Package 6 now separates commit selection, Linux builds, Windows envd builds,
+and final assembly for main snapshots and tagged releases. Both builders use
+one product version, exact SHA, pinned Rust version and Cargo.lock. Assembly
+requires both jobs; no completed release or deployment notification can bypass
+a failed Windows build. Existing Linux CI still gates main snapshots; broad
+Windows PR CI remains deferred.
+
+Release metadata advertises both Linux musl and Windows MSVC targets. Manifest
+v1 adds target-indexed daemon artifacts and build provenance while retaining
+the Linux bootstrap aliases. Discovery, hashes, immutable OCI URLs, release
+assets and assembly verification cover both targets. Linux-only staging is
+explicitly partial and cannot pass published-manifest verification. The private
+deployment repository already installs all discovery targets; companion changes
+validate the full manifest/discovery target set while retaining old-bundle rollback.
+
+The VM runs the GitHub Actions runner as a Windows service under the dedicated
+non-administrator `lightspeed-build` account. Runner state, working directories
+and Rust installations are under `C:\actions-runner`, separate from the developer
+checkout. The service uses delayed automatic start and recovery. The native
+build script discovers MSVC and packages envd with a static C runtime; Windows
+provenance records OS, MSVC, SDK, linker, Rust, Cargo, compiler flags, lockfile and
+archive hashes. Its acceptance test runs the extracted executable over real
+WebSockets and covers initialization, Unicode file writes/reads and process
+output/exit status without optional shells or symlink privileges.
+
+Local validation passed a clean-checkout release build with the static C runtime
+and packaged protocol smoke test under the dedicated account, all 21 build-script
+tests, scoped envd all-target Clippy with warnings denied, and actionlint for the
+three release workflows. GitHub reports the runner online with the required
+labels. The deployment manifest validator passed; initial multi-target discovery
+installation passed locally, but the full installation/replacement suite still
+requires Linux because its atomic directory-symlink replacement is not supported
+by Windows. No production release or deployment was triggered by this validation.
+
+Runner registration and local build validation do not constitute an end-to-end
+Actions release run: the workflow changes must land before that can be exercised.
+Production envd service installation, outbound registration under that identity,
+replacement upgrades and recovery remain package 6 lifecycle work. Linux-hosted
+agent acceptance and Linux/macOS regression gates remain separate checks.
+
 ## Implementation packages
 
 Land reviewable packages on the implementation branch. Keep this document's
@@ -647,7 +690,10 @@ release; no Windows version beyond Server 2025 is claimed yet.
 - [x] Native filesystem, process, and terminal backends implemented and tested on Windows, with the explicit limitations above.
 - [x] Model-facing shell selection and Windows context implemented, with native edit/build/test and job coverage.
 - [ ] Real Linux-hosted session against Windows and Linux/macOS regression execution verified.
-- [ ] Transfer/conformance, Windows CI, and unattended release completed.
+- [x] Windows transfers and native live protocol conformance implemented and exercised.
+- [x] Windows release runner registered; required multi-target build/assembly and packaged acceptance implemented.
+- [ ] First combined Linux/Windows Actions release build verified after integration.
+- [ ] Production envd service, registration, installation/upgrade and recovery acceptance completed.
 
 ## References
 

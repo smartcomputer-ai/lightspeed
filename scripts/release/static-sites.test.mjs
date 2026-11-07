@@ -9,7 +9,7 @@ import { test } from 'node:test';
 
 const repository = fileURLToPath(new URL('../../', import.meta.url));
 const metadata = Object.fromEntries(readFileSync(join(repository, 'release/metadata.env'), 'utf8')
-  .split('\n').filter((line) => line && !line.startsWith('#'))
+  .split(/\r?\n/).filter((line) => line && !line.startsWith('#'))
   .map((line) => line.split(/=(.*)/s).slice(0, 2)));
 const version = metadata.LIGHTSPEED_PRODUCT_VERSION;
 const gitSha = 'a'.repeat(40);
@@ -27,6 +27,7 @@ function fixture(t) {
     writeFileSync(join(cwd, path), bytes);
   };
   write('release/metadata.env', readFileSync(join(repository, 'release/metadata.env')));
+  write('Cargo.lock', readFileSync(join(repository, 'Cargo.lock')));
   write('dist/release-manifest.json', JSON.stringify({ rustVersion: `rustc ${metadata.LIGHTSPEED_RELEASE_RUST_VERSION}` }));
   for (const contract of ['api.schema.json', 'methods.json', 'openrpc.json', 'api-reference.md']) {
     write(`dist/contracts/${contract}`, `fixture ${contract}`);
@@ -35,6 +36,17 @@ function fixture(t) {
     write(`dist/archives/lightspeed-${component}-${version}.tar.gz`, `fixture ${component}`);
   }
   write(`dist/archives/lightspeed-envd-${version}-${metadata.LIGHTSPEED_ENVD_TARGET}.tar.gz`, 'fixture envd');
+  const windowsTarget = 'x86_64-pc-windows-msvc';
+  const windowsFile = `lightspeed-envd-${version}-${windowsTarget}.tar.gz`;
+  write(`dist/archives/${windowsFile}`, 'fixture windows envd');
+  write('dist/provenance/windows-envd.json', JSON.stringify({
+    version, gitSha, target: windowsTarget, file: windowsFile,
+    protocolVersion: Number(metadata.LIGHTSPEED_ENVD_PROTOCOL_VERSION),
+    sha256: hash('fixture windows envd'), rustVersion: `rustc ${metadata.LIGHTSPEED_RELEASE_RUST_VERSION} (fixture)`,
+    cargoVersion: 'cargo fixture', cargoLockSha256: hash(readFileSync(join(repository, 'Cargo.lock'))),
+    osVersion: 'Windows fixture', msvcVersion: '14.44', windowsSdkVersion: '10.0.26100', linkerVersion: '14.44',
+    rustFlags: '-C target-feature=+crt-static',
+  }));
   write(`dist/archives/lightspeed-docs-${version}.tar.gz`, 'fixture documentation archive');
   write('dist/npm/sdk.tgz', 'fixture client');
   const env = {
@@ -47,6 +59,7 @@ function fixture(t) {
   for (const name of ['DEMO', 'DOCS']) {
     env[`LIGHTSPEED_ARTIFACT_URL_${name}`] = `oci://${registry}/${name.toLowerCase()}-bundle@${digest}`;
   }
+  env.LIGHTSPEED_BINARY_URL_ENVD_X86_64_PC_WINDOWS_MSVC = `oci://${registry}/envd-x86_64-pc-windows-msvc-bundle@${digest}`;
   for (const name of ['RUNTIME', 'CONFIGURATOR_MCP', 'PLATFORM', 'PLATFORM_WORKERS']) {
     env[`LIGHTSPEED_${name}_IMAGE`] = `${registry}/${name.toLowerCase().replaceAll('_', '-')}@${digest}`;
   }
@@ -145,7 +158,7 @@ test('release aliases include the docs digest; snapshots retain one aggregate id
   const f = fixture(t);
   f.create();
   mkdirSync(join(f.cwd, 'scripts/release'), { recursive: true });
-  for (const script of ['publish-aliases.sh', 'verify-manifest.mjs']) {
+  for (const script of ['publish-aliases.sh', 'verify-manifest.mjs', 'envd-artifacts.mjs']) {
     copyFileSync(join(repository, 'scripts/release', script), join(f.cwd, 'scripts/release', script));
   }
   // Local registry doubles exercise publication without network access.
@@ -186,10 +199,85 @@ if (operation === 'resolve' || operation === 'digest') {
   const releaseCopies = copies();
   assert.ok(releaseCopies.some(({ source, target }) =>
     source === `${registry}/docs-bundle@${digest}` && target === `${registry}/docs-bundle:${version}`));
+  assert.ok(releaseCopies.some(({ target }) => target === `${registry}/envd-x86_64-pc-windows-msvc-bundle:${version}`));
   assert.equal(releaseCopies.at(-1).target, `${registry}/release-bundle:${version}`);
   publish(version);
   assert.deepEqual(copies(), releaseCopies, 'repeated publication preserves existing aliases');
   reset();
   publish(`sha-${gitSha}`);
   assert.deepEqual(copies(), [{ source: `${registry}/release-bundle@${digest}`, target: `${registry}/release-bundle:sha-${gitSha}` }]);
+});
+
+test('complete assembly requires both targets and matching Windows identity, lockfile and provenance', (t) => {
+  const f = fixture(t);
+  f.create();
+  assert.deepEqual(f.manifest().envdTargets, metadata.LIGHTSPEED_ENVD_TARGETS.split(','));
+  const recordPath = join(f.cwd, 'dist/provenance/windows-envd.json');
+  const original = JSON.parse(readFileSync(recordPath, 'utf8'));
+  for (const change of [
+    (build) => { build.gitSha = 'c'.repeat(40); },
+    (build) => { build.version = '0.0.0'; },
+    (build) => { build.protocolVersion += 1; },
+    (build) => { build.target = 'x86_64-unknown-linux-musl'; },
+    (build) => { build.sha256 = '0'.repeat(64); },
+    (build) => { build.cargoLockSha256 = '0'.repeat(64); },
+    (build) => { delete build.msvcVersion; },
+    (build) => { build.rustVersion = 'rustc 0.0.0 (fixture)'; },
+  ]) {
+    const build = structuredClone(original);
+    change(build);
+    f.write('dist/provenance/windows-envd.json', JSON.stringify(build));
+    assert.throws(f.create);
+    assert.notEqual(f.verify('--published').status, 0);
+  }
+  f.write('dist/provenance/windows-envd.json', JSON.stringify(original));
+  rmSync(join(f.cwd, 'dist/archives', original.file));
+  assert.throws(f.create);
+  assert.notEqual(f.verify('--published').status, 0);
+  execFileSync(process.execPath, [join(repository, 'scripts/release/create-manifest.mjs'), version, gitSha, '--partial'], { cwd: f.cwd, env: f.env });
+  assert.equal(f.verify('--partial').status, 0);
+  assert.notEqual(f.verify().status, 0);
+  assert.notEqual(f.verify('--partial', '--published').status, 0);
+});
+
+test('discovery and manifest must describe the same complete target set', (t) => {
+  const f = fixture(t);
+  f.create();
+  const discoveryPath = join(f.cwd, 'dist/envd.json');
+  const discovery = JSON.parse(readFileSync(discoveryPath, 'utf8'));
+  delete discovery.artifacts['x86_64-pc-windows-msvc'];
+  f.write('dist/envd.json', JSON.stringify(discovery));
+  assert.notEqual(f.verify().status, 0);
+  f.create();
+  const manifest = f.manifest();
+  delete manifest.envdBinaries['x86_64-pc-windows-msvc'];
+  f.write('dist/release-manifest.json', JSON.stringify(manifest));
+  assert.notEqual(f.verify('--published').status, 0);
+});
+
+test('assembly rejects a Linux build from a different selected commit', (t) => {
+  const f = fixture(t);
+  f.create();
+  const manifest = f.manifest();
+  manifest.gitSha = 'd'.repeat(40);
+  f.write('dist/release-manifest.json', JSON.stringify(manifest));
+  assert.throws(f.create, /Linux build identity differs/);
+});
+
+test('Windows import verifies the uploaded bytes before adding them to the release', (t) => {
+  const f = fixture(t);
+  const build = JSON.parse(readFileSync(join(f.cwd, 'dist/provenance/windows-envd.json'), 'utf8'));
+  f.write('incoming/provenance/windows-envd.json', JSON.stringify(build));
+  f.write(`incoming/archives/${build.file}`, 'fixture windows envd');
+  rmSync(join(f.cwd, 'dist/archives', build.file));
+  rmSync(join(f.cwd, 'dist/provenance/windows-envd.json'));
+  const run = () => execFileSync(process.execPath,
+    [join(repository, 'scripts/release/import-windows.mjs'), 'incoming', gitSha], { cwd: f.cwd, env: f.env, stdio: 'pipe' });
+  run();
+  f.create();
+  assert.equal(f.verify('--published').status, 0);
+  f.write(`incoming/archives/${build.file}`, 'changed bytes');
+  assert.throws(run, /checksum mismatch/);
+  // A rejected upload leaves the previously verified archive intact.
+  assert.equal(hash(readFileSync(join(f.cwd, 'dist/archives', build.file))), build.sha256);
 });

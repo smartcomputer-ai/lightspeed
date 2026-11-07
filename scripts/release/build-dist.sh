@@ -18,12 +18,12 @@ fi
 
 rm -rf "$dist_dir"
 mkdir -p "$dist_dir/bin" "$dist_dir/npm" "$dist_dir/contracts" \
-  "$dist_dir/archives" "$dist_dir/configurator-mcp" "$dist_dir/runtime"
+  "$dist_dir/archives" "$dist_dir/configurator-mcp" "$dist_dir/runtime" "$dist_dir/provenance"
 
 export LIGHTSPEED_RELEASE_VERSION="$version"
 export LIGHTSPEED_GIT_SHA="$git_sha"
 # The server reports which daemon targets this release publishes.
-export LIGHTSPEED_ENVD_TARGETS="$envd_target"
+export LIGHTSPEED_ENVD_TARGETS
 cargo build --release --locked --target "$target" \
   -p temporal-runtime -p environment-provider-incus -p cli
 # The environment daemon alone is a static musl binary, so it runs on any
@@ -86,6 +86,6 @@ done
 scripts/release/stage-static-sites.sh "$dist_dir"
 
 scripts/release/create-sbom.mjs "$version" "$git_sha"
-scripts/release/create-manifest.mjs "$version" "$git_sha"
+scripts/release/create-manifest.mjs "$version" "$git_sha" --partial
 scripts/release/checksums.sh
-scripts/release/smoke.sh
+scripts/release/smoke.sh --partial

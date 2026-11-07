@@ -78,7 +78,9 @@ impl Daemon {
         log: &Path,
         read_only: bool,
     ) -> (OwnedDaemon, String, DataClient) {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_lightspeed-envd"));
+        let executable = std::env::var_os("LIGHTSPEED_TEST_ENVD_BINARY")
+            .unwrap_or_else(|| env!("CARGO_BIN_EXE_lightspeed-envd").into());
+        let mut command = Command::new(executable);
         command
             .args(["--listen", "127.0.0.1:0", "--cwd"])
             .arg(root)
