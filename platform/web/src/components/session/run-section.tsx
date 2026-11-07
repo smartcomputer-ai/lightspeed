@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Brain, ChevronRight, LoaderCircle, TriangleAlert } from "lucide-react";
+import { ExpandIcon, LoadingIcon, ThinkingIcon, WarningIcon } from "@/icons";
 import type { FullTextLoader } from "@/components/session/expandable-content";
 import { RunOutcomeLine, RunStatsRow, RunStatsTrigger } from "@/components/session/run-stats";
 import { ActivityIcon, GROUP_ORDER, groupStyle, useElapsed } from "@/components/session/tool-trace";
@@ -98,12 +98,12 @@ function RunStrip({
           onClick={onToggle}
           className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-muted-foreground outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
         >
-          <ChevronRight
+          <ExpandIcon
             className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
             aria-hidden="true"
           />
           <span className="flex shrink-0 items-center gap-1 [&_svg]:size-3.5" aria-hidden="true">
-            {activity.thinking && <Brain className="text-muted-foreground" />}
+            {activity.thinking && <ThinkingIcon className="text-muted-foreground" />}
             {groups.map((group) => (
               <ActivityIcon key={group} group={group} className={groupStyle(group).text} />
             ))}
@@ -126,7 +126,7 @@ function RunStrip({
       </div>
       {summary?.status === "failed" && (
         <p className="flex items-start gap-1.5 px-2 pb-1.5 text-xs text-destructive">
-          <TriangleAlert className="mt-px size-3.5 shrink-0" />
+          <WarningIcon className="mt-px size-3.5 shrink-0" />
           <span className="[overflow-wrap:anywhere]">{runFailureText(summary)}</span>
         </p>
       )}
@@ -174,7 +174,7 @@ export function RunStatusRow({ run }: { run: ActiveRun | null }) {
   if (!run) return null;
   return (
     <div role="status" className="flex items-center gap-2 px-2 py-1 text-[13px] text-muted-foreground">
-      <LoaderCircle className="size-3.5 shrink-0 motion-safe:animate-spin" aria-hidden="true" />
+      <LoadingIcon className="size-3.5 shrink-0 motion-safe:animate-spin" aria-hidden="true" />
       <span>{run.label}…</span>
       {elapsed !== undefined && <span className="ml-auto text-xs tabular-nums">{formatDuration(elapsed)}</span>}
     </div>

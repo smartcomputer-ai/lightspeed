@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
-import { LoaderCircle, Mic, MicOff, RotateCw, Square, X } from "lucide-react";
+import { CancelIcon, DictateIcon, DictationUnavailableIcon, LoadingIcon, RetryIcon, StopIcon } from "@/icons";
 import { MAX_DICTATION_SECONDS } from "@lightspeed-ai/platform-shared";
 import type { useDictation } from "@/lib/use-dictation";
 import { Button } from "@/components/ui/button";
@@ -28,9 +28,9 @@ export function VoiceControl({ voice, unavailableReason, settingsHref, demo, onS
   if (voice.phase === "requesting") {
     return (
       <Pill tone="muted" label="Waiting for microphone permission">
-        <Mic className="size-3.5 animate-pulse" aria-hidden />
+        <DictateIcon className="size-3.5 animate-pulse" aria-hidden />
         <span className="hidden sm:inline">Allow the microphone…</span>
-        <PillButton label="Cancel dictation" onClick={voice.cancel}><X /></PillButton>
+        <PillButton label="Cancel dictation" onClick={voice.cancel}><CancelIcon /></PillButton>
       </Pill>
     );
   }
@@ -44,9 +44,9 @@ export function VoiceControl({ voice, unavailableReason, settingsHref, demo, onS
           {clock(voice.seconds)}
         </span>
         <LevelMeter level={voice.level} />
-        <PillButton label="Cancel dictation" title="Discard recording (Esc)" onClick={voice.cancel}><X /></PillButton>
+        <PillButton label="Cancel dictation" title="Discard recording (Esc)" onClick={voice.cancel}><CancelIcon /></PillButton>
         <PillButton label="Stop recording" title="Stop and insert transcript" onClick={() => void voice.stop()}>
-          <Square className="fill-current" />
+          <StopIcon className="fill-current" />
         </PillButton>
       </Pill>
     );
@@ -54,21 +54,21 @@ export function VoiceControl({ voice, unavailableReason, settingsHref, demo, onS
   if (voice.phase === "transcribing") {
     return (
       <Pill tone="muted" label="Transcribing">
-        <LoaderCircle className="size-3.5 animate-spin" aria-hidden />
+        <LoadingIcon className="size-3.5 animate-spin" aria-hidden />
         <span>Transcribing…</span>
-        <PillButton label="Cancel dictation" title="Cancel transcription (Esc)" onClick={voice.cancel}><X /></PillButton>
+        <PillButton label="Cancel dictation" title="Cancel transcription (Esc)" onClick={voice.cancel}><CancelIcon /></PillButton>
       </Pill>
     );
   }
   if (voice.phase === "error") {
     return (
       <Pill tone="error" label="Dictation failed">
-        <MicOff className="size-3.5 shrink-0" aria-hidden />
+        <DictationUnavailableIcon className="size-3.5 shrink-0" aria-hidden />
         <span role="alert" className="max-w-28 truncate sm:max-w-64" title={voice.error}>{voice.error ?? "Dictation failed."}</span>
         {voice.canRetry
-          ? <PillButton label="Retry transcription" title="Retry transcription" onClick={voice.retry}><RotateCw /></PillButton>
-          : <PillButton label="Dictate message" title="Try again" onClick={onStart}><RotateCw /></PillButton>}
-        <PillButton label="Cancel dictation" title="Dismiss" onClick={voice.cancel}><X /></PillButton>
+          ? <PillButton label="Retry transcription" title="Retry transcription" onClick={voice.retry}><RetryIcon /></PillButton>
+          : <PillButton label="Dictate message" title="Try again" onClick={onStart}><RetryIcon /></PillButton>}
+        <PillButton label="Cancel dictation" title="Dismiss" onClick={voice.cancel}><CancelIcon /></PillButton>
       </Pill>
     );
   }
@@ -79,7 +79,7 @@ export function VoiceControl({ voice, unavailableReason, settingsHref, demo, onS
           <Button type="button" variant="ghost" size="icon-sm" aria-label="Dictate message" aria-disabled="true"
             className="text-muted-foreground/50 hover:text-muted-foreground" />
         }>
-          <Mic />
+          <DictateIcon />
         </PopoverTrigger>
         <PopoverContent side="top" align="end" className="w-72 p-3 text-sm">
           <p className="font-medium">Dictation is unavailable</p>
@@ -95,7 +95,7 @@ export function VoiceControl({ voice, unavailableReason, settingsHref, demo, onS
     <Button type="button" variant="ghost" size="icon-sm" aria-label="Dictate message"
       title={demo ? "Dictate (demo inserts a sample transcript)" : "Dictate. Stop inserts the text; Send or Enter sends after transcription; Esc discards."}
       className="text-muted-foreground hover:text-foreground" onClick={onStart}>
-      <Mic />
+      <DictateIcon />
     </Button>
   );
 }

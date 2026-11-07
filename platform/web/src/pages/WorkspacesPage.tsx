@@ -4,13 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { slugify, workspaceCreateSchema, validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
-import {
-  ChevronRight,
-  File,
-  FolderGit2,
-  Plus,
-  ExternalLink,
-} from "lucide-react";
+import { AddIcon, BackIcon, FileIcon, NewTabIcon, WorkspaceIcon } from "@/icons";
 import {
   api,
   type BlobContent,
@@ -130,12 +124,12 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
           />
         ) : (
           workspaceId ? (
-            <DetailPrompt icon={<File className="size-10 text-muted-foreground/60" />}>
+            <DetailPrompt icon={<FileIcon className="size-10 text-muted-foreground/60" />}>
               {permissions.can("useResource") ? "Pick a file, or drop files and folders into this workspace." : "Pick a file."}
             </DetailPrompt>
           ) : (
             <DetailPrompt
-              icon={<FolderGit2 className="size-10 text-muted-foreground/60" />}
+              icon={<WorkspaceIcon className="size-10 text-muted-foreground/60" />}
               create={permissions.can("createWorkspace") ? { label: "New workspace", onClick: () => setCreateOpen(true) } : undefined}
             >
               Pick a workspace{permissions.can("createWorkspace") ? ", or create one" : ""}.
@@ -211,7 +205,7 @@ function WorkspacePane({
             onClick={() => setCreateOpen(true)}
             aria-label="New workspace"
           >
-            <Plus />
+            <AddIcon />
           </Button>
         )}
       </div>
@@ -223,7 +217,7 @@ function WorkspacePane({
             onValueChange={(value) => navigate(`/u/${slug}/workspaces/${value}`)}
           >
             <SelectTrigger className="w-full" aria-label="Workspace">
-              <FolderGit2 className="size-4 shrink-0 text-muted-foreground" />
+              <WorkspaceIcon className="size-4 shrink-0 text-muted-foreground" />
               <SelectValue>
                 {(value: string) => {
                   const label = workspaces.data?.find((w) => w.workspaceId === value)?.displayName ?? value;
@@ -507,7 +501,7 @@ function FileDetail({
           to={`/u/${slug}/workspaces/${workspaceId}`}
           className="md:hidden"
         >
-          <ChevronRight className="size-4 rotate-180" />
+          <BackIcon className="size-4" />
         </NavLink>
         <h1 className="min-w-0 flex-1 truncate font-mono text-sm">{filePath}</h1>
         <span className="shrink-0 text-xs text-muted-foreground">
@@ -523,7 +517,7 @@ function FileDetail({
               aria-label="Open in blob viewer (new tab)"
               title={dirty ? "Open saved version in blob viewer (new tab)" : "Open in blob viewer (new tab)"}
             >
-              <ExternalLink />
+              <NewTabIcon />
             </Button>
           )}
           {decoded?.kind === "text" && (

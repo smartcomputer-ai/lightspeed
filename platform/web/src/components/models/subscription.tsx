@@ -2,7 +2,7 @@ import { ResourceActions } from "@/components/resource-details-dialog";
 import { useActionPermissions } from "@/lib/permissions";
 import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Copy } from "lucide-react";
+import { CopyIcon } from "@/icons";
 import { api, type SecretGrant, type SubscriptionImportResult } from "@/api";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
@@ -209,7 +209,7 @@ export function CodexBootstrapNote() {
             });
           }}
         >
-          <Copy />
+          <CopyIcon />
           {copied ? "Copied" : "Copy"}
         </Button>
       </div>

@@ -13,7 +13,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { NavLink, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Archive, ArrowLeft, ListChecks, ListFilter, LoaderCircle, MessagesSquare, Plus, ShieldCheck, Trash2, X } from "lucide-react";
+import { AddIcon, ArchiveIcon, BackIcon, BotIcon, DeleteIcon, FilterIcon, LoadingIcon, ManagedIcon, RemoveIcon, SelectModeIcon, SessionIcon } from "@/icons";
 import {
   api,
   botLabel,
@@ -35,7 +35,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { BotFaceIcon } from "@/components/icons/bot";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -194,7 +193,7 @@ export function SessionsPage({ admin }: { admin: boolean }) {
           />
         ) : (
           <DetailPrompt
-            icon={<MessagesSquare className="size-10 text-muted-foreground/60" />}
+            icon={<SessionIcon className="size-10 text-muted-foreground/60" />}
             create={canCreate ? { label: "New session", onClick: () => setCreateOpen(true) } : undefined}
           >
             Pick a session{canCreate ? ", or start one" : ""}.
@@ -407,7 +406,7 @@ function SessionList({
               />
             }
           >
-            <ListFilter />
+            <FilterIcon />
             {activeFilterCount > 0 && (
               <span className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-primary text-[9px] font-semibold text-primary-foreground">
                 {activeFilterCount}
@@ -477,7 +476,7 @@ function SessionList({
                         aria-label={`Remove filter ${key}`}
                         className="shrink-0 rounded hover:text-foreground"
                       >
-                        <X className="size-3" />
+                        <RemoveIcon className="size-3" />
                       </button>
                     </Badge>
                   ))}
@@ -532,7 +531,7 @@ function SessionList({
                         aria-label={`Stop showing metadata key ${key}`}
                         className="shrink-0 rounded hover:text-foreground"
                       >
-                        <X className="size-3" />
+                        <RemoveIcon className="size-3" />
                       </button>
                     </Badge>
                   ))}
@@ -566,7 +565,7 @@ function SessionList({
           aria-label={selecting ? "Exit selection" : "Select sessions"}
           title={selecting ? "Exit selection" : "Select sessions to close or delete"}
         >
-          <ListChecks />
+          <SelectModeIcon />
         </Button>}
         {canCreate && <Button
           variant="ghost"
@@ -574,7 +573,7 @@ function SessionList({
           onClick={() => setCreateOpen(true)}
           aria-label="New session"
         >
-          <Plus />
+          <AddIcon />
         </Button>}
       </div>
       {selecting && (
@@ -623,7 +622,7 @@ function SessionList({
       )}
       {bulkNotice && (
         <p className="flex shrink-0 items-center gap-2 border-b px-4 py-1.5 text-xs text-muted-foreground">
-          {bulk.isPending && <LoaderCircle className="size-3 animate-spin" />}
+          {bulk.isPending && <LoadingIcon className="size-3 animate-spin" />}
           {bulkNotice}
           <button
             type="button"
@@ -631,7 +630,7 @@ function SessionList({
             onClick={() => setBulkNotice(null)}
             aria-label="Dismiss"
           >
-            <X className="size-3" />
+            <RemoveIcon className="size-3" />
           </button>
         </p>
       )}
@@ -731,7 +730,7 @@ function BulkActionDialog({
           />
         }
       >
-        {action === "close" ? <Archive /> : <Trash2 />}
+        {action === "close" ? <ArchiveIcon /> : <DeleteIcon />}
         {verb} {count}
       </AlertDialogTrigger>
       <AlertDialogContent>
@@ -871,7 +870,7 @@ function SessionListItem({
         )}
         {session.lifecycleControlled && (
           <Badge className="shrink-0" variant="secondary" title={botControlled ? "Bot-managed session" : undefined}>
-            {botControlled && <BotFaceIcon />}
+            {botControlled && <BotIcon />}
             {botControlled ? "Bot" : "Managed"}
           </Badge>
         )}
@@ -2072,7 +2071,7 @@ export function SessionDetail({
         <>
         <header className="flex h-12 min-w-0 shrink-0 items-center gap-3 overflow-hidden border-b px-4">
           <NavLink to={backTo} className="shrink-0 md:hidden">
-            <ArrowLeft className="size-4" />
+            <BackIcon className="size-4" />
           </NavLink>
           {/* Left is state: what it is, who sees it, who drives it, what it is doing. */}
           <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -2086,14 +2085,14 @@ export function SessionDetail({
                 className="hidden shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground sm:flex"
                 title="Open this conversation in its bot"
               >
-                <BotFaceIcon className="size-3.5" />
+                <BotIcon className="size-3.5" />
                 via {owningBot ? botLabel(owningBot) : "a bot"}
               </NavLink>
             ) : (
               <Tooltip>
                 <TooltipTrigger render={<span className="shrink-0" />}>
                   <Badge variant="secondary" className="gap-1">
-                    <ShieldCheck />
+                    <ManagedIcon />
                     <span className="hidden xl:inline">Managed by {managerLabel}</span>
                   </Badge>
                 </TooltipTrigger>
@@ -2123,7 +2122,7 @@ export function SessionDetail({
               variant="more"
               sessionId={sessionId}
               metadata={session.data?.metadata}
-              open={owningBotHref ? { label: "Open in bot", href: owningBotHref, icon: <BotFaceIcon /> } : undefined}
+              open={owningBotHref ? { label: "Open in bot", href: owningBotHref, icon: <BotIcon /> } : undefined}
               onSettings={permissions.can("read") ? () => setSettingsOpen(true) : undefined}
               onCompact={canControl && session.data && !closed ? compaction.compact : undefined}
               compactionLabel={compaction.label}
@@ -2134,7 +2133,7 @@ export function SessionDetail({
                     variant="destructive"
                     onClick={() => setDeleteOpen(true)}
                   >
-                    <Trash2 /> Delete session…
+                    <DeleteIcon /> Delete session…
                   </DropdownMenuItem>
                 ) : (
                   <DropdownMenuItem
@@ -2144,7 +2143,7 @@ export function SessionDetail({
                       setCloseOpen(true);
                     }}
                   >
-                    <Archive /> {runActive ? "Force close session…" : "Close session…"}
+                    <ArchiveIcon /> {runActive ? "Force close session…" : "Close session…"}
                   </DropdownMenuItem>
                 )
               ) : undefined}
@@ -2721,7 +2720,7 @@ function SessionWelcome({
   }[state];
   return (
     <div className="flex min-h-[45vh] flex-col items-center justify-center gap-3 px-4 text-center">
-      <MessagesSquare className="size-10 text-muted-foreground/50" />
+      <SessionIcon className="size-10 text-muted-foreground/50" />
       <h2 className="text-lg font-medium tracking-tight">{title}</h2>
       <p className="max-w-md text-sm text-muted-foreground">{body}</p>
       {unshared && state === "open" && (

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { slugify } from "@lightspeed-ai/platform-shared";
-import { ChevronRight, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
+import { AddIcon, BackIcon, DeleteIcon, ProfileIcon } from "@/icons";
 import {
   api,
   type ProfileDocument,
@@ -95,7 +95,7 @@ export function ProfilesPage(_props: { admin: boolean }) {
           />
         ) : (
           <DetailPrompt
-            icon={<SlidersHorizontal className="size-10 text-muted-foreground/60" />}
+            icon={<ProfileIcon className="size-10 text-muted-foreground/60" />}
             create={canCreate ? { label: "New profile", onClick: () => setCreateOpen(true) } : undefined}
           >
             Pick a profile{canCreate ? ", or create one" : ""}.
@@ -135,7 +135,7 @@ function ProfilePane({
           onClick={() => setCreateOpen(true)}
           aria-label="New profile"
         >
-            <Plus />
+            <AddIcon />
           </Button>
         )}
       </div>
@@ -345,7 +345,7 @@ function ProfileEditor({
     <>
       <header className="flex h-12 min-w-0 shrink-0 items-center gap-1.5 border-b px-2 md:gap-3 md:px-4">
         <NavLink to={`/u/${slug}/profiles`} className="flex size-8 shrink-0 items-center justify-center md:hidden" aria-label="Back to profiles">
-          <ChevronRight className="size-4 rotate-180" />
+          <BackIcon className="size-4" />
         </NavLink>
         <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
           {(draft.displayName as string) || profileId}
@@ -374,7 +374,7 @@ function ProfileEditor({
                 <Button variant="ghost" size="icon-sm" className="text-destructive" aria-label="Delete profile" />
               }
             >
-              <Trash2 />
+              <DeleteIcon />
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>

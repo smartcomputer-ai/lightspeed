@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowUp, ChevronDown, CornerDownRight, ListPlus, LoaderCircle, Lock, Plus, Square, TriangleAlert, X } from "lucide-react";
+import { AttachIcon, DismissIcon, DropdownCaretIcon, LoadingIcon, LockedIcon, QueueIcon, SteerIcon, StopIcon, SubmitIcon, WarningIcon } from "@/icons";
 import { ATTACHMENT_ACCEPT, ATTACHMENT_SUMMARY, type MessageRunOptions } from "@lightspeed-ai/platform-shared";
 import type { ModelOption } from "@/api";
 import { useDictation } from "@/lib/use-dictation";
@@ -323,12 +323,12 @@ export function SessionComposer({
                 "mx-2 mt-2 flex items-start gap-2 rounded-lg py-1.5 pr-1 pl-2.5 text-xs",
                 item.tone === "error" ? "bg-destructive/10 text-destructive" : "bg-amber-500/10 text-amber-800 dark:text-amber-300",
               )}>
-              <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+              <WarningIcon className="mt-px size-3.5 shrink-0" aria-hidden />
               <span className="min-w-0 flex-1 py-px wrap-break-word">{item.text}</span>
               {item.dismiss && (
                 <Button type="button" variant="ghost" size="icon-xs" aria-label="Dismiss" className="text-current hover:bg-foreground/10 hover:text-current"
                   onClick={item.dismiss}>
-                  <X />
+                  <DismissIcon />
                 </Button>
               )}
             </div>
@@ -370,7 +370,7 @@ export function SessionComposer({
                   <Button type="button" variant="ghost" size="icon-sm" aria-label="Attach files"
                     title={`Attach files. ${ATTACHMENT_SUMMARY}. You can also drop or paste them.`}
                     className="text-muted-foreground hover:text-foreground" onClick={() => fileInput.current?.click()}>
-                    <Plus />
+                    <AttachIcon />
                   </Button>
                 </>
               )}
@@ -394,7 +394,7 @@ export function SessionComposer({
                 <Button type="button" variant="outline" size="icon-sm" onClick={onStop} disabled={stopping}
                   aria-label={stopping ? "Stopping run" : "Stop run"}
                   title={stopping ? "Stopping the active run…" : "Stop the active run"}>
-                  {stopping ? <LoaderCircle className="animate-spin" /> : <Square className="size-3 fill-current" />}
+                  {stopping ? <LoadingIcon className="animate-spin" /> : <StopIcon className="size-3 fill-current" />}
                 </Button>
               )}
               {!disabled && (
@@ -403,7 +403,7 @@ export function SessionComposer({
                     disabled={!hasContent && !voiceCanSubmit}
                     aria-label={sendLabel} title={sendTitle}
                     className={cn(runActive && "rounded-r-none")}>
-                    {pendingSubmit ? <LoaderCircle className="animate-spin" /> : <ArrowUp />}
+                    {pendingSubmit ? <LoadingIcon className="animate-spin" /> : <SubmitIcon />}
                   </Button>
                   {runActive && (
                     <DropdownMenu>
@@ -411,16 +411,16 @@ export function SessionComposer({
                         <Button type="button" size="icon-sm" aria-label="Queue or steer" disabled={!hasContent && !voiceCanSubmit}
                           className="w-5 rounded-l-none border-l border-l-primary-foreground/20" />
                       }>
-                        <ChevronDown className="size-3" />
+                        <DropdownCaretIcon className="size-3" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent side="top" align="end" className="w-72">
                         <DropdownMenuItem disabled={!hasContent && !voiceCanSubmit} onClick={() => submit(false)}>
-                          <ListPlus />
+                          <QueueIcon />
                           <span>Queue as the next run</span>
                           <DropdownMenuShortcut>↵</DropdownMenuShortcut>
                         </DropdownMenuItem>
                         <DropdownMenuItem disabled={(!hasContent && !voiceCanSubmit) || !canSteer} onClick={() => submit(true)}>
-                          <CornerDownRight />
+                          <SteerIcon />
                           <span className="flex flex-col">
                             <span>Steer the current run</span>
                             <span className="text-xs text-muted-foreground">
@@ -438,7 +438,7 @@ export function SessionComposer({
           )}
           {reasonLine && (
             <p className="flex items-center gap-1.5 px-3.5 pb-2.5 text-xs text-muted-foreground">
-              <Lock className="size-3 shrink-0" aria-hidden />
+              <LockedIcon className="size-3 shrink-0" aria-hidden />
               <span>{reasonLine}</span>
             </p>
           )}

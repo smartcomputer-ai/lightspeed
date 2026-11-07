@@ -227,7 +227,7 @@
   * {
     @apply border-border outline-ring/50;
     }
-  svg:is(.lucide, .tabler-icon, [data-app-icon]) {
+  svg:is([data-icon-role], [data-universe-icon]) {
     zoom: var(--icon-scale);
     }
   body {

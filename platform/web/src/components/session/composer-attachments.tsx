@@ -1,4 +1,4 @@
-import { FileText, LoaderCircle, RotateCw, TriangleAlert, X } from "lucide-react";
+import { DocumentIcon, LoadingIcon, RemoveIcon, RetryIcon, WarningIcon } from "@/icons";
 import { attachmentLabel, formatBytes, type ComposerAttachment } from "@/lib/composer-attachments";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -44,10 +44,10 @@ function AttachmentChip({ item, disabled, onRemove, onRetry }: {
       <span className="relative flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted text-muted-foreground">
         {item.previewUrl
           ? <img src={item.previewUrl} alt="" className="size-full object-cover" />
-          : failed ? <TriangleAlert className="size-4 text-destructive" /> : <FileText className="size-4" />}
+          : failed ? <WarningIcon className="size-4 text-destructive" /> : <DocumentIcon className="size-4" />}
         {uploading && (
           <span className="absolute inset-0 flex items-center justify-center bg-background/70">
-            <LoaderCircle className="size-4 animate-spin" aria-hidden />
+            <LoadingIcon className="size-4 animate-spin" aria-hidden />
           </span>
         )}
       </span>
@@ -61,12 +61,12 @@ function AttachmentChip({ item, disabled, onRemove, onRetry }: {
         {failed && (
           <Button type="button" variant="ghost" size="icon-xs" aria-label={`Retry uploading ${item.name}`} title="Retry upload"
             disabled={disabled} onClick={() => onRetry(item.id)}>
-            <RotateCw />
+            <RetryIcon />
           </Button>
         )}
         <Button type="button" variant="ghost" size="icon-xs" aria-label={`Remove ${item.name}`} title="Remove"
           disabled={disabled} onClick={() => onRemove(item.id)}>
-          <X />
+          <RemoveIcon />
         </Button>
       </span>
     </li>

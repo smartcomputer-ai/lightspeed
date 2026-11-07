@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { CopiedIcon, CopyIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -40,7 +40,7 @@ export function CodeCopy({ code, title, label = "Copy", className }: { code: str
           variant="outline"
           onClick={() => copyText(code).then(() => setState("copied"), () => setState("failed"))}
         >
-          {state === "copied" ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
+          {state === "copied" ? <CopiedIcon data-icon="inline-start" /> : <CopyIcon data-icon="inline-start" />}
           {state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : label}
         </Button>
       </div>

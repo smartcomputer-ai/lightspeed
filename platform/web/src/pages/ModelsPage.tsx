@@ -1,7 +1,7 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { AddIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import { ReadError } from "@/components/read-error";
 import { LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
@@ -61,7 +61,7 @@ function Models({ universeId }: { universeId: string }) {
         description="Provider connections and default models for agents in this universe."
         actions={writable && (
           <Button onClick={() => setAddOpen(true)}>
-            <Plus data-icon="inline-start" />
+            <AddIcon data-icon="inline-start" />
             Add provider
           </Button>
         )}

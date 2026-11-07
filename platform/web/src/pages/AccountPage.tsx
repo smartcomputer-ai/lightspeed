@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { DarkThemeIcon, LightThemeIcon, SystemThemeIcon } from "@/icons";
 import { authClient, useLoginConfig, type SessionUser } from "@/auth";
 import { Button } from "@/components/ui/button";
 import {
@@ -182,10 +182,10 @@ function PasswordCard() {
 
 function ThemeCard() {
   const { theme, setTheme } = useTheme();
-  const options: { value: Theme; label: string; icon: typeof Sun }[] = [
-    { value: "light", label: "Light", icon: Sun },
-    { value: "dark", label: "Dark", icon: Moon },
-    { value: "system", label: "System", icon: Monitor },
+  const options: { value: Theme; label: string; icon: typeof LightThemeIcon }[] = [
+    { value: "light", label: "Light", icon: LightThemeIcon },
+    { value: "dark", label: "Dark", icon: DarkThemeIcon },
+    { value: "system", label: "System", icon: SystemThemeIcon },
   ];
 
   return (

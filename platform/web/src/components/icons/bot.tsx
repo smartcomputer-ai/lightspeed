@@ -23,7 +23,6 @@ export const BotIcon = forwardRef<SVGSVGElement, BotMarkProps>(
       strokeWidth={2}
       strokeLinecap="round"
       strokeLinejoin="round"
-      data-app-icon=""
       aria-hidden="true"
       {...props}
     >
@@ -56,7 +55,6 @@ export const BotFaceIcon = forwardRef<SVGSVGElement, BotMarkProps>(
       strokeWidth={2}
       strokeLinecap="round"
       strokeLinejoin="round"
-      data-app-icon=""
       aria-hidden="true"
       {...props}
     >

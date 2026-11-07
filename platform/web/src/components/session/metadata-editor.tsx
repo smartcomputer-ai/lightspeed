@@ -2,7 +2,7 @@
 /// freely; `rowsToMetadata` drops incomplete rows and the last duplicate key
 /// wins, which is exactly what the put will store.
 import { useEffect, useState } from "react";
-import { Plus, X } from "lucide-react";
+import { AddIcon, RemoveIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -109,7 +109,7 @@ export function MetadataEditor({
             disabled={disabled}
             onClick={() => onChange(rows.filter((_, i) => i !== index))}
           >
-            <X />
+            <RemoveIcon />
           </Button>
         </div>
       ))}
@@ -121,7 +121,7 @@ export function MetadataEditor({
           disabled={disabled || rows.length >= METADATA_MAX_ENTRIES}
           onClick={() => onChange([...rows, { key: "", value: "" }])}
         >
-          <Plus /> Add pair
+          <AddIcon /> Add pair
         </Button>
       </div>
     </div>

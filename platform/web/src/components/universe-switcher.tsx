@@ -2,7 +2,7 @@ import { slugify, universeSlugSchema } from "@lightspeed-ai/platform-shared";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { AddIcon, SelectedIcon, SwitcherIcon } from "@/icons";
 import { UniverseIcon } from "@/components/universe-icon";
 import { api, type Universe } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -75,7 +75,7 @@ export function UniverseSwitcher({
                   : "Lightspeed"}
               </span>
             </div>
-            <ChevronsUpDown className="ml-auto size-4" />
+            <SwitcherIcon className="ml-auto size-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent className="min-w-56" align="start">
             <DropdownMenuGroup>
@@ -88,7 +88,7 @@ export function UniverseSwitcher({
               >
                 <UniverseIcon icon={universe.icon} iconColor={universe.iconColor} className="size-6 rounded-md" />
                 <span className="truncate">{universe.name}</span>
-                {universe.id === active?.id && <Check className="ml-auto size-4" />}
+                {universe.id === active?.id && <SelectedIcon className="ml-auto size-4" />}
               </DropdownMenuItem>
             ))}
             {mine.length === 0 && (
@@ -98,7 +98,7 @@ export function UniverseSwitcher({
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => setCreateOpen(true)}>
-                  <Plus />
+                  <AddIcon />
                   New universe
                 </DropdownMenuItem>
               </>

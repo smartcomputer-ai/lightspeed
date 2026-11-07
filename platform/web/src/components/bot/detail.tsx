@@ -1,13 +1,7 @@
 import { useSessionCompaction } from "@/lib/sessions/compaction";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Activity,
-  ArrowUpRight,
-  ChevronDown,
-  ChevronRight,
-  RotateCcw,
-} from "lucide-react";
+import { ActivityIcon, BackIcon, DropdownCaretIcon, GoToIcon, ResetIcon } from "@/icons";
 import { NavLink, useNavigate, useSearchParams } from "react-router-dom";
 import { api, botLabel, type BotControllerSnapshot, type BotStateView, type BotView, type SessionView } from "@/api";
 import {
@@ -186,7 +180,7 @@ export function BotDetail({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex h-12 shrink-0 items-center gap-2.5 border-b px-4">
         <NavLink to={`/u/${slug}/bots`} className="md:hidden" aria-label="Back to bots">
-          <ChevronRight className="size-4 rotate-180" />
+          <BackIcon className="size-4" />
         </NavLink>
         <BotAvatar botId={bot.botId} size={26} />
         <span className="min-w-0 truncate text-sm font-semibold">{botLabel(bot)}</span>
@@ -266,7 +260,7 @@ export function BotDetail({
         {overflow.length > 0 && <OverflowTabs tabs={overflow} sessionHref={sessionHref} />}
         <span className="my-2.5 mx-1.5 w-px shrink-0 bg-border" aria-hidden />
         <TabLink to={`${base}/activity`} active={view === "activity"}>
-          <Activity className="size-4" />
+          <ActivityIcon className="size-4" />
           Activity
           {pending > 0 && (
             <span className="rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">{pending}</span>
@@ -334,7 +328,7 @@ function OverflowTabs({ tabs, sessionHref }: { tabs: ConversationTab[]; sessionH
         }
       >
         +{tabs.length}
-        <ChevronDown className="size-3.5" />
+        <DropdownCaretIcon className="size-3.5" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-96 min-w-64 overflow-y-auto">
         {threads.length > 0 && (
@@ -435,11 +429,11 @@ function ConversationMenu({
         open={{
           label: "Open on the Sessions page",
           href: `/u/${slug}/sessions/${encodeURIComponent(sessionId)}`,
-          icon: <ArrowUpRight />,
+          icon: <GoToIcon />,
         }}
         lifecycle={manage && managedHere && bot.closedAtMs == null ? (
           <DropdownMenuItem disabled={reset.isPending} onClick={() => setResetOpen(true)}>
-            <RotateCcw /> Reset {label}…
+            <ResetIcon /> Reset {label}…
           </DropdownMenuItem>
         ) : undefined}
       />

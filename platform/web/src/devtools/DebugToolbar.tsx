@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Bug, MessageSquareText, Palette, X } from "lucide-react";
+import { DebugIcon, DesignIcon, DismissIcon, FeedbackIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CodeCopy } from "./CodeCopy";
@@ -67,7 +67,7 @@ function Toolbar() {
           className="fixed right-4 bottom-4 z-[2147483000] flex items-center gap-1 rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg"
         >
           <span className="flex items-center gap-1.5 px-2 text-xs font-medium text-muted-foreground">
-            <Bug className="size-3.5" />
+            <DebugIcon className="size-3.5" />
             Debug
           </span>
           <Button
@@ -77,7 +77,7 @@ function Toolbar() {
             title="Pick an element to report (Esc cancels)"
             onClick={() => setPicking(!picking)}
           >
-            <MessageSquareText data-icon="inline-start" />
+            <FeedbackIcon data-icon="inline-start" />
             Feedback
           </Button>
           <Button
@@ -86,12 +86,12 @@ function Toolbar() {
             title={designActive ? "Edit design tokens (overrides active)" : "Edit design tokens"}
             onClick={() => window.open(designConfigurationUrl(), DESIGN_WINDOW_NAME, "popup,width=600,height=900")?.focus()}
           >
-            <Palette data-icon="inline-start" />
+            <DesignIcon data-icon="inline-start" />
             Design
             {designActive && <span className="size-1.5 rounded-full bg-blue-500" aria-label="overrides active" />}
           </Button>
           <Button size="icon-sm" variant="ghost" aria-label="Close debug toolbar (Ctrl+D)" title="Close (Ctrl+D)" onClick={() => show(false)}>
-            <X />
+            <DismissIcon />
           </Button>
         </div>
       )}

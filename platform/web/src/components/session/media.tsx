@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState } from "react";
-import { FileText, ImageOff } from "lucide-react";
+import { DocumentIcon, ImageUnavailableIcon } from "@/icons";
 import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/transcript-links";
 import type { TranscriptMedia } from "@/lib/sessions/transcript";
 import { cn } from "@/lib/utils";
@@ -82,7 +82,7 @@ export function MediaThumb({ media, className }: { media: TranscriptMedia; class
         title={title}
         aria-label={title}
       >
-        <ImageOff className="size-4" />
+        <ImageUnavailableIcon className="size-4" />
       </div>
     );
   }
@@ -106,7 +106,7 @@ export function DocumentChip({ media }: { media: TranscriptMedia }) {
   const label = media.name ?? media.handle;
   const body = (
     <>
-      <FileText className="size-3.5 shrink-0" />
+      <DocumentIcon className="size-3.5 shrink-0" />
       <span className="truncate">{label}</span>
     </>
   );

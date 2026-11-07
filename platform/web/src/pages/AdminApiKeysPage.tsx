@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Plus, RotateCw, ShieldOff } from "lucide-react";
+import { AddIcon, ApiKeyIcon, RevokeIcon, RotateSecretIcon } from "@/icons";
 import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/sdk";
 import { api, type Universe } from "@/api";
 import { GroupSummary, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
@@ -82,7 +82,7 @@ export function AdminApiKeysPage() {
         description="Every key of this deployment: what it reaches, which methods it may call, and whether it speaks for people."
         actions={
           <Button onClick={() => setCreateOpen(true)}>
-            <Plus data-icon="inline-start" />
+            <AddIcon data-icon="inline-start" />
             Create key
           </Button>
         }
@@ -91,7 +91,7 @@ export function AdminApiKeysPage() {
       {keys.error && <ReadError error={keys.error} loading={!keys.data} />}
       {revoke.error && <p className="mb-3 text-sm text-destructive">{revoke.error.message}</p>}
       {keys.data && allRows.length === 0 && (
-        <EmptyState icon={KeyRound} title="No API keys yet">
+        <EmptyState icon={ApiKeyIcon} title="No API keys yet">
           Keys reach the deployment or one universe and call the method groups they were minted
           with.
         </EmptyState>
@@ -133,7 +133,7 @@ export function AdminApiKeysPage() {
                     <TableActionsCell>
                       {!revoked && (
                         <Button variant="ghost" size="icon-sm" aria-label={`Rotate ${key.displayName ?? key.keyPrefix}`} onClick={() => setRotatingKey(key)}>
-                          <RotateCw />
+                          <RotateSecretIcon />
                         </Button>
                       )}
                       {!revoked && (
@@ -148,7 +148,7 @@ export function AdminApiKeysPage() {
                               />
                             }
                           >
-                            <ShieldOff />
+                            <RevokeIcon />
                           </AlertDialogTrigger>
                           <AlertDialogContent>
                             <AlertDialogHeader>

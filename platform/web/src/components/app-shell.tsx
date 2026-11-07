@@ -1,18 +1,7 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { useEffect, type ComponentType, type CSSProperties } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
-import {
-  ArrowLeft,
-  ScrollText,
-  Globe,
-  KeyRound,
-  Palette,
-  RadioTower,
-  ServerCog,
-  UserRound,
-  Users,
-  UserCog,
-} from "lucide-react";
+import { ApiKeyIcon, AppearanceIcon, AuditLogIcon, BackIcon, ChannelIcon, EnvironmentProviderIcon, SecurityIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
 import {
   Sidebar,
   SidebarContent,
@@ -75,7 +64,7 @@ function ModeHeader({ title }: { title: string }) {
       <SidebarMenuItem>
         <SidebarMenuButton size="lg" render={<Link to="/" />} tooltip="Back">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border">
-            <ArrowLeft className="size-4" />
+            <BackIcon className="size-4" />
           </div>
           <div className="grid flex-1 text-left leading-tight">
             <span className="truncate text-sm font-medium">{title}</span>
@@ -182,14 +171,14 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
               <SidebarGroupLabel>Platform admin</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  <NavItem to="/admin/users" icon={UserCog} label="Users" />
-                  <NavItem to="/admin/universes" icon={Globe} label="Universes" />
-                  <NavItem to="/admin/api-keys" icon={KeyRound} label="API keys" />
-                  <NavItem to="/admin/channels" icon={RadioTower} label="Channels" />
-                  <NavItem to="/admin/audit" icon={ScrollText} label="Audit log" />
+                  <NavItem to="/admin/users" icon={UserAdminIcon} label="Users" />
+                  <NavItem to="/admin/universes" icon={UniversesIcon} label="Universes" />
+                  <NavItem to="/admin/api-keys" icon={ApiKeyIcon} label="API keys" />
+                  <NavItem to="/admin/channels" icon={ChannelIcon} label="Channels" />
+                  <NavItem to="/admin/audit" icon={AuditLogIcon} label="Audit log" />
                   <NavItem
                     to="/admin/environment-providers"
-                    icon={ServerCog}
+                    icon={EnvironmentProviderIcon}
                     label="Environment providers"
                   />
                 </SidebarMenu>
@@ -203,19 +192,19 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
                 <SidebarMenu>
                   <SidebarMenuItem>
                     <SidebarMenuButton onClick={() => scrollToSection("profile")} tooltip="Profile">
-                      <UserRound />
+                      <UserIcon />
                       <span>Profile</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
                     <SidebarMenuButton onClick={() => scrollToSection("security")} tooltip="Security">
-                      <KeyRound />
+                      <SecurityIcon />
                       <span>Security</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
                     <SidebarMenuButton onClick={() => scrollToSection("appearance")} tooltip="Appearance">
-                      <Palette />
+                      <AppearanceIcon />
                       <span>Appearance</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

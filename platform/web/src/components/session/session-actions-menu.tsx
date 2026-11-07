@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ChevronDown, Minimize2, Ellipsis, LoaderCircle, Share2, SlidersHorizontal } from "lucide-react";
+import { CompactIcon, ConfigureIcon, DropdownCaretIcon, LoadingIcon, MoreIcon, ShareIcon } from "@/icons";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,7 +46,7 @@ export function SessionActionsMenu({
   const navigate = useNavigate();
   const compactItem = onCompact && (
     <DropdownMenuItem onClick={onCompact} disabled={Boolean(compactionLabel)}>
-      {compactionLabel ? <LoaderCircle className="animate-spin" /> : <Minimize2 />}
+      {compactionLabel ? <LoadingIcon className="animate-spin" /> : <CompactIcon />}
       {compactionLabel ?? "Compact context"}
     </DropdownMenuItem>
   );
@@ -73,9 +73,9 @@ export function SessionActionsMenu({
         }
       >
         {variant === "more" ? (
-          <Ellipsis />
+          <MoreIcon />
         ) : (
-          <ChevronDown className="size-3.5" />
+          <DropdownCaretIcon className="size-3.5" />
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -87,12 +87,12 @@ export function SessionActionsMenu({
             <DropdownMenuGroup>
               {onSettings && (
                 <DropdownMenuItem onClick={onSettings}>
-                  <SlidersHorizontal /> Session settings
+                  <ConfigureIcon /> Session settings
                 </DropdownMenuItem>
               )}
               {onShare && (
                 <DropdownMenuItem onClick={onShare}>
-                  <Share2 /> Share with universe…
+                  <ShareIcon /> Share with universe…
                 </DropdownMenuItem>
               )}
               {open && (

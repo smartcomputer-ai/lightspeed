@@ -1,4 +1,4 @@
-import { Ellipsis, LoaderCircle, Pause, Play, SlidersHorizontal } from "lucide-react";
+import { ConfigureIcon, LoadingIcon, MoreIcon, PauseIcon, ResumeIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -38,12 +38,12 @@ export function BotActionsMenu({
           />
         }
       >
-        {pause?.pending ? <LoaderCircle className="size-3.5 animate-spin" /> : <Ellipsis />}
+        {pause?.pending ? <LoadingIcon className="size-3.5 animate-spin" /> : <MoreIcon />}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80 max-w-[calc(100vw-1rem)]">
         <DropdownMenuGroup>
           <DropdownMenuItem onClick={onSettings}>
-            <SlidersHorizontal /> Bot settings
+            <ConfigureIcon /> Bot settings
           </DropdownMenuItem>
           {pause && (
             <DropdownMenuItem
@@ -53,7 +53,7 @@ export function BotActionsMenu({
                 ? "Schedules stop and events wait; nothing is lost."
                 : "Schedules and delivery resume."}
             >
-              {pause.enabled ? <Pause /> : <Play />}
+              {pause.enabled ? <PauseIcon /> : <ResumeIcon />}
               {pause.enabled ? "Pause bot" : "Resume bot"}
             </DropdownMenuItem>
           )}

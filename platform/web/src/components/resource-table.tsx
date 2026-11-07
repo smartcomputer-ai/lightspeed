@@ -1,5 +1,5 @@
 import { useRef, type ReactNode } from "react";
-import { ChevronRight, LoaderCircle } from "lucide-react";
+import { LoadingIcon, RowLinkIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableActionsCell, TableBody, TableCard, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -40,7 +40,7 @@ export function ResourceRow({ name, onOpen, children }: {
       <TableActionsCell>
         <Button ref={triggerRef} variant="ghost" size="icon-sm" className="text-muted-foreground"
           aria-label={`Details for ${name}`} aria-haspopup="dialog">
-          <ChevronRight aria-hidden="true" className="size-4" />
+          <RowLinkIcon aria-hidden="true" className="size-4" />
         </Button>
       </TableActionsCell>
     </TableRow>
@@ -89,7 +89,7 @@ export function ResourceStatusBadge({ status }: { status: ResourceStatusInfo }) 
       status.tone === "danger" && "border-destructive/50 text-destructive",
       status.tone === "neutral" && "text-muted-foreground",
     )}>
-      {status.tone === "pending" && <LoaderCircle aria-hidden="true" className="animate-spin motion-reduce:animate-none" />}
+      {status.tone === "pending" && <LoadingIcon aria-hidden="true" className="animate-spin motion-reduce:animate-none" />}
       {status.label}
     </Badge>
   );

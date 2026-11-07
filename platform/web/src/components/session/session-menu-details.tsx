@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { CopiedIcon, CopyIcon } from "@/icons";
 import {
   DropdownMenuGroup,
   DropdownMenuLabel,
@@ -49,7 +49,7 @@ export function MenuIdentity({ noun, id }: { noun: string; id: string }) {
               .catch(() => undefined);
           }}
         >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+          {copied ? <CopiedIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
         </button>
       </div>
     </DropdownMenuGroup>

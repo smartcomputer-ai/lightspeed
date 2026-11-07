@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Navigate } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { AddIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import { NewUniverseDialog } from "@/components/universe-switcher";
 import { CenteredNote } from "@/components/page";
@@ -38,7 +38,7 @@ export function HomeRedirect({ admin }: { admin: boolean }) {
         {admin && (
           <div>
             <Button onClick={() => setCreateOpen(true)}>
-              <Plus data-icon="inline-start" />
+              <AddIcon data-icon="inline-start" />
               New universe
             </Button>
             <NewUniverseDialog open={createOpen} onOpenChange={setCreateOpen} />

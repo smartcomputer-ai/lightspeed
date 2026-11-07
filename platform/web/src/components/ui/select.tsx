@@ -2,7 +2,7 @@ import * as React from "react"
 import { Select as SelectPrimitive } from "@base-ui/react/select"
 
 import { cn } from "@/lib/utils"
-import { IconSelector, IconCheck, IconChevronUp, IconChevronDown } from "@tabler/icons-react"
+import { CheckedIcon, ScrollDownIcon, ScrollUpIcon, SelectTriggerIcon } from "@/icons";
 
 /// Base UI's `Select.Value` renders the raw value unless the root knows the
 /// items' labels. Every call site here writes `<SelectItem value>{label}</SelectItem>`
@@ -86,7 +86,7 @@ function SelectTrigger({
       {children}
       <SelectPrimitive.Icon
         render={
-          <IconSelector className="pointer-events-none size-4 text-muted-foreground" />
+          <SelectTriggerIcon className="pointer-events-none size-4 text-muted-foreground" />
         }
       />
     </SelectPrimitive.Trigger>
@@ -170,7 +170,7 @@ function SelectItem({
           <span className="pointer-events-none absolute right-2 flex size-4 items-center justify-center" />
         }
       >
-        <IconCheck className="pointer-events-none" />
+        <CheckedIcon className="pointer-events-none" />
       </SelectPrimitive.ItemIndicator>
     </SelectPrimitive.Item>
   )
@@ -202,7 +202,7 @@ function SelectScrollUpButton({
       )}
       {...props}
     >
-      <IconChevronUp
+      <ScrollUpIcon
       />
     </SelectPrimitive.ScrollUpArrow>
   )
@@ -221,7 +221,7 @@ function SelectScrollDownButton({
       )}
       {...props}
     >
-      <IconChevronDown
+      <ScrollDownIcon
       />
     </SelectPrimitive.ScrollDownArrow>
   )

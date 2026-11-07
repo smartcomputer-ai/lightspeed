@@ -77,10 +77,10 @@ describe("design tokens", () => {
     }
   });
 
-  it("declares the icon scale and applies it to every icon library", () => {
+  it("declares the icon scale and applies it to every icon role", () => {
     const css = readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
     expect(css).toMatch(/--icon-scale: 1;/);
-    expect(css).toMatch(/svg:is\(\.lucide, \.tabler-icon, \[data-app-icon\]\) \{\s*zoom: var\(--icon-scale\);/);
+    expect(css).toMatch(/svg:is\(\[data-icon-role\], \[data-universe-icon\]\) \{\s*zoom: var\(--icon-scale\);/);
   });
 
   it("round-trips surface colors and leaves other colors custom", () => {

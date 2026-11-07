@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Code, Plus, RotateCcw, Search, Settings, Trash2 } from "lucide-react";
+import { AddIcon, DeleteIcon, ExportCodeIcon, ResetIcon, SearchIcon, SettingsIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -99,7 +99,7 @@ export function DesignConfigurationPage() {
           <div className="flex shrink-0 items-center gap-1.5">
             {changes > 0 && <Badge variant="secondary">{changes} changed</Badge>}
             <Button size="sm" variant="outline" onClick={() => setExportOpen(true)}>
-              <Code data-icon="inline-start" />
+              <ExportCodeIcon data-icon="inline-start" />
               Export CSS
             </Button>
             <Button size="sm" variant="ghost" disabled={isEmpty(overrides)} onClick={() => publish(EMPTY_OVERRIDES)}>
@@ -247,10 +247,10 @@ export function DesignConfigurationPage() {
             />
             <div className="flex flex-wrap items-center gap-4 pt-1 text-sm">
               {[
-                { Icon: Search, label: "Search" },
-                { Icon: Settings, label: "Settings" },
-                { Icon: Plus, label: "New" },
-                { Icon: Trash2, label: "Delete" },
+                { Icon: SearchIcon, label: "Search" },
+                { Icon: SettingsIcon, label: "Settings" },
+                { Icon: AddIcon, label: "New" },
+                { Icon: DeleteIcon, label: "Delete" },
               ].map(({ Icon, label }) => (
                 <span key={label} className="flex items-center gap-1.5">
                   <Icon className="size-4" style={{ zoom: valueOf("shared", "--icon-scale") }} />
@@ -369,7 +369,7 @@ function ResetButton({ changed, onReset, name }: { changed: boolean; onReset: ()
       className={cn(!changed && "invisible")}
       onClick={onReset}
     >
-      <RotateCcw />
+      <ResetIcon />
     </Button>
   );
 }
@@ -756,7 +756,7 @@ function ShadowEditor({ params, values, onChange }: {
         </div>
         <div>
           <Button size="sm" variant="ghost" disabled={!changed} onClick={() => onChange(DEFAULT_SHADOW)}>
-            <RotateCcw data-icon="inline-start" />
+            <ResetIcon data-icon="inline-start" />
             Reset shadows
           </Button>
         </div>

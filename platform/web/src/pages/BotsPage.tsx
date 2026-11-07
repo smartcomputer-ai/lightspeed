@@ -1,7 +1,7 @@
 import type { BotReadResponse } from "@lightspeed-ai/sdk";
 import { ReadError } from "@/components/read-error";
 import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { AddIcon, BotAvatarIcon } from "@/icons";
 import { NavLink, useParams } from "react-router-dom";
 import {
   api,
@@ -15,7 +15,6 @@ import { BotDetail, type BotTab } from "@/components/bot/detail";
 import { BotCreateDialog } from "@/pages/BotCreatePage";
 import { BotAvatar } from "@/components/bot/face";
 import { StatusDot, outcomeLabel, relativeTime, type BotTone } from "@/components/bot/status";
-import { BotFace } from "@/components/icons/bot";
 import { Button } from "@/components/ui/button";
 import { DetailPrompt, ListNote, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
@@ -66,7 +65,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
           />
         ) : (
           <DetailPrompt
-            icon={<BotFace size={40} className="text-muted-foreground/60" />}
+            icon={<BotAvatarIcon size={40} className="text-muted-foreground/60" />}
             create={create ? { label: "New bot", onClick: () => setCreateOpen(true) } : undefined}
           >
             Pick a bot{create ? ", or create one" : ""}.
@@ -160,7 +159,7 @@ function BotsPane({
             onClick={onCreate}
             aria-label="New bot"
           >
-            <Plus />
+            <AddIcon />
           </Button>
         )}
       </div>

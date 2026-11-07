@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { NavLink } from "react-router-dom";
-import { ChevronRight, File, FolderOpen } from "lucide-react";
+import { ExpandIcon, FileIcon, FolderIcon } from "@/icons";
 import type { VfsTreeEntry } from "@/api";
 import {
   WorkspaceActionsMenu,
@@ -177,7 +177,7 @@ function Entries({ entries, basePath, ...props }: EntriesProps) {
             props.activePath === path && "font-medium",
           )}
         >
-          <File className="size-3.5 shrink-0 text-muted-foreground" />
+          <FileIcon className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate">{name}</span>
         </NavLink>
         <WorkspaceActionsMenu
@@ -235,13 +235,13 @@ function Directory({
             setOpen((value) => !value);
           }}
         >
-          <ChevronRight
+          <ExpandIcon
             className={cn(
               "size-3.5 shrink-0 transition-transform",
               open && "rotate-90",
             )}
           />
-          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+          <FolderIcon className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate">{name}</span>
         </button>
         <WorkspaceActionsMenu

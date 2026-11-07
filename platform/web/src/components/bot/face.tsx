@@ -1,4 +1,4 @@
-import { BotFace } from "@/components/icons/bot";
+import { BotAvatarIcon } from "@/icons";
 import { cn } from "@/lib/utils";
 import { identityColor } from "@/lib/identity-colors";
 
@@ -32,7 +32,7 @@ export function BotAvatar({
       style={{ width: size, height: size, background: color ?? botColor(botId) }}
       aria-hidden
     >
-      <BotFace size={Math.round(size * 0.72)} />
+      <BotAvatarIcon size={Math.round(size * 0.72)} />
     </span>
   );
 }

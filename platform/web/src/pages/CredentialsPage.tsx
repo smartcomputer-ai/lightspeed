@@ -3,7 +3,7 @@ import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, KeyRound, LockKeyhole, Plus, ShieldOff } from "lucide-react";
+import { AddIcon, CredentialIcon, GitHubLogo, RevokeIcon, RowLinkIcon, SecretIcon } from "@/icons";
 import {
   api,
   type GitHubApp,
@@ -68,7 +68,6 @@ import {
   GitHubAppForm,
   GitHubAppStatusBadge,
 } from "@/components/credentials/github-app";
-import { GitHubLogo } from "@/components/icons/logos";
 import { isSubscriptionGrant } from "@/lib/subscriptions";
 import { useActiveUniverse } from "@/lib/universes";
 
@@ -156,12 +155,12 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
         actions={
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button />}>
-              <Plus data-icon="inline-start" />
+              <AddIcon data-icon="inline-start" />
               Add credential
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => setPasteOpen(true)}>
-                <KeyRound />
+                <SecretIcon />
                 Paste a token or secret
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setGitHubOpen(true)}>
@@ -186,7 +185,7 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
         <p className="mb-4 text-sm text-destructive">{revokeGrant.error.message}</p>
       )}
       {inventory.data && reusable.length === 0 && (
-        <EmptyState icon={LockKeyhole} title="No credentials yet">
+        <EmptyState icon={CredentialIcon} title="No credentials yet">
           Tokens, environment secrets and GitHub App installations live here, bound to
           environments, MCP servers and bot triggers without exposing their values.
         </EmptyState>
@@ -250,7 +249,7 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
                             />
                           }
                         >
-                          <ShieldOff />
+                          <RevokeIcon />
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
@@ -336,7 +335,7 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
                         <GitHubAppStatusBadge app={app} />
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        <ChevronRight className="size-4" />
+                        <RowLinkIcon className="size-4" />
                       </TableCell>
                     </TableRow>
                   );

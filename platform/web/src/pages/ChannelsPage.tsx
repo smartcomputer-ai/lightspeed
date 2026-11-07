@@ -3,7 +3,7 @@ import { ReadError } from "@/components/read-error";
 import { useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, RadioTower, Unplug } from "lucide-react";
+import { AddIcon, ChannelIcon, DisconnectIcon } from "@/icons";
 import {
   api,
   type ChannelAccountInput,
@@ -136,7 +136,7 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
         description="Connect messaging accounts to this universe, then route conversations from your bots."
         actions={
           <Button onClick={() => setConnectOpen(true)}>
-            <Plus data-icon="inline-start" />
+            <AddIcon data-icon="inline-start" />
             Connect channel
           </Button>
         }
@@ -154,7 +154,7 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
       {toggle.error && <p className="mb-4 text-sm text-destructive">{toggle.error.message}</p>}
 
       {accounts.data && accountRows.length === 0 ? (
-        <EmptyState icon={RadioTower} title="No messaging accounts yet">
+        <EmptyState icon={ChannelIcon} title="No messaging accounts yet">
           Telegram bots and WhatsApp numbers that bots talk through; their credentials are kept for
           you.
         </EmptyState>
@@ -277,7 +277,7 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
                                   />
                                 }
                               >
-                                <Unplug />
+                                <DisconnectIcon />
                               </AlertDialogTrigger>
                               <AlertDialogContent>
                                 <AlertDialogHeader>

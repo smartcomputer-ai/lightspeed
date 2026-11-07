@@ -1,5 +1,5 @@
-import { useMemo, useState, type ComponentType, type ReactNode } from "react";
-import { Bell, Bot, ChevronsUpDown, Copy, Inbox, Mail, Monitor, Moon, Plus, Search, Settings, Sun, Trash2 } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { AddIcon, BotIcon, CopyIcon, DarkThemeIcon, DeleteIcon, EmailIcon, InboxIcon, LightThemeIcon, NotificationIcon, SearchIcon, SettingsIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -90,14 +90,13 @@ import { EmptyState, PageHeader, SectionHeader } from "@/components/page";
 import { StatusDot, type BotTone } from "@/components/bot/status";
 import { useTheme, type Theme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
-import * as LucideIcons from "lucide-react";
-import * as TablerIcons from "@tabler/icons-react";
-import * as BotIcons from "@/components/icons/bot";
-import * as LogoIcons from "@/components/icons/logos";
-import { BotFaceIcon } from "@/components/icons/bot";
+import * as Icons from "@/icons";
+import type { IconComponent } from "@/icons";
+import ROLES_SOURCE from "@/icons/roles.ts?raw";
+import OWN_SOURCE from "./UiOverviewPage.tsx?raw";
 import { GROUP_ORDER, StepRow, groupStyle } from "@/components/session/tool-trace";
 import { UNIVERSE_NAV } from "@/components/universe-nav";
-import { collectIconUsage, type IconLibrary, type IconUsage } from "./icon-usage";
+import { collectRoleUsage, iconRoles, libraryGlyphs, type IconRole, type RoleGlyph } from "./icon-usage";
 
 /// Every shared UI component and its variations on one page, grouped by
 /// category, for reviewing the design system in both themes. Development
@@ -182,9 +181,9 @@ export function UiOverviewPage() {
 function ThemeSwitch() {
   const { theme, setTheme } = useTheme();
   const options: Array<{ value: Theme; label: string; icon: ReactNode }> = [
-    { value: "light", label: "Light", icon: <Sun /> },
-    { value: "dark", label: "Dark", icon: <Moon /> },
-    { value: "system", label: "System", icon: <Monitor /> },
+    { value: "light", label: "Light", icon: <LightThemeIcon /> },
+    { value: "dark", label: "Dark", icon: <DarkThemeIcon /> },
+    { value: "system", label: "System", icon: <SystemThemeIcon /> },
   ];
   return (
     <div className="flex h-fit gap-1 rounded-lg bg-muted p-1 shadow-md ring-1 ring-foreground/10" role="radiogroup" aria-label="Theme">
@@ -241,7 +240,7 @@ function TypographySection() {
   return (
     <Category id="typography">
       <Specimen title="Page and section headers" className="block">
-        <PageHeader title="Page title" description="A page description explains what lives here." actions={<Button><Plus data-icon="inline-start" />Add item</Button>} />
+        <PageHeader title="Page title" description="A page description explains what lives here." actions={<Button><AddIcon data-icon="inline-start" />Add item</Button>} />
         <SectionHeader title="Section title" description="A section description." actions={<Button variant="outline" size="sm">Action</Button>} />
       </Specimen>
       <Specimen title="Sizes" className="grid gap-2">
@@ -383,17 +382,17 @@ function ButtonsSection() {
         ))}
       </Specimen>
       <Specimen title="With icons">
-        <Button><Plus data-icon="inline-start" />New session</Button>
-        <Button variant="outline">Continue<ChevronsUpDown data-icon="inline-end" /></Button>
-        <Button variant="secondary" size="sm"><Copy data-icon="inline-start" />Copy</Button>
-        <Button variant="destructive"><Trash2 data-icon="inline-start" />Delete</Button>
+        <Button><AddIcon data-icon="inline-start" />New session</Button>
+        <Button variant="outline">Continue<SwitcherIcon data-icon="inline-end" /></Button>
+        <Button variant="secondary" size="sm"><CopyIcon data-icon="inline-start" />Copy</Button>
+        <Button variant="destructive"><DeleteIcon data-icon="inline-start" />Delete</Button>
       </Specimen>
       <Specimen title="Icon buttons">
         {ICON_SIZES.map((size) => (
-          <Button key={size} size={size} variant="outline" aria-label={`Settings ${size}`}><Settings /></Button>
+          <Button key={size} size={size} variant="outline" aria-label={`Settings ${size}`}><SettingsIcon /></Button>
         ))}
         {ICON_SIZES.map((size) => (
-          <Button key={`ghost-${size}`} size={size} variant="ghost" aria-label={`Bell ${size}`}><Bell /></Button>
+          <Button key={`ghost-${size}`} size={size} variant="ghost" aria-label={`Bell ${size}`}><NotificationIcon /></Button>
         ))}
       </Specimen>
       <Specimen title="States">
@@ -415,7 +414,7 @@ function BadgesSection() {
         {(["default", "secondary", "outline", "destructive", "ghost", "link"] as const).map((variant) => (
           <Badge key={variant} variant={variant}>{variant}</Badge>
         ))}
-        <Badge variant="secondary"><Bot data-icon="inline-start" />with icon</Badge>
+        <Badge variant="secondary"><BotIcon data-icon="inline-start" />with icon</Badge>
       </Specimen>
       <Specimen title="Status dots" note="components/bot/status">
         {TONES.map((tone) => (
@@ -446,7 +445,7 @@ function InputsSection() {
       </Specimen>
       <Specimen title="Input group" className="grid gap-3 sm:grid-cols-2">
         <InputGroup>
-          <InputGroupAddon><Search /></InputGroupAddon>
+          <InputGroupAddon><SearchIcon /></InputGroupAddon>
           <InputGroupInput placeholder="Search sessions" aria-label="Search sessions" />
         </InputGroup>
         <InputGroup>
@@ -454,10 +453,10 @@ function InputsSection() {
           <InputGroupAddon align="inline-end"><InputGroupText>.lightspeed.dev</InputGroupText></InputGroupAddon>
         </InputGroup>
         <InputGroup>
-          <InputGroupAddon><Mail /></InputGroupAddon>
+          <InputGroupAddon><EmailIcon /></InputGroupAddon>
           <InputGroupInput defaultValue="ada@example.com" aria-label="Email" />
           <InputGroupAddon align="inline-end">
-            <InputGroupButton aria-label="Copy"><Copy /></InputGroupButton>
+            <InputGroupButton aria-label="Copy"><CopyIcon /></InputGroupButton>
           </InputGroupAddon>
         </InputGroup>
         <InputGroup>
@@ -635,13 +634,13 @@ function MenusSection() {
       <Specimen title="Dropdown menu">
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="outline" />}>
-            Open menu<ChevronsUpDown data-icon="inline-end" />
+            Open menu<SwitcherIcon data-icon="inline-end" />
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-56" align="start">
             <DropdownMenuGroup>
               <DropdownMenuLabel>Session</DropdownMenuLabel>
-              <DropdownMenuItem><Copy />Duplicate<DropdownMenuShortcut>⌘D</DropdownMenuShortcut></DropdownMenuItem>
-              <DropdownMenuItem><Inbox />Move to inbox</DropdownMenuItem>
+              <DropdownMenuItem><CopyIcon />Duplicate<DropdownMenuShortcut>⌘D</DropdownMenuShortcut></DropdownMenuItem>
+              <DropdownMenuItem><InboxIcon />Move to inbox</DropdownMenuItem>
               <DropdownMenuItem disabled>Disabled item</DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
@@ -663,12 +662,12 @@ function MenusSection() {
               </DropdownMenuSubContent>
             </DropdownMenuSub>
             <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive"><Trash2 />Delete</DropdownMenuItem>
+            <DropdownMenuItem variant="destructive"><DeleteIcon />Delete</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="More actions" />}>
-            <Settings />
+            <SettingsIcon />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem>Rename</DropdownMenuItem>
@@ -717,7 +716,7 @@ function OverlaysSection() {
           <AlertDialogTrigger render={<Button variant="outline" />}>Small with media</AlertDialogTrigger>
           <AlertDialogContent size="sm">
             <AlertDialogHeader>
-              <AlertDialogMedia><Bell /></AlertDialogMedia>
+              <AlertDialogMedia><NotificationIcon /></AlertDialogMedia>
               <AlertDialogTitle>Enable notifications?</AlertDialogTitle>
               <AlertDialogDescription>Get a message when a bot needs approval.</AlertDialogDescription>
             </AlertDialogHeader>
@@ -837,7 +836,7 @@ function CardsSection() {
         </Card>
       </Specimen>
       <Specimen title="Empty state" note="components/page" className="block">
-        <EmptyState icon={Inbox} title="No sessions yet">Sessions you start or bots run appear here.</EmptyState>
+        <EmptyState icon={InboxIcon} title="No sessions yet">Sessions you start or bots run appear here.</EmptyState>
       </Specimen>
       <Specimen title="Separator">
         <div className="flex h-6 items-center gap-3 text-sm">
@@ -850,7 +849,7 @@ function CardsSection() {
       <Specimen title="Collapsible" className="block">
         <Collapsible className="grid max-w-md gap-2">
           <CollapsibleTrigger render={<Button variant="outline" size="sm" className="justify-self-start" />}>
-            Toggle details<ChevronsUpDown data-icon="inline-end" />
+            Toggle details<SwitcherIcon data-icon="inline-end" />
           </CollapsibleTrigger>
           <CollapsibleContent className="rounded-md border p-3 text-sm text-muted-foreground">
             Hidden detail that expands in place.
@@ -922,7 +921,7 @@ function DataSection() {
         </AvatarGroup>
       </Specimen>
       <Specimen title="Marker" note="default, separator, border" className="grid gap-4">
-        <Marker><MarkerIcon><Bot /></MarkerIcon><MarkerContent>Planner joined the session</MarkerContent></Marker>
+        <Marker><MarkerIcon><BotIcon /></MarkerIcon><MarkerContent>Planner joined the session</MarkerContent></Marker>
         <Marker variant="separator"><MarkerContent>Today</MarkerContent></Marker>
         <Marker variant="border"><MarkerContent>Context compacted</MarkerContent></Marker>
       </Specimen>
@@ -974,75 +973,99 @@ function MessagesSection() {
   );
 }
 
-/// The raw source of every app module, read for the icon imports. Vite
-/// inlines it into this development-only chunk.
-const APP_SOURCES = import.meta.glob<string>(
-  ["/src/**/*.{ts,tsx}", "!/src/devtools/**", "!/src/**/*.test.{ts,tsx}", "!/src/**/*.test-double.tsx"],
+/// The raw source of every module, read for which files import each icon
+/// role. Vite inlines it into this development-only chunk.
+const GLOBBED_SOURCES = import.meta.glob<string>(
+  ["/src/**/*.{ts,tsx}", "!/src/**/*.test.{ts,tsx}", "!/src/**/*.test-double.tsx"],
   { query: "?raw", import: "default", eager: true },
 );
+// The glob skips the module it is written in, so add this page by hand.
+const APP_SOURCES = { ...GLOBBED_SOURCES, "/src/devtools/UiOverviewPage.tsx": OWN_SOURCE };
 
-type IconComponent = ComponentType<{ className?: string; size?: number }>;
+const ROLE_COMPONENTS = Icons as unknown as Record<string, IconComponent | undefined>;
 
-const ICON_SETS: Record<IconLibrary, Record<string, unknown>> = {
-  lucide: LucideIcons,
-  tabler: TablerIcons,
-  local: { ...BotIcons, ...LogoIcons },
-};
-
-const LIBRARY_TITLES: Record<IconLibrary, { title: string; note: string }> = {
-  lucide: { title: "Lucide", note: "lucide-react, the app's icon set" },
-  tabler: { title: "Tabler", note: "@tabler/icons-react, inside the shared ui components" },
-  local: { title: "Own marks and logos", note: "src/components/icons" },
-};
-
-function iconComponent(library: IconLibrary, name: string): IconComponent | null {
-  const component = ICON_SETS[library][name];
-  return typeof component === "function" || (typeof component === "object" && component !== null)
-    ? (component as IconComponent)
-    : null;
+interface RoleUsage extends IconRole, RoleGlyph {
+  files: string[];
 }
 
+/// The source of the active library module, found by its `name`.
+const LIBRARY_SOURCE =
+  Object.entries(APP_SOURCES).find(
+    ([file, source]) => file.startsWith("/src/icons/") && source.includes(`name: "${Icons.ICON_LIBRARY}"`),
+  )?.[1] ?? "";
+
 function IconsSection() {
-  const usage = useMemo(
-    () => collectIconUsage(APP_SOURCES).filter((icon) => iconComponent(icon.library, icon.name)),
-    [],
-  );
+  const roles = useMemo(() => {
+    const usage = collectRoleUsage(APP_SOURCES);
+    const glyphs = libraryGlyphs(LIBRARY_SOURCE);
+    return iconRoles(ROLES_SOURCE)
+      .filter((role) => ROLE_COMPONENTS[role.role])
+      .map((role): RoleUsage => ({
+        ...role,
+        ...(glyphs.get(role.role) ?? { glyph: "?", library: "?" }),
+        files: usage.get(role.role) ?? [],
+      }));
+  }, []);
   const [query, setQuery] = useState("");
-  const shown = usage.filter((icon) => icon.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const needle = query.trim().toLowerCase();
+  const shown = roles.filter((role) => `${role.role} ${role.glyph}`.toLowerCase().includes(needle));
+  const sections = [...new Set(roles.map((role) => role.section))];
+  const glyphs = new Set(roles.map((role) => `${role.library}:${role.glyph}`)).size;
   return (
     <Category
       id="icons"
-      description={`Every icon the app imports (${usage.length}), read from the source. Click one to see the files that use it.`}
+      description={`The ${roles.length} icon roles declared in src/icons/roles.ts, drawn by the ${Icons.ICON_LIBRARY} library with ${glyphs} distinct icons. Components import roles, never the libraries. Click one to see the files that use it.`}
     >
       <Input
         value={query}
         onChange={(event) => setQuery(event.target.value)}
-        placeholder="Filter icons"
+        placeholder="Filter by role or icon"
         aria-label="Filter icons"
         className="max-w-xs"
       />
-      {(["lucide", "tabler", "local"] as const).map((library) => {
-        const icons = shown.filter((icon) => icon.library === library);
+      {sections.map((section) => {
+        const icons = shown.filter((role) => role.section === section);
         if (icons.length === 0) return null;
         return (
           <Specimen
-            key={library}
-            title={`${LIBRARY_TITLES[library].title} (${icons.length})`}
-            note={LIBRARY_TITLES[library].note}
-            className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2"
+            key={section}
+            title={`${section} (${icons.length})`}
+            className="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-2"
           >
-            {icons.map((icon) => (
-              <IconTile key={`${icon.library}:${icon.name}`} icon={icon} />
+            {icons.map((role) => (
+              <IconTile key={role.role} icon={role} />
             ))}
           </Specimen>
         );
       })}
+      {!needle && (
+        <Specimen
+          title={`Universe icons (${Object.keys(Icons.UNIVERSE_ICON_CHOICES).length})`}
+          note="Picked by name for each universe"
+          className="grid grid-cols-[repeat(auto-fill,minmax(6rem,1fr))] gap-2"
+        >
+          {Object.entries(Icons.UNIVERSE_ICON_CHOICES).map(([name, Icon]) => (
+            <span key={name} className="grid justify-items-center gap-1.5 rounded-lg border px-2 py-3">
+              <Icon className="size-5" />
+              <span className="font-mono text-[11px]">{name}</span>
+            </span>
+          ))}
+        </Specimen>
+      )}
     </Category>
   );
 }
 
-function IconTile({ icon }: { icon: IconUsage }) {
-  const Icon = iconComponent(icon.library, icon.name)!;
+const LIBRARY_LABELS: Record<string, string> = {
+  "lucide-react": "lucide",
+  "@tabler/icons-react": "tabler",
+  "@/components/icons/bot": "own",
+  "@/components/icons/logos": "own",
+};
+
+function IconTile({ icon }: { icon: RoleUsage }) {
+  const Icon = ROLE_COMPONENTS[icon.role]!;
+  const library = LIBRARY_LABELS[icon.library] ?? icon.library;
   return (
     <Popover>
       <PopoverTrigger
@@ -1053,22 +1076,30 @@ function IconTile({ icon }: { icon: IconUsage }) {
           />
         }
       >
-        <Icon className="size-5" size={20} />
-        <span className="w-full truncate font-mono text-[11px]" title={icon.name}>{icon.name}</span>
-        <span className="text-[11px] text-muted-foreground">
-          {icon.files.length} {icon.files.length === 1 ? "file" : "files"}
+        <Icon className="size-5" />
+        <span className="w-full truncate font-mono text-[11px]" title={icon.role}>{icon.role.replace(/Icon$/, "")}</span>
+        <span className="w-full truncate text-[11px] text-muted-foreground" title={`${icon.glyph} from ${icon.library}`}>
+          {icon.glyph} · {library}
+        </span>
+        <span className={cn("text-[11px]", icon.files.length ? "text-muted-foreground" : "text-warning")}>
+          {icon.files.length === 0 ? "unused" : `${icon.files.length} ${icon.files.length === 1 ? "file" : "files"}`}
         </span>
       </PopoverTrigger>
       <PopoverContent className="grid gap-2 p-3">
         <p className="flex items-center gap-2 text-sm font-medium">
-          <Icon className="size-4" size={16} />
-          {icon.name}
+          <Icon className="size-4" />
+          <span className="font-mono">{icon.role}</span>
         </p>
-        <ul className="grid gap-0.5">
-          {icon.files.map((file) => (
-            <li key={file} className="truncate font-mono text-[11px] text-muted-foreground" title={file}>{file}</li>
-          ))}
-        </ul>
+        <p className="text-xs text-muted-foreground">{icon.glyph} from {icon.library}</p>
+        {icon.files.length ? (
+          <ul className="grid gap-0.5">
+            {icon.files.map((file) => (
+              <li key={file} className="truncate font-mono text-[11px] text-muted-foreground" title={file}>{file}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-muted-foreground">No module imports this role.</p>
+        )}
       </PopoverContent>
     </Popover>
   );
@@ -1087,9 +1118,9 @@ const STEP_EXAMPLES: Array<{ group: string; entity: string; verb: string; target
   { group: "mcp", entity: "MCP tool", verb: "GitHub", target: "create_issue" },
   { group: "agent", entity: "Delegate tool", verb: "Delegate", target: "reviewer" },
   { group: "agent", entity: "Spawn tool", verb: "Spawn", target: "test-writer" },
-  { group: "agent", entity: "Await sub-agent", verb: "Await", target: "test-writer", icon: LucideIcons.Hourglass },
+  { group: "agent", entity: "Await sub-agent", verb: "Await", target: "test-writer", icon: Icons.AwaitToolIcon },
   { group: "bot", entity: "Bot emit", verb: "Emit", target: "to implementer" },
-  { group: "bot", entity: "Bot emit to self", verb: "Emit", target: "to self", icon: LucideIcons.Repeat },
+  { group: "bot", entity: "Bot emit to self", verb: "Emit", target: "to self", icon: Icons.EmitToSelfIcon },
   { group: "bot", entity: "Bot brief", verb: "Update brief", target: "Release planner" },
   { group: "message", entity: "Channel send", verb: "Send", target: "#releases" },
   { group: "message", entity: "Channel skip", verb: "Skip", target: "no reply needed" },
@@ -1104,23 +1135,23 @@ interface PlainEntity {
 
 /// Session resources as the resource strip and setup editor show them.
 const RESOURCE_ENTITIES: PlainEntity[] = [
-  { entity: "Environment", icon: LucideIcons.Server, source: "session/session-resources.tsx" },
-  { entity: "Workspace", icon: LucideIcons.FolderOpen, source: "session/session-resources.tsx" },
-  { entity: "Tools", icon: LucideIcons.Wrench, source: "session/session-resources.tsx" },
-  { entity: "Sub-agents", icon: LucideIcons.Network, source: "session/session-resources.tsx" },
-  { entity: "Code mode", icon: LucideIcons.Code2, source: "session/session-resources.tsx" },
-  { entity: "Web", icon: LucideIcons.Globe2, source: "session/session-resources.tsx" },
-  { entity: "Timers", icon: LucideIcons.Clock3, source: "session/session-resources.tsx" },
+  { entity: "Environment", icon: Icons.EnvironmentIcon, source: "session/session-resources.tsx" },
+  { entity: "Workspace", icon: Icons.WorkspaceIcon, source: "session/session-resources.tsx" },
+  { entity: "Tools", icon: Icons.ToolsIcon, source: "session/session-resources.tsx" },
+  { entity: "Sub-agents", icon: Icons.SubAgentIcon, source: "session/session-resources.tsx" },
+  { entity: "Code mode", icon: Icons.CodeModeIcon, source: "session/session-resources.tsx" },
+  { entity: "Web", icon: Icons.WebIcon, source: "session/session-resources.tsx" },
+  { entity: "Timers", icon: Icons.TimerIcon, source: "session/session-resources.tsx" },
 ];
 
 /// Bot trigger kinds, as the trigger picker shows them.
 const TRIGGER_ENTITIES: PlainEntity[] = [
-  { entity: "Schedule", icon: LucideIcons.CalendarClock, source: "bot/triggers.tsx" },
-  { entity: "Webhook", icon: LucideIcons.Webhook, source: "bot/triggers.tsx" },
-  { entity: "Chat account", icon: LucideIcons.MessageCircle, source: "bot/triggers.tsx" },
-  { entity: "Other bots", icon: LucideIcons.Inbox, source: "bot/triggers.tsx" },
-  { entity: "Check a URL", icon: LucideIcons.RefreshCw, source: "bot/triggers.tsx" },
-  { entity: "Run a command", icon: LucideIcons.Terminal, source: "bot/triggers.tsx" },
+  { entity: "Schedule", icon: Icons.ScheduleIcon, source: "bot/triggers.tsx" },
+  { entity: "Webhook", icon: Icons.WebhookIcon, source: "bot/triggers.tsx" },
+  { entity: "Chat account", icon: Icons.ChatTriggerIcon, source: "bot/triggers.tsx" },
+  { entity: "Other bots", icon: Icons.InboxIcon, source: "bot/triggers.tsx" },
+  { entity: "Check a URL", icon: Icons.PollIcon, source: "bot/triggers.tsx" },
+  { entity: "Run a command", icon: Icons.CommandIcon, source: "bot/triggers.tsx" },
 ];
 
 /// The universe's sections, straight from the sidebar definition.
@@ -1129,7 +1160,7 @@ const NAV_ENTITIES: PlainEntity[] = UNIVERSE_NAV.flatMap((group) =>
 );
 
 function EntitiesSection() {
-  const Brain = LucideIcons.Brain;
+  const Brain = Icons.ThinkingIcon;
   return (
     <Category
       id="entities"
@@ -1176,8 +1207,8 @@ function EntitiesSection() {
       <PlainEntities title="Bot triggers" note="What starts a bot" entities={TRIGGER_ENTITIES} />
       <PlainEntities
         title="Universe sections"
-        note="The sidebar; Bots uses the bot face mark"
-        entities={NAV_ENTITIES.map((item) => (item.entity === "Bots" ? { ...item, icon: BotFaceIcon as IconComponent } : item))}
+        note="The sidebar"
+        entities={NAV_ENTITIES}
       />
     </Category>
   );

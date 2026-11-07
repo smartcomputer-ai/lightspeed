@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import { openEnvironmentsQuery } from "@/lib/environments";
 import type { McpServerOption, WorkspaceOption } from "@/components/session/session-config-editor";
-import { Clock3, Code2, FolderOpen, Globe2, Network, Server, Settings2, Wrench, type LucideIcon } from "lucide-react";
+import { CodeModeIcon, ConfigureIcon, EnvironmentIcon, SubAgentIcon, TimerIcon, ToolsIcon, WebIcon, WorkspaceIcon, type IconComponent } from "@/icons";
 import { sessionResources, type ResourceTone, type SessionResources } from "@/lib/sessions/session-resources";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -82,7 +82,7 @@ export function SessionResourceChips({ resources, slug, onConfigure }: {
     <span className="flex min-w-0 flex-wrap items-center gap-1" aria-label="Session resources">
       {environments && (
         <Chip
-          icon={Server}
+          icon={EnvironmentIcon}
           label={environments.active?.label ?? (environments.items.length ? "No active environment" : "No environment")}
           tone={environments.active?.tone}
           muted={!environments.active}
@@ -107,7 +107,7 @@ export function SessionResourceChips({ resources, slug, onConfigure }: {
       )}
       {files && (
         <Chip
-          icon={FolderOpen}
+          icon={WorkspaceIcon}
           label={files.workspaces.length === 1 ? files.workspaces[0]!.label : files.workspaces.length ? plural(files.workspaces.length, "workspace") : "No workspaces"}
           tone={files.workspaces.some((workspace) => workspace.missing) ? "problem" : undefined}
           muted={files.workspaces.length === 0}
@@ -132,7 +132,7 @@ export function SessionResourceChips({ resources, slug, onConfigure }: {
       )}
       {mcp && (
         <Chip
-          icon={Wrench}
+          icon={ToolsIcon}
           label={mcp.servers.length === 1 ? mcp.servers[0]!.label : mcp.servers.length ? plural(mcp.servers.length, "MCP server") : "No MCP servers"}
           tone={mcp.servers.length && worst(mcp.servers.map((server) => server.tone)) !== "ok" ? worst(mcp.servers.map((server) => server.tone)) : undefined}
           muted={mcp.servers.length === 0}
@@ -155,7 +155,7 @@ export function SessionResourceChips({ resources, slug, onConfigure }: {
         </Chip>
       )}
       {agents && (
-        <Chip icon={Network} label={plural(agents.profiles.length, "agent")} muted={agents.profiles.length === 0} title="Sub-agent profiles">
+        <Chip icon={SubAgentIcon} label={plural(agents.profiles.length, "agent")} muted={agents.profiles.length === 0} title="Sub-agent profiles">
           <Heading title="Sub-agent profiles" detail="Profiles the agent may run as sub-agents." />
           {agents.profiles.length === 0
             ? <Empty>No profiles are listed.</Empty>
@@ -170,14 +170,14 @@ export function SessionResourceChips({ resources, slug, onConfigure }: {
         </Chip>
       )}
       {codeMode && (
-        <Chip icon={Code2} label="Code mode" title="Code mode">
+        <Chip icon={CodeModeIcon} label="Code mode" title="Code mode">
           <Heading title="Code mode" detail="The agent may compose its available tools with JavaScript." />
           <Note>Ordinary tool calls remain available alongside code execution.</Note>
           {footer()}
         </Chip>
       )}
       {web && (
-        <Chip icon={Globe2} label={web.search && web.fetch ? "Web" : web.search ? "Web search" : web.fetch ? "Web fetch" : "Web"} title="Web">
+        <Chip icon={WebIcon} label={web.search && web.fetch ? "Web" : web.search ? "Web search" : web.fetch ? "Web fetch" : "Web"} title="Web">
           <Heading title="Web" detail="Independent of MCP servers and the environment's network." />
           <Row primary="Search" secondary={web.search ? "Enabled" : "Off"} tone={web.search ? "ok" : "idle"} />
           <Row primary="Fetch pages" secondary={web.fetch ? "Enabled" : "Off"} tone={web.fetch ? "ok" : "idle"} />
@@ -185,7 +185,7 @@ export function SessionResourceChips({ resources, slug, onConfigure }: {
         </Chip>
       )}
       {timers && (
-        <Chip icon={Clock3} label="Timers" title="Timers">
+        <Chip icon={TimerIcon} label="Timers" title="Timers">
           <Heading title="Timers" detail="The agent may wait, sleep, and await delayed work." />
           {footer()}
         </Chip>
@@ -199,7 +199,7 @@ function sources(instructions: boolean, skills: boolean): string {
 }
 
 function Chip({ icon: Icon, label, tone, muted, title, children }: {
-  icon: LucideIcon;
+  icon: IconComponent;
   label: string;
   tone?: ResourceTone;
   muted?: boolean;
@@ -276,7 +276,7 @@ function Footer({ onConfigure, page }: { onConfigure?: () => void; page?: { to: 
     <div className="mt-1 flex items-center gap-2 border-t px-2 pt-1.5 pb-0.5 text-xs">
       {onConfigure && (
         <button type="button" onClick={onConfigure} className="inline-flex items-center gap-1 font-medium hover:underline">
-          <Settings2 className="size-3" aria-hidden />
+          <ConfigureIcon className="size-3" aria-hidden />
           Change in session settings
         </button>
       )}
