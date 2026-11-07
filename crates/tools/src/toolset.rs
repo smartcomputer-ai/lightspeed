@@ -671,6 +671,7 @@ mod tests {
                 "cmd",
                 "login",
                 "max_output_tokens",
+                "shell",
                 "tty",
                 "workdir",
                 "yield_time_ms"
@@ -704,6 +705,7 @@ mod tests {
                 "dangerouslyDisableSandbox",
                 "description",
                 "run_in_background",
+                "shell",
                 "timeout"
             ]
         );
@@ -840,7 +842,14 @@ mod tests {
         assert_eq!(optional_tool_names(&toolset), vec!["exec_command"]);
         assert_eq!(
             property_names(&input_schema(&toolset, "exec_command")),
-            ["cmd", "login", "max_output_tokens", "timeout_ms", "workdir"]
+            [
+                "cmd",
+                "login",
+                "max_output_tokens",
+                "shell",
+                "timeout_ms",
+                "workdir"
+            ]
         );
         assert_eq!(
             toolset

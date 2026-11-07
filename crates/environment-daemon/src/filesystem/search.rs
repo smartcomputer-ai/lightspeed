@@ -434,7 +434,7 @@ mod tests {
         let confinement = Arc::new(Confinement::new(host.clone(), host.join(".state")).unwrap());
         Fixture {
             _temp: temp,
-            root: EnvironmentPath::new(host.to_str().unwrap()).unwrap(),
+            root: confinement.root_path().clone(),
             host,
             confinement,
         }

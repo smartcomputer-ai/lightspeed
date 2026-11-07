@@ -19,6 +19,7 @@ if [[ ! "$LIGHTSPEED_ENVD_TARGET" =~ -linux-musl$ ]]; then
   exit 1
 fi
 grep -F "rustup target add $LIGHTSPEED_ENVD_TARGET" release/build-env.Dockerfile >/dev/null
+test "$LIGHTSPEED_ENVD_TARGETS" = "$LIGHTSPEED_ENVD_TARGET,x86_64-pc-windows-msvc"
 grep -F "$LIGHTSPEED_RELEASE_BUILD_BASE_IMAGE" release/build-env.Dockerfile >/dev/null
 node -e '
   const fs = require("node:fs");

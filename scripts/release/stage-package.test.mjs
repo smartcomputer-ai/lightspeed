@@ -64,7 +64,10 @@ test('staged Configurator installs the SDK production graph from its lockfile of
   });
   execFileSync(process.execPath, [stageScript, 'configurator', config, '0.3.0', 'a'.repeat(40), clientLockPath]);
   const lockBeforeInstall = readFileSync(join(config, 'package-lock.json'), 'utf8');
-  execFileSync('npm', ['ci', '--omit=dev', '--offline', '--ignore-scripts', '--no-audit', '--cache', join(root, 'cache')],
+  const npmArgs = ['ci', '--omit=dev', '--offline', '--ignore-scripts', '--no-audit', '--cache', join(root, 'cache')];
+  // Git Bash executes npm's Windows shim while preserving separate arguments.
+  execFileSync(process.platform === 'win32' ? 'bash' : 'npm',
+    process.platform === 'win32' ? ['-c', 'exec npm "$@"', 'npm', ...npmArgs] : npmArgs,
     { cwd: config, stdio: 'pipe' });
   assert.equal(readFileSync(join(config, 'package-lock.json'), 'utf8'), lockBeforeInstall);
   const result = execFileSync(process.execPath,

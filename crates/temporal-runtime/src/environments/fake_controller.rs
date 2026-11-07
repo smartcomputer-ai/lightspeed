@@ -499,6 +499,9 @@ fn data_initialize(protocol_version: u32) -> InitializeResponse {
         ))
         .expect("valid daemon instance id"),
         server_info: implementation("lightspeed-fake-envd"),
+        platform: environment_protocol::data::platform::PlatformFacts::without_shells(
+            environment_protocol::data::platform::OperatingSystem::Linux,
+        ),
         capabilities: DataCapabilities::default(),
         limits: DataLimits {
             max_concurrent_requests: MIN_CONCURRENT_REQUESTS,

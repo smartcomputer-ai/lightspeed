@@ -73,7 +73,7 @@ tar -tzf dist/runtime/platform-workers.tar.gz > "$platform_worker_files"
 grep -Eq '^\./node_modules/baileys/' "$platform_worker_files"
 
 (cd dist && sha256sum --check checksums.txt)
-scripts/release/verify-manifest.mjs
+scripts/release/verify-manifest.mjs "$@"
 
 # The packaged daemon must reach TLS on its own: a workspace build links two
 # rustls providers, and a client config that relied on the process default

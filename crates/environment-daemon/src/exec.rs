@@ -18,20 +18,31 @@ pub(crate) mod job_store;
 pub(crate) mod log;
 pub(crate) mod outcome;
 pub(crate) mod spawn_record;
+#[cfg(windows)]
+mod windows;
+#[cfg(all(test, windows))]
+mod windows_tests;
 
-use std::{collections::BTreeMap, path::PathBuf, process::Stdio};
+#[cfg(not(windows))]
+use std::process::Stdio;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use environment_protocol::{
     bytes::SecretString,
     data::exec::{CommandSpec, ExecInput, PtySize},
     error::ProtocolError,
 };
+#[cfg(not(windows))]
 use portable_pty::{CommandBuilder, native_pty_system};
+#[cfg(not(windows))]
 use tokio::process::Command;
 
-use crate::{process_group, redaction::redactions_for_secret_env};
+#[cfg(not(windows))]
+use crate::process_group;
+use crate::redaction::redactions_for_secret_env;
 
 pub(crate) use execution::{AfterExit, ExecOptions, Execution, OutputSink};
+#[cfg(not(windows))]
 use input::{Input, InputSink};
 
 /// Checks a command before anything runs. `field` is the wire path of the
@@ -79,6 +90,21 @@ pub(crate) fn validate_command(spec: &CommandSpec, field: &str) -> Result<(), Pr
             ));
         }
     }
+    #[cfg(windows)]
+    {
+        let names: Vec<_> = spec.env.keys().chain(spec.secret_env.keys()).collect();
+        for (index, name) in names.iter().enumerate() {
+            if names[..index]
+                .iter()
+                .any(|other| windows::same_env_name(name, other))
+            {
+                return Err(ProtocolError::invalid_field(
+                    format!("{field}.env"),
+                    "Windows environment variable names collide ignoring case",
+                ));
+            }
+        }
+    }
     if spec.timeout_ms == Some(0) {
         return Err(ProtocolError::invalid_field(
             format!("{field}.timeoutMs"),
@@ -96,6 +122,39 @@ fn validate_env_name(name: &str, field: &str) -> Result<(), ProtocolError> {
         ));
     }
     Ok(())
+}
+
+#[cfg(windows)]
+pub(crate) fn pin_cwd(
+    confinement: &crate::filesystem::Confinement,
+    requested: Option<&environment_protocol::paths::EnvironmentPath>,
+    default: &std::path::Path,
+) -> Result<crate::filesystem::PinnedDirectory, ProtocolError> {
+    let path = match requested {
+        Some(path) => path.clone(),
+        None => {
+            // The daemon's trusted default can have a short-name alias or a
+            // canonical Win32 prefix. Normalize it before wire conversion;
+            // explicit client paths still pass through confinement unchanged.
+            let canonical = default.canonicalize().map_err(|error| {
+                ProtocolError::process_failed(format!("resolve default working directory: {error}"))
+            })?;
+            let native =
+                crate::windows_security::local_drive_path(&canonical).map_err(|error| {
+                    ProtocolError::process_failed(format!(
+                        "resolve default working directory: {error}"
+                    ))
+                })?;
+            environment_protocol::paths::EnvironmentPath::from_native(
+                native.to_str().ok_or_else(|| {
+                    ProtocolError::invalid_field("cwd", "working directory is not Unicode")
+                })?,
+                environment_protocol::paths::PathConvention::Windows,
+            )
+            .map_err(|error| ProtocolError::invalid_field("cwd", error.to_string()))?
+        }
+    };
+    confinement.pin_directory(&path)
 }
 
 /// A validated command with its working directory resolved, ready to
@@ -138,13 +197,19 @@ impl PreparedCommand {
         input_queue_bytes: u64,
     ) -> Result<Execution<S>, ProtocolError> {
         let redactions = redactions_for_secret_env(&self.secret_env);
-        if let Some(size) = self.pty {
-            self.spawn_pty(size, sink, options, redactions, input_queue_bytes)
-        } else {
-            self.spawn_pipes(sink, options, redactions, input_queue_bytes)
+        #[cfg(windows)]
+        return windows::spawn(self, sink, options, redactions, input_queue_bytes);
+        #[cfg(not(windows))]
+        {
+            if let Some(size) = self.pty {
+                self.spawn_pty(size, sink, options, redactions, input_queue_bytes)
+            } else {
+                self.spawn_pipes(sink, options, redactions, input_queue_bytes)
+            }
         }
     }
 
+    #[cfg(not(windows))]
     fn spawn_pipes<S: OutputSink>(
         self,
         sink: S,
@@ -196,6 +261,7 @@ impl PreparedCommand {
         ))
     }
 
+    #[cfg(not(windows))]
     fn spawn_pty<S: OutputSink>(
         self,
         size: PtySize,
@@ -259,6 +325,39 @@ impl PreparedCommand {
         Ok(Execution::start_pty(
             pid, child, master, reader, input, sink, redactions, options,
         ))
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_script<'a>(unix: &'a str, windows: &'a str) -> &'a str {
+    if cfg!(windows) { windows } else { unix }
+}
+
+#[cfg(all(test, windows))]
+pub(crate) fn test_native_command(mode: &str) -> CommandSpec {
+    CommandSpec {
+        argv: windows_tests::arguments(),
+        cwd: None,
+        env: BTreeMap::from([(windows_tests::MODE.into(), mode.into())]),
+        secret_env: BTreeMap::new(),
+        input: ExecInput::None {},
+        timeout_ms: Some(10_000),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_shell_argv(script: &str) -> Vec<String> {
+    if cfg!(windows) {
+        vec![
+            "powershell.exe".into(),
+            "-NoLogo".into(),
+            "-NoProfile".into(),
+            "-NonInteractive".into(),
+            "-Command".into(),
+            script.into(),
+        ]
+    } else {
+        vec!["/bin/sh".into(), "-c".into(), script.into()]
     }
 }
 

@@ -21,9 +21,13 @@
 //!   `notFound`, and graceful `terminate`;
 //! - `job/*` (when the family is present): `requestId` replay versus
 //!   `jobIdInUse`, per-entry `notFound`, and byte-exact paging.
+//! - `transfer/*` when advertised: capture, chunked file publication,
+//!   stale-version rejection at commit, and receipt replay.
 //!
 //! The suite works in a fresh directory below `work_directory` and removes
-//! it at the end. Commands run through `/bin/sh`.
+//! it at the end. Command fixtures use `/bin/sh` on POSIX or native Windows
+//! PowerShell on Windows, selected from the remote path convention. Windows
+//! symlink checks require the test account's symlink creation privilege.
 //!
 //! ```no_run
 //! # async fn example(client: environment_client::DataClient) {
@@ -65,9 +69,11 @@ use environment_protocol::{
     handshake::Plane,
     ids::{JobId, JobRequestId, ProcessId},
     limits::MIN_CONCURRENT_REQUESTS,
-    paths::{EnvironmentPath, TreePath},
+    paths::{EnvironmentPath, PathConvention, TreePath},
 };
 use thiserror::Error;
+
+mod transfers;
 
 /// What to run the suite against.
 #[derive(Clone)]
@@ -229,6 +235,18 @@ pub async fn run(suite: &DataConformance) -> DataConformanceReport {
     );
     record(&mut report, "fs.searchText", context.search().await);
     record(&mut report, "fs.scan.perRoot", context.scan().await);
+    if initialized
+        .capabilities
+        .filesystem
+        .as_ref()
+        .is_some_and(|fs| fs.transfer)
+    {
+        record(
+            &mut report,
+            "transfer.captureAndPublish",
+            context.transfers().await,
+        );
+    }
     if initialized.capabilities.process.is_some() {
         record(
             &mut report,
@@ -335,6 +353,21 @@ struct Context<'a> {
 }
 
 impl Context<'_> {
+    fn script<'a>(&self, posix: &'a str, windows: &'a str) -> &'a str {
+        if self.work.convention() == PathConvention::Windows {
+            windows
+        } else {
+            posix
+        }
+    }
+
+    fn quote(&self, path: &EnvironmentPath) -> String {
+        if path.convention() == PathConvention::Windows {
+            format!("'{}'", path.to_native().replace('\'', "''"))
+        } else {
+            format!("'{}'", path.as_str().replace('\'', "'\"'\"'"))
+        }
+    }
     fn path(&self, relative: &str) -> Result<EnvironmentPath, String> {
         let tree = TreePath::new(relative).map_err(|error| error.to_string())?;
         self.work.join(&tree).map_err(|error| error.to_string())
@@ -712,14 +745,7 @@ impl Context<'_> {
         }
         let blobs: std::sync::Arc<dyn harness::storage::BlobStore> =
             std::sync::Arc::new(harness::storage::InMemoryBlobStore::new());
-        let remote_root =
-            FsPath::new(self.path("parity")?.as_str()).map_err(|error| error.to_string())?;
-        let remote = FsToolContext::new(
-            std::sync::Arc::new(
-                super::RemoteEnvironmentConnection::new(self.client.clone()).file_system(),
-            ),
-            blobs.clone(),
-        );
+        let remote_root = self.path("parity")?;
         let local = FsToolContext::new(std::sync::Arc::new(memory), blobs);
         let relative = |root: &FsPath, matches: Vec<FsPath>| {
             matches
@@ -735,17 +761,36 @@ impl Context<'_> {
         for pattern in PATTERNS {
             let args = |root: &FsPath| GlobArgs {
                 pattern: pattern.to_owned(),
-                path: Some(root.clone()),
+                path: Some(root.clone().into()),
                 max_depth: None,
                 limit: None,
             };
-            let native = invoke_glob(&remote, args(&remote_root))
-                .await
-                .map_err(|error| format!("glob {pattern:?} on the server: {error}"))?;
+            let native = call(self.client.glob_files(&GlobFilesParams {
+                root: remote_root.clone(),
+                filter: TreeFilter {
+                    include: vec![pattern.into()],
+                    ..TreeFilter::default()
+                },
+                limits: GlobFilesLimits {
+                    max_matches: 100,
+                    max_files: 1000,
+                    max_duration_ms: 10000,
+                },
+            }))
+            .await?;
             let generic = invoke_glob(&local, args(&local_root))
                 .await
                 .map_err(|error| format!("generic glob {pattern:?}: {error}"))?;
-            let native = relative(&remote_root, native.matches);
+            let native = native
+                .matches
+                .iter()
+                .map(|path| {
+                    path.as_str()
+                        .strip_prefix(remote_root.as_str())
+                        .unwrap_or(path.as_str())
+                        .to_owned()
+                })
+                .collect::<Vec<_>>();
             let generic = relative(&local_root, generic.matches);
             ensure(
                 native == generic,
@@ -842,9 +887,13 @@ impl Context<'_> {
     /// following `fs/getMetadata`, while the link itself stays describable.
     async fn symlink_confinement(&self, outside_root: Option<&EnvironmentPath>) -> Check {
         self.write("link-target.txt", b"inside").await?;
-        let mut script = "ln -s link-target.txt link-inside".to_owned();
+        let mut script = self.script("ln -s link-target.txt link-inside",
+            "New-Item -ItemType SymbolicLink -Path link-inside -Target link-target.txt -ErrorAction Stop | Out-Null").to_owned();
         if let Some(outside) = outside_root {
-            script.push_str(&format!(" && ln -s '{outside}' link-outside"));
+            let outside = self.quote(outside);
+            script.push_str(&if self.work.convention() == PathConvention::Windows {
+                format!("; New-Item -ItemType SymbolicLink -Path link-outside -Target {outside} -ErrorAction Stop | Out-Null")
+            } else { format!(" && ln -s {outside} link-outside") });
         }
         let process_id = self.start(&script, ExecInput::None {}).await?;
         let (_, exited) = self.read_to_exit(&process_id).await?;
@@ -977,7 +1026,13 @@ impl Context<'_> {
 
     async fn process_exit(&self) -> Check {
         let process_id = self
-            .start("printf out; printf err >&2; exit 3", ExecInput::None {})
+            .start(
+                self.script(
+                    "printf out; printf err >&2; exit 3",
+                    "[Console]::Out.Write('out'); [Console]::Error.Write('err'); exit 3",
+                ),
+                ExecInput::None {},
+            )
             .await?;
         let (output, response) = self.read_to_exit(&process_id).await?;
         ensure(
@@ -992,9 +1047,19 @@ impl Context<'_> {
     }
 
     async fn process_signal(&self) -> Check {
-        let process_id = self.start("kill -TERM $$", ExecInput::None {}).await?;
+        let process_id = self
+            .start(
+                self.script("kill -TERM $$", "Stop-Process -Id $PID -Force"),
+                ExecInput::None {},
+            )
+            .await?;
         let (_, response) = self.read_to_exit(&process_id).await?;
         match &response.exit {
+            Some(ExitStatus::Code { code })
+                if self.work.convention() == PathConvention::Windows && *code != 0 =>
+            {
+                Ok(())
+            }
             Some(ExitStatus::Signal { signal, .. }) if signal.as_str() == "SIGTERM" => Ok(()),
             other => Err(format!("a signal death was reported as {other:?}")),
         }
@@ -1004,7 +1069,10 @@ impl Context<'_> {
         let input = vec![b'x'; 1 << 20];
         let process_id = self
             .start(
-                "cat",
+                self.script(
+                    "cat",
+                    "[Console]::OpenStandardInput().CopyTo([Console]::OpenStandardOutput())",
+                ),
                 ExecInput::Bytes {
                     data: ByteChunk::from(input.clone()),
                 },
@@ -1049,8 +1117,13 @@ impl Context<'_> {
 
     async fn process_duplicate_id(&self) -> Check {
         let marker = self.path("duplicate-marker")?;
-        let script = format!("echo ran >> '{marker}'");
-        let process_id = self.start("sleep 30", ExecInput::None {}).await?;
+        let script = format!("echo ran >> {}", self.quote(&marker));
+        let process_id = self
+            .start(
+                self.script("sleep 30", "Start-Sleep -Seconds 30"),
+                ExecInput::None {},
+            )
+            .await?;
         let duplicate = self
             .client
             .start_process(&StartProcessParams {
@@ -1118,7 +1191,12 @@ impl Context<'_> {
     }
 
     async fn process_terminate(&self) -> Check {
-        let process_id = self.start("sleep 60", ExecInput::None {}).await?;
+        let process_id = self
+            .start(
+                self.script("sleep 60", "Start-Sleep -Seconds 60"),
+                ExecInput::None {},
+            )
+            .await?;
         let response = call(self.client.terminate_process(&TerminateProcessParams {
             process_id: process_id.clone(),
             signal: ProcessSignal::Terminate,
@@ -1159,7 +1237,7 @@ impl Context<'_> {
         let (job_id, first, second) = self.job_ids();
         let start = |request_id: &JobRequestId| StartJobsParams {
             request_id: request_id.clone(),
-            jobs: vec![self.job(&job_id, "true")],
+            jobs: vec![self.job(&job_id, self.script("true", "exit 0"))],
         };
         let started = call(self.client.start_jobs(&start(&first))).await?;
         let replayed = call(self.client.start_jobs(&start(&first))).await?;
@@ -1198,7 +1276,10 @@ impl Context<'_> {
     async fn job_paging(&self) -> Check {
         let (job_id, request_id, _) = self.job_ids();
         // 20 000 bytes: 2 000 numbered lines of 10 bytes each.
-        let script = "i=0; while [ $i -lt 2000 ]; do printf '%09d\\n' $i; i=$((i+1)); done";
+        let script = self.script(
+            "i=0; while [ $i -lt 2000 ]; do printf '%09d\\n' $i; i=$((i+1)); done",
+            "for ($i = 0; $i -lt 2000; $i++) { [Console]::Write(('{0:D9}' -f $i) + [char]10) }",
+        );
         call(self.client.start_jobs(&StartJobsParams {
             request_id,
             jobs: vec![self.job(&job_id, script)],
@@ -1259,7 +1340,18 @@ impl Context<'_> {
 
 fn shell(script: &str, input: ExecInput, cwd: &EnvironmentPath) -> CommandSpec {
     CommandSpec {
-        argv: vec!["/bin/sh".into(), "-c".into(), script.into()],
+        argv: if cwd.convention() == PathConvention::Windows {
+            vec![
+                "powershell.exe".into(),
+                "-NoLogo".into(),
+                "-NoProfile".into(),
+                "-NonInteractive".into(),
+                "-Command".into(),
+                script.into(),
+            ]
+        } else {
+            vec!["/bin/sh".into(), "-c".into(), script.into()]
+        },
         cwd: Some(cwd.clone()),
         env: BTreeMap::new(),
         secret_env: BTreeMap::new(),

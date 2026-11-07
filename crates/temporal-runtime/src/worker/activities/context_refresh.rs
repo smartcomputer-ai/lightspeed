@@ -72,6 +72,19 @@ pub(super) async fn refresh_context(
     if let Some(command) = environment_sources.skill_command {
         commands.push(command);
     }
+    let platform_key = tools::environment::platform::CONTEXT_KEY;
+    let current_platform = request
+        .active_catalogs
+        .get(&ContextEntryKey::new(platform_key));
+    let platform_command = match environment_sources.platform_entry {
+        Some(entry) => {
+            tools::catalog::catalog_publication_command(current_platform, platform_key, entry)
+        }
+        None => clear_catalog_command(current_platform, platform_key),
+    };
+    if let Some(command) = platform_command {
+        commands.push(command);
+    }
 
     if request.vfs_catalog_enabled {
         let catalog =

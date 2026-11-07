@@ -35,11 +35,8 @@ pub(crate) fn working_directory(
     let Some(value) = configured else {
         return Ok(default.clone());
     };
-    if !value.starts_with('/') {
-        return Err("environment working directory must be absolute".into());
-    }
-    let cwd = tools::environment::sources::absolute(std::path::Path::new("/"), value)?;
-    EnvironmentPath::new(cwd.to_string_lossy()).map_err(|error| error.to_string())
+    environment_client::paths::absolute(value, default.convention())
+        .map_err(|error| error.to_string())
 }
 
 pub(crate) struct Discovery<'a> {
@@ -48,6 +45,8 @@ pub(crate) struct Discovery<'a> {
     pub feature: Option<&'a EnvironmentsFeature>,
     pub environment_id: Option<&'a EnvironmentId>,
     connection: Option<SourceConnection>,
+    // A failed initial platform handshake applies to every source in this refresh.
+    connection_error: Option<String>,
 }
 
 pub(crate) struct SourceConnection {
@@ -63,6 +62,9 @@ impl SourceConnection {
     /// that probe, and return the response without it. `fs/scan` is an
     /// observation, so discovery never resets the idle clock.
     pub async fn scan(&self, mut query: ScanParams) -> Result<ScanResponse, String> {
+        if self.initialized.capabilities.filesystem.is_none() {
+            return Err("endpoint does not support filesystem source discovery".into());
+        }
         tools::environment::sources::with_working_directory_probe(&mut query, &self.cwd);
         let mut scan = self
             .client
@@ -84,6 +86,9 @@ impl SourceConnection {
 
 impl Discovery<'_> {
     pub async fn connection(&mut self) -> Result<&mut SourceConnection, String> {
+        if let Some(error) = &self.connection_error {
+            return Err(error.clone());
+        }
         if self.connection.is_none() {
             self.connection = Some(
                 connect(
@@ -114,6 +119,7 @@ impl Discovery<'_> {
 }
 
 pub(crate) struct Publication {
+    pub platform_entry: Option<ContextEntryInput>,
     pub skill_command: Option<CoreAgentCommand>,
     pub prompt_entries: BTreeMap<ContextEntryKey, ContextEntryInput>,
 }
@@ -135,13 +141,53 @@ pub(crate) async fn refresh(
         feature,
         environment_id,
         connection: None,
+        connection_error: None,
     };
     let result = async {
+        let platform_entry =
+            match tokio::time::timeout(Duration::from_secs(4), discovery.connection()).await {
+                Ok(Ok(connection)) => {
+                    let id = environment_id.expect("connected environment");
+                    let snapshot = serde_json::to_vec(&(
+                        id,
+                        &connection.initialized.platform,
+                        &connection.cwd,
+                        &connection.initialized.home_directory,
+                        &connection.initialized.capabilities,
+                    ))
+                    .expect("platform snapshot");
+                    let reference = blobs.put_bytes(snapshot).await?;
+                    let mut entry = tools::catalog::catalog_context_input(
+                        blobs,
+                        "Active environment",
+                        tools::environment::platform::describe(
+                            id.as_str(),
+                            &connection.initialized,
+                            &connection.cwd,
+                        ),
+                        reference,
+                    )
+                    .await?;
+                    entry.origin = Some(format!("runtime.environment:{id}"));
+                    Some(entry)
+                }
+                failure => {
+                    let error = match failure {
+                        Ok(Err(error)) => error,
+                        Err(_) => "environment platform discovery timed out".into(),
+                        Ok(Ok(_)) => unreachable!("successful discovery handled above"),
+                    };
+                    discovery.discard_connection();
+                    discovery.connection_error = Some(error);
+                    None
+                }
+            };
         let skill_command =
             crate::environments::skills::refresh(blobs, &mut discovery, session_id, current_skills)
                 .await?;
         let prompt_entries = crate::environments::prompts::refresh(blobs, &mut discovery).await?;
         Ok(Publication {
+            platform_entry,
             skill_command,
             prompt_entries,
         })
@@ -215,10 +261,6 @@ async fn connect(
         .await
         .map_err(|e| e.to_string())?
     };
-    if initialized.capabilities.filesystem.is_none() {
-        let _ = client.close().await;
-        return Err("endpoint does not support filesystem source discovery".into());
-    }
     let cwd = match working_directory(
         attachment.working_directory.as_deref(),
         &initialized.default_cwd,
@@ -253,5 +295,14 @@ mod tests {
         );
         assert!(working_directory(Some("relative"), &default).is_err());
         assert!(working_directory(Some("/../escape"), &default).is_err());
+        let windows = EnvironmentPath::new("C:/work").unwrap();
+        assert_eq!(
+            working_directory(Some(r"d:\build\src\.."), &windows)
+                .unwrap()
+                .as_str(),
+            "D:/build"
+        );
+        assert!(working_directory(Some(r"C:relative"), &windows).is_err());
+        assert!(working_directory(Some("/srv/app"), &windows).is_err());
     }
 }

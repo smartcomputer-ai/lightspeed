@@ -49,13 +49,13 @@ use tokio_tungstenite::{
 
 use crate::{
     DaemonRuntime,
-    config::{
-        AUTO_UPGRADE_ATTEMPTED_ENV, GatewayUrls, REEXEC_REGISTRATION_KEY_ENV, RegistrationConfig,
-        RestartInvocation,
-    },
+    config::{GatewayUrls, RegistrationConfig, RestartInvocation},
     identity::DaemonIdentity,
     server::{DaemonExit, run_data_connection, tracing_line, websocket_config},
 };
+
+#[cfg(unix)]
+use crate::config::{AUTO_UPGRADE_ATTEMPTED_ENV, REEXEC_REGISTRATION_KEY_ENV};
 
 /// Bound on TCP connect, TLS and the WebSocket upgrade of the control
 /// connection.
@@ -629,6 +629,7 @@ fn upgrade_refusal(
 /// Arguments of the restarted daemon: the original ones without any
 /// registration key option, which travels only through the one-exec
 /// variable and only while it is still needed.
+#[cfg(any(unix, test))]
 fn replacement_args(args: &[std::ffi::OsString]) -> Vec<std::ffi::OsString> {
     let mut kept = Vec::with_capacity(args.len());
     let mut skip_value = false;
@@ -1489,7 +1490,9 @@ mod tests {
         );
         registration.auto_upgrade = Some(RestartInvocation {
             executable: PathBuf::from("/usr/local/bin/lightspeed-envd"),
+            #[cfg(unix)]
             arg0: "lightspeed-envd".into(),
+            #[cfg(unix)]
             args: Vec::new(),
         });
         assert!(upgrade_refusal(&registration, Some(4)).is_none());

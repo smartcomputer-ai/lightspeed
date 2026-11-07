@@ -420,8 +420,20 @@ mod tests {
     }
 
     fn root(path: &std::path::Path) -> ScanRoot {
+        #[cfg(windows)]
+        let native = crate::windows_security::local_drive_path(path).unwrap();
+        #[cfg(windows)]
+        let path = native.as_path();
         ScanRoot {
-            path: EnvironmentPath::new(path.to_str().unwrap()).unwrap(),
+            path: EnvironmentPath::from_native(
+                path.to_str().unwrap(),
+                if cfg!(windows) {
+                    environment_protocol::paths::PathConvention::Windows
+                } else {
+                    environment_protocol::paths::PathConvention::Posix
+                },
+            )
+            .unwrap(),
             if_none_match: None,
             max_depth: None,
         }

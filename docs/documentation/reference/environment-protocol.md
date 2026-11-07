@@ -22,8 +22,9 @@ The protocol has three planes. Each runs over its own WebSocket connection.
 | Controller | The Lightspeed runtime | A provider controller | `CONTROLLER_PROTOCOL_VERSION` | Create, observe, power, and close the provider's targets. |
 | Registration | `lightspeed-envd` | The Lightspeed environment gateway | `ENVD_PROTOCOL_VERSION` | Admit an outbound daemon and ask it for reverse-dialed data streams. |
 
-Both numbers are currently `4`. They are matched exactly. A peer that states
-any other number is refused with `versionMismatch`. There are no version
+Data and registration currently use `5`; the controller uses `4`. They are
+matched exactly. A peer that states any other number is refused with
+`versionMismatch`. There are no version
 ranges and no negotiation. A change to a plane's wire shape, or to the meaning
 of an existing field or method, needs a new number for that plane. The data
 plane and the registration channel share one number, so a data-plane change
@@ -112,6 +113,35 @@ enforces these rules per connection:
 optional `version`, `gitSha`, and `target`, each 1 to 256 bytes without
 control characters. They are descriptive only. Nothing selects, gates, or
 authenticates on them.
+
+Data `initialize` also carries `platform`: the remote `os`, `pathConvention`,
+verified shell catalog and optional default shell. Shell entries identify a
+kind, absolute executable path and observed version. An absent catalog/default
+does not authorize a client to guess a shell. Windows defaults to verified
+PowerShell 7, otherwise Windows PowerShell; Git Bash requires explicit selection.
+Clients validate these facts against cwd/home and execution capabilities before
+using the connection.
+
+The daemon probes installed shells once at startup, recording only successful,
+bounded version probes. Windows probes PowerShell 7 on PATH and in its standard
+installation directory, and Windows PowerShell in the system directory. Git
+Bash requires an adjacent verified Git for Windows installation in a standard
+system or per-user installation directory; a PATH `bash.exe` is not accepted.
+Restart the daemon after installing a shell to refresh the catalog.
+
+Model-facing `exec_command` and `Bash` accept an optional `shell` enum:
+`bash`, `powerShell`, `windowsPowerShell`, or `gitBash`. Omission uses the
+discovered default. `exec_command` preserves Unix Bash's login default;
+PowerShell and Git Bash default to no profiles. Explicit `login: true` enables
+profiles. PowerShell pipe requests use `-NonInteractive`; terminal requests
+omit it. Direct process and job argv bypass these shell adapters.
+
+The active environment's model context includes its OS, native cwd/home, shell
+paths and versions, and relevant execution capabilities. Model file paths and
+cwd overrides are resolved using the remote path convention, independently of
+the controller OS. Windows accepts native drive paths or relative paths; the
+wire still uses canonical `C:/...` spelling. VFS paths retain their separate
+logical POSIX grammar.
 
 ## Decoding
 
@@ -535,11 +565,11 @@ The response carries `protocolVersion`, `plane: data`, `serverInfo`, and:
 | `defaultCwd` | The daemon's working directory, the default `cwd` of commands. |
 | `homeDirectory` | The home directory of the user commands run as, when it lies inside the filesystem root. |
 
-A present capability family means all of its methods exist: `filesystem`
-covers `fs/*` and `transfer/*`, including search, glob, scan, and transfers;
-`process` covers `process/*`; `job` covers `job/*`. Inside a family are only
-facts that vary per instance: `filesystem.write` is false on a daemon started
-read-only, and `process.pty` says whether `process/start` accepts `pty`. A
+A present `filesystem` capability covers `fs/*`, including search, glob and
+scan. `filesystem.transfer` separately enables `transfer/*`; an omitted flag
+means transfers are unavailable. `process` covers `process/*`; `job` covers
+`job/*`. `filesystem.write` is false on a daemon started read-only, and
+`process.pty` says whether `process/start` accepts `pty`. A
 request that needs an absent family or fact is `capabilityUnavailable` before
 any side effect.
 
@@ -560,11 +590,11 @@ any side effect.
 | `fs/searchText` | Yes | Yes | `filesystem` | Search file contents below a root with a regular expression. |
 | `fs/globFiles` | Yes | Yes | `filesystem` | List non-directory entries below a root that match patterns. |
 | `fs/scan` | No | Yes | `filesystem` | Observe small trees below several roots, each reported on its own. |
-| `transfer/begin`, `transfer/advance`, `transfer/getStatus`, `transfer/readInventory`, `transfer/append`, `transfer/listMissing`, `transfer/read`, `transfer/write`, `transfer/commit`, `transfer/abort` | Yes | | `filesystem` (writes also `filesystem.write`) | One capture, materialize, or file write as many bounded calls. |
+| `transfer/begin`, `transfer/advance`, `transfer/getStatus`, `transfer/readInventory`, `transfer/append`, `transfer/listMissing`, `transfer/read`, `transfer/write`, `transfer/commit`, `transfer/abort` | Yes | | `filesystem.transfer` (writes also `filesystem.write`) | One capture, materialize, or file write as many bounded calls. |
 | `process/start` | Yes | | `process` | Start a process under a caller-chosen `processId`. |
 | `process/read` | Yes | Yes | `process` | Wait for and read a page of output and the process state. |
 | `process/write` | Yes | | `process` | Queue bytes for a pipe or PTY input. |
-| `process/terminate` | Yes | | `process` | Interrupt, terminate, or kill the process group. |
+| `process/terminate` | Yes | | `process` | Interrupt, terminate, or kill the owned group or job using the advertised mechanisms. |
 | `job/start` | Yes | | `job` | Start jobs, or replay an identical earlier start. |
 | `job/read` | Yes | Yes | `job` | Read jobs' summaries and output pages. |
 | `job/cancel` | Yes | | `job` | Cancel jobs and optionally their dependents. |
@@ -594,8 +624,28 @@ One rule applies to every method and to every command's `cwd`:
   lies inside it, and a remove, rename, write, or capture whose subject
   contains it, is `permissionDenied` (`daemonState`). Walks prune it.
 
-Names are UTF-8 and POSIX: `/` is the only separator. An entry whose name is
-not UTF-8 is skipped and counted wherever a method enumerates entries.
+Paths are UTF-8. POSIX spellings remain unchanged; Windows drive paths use an
+uppercase drive and `/` separators (`C:/work`). Native conversion takes the
+remote convention explicitly and renders Windows paths with backslashes.
+UNC, drive-relative and device namespaces, alternate streams, reserved device
+names and trailing dots/spaces are unsupported. Windows names also exclude
+control characters and Win32-reserved punctuation. Path equality and prefixes
+are lexical, not filesystem identity or authorization; confinement needs native
+handles and identity checks. Entries that cannot be represented are skipped
+and counted. Relative transfer paths retain their grammar but must be validated
+against the destination convention before mutation. VFS paths are unchanged.
+
+The native Windows backend opens path components relative to directory handles,
+retains ancestors against rename and junction replacement, and excludes daemon
+state by volume/file identity. Writes stage privately and preserve the target's
+DACL when replacing an existing file. New files retain the destination's inherited
+DACL. Same-directory rename is supported; cross-directory rename and
+`executable: true` are `capabilityUnavailable`. Executable metadata is false on
+Windows. Publication is atomic, but directory crash-durability is not promised.
+Windows advertises `filesystem.transfer: true`. Captures, publication to a new
+tree path, and atomic file writes are supported. Replacing an existing
+materialized tree is `capabilityUnavailable`; the daemon never emulates an
+atomic tree replacement by deleting the destination first.
 
 ### Pattern grammar and walks
 
@@ -616,6 +666,29 @@ never end the walk. A file larger than the remaining byte budget is skipped
 and counted too.
 
 ### Process output
+
+Process and job capabilities advertise `tree` (`posixProcessGroup` or
+`windowsJobObject`) and `termination` (`gracefulThenKill` or `immediateKill`).
+Immediate termination has zero grace. Processes additionally advertise separate
+`interrupt.pipe` and `interrupt.pty` flags; unsupported interruption is
+`capabilityUnavailable`, never a substitute forced kill.
+
+A Windows ownership unit is a non-breakaway Job Object attached before the
+child runs. Normal process root exit keeps descendants; job root exit sweeps
+them. Timeout, cancellation, environment close and daemon death terminate the
+owned tree. The daemon keeps non-inheritable kill-on-close handles while any
+owned descendants survive, independently of retained output. Restart never
+adopts raw Windows PIDs. POSIX group and restart behavior is unchanged.
+Windows returns native exit codes through the signed i32 `code` field, preserving
+all 32 bits; it never represents Windows termination as a Unix signal.
+
+Native pipe execution preserves bytes and supports closing stdin. ConPTY uses
+UTF-8 terminal streams and supports Ctrl-C; pipe interruption is unavailable.
+Closing ConPTY input with `close: true` is `capabilityUnavailable`, because
+closing the pseudoconsole would terminate attached processes rather than supply
+EOF. Terminal dimensions are set at start; the backend supports resize, but the
+protocol currently has no resize method. Direct Windows execution requires an
+`.exe`; scripts and batch files require an explicit interpreter.
 
 A process has one combined output stream: stdout, stderr, or PTY output
 interleaved in arrival order. Positions are byte offsets into it.
@@ -656,8 +729,8 @@ A job's identity is its `jobId` together with the `requestId` of the
 `succeeded`, `failed`, `timedOut`, `cancelled`, `dependencyFailed`, and
 `interrupted`. Dependencies name a job id or a name within the same request.
 Jobs that share a `queueKey` run one at a time, in start order. At job
-completion, the daemon sweeps the job's process group and reports what it
-stopped as `leftovers` with disposition `swept`.
+completion, the daemon sweeps the job's owned group or Job Object and reports
+what it stopped as `leftovers` with disposition `swept`.
 
 `job/read` takes a list of entries, each reading one job from `after` or the
 last `tailBytes`; a job may appear twice to read its head and tail in one
@@ -682,6 +755,32 @@ already present is not sent again. The first failure moves the operation to
 operations keep a receipt for the advertised retention period. The
 [transfer module](../../../crates/environment-protocol/src/data/transfer.rs)
 documents the phases.
+
+Windows validates incoming inventory names against its native path rules and
+rejects case-colliding paths, including collisions across inventory pages.
+Parents must precede children with the same spelling. Rejected pages leave the
+inventory unchanged. Unix executable bits cannot be represented on Windows:
+`executable: true` in a write selection or inventory is `capabilityUnavailable`.
+VFS tree paths keep their portable grammar; these checks occur when publishing
+into Windows.
+
+Windows stages the selected root beside its destination and retains ancestor
+handles through publication. Staging is private to the execution account and
+SYSTEM. Materialized trees retain that protected ACL; file writes restore the
+existing target's DACL or, for a new file, its inherited DACL. File writes
+recheck `create` and `ifMatch` at commit. Existing-tree materialization is
+refused at begin, or at commit if a destination appeared during the operation.
+
+Transfer journals tag native path encoding: Unix bytes or Windows UTF-16LE.
+Legacy untagged records are Unix records. Foreign or undecodable records are
+quarantined, never interpreted as native cleanup paths. A daemon restart fails
+interrupted operations and retries staging/spool cleanup; a sharing violation
+retains the cleanup record even after its receipt expires. A restart during
+commit reports an uncertain outcome because publication may already have
+occurred. Completed captures retain their inventories with their receipts.
+Windows flushes journal files before write-through replacement; this recovery
+contract covers daemon restart and does not promise directory durability after
+power loss.
 
 ## Registration channel
 
@@ -772,5 +871,7 @@ provisioning anything else:
 - The data suite,
   [`tools::environment_protocol::conformance`](../../../crates/tools/src/environment_protocol/conformance.rs),
   drives a data endpoint and checks file writes and reads, confinement,
-  walks, scans, process output and exits, and job identity. It works in a
-  fresh directory and removes it afterwards.
+  walks, scans, process output and exits, and job identity. When transfers are
+  advertised it also checks capture, chunked file publication, stale-version
+  rejection at commit, and receipt replay. It works in a fresh directory and
+  removes it afterwards.

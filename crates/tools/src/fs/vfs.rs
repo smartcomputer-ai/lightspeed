@@ -2292,7 +2292,7 @@ mod tests {
         invoke_edit_file(
             &ctx,
             EditFileArgs {
-                path: script.clone(),
+                path: script.clone().into(),
                 old_string: "one".to_owned(),
                 new_string: "two".to_owned(),
                 replace_all: false,
@@ -2677,7 +2677,7 @@ mod tests {
         let write = invoke_write_file(
             &fs_ctx,
             WriteFileArgs {
-                path: FsPath::new("src/lib.rs").unwrap(),
+                path: FsPath::new("src/lib.rs").unwrap().into(),
                 content: Some("pub fn alpha() {}\n".to_owned()),
                 content_ref: None,
             },
@@ -2692,7 +2692,7 @@ mod tests {
         let read = invoke_read_file(
             &fs_ctx,
             ReadFileArgs {
-                path: FsPath::new("src/lib.rs").unwrap(),
+                path: FsPath::new("src/lib.rs").unwrap().into(),
                 offset: None,
                 limit: None,
             },
@@ -2704,7 +2704,7 @@ mod tests {
         invoke_edit_file(
             &fs_ctx,
             EditFileArgs {
-                path: FsPath::new("src/lib.rs").unwrap(),
+                path: FsPath::new("src/lib.rs").unwrap().into(),
                 old_string: "alpha".to_owned(),
                 new_string: "beta".to_owned(),
                 replace_all: false,
@@ -2727,7 +2727,7 @@ mod tests {
             &fs_ctx,
             GrepArgs {
                 pattern: "beta".to_owned(),
-                path: Some(FsPath::current_dir()),
+                path: Some(FsPath::current_dir().into()),
                 include: Some("*.rs".to_owned()),
                 case_sensitive: true,
                 max_depth: None,
@@ -2746,7 +2746,7 @@ mod tests {
             &fs_ctx,
             GlobArgs {
                 pattern: "**/*.rs".to_owned(),
-                path: Some(FsPath::current_dir()),
+                path: Some(FsPath::current_dir().into()),
                 max_depth: None,
                 limit: None,
             },
@@ -2764,7 +2764,7 @@ mod tests {
         let listing = invoke_list_dir(
             &fs_ctx,
             ListDirArgs {
-                path: FsPath::new("src").unwrap(),
+                path: Some(FsPath::new("src").unwrap().into()),
             },
         )
         .await
@@ -2991,7 +2991,7 @@ mod tests {
         let skill = invoke_read_file(
             &fs_ctx,
             ReadFileArgs {
-                path: FsPath::new("/skills/rust/SKILL.md").unwrap(),
+                path: FsPath::new("/skills/rust/SKILL.md").unwrap().into(),
                 offset: None,
                 limit: None,
             },
@@ -3003,7 +3003,7 @@ mod tests {
         invoke_write_file(
             &fs_ctx,
             WriteFileArgs {
-                path: FsPath::new("src/lib.rs").unwrap(),
+                path: FsPath::new("src/lib.rs").unwrap().into(),
                 content: Some("pub fn alpha() {}\n".to_owned()),
                 content_ref: None,
             },
@@ -3013,7 +3013,7 @@ mod tests {
         invoke_edit_file(
             &fs_ctx,
             EditFileArgs {
-                path: FsPath::new("src/lib.rs").unwrap(),
+                path: FsPath::new("src/lib.rs").unwrap().into(),
                 old_string: "alpha".to_owned(),
                 new_string: "beta".to_owned(),
                 replace_all: false,
@@ -3035,7 +3035,7 @@ mod tests {
             &fs_ctx,
             GrepArgs {
                 pattern: "beta".to_owned(),
-                path: Some(FsPath::root()),
+                path: Some(FsPath::root().into()),
                 include: Some("*.rs".to_owned()),
                 case_sensitive: true,
                 max_depth: None,
@@ -3056,7 +3056,7 @@ mod tests {
             &fs_ctx,
             GlobArgs {
                 pattern: "**/*.md".to_owned(),
-                path: Some(FsPath::root()),
+                path: Some(FsPath::root().into()),
                 max_depth: None,
                 limit: None,
             },
@@ -3075,7 +3075,7 @@ mod tests {
         let listing = invoke_list_dir(
             &fs_ctx,
             ListDirArgs {
-                path: FsPath::root(),
+                path: Some(FsPath::root().into()),
             },
         )
         .await

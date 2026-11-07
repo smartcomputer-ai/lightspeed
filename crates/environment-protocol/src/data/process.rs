@@ -1,7 +1,7 @@
 //! `process/*`: interactive processes read through byte-offset pages.
 //!
-//! A process runs as the leader of its own process group. Its root's
-//! natural exit never sweeps the group: whatever it left running is
+//! A process runs in the ownership model advertised by `capabilities.process.tree`.
+//! Its root's natural exit never sweeps that group or job: what it left running is
 //! reported in `leftovers` and keeps the environment's lifetime. Each
 //! process has a daemon-owned cursor; a read without `after` starts there,
 //! and the cursor advances to `next` only after the response frame was
@@ -43,7 +43,8 @@ pub struct StartProcessParams {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartProcessResponse {
-    /// OS pid of the root process, which is also its process group id.
+    /// OS pid of the root process; a process group id only on POSIX. Never
+    /// a durable identity or a Windows Job Object handle.
     pub pid: u32,
 }
 
@@ -112,7 +113,9 @@ pub struct WriteProcessParams {
     #[serde(default, skip_serializing_if = "ByteChunk::is_empty")]
     pub data: ByteChunk,
     /// Close the input after `data`: end of file on a pipe, `VEOF` on a
-    /// PTY. Applied only when every byte of `data` was accepted.
+    /// POSIX PTY. A Windows terminal backend must refuse this with
+    /// `capabilityUnavailable` if it cannot deliver EOF without killing the
+    /// terminal. Applied only when every byte of `data` was accepted.
     #[serde(default, skip_serializing_if = "is_false")]
     pub close_input: bool,
 }
@@ -128,20 +131,22 @@ pub struct WriteProcessResponse {
     pub accepted_bytes: u64,
 }
 
-/// Signal delivered by `process/terminate`.
+/// Semantic action delivered by `process/terminate`, using advertised mechanisms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub enum ProcessSignal {
-    /// `SIGINT` to the foreground process group (the terminal's under a
-    /// PTY, otherwise the process group). Records nothing; the next read
-    /// shows what the process did.
+    /// Request interruption; requires `capabilities.process.interrupt.pipe`
+    /// or `.pty` for the handle's mode. POSIX delivers `SIGINT` to the foreground
+    /// group. Windows requires a verified terminal mechanism; an unsupported
+    /// request is `capabilityUnavailable`, not a forced kill. Records nothing.
     Interrupt,
-    /// `SIGTERM` to the group, then `SIGKILL` after
-    /// `limits.process.terminateGraceMs` if members remain. Records
-    /// `stoppedBy: terminate`.
+    /// Stop the owned tree using `capabilities.process.termination`. POSIX
+    /// sends `SIGTERM`, then `SIGKILL` after `terminateGraceMs`; `immediateKill`
+    /// forces termination without a grace period. Records `stoppedBy: terminate`.
     Terminate,
-    /// `SIGKILL` to the group. Records `stoppedBy: kill`.
+    /// Force the owned tree to terminate. POSIX uses `SIGKILL`; Windows uses
+    /// Job Object termination. Records `stoppedBy: kill`.
     Kill,
 }
 

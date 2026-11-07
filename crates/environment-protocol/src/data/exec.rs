@@ -43,8 +43,8 @@ pub struct CommandSpec {
     /// Standard input; none by default.
     #[serde(default, skip_serializing_if = "ExecInput::is_none")]
     pub input: ExecInput,
-    /// Stop deadline from start. On expiry the daemon terminates the process
-    /// group (`SIGTERM`, the advertised grace, then `SIGKILL`) and records
+    /// Stop deadline from start. On expiry the daemon stops the owned tree using
+    /// the family's advertised `termination` mode and grace, and records
     /// `stoppedBy: timeout`. Absent means no deadline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
@@ -60,8 +60,8 @@ pub struct CommandSpec {
     deny_unknown_fields
 )]
 pub enum ExecInput {
-    /// `/dev/null`: the command reads end of file. Model-facing tools use
-    /// this.
+    /// The command reads end of file from the platform's null input.
+    /// Model-facing tools use this.
     None {},
     /// These bytes, then end of file. Written by a writer task after the
     /// output readers, the exit watcher and the deadline are in place.
@@ -200,7 +200,9 @@ pub enum ExecState {
     deny_unknown_fields
 )]
 pub enum ExitStatus {
-    /// Normal exit with this status code.
+    /// Native exit status. Windows preserves all 32 bits by interpreting the
+    /// unsigned process code as signed i32 (for example 0xC0000005 is -1073741819).
+    /// Windows forced termination also uses a native code, never a fake signal.
     Code { code: i32 },
     /// Killed by this signal.
     Signal {
@@ -216,13 +218,13 @@ pub enum ExitStatus {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub enum StoppedBy {
-    /// `timeoutMs` expired: `SIGTERM`, the grace, then `SIGKILL`.
+    /// `timeoutMs` expired; stopped using the advertised termination mode.
     Timeout,
     /// `process/terminate` with `terminate`, or `job/cancel` without
-    /// `force`: `SIGTERM`, the grace, then `SIGKILL`.
+    /// `force`: stopped using the advertised termination mode.
     Terminate,
     /// `process/terminate` with `kill`, or `job/cancel` with `force`:
-    /// `SIGKILL` at once.
+    /// forced tree termination at once.
     Kill,
 }
 

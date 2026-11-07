@@ -522,7 +522,7 @@ export function displayStatus(environment: Omit<Environment, "status">): Environ
   }
 }
 
-const DEMO_DAEMON = { version: "0.1.0", protocolVersion: 4 };
+const DEMO_DAEMON = { version: "0.1.0", protocolVersion: 5 };
 
 interface EnvironmentInit {
   environmentId: string;

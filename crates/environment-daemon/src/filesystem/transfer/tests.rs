@@ -1,16 +1,33 @@
 //! Transfer state machine tests against the handlers, without sockets.
 
-use std::{os::unix::fs::symlink, path::Path};
+#[cfg(windows)]
+mod windows;
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+use std::path::Path;
+#[cfg(windows)]
+fn symlink(source: impl AsRef<Path>, target: impl AsRef<Path>) -> std::io::Result<()> {
+    let source = source.as_ref();
+    let target = target.as_ref();
+    if target.parent().unwrap().join(source).is_dir() {
+        std::os::windows::fs::symlink_dir(source, target)
+    } else {
+        std::os::windows::fs::symlink_file(source, target)
+    }
+}
+
+#[cfg(unix)]
+use environment_protocol::data::transfer::ListTransferMissingParams;
 use environment_protocol::{
     data::{
         fs::{TreeContent, TreeFilter, WriteCondition},
         transfer::{
             AppendTransferInventoryParams, BeginTransferParams, InventoryEntry,
-            ListTransferMissingParams, ReadTransferContentParams, ReadTransferInventoryParams,
-            SpecialFilePolicy, SymlinkPolicy, TransferLimits, TransferOnExisting,
-            TransferOperationParams, TransferPhase, TransferSelection, TransferSkipReason,
-            TransferStatus, WriteTransferContentParams,
+            ReadTransferContentParams, ReadTransferInventoryParams, SpecialFilePolicy,
+            SymlinkPolicy, TransferLimits, TransferOnExisting, TransferOperationParams,
+            TransferPhase, TransferSelection, TransferSkipReason, TransferStatus,
+            WriteTransferContentParams,
         },
     },
     error::{
@@ -21,17 +38,40 @@ use environment_protocol::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::filesystem::{
-    LocalFileSystem,
-    tests::{context, filesystem},
-};
+use crate::filesystem::{Confinement, FilesystemConfig, LocalFileSystem};
+fn context() -> crate::dispatch::RequestContext {
+    crate::dispatch::RequestContext::detached()
+}
+fn filesystem(root: &Path, writable: bool) -> LocalFileSystem {
+    let confinement =
+        std::sync::Arc::new(Confinement::new(root.to_owned(), root.join(".state")).unwrap());
+    LocalFileSystem::new(FilesystemConfig {
+        confinement,
+        cwd: root.to_owned(),
+        writable,
+        limits: crate::data_limits().filesystem,
+    })
+    .unwrap()
+}
 
 fn id(value: &str) -> TransferOperationId {
     TransferOperationId::new(value).unwrap()
 }
 
 fn path(root: &Path, relative: &str) -> EnvironmentPath {
-    EnvironmentPath::new(format!("{}/{relative}", root.display())).unwrap()
+    let native = root.join(relative);
+    let text = native.to_str().unwrap();
+    #[cfg(windows)]
+    let text = text.strip_prefix(r"\\?\").unwrap_or(text);
+    EnvironmentPath::from_native(
+        text,
+        if cfg!(windows) {
+            environment_protocol::paths::PathConvention::Windows
+        } else {
+            environment_protocol::paths::PathConvention::Posix
+        },
+    )
+    .unwrap()
 }
 
 fn limits() -> TransferLimits {
@@ -287,7 +327,10 @@ async fn a_failed_capture_answers_its_first_error_and_never_commits() {
     assert_eq!(aborted.phase, TransferPhase::Failed);
 
     // A source that changes after hashing fails the operation at read time.
+    #[cfg(unix)]
     std::fs::remove_file(root.join("tree/escape")).unwrap();
+    #[cfg(windows)]
+    std::fs::remove_dir(root.join("tree/escape")).unwrap();
     begin(
         &fs,
         "changed",
@@ -325,6 +368,7 @@ async fn a_failed_capture_answers_its_first_error_and_never_commits() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
 async fn entries_outside_the_selection_never_fail_a_capture() {
     let temp = tempfile::tempdir().unwrap();
     let base = temp.path().canonicalize().unwrap();
@@ -502,6 +546,7 @@ fn directory_entry(path: &str) -> InventoryEntry {
 }
 
 #[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
 async fn materialize_reuses_matching_destination_files_and_publishes_atomically() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -759,6 +804,10 @@ async fn a_restart_fails_active_operations_and_discards_their_staging() {
     {
         let fs = filesystem(&root, true);
         begin(&fs, "interrupted", selection.clone()).await.unwrap();
+        append_all(&fs, "interrupted", vec![directory_entry(".")]).await;
+        advance_until(&fs, "interrupted", TransferPhase::Ready)
+            .await
+            .unwrap();
         let staged = std::fs::read_dir(&root).unwrap().flatten().any(|entry| {
             entry
                 .file_name()
@@ -939,6 +988,7 @@ async fn a_receipt_names_its_staging_until_removal_is_confirmed() {
         &journal,
         &id("done"),
         &Record {
+            format: journal::JournalFormat::native(),
             params: BeginTransferParams {
                 operation_id: id("done"),
                 selection,
@@ -961,4 +1011,48 @@ async fn a_receipt_names_its_staging_until_removal_is_confirmed() {
         .await
         .unwrap();
     assert_eq!(answered.phase, TransferPhase::Aborted);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn restart_during_commit_preserves_the_destination_and_reports_uncertainty() {
+    use super::journal;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    {
+        let fs = filesystem(&root, true);
+        begin(
+            &fs,
+            "committing",
+            TransferSelection::Materialize {
+                destination: path(&root, "out"),
+                on_existing: TransferOnExisting::Replace,
+            },
+        )
+        .await
+        .unwrap();
+        fs.transfer_abort(&context(), operation("committing"))
+            .await
+            .unwrap();
+    }
+    let directory = root.join(".state/transfers");
+    let mut record = journal::read(&directory, &id("committing"))
+        .unwrap()
+        .unwrap();
+    record.status.phase = TransferPhase::Ready;
+    record.committing = true;
+    journal::write(&directory, &id("committing"), &record).unwrap();
+    std::fs::write(root.join("out"), b"already published").unwrap();
+    let fs = filesystem(&root, true);
+    let status = fs
+        .transfer_get_status(&context(), operation("committing"))
+        .await
+        .unwrap();
+    assert_eq!(status.phase, TransferPhase::Failed);
+    let error = status.error.unwrap();
+    assert_eq!(error.kind(), ProtocolErrorKind::Aborted);
+    assert!(error.message.contains("may hold the published tree"));
+    assert_eq!(
+        std::fs::read(root.join("out")).unwrap(),
+        b"already published"
+    );
 }

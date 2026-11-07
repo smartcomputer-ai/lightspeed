@@ -84,7 +84,7 @@ deployment maintenance and recovery requirements.
 
 ## Local release build
 
-The authoritative build runs inside the digest-pinned Debian 12/Rust image:
+The Linux build runs inside the digest-pinned Debian 12/Rust image:
 
 ```bash
 make release
@@ -133,6 +133,71 @@ a run-specific staging tag, then run that exact image by digest. The release
 manifest records this composite image digest, not merely the Rust base-image
 digest.
 
+Windows envd is built separately on the hz01 Windows VM. Both workflows select
+one commit before starting Linux and Windows jobs, and assembly depends on both
+jobs succeeding. Main snapshots retain the existing successful-Linux-CI trigger.
+Windows PR CI is not added. A failed or unavailable Windows builder prevents
+publication and deployment of that release, even if Linux staging succeeded.
+
+`LIGHTSPEED_ENVD_TARGETS` in `release/metadata.env` is the complete required
+target set and is also embedded in the server. Manifest v1 adds `envdTargets`,
+`envdBinaries` keyed by target, and `envdBuilds` for provenance. `envdTarget` and
+`binaries.envd` remain aliases for the Linux bootstrap artifact so existing
+installers and rollback bundles remain compatible. Discovery (`envd.json`)
+contains exactly the same target/file/checksum set. Each daemon target gets its
+own immutable OCI archive reference; Windows uses
+`envd-x86_64-pc-windows-msvc-bundle`. Both archives are also in the aggregate
+release bundle and tagged GitHub Release assets.
+
+Linux packaging uses `--partial` internally until the Windows archive arrives.
+Normal manifest verification requires all targets; `--partial --published` is
+rejected. Assembly verifies the Windows archive checksum, product version,
+commit, protocol, pinned Rust version and Cargo.lock hash before publication.
+`dist/provenance/windows-envd.json` records Windows, MSVC, Windows SDK, linker,
+Cargo, Rust and compiler flags. The Windows job attests its archive and provenance
+before upload; the Linux build-container digest only describes Linux builds.
+
+### Windows builder
+
+The registered runner is `hz01-windows-lightspeed`, selected with
+`[self-hosted, windows, x64, hz01, protected]`. Its Windows service runs under
+the dedicated non-administrator local account `lightspeed-build`, with delayed
+automatic startup and recovery configured by the runner installer. Runner files
+and checkouts are under `C:\actions-runner` and `C:\actions-runner\_work`;
+builds do not use `C:\dev\lightspeed`. The runner directory is writable only by
+the build account, Administrators and SYSTEM. The label `protected` is routing
+metadata; trusted workflow triggers enforce which source is built.
+
+The VM has Visual Studio C++ Build Tools, the Windows SDK, Git for Windows,
+PowerShell 7, Node, and a separate Rust installation. `CARGO_HOME` and
+`RUSTUP_HOME` in the runner's `.env` point into
+`C:\actions-runner\toolchains`; `PATH` in the same file includes the installed tools.
+The build script discovers MSVC using `vswhere`, reads the pinned Rust version
+from release metadata, and uses `--locked`. Keep these tools available to the
+service account, rather than installing them only in an interactive user's
+profile. After changing runner environment files, restart the runner service.
+
+To reproduce the Windows job in a clean dedicated checkout, using PowerShell 7:
+
+```powershell
+./scripts/release/build-windows.ps1 -ExpectedSha (git rev-parse HEAD)
+```
+
+The script rejects dirty or mismatched checkouts, compiles envd with a static C
+runtime, rejects imports of an external Visual C++ runtime DLL, and packages
+`lightspeed-envd.exe` at the archive root. It extracts that archive and runs an
+ignored live test against those exact bytes: startup and WebSocket handshake,
+Unicode file write/read, process output, and exit status. It also verifies
+`--version` and `--print-build`. Output is under `dist-windows/`; use a clean
+checkout or a new `-OutputDirectory` for another invocation. This acceptance
+does not require Git Bash, PowerShell 7 inside envd, or symlink privileges.
+
+Runner administration follows GitHub's
+[Windows service setup](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/configure-the-application).
+Registration credentials are not repository files. This build integration does
+not install envd as a production service or implement Windows self-upgrades;
+those deployment lifecycle checks remain separate work.
+
 Release constants—including both Rust and platform database compatibility—are
 centralized in `release/metadata.env`; run
 `scripts/release/verify-metadata.sh` after changing a product, protocol, schema,
@@ -162,13 +227,14 @@ and use those notes as the annotated tag message, as described in
   only the lightweight required gate. The root consumer checks exclude docs
   tests so unrelated platform changes do not run them. CI publishes nothing.
 - `.github/workflows/macos.yml` provides a manual native Apple Silicon
-  compile/`--version` smoke test. Published standalone archives remain
-  Linux-only in the first cut; macOS development uses `cargo run`.
+  compile/`--version` smoke test. macOS development uses `cargo run`; no macOS
+  release archive is published.
 - The `main` ruleset requires a pull request and the successful, up-to-date
   `required` CI gate. The successful `main` CI workflow triggers
   `.github/workflows/snapshot-main.yml`, which checks out that exact tested SHA,
   confirms that it is still the head of `origin/main`, and builds one coherent
-  Linux artifact set on hz01 without repeating the CI test suite.
+  artifact set on the Linux and Windows hz01 builders without repeating the
+  Linux CI test suite. Windows runs its packaged executable acceptance check.
   Documentation-only pushes also start this chain: they skip unrelated CI
   suites, then produce a complete snapshot including the updated manual.
 - Snapshot components are first published under a run-specific staging tag and

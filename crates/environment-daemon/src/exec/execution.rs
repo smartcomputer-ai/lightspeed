@@ -14,16 +14,18 @@ use environment_protocol::{
     error::ProtocolError,
 };
 use portable_pty::MasterPty;
+#[cfg(not(windows))]
 use tokio::{
     io::{AsyncRead, AsyncReadExt as _},
     process::{Child, ChildStderr, ChildStdout},
-    sync::watch,
-    task::JoinHandle,
 };
+use tokio::{sync::watch, task::JoinHandle};
 
 use super::{input::Input, outcome};
+#[cfg(not(windows))]
+use crate::process_group;
 use crate::{
-    process_group::{self, Group, GroupSignal, OUTPUT_DRAIN_GRACE},
+    process_group::{Group, GroupSignal, OUTPUT_DRAIN_GRACE},
     redaction::redact_bytes,
 };
 
@@ -129,7 +131,89 @@ impl<S> State<S> {
 }
 
 impl<S: OutputSink> Execution<S> {
+    #[cfg(windows)]
     #[allow(clippy::too_many_arguments)]
+    pub(super) fn start_native(
+        group: Group,
+        child: super::windows::Child,
+        master: Option<Box<dyn MasterPty + Send>>,
+        readers: Vec<(std::fs::File, OutputStream)>,
+        input: Input,
+        sink: S,
+        redactions: Vec<Vec<u8>>,
+        options: ExecOptions,
+    ) -> std::io::Result<Self> {
+        let execution = Self::new(
+            group,
+            master,
+            input,
+            sink,
+            redactions,
+            readers.len() as u32,
+            options,
+        );
+        for (mut reader, stream) in readers {
+            let inner = execution.inner.clone();
+            if let Err(error) = std::thread::Builder::new()
+                .name("envd-native-reader".into())
+                .spawn(move || {
+                    let mut buffer = vec![0; READ_BUFFER_BYTES];
+                    loop {
+                        match reader.read(&mut buffer) {
+                            Ok(0) => break,
+                            Ok(read) => inner.push(stream, &buffer[..read]),
+                            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => break,
+                            Err(error) => {
+                                inner.capture_failed(stream, error);
+                                break;
+                            }
+                        }
+                    }
+                    inner.reader_closed();
+                })
+            {
+                execution.inner.group.signal(GroupSignal::Kill);
+                execution.close_native_terminal();
+                return Err(error);
+            }
+        }
+        let (send, receive) = tokio::sync::oneshot::channel();
+        if let Err(error) = std::thread::Builder::new()
+            .name("envd-native-wait".into())
+            .spawn(move || {
+                let _ = send.send(child.wait());
+            })
+        {
+            execution.inner.group.signal(GroupSignal::Kill);
+            execution.close_native_terminal();
+            return Err(error);
+        }
+        let watched = execution.clone();
+        tokio::spawn(async move {
+            let status = receive
+                .await
+                .unwrap_or_else(|_| Err(std::io::Error::other("native wait thread ended")));
+            // The console must close after its last owned process exits so
+            // output reaches EOF. A separate task preserves process descendants
+            // while a normal root exit settles its own captured output.
+            if watched.inner.pty.is_some() {
+                let terminal = watched.clone();
+                tokio::spawn(async move {
+                    while terminal.inner.group.alive() {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                    terminal.close_native_terminal();
+                });
+            }
+            watched.observe_exit(status, options.after_exit).await;
+        });
+        execution.start_deadline(options.timeout);
+        Ok(execution)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[cfg(not(windows))]
     pub(super) fn start_pipes(
         pid: u32,
         child: Child,
@@ -141,7 +225,15 @@ impl<S: OutputSink> Execution<S> {
         options: ExecOptions,
     ) -> Self {
         let readers_open = u32::from(stdout.is_some()) + u32::from(stderr.is_some());
-        let execution = Self::new(pid, None, input, sink, redactions, readers_open, options);
+        let execution = Self::new(
+            Group::capture(pid),
+            None,
+            input,
+            sink,
+            redactions,
+            readers_open,
+            options,
+        );
         let inner = &execution.inner;
         let mut readers = Vec::new();
         if let Some(stdout) = stdout {
@@ -172,6 +264,7 @@ impl<S: OutputSink> Execution<S> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[cfg(not(windows))]
     pub(super) fn start_pty(
         pid: u32,
         child: Box<dyn portable_pty::Child + Send + Sync>,
@@ -182,7 +275,15 @@ impl<S: OutputSink> Execution<S> {
         redactions: Vec<Vec<u8>>,
         options: ExecOptions,
     ) -> Self {
-        let execution = Self::new(pid, Some(master), input, sink, redactions, 1, options);
+        let execution = Self::new(
+            Group::capture(pid),
+            Some(master),
+            input,
+            sink,
+            redactions,
+            1,
+            options,
+        );
         // PTY reads and waits block. They run on threads of their own, not
         // the runtime's blocking pool, so a PTY that leftovers keep open can
         // never hold up the daemon's shutdown.
@@ -226,7 +327,7 @@ impl<S: OutputSink> Execution<S> {
     }
 
     fn new(
-        pid: u32,
+        group: Group,
         pty: Option<Box<dyn MasterPty + Send>>,
         input: Input,
         sink: S,
@@ -236,8 +337,8 @@ impl<S: OutputSink> Execution<S> {
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
-                pid,
-                group: Group::capture(pid),
+                pid: group.pgid,
+                group,
                 group_gone: AtomicBool::new(false),
                 state: Mutex::new(State {
                     sink,
@@ -304,6 +405,23 @@ impl<S: OutputSink> Execution<S> {
 }
 
 impl<S> Execution<S> {
+    #[cfg(all(test, windows))]
+    pub(super) fn resize_for_test(&self, size: portable_pty::PtySize) -> anyhow::Result<()> {
+        let master = lock(self.inner.pty.as_ref().expect("terminal"));
+        master.resize(size)?;
+        assert_eq!(master.get_size()?, size);
+        Ok(())
+    }
+    #[cfg(windows)]
+    fn close_native_terminal(&self) {
+        if let Some(master) = &self.inner.pty {
+            let locked = lock(master);
+            let master: &dyn MasterPty = locked.as_ref();
+            if let Some(terminal) = master.downcast_ref::<super::windows::NativePty>() {
+                terminal.close();
+            }
+        }
+    }
     /// OS pid of the root, which is also its process group id.
     pub fn pid(&self) -> u32 {
         self.inner.pid
@@ -311,7 +429,7 @@ impl<S> Execution<S> {
 
     /// The root's process group.
     pub fn group(&self) -> Group {
-        self.inner.group
+        self.inner.group.clone()
     }
 
     /// The root runs, or its group still has members of its own. After the
@@ -337,7 +455,7 @@ impl<S> Execution<S> {
         if !self.group_alive() {
             return None;
         }
-        outcome::leftover_report(process_group::group_members(self.inner.pid), disposition)
+        outcome::leftover_report(self.inner.group.members(), disposition)
     }
 
     /// Runs `f` on the current state under the execution's lock.
@@ -357,6 +475,13 @@ impl<S> Execution<S> {
 
     /// Queues input; see [`Input::offer`].
     pub fn offer_input(&self, data: &[u8], close: bool) -> Result<u64, ProtocolError> {
+        #[cfg(windows)]
+        if close && self.inner.pty.is_some() {
+            return Err(ProtocolError::capability_unavailable(
+                environment_protocol::error::Capability::ProcessPty,
+                "ConPTY does not support terminal EOF without closing the terminal",
+            ));
+        }
         self.inner.input.offer(data, close)
     }
 
@@ -421,7 +546,7 @@ impl<S> Execution<S> {
             running
         };
         if running || self.group_alive() {
-            let group = self.inner.group;
+            let group = self.inner.group.clone();
             match reason {
                 StoppedBy::Kill => {
                     group.signal(GroupSignal::Kill);
@@ -439,21 +564,43 @@ impl<S> Execution<S> {
 
     /// `SIGINT` to the foreground group: the terminal's under a PTY,
     /// otherwise the process group. Returns whether the root was running.
-    pub fn interrupt(&self) -> bool {
-        let running = !self.state().exited;
-        if !self.group_alive() {
-            return false;
+    pub fn interrupt(&self) -> Result<bool, ProtocolError> {
+        #[cfg(windows)]
+        {
+            if self.inner.pty.is_none() {
+                return Err(ProtocolError::capability_unavailable(
+                    environment_protocol::error::Capability::Process,
+                    "Windows pipe processes do not support graceful interruption",
+                ));
+            }
+            let running = !self.state().exited;
+            if !running {
+                return Ok(false);
+            }
+            if self.inner.input.offer(&[3], false)? != 1 {
+                return Err(ProtocolError::process_failed(
+                    "terminal input queue is full; interrupt was not delivered",
+                ));
+            }
+            Ok(running)
         }
-        let foreground = self.inner.pty.as_ref().and_then(|master| {
-            lock(master)
-                .process_group_leader()
-                .and_then(|leader| u32::try_from(leader).ok())
-        });
-        match foreground {
-            Some(foreground) => process_group::interrupt_foreground(foreground),
-            None => self.inner.group.signal(GroupSignal::Interrupt),
-        };
-        running
+        #[cfg(not(windows))]
+        {
+            let running = !self.state().exited;
+            if !self.group_alive() {
+                return Ok(false);
+            }
+            let foreground = self.inner.pty.as_ref().and_then(|master| {
+                lock(master)
+                    .process_group_leader()
+                    .and_then(|leader| u32::try_from(leader).ok())
+            });
+            match foreground {
+                Some(foreground) => process_group::interrupt_foreground(foreground),
+                None => self.inner.group.signal(GroupSignal::Interrupt),
+            };
+            Ok(running)
+        }
     }
 
     fn state(&self) -> MutexGuard<'_, State<S>> {
@@ -509,6 +656,7 @@ impl<S: OutputSink> Inner<S> {
     }
 }
 
+#[cfg(not(windows))]
 async fn read_pipe<S: OutputSink, R: AsyncRead + Unpin>(
     inner: Arc<Inner<S>>,
     mut reader: R,
@@ -529,6 +677,7 @@ async fn read_pipe<S: OutputSink, R: AsyncRead + Unpin>(
     inner.reader_closed();
 }
 
+#[cfg(not(windows))]
 fn read_pty<S: OutputSink>(inner: Arc<Inner<S>>, mut reader: Box<dyn std::io::Read + Send>) {
     let mut buffer = vec![0; READ_BUFFER_BYTES];
     loop {

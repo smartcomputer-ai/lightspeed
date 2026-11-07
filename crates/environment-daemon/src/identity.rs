@@ -38,7 +38,8 @@ impl std::fmt::Debug for DaemonIdentity {
 
 impl DaemonIdentity {
     /// Load the key from `<state_dir>/daemon-key`, or generate one there.
-    /// The file is created `0600` and installed without ever replacing an
+    /// The file is created privately (`0600` on Unix, a protected user/SYSTEM
+    /// DACL on Windows) and installed without ever replacing an
     /// existing key: when two first starts race, the key installed first
     /// wins and both processes load it.
     pub fn load_or_create(state_dir: &Path) -> Result<Self> {
@@ -55,9 +56,12 @@ impl DaemonIdentity {
             .context("generate temporary key name")?;
         let temp = state_dir.join(format!(".{DAEMON_KEY_FILE}.{}", encode_hex(&suffix)));
         write_private(&temp, &encode_hex(&signing_key.to_bytes()))?;
-        // A hard link fails when the destination exists, unlike rename,
-        // which would silently replace a key a concurrent start installed.
+        // Both native installs fail when the destination exists, preserving
+        // the key a concurrent first start already installed.
+        #[cfg(not(windows))]
         let installed = std::fs::hard_link(&temp, &path);
+        #[cfg(windows)]
+        let installed = crate::windows_security::install_private_file(&temp, &path);
         let _ = std::fs::remove_file(&temp);
         match installed {
             Ok(()) => {
@@ -71,7 +75,7 @@ impl DaemonIdentity {
     }
 
     fn load(path: &Path) -> Result<Option<Self>> {
-        let contents = match std::fs::read_to_string(path) {
+        let contents = match read_private(path) {
             Ok(contents) => contents,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => {
@@ -116,20 +120,42 @@ impl DaemonIdentity {
 
 fn write_private(path: &Path, contents: &str) -> Result<()> {
     use std::io::Write as _;
+    #[cfg(not(windows))]
     let mut options = std::fs::OpenOptions::new();
+    #[cfg(not(windows))]
     options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    let mut file = options
+    #[cfg(not(windows))]
+    let file = options
         .open(path)
         .with_context(|| format!("create daemon key {}", path.display()))?;
+    #[cfg(windows)]
+    let file = crate::windows_security::create_private_file(path)
+        .with_context(|| format!("create private daemon key {}", path.display()))?;
+    let mut file = file;
     file.write_all(contents.as_bytes())?;
     file.write_all(b"\n")?;
     file.sync_all()?;
     Ok(())
+}
+
+fn read_private(path: &Path) -> std::io::Result<String> {
+    #[cfg(windows)]
+    {
+        use std::io::Read as _;
+        let mut file = crate::windows_security::open_private_file(path)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+        Ok(contents)
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::read_to_string(path)
+    }
 }
 
 /// Make the new directory entry durable; best effort.

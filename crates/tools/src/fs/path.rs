@@ -1,30 +1,87 @@
-//! Logical filesystem paths.
+//! Logical workspace paths and explicitly constructed remote filesystem paths.
 
 use std::{fmt, path::PathBuf, str::FromStr};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as SerdeError};
 use thiserror::Error;
 
+/// Uninterpreted model input. The selected filesystem resolves its grammar.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub struct PathInput(pub String);
+impl PathInput {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+    pub fn presented(&self, resolved: &FsPath) -> FsPath {
+        if resolved.environment.is_some() {
+            resolved.clone()
+        } else {
+            FsPath::new(&self.0).unwrap_or_else(|_| resolved.clone())
+        }
+    }
+}
+impl AsRef<str> for PathInput {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+impl From<FsPath> for PathInput {
+    fn from(path: FsPath) -> Self {
+        Self(path.as_str().into())
+    }
+}
+impl From<String> for PathInput {
+    fn from(path: String) -> Self {
+        Self(path)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, schemars::JsonSchema)]
 #[schemars(with = "String")]
 pub struct FsPath {
     normalized: String,
+    #[schemars(skip)]
+    environment: Option<Box<environment_protocol::paths::EnvironmentPath>>,
 }
 
 impl FsPath {
     pub fn new(path: impl AsRef<str>) -> Result<Self, FsPathError> {
-        normalize_path(path.as_ref()).map(|normalized| Self { normalized })
+        normalize_path(path.as_ref()).map(|normalized| Self {
+            normalized,
+            environment: None,
+        })
+    }
+
+    /// Explicit remote-path construction. `new` retains logical/VFS semantics.
+    pub fn from_environment(path: environment_protocol::paths::EnvironmentPath) -> Self {
+        if path.convention() == environment_protocol::paths::PathConvention::Posix {
+            return Self {
+                normalized: path.to_string(),
+                environment: None,
+            };
+        }
+        Self {
+            normalized: path.to_string(),
+            environment: Some(Box::new(path)),
+        }
+    }
+
+    pub fn environment_path(&self) -> Option<&environment_protocol::paths::EnvironmentPath> {
+        self.environment.as_deref()
     }
 
     pub fn root() -> Self {
         Self {
             normalized: "/".to_string(),
+            environment: None,
         }
     }
 
     pub fn current_dir() -> Self {
         Self {
             normalized: ".".to_string(),
+            environment: None,
         }
     }
 
@@ -33,7 +90,7 @@ impl FsPath {
     }
 
     pub fn is_absolute(&self) -> bool {
-        self.normalized.starts_with('/')
+        self.environment.is_some() || self.normalized.starts_with('/')
     }
 
     pub fn is_relative(&self) -> bool {
@@ -41,7 +98,9 @@ impl FsPath {
     }
 
     pub fn is_root(&self) -> bool {
-        self.normalized == "/" || self.normalized == "."
+        self.environment.as_ref().is_some_and(|p| p.is_root())
+            || self.normalized == "/"
+            || self.normalized == "."
     }
 
     pub fn has_unresolved_parent(&self) -> bool {
@@ -49,6 +108,13 @@ impl FsPath {
     }
 
     pub fn join(&self, path: impl AsRef<str>) -> Result<Self, FsPathError> {
+        if let Some(base) = &self.environment {
+            return environment_client::paths::resolve(base, path.as_ref())
+                .map(Self::from_environment)
+                .map_err(|e| FsPathError::Remote {
+                    message: e.to_string(),
+                });
+        }
         let path = Self::new(path)?;
         self.join_path(&path)
     }
@@ -56,6 +122,9 @@ impl FsPath {
     pub fn join_path(&self, path: &Self) -> Result<Self, FsPathError> {
         if path.is_absolute() {
             return Ok(path.clone());
+        }
+        if self.environment.is_some() {
+            return self.join(path.as_str());
         }
         self.join_segments(path.segments())
     }
@@ -70,6 +139,9 @@ impl FsPath {
             .collect::<Vec<_>>();
         if suffix.is_empty() {
             return Ok(self.clone());
+        }
+        if self.environment.is_some() {
+            return self.join(suffix.join("/"));
         }
 
         let mut value = self.normalized.clone();
@@ -87,6 +159,9 @@ impl FsPath {
     pub fn parent(&self) -> Option<Self> {
         if self.is_root() {
             return None;
+        }
+        if self.environment.is_some() {
+            return self.join("..").ok();
         }
 
         let prefix = if self.is_absolute() { "/" } else { "" };
@@ -116,6 +191,15 @@ impl FsPath {
     }
 
     pub fn starts_with(&self, base: &Self) -> bool {
+        if let Some(path) = &self.environment {
+            return base
+                .environment
+                .as_ref()
+                .is_some_and(|base| path.relative_to(base).is_some());
+        }
+        if base.environment.is_some() {
+            return false;
+        }
         if base.normalized == "/" {
             return self.is_absolute();
         }
@@ -131,6 +215,9 @@ impl FsPath {
     }
 
     pub fn to_path_buf(&self) -> PathBuf {
+        if let Some(path) = &self.environment {
+            return PathBuf::from(path.to_native());
+        }
         if self.normalized == "/" {
             return PathBuf::from("/");
         }
@@ -157,7 +244,10 @@ impl FsPath {
 
 impl fmt::Display for FsPath {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.normalized.fmt(formatter)
+        match &self.environment {
+            Some(path) => path.to_native().fmt(formatter),
+            None => self.normalized.fmt(formatter),
+        }
     }
 }
 
@@ -212,6 +302,8 @@ impl<'de> Deserialize<'de> for FsPath {
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum FsPathError {
+    #[error("invalid remote path: {message}")]
+    Remote { message: String },
     #[error("filesystem path is empty")]
     Empty,
 
@@ -271,6 +363,26 @@ fn normalize_path(path: &str) -> Result<String, FsPathError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_paths_require_explicit_environment_construction() {
+        use environment_protocol::paths::EnvironmentPath;
+        let logical = FsPath::new("C:/work").unwrap();
+        assert!(logical.is_relative());
+        assert!(FsPath::new(r"C:\work").is_err());
+        let native = FsPath::from_environment(EnvironmentPath::new("C:/work").unwrap());
+        assert!(native.is_absolute());
+        assert_ne!(native, logical);
+        assert_eq!(native.to_string(), r"C:\work");
+        assert_eq!(native.parent().unwrap().as_str(), "C:/");
+        assert!(native.parent().unwrap().parent().is_none());
+        let child = native.join_segments(["src", "main.rs"]).unwrap();
+        assert!(child.starts_with(&native));
+        assert_eq!(child.parent().unwrap(), native.join("src").unwrap());
+        assert_eq!(native.join(r"..\other").unwrap().as_str(), "C:/other");
+        assert!(native.join(r"C:relative").is_err());
+        assert!(!native.starts_with(&FsPath::root()));
+    }
 
     #[test]
     fn new_normalizes_relative_path() {

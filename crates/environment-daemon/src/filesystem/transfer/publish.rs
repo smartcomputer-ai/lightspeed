@@ -37,9 +37,10 @@ use super::{
     journal::StageRecord,
 };
 
-/// Prefix of staging directories next to a destination.
+/// Prefix of staging entries next to a destination.
 pub(super) const STAGE_PREFIX: &str = ".lightspeed-transfer-";
 /// The staged tree inside a staging directory.
+#[cfg(unix)]
 const STAGED_TREE: &str = "tree";
 
 /// What a publish writes.
@@ -59,6 +60,7 @@ struct Stage {
     parent: Arc<Directory>,
     name: OsString,
     directory: Directory,
+    root_name: OsString,
 }
 
 /// Content uploaded for one digest, spooled under the journal directory.
@@ -160,6 +162,10 @@ struct DestinationScan {
 }
 
 pub(super) struct Publish {
+    #[cfg(windows)]
+    permissions: Option<crate::windows_security::FilePermissions>,
+    #[cfg(windows)]
+    native_paths: std::collections::BTreeSet<super::windows::NameKey>,
     confinement: Arc<Confinement>,
     pub kind: Kind,
     destination: EnvironmentPath,
@@ -171,8 +177,8 @@ pub(super) struct Publish {
     /// Directories `begin` created for the destination; removed again
     /// unless a commit published into them.
     created_parents: Vec<Vec<OsString>>,
-    /// Name of the staging directory, chosen at begin and created by
-    /// [`Publish::create_stage`] once it is journaled.
+    /// Staging name chosen at begin and journaled before anything is created.
+    /// Unix uses a wrapper directory; Windows stages the selected root itself.
     stage_name: OsString,
     stage: Option<Stage>,
     limits: TransferLimits,
@@ -199,6 +205,19 @@ impl Publish {
         limits: TransferLimits,
         spool: tempfile::TempDir,
     ) -> Result<Self, ProtocolError> {
+        #[cfg(windows)]
+        if matches!(
+            kind,
+            Kind::WriteFile {
+                executable: true,
+                ..
+            }
+        ) {
+            return Err(ProtocolError::capability_unavailable(
+                environment_protocol::error::Capability::FilesystemWrite,
+                "Windows transfers cannot represent Unix executable bits",
+            ));
+        }
         let resolved = match &kind {
             Kind::Materialize { on_existing } => {
                 let resolved = confinement.lookup(
@@ -223,6 +242,11 @@ impl Publish {
                             "{destination} exists"
                         )));
                     }
+                    #[cfg(windows)]
+                    return Err(ProtocolError::capability_unavailable(
+                        environment_protocol::error::Capability::FilesystemWrite,
+                        "atomic replacement of an existing materialized tree is unavailable on Windows",
+                    ));
                 }
                 resolved
             }
@@ -247,7 +271,9 @@ impl Publish {
             ));
         }
         if let Err(error) = confinement.refuse_containing_state(&resolved, destination) {
-            confinement.remove_created(&resolved.created);
+            let created = resolved.created.clone();
+            drop(resolved);
+            confinement.remove_created(&created);
             return Err(error);
         }
         let Resolved {
@@ -258,6 +284,10 @@ impl Publish {
             ..
         } = resolved;
         Ok(Self {
+            #[cfg(windows)]
+            permissions: None,
+            #[cfg(windows)]
+            native_paths: Default::default(),
             confinement,
             kind,
             destination: destination.clone(),
@@ -285,34 +315,59 @@ impl Publish {
         })
     }
 
-    /// Create the staging directory next to the destination. Called once
-    /// its record is journaled, so a restart always finds and removes it.
+    /// Prepare staging next to the destination after its record is journaled.
+    /// On Windows the first staged entry creates the root at its reserved name.
     pub fn create_stage(&mut self) -> Result<(), ProtocolError> {
-        let io = |error| io_error(error, &self.destination);
-        self.parent
-            .mkdir(&self.stage_name, os::PRIVATE_DIRECTORY_MODE)
-            .map_err(io)?;
-        let directory = self.parent.child(&self.stage_name).map_err(io)?;
-        self.stage = Some(Stage {
-            parent: self.parent.clone(),
-            name: self.stage_name.clone(),
-            directory,
-        });
-        Ok(())
+        #[cfg(windows)]
+        {
+            // Stage the root itself beside its destination. Publication uses a
+            // same-parent rename while every ancestor remains pinned.
+            self.stage = Some(Stage {
+                parent: self.parent.clone(),
+                name: self.stage_name.clone(),
+                directory: self
+                    .parent
+                    .try_clone()
+                    .map_err(|e| io_error(e, &self.destination))?,
+                root_name: self.stage_name.clone(),
+            });
+            Ok(())
+        }
+        #[cfg(unix)]
+        {
+            let io = |error| io_error(error, &self.destination);
+            self.parent
+                .mkdir(&self.stage_name, os::PRIVATE_DIRECTORY_MODE)
+                .map_err(io)?;
+            let directory = self.parent.child(&self.stage_name).map_err(io)?;
+            self.stage = Some(Stage {
+                parent: self.parent.clone(),
+                name: self.stage_name.clone(),
+                directory,
+                root_name: OsString::from(STAGED_TREE),
+            });
+            Ok(())
+        }
     }
 
     /// Remove everything `begin` created, at once: a begin refused before
     /// the operation was recorded leaves nothing behind.
     pub fn discard(mut self) {
+        self.scan = None;
+        self.copying = None;
         if let Some(stage) = self.stage.take() {
             remove_stage(stage);
+        }
+        #[cfg(windows)]
+        {
+            self.parent = Arc::new(self.confinement.root_directory());
         }
         self.confinement
             .remove_created(&std::mem::take(&mut self.created_parents));
         drop(self.spool.take());
     }
 
-    /// Where the staging directory is (or is about to be) created.
+    /// Where staging is (or is about to be) created.
     pub fn stage_record(&self) -> StageRecord {
         StageRecord::new(
             &self.parent_segments,
@@ -320,7 +375,7 @@ impl Publish {
         )
     }
 
-    /// [`Self::stage_record`] once the staging directory exists.
+    /// [`Self::stage_record`] once staging has been prepared.
     pub fn created_stage_record(&self) -> Option<StageRecord> {
         self.stage.as_ref().map(|_| self.stage_record())
     }
@@ -367,12 +422,24 @@ impl Publish {
         }
         let single_file = matches!(self.kind, Kind::WriteFile { .. });
         let mut paths = HashMap::new();
+        #[cfg(windows)]
+        let mut native_paths = std::collections::BTreeSet::new();
         let mut sizes = BTreeMap::new();
         let mut total = self.total_bytes;
         let mut manifest = self.manifest_bytes;
         for (offset, entry) in entries.iter().enumerate() {
             let position = self.entries.len() + offset;
             let field = |member: &str| format!("entries[{offset}]{member}");
+            #[cfg(windows)]
+            {
+                let key = super::windows::validate(entry, &field(""))?;
+                if self.native_paths.contains(&key) || !native_paths.insert(key) {
+                    return Err(ProtocolError::invalid_field(
+                        field(".path"),
+                        "inventory paths collide under Windows case-insensitive lookup",
+                    ));
+                }
+            }
             if entry.path.depth() > self.limits.max_depth {
                 return Err(ProtocolError::invalid_field(
                     field(".path"),
@@ -470,6 +537,8 @@ impl Publish {
         }
         self.pages.insert(index, (entries.clone(), last));
         self.paths.extend(paths);
+        #[cfg(windows)]
+        self.native_paths.extend(native_paths);
         self.sizes.extend(sizes);
         self.entries.extend(entries);
         self.total_bytes = total;
@@ -676,12 +745,17 @@ impl Publish {
                 return Ok(true);
             };
             let stage = self.stage.as_ref().expect("staging before commit");
-            let (directory, name) = staged_parent(&stage.directory, &entry.path)
+            let (directory, name) = staged_parent(&stage.directory, &stage.root_name, &entry.path)
                 .map_err(|error| io_error(error, &entry.path))?;
             match entry.content {
                 TreeContent::Directory {} => {
+                    let mode = if cfg!(windows) && entry.path.is_root() {
+                        os::PRIVATE_DIRECTORY_MODE
+                    } else {
+                        DEFAULT_DIRECTORY_MODE
+                    };
                     directory
-                        .mkdir(&name, DEFAULT_DIRECTORY_MODE)
+                        .mkdir(&name, mode)
                         .map_err(|error| io_error(error, &entry.path))?;
                     directory
                         .sync()
@@ -702,6 +776,15 @@ impl Publish {
                     let destination = directory
                         .create_file(&name, os::PRIVATE_FILE_MODE)
                         .map_err(|error| io_error(error, &entry.path))?;
+                    #[cfg(windows)]
+                    if entry.path.is_root() {
+                        self.permissions = Some(
+                            crate::windows_security::FilePermissions::capture(&destination)
+                                .map_err(|e| io_error(e, &entry.path))?,
+                        );
+                        crate::windows_security::restrict_private_file(&destination)
+                            .map_err(|e| io_error(e, &entry.path))?;
+                    }
                     let (source, changed) = self.content_source(&digest, size_bytes)?;
                     self.copying = Some(Copying {
                         source,
@@ -811,7 +894,7 @@ impl Publish {
     /// Publish the staged tree with one rename.
     pub fn commit(&mut self) -> Result<(), ProtocolError> {
         let stage = self.stage.as_ref().expect("commit before release");
-        let staged = OsStr::new(STAGED_TREE);
+        let staged = stage.root_name.as_os_str();
         let io = |error| io_error(error, &self.destination);
         match &self.kind {
             Kind::Materialize { on_existing } => {
@@ -825,12 +908,20 @@ impl Publish {
                         if error.kind() == std::io::ErrorKind::AlreadyExists
                             && *on_existing == TransferOnExisting::Replace =>
                     {
-                        // The previous tree lands in the staging directory,
-                        // which is removed with the operation.
-                        stage
-                            .directory
-                            .rename(staged, &self.parent, &self.name, RenameMode::Exchange)
-                            .map_err(io)?;
+                        #[cfg(windows)]
+                        return Err(ProtocolError::capability_unavailable(
+                            environment_protocol::error::Capability::FilesystemWrite,
+                            "atomic replacement of an existing materialized tree is unavailable on Windows",
+                        ));
+                        #[cfg(unix)]
+                        {
+                            // The previous tree lands in the staging directory,
+                            // which is removed with the operation.
+                            stage
+                                .directory
+                                .rename(staged, &self.parent, &self.name, RenameMode::Exchange)
+                                .map_err(io)?;
+                        }
                     }
                     Err(error) => return Err(io(error)),
                 }
@@ -851,13 +942,27 @@ impl Publish {
                     *create,
                     if_match.as_ref(),
                 )?;
-                let base = current.map_or(DEFAULT_FILE_MODE, |stat| stat.mode);
+                let base = current.as_ref().map_or(DEFAULT_FILE_MODE, |stat| stat.mode);
                 let mode = if *executable {
                     os::with_execute_bits(base)
                 } else {
                     base
                 };
+                #[cfg(unix)]
                 let file = stage.directory.open_read(staged).map_err(io)?;
+                #[cfg(windows)]
+                let file = {
+                    let file = stage.directory.open_publish_file(staged).map_err(io)?;
+                    let permissions = if current.is_some() {
+                        self.parent.permissions(&self.name).map_err(io)?
+                    } else {
+                        self.permissions
+                            .take()
+                            .expect("root file permissions captured during staging")
+                    };
+                    permissions.apply(&file).map_err(io)?;
+                    file
+                };
                 os::set_mode(&file, mode)
                     .and_then(|()| file.sync_all())
                     .map_err(io)?;
@@ -881,7 +986,13 @@ impl Publish {
 
 impl Drop for Publish {
     fn drop(&mut self) {
+        self.scan = None;
+        self.copying = None;
         let stage = self.stage.take();
+        #[cfg(windows)]
+        {
+            self.parent = Arc::new(self.confinement.root_directory());
+        }
         let created = std::mem::take(&mut self.created_parents);
         if stage.is_some() || !created.is_empty() {
             // A replaced tree may be large; removal never delays a receipt.
@@ -939,11 +1050,15 @@ fn parent_of(path: &TreePath) -> TreePath {
 }
 
 /// The directory that holds `path` in the staged tree, and its name there.
-fn staged_parent(stage: &Directory, path: &TreePath) -> std::io::Result<(Directory, OsString)> {
+fn staged_parent(
+    stage: &Directory,
+    root: &OsStr,
+    path: &TreePath,
+) -> std::io::Result<(Directory, OsString)> {
     if path.is_root() {
-        return Ok((stage.try_clone()?, OsString::from(STAGED_TREE)));
+        return Ok((stage.try_clone()?, root.to_owned()));
     }
-    let mut directory = stage.child(OsStr::new(STAGED_TREE))?;
+    let mut directory = stage.child(root)?;
     let segments: Vec<&str> = path.segments().collect();
     let (name, parents) = segments
         .split_last()
@@ -954,17 +1069,31 @@ fn staged_parent(stage: &Directory, path: &TreePath) -> std::io::Result<(Directo
     Ok((directory, OsString::from(name)))
 }
 
-/// Remove a staging directory recorded by an operation a restart
+/// Remove a staging entry recorded by an operation a restart
 /// interrupted.
-pub(super) fn discard_stage(confinement: &Confinement, record: &StageRecord) {
-    if !record.name.starts_with(STAGE_PREFIX) || record.name.contains('/') {
-        return;
+pub(super) fn discard_stage(confinement: &Confinement, record: &StageRecord) -> bool {
+    if !record.name.starts_with(STAGE_PREFIX)
+        || !record.name[STAGE_PREFIX.len()..]
+            .bytes()
+            .all(|c| c.is_ascii_hexdigit())
+        || record.name.len() != STAGE_PREFIX.len() + 32
+    {
+        return false;
     }
-    let segments = record.parent_segments();
-    let Ok(resolved) = confinement.reopen(&segments, &"transfer staging") else {
-        return;
+    let Some(segments) = record.parent_segments() else {
+        return false;
+    };
+    let resolved = match confinement.reopen(&segments, &"transfer staging") {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            return error.kind() == environment_protocol::error::ProtocolErrorKind::NotFound;
+        }
     };
     if let Ok(parent) = resolved.open_directory() {
-        let _ = parent.remove_tree(OsStr::new(&record.name));
+        return match parent.remove_tree(OsStr::new(&record.name)) {
+            Ok(()) => true,
+            Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+        };
     }
+    false
 }

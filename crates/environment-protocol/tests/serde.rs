@@ -34,8 +34,8 @@ fn decode<T: DeserializeOwned>(value: &Value) -> T {
 }
 
 #[test]
-fn both_numbers_are_four() {
-    assert_eq!(ENVD_PROTOCOL_VERSION, 4);
+fn data_and_controller_versions_are_independent() {
+    assert_eq!(ENVD_PROTOCOL_VERSION, 5);
     assert_eq!(CONTROLLER_PROTOCOL_VERSION, 4);
 }
 
@@ -57,12 +57,51 @@ fn handshakes_require_a_stated_protocol_version() {
 #[test]
 fn initialize_names_the_plane_and_the_daemon_instance() {
     let response: InitializeResponse = decode(&fixture("data/initialize.json")["response"]);
+    response
+        .validate_platform()
+        .expect("consistent discovery facts");
     assert_eq!(response.plane, Plane::Data);
     assert_eq!(response.daemon_instance_id.as_str(), "envd_01jb8x7k2m");
     assert!(response.capabilities.filesystem.unwrap().write);
     assert!(response.limits.max_concurrent_requests >= 16);
     let absent: DataCapabilities = decode(&json!({}));
     assert!(absent.process.is_none(), "an absent family is unavailable");
+}
+
+#[test]
+fn windows_lifecycle_requires_matching_paths_tree_and_grace() {
+    use environment_protocol::data::platform::{
+        OperatingSystem, PlatformError, PlatformFacts, ProcessTree, TerminationMode,
+    };
+    use environment_protocol::paths::EnvironmentPath;
+
+    let mut response: InitializeResponse = decode(&fixture("data/initialize.json")["response"]);
+    response.platform = PlatformFacts::without_shells(OperatingSystem::Windows);
+    assert_eq!(
+        response.validate_platform(),
+        Err(PlatformError::EnvironmentPathConvention)
+    );
+    response.default_cwd = EnvironmentPath::new("C:/work").unwrap();
+    response.home_directory = Some(EnvironmentPath::new("C:/Users/dev").unwrap());
+    assert_eq!(response.validate_platform(), Err(PlatformError::Lifecycle));
+    let process = response.capabilities.process.as_mut().unwrap();
+    process.tree = ProcessTree::WindowsJobObject;
+    process.termination = TerminationMode::ImmediateKill;
+    process.interrupt = Default::default();
+    let job = response.capabilities.job.as_mut().unwrap();
+    job.tree = ProcessTree::WindowsJobObject;
+    job.termination = TerminationMode::ImmediateKill;
+    assert_eq!(response.validate_platform(), Err(PlatformError::Lifecycle));
+    response.limits.process.terminate_grace_ms = 0;
+    response.limits.job.cancel_grace_ms = 0;
+    response.validate_platform().unwrap();
+    let encoded = serde_json::to_value(&response).unwrap();
+    assert_eq!(encoded["capabilities"]["process"]["interrupt"], json!({}));
+    assert_eq!(encoded["defaultCwd"], "C:/work");
+    let decoded: InitializeResponse = decode(&encoded);
+    assert_eq!(decoded, response);
+    let native_code: ExitStatus = decode(&json!({"kind": "code", "code": -1073741819}));
+    assert_eq!(native_code, ExitStatus::Code { code: -1073741819 });
 }
 
 #[test]

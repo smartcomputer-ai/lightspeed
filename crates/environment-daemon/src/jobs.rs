@@ -21,6 +21,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use environment_protocol::paths::EnvironmentPath;
 use environment_protocol::{
     bytes::encode_hex,
     data::{
@@ -38,7 +39,6 @@ use environment_protocol::{
     error::{PreconditionReason, ProtocolError},
     ids::{DaemonInstanceId, JobId, JobName, JobRequestId, QueueKey},
     limits::MAX_PAGE_CHUNKS,
-    paths::EnvironmentPath,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -97,6 +97,8 @@ struct JobsInner {
 
 #[derive(Default)]
 struct JobsState {
+    #[cfg(windows)]
+    closing: bool,
     jobs: BTreeMap<JobId, JobEntry>,
     next_seq: u64,
     /// Terminal jobs holding their output in memory, oldest first.
@@ -221,6 +223,17 @@ struct ResolvedJob {
 }
 
 impl JobManager {
+    /// Close all Windows ownership units and prevent queued work from starting.
+    #[cfg(windows)]
+    pub fn shutdown(&self) {
+        let mut state = self.state();
+        state.closing = true;
+        for entry in state.jobs.values() {
+            if let Some(run) = &entry.run {
+                run.execution.stop(StoppedBy::Kill);
+            }
+        }
+    }
     /// Loads job summaries and reconciles what an earlier instance left.
     /// Never fails on a record: unreadable ones are quarantined.
     pub fn new(config: JobConfig) -> anyhow::Result<Self> {
@@ -311,6 +324,13 @@ impl JobManager {
         self.maintain();
         let records = {
             let mut state = self.state();
+            #[cfg(windows)]
+            if state.closing {
+                return Err(ProtocolError::failed_precondition(
+                    PreconditionReason::EnvironmentClosed,
+                    "environment is closing",
+                ));
+            }
             if let Some(replay) = replay_or_conflict(&state, &params.request_id, &resolved)? {
                 return Ok(StartJobsResponse { jobs: replay });
             }
@@ -718,6 +738,10 @@ impl JobManager {
     /// runnable job whose queue is free, in start order.
     fn schedule(&self) {
         let mut state = self.state();
+        #[cfg(windows)]
+        if state.closing {
+            return;
+        }
         let mut changed = false;
         loop {
             let now = now_ms();
@@ -824,7 +848,14 @@ impl JobManager {
             terminate_grace: Duration::from_millis(config.limits.cancel_grace_ms),
             after_exit: AfterExit::Manual,
         };
-        let spawned = resolve_cwd(config, command.cwd.as_ref()).and_then(|cwd| {
+        let spawned = (|| {
+            #[cfg(not(windows))]
+            let cwd = resolve_cwd(config, command.cwd.as_ref())?;
+            #[cfg(windows)]
+            let cwd_guard =
+                crate::exec::pin_cwd(&config.confinement, command.cwd.as_ref(), &config.cwd)?;
+            #[cfg(windows)]
+            let cwd = cwd_guard.path().to_owned();
             let sink = JobOutput {
                 job_id: job_id.clone(),
                 log: OutputLog::default(),
@@ -833,7 +864,7 @@ impl JobManager {
                 changed: self.inner.changed.clone(),
             };
             PreparedCommand::new(command, cwd, &config.scrubbed_env, None).spawn(sink, options, 0)
-        });
+        })();
         match spawned {
             Ok(execution) => {
                 entry.record.status = JobStatus::Running;
@@ -1229,6 +1260,7 @@ fn spec_hash(
     digest(&serde_json::to_vec(&material).expect("hash material encodes"))
 }
 
+#[cfg(not(windows))]
 fn resolve_cwd(
     config: &JobConfig,
     cwd: Option<&EnvironmentPath>,
@@ -1354,6 +1386,7 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use crate::exec::test_script as script;
     use environment_protocol::{
         bytes::ByteChunk,
         data::{exec::GapReason, job::JobSpec},
@@ -1381,7 +1414,7 @@ mod tests {
 
     fn fixture_with(limits: JobLimits) -> Fixture {
         let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
+        let root = temp.path().to_owned();
         let state_dir = root.join("state");
         let manager = manager_at(&root, &state_dir, limits);
         Fixture {
@@ -1428,7 +1461,7 @@ mod tests {
             job_id: id(job_id),
             name: None,
             command: CommandSpec {
-                argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), script.to_owned()],
+                argv: crate::exec::test_shell_argv(script),
                 cwd: None,
                 env: BTreeMap::new(),
                 secret_env: BTreeMap::new(),
@@ -1508,7 +1541,13 @@ mod tests {
             .manager
             .start(
                 &ctx(),
-                start("r1", vec![job("ok", "printf done"), job("bad", "exit 4")]),
+                start(
+                    "r1",
+                    vec![
+                        job("ok", script("printf done", "[Console]::Write('done')")),
+                        job("bad", "exit 4"),
+                    ],
+                ),
             )
             .await
             .expect("start");
@@ -1526,30 +1565,27 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn a_resubmitted_job_id_is_refused_and_an_identical_retry_replays() {
         let fixture = fixture();
-        let script = "echo run >> runs.txt";
+        let command_script = script(
+            "echo run >> runs.txt",
+            "[IO.File]::AppendAllText((Join-Path $pwd 'runs.txt'), \"run`n\")",
+        );
         fixture
             .manager
-            .start(&ctx(), start("first", vec![job("build", script)]))
+            .start(&ctx(), start("first", vec![job("build", command_script)]))
             .await
             .expect("start");
         finished(&fixture.manager, &["build"]).await;
 
         let replay = fixture
             .manager
-            .start(&ctx(), start("first", vec![job("build", script)]))
+            .start(&ctx(), start("first", vec![job("build", command_script)]))
             .await
             .expect("replay");
         assert_eq!(replay.jobs[0].status, JobStatus::Succeeded);
 
         let error = fixture
             .manager
-            .start(&ctx(), start("second", vec![job("build", script)]))
-            .await
-            .unwrap_err();
-        assert_eq!(precondition(&error), Some(PreconditionReason::JobIdInUse));
-        let error = fixture
-            .manager
-            .start(&ctx(), start("first", vec![job("build", "echo changed")]))
+            .start(&ctx(), start("second", vec![job("build", command_script)]))
             .await
             .unwrap_err();
         assert_eq!(precondition(&error), Some(PreconditionReason::JobIdInUse));
@@ -1557,7 +1593,28 @@ mod tests {
             .manager
             .start(
                 &ctx(),
-                start("first", vec![job("build", script), job("new", "true")]),
+                start(
+                    "first",
+                    vec![job(
+                        "build",
+                        script("echo changed", "[Console]::Write('changed')"),
+                    )],
+                ),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(precondition(&error), Some(PreconditionReason::JobIdInUse));
+        let error = fixture
+            .manager
+            .start(
+                &ctx(),
+                start(
+                    "first",
+                    vec![
+                        job("build", command_script),
+                        job("new", script("true", "exit 0")),
+                    ],
+                ),
             )
             .await
             .unwrap_err();
@@ -1572,12 +1629,18 @@ mod tests {
         // The child never reads its input, so the timeout must be armed
         // before the input is written or the job runs forever.
         let fixture = fixture();
-        let mut stuck = job("stuck", "sleep 30");
+        let mut stuck = job("stuck", script("sleep 30", "Start-Sleep -Seconds 30"));
         stuck.command.input = ExecInput::Bytes {
             data: ByteChunk::from(vec![b'x'; 1024 * 1024]),
         };
         stuck.command.timeout_ms = Some(300);
-        let mut echo = job("echo", "cat");
+        let mut echo = job(
+            "echo",
+            script(
+                "cat",
+                "[Console]::OpenStandardInput().CopyTo([Console]::OpenStandardOutput())",
+            ),
+        );
         let input: Vec<u8> = (0..512 * 1024u32).map(|i| b'a' + (i % 26) as u8).collect();
         echo.command.input = ExecInput::Bytes {
             data: ByteChunk::from(input.clone()),
@@ -1609,7 +1672,7 @@ mod tests {
                     "r",
                     vec![job(
                         "verbose",
-                        "i=0; while [ $i -lt 30000 ]; do echo line-$i; i=$((i+1)); done; echo 'FAILED: 3 tests'",
+                        script("i=0; while [ $i -lt 30000 ]; do echo line-$i; i=$((i+1)); done; echo 'FAILED: 3 tests'", "for ($i=0; $i -lt 30000; $i++) { [Console]::Write(\"line-$i`n\") }; [Console]::Write(\"FAILED: 3 tests`n\")"),
                     )],
                 ),
             )
@@ -1687,7 +1750,7 @@ mod tests {
                     "r",
                     vec![job(
                         "page",
-                        "i=0; while [ $i -lt 2000 ]; do printf '%09d\\n' $i; i=$((i+1)); done",
+                        script("i=0; while [ $i -lt 2000 ]; do printf '%09d\\n' $i; i=$((i+1)); done", "for ($i=0; $i -lt 2000; $i++) { [Console]::Write(('{0:D9}' -f $i) + \"`n\") }"),
                     )],
                 ),
             )
@@ -1740,7 +1803,16 @@ mod tests {
                     "r",
                     names
                         .iter()
-                        .map(|name| job(name, &format!("printf {name}")))
+                        .map(|name| {
+                            job(
+                                name,
+                                &if cfg!(windows) {
+                                    format!("[Console]::Write('{name}')")
+                                } else {
+                                    format!("printf {name}")
+                                },
+                            )
+                        })
                         .collect(),
                 ),
             )
@@ -1805,7 +1877,7 @@ mod tests {
                             "forced",
                             "trap 'echo trapped; exit 0' TERM; sleep 30 & wait",
                         ),
-                        job("queued", "true"),
+                        job("queued", script("true", "exit 0")),
                     ]
                     .into_iter()
                     .enumerate()
@@ -1870,20 +1942,50 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn dependencies_and_queues_order_jobs() {
         let fixture = fixture();
-        let mut first = job("first", "sleep 0.2; echo first >> order.txt");
+        let mut first = job(
+            "first",
+            script(
+                "sleep 0.2; echo first >> order.txt",
+                "Start-Sleep -Milliseconds 200; [IO.File]::AppendAllText((Join-Path $pwd 'order.txt'), \"first`n\")",
+            ),
+        );
         first.name = Some(JobName::new("first job").unwrap());
         first.queue_key = Some(QueueKey::new("q").unwrap());
-        let mut second = job("second", "echo second >> order.txt");
+        let mut second = job(
+            "second",
+            script(
+                "echo second >> order.txt",
+                "[IO.File]::AppendAllText((Join-Path $pwd 'order.txt'), \"second`n\")",
+            ),
+        );
         second.queue_key = Some(QueueKey::new("q").unwrap());
-        let mut after = job("after", "echo after >> order.txt; exit 1");
+        let mut after = job(
+            "after",
+            script(
+                "echo after >> order.txt; exit 1",
+                "[IO.File]::AppendAllText((Join-Path $pwd 'order.txt'), \"after`n\"); exit 1",
+            ),
+        );
         after.depends_on = vec![JobDependency::Name {
             name: JobName::new("first job").unwrap(),
         }];
-        let mut doomed = job("doomed", "echo doomed >> order.txt");
+        let mut doomed = job(
+            "doomed",
+            script(
+                "echo doomed >> order.txt",
+                "[IO.File]::AppendAllText((Join-Path $pwd 'order.txt'), \"doomed`n\")",
+            ),
+        );
         doomed.depends_on = vec![JobDependency::JobId {
             job_id: id("after"),
         }];
-        let mut tolerant = job("tolerant", "echo tolerant >> order.txt");
+        let mut tolerant = job(
+            "tolerant",
+            script(
+                "echo tolerant >> order.txt",
+                "[IO.File]::AppendAllText((Join-Path $pwd 'order.txt'), \"tolerant`n\")",
+            ),
+        );
         tolerant.depends_on = vec![JobDependency::JobId {
             job_id: id("after"),
         }];
@@ -1911,9 +2013,9 @@ mod tests {
         assert!(lines.iter().position(|line| *line == "second") > Some(0));
         assert!(!lines.contains(&"doomed"));
 
-        let mut cyclic = job("a", "true");
+        let mut cyclic = job("a", script("true", "exit 0"));
         cyclic.depends_on = vec![JobDependency::JobId { job_id: id("b") }];
-        let mut back = job("b", "true");
+        let mut back = job("b", script("true", "exit 0"));
         back.depends_on = vec![JobDependency::JobId { job_id: id("a") }];
         let error = fixture
             .manager
@@ -1921,7 +2023,13 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error.kind(), ProtocolErrorKind::InvalidParams);
-        let mut piped = job("piped", "cat");
+        let mut piped = job(
+            "piped",
+            script(
+                "cat",
+                "[Console]::OpenStandardInput().CopyTo([Console]::OpenStandardOutput())",
+            ),
+        );
         piped.command.input = ExecInput::Pipe {};
         let error = fixture
             .manager
@@ -2008,6 +2116,122 @@ mod tests {
         panic!("the earlier instance's job group survived the restart");
     }
 
+    #[cfg(windows)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_jobs_sweep_descendants_and_cancel_owned_trees() {
+        let fixture = fixture();
+        let mut leaky = job("leaky", "exit 0");
+        leaky.command = crate::exec::test_native_command("tree");
+        fixture
+            .manager
+            .start(&ctx(), start("leak", vec![leaky]))
+            .await
+            .unwrap();
+        let jobs = finished(&fixture.manager, &["leaky"]).await;
+        assert_eq!(jobs[0].0.status, JobStatus::Succeeded);
+        let leftovers = jobs[0]
+            .0
+            .leftovers
+            .as_ref()
+            .expect("owned grandchild reported");
+        assert_eq!(leftovers.disposition, LeftoverDisposition::Swept);
+        assert!(!leftovers.processes.is_empty());
+        for child in &leftovers.processes {
+            assert!(
+                process_group::process_start_time(child.pid).is_none(),
+                "job completion waits for its tree to die"
+            );
+        }
+        for force in [false, true] {
+            let name = if force { "force" } else { "cancel" };
+            let mut running = job(name, "exit 0");
+            running.command = crate::exec::test_native_command("tree_running");
+            fixture
+                .manager
+                .start(&ctx(), start(name, vec![running]))
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let ready = fixture
+                        .manager
+                        .state()
+                        .jobs
+                        .get(&id(name))
+                        .and_then(|entry| entry.run.as_ref())
+                        .is_some_and(|run| {
+                            run.execution
+                                .sample_leftovers(LeftoverDisposition::Kept)
+                                .is_some_and(|report| report.processes.len() >= 2)
+                        });
+                    if ready {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            fixture
+                .manager
+                .cancel(
+                    &ctx(),
+                    CancelJobsParams {
+                        job_ids: vec![id(name)],
+                        scope: JobCancelScope::Job,
+                        force,
+                    },
+                )
+                .await
+                .unwrap();
+            let jobs = finished(&fixture.manager, &[name]).await;
+            assert_eq!(jobs[0].0.status, JobStatus::Cancelled);
+        }
+    }
+
+    #[cfg(windows)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_job_shutdown_kills_owned_tree_with_live_manager_clones() {
+        let fixture = fixture();
+        let clone = fixture.manager.clone();
+        let mut running = job("running", "exit 0");
+        running.command = crate::exec::test_native_command("sleep");
+        fixture
+            .manager
+            .start(&ctx(), start("r", vec![running]))
+            .await
+            .unwrap();
+        let group = fixture
+            .manager
+            .state()
+            .jobs
+            .get(&id("running"))
+            .unwrap()
+            .run
+            .as_ref()
+            .unwrap()
+            .execution
+            .group();
+        fixture.manager.shutdown();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while group.alive() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let error = clone
+            .start(&ctx(), start("late", vec![job("late", "exit 0")]))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error.data,
+            ErrorData::FailedPrecondition {
+                reason: PreconditionReason::EnvironmentClosed
+            }
+        ));
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn unreadable_records_are_quarantined_instead_of_failing_startup() {
         let fixture = fixture();
@@ -2036,7 +2260,11 @@ mod tests {
                 &ctx(),
                 start(
                     "r",
-                    vec![job("a", "true"), job("b", "true"), job("c", "true")],
+                    vec![
+                        job("a", script("true", "exit 0")),
+                        job("b", script("true", "exit 0")),
+                        job("c", script("true", "exit 0")),
+                    ],
                 ),
             )
             .await

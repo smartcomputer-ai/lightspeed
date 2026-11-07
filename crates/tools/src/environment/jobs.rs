@@ -30,12 +30,9 @@ use harness::{
     storage::{BlobEdge, BlobGraphStore, BlobStore, BlobStoreError},
 };
 
-use crate::{
-    environment::{
-        output::{ShownOutput, is_stderr},
-        process::LeftoverProcess,
-    },
-    fs::FsPath,
+use crate::environment::{
+    output::{ShownOutput, is_stderr},
+    process::LeftoverProcess,
 };
 
 pub const JOB_SUBMIT_TOOL_NAME: &str = "job_submit";
@@ -114,7 +111,7 @@ pub struct JobRunArgs {
     pub name: Option<String>,
     pub argv: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<FsPath>,
+    pub cwd: Option<crate::fs::PathInput>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -235,7 +232,7 @@ pub struct JobSubmitSpecArgs {
     pub job_id: JobId,
     pub argv: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<FsPath>,
+    pub cwd: Option<crate::fs::PathInput>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -817,31 +814,38 @@ fn job_name(name: String) -> JobExecResult<JobName> {
 }
 
 fn job_cwd(
-    cwd: Option<&FsPath>,
+    cwd: Option<&crate::fs::PathInput>,
     working_directory: Option<&str>,
 ) -> JobExecResult<Option<EnvironmentPath>> {
-    let invalid = |message: String| JobError::InvalidRequest { message };
-    let resolved = match (cwd, working_directory) {
-        (Some(cwd), _) if cwd.is_absolute() => cwd.as_str().to_owned(),
-        (cwd, Some(base)) => crate::environment::sources::absolute(
-            std::path::Path::new(base),
-            cwd.map_or(".", FsPath::as_str),
-        )
-        .map_err(invalid)?
-        .to_string_lossy()
-        .into_owned(),
-        (Some(cwd), None) => {
-            return Err(invalid(format!(
-                "job cwd {cwd} is relative and the environment has no working directory"
-            )));
-        }
-        (None, None) => return Ok(None),
+    use environment_protocol::paths::PathConvention;
+    let invalid = |error: environment_protocol::paths::PathError| JobError::InvalidRequest {
+        message: error.to_string(),
     };
-    EnvironmentPath::new(resolved)
-        .map(Some)
-        .map_err(|error| invalid(error.to_string()))
+    match (cwd, working_directory) {
+        (cwd, Some(base)) => {
+            let convention = if base.starts_with('/') {
+                PathConvention::Posix
+            } else {
+                PathConvention::Windows
+            };
+            let base = environment_client::paths::absolute(base, convention).map_err(invalid)?;
+            environment_client::paths::resolve(&base, cwd.map_or(".", |path| path.as_str()))
+                .map(Some)
+                .map_err(invalid)
+        }
+        (Some(path), None) => {
+            let convention = if path.as_str().starts_with('/') {
+                PathConvention::Posix
+            } else {
+                PathConvention::Windows
+            };
+            environment_client::paths::absolute(path.as_str(), convention)
+                .map(Some)
+                .map_err(invalid)
+        }
+        (None, None) => Ok(None),
+    }
 }
-
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -894,7 +898,7 @@ mod tests {
                 name: None,
                 job_id: job_id("build"),
                 argv: vec!["true".to_owned()],
-                cwd: cwd.map(|cwd| FsPath::new(cwd).unwrap()),
+                cwd: cwd.map(|cwd| cwd.to_owned().into()),
                 env: BTreeMap::new(),
                 stdin: Some("input".to_owned()),
                 timeout_ms: None,
@@ -933,6 +937,28 @@ mod tests {
         assert!(spec(None, None).unwrap().command.cwd.is_none());
         assert!(matches!(
             spec(Some("sub"), None),
+            Err(JobError::InvalidRequest { .. })
+        ));
+        assert_eq!(
+            spec(Some(r"..\tests"), Some("C:/work/src"))
+                .unwrap()
+                .command
+                .cwd
+                .unwrap()
+                .as_str(),
+            "C:/work/tests"
+        );
+        assert_eq!(
+            spec(Some(r"D:\build"), Some("C:/work"))
+                .unwrap()
+                .command
+                .cwd
+                .unwrap()
+                .as_str(),
+            "D:/build"
+        );
+        assert!(matches!(
+            spec(Some("C:relative"), Some("C:/work")),
             Err(JobError::InvalidRequest { .. })
         ));
     }

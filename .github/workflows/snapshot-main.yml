@@ -14,31 +14,17 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  identity:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_repository.full_name == github.repository
-    runs-on: [self-hosted, linux, x64, hz01, protected]
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-    services:
-      postgres:
-        image: postgres:17-bookworm@sha256:84560e3b9c6874893fc4e2854f5dc3e7c1a37bc9d1dfd7a8c641310ae22ba5ad
-        env:
-          POSTGRES_USER: lightspeed
-          POSTGRES_PASSWORD: lightspeed
-          POSTGRES_DB: lightspeed
-        ports:
-          - 55432:5432
-        options: >-
-          --health-cmd "pg_isready -U lightspeed"
-          --health-interval 2s
-          --health-timeout 5s
-          --health-retries 15
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.identity.outputs.sha }}
+      version: ${{ steps.identity.outputs.version }}
+      rust_version: ${{ steps.identity.outputs.rust_version }}
+      staging_tag: ${{ steps.identity.outputs.staging_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,9 +45,43 @@ jobs:
           echo "version=$LIGHTSPEED_PRODUCT_VERSION" >> "$GITHUB_OUTPUT"
           echo "rust_version=$LIGHTSPEED_RELEASE_RUST_VERSION" >> "$GITHUB_OUTPUT"
           echo "staging_tag=staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: identity
+    runs-on: [self-hosted, linux, x64, hz01, protected]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      build_environment: ${{ steps.build_environment.outputs.digest }}
+      runtime: ${{ steps.runtime.outputs.digest }}
+      configurator: ${{ steps.configurator.outputs.digest }}
+      platform: ${{ steps.platform.outputs.digest }}
+      platform_workers: ${{ steps.platform_workers.outputs.digest }}
+    services:
+      postgres:
+        image: postgres:17-bookworm@sha256:84560e3b9c6874893fc4e2854f5dc3e7c1a37bc9d1dfd7a8c641310ae22ba5ad
+        env:
+          POSTGRES_USER: lightspeed
+          POSTGRES_PASSWORD: lightspeed
+          POSTGRES_DB: lightspeed
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U lightspeed"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.identity.outputs.sha }}
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
-          toolchain: ${{ steps.identity.outputs.rust_version }}
+          toolchain: ${{ needs.identity.outputs.rust_version }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.21.0
@@ -84,12 +104,12 @@ jobs:
           file: release/build-env.Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/${{ github.repository }}/build-env:${{ steps.identity.outputs.staging_tag }}
+          tags: ghcr.io/${{ github.repository }}/build-env:${{ needs.identity.outputs.staging_tag }}
           provenance: mode=max
           sbom: true
       - name: Build the coherent artifact set once
         env:
-          LIGHTSPEED_GIT_SHA: ${{ steps.identity.outputs.sha }}
+          LIGHTSPEED_GIT_SHA: ${{ needs.identity.outputs.sha }}
           BUILD_IMAGE: ghcr.io/${{ github.repository }}/build-env@${{ steps.build_environment.outputs.digest }}
         run: LIGHTSPEED_RELEASE_BUILD_IMAGE="$BUILD_IMAGE" scripts/release/run-build-env.sh "$BUILD_IMAGE"
       - name: Build and publish the runtime image to staging
@@ -101,9 +121,9 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            LIGHTSPEED_RELEASE_VERSION=${{ steps.identity.outputs.version }}
-            LIGHTSPEED_GIT_SHA=${{ steps.identity.outputs.sha }}
-          tags: ghcr.io/${{ github.repository }}/runtime:${{ steps.identity.outputs.staging_tag }}
+            LIGHTSPEED_RELEASE_VERSION=${{ needs.identity.outputs.version }}
+            LIGHTSPEED_GIT_SHA=${{ needs.identity.outputs.sha }}
+          tags: ghcr.io/${{ github.repository }}/runtime:${{ needs.identity.outputs.staging_tag }}
           provenance: mode=max
           sbom: true
       - name: Build and publish Configurator MCP image to staging
@@ -115,9 +135,9 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            LIGHTSPEED_RELEASE_VERSION=${{ steps.identity.outputs.version }}
-            LIGHTSPEED_GIT_SHA=${{ steps.identity.outputs.sha }}
-          tags: ghcr.io/${{ github.repository }}/configurator-mcp:${{ steps.identity.outputs.staging_tag }}
+            LIGHTSPEED_RELEASE_VERSION=${{ needs.identity.outputs.version }}
+            LIGHTSPEED_GIT_SHA=${{ needs.identity.outputs.sha }}
+          tags: ghcr.io/${{ github.repository }}/configurator-mcp:${{ needs.identity.outputs.staging_tag }}
           provenance: mode=max
           sbom: true
       - name: Build and publish platform image to staging
@@ -129,9 +149,9 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            LIGHTSPEED_RELEASE_VERSION=${{ steps.identity.outputs.version }}
-            LIGHTSPEED_GIT_SHA=${{ steps.identity.outputs.sha }}
-          tags: ghcr.io/${{ github.repository }}/platform:${{ steps.identity.outputs.staging_tag }}
+            LIGHTSPEED_RELEASE_VERSION=${{ needs.identity.outputs.version }}
+            LIGHTSPEED_GIT_SHA=${{ needs.identity.outputs.sha }}
+          tags: ghcr.io/${{ github.repository }}/platform:${{ needs.identity.outputs.staging_tag }}
           provenance: mode=max
           sbom: true
       - name: Build and publish Platform workers image to staging
@@ -143,67 +163,11 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            LIGHTSPEED_RELEASE_VERSION=${{ steps.identity.outputs.version }}
-            LIGHTSPEED_GIT_SHA=${{ steps.identity.outputs.sha }}
-          tags: ghcr.io/${{ github.repository }}/platform-workers:${{ steps.identity.outputs.staging_tag }}
+            LIGHTSPEED_RELEASE_VERSION=${{ needs.identity.outputs.version }}
+            LIGHTSPEED_GIT_SHA=${{ needs.identity.outputs.sha }}
+          tags: ghcr.io/${{ github.repository }}/platform-workers:${{ needs.identity.outputs.staging_tag }}
           provenance: mode=max
           sbom: true
-      - name: Publish standalone archives to staging
-        id: archives
-        env:
-          GHCR_ROOT: ghcr.io/${{ github.repository }}
-          STAGING_TAG: ${{ steps.identity.outputs.staging_tag }}
-        run: |
-          set -euo pipefail
-          declare -A files=(
-            [runtime]="$(find dist/archives -name '*-runtime-*' -print -quit)"
-            [provider-incus]="$(find dist/archives -name '*-provider-incus-*' -print -quit)"
-            [envd]="$(find dist/archives -name '*-envd-*' -print -quit)"
-            [cli]="$(find dist/archives -name '*-cli-*' -print -quit)"
-            [demo]="$(find dist/archives -name '*-demo-*' -print -quit)"
-            [docs]="$(find dist/archives -name '*-docs-*' -print -quit)"
-          )
-          for name in runtime provider-incus envd cli demo docs; do
-            test -n "${files[$name]}"
-            ref="$GHCR_ROOT/${name}-bundle:$STAGING_TAG"
-            oras push "$ref" "${files[$name]}:application/gzip"
-            digest="$(oras resolve "$ref")"
-            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            key="${name^^}"
-            key="${key//-/_}"
-            echo "${key}_URL=oci://$GHCR_ROOT/${name}-bundle@$digest" >> "$GITHUB_OUTPUT"
-          done
-      - name: Finalize the digest-pinned manifest and staged bundle
-        id: release_bundle
-        env:
-          LIGHTSPEED_RUNTIME_IMAGE: ghcr.io/${{ github.repository }}/runtime@${{ steps.runtime.outputs.digest }}
-          LIGHTSPEED_CONFIGURATOR_MCP_IMAGE: ghcr.io/${{ github.repository }}/configurator-mcp@${{ steps.configurator.outputs.digest }}
-          LIGHTSPEED_PLATFORM_IMAGE: ghcr.io/${{ github.repository }}/platform@${{ steps.platform.outputs.digest }}
-          LIGHTSPEED_PLATFORM_WORKERS_IMAGE: ghcr.io/${{ github.repository }}/platform-workers@${{ steps.platform_workers.outputs.digest }}
-          LIGHTSPEED_RELEASE_BUILD_IMAGE: ghcr.io/${{ github.repository }}/build-env@${{ steps.build_environment.outputs.digest }}
-          LIGHTSPEED_BINARY_URL_RUNTIME: ${{ steps.archives.outputs.RUNTIME_URL }}
-          LIGHTSPEED_BINARY_URL_PROVIDER_INCUS: ${{ steps.archives.outputs.PROVIDER_INCUS_URL }}
-          LIGHTSPEED_BINARY_URL_ENVD: ${{ steps.archives.outputs.ENVD_URL }}
-          LIGHTSPEED_BINARY_URL_CLI: ${{ steps.archives.outputs.CLI_URL }}
-          LIGHTSPEED_ARTIFACT_URL_DEMO: ${{ steps.archives.outputs.DEMO_URL }}
-          LIGHTSPEED_ARTIFACT_URL_DOCS: ${{ steps.archives.outputs.DOCS_URL }}
-          LIGHTSPEED_RELEASE_CHANNEL: main
-          STAGING_TAG: ${{ steps.identity.outputs.staging_tag }}
-        run: |
-          set -euo pipefail
-          find dist/runtime -depth -delete
-          scripts/release/create-manifest.mjs \
-            "${{ steps.identity.outputs.version }}" "${{ steps.identity.outputs.sha }}"
-          scripts/release/checksums.sh
-          scripts/release/verify-manifest.mjs --published
-          (cd dist && sha256sum --check checksums.txt)
-          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
-            -czf release-bundle.tar.gz dist
-          bundle_ref="ghcr.io/${{ github.repository }}/release-bundle:$STAGING_TAG"
-          oras push "$bundle_ref" release-bundle.tar.gz:application/gzip
-          bundle_digest="$(oras resolve "$bundle_ref")"
-          [[ "$bundle_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          echo "digest=$bundle_digest" >> "$GITHUB_OUTPUT"
       - name: Verify the staged runtime images
         env:
           RUNTIME_IMAGE: ghcr.io/${{ github.repository }}/runtime@${{ steps.runtime.outputs.digest }}
@@ -211,7 +175,7 @@ jobs:
           PLATFORM_IMAGE: ghcr.io/${{ github.repository }}/platform@${{ steps.platform.outputs.digest }}
           PLATFORM_WORKERS_IMAGE: ghcr.io/${{ github.repository }}/platform-workers@${{ steps.platform_workers.outputs.digest }}
           PLATFORM_DATABASE_URL: postgres://lightspeed:lightspeed@127.0.0.1:55432/lightspeed
-          EXPECTED_SHA: ${{ steps.identity.outputs.sha }}
+          EXPECTED_SHA: ${{ needs.identity.outputs.sha }}
         run: |
           set -euo pipefail
           docker pull "$RUNTIME_IMAGE"
@@ -222,10 +186,102 @@ jobs:
           cmp dist/bin/lightspeed-runtime image-check/lightspeed-runtime
           docker run --rm "$RUNTIME_IMAGE" --version | grep -F "$EXPECTED_SHA"
           scripts/release/smoke-images.sh
+      - name: Stage Linux build for assembly
+        run: |
+          set -euo pipefail
+          find dist/runtime -depth -delete
+          tar -czf linux-build.tar.gz dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: linux-build.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+
+  windows:
+    needs: identity
+    uses: ./.github/workflows/build-windows-envd.yml
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    with:
+      sha: ${{ needs.identity.outputs.sha }}
+
+  build:
+    needs: [identity, linux, windows]
+    runs-on: [self-hosted, linux, x64, hz01, protected]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      bundle_digest: ${{ steps.release_bundle.outputs.digest }}
+      git_sha: ${{ needs.identity.outputs.sha }}
+      version: ${{ needs.identity.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.identity.outputs.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: linux-build-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-envd-${{ github.run_id }}-${{ github.run_attempt }}
+          path: windows-build
+      - name: Verify and assemble both targets
+        run: |
+          set -euo pipefail
+          tar -xzf linux-build.tar.gz
+          node scripts/release/import-windows.mjs windows-build "${{ needs.identity.outputs.sha }}"
+          node scripts/release/create-manifest.mjs "${{ needs.identity.outputs.version }}" "${{ needs.identity.outputs.sha }}"
+          node scripts/release/verify-manifest.mjs
+      - name: Publish every standalone archive to staging
+        env:
+          GHCR_ROOT: ghcr.io/${{ github.repository }}
+          STAGING_TAG: ${{ needs.identity.outputs.staging_tag }}
+        run: node scripts/release/publish-archives.mjs
+      - name: Finalize the digest-pinned manifest and staged bundle
+        id: release_bundle
+        env:
+          LIGHTSPEED_RUNTIME_IMAGE: ghcr.io/${{ github.repository }}/runtime@${{ needs.linux.outputs.runtime }}
+          LIGHTSPEED_CONFIGURATOR_MCP_IMAGE: ghcr.io/${{ github.repository }}/configurator-mcp@${{ needs.linux.outputs.configurator }}
+          LIGHTSPEED_PLATFORM_IMAGE: ghcr.io/${{ github.repository }}/platform@${{ needs.linux.outputs.platform }}
+          LIGHTSPEED_PLATFORM_WORKERS_IMAGE: ghcr.io/${{ github.repository }}/platform-workers@${{ needs.linux.outputs.platform_workers }}
+          LIGHTSPEED_RELEASE_BUILD_IMAGE: ghcr.io/${{ github.repository }}/build-env@${{ needs.linux.outputs.build_environment }}
+          LIGHTSPEED_RELEASE_CHANNEL: main
+          STAGING_TAG: ${{ needs.identity.outputs.staging_tag }}
+        run: |
+          set -euo pipefail
+          scripts/release/create-manifest.mjs \
+            "${{ needs.identity.outputs.version }}" "${{ needs.identity.outputs.sha }}"
+          scripts/release/checksums.sh
+          scripts/release/verify-manifest.mjs --published
+          (cd dist && sha256sum --check checksums.txt)
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+            -czf release-bundle.tar.gz dist
+          bundle_ref="ghcr.io/${{ github.repository }}/release-bundle:$STAGING_TAG"
+          oras push "$bundle_ref" release-bundle.tar.gz:application/gzip
+          bundle_digest="$(oras resolve "$bundle_ref")"
+          [[ "$bundle_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$bundle_digest" >> "$GITHUB_OUTPUT"
       - name: Confirm this is still the current main commit
         id: current
         env:
-          EXPECTED_SHA: ${{ steps.identity.outputs.sha }}
+          EXPECTED_SHA: ${{ needs.identity.outputs.sha }}
         run: |
           set -euo pipefail
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
@@ -240,7 +296,7 @@ jobs:
         env:
           GHCR_ROOT: ghcr.io/${{ github.repository }}
           BUNDLE_DIGEST: ${{ steps.release_bundle.outputs.digest }}
-          SHA: ${{ steps.identity.outputs.sha }}
+          SHA: ${{ needs.identity.outputs.sha }}
         run: |
           set -euo pipefail
           scripts/release/publish-aliases.sh "sha-$SHA" "$BUNDLE_DIGEST"
@@ -260,7 +316,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: steps.current.outputs.publish == 'true'
         with:
-          name: lightspeed-snapshot-${{ steps.identity.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: lightspeed-snapshot-${{ needs.identity.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             dist/
             release-bundle.tar.gz
@@ -272,7 +328,7 @@ jobs:
           DEPLOYMENT_DISPATCH_TOKEN: ${{ secrets.LIGHTSPEED_DEPLOYMENT_DISPATCH_TOKEN }}
           DEPLOYMENT_REPOSITORY: ${{ vars.LIGHTSPEED_DEPLOYMENT_REPOSITORY }}
           BUNDLE_DIGEST: ${{ steps.release_bundle.outputs.digest }}
-          LIGHTSPEED_SHA: ${{ steps.identity.outputs.sha }}
+          LIGHTSPEED_SHA: ${{ needs.identity.outputs.sha }}
         run: |
           set -euo pipefail
           if [[ -z "$DEPLOYMENT_DISPATCH_TOKEN" || -z "$DEPLOYMENT_REPOSITORY" ]]; then

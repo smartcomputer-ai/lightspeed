@@ -482,6 +482,7 @@ fixtures. Ordinary unit tests do not require them.
 | Variable | Purpose |
 | --- | --- |
 | `LIGHTSPEED_TEST_POSTGRES_URL` | PostgreSQL URL for Rust live store/runtime tests and the development fallback. |
+| `LIGHTSPEED_TEST_ENVD_BINARY` | Absolute path to the extracted Windows envd executable, set by release acceptance. Windows live fixtures otherwise use Cargo's built executable; an invalid override fails the tests. |
 | `LIGHTSPEED_PLATFORM_MIGRATION_TEST_URL` | Scratch PostgreSQL URL used by the Platform empty-install and upgrade migration test. |
 | `LIGHTSPEED_OPENAI_MODEL` | First-choice model override in hosted runtime live tests. |
 | `OPENAI_LIVE_MODEL` | Shared fallback model for OpenAI live suites. |
@@ -521,13 +522,14 @@ them on services.
 | `SOURCE_DATE_EPOCH` | Reproducible SBOM/archive timestamp. |
 | `LIGHTSPEED_BINARY_URL_RUNTIME` | Published runtime archive URL recorded in the manifest. |
 | `LIGHTSPEED_BINARY_URL_PROVIDER_INCUS` | Published Incus-provider archive URL. |
-| `LIGHTSPEED_BINARY_URL_ENVD` | Published environment-daemon archive URL. |
+| `LIGHTSPEED_BINARY_URL_ENVD` | Legacy Linux bootstrap daemon archive URL; the target-specific value takes precedence. |
+| `LIGHTSPEED_BINARY_URL_ENVD_<TARGET>` | Immutable daemon archive URL for each target, uppercased with hyphens replaced by underscores (for example `X86_64_PC_WINDOWS_MSVC`). Set by archive publication during assembly. |
 | `LIGHTSPEED_BINARY_URL_CLI` | Published CLI archive URL. |
 | `LIGHTSPEED_ARTIFACT_URL_DEMO` | Published static demo archive URL recorded in the manifest. |
 | `LIGHTSPEED_ARTIFACT_URL_DOCS` | Published static documentation archive URL recorded in the manifest. |
 | `LIGHTSPEED_RELEASE_CHANNEL` | `release` for a tagged build, `main` (default) for a snapshot; recorded in the envd discovery document (`envd.json`). |
 | `LIGHTSPEED_ENVD_PUBLIC_URL_BASE` | HTTPS base under which the envd archives are downloadable without credentials (a tag's GitHub release assets); unset for snapshots, whose discovery document then carries `null` URLs for the serving deployment to fill in. |
-| `LIGHTSPEED_ENVD_TARGETS` | Comma-separated envd targets this release publishes, baked into the server so `initialize` can report them; a local build reports its own target. |
+| `LIGHTSPEED_ENVD_TARGETS` | Complete comma-separated daemon target set from release metadata, baked into release servers so `initialize` reports Linux musl and Windows MSVC. A direct local Cargo build reports its own target unless overridden. |
 | `LIGHTSPEED_RUNTIME_IMAGE` | Digest-pinned runtime image recorded in the manifest. |
 | `LIGHTSPEED_PLATFORM_IMAGE` | Digest-pinned Platform image recorded in the manifest. |
 | `LIGHTSPEED_PLATFORM_WORKERS_IMAGE` | Digest-pinned connector-host image (still published as `platform-workers`) recorded in the manifest. |
@@ -539,7 +541,7 @@ consumed by build scripts and should not be used as deployment overrides.
 | Variable | Purpose |
 | --- | --- |
 | `LIGHTSPEED_RELEASE_TARGET` | Rust release target triple for the server, provider, and CLI. |
-| `LIGHTSPEED_ENVD_TARGET` | Static musl target the environment daemon is published for, so it runs on any Linux image regardless of glibc. |
+| `LIGHTSPEED_ENVD_TARGET` | Linux bootstrap daemon target, retained alongside the complete `LIGHTSPEED_ENVD_TARGETS` set. |
 | `LIGHTSPEED_PRODUCT_VERSION` | Product version used when no explicit release version is supplied. |
 | `LIGHTSPEED_RELEASE_RUST_VERSION` | Pinned release Rust toolchain. |
 | `LIGHTSPEED_RELEASE_BUILD_BASE_IMAGE` | Digest-pinned base used to construct the build environment. |

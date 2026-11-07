@@ -167,6 +167,12 @@ impl RemoteEnvironmentConnection {
         blobs: Arc<dyn BlobStore>,
     ) -> (FsToolContext, EnvironmentToolContext) {
         let has_filesystem = self.initialize_response().capabilities.filesystem.is_some();
+        let has_transfer = self
+            .initialize_response()
+            .capabilities
+            .filesystem
+            .as_ref()
+            .is_some_and(|filesystem| filesystem.transfer);
         let fs = Arc::new(self.file_system());
         let process = self
             .process_executor()
@@ -176,16 +182,18 @@ impl RemoteEnvironmentConnection {
             .map(|executor| Arc::new(executor) as Arc<dyn JobExecutor>);
         let mut fs_ctx = FsToolContext::new(fs, blobs.clone());
         let mut env_ctx = EnvironmentToolContext::new(process, blobs);
-        if has_filesystem {
+        env_ctx.platform = Some(self.initialize_response().platform.clone());
+        if has_transfer {
             env_ctx.transfer = Some(Arc::new(self.client.clone()));
         }
         if let Some(jobs) = jobs {
             env_ctx = env_ctx.with_jobs(jobs);
         }
-        if let Some(cwd) = self.cwd {
-            fs_ctx = fs_ctx.with_cwd(cwd.clone());
-            env_ctx = env_ctx.with_process_cwd(cwd);
-        }
+        let cwd = self.cwd.unwrap_or_else(|| {
+            FsPath::from_environment(self.client.initialize_response().default_cwd.clone())
+        });
+        fs_ctx = fs_ctx.with_cwd(cwd.clone());
+        env_ctx = env_ctx.with_process_cwd(cwd);
         // Filesystem tools exist only when the daemon serves the filesystem
         // family; write access follows its `write` fact through the file
         // system's access policy.
@@ -328,6 +336,21 @@ struct FileKindFacts {
 
 #[async_trait]
 impl FileSystem for RemoteEnvironmentFileSystem {
+    fn resolve_input_path(&self, cwd: Option<&FsPath>, value: &str) -> FsResult<FsPath> {
+        let facts = self.client.initialize_response();
+        let base = match cwd {
+            Some(cwd) => EnvironmentPath::from_native(cwd.as_str(), facts.platform.path_convention),
+            None => Ok(facts.default_cwd.clone()),
+        }
+        .map_err(|error| FsError::InvalidInput {
+            message: error.to_string(),
+        })?;
+        environment_client::paths::resolve(&base, value)
+            .map(FsPath::from_environment)
+            .map_err(|error| FsError::InvalidInput {
+                message: error.to_string(),
+            })
+    }
     fn access_policy(&self) -> FileAccessPolicy {
         if self.writable {
             FileAccessPolicy::FullReadWrite
@@ -559,7 +582,7 @@ impl FileSystem for RemoteEnvironmentFileSystem {
             .into_iter()
             .map(|item| {
                 Ok(FsTextSearchMatch {
-                    path: FsPath::new(item.path.as_str()).map_err(FsError::from)?,
+                    path: FsPath::from_environment(item.path),
                     line_number: u64::from(item.line_number),
                     line: item.line,
                     line_truncated: item.line_truncated,
@@ -604,7 +627,7 @@ impl FileSystem for RemoteEnvironmentFileSystem {
         let matches = response
             .matches
             .into_iter()
-            .map(|path| FsPath::new(path.as_str()).map_err(FsError::from))
+            .map(|path| Ok(FsPath::from_environment(path)))
             .collect::<FsResult<Vec<_>>>()?;
         Ok(Some(FsGlobResponse {
             matches,
@@ -1359,6 +1382,16 @@ mod tests {
         ))
         .unwrap();
         let mut response = fixture["response"].clone();
+        let mut capabilities = capabilities;
+        for family in ["process", "job"] {
+            if let Some(fields) = capabilities.get_mut(family).and_then(Value::as_object_mut) {
+                fields.insert("tree".into(), json!("posixProcessGroup"));
+                fields.insert("termination".into(), json!("gracefulThenKill"));
+                if family == "process" {
+                    fields.insert("interrupt".into(), json!({"pipe": true, "pty": true}));
+                }
+            }
+        }
         response["capabilities"] = capabilities;
         response["defaultCwd"] = json!("/workspace");
         serde_json::from_value(response).unwrap()
@@ -1394,7 +1427,7 @@ mod tests {
     }
 
     fn all() -> Value {
-        json!({"filesystem": {"write": true}, "process": {"pty": true}, "job": {}})
+        json!({"filesystem": {"write": true, "transfer": true}, "process": {"pty": true}, "job": {}})
     }
 
     fn sent(script: &Script) -> Vec<(String, Value)> {
@@ -1955,13 +1988,20 @@ mod tests {
         assert_eq!(fs_ctx.fs.access_policy(), FileAccessPolicy::FullReadOnly);
         assert_eq!(fs_ctx.fs_cwd, Some(FsPath::new("/workspace").unwrap()));
         assert!(env_ctx.filesystem.is_some());
-        assert!(env_ctx.transfer.is_some());
+        assert!(
+            env_ctx.transfer.is_none(),
+            "file access alone does not advertise transfers"
+        );
         assert!(env_ctx.jobs.is_none());
 
         let (client, _) = scripted(json!({}), []);
         let (_, none) = RemoteEnvironmentConnection::new(client)
             .into_contexts(Arc::new(InMemoryBlobStore::new()));
         assert!(none.filesystem.is_none() && none.process.is_none() && none.transfer.is_none());
+        let (client, _) = scripted(json!({"filesystem": {"transfer": true}}), []);
+        let (_, transfer) = RemoteEnvironmentConnection::new(client)
+            .into_contexts(Arc::new(InMemoryBlobStore::new()));
+        assert!(transfer.transfer.is_some());
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2000,7 +2040,7 @@ mod tests {
         let write = invoke_write_file(
             &fs_ctx,
             WriteFileArgs {
-                path: FsPath::new("nested/file.txt").unwrap(),
+                path: FsPath::new("nested/file.txt").unwrap().into(),
                 content: Some("hello\n".to_owned()),
                 content_ref: None,
             },
@@ -2010,7 +2050,7 @@ mod tests {
         let read = invoke_read_file(
             &fs_ctx,
             ReadFileArgs {
-                path: FsPath::new("nested/file.txt").unwrap(),
+                path: FsPath::new("nested/file.txt").unwrap().into(),
                 offset: None,
                 limit: None,
             },

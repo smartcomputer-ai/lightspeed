@@ -1,15 +1,21 @@
-//! Unix process-group lifecycle shared by job and process execution.
+//! Owned process-tree lifecycle shared by job and process execution.
 //!
-//! Every command starts as the leader of its own process group, so the
+//! On Unix every command starts as the leader of its own process group, so the
 //! descendants a script leaves behind can be signalled as a unit. Jobs
 //! sweep the group when the root exits; processes signal it only on
 //! timeout or an explicit terminate or kill, and otherwise let leftovers
 //! live with the environment. A descendant can still escape the group
-//! (`setsid`), so completion never depends on the group being empty.
+//! (`setsid`), so completion never depends on the group being empty. Windows
+//! uses a non-breakaway, kill-on-close Job Object attached atomically at spawn;
+//! its handle, never a persisted PID, grants authority over its members.
 
 use std::time::Duration;
 
+#[cfg(not(windows))]
 use tokio::process::Command;
+
+#[cfg(windows)]
+pub(crate) mod windows;
 
 #[cfg(unix)]
 use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
@@ -22,11 +28,13 @@ pub(crate) const OUTPUT_DRAIN_GRACE: Duration = Duration::from_secs(2);
 pub(crate) const OUTPUT_DRAIN_GRACE: Duration = Duration::from_millis(200);
 
 /// How often a terminating group is checked for members during its grace.
+#[cfg(not(windows))]
 const GRACE_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// A signal the daemon sends to a whole process group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GroupSignal {
+    #[cfg(not(windows))]
     Interrupt,
     Terminate,
     Kill,
@@ -34,6 +42,7 @@ pub(crate) enum GroupSignal {
 
 /// Places the spawned command in its own process group (the child becomes
 /// the group leader).
+#[cfg(not(windows))]
 pub(crate) fn spawn_in_own_group(command: &mut Command) {
     #[cfg(unix)]
     command.process_group(0);
@@ -43,6 +52,7 @@ pub(crate) fn spawn_in_own_group(command: &mut Command) {
 
 /// True when at least one process is left in the group. Says nothing about
 /// whose group it is; see [`Group::alive`].
+#[cfg(not(windows))]
 pub(crate) fn group_alive(pgid: u32) -> bool {
     #[cfg(unix)]
     return group_pid(pgid).is_some_and(|pid| test_kill_process_group(pid).is_ok());
@@ -55,6 +65,7 @@ pub(crate) fn group_alive(pgid: u32) -> bool {
 
 /// Sends `signal` to every process in the group. Returns true when the
 /// group had at least one member to signal.
+#[cfg(not(windows))]
 pub(crate) fn signal_group(pgid: u32, signal: GroupSignal) -> bool {
     #[cfg(unix)]
     {
@@ -79,58 +90,119 @@ pub(crate) fn signal_group(pgid: u32, signal: GroupSignal) -> bool {
 /// may name a later, unrelated group whose leader got the same pid: a live
 /// process with the group's pid and another start time means the group is
 /// gone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
+#[cfg_attr(not(windows), derive(PartialEq, Eq))]
 pub(crate) struct Group {
     pub pgid: u32,
     pub leader_start_time: Option<u64>,
+    #[cfg(windows)]
+    pub job: Option<std::sync::Arc<windows::Job>>,
 }
 
 impl Group {
+    /// A process-local ownership key. Windows roots can exit and have their
+    /// numeric PID reused while descendants still inhabit the owned Job Object.
+    pub fn ownership_key(&self) -> u64 {
+        #[cfg(windows)]
+        {
+            self.job.as_ref().map_or(0, |job| job.raw() as usize as u64)
+        }
+        #[cfg(not(windows))]
+        {
+            u64::from(self.pgid)
+        }
+    }
     /// The group led by `pgid`, a live process (a just spawned root).
+    #[cfg(not(windows))]
     pub fn capture(pgid: u32) -> Self {
         Self {
             pgid,
             leader_start_time: process_start_time(pgid),
+            #[cfg(windows)]
+            job: None,
         }
     }
 
     /// The group still has members, and they are this group's.
     pub fn alive(&self) -> bool {
-        if !group_alive(self.pgid) {
-            return false;
-        }
-        match process_start_time(self.pgid) {
-            None => true,
-            Some(started) => self.leader_start_time == Some(started),
+        #[cfg(windows)]
+        return self.job.as_ref().is_some_and(|job| job.alive());
+        #[cfg(not(windows))]
+        {
+            if !group_alive(self.pgid) {
+                return false;
+            }
+            match process_start_time(self.pgid) {
+                None => true,
+                Some(started) => self.leader_start_time == Some(started),
+            }
         }
     }
 
     /// Sends `signal` to the group while it is alive. Returns true when it
     /// had a member to signal.
     pub fn signal(&self, signal: GroupSignal) -> bool {
-        self.alive() && signal_group(self.pgid, signal)
+        #[cfg(windows)]
+        {
+            let _ = signal;
+            self.job.as_ref().is_some_and(|job| job.terminate())
+        }
+        #[cfg(not(windows))]
+        {
+            self.alive() && signal_group(self.pgid, signal)
+        }
+    }
+
+    pub fn members(&self) -> Vec<(u32, Option<String>)> {
+        #[cfg(windows)]
+        return self.job.as_ref().map_or_else(Vec::new, |job| job.members());
+        #[cfg(not(windows))]
+        group_members(self.pgid)
     }
 
     /// Terminates every process left in the group: `SIGTERM`, up to
     /// `grace` for the members to exit, then `SIGKILL` to whatever remains.
+    /// Windows kills immediately and waits for the owned process objects to exit.
     /// Returns true when the group had members to signal.
     pub async fn terminate(self, grace: Duration) -> bool {
-        if !self.signal(GroupSignal::Terminate) {
-            return false;
+        #[cfg(windows)]
+        {
+            let _ = grace;
+            match &self.job {
+                Some(job) => job.terminate_and_wait().await,
+                None => false,
+            }
         }
-        self.kill_after_grace(grace).await;
-        true
+        #[cfg(not(windows))]
+        {
+            if !self.signal(GroupSignal::Terminate) {
+                return false;
+            }
+            self.kill_after_grace(grace).await;
+            true
+        }
     }
 
     /// Waits up to `grace` for the group to empty, then kills what is left.
+    /// Windows has no grace period but still waits for termination to finish.
     pub async fn kill_after_grace(self, grace: Duration) {
-        let deadline = tokio::time::Instant::now() + grace;
-        while self.alive() {
-            if tokio::time::Instant::now() >= deadline {
-                self.signal(GroupSignal::Kill);
-                return;
+        #[cfg(windows)]
+        {
+            let _ = grace;
+            if let Some(job) = &self.job {
+                job.terminate_and_wait().await;
             }
-            tokio::time::sleep(GRACE_POLL_INTERVAL.min(grace)).await;
+        }
+        #[cfg(not(windows))]
+        {
+            let deadline = tokio::time::Instant::now() + grace;
+            while self.alive() {
+                if tokio::time::Instant::now() >= deadline {
+                    self.signal(GroupSignal::Kill);
+                    return;
+                }
+                tokio::time::sleep(GRACE_POLL_INTERVAL.min(grace)).await;
+            }
         }
     }
 }
@@ -145,6 +217,7 @@ fn group_pid(pgid: u32) -> Option<Pid> {
 
 /// Sends `SIGINT` to one process group by id, such as a terminal's
 /// foreground group. Returns true when it had a member to signal.
+#[cfg(not(windows))]
 pub(crate) fn interrupt_foreground(pgid: u32) -> bool {
     signal_group(pgid, GroupSignal::Interrupt)
 }
@@ -191,6 +264,10 @@ pub(crate) fn boot_id() -> Option<String> {
 /// the epoch on macOS. Tells a group leader apart from a later process that
 /// reused its pid.
 pub(crate) fn process_start_time(pid: u32) -> Option<u64> {
+    #[cfg(windows)]
+    {
+        windows::process_start_time(pid)
+    }
     #[cfg(target_os = "linux")]
     {
         let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
@@ -208,7 +285,7 @@ pub(crate) fn process_start_time(pid: u32) -> Option<u64> {
         let info = bsd_info(pid)?;
         Some(info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec)
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         let _ = pid;
         None
@@ -323,7 +400,7 @@ pub(crate) fn group_members(pgid: u32) -> Vec<(u32, Option<String>)> {
     members
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub(crate) fn group_members(_pgid: u32) -> Vec<(u32, Option<String>)> {
     Vec::new()
 }

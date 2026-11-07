@@ -9,6 +9,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    data::platform::{
+        InterruptCapabilities, OperatingSystem, PlatformError, PlatformFacts, ProcessTree,
+        TerminationMode,
+    },
     handshake::{ImplementationInfo, Plane},
     ids::DaemonInstanceId,
     paths::EnvironmentPath,
@@ -38,6 +42,8 @@ pub struct InitializeResponse {
     /// process handles are gone.
     pub daemon_instance_id: DaemonInstanceId,
     pub server_info: ImplementationInfo,
+    /// Observations of the execution environment, independent of the client OS.
+    pub platform: PlatformFacts,
     pub capabilities: DataCapabilities,
     pub limits: DataLimits,
     /// The daemon's working directory: the default `cwd` of commands.
@@ -45,6 +51,44 @@ pub struct InitializeResponse {
     /// Home directory of the user commands run as, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_directory: Option<EnvironmentPath>,
+}
+
+impl InitializeResponse {
+    /// Validate relationships between observed facts before a client uses them.
+    /// Wire decoding alone cannot establish filesystem identity or containment.
+    pub fn validate_platform(&self) -> Result<(), PlatformError> {
+        self.platform.validate()?;
+        let convention = self.platform.path_convention;
+        if self.default_cwd.convention() != convention
+            || self
+                .home_directory
+                .as_ref()
+                .is_some_and(|home| home.convention() != convention)
+        {
+            return Err(PlatformError::EnvironmentPathConvention);
+        }
+        let expected_tree = if self.platform.os == OperatingSystem::Windows {
+            ProcessTree::WindowsJobObject
+        } else {
+            ProcessTree::PosixProcessGroup
+        };
+        if let Some(process) = &self.capabilities.process
+            && (process.tree != expected_tree
+                || (process.interrupt.pty && !process.pty)
+                || (process.termination == TerminationMode::ImmediateKill
+                    && self.limits.process.terminate_grace_ms != 0))
+        {
+            return Err(PlatformError::Lifecycle);
+        }
+        if let Some(job) = &self.capabilities.job
+            && (job.tree != expected_tree
+                || (job.termination == TerminationMode::ImmediateKill
+                    && self.limits.job.cancel_grace_ms != 0))
+        {
+            return Err(PlatformError::Lifecycle);
+        }
+        Ok(())
+    }
 }
 
 /// Capability families. A present family means its base methods exist; a
@@ -55,7 +99,7 @@ pub struct InitializeResponse {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DataCapabilities {
-    /// `fs/*` (search, glob and scan included) and `transfer/*`.
+    /// `fs/*` (search, glob and scan included); `transfer/*` needs its own fact.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filesystem: Option<FilesystemCapabilities>,
     /// `process/*`.
@@ -66,11 +110,15 @@ pub struct DataCapabilities {
     pub job: Option<JobCapabilities>,
 }
 
-/// The `filesystem` family: `fs/*` and `transfer/*`.
+/// The `filesystem` family: `fs/*`, with optional `transfer/*` support.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FilesystemCapabilities {
+    /// `transfer/*` supports its journal, recovery and publish guarantees.
+    /// Core file operations do not imply transfer support.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub transfer: bool,
     /// Methods that change the filesystem are served; false on a daemon
     /// started read-only.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -78,20 +126,26 @@ pub struct FilesystemCapabilities {
 }
 
 /// The `process` family: `process/*`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProcessCapabilities {
+    pub tree: ProcessTree,
+    pub interrupt: InterruptCapabilities,
+    pub termination: TerminationMode,
     /// `process/start` accepts `pty`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub pty: bool,
 }
 
-/// The `job` family: `job/*`. It has no instance facts.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// The `job` family: `job/*`. Root completion always sweeps the owned tree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct JobCapabilities {}
+pub struct JobCapabilities {
+    pub tree: ProcessTree,
+    pub termination: TerminationMode,
+}
 
 /// Operational ceilings this daemon enforces. A request above a ceiling is
 /// `invalidParams` naming the field and the ceiling; nothing is clamped.
@@ -129,7 +183,8 @@ pub struct ProcessLimits {
     /// Output retained across all exited processes; beyond it the oldest
     /// are evicted early.
     pub max_exited_retained_bytes: u64,
-    /// Grace between `SIGTERM` and `SIGKILL` for `terminate` and timeouts.
+    /// Grace before forced termination for `terminate` and timeouts; zero
+    /// when `capabilities.process.termination` is `immediateKill`.
     pub terminate_grace_ms: u64,
     /// Bytes queued for a process's input before `process/write` accepts
     /// fewer than it was sent.
@@ -151,8 +206,8 @@ pub struct JobLimits {
     pub max_retained_output_bytes: u64,
     /// How long a terminal job's record and output are kept.
     pub record_retention_ms: u64,
-    /// Grace between `SIGTERM` and `SIGKILL` for a non-forced cancel and
-    /// timeouts.
+    /// Grace before forced termination for a non-forced cancel and timeouts;
+    /// zero when `capabilities.job.termination` is `immediateKill`.
     pub cancel_grace_ms: u64,
 }
 

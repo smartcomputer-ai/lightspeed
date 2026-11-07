@@ -101,9 +101,17 @@ while IFS=$'\t' read -r manifest_key target_name; do
 done <<'EOF'
 runtime	runtime
 providerIncus	provider-incus
-envd	envd
 cli	cli
 EOF
+
+while IFS=$'\t' read -r target source_url; do
+  source_ref="${source_url#oci://}"
+  repository="envd-${target}-bundle"
+  if [[ "$target" == "$(jq -r .envdTarget "$manifest")" ]]; then
+    repository=envd-bundle
+  fi
+  copy_oras_alias "$source_ref" "$root/$repository:$alias_name"
+done < <(jq -r '.envdBinaries | to_entries[] | [.key, .value.url] | @tsv' "$manifest")
 
 for site in demo docs; do
   source_url="$(jq -er --arg site "$site" '.artifacts[$site].url' "$manifest")"
