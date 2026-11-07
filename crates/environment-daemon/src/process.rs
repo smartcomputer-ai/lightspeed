@@ -863,7 +863,11 @@ mod tests {
         assert_eq!(response.pid, started.pid);
         assert_eq!(response.exit, Some(ExitStatus::Code { code: 3 }));
         assert_eq!(response.stopped_by, None);
-        assert!(response.leftovers.is_none());
+        assert!(
+            response.leftovers.is_none(),
+            "unexpected leftovers: {:?}",
+            response.leftovers
+        );
         // The two streams interleave in arrival order.
         let mut sorted = bytes;
         sorted.sort_unstable();

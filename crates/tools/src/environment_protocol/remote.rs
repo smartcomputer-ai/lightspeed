@@ -182,16 +182,18 @@ impl RemoteEnvironmentConnection {
             .map(|executor| Arc::new(executor) as Arc<dyn JobExecutor>);
         let mut fs_ctx = FsToolContext::new(fs, blobs.clone());
         let mut env_ctx = EnvironmentToolContext::new(process, blobs);
+        env_ctx.platform = Some(self.initialize_response().platform.clone());
         if has_transfer {
             env_ctx.transfer = Some(Arc::new(self.client.clone()));
         }
         if let Some(jobs) = jobs {
             env_ctx = env_ctx.with_jobs(jobs);
         }
-        if let Some(cwd) = self.cwd {
-            fs_ctx = fs_ctx.with_cwd(cwd.clone());
-            env_ctx = env_ctx.with_process_cwd(cwd);
-        }
+        let cwd = self.cwd.unwrap_or_else(|| {
+            FsPath::from_environment(self.client.initialize_response().default_cwd.clone())
+        });
+        fs_ctx = fs_ctx.with_cwd(cwd.clone());
+        env_ctx = env_ctx.with_process_cwd(cwd);
         // Filesystem tools exist only when the daemon serves the filesystem
         // family; write access follows its `write` fact through the file
         // system's access policy.
@@ -334,6 +336,21 @@ struct FileKindFacts {
 
 #[async_trait]
 impl FileSystem for RemoteEnvironmentFileSystem {
+    fn resolve_input_path(&self, cwd: Option<&FsPath>, value: &str) -> FsResult<FsPath> {
+        let facts = self.client.initialize_response();
+        let base = match cwd {
+            Some(cwd) => EnvironmentPath::from_native(cwd.as_str(), facts.platform.path_convention),
+            None => Ok(facts.default_cwd.clone()),
+        }
+        .map_err(|error| FsError::InvalidInput {
+            message: error.to_string(),
+        })?;
+        environment_client::paths::resolve(&base, value)
+            .map(FsPath::from_environment)
+            .map_err(|error| FsError::InvalidInput {
+                message: error.to_string(),
+            })
+    }
     fn access_policy(&self) -> FileAccessPolicy {
         if self.writable {
             FileAccessPolicy::FullReadWrite
@@ -565,7 +582,7 @@ impl FileSystem for RemoteEnvironmentFileSystem {
             .into_iter()
             .map(|item| {
                 Ok(FsTextSearchMatch {
-                    path: FsPath::new(item.path.as_str()).map_err(FsError::from)?,
+                    path: FsPath::from_environment(item.path),
                     line_number: u64::from(item.line_number),
                     line: item.line,
                     line_truncated: item.line_truncated,
@@ -610,7 +627,7 @@ impl FileSystem for RemoteEnvironmentFileSystem {
         let matches = response
             .matches
             .into_iter()
-            .map(|path| FsPath::new(path.as_str()).map_err(FsError::from))
+            .map(|path| Ok(FsPath::from_environment(path)))
             .collect::<FsResult<Vec<_>>>()?;
         Ok(Some(FsGlobResponse {
             matches,
@@ -2023,7 +2040,7 @@ mod tests {
         let write = invoke_write_file(
             &fs_ctx,
             WriteFileArgs {
-                path: FsPath::new("nested/file.txt").unwrap(),
+                path: FsPath::new("nested/file.txt").unwrap().into(),
                 content: Some("hello\n".to_owned()),
                 content_ref: None,
             },
@@ -2033,7 +2050,7 @@ mod tests {
         let read = invoke_read_file(
             &fs_ctx,
             ReadFileArgs {
-                path: FsPath::new("nested/file.txt").unwrap(),
+                path: FsPath::new("nested/file.txt").unwrap().into(),
                 offset: None,
                 limit: None,
             },

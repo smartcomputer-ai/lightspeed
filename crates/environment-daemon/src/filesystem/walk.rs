@@ -164,7 +164,6 @@ impl CompiledFilter {
     }
 
     /// Visit everything: no patterns, hidden and ignored entries included.
-    #[cfg(unix)]
     pub fn everything() -> Self {
         Self {
             include: PatternSet::default(),

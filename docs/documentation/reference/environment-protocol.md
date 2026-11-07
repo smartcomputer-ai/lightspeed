@@ -122,6 +122,27 @@ PowerShell 7, otherwise Windows PowerShell; Git Bash requires explicit selection
 Clients validate these facts against cwd/home and execution capabilities before
 using the connection.
 
+The daemon probes installed shells once at startup, recording only successful,
+bounded version probes. Windows probes PowerShell 7 on PATH and in its standard
+installation directory, and Windows PowerShell in the system directory. Git
+Bash requires an adjacent verified Git for Windows installation in a standard
+system or per-user installation directory; a PATH `bash.exe` is not accepted.
+Restart the daemon after installing a shell to refresh the catalog.
+
+Model-facing `exec_command` and `Bash` accept an optional `shell` enum:
+`bash`, `powerShell`, `windowsPowerShell`, or `gitBash`. Omission uses the
+discovered default. `exec_command` preserves Unix Bash's login default;
+PowerShell and Git Bash default to no profiles. Explicit `login: true` enables
+profiles. PowerShell pipe requests use `-NonInteractive`; terminal requests
+omit it. Direct process and job argv bypass these shell adapters.
+
+The active environment's model context includes its OS, native cwd/home, shell
+paths and versions, and relevant execution capabilities. Model file paths and
+cwd overrides are resolved using the remote path convention, independently of
+the controller OS. Windows accepts native drive paths or relative paths; the
+wire still uses canonical `C:/...` spelling. VFS paths retain their separate
+logical POSIX grammar.
+
 ## Decoding
 
 Every params, response, and message type on the three planes decodes
@@ -621,8 +642,10 @@ DACL when replacing an existing file. New files retain the destination's inherit
 DACL. Same-directory rename is supported; cross-directory rename and
 `executable: true` are `capabilityUnavailable`. Executable metadata is false on
 Windows. Publication is atomic, but directory crash-durability is not promised.
-Windows advertises `filesystem.transfer: false` until native transfer recovery
-and publication are implemented.
+Windows advertises `filesystem.transfer: true`. Captures, publication to a new
+tree path, and atomic file writes are supported. Replacing an existing
+materialized tree is `capabilityUnavailable`; the daemon never emulates an
+atomic tree replacement by deleting the destination first.
 
 ### Pattern grammar and walks
 
@@ -733,6 +756,32 @@ operations keep a receipt for the advertised retention period. The
 [transfer module](../../../crates/environment-protocol/src/data/transfer.rs)
 documents the phases.
 
+Windows validates incoming inventory names against its native path rules and
+rejects case-colliding paths, including collisions across inventory pages.
+Parents must precede children with the same spelling. Rejected pages leave the
+inventory unchanged. Unix executable bits cannot be represented on Windows:
+`executable: true` in a write selection or inventory is `capabilityUnavailable`.
+VFS tree paths keep their portable grammar; these checks occur when publishing
+into Windows.
+
+Windows stages the selected root beside its destination and retains ancestor
+handles through publication. Staging is private to the execution account and
+SYSTEM. Materialized trees retain that protected ACL; file writes restore the
+existing target's DACL or, for a new file, its inherited DACL. File writes
+recheck `create` and `ifMatch` at commit. Existing-tree materialization is
+refused at begin, or at commit if a destination appeared during the operation.
+
+Transfer journals tag native path encoding: Unix bytes or Windows UTF-16LE.
+Legacy untagged records are Unix records. Foreign or undecodable records are
+quarantined, never interpreted as native cleanup paths. A daemon restart fails
+interrupted operations and retries staging/spool cleanup; a sharing violation
+retains the cleanup record even after its receipt expires. A restart during
+commit reports an uncertain outcome because publication may already have
+occurred. Completed captures retain their inventories with their receipts.
+Windows flushes journal files before write-through replacement; this recovery
+contract covers daemon restart and does not promise directory durability after
+power loss.
+
 ## Registration channel
 
 An outbound daemon dials
@@ -822,5 +871,7 @@ provisioning anything else:
 - The data suite,
   [`tools::environment_protocol::conformance`](../../../crates/tools/src/environment_protocol/conformance.rs),
   drives a data endpoint and checks file writes and reads, confinement,
-  walks, scans, process output and exits, and job identity. It works in a
-  fresh directory and removes it afterwards.
+  walks, scans, process output and exits, and job identity. When transfers are
+  advertised it also checks capture, chunked file publication, stale-version
+  rejection at commit, and receipt replay. It works in a fresh directory and
+  removes it afterwards.

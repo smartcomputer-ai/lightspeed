@@ -760,7 +760,7 @@ pub(crate) async fn invoke_write_reference(
     .await?;
     guard.complete = true;
     Ok(crate::fs::tools::WriteFileResult {
-        path: args.path,
+        path: args.path.presented(&resolved_path),
         resolved_path,
         bytes_written,
         receipt: Some(TransferReceipt::from(&receipt)),
@@ -919,9 +919,8 @@ fn resolve_environment_path(
     path: &str,
 ) -> ToolResult<EnvironmentPath> {
     let base = ctx.process_cwd.as_ref().map_or("/", |cwd| cwd.as_str());
-    let path =
-        crate::environment::sources::absolute(std::path::Path::new(base), path).map_err(invalid)?;
-    EnvironmentPath::new(path.to_string_lossy()).map_err(|e| invalid(e.to_string()))
+    let base = EnvironmentPath::new(base).map_err(|e| invalid(e.to_string()))?;
+    environment_client::paths::resolve(&base, path).map_err(|e| invalid(e.to_string()))
 }
 
 pub async fn invoke_materialize(

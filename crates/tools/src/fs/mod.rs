@@ -20,7 +20,7 @@ pub use access::FileAccessPolicy;
 use async_trait::async_trait;
 pub use local::LocalFileSystem;
 pub use memory::InMemoryFileSystem;
-pub use path::{FsPath, FsPathError};
+pub use path::{FsPath, FsPathError, PathInput};
 pub use read_only::ReadOnlyFileSystem;
 pub use scoped::ScopedFileSystem;
 pub use scoped_local::ScopedLocalFileSystem;
@@ -279,6 +279,17 @@ pub trait VfsCaptureTarget: Send + Sync {
 #[async_trait]
 pub trait FileSystem: Send + Sync {
     fn access_policy(&self) -> FileAccessPolicy;
+
+    /// Interpret model input in this filesystem's domain, never the host OS.
+    fn resolve_input_path(&self, cwd: Option<&FsPath>, value: &str) -> FsResult<FsPath> {
+        let path = FsPath::new(value)?;
+        if path.is_absolute() {
+            return Ok(path);
+        }
+        cwd.map_or(Ok(path.clone()), |cwd| {
+            cwd.join_path(&path).map_err(Into::into)
+        })
+    }
 
     async fn export_vfs(&self, _path: &FsPath) -> FsResult<::vfs::VfsEntry> {
         Err(FsError::Unsupported {

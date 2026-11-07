@@ -290,15 +290,14 @@ or workflow contract changes in this package.
 (`kind`, absolute `executable`, observed `version`) and optional `defaultShell`.
 An empty catalog means no shell was verified. Build-target strings are not
 used for selection. Clients reject inconsistent path, shell and lifecycle
-facts at initialization. The daemon currently reports platform facts with an
-empty catalog; installation probing is package 4 work.
+facts at initialization. The contract package initially reported an empty shell
+catalog; package 4 now fills it with verified installation probes.
 
 The selected model-facing shell contract is an optional enum: `bash`, `powerShell`,
 `windowsPowerShell`, or `gitBash`. Omission selects the discovered default;
 there is no arbitrary executable-path selector or error-triggered fallback.
 On Windows prefer verified PowerShell 7, then Windows PowerShell 5.1; never
-select Git Bash implicitly. Package 4 must provide an operator-configured
-absolute Git Bash path or verify a Git for Windows installation, rather than
+select Git Bash implicitly. Package 4 verifies a Git for Windows installation rather than
 using an arbitrary `bash.exe` from PATH. Missing selections are typed errors.
 
 Omitted `login` preserves Unix Bash's existing login behavior. PowerShell and
@@ -340,9 +339,9 @@ Output offsets, draining and settled-exit rules retain their existing meaning.
 ### Remaining integration and evidence
 
 Packages 2 and 3 implement the native backends and enforce these contracts;
-package 4 probes shells, exposes the selector and updates native cwd/home/model
-rendering. Package 5 must validate Windows transfer names and collisions and
-record journal path conventions before Windows transfers are enabled. Native
+package 4 adds shell probes, the selector and native cwd/home/model rendering.
+Package 5 adds Windows transfer validation, native journal formats and recovery
+as described below. Native
 environment-variable handling must preserve required system/home/temp values
 and reject case-insensitive collisions across ordinary and secret overrides.
 Service identity, supervision and replacement upgrades remain package 6 work.
@@ -365,8 +364,8 @@ Clippy gate remain required before a Rust PR.
 
 The filesystem and execution packages are implemented together under envd
 protocol 5, selected by the contract package. `filesystem.transfer` separates
-core file access from transfers, so the Windows daemon exposes file operations
-while transfer methods fail explicitly before mutation.
+core file access from transfers. Transfers were withheld at this backend
+checkpoint and are enabled by the transfer package below.
 
 The native filesystem uses handle-relative opens, retained ancestor handles,
 reparse-point inspection and volume/file identity. It supports read/write,
@@ -387,8 +386,7 @@ normalize a literal native name to a different directory at process creation.
 
 Explicit limits for these packages:
 
-- Transfers remain unavailable until native journals, recovery and publication
-  are implemented in package 5.
+- Transfers at this checkpoint were unavailable pending package 5.
 - Cross-directory rename is unavailable: Windows reopens its destination for
   write access, conflicting with the ancestor pin that prevents junction
   replacement. Same-directory rename and atomic file replacement are supported.
@@ -398,8 +396,7 @@ Explicit limits for these packages:
   resize is tested, but no public resize method is added.
 - Direct native spawning accepts executables; scripts require an explicit
   interpreter. Shell discovery, model-facing commands and source-root discovery
-  remain package 4 work. The Windows scan/catalog integration test supplies
-  explicit wire roots to exercise the backend independently of that adapter.
+  are integrated by package 4 below.
 
 Validation on Windows Server 2025 passed 123 daemon unit tests and 5 client
 round-trip tests, including the shared data conformance suite. The one ignored
@@ -411,6 +408,150 @@ environment-client, environment-protocol and tools with `--all-targets --locked
 `x86_64-pc-windows-msvc` and protocol 5. Linux/macOS execution, the full workspace
 Clippy gate and Windows release/service installation remain separate validation
 requirements.
+
+### Model-facing environment implementation
+
+The daemon now probes shells once at startup with bounded, owned subprocesses.
+PowerShell 7 is preferred over Windows PowerShell 5.1. Git Bash is accepted only
+from a standard Git for Windows installation after checking both Git and Bash;
+a PATH `bash.exe` is never used. Installing a shell requires a daemon restart to
+refresh discovery. No WSL or Cygwin dependency is introduced.
+
+Both model command surfaces use the discovered shell catalog and accept the
+optional selector. Shell failures do not trigger fallback. PowerShell profile,
+noninteractive, UTF-8 and native-exit behavior uses the contract package's pure
+adapter. Direct program argv and durable jobs bypass shell selection.
+
+File tools, apply-patch, process/job cwd and skill/prompt discovery resolve paths
+using the remote convention. Windows drive paths and backslashes are accepted
+without reinterpreting VFS paths. Active-environment context publishes native
+cwd/home, OS, installed shells and versions, and execution capabilities through
+the existing catalog mechanism. Discovery still does not wake environments.
+Windows directory listing defaults to the working directory; logical POSIX/VFS
+listing retains its root default.
+
+The native integration test edits a Rust test through structured tools in a
+directory containing spaces and Unicode, builds and runs it with the discovered
+default shell, and runs the resulting executable directly and as a durable job.
+Shared adapter tests exercise Windows shell and path facts independently of the
+controller's compilation target. The skill scan test now uses the shared source
+resolver on Windows as well as Unix.
+
+Windows validation passed 348 tool unit tests, 124 daemon unit tests, six native
+client round-trip tests, 131 protocol/client tests and five doctests. The
+additional installation-dependent test passed explicitly with PowerShell 7.6.9,
+Windows PowerShell 5.1 and Git for Windows Bash. The harness working-directory
+validation vectors also passed. Scoped all-target Clippy passed with warnings
+denied for the protocol, client, daemon, tools and harness crates.
+
+The broader daemon suite exposed a liveness-observation issue: an exited Windows
+process remains queryable while a handle survives. The creation-time observer
+now polls the process handle before treating its identity as live, with a
+regression test retaining a handle after process exit.
+
+The envd protocol remains **5** and the controller protocol remains **4**.
+A real Linux-hosted session against Windows and Linux/macOS regression execution remain acceptance checks;
+the local native integration test does not establish those results. The hosted
+runtime's native Windows check reaches existing `tokio::net::UnixStream` uses
+in its gateway and cannot complete on this host. Porting that hosted runtime is
+outside this plan's native-daemon scope.
+
+### Transfer implementation
+
+Windows now uses the shared capture, inventory, chunk upload, digest validation,
+receipt and recovery engine and advertises `filesystem.transfer: true`.
+Materialization publishes to a new destination with a same-parent native rename;
+file transfers atomically replace files with `create`/`ifMatch` rechecked at
+commit. Existing file DACLs are preserved; new file writes recover inherited
+DACLs. Ancestor handles remain pinned throughout staging and publication.
+
+Windows inventory admission rejects reserved/unsupported native names,
+case-colliding paths within or across pages, and executable bits. A rejected
+page leaves the inventory unchanged. Active publishers also compare destination
+segments without case sensitivity. Logical VFS paths are unchanged.
+
+Native journal records tag Unix bytes or Windows UTF-16LE, preserving native
+segments without lossy conversion. Legacy Unix and foreign-format records are
+quarantined on Windows. Interrupted operations fail on restart; a commit in
+progress reports that the destination may already have been published.
+Completed captures retain their inventory and receipt. Cleanup blocked by an
+open Windows handle stays recorded, including after receipt expiry, and is
+retried on sweeps or restart.
+
+Explicit limits:
+
+- Atomic replacement of an existing materialized tree remains unsupported on
+  Windows and returns `capabilityUnavailable`; no delete-then-copy fallback is
+  used. Publication also refuses a destination that appears before commit.
+- Staged and newly materialized Windows trees have protected account/SYSTEM
+  ACLs. File writes restore destination or inherited permissions at commit.
+- Journal files are flushed before write-through replacement. Recovery covers
+  daemon restarts, without promising directory durability after power loss.
+- Cross-directory rename and Unix executable bits remain unsupported.
+
+Shared conformance now exercises transfer capture, bounded content reads and
+writes, stale file versions at commit, and receipt replay. Native transfer tests
+cover Unicode/spaces, case collisions, invalid names, chunk retries and gaps,
+digest mismatches, pinned ancestors, abort cleanup, foreign journal quarantine
+and sharing violations during recovery. VFS materialize/capture and large binary
+blob write/reference tests run on both Windows and Unix.
+
+Windows validation passed 348 tool tests, 131 protocol/client tests and five
+doctests, including generated-contract freshness checks. Scoped Clippy passed
+for the protocol, client, daemon and tools crates with all targets and warnings
+denied. Native integration passed eight tests, including shared data conformance,
+VFS materialize/capture and binary blob transfers on all three tool surfaces.
+The installation-dependent shell test remains separately exercised by package 4.
+
+The broader daemon checks exposed an execution completion race: requesting
+Windows job termination could return before owned process objects had finished
+exiting. Job cleanup now retains process handles and waits for both process exit
+and empty job accounting. Leftover reports verify membership and exclude exited
+or reused PIDs. A regression test holds the process handle through termination;
+the full parallel daemon unit suite then passed 143 tests.
+
+The envd protocol remains **5** and the controller protocol remains **4**;
+this package uses the existing wire contract. Linux/macOS regression execution,
+Linux-hosted acceptance and distribution/service checks remain outstanding.
+
+### Native Windows live protocol coverage
+
+`crates/environment-daemon/tests/windows_live.rs` adds eight opt-in live tests.
+Each launches the actual envd executable with a private temporary workspace and
+state, connects over real loopback WebSockets, and kills/reaps only its owned
+daemon. The listener reports its actual bound port so port-zero allocation is
+race-free. The fixture uses canonical Windows paths, including spaces and
+Unicode, and compiles a small dependency-free native program for argv, pipe,
+terminal and process-tree observations. Retained process handles prevent PID
+reuse from weakening termination assertions.
+
+Coverage complements the existing unit and in-process round-trip suites:
+
+- Full shared data conformance across a real executable and socket boundary.
+- Installed PowerShell 7, Windows PowerShell 5.1 and Git Bash with Unicode,
+  environment overrides, native cwd and explicit failure exit codes.
+- Direct argv quoting and byte-exact binary stdin/output across disconnect and
+  reconnection, plus ConPTY Unicode input, EOF refusal and interruption from a
+  second connection.
+- Real daemon death killing natural-exit descendants and a running durable job;
+  restarted envd retains completed job output, interrupts unfinished jobs and
+  refuses old interactive handles.
+- Read-only file and capture access with mutation refused.
+- Abrupt transfer interruption during inventory, partial upload and ready-to-
+  publish staging, with failed receipts and cleanup verified after restart.
+- Eight simultaneous publishers on separate sockets contending for a
+  case-aliased destination; the winner resumes uploaded chunks after reconnect,
+  and publication/capture receipts survive restart without replaying writes.
+
+All eight passed on the Windows development VM in a parallel run (about twelve
+seconds). PowerShell 7 was made available on the test process's PATH from its
+portable installation. The existing ignored model-tool shell integration test
+also passed, and all-target daemon Clippy passed with warnings denied. These
+tests need no Temporal, PostgreSQL, gateway,
+provider account or model credentials. See the
+[testing guide](../documentation/development/testing-and-evaluation.md#run-live-tests)
+for prerequisites and commands. Service installation, upgrades and a Linux-hosted
+controller remain separate acceptance checks.
 
 ## Implementation packages
 
@@ -499,7 +640,8 @@ release; no Windows version beyond Server 2025 is claimed yet.
 - [x] Implementation branch created from fetched `origin/main`.
 - [x] Cross-platform protocol and lifecycle decisions finalized and contract-tested.
 - [x] Native filesystem, process, and terminal backends implemented and tested on Windows, with the explicit limitations above.
-- [ ] Model-facing shell selection and Windows context completed.
+- [x] Model-facing shell selection and Windows context implemented, with native edit/build/test and job coverage.
+- [ ] Real Linux-hosted session against Windows and Linux/macOS regression execution verified.
 - [ ] Transfer/conformance, Windows CI, and unattended release completed.
 
 ## References

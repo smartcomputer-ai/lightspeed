@@ -133,9 +133,226 @@ async fn envd_passes_the_data_conformance_suite() {
     }
 }
 
-// Windows transfers are explicitly unavailable pending native journal/recovery
-// support. The Windows test below verifies that boundary through the wire.
-#[cfg(unix)]
+/// The actual model adapters edit, build and test in a native Windows cwd.
+/// This requires the Rust toolchain and MSVC build environment, like the suite.
+#[cfg(windows)]
+#[tokio::test(flavor = "current_thread")]
+async fn model_tools_edit_build_test_and_run_a_windows_job() {
+    windows_model_task(&[]).await;
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires PowerShell 7 on PATH and a standard Git for Windows installation"]
+async fn model_tools_with_powershell_seven_and_git_bash() {
+    use environment_protocol::data::platform::ShellKind;
+    windows_model_task(&[ShellKind::PowerShell, ShellKind::GitBash]).await;
+}
+
+#[cfg(windows)]
+async fn windows_model_task(required: &[environment_protocol::data::platform::ShellKind]) {
+    use environment_protocol::data::{
+        job::{JobReadEntry, JobReadRequest, JobStatus, ReadJobsParams},
+        platform::ShellKind,
+    };
+    use harness::storage::InMemoryBlobStore;
+    use serde_json::json;
+    use std::sync::Arc;
+    use tools::builtin::{
+        BuiltinTool, BuiltinToolContext, BuiltinToolOperation as Op, BuiltinToolSurface as Surface,
+    };
+    let daemon = Daemon::start().await;
+    let project = daemon.root.join("project space 雪");
+    std::fs::create_dir(&project).unwrap();
+    let initialized = daemon.client.initialize_response();
+    initialized
+        .validate_platform()
+        .expect("consistent discovery");
+    for kind in required {
+        assert!(
+            initialized
+                .platform
+                .shells
+                .iter()
+                .any(|shell| shell.kind == *kind),
+            "required shell {kind:?} is unavailable: {:?}",
+            initialized.platform
+        );
+    }
+    if required.contains(&ShellKind::PowerShell) {
+        assert_eq!(
+            initialized.platform.default_shell,
+            Some(ShellKind::PowerShell)
+        );
+    }
+    assert!(matches!(
+        initialized.platform.default_shell,
+        Some(ShellKind::PowerShell | ShellKind::WindowsPowerShell)
+    ));
+    assert!(initialized.platform.shells.iter().any(|shell| shell.kind
+        == ShellKind::WindowsPowerShell
+        && shell.version.starts_with("5.1.")));
+    assert!(
+        !initialized
+            .platform
+            .shells
+            .iter()
+            .any(|shell| shell.kind == ShellKind::Bash)
+    );
+    let cwd = wire_path(&project);
+    let facts = tools::environment::platform::describe("native-windows", initialized, &cwd);
+    assert!(facts.contains("Operating system: Windows"));
+    assert!(facts.contains(&cwd.to_native()));
+    assert!(!facts.contains("transfers are unavailable"));
+    let (_, ctx) = RemoteEnvironmentConnection::new(daemon.client.clone())
+        .with_cwd(tools::fs::FsPath::from_environment(cwd.clone()))
+        .into_contexts(Arc::new(InMemoryBlobStore::new()));
+    let ctx = ctx
+        .with_environment_id("native-windows")
+        .with_operation_id("native-build-test");
+    let invoke = async |op, surface, args| {
+        BuiltinTool::environment(op, surface)
+            .with_one_shot(true)
+            .invoke_json(BuiltinToolContext::Environment(&ctx), args)
+            .await
+            .unwrap()
+    };
+    for shell in &initialized.platform.shells {
+        let cmd = match shell.kind {
+            ShellKind::PowerShell | ShellKind::WindowsPowerShell => {
+                "[Console]::Write($PSVersionTable.PSVersion.ToString())"
+            }
+            ShellKind::GitBash => "printf '%s' \"$BASH_VERSION\"",
+            ShellKind::Bash => panic!("Unix Bash advertised by Windows"),
+        };
+        let output = invoke(
+            Op::RunProcess,
+            Surface::CodexLike,
+            json!({"cmd": cmd, "shell": shell.kind}),
+        )
+        .await;
+        assert!(
+            output.model_visible_text.contains(&shell.version),
+            "{output:?}"
+        );
+    }
+    invoke(Op::ApplyPatch, Surface::CodexLike, json!({"patch": "*** Begin Patch\n*** Add File: src\\main.rs\n+#[test]\n+fn unicode_output() { println!(\"hello 雪\"); assert_eq!(2 + 2, 4); }\n*** End Patch"})).await;
+    let file = format!("{}\\src\\main.rs", cwd.to_native());
+    let read_only = tools::fs::FsToolContext::new(
+        Arc::new(tools::fs::ReadOnlyFileSystem::from_arc(
+            ctx.filesystem.as_ref().unwrap().fs.clone(),
+        )),
+        ctx.blobs.clone(),
+    )
+    .with_cwd(tools::fs::FsPath::from_environment(cwd.clone()));
+    let read = tools::fs::tools::invoke_read_file(
+        &read_only,
+        serde_json::from_value(json!({"path": file})).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(read.resolved_path.as_str(), format!("{cwd}/src/main.rs"));
+    let read = invoke(
+        Op::ReadFile,
+        Surface::ClaudeCodeLike,
+        json!({"file_path": file}),
+    )
+    .await;
+    assert!(read.model_visible_text.contains("hello 雪"));
+    invoke(
+        Op::EditFile,
+        Surface::ClaudeCodeLike,
+        json!({"file_path": file, "old_string": "hello 雪", "new_string": "verified 雪"}),
+    )
+    .await;
+    let glob = invoke(
+        Op::Glob,
+        Surface::Canonical,
+        json!({"pattern": "**/*.rs", "path": "."}),
+    )
+    .await;
+    assert!(glob.model_visible_text.contains("main.rs"));
+    let grep = invoke(
+        Op::Grep,
+        Surface::Canonical,
+        json!({"pattern": "verified", "path": "src"}),
+    )
+    .await;
+    assert!(grep.model_visible_text.contains("verified"));
+    let list = invoke(Op::ListDir, Surface::Canonical, json!({})).await;
+    assert!(list.model_visible_text.contains("src"));
+    invoke(
+        Op::WriteFile,
+        Surface::Canonical,
+        json!({"path": "notes\\unicode.txt", "content": "雪"}),
+    )
+    .await;
+    let built = invoke(Op::RunProcess, Surface::CodexLike, json!({"cmd": "rustc --test src/main.rs -o tests.exe; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; & .\\tests.exe --nocapture", "workdir": cwd.to_native(), "timeout_ms": 30000})).await;
+    assert!(
+        built.model_visible_text.contains("verified 雪"),
+        "{}",
+        built.model_visible_text
+    );
+    assert!(
+        built.model_visible_text.contains("1 passed"),
+        "{}",
+        built.model_visible_text
+    );
+    let failed = invoke(
+        Op::RunProcess,
+        Surface::ClaudeCodeLike,
+        json!({"command": "& $env:ComSpec /d /c 'exit 23'"}),
+    )
+    .await;
+    assert_eq!(failed.output_json["exit_code"], 23, "{failed:?}");
+    let unavailable = BuiltinTool::environment(Op::RunProcess, Surface::CodexLike)
+        .invoke_json(
+            BuiltinToolContext::Environment(&ctx),
+            json!({"cmd": "echo wrong", "shell": "bash"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        unavailable,
+        tools::error::ToolError::UnsupportedCapability { .. }
+    ));
+    // Direct argv and durable jobs bypass shell selection entirely.
+    let direct = invoke(
+        Op::RunProcess,
+        Surface::Canonical,
+        json!({"argv": [project.join("tests.exe").to_str().unwrap(), "--nocapture"], "cwd": "."}),
+    )
+    .await;
+    assert_eq!(direct.output_json["exit_code"], 0, "{direct:?}");
+    invoke(Op::JobSubmit, Surface::Canonical, json!({"jobs": [{"job_id": "native-test", "argv": [project.join("tests.exe").to_str().unwrap(), "--nocapture"], "cwd": cwd.to_native()}]})).await;
+    let jobs = daemon
+        .client
+        .read_jobs(&ReadJobsParams {
+            jobs: vec![JobReadRequest {
+                job_id: environment_protocol::ids::JobId::new("native-test").unwrap(),
+                after: None,
+                tail_bytes: None,
+                max_bytes: None,
+            }],
+            max_bytes: 4096,
+            wait_ms: 10000,
+            return_on: ReturnOn::Exit,
+        })
+        .await
+        .unwrap();
+    let JobReadEntry::Job { summary, output } = &jobs.jobs[0] else {
+        panic!("{jobs:?}")
+    };
+    assert_eq!(summary.status, JobStatus::Succeeded, "{summary:?}");
+    let bytes: Vec<_> = output
+        .chunks
+        .iter()
+        .flat_map(|chunk| chunk.data.as_slice().iter().copied())
+        .collect();
+    assert!(String::from_utf8(bytes).unwrap().contains("verified 雪"));
+    daemon.runtime.shutdown().cancel();
+}
+
 mod transfers {
     use super::*;
     use environment_client::ClientError;
@@ -146,12 +363,11 @@ mod transfers {
     };
     use harness::storage::BlobStore;
     use serde_json::json;
-    use std::{
-        os::unix::fs::PermissionsExt,
-        sync::{
-            Arc,
-            atomic::{AtomicBool, AtomicUsize, Ordering},
-        },
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     };
     use tools::{
         builtin::{
@@ -161,9 +377,9 @@ mod transfers {
         transfer,
     };
 
-    /// A VFS tree materialized into envd and captured back is the same tree;
-    /// a repeat reuses the bytes already there, and capturing into an empty
-    /// store moves them.
+    /// A VFS tree survives materialize/capture and receipt retries. Unix tree
+    /// replacement reuses destination bytes; capture into an empty store moves
+    /// the missing content on both platforms.
     #[tokio::test(flavor = "current_thread")]
     async fn vfs_trees_round_trip_through_materialize_and_capture() {
         let daemon = Daemon::start().await;
@@ -182,7 +398,7 @@ mod transfers {
                 blob_ref: blob.clone(),
                 size_bytes: size as u64,
                 media_type: None,
-                executable: true,
+                executable: cfg!(unix),
             }),
         );
         directory.entries.insert(
@@ -208,24 +424,40 @@ mod transfers {
         assert_eq!(first.reused_bytes, 0);
         let run = daemon.root.join("selected/run");
         assert_eq!(std::fs::read(&run).expect("run"), content);
+        #[cfg(unix)]
         assert_eq!(
             std::fs::metadata(&run).expect("run").permissions().mode() & 0o111,
             0o111
         );
         assert!(daemon.root.join("selected/empty").is_dir());
 
-        let again = transfer::materialize(
+        let retry = transfer::materialize(
             &daemon.client,
             &store,
-            "again",
+            "first",
             &selection,
             daemon.path("selected"),
             TransferOnExisting::Replace,
         )
         .await
-        .expect("materialize again");
-        assert_eq!(again.transferred_bytes, 0);
-        assert_eq!(again.reused_bytes, size as u64);
+        .expect("retry the receipt");
+        assert_eq!(retry, first);
+
+        #[cfg(unix)]
+        {
+            let again = transfer::materialize(
+                &daemon.client,
+                &store,
+                "again",
+                &selection,
+                daemon.path("selected"),
+                TransferOnExisting::Replace,
+            )
+            .await
+            .expect("materialize again");
+            assert_eq!(again.transferred_bytes, 0);
+            assert_eq!(again.reused_bytes, size as u64);
+        }
 
         let captured = transfer::capture(
             &daemon.client,
@@ -322,6 +554,7 @@ mod transfers {
         ] {
             let temp = tempfile::tempdir().expect("tempdir");
             let base = temp.path().canonicalize().expect("canonical temp");
+            let base = std::path::PathBuf::from(wire_path(&base).to_native());
             let root = base.join("root");
             std::fs::create_dir_all(&root).expect("root");
             let runtime =
@@ -337,7 +570,7 @@ mod transfers {
             let content = store.put_bytes(vec![0x83; size]).await.expect("blob");
             let (client, largest, lose_commit) = in_process_client(runtime);
             let (_, context) = RemoteEnvironmentConnection::new(client)
-                .with_cwd(tools::fs::FsPath::new(root.to_str().expect("UTF-8")).expect("cwd"))
+                .with_cwd(tools::fs::FsPath::from_environment(wire_path(&root)))
                 .into_contexts(store.clone());
             let context = context.with_environment_id("test-env");
             let key = if surface == Surface::ClaudeCodeLike {
@@ -419,6 +652,7 @@ mod transfers {
             // A lost commit response leaves the write's receipt to answer the retry.
             let result = root.join("result.bin");
             std::fs::write(&result, b"original").expect("result");
+            #[cfg(unix)]
             std::fs::set_permissions(&result, std::fs::Permissions::from_mode(0o751))
                 .expect("mode");
             let writer = context.clone().with_operation_id("lost-write-receipt");
@@ -432,6 +666,7 @@ mod transfers {
                     .await
                     .is_err()
             );
+            #[cfg(unix)]
             assert_eq!(
                 std::fs::metadata(&result)
                     .expect("result")
@@ -489,7 +724,7 @@ mod transfers {
 
 #[cfg(windows)]
 #[tokio::test(flavor = "current_thread")]
-async fn windows_file_access_does_not_advertise_unimplemented_transfers() {
+async fn windows_transfers_advertise_support_and_refuse_existing_tree_replacement() {
     let daemon = Daemon::start().await;
     let filesystem = daemon
         .client
@@ -499,17 +734,17 @@ async fn windows_file_access_does_not_advertise_unimplemented_transfers() {
         .as_ref()
         .expect("filesystem");
     assert!(filesystem.write);
-    assert!(!filesystem.transfer);
+    assert!(filesystem.transfer);
+    std::fs::create_dir(daemon.root.join("existing")).unwrap();
+    std::fs::write(daemon.root.join("existing/keep"), b"original").unwrap();
     let error = daemon
         .client
         .transfer_begin(&environment_protocol::data::transfer::BeginTransferParams {
             operation_id: environment_protocol::ids::TransferOperationId::new("unsupported")
                 .unwrap(),
-            selection: environment_protocol::data::transfer::TransferSelection::Capture {
-                source: daemon.path(""),
-                filter: Default::default(),
-                symlinks: Default::default(),
-                special_files: Default::default(),
+            selection: environment_protocol::data::transfer::TransferSelection::Materialize {
+                destination: daemon.path("existing"),
+                on_existing: environment_protocol::data::transfer::TransferOnExisting::Replace,
             },
             limits: environment_protocol::data::transfer::TransferLimits {
                 max_entries: 1,
@@ -521,10 +756,14 @@ async fn windows_file_access_does_not_advertise_unimplemented_transfers() {
             },
         })
         .await
-        .expect_err("transfers unavailable");
+        .expect_err("existing tree replacement unavailable");
     assert_eq!(
         error.protocol_kind(),
         Some(ProtocolErrorKind::CapabilityUnavailable)
+    );
+    assert_eq!(
+        std::fs::read(daemon.root.join("existing/keep")).unwrap(),
+        b"original"
     );
 }
 
@@ -544,49 +783,18 @@ async fn skill_discovery_reads_installer_layouts_per_root() {
     let doc = "---\nname: review\ndescription: >-\n  Review code\n  carefully.\n---\nbody one";
     std::fs::write(review.join("SKILL.md"), doc).expect("review");
     std::fs::write(home_root.join("copy/SKILL.md"), doc).expect("copy");
-    #[cfg(unix)]
     let config = harness::EnvironmentSkillsConfig {
         roots: Some(vec![
             wire_path(&project_root).as_str().to_owned(),
             wire_path(&home_root).as_str().to_owned(),
         ]),
     };
-    #[cfg(unix)]
     let mut query = tools::skills::environment::environment_skill_scan_query(
         &config,
         Some(wire_path(&daemon.root.join("project")).as_str()),
         None,
     )
     .expect("query");
-    // Native source-root discovery belongs to the model adapter. Exercise the
-    // daemon's scanning and catalog caching here with explicit wire roots.
-    #[cfg(windows)]
-    let mut query = environment_protocol::data::scan::ScanParams {
-        roots: [&project_root, &home_root]
-            .into_iter()
-            .map(|path| environment_protocol::data::scan::ScanRoot {
-                path: wire_path(path),
-                if_none_match: None,
-                max_depth: None,
-            })
-            .collect(),
-        filter: environment_protocol::data::fs::TreeFilter {
-            include: vec!["SKILL.md".into()],
-            include_hidden: true,
-            include_ignored: true,
-            max_depth: Some(8),
-            ..Default::default()
-        },
-        read_content: true,
-        include_digests: false,
-        follow_symlinks: true,
-        limits: environment_protocol::data::scan::ScanLimits {
-            max_entries: 4096,
-            max_file_bytes: 64 * 1024,
-            max_total_bytes: 2 * 1024 * 1024,
-            max_duration_ms: 2000,
-        },
-    };
 
     let first = daemon.client.scan(&query).await.expect("scan");
     let catalog = environment_skill_catalog("machine-a", &first, None).expect("catalog");

@@ -33,6 +33,8 @@ pub(crate) const SELF: &str = ".";
 pub(crate) const DEFAULT_FILE_MODE: u32 = 0;
 pub(crate) const DEFAULT_DIRECTORY_MODE: u32 = 0;
 pub(crate) const PRIVATE_FILE_MODE: u32 = 0;
+// An internal creation policy, not a Unix permission mapping.
+pub(crate) const PRIVATE_DIRECTORY_MODE: u32 = u32::MAX;
 const MAX_REMOVE_DEPTH: usize = 1024;
 const FSCTL_GET_REPARSE_POINT: u32 = 0x0009_00a8;
 
@@ -290,7 +292,11 @@ impl Directory {
         crate::windows_security::FilePermissions::capture(&file)
     }
 
-    pub fn mkdir(&self, name: &OsStr, _mode: u32) -> io::Result<()> {
+    pub fn mkdir(&self, name: &OsStr, mode: u32) -> io::Result<()> {
+        if mode == PRIVATE_DIRECTORY_MODE {
+            return crate::windows_security::create_private_directory_at(&self.file, name)
+                .map(drop);
+        }
         self.open_relative(
             name,
             fs::FILE_LIST_DIRECTORY | fs::FILE_READ_ATTRIBUTES,
@@ -299,6 +305,24 @@ impl Directory {
             fs::FILE_SHARE_READ,
         )
         .map(drop)
+    }
+
+    pub fn open_publish_file(&self, name: &OsStr) -> io::Result<File> {
+        let file = self.open_relative(
+            name,
+            fs::FILE_READ_DATA
+                | fs::FILE_WRITE_DATA
+                | fs::FILE_READ_ATTRIBUTES
+                | fs::READ_CONTROL
+                | fs::WRITE_DAC,
+            nt::FILE_OPEN,
+            nt::FILE_NON_DIRECTORY_FILE,
+            fs::FILE_SHARE_READ | fs::FILE_SHARE_WRITE | fs::FILE_SHARE_DELETE,
+        )?;
+        if !EntryStat::of_file(&file)?.is_file() {
+            return Err(reparse_error());
+        }
+        Ok(file)
     }
 
     fn delete(&self, name: &OsStr, directory: bool) -> io::Result<()> {
@@ -455,8 +479,8 @@ impl Directory {
     }
 
     /// Windows has no unprivileged directory fsync API. Core writes flush their
-    /// staged file before an atomic NT rename. Crash-durable transfer publication
-    /// is intentionally unavailable until its Windows contract is implemented.
+    /// staged file before an atomic NT rename. Transfer journals recover daemon
+    /// restarts; publication does not promise directory durability on power loss.
     pub fn sync(&self) -> io::Result<()> {
         Ok(())
     }

@@ -212,7 +212,9 @@ pub(super) fn input_schema(tool: BuiltinTool) -> Value {
         BuiltinToolOperation::ListDir => object(
             [(
                 "path",
-                string("Directory path to list. Defaults to the workspace root."),
+                string(
+                    "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
+                ),
             )],
             [],
         ),

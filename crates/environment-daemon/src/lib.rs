@@ -4,6 +4,7 @@ mod exec;
 pub mod filesystem;
 pub mod identity;
 pub mod jobs;
+mod platform;
 pub mod process;
 mod process_group;
 mod redaction;
@@ -33,9 +34,7 @@ use environment_protocol::{
             ScanCeilings, SearchCeilings, TransferCeilings,
         },
         idle::GetIdleResponse,
-        platform::{
-            InterruptCapabilities, OperatingSystem, PlatformFacts, ProcessTree, TerminationMode,
-        },
+        platform::{InterruptCapabilities, PlatformFacts, ProcessTree, TerminationMode},
     },
     error::{Capability, ProtocolError},
     handshake::{ImplementationInfo, Plane},
@@ -63,6 +62,7 @@ pub struct DaemonRuntime {
 }
 
 struct RuntimeInner {
+    platform: PlatformFacts,
     config: DaemonConfig,
     instance_id: DaemonInstanceId,
     server_info: ImplementationInfo,
@@ -168,6 +168,7 @@ impl DaemonRuntime {
         .context("job manager")?;
         Ok(Self {
             inner: Arc::new(RuntimeInner {
+                platform: platform::facts(&config.scrubbed_env),
                 config,
                 instance_id,
                 server_info: server_info(),
@@ -228,15 +229,7 @@ impl DaemonRuntime {
             plane: Plane::Data,
             daemon_instance_id: self.inner.instance_id.clone(),
             server_info: self.inner.server_info.clone(),
-            platform: PlatformFacts::without_shells(if cfg!(target_os = "windows") {
-                OperatingSystem::Windows
-            } else if cfg!(target_os = "linux") {
-                OperatingSystem::Linux
-            } else if cfg!(target_os = "macos") {
-                OperatingSystem::Macos
-            } else {
-                OperatingSystem::Other
-            }),
+            platform: self.inner.platform.clone(),
             capabilities: self.inner.capabilities.clone(),
             limits: self.inner.limits.clone(),
             default_cwd: self.inner.default_cwd.clone(),
@@ -326,7 +319,7 @@ fn data_capabilities(config: &DaemonConfig) -> DataCapabilities {
     DataCapabilities {
         filesystem: Some(FilesystemCapabilities {
             write: !config.read_only_fs,
-            transfer: cfg!(unix),
+            transfer: true,
         }),
         process: Some(ProcessCapabilities {
             pty: PTY_SUPPORTED,

@@ -35,11 +35,8 @@ pub(crate) fn working_directory(
     let Some(value) = configured else {
         return Ok(default.clone());
     };
-    if !value.starts_with('/') {
-        return Err("environment working directory must be absolute".into());
-    }
-    let cwd = tools::environment::sources::absolute(std::path::Path::new("/"), value)?;
-    EnvironmentPath::new(cwd.to_string_lossy()).map_err(|error| error.to_string())
+    environment_client::paths::absolute(value, default.convention())
+        .map_err(|error| error.to_string())
 }
 
 pub(crate) struct Discovery<'a> {
@@ -114,6 +111,7 @@ impl Discovery<'_> {
 }
 
 pub(crate) struct Publication {
+    pub platform_entry: Option<ContextEntryInput>,
     pub skill_command: Option<CoreAgentCommand>,
     pub prompt_entries: BTreeMap<ContextEntryKey, ContextEntryInput>,
 }
@@ -137,11 +135,44 @@ pub(crate) async fn refresh(
         connection: None,
     };
     let result = async {
+        let platform_entry =
+            match tokio::time::timeout(Duration::from_secs(4), discovery.connection()).await {
+                Ok(Ok(connection)) => {
+                    let id = environment_id.expect("connected environment");
+                    let snapshot = serde_json::to_vec(&(
+                        id,
+                        &connection.initialized.platform,
+                        &connection.cwd,
+                        &connection.initialized.home_directory,
+                        &connection.initialized.capabilities,
+                    ))
+                    .expect("platform snapshot");
+                    let reference = blobs.put_bytes(snapshot).await?;
+                    let mut entry = tools::catalog::catalog_context_input(
+                        blobs,
+                        "Active environment",
+                        tools::environment::platform::describe(
+                            id.as_str(),
+                            &connection.initialized,
+                            &connection.cwd,
+                        ),
+                        reference,
+                    )
+                    .await?;
+                    entry.origin = Some(format!("runtime.environment:{id}"));
+                    Some(entry)
+                }
+                _ => {
+                    discovery.discard_connection();
+                    None
+                }
+            };
         let skill_command =
             crate::environments::skills::refresh(blobs, &mut discovery, session_id, current_skills)
                 .await?;
         let prompt_entries = crate::environments::prompts::refresh(blobs, &mut discovery).await?;
         Ok(Publication {
+            platform_entry,
             skill_command,
             prompt_entries,
         })
@@ -215,10 +246,6 @@ async fn connect(
         .await
         .map_err(|e| e.to_string())?
     };
-    if initialized.capabilities.filesystem.is_none() {
-        let _ = client.close().await;
-        return Err("endpoint does not support filesystem source discovery".into());
-    }
     let cwd = match working_directory(
         attachment.working_directory.as_deref(),
         &initialized.default_cwd,
@@ -253,5 +280,14 @@ mod tests {
         );
         assert!(working_directory(Some("relative"), &default).is_err());
         assert!(working_directory(Some("/../escape"), &default).is_err());
+        let windows = EnvironmentPath::new("C:/work").unwrap();
+        assert_eq!(
+            working_directory(Some(r"d:\build\src\.."), &windows)
+                .unwrap()
+                .as_str(),
+            "D:/build"
+        );
+        assert!(working_directory(Some(r"C:relative"), &windows).is_err());
+        assert!(working_directory(Some("/srv/app"), &windows).is_err());
     }
 }

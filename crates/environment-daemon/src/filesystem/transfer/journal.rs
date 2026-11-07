@@ -6,14 +6,13 @@
 //! and spool records until a sweep confirmed their removal. A completed
 //! capture also keeps its sealed inventory beside its receipt, one entry
 //! per line, so a retried capture can page it again. The
-//! record is this daemon's own file: it is never read by another version,
-//! and an undecodable record is renamed aside instead of failing startup.
+//! record tags its native path encoding. Foreign encodings and undecodable
+//! records are renamed aside instead of interpreted for cleanup.
 
 use std::{
     ffi::OsString,
     fs::File,
     io::{BufRead, BufReader, BufWriter, Read, Write},
-    os::unix::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
 };
 
@@ -23,6 +22,10 @@ use environment_protocol::{
     ids::TransferOperationId,
 };
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+#[cfg(windows)]
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
 use crate::filesystem::io_error;
 
@@ -32,9 +35,11 @@ const MAX_RECORD_BYTES: u64 = 1024 * 1024;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Record {
+    #[serde(default)]
+    pub format: JournalFormat,
     pub params: BeginTransferParams,
     pub status: TransferStatus,
-    /// The staging directory of an active publish.
+    /// The staging entry of an active publish.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage: Option<StageRecord>,
     /// The upload spool of an active publish.
@@ -46,8 +51,26 @@ pub(super) struct Record {
     pub committing: bool,
 }
 
-/// Where a staging directory lives: the canonical segments of its parent
-/// below the filesystem root (raw bytes, names need not be UTF-8) and its
+/// Missing format is the legacy Unix record. Never reinterpret it on Windows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) enum JournalFormat {
+    #[default]
+    PosixBytes,
+    WindowsUtf16Le,
+}
+impl JournalFormat {
+    pub fn native() -> Self {
+        if cfg!(windows) {
+            Self::WindowsUtf16Le
+        } else {
+            Self::PosixBytes
+        }
+    }
+}
+
+/// Where staging lives: the canonical segments of its parent
+/// below the filesystem root (Unix bytes or Windows UTF-16LE) and its
 /// name.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -61,16 +84,49 @@ impl StageRecord {
         Self {
             parent: parent
                 .iter()
-                .map(|segment| segment.as_bytes().to_vec())
+                .map(|segment| {
+                    #[cfg(unix)]
+                    {
+                        segment.as_bytes().to_vec()
+                    }
+                    #[cfg(windows)]
+                    {
+                        segment.encode_wide().flat_map(u16::to_le_bytes).collect()
+                    }
+                })
                 .collect(),
             name: name.to_owned(),
         }
     }
 
-    pub fn parent_segments(&self) -> Vec<OsString> {
+    pub fn parent_segments(&self) -> Option<Vec<OsString>> {
         self.parent
             .iter()
-            .map(|segment| OsString::from_vec(segment.clone()))
+            .map(|segment| {
+                #[cfg(unix)]
+                let value = OsString::from_vec(segment.clone());
+                #[cfg(windows)]
+                let value = {
+                    if !segment.len().is_multiple_of(2) {
+                        return None;
+                    }
+                    OsString::from_wide(
+                        &segment
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .map(|pair| u16::from_le_bytes(*pair))
+                            .collect::<Vec<_>>(),
+                    )
+                };
+                let path = Path::new(&value);
+                let mut components = path.components();
+                matches!(components.next(), Some(std::path::Component::Normal(_))).then_some(())?;
+                if components.next().is_some() {
+                    return None;
+                }
+                Some(value)
+            })
             .collect()
     }
 }
@@ -112,12 +168,8 @@ pub(super) fn write_inventory(
         .into_inner()
         .map_err(|error| io(error.into_error()))?;
     temporary.as_file().sync_all().map_err(io)?;
-    temporary
-        .persist(inventory_path(directory, id))
-        .map_err(|error| io(error.error))?;
-    File::open(directory)
-        .and_then(|file| file.sync_all())
-        .map_err(io)
+    persist(temporary, &inventory_path(directory, id)).map_err(io)?;
+    sync_directory(directory).map_err(io)
 }
 
 /// Up to `limit` entries of a retained inventory from `index`, and whether
@@ -156,12 +208,58 @@ pub(super) fn write(
     serde_json::to_writer(&mut temporary, record)
         .map_err(|error| ProtocolError::internal(format!("encode transfer record: {error}")))?;
     temporary.as_file().sync_all().map_err(io)?;
-    temporary
-        .persist(record_path(directory, id))
-        .map_err(|error| io(error.error))?;
-    File::open(directory)
-        .and_then(|file| file.sync_all())
-        .map_err(io)
+    persist(temporary, &record_path(directory, id)).map_err(io)?;
+    sync_directory(directory).map_err(io)
+}
+
+fn sync_directory(directory: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        File::open(directory)?.sync_all()
+    }
+    #[cfg(windows)]
+    // Records are flushed before write-through replacement. Windows provides
+    // no unprivileged directory fsync; recovery covers daemon restart, not a
+    // guarantee that directory updates survive power loss.
+    {
+        let _ = directory;
+        Ok(())
+    }
+}
+
+fn persist(file: tempfile::NamedTempFile, destination: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        file.persist(destination)
+            .map(|_| ())
+            .map_err(|error| error.error)
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Storage::FileSystem::{
+            MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        };
+        let path = file.into_temp_path();
+        let source: Vec<_> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let destination: Vec<_> = destination
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        // SAFETY: both NUL-terminated names are inside the private journal;
+        // the flushed temporary file is closed before atomic replacement.
+        if unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
 }
 
 /// Read a record; `Ok(None)` when there is none or it was quarantined.
@@ -178,8 +276,12 @@ fn read_path(path: &Path) -> Result<Option<Record>, ProtocolError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(io_error(error, path.display())),
     };
-    match serde_json::from_reader(file.take(MAX_RECORD_BYTES)) {
-        Ok(record) => Ok(Some(record)),
+    match serde_json::from_reader::<_, Record>(file.take(MAX_RECORD_BYTES)) {
+        Ok(record) if record.format == JournalFormat::native() => Ok(Some(record)),
+        Ok(_) => {
+            quarantine(path, "journal path convention differs from this daemon");
+            Ok(None)
+        }
         Err(error) => {
             quarantine(path, &error.to_string());
             Ok(None)

@@ -17,10 +17,6 @@ mod os;
 mod os;
 mod scan;
 mod search;
-#[cfg(unix)]
-mod transfer;
-#[cfg(windows)]
-#[path = "filesystem/transfer_windows.rs"]
 mod transfer;
 mod walk;
 #[cfg(all(test, windows))]

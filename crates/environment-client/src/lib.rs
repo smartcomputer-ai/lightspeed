@@ -55,6 +55,7 @@ mod data;
 mod dial;
 mod error;
 mod options;
+pub mod paths;
 pub mod shell;
 
 #[cfg(feature = "conformance")]

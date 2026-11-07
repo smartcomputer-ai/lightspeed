@@ -9,10 +9,7 @@ use harness::{
     storage::{BlobStore, BlobStoreError},
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const ENVIRONMENT_SKILL_CATALOG_CONTEXT_KEY: &str = "runtime.catalog.skills.environment";
 
@@ -173,8 +170,7 @@ pub fn environment_skill_catalog(
     documents.sort_by(|left, right| left.1.cmp(&right.1));
     let mut seen = BTreeSet::new();
     for (root, doc, data) in documents {
-        let path = Path::new(&doc);
-        let Some(dir) = path.parent() else {
+        let Some((dir, _)) = doc.rsplit_once('/') else {
             continue;
         };
         if !seen.insert(dir.to_owned()) {
@@ -200,7 +196,7 @@ pub fn environment_skill_catalog(
                     name: metadata.name,
                     description: metadata.description,
                     short_description: metadata.short_description,
-                    skill_dir_path: dir.to_string_lossy().into_owned(),
+                    skill_dir_path: dir.to_owned(),
                     skill_doc_path: doc,
                 });
             }

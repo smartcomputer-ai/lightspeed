@@ -11,7 +11,7 @@ use super::{invalid_request, resolve_path};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EditFileArgs {
-    pub path: FsPath,
+    pub path: crate::fs::PathInput,
     pub old_string: String,
     pub new_string: String,
     #[serde(default)]
@@ -73,7 +73,7 @@ pub async fn invoke_edit_file(
         .await?;
 
     Ok(EditFileResult {
-        path: args.path,
+        path: args.path.presented(&resolved_path),
         resolved_path,
         replacements: if args.replace_all { replacements } else { 1 },
         bytes_written,
@@ -116,7 +116,7 @@ mod tests {
         let result = invoke_edit_file(
             &ctx,
             EditFileArgs {
-                path: FsPath::new("file.txt").expect("path"),
+                path: FsPath::new("file.txt").expect("path").into(),
                 old_string: "world".to_string(),
                 new_string: "lightspeed".to_string(),
                 replace_all: false,
@@ -148,7 +148,7 @@ mod tests {
         let error = invoke_edit_file(
             &ctx,
             EditFileArgs {
-                path: FsPath::new("/file.txt").expect("path"),
+                path: FsPath::new("/file.txt").expect("path").into(),
                 old_string: "one".to_string(),
                 new_string: "two".to_string(),
                 replace_all: false,
@@ -174,7 +174,7 @@ mod tests {
         let result = invoke_edit_file(
             &ctx,
             EditFileArgs {
-                path: FsPath::new("/file.txt").expect("path"),
+                path: FsPath::new("/file.txt").expect("path").into(),
                 old_string: "one".to_string(),
                 new_string: "two".to_string(),
                 replace_all: true,

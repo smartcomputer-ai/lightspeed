@@ -504,6 +504,23 @@ pub(crate) struct FilePermissions {
     protected: bool,
 }
 
+// SAFETY: this owns its LocalAlloc descriptor, with no borrowed pointers or
+// thread-affine state. Moving it transfers sole ownership of that allocation.
+unsafe impl Send for FilePermissions {}
+
+/// Create an empty directory with its private ACL already installed, relative
+/// to a pinned parent. No inherited-access window precedes the restriction.
+pub(crate) fn create_private_directory_at(parent: &File, name: &OsStr) -> io::Result<File> {
+    relative_open(
+        parent,
+        name,
+        true,
+        FILE_CREATE,
+        windows_sys::Win32::Storage::FileSystem::FILE_LIST_DIRECTORY | READ_CONTROL,
+        Some(&PrivateDescriptor::new(true)?),
+    )
+}
+
 impl FilePermissions {
     pub(crate) fn capture(file: &File) -> io::Result<Self> {
         let mut descriptor = null_mut();
@@ -707,6 +724,9 @@ mod tests {
         assert_ne!(raw, INVALID_HANDLE_VALUE);
         let directory = unsafe { File::from_raw_handle(raw) };
         assert_private(&directory, true);
+        let child = create_private_directory_at(&directory, OsStr::new("staging")).unwrap();
+        assert_private(&child, true);
+        drop(child);
         drop(directory);
         let path = state.join("key");
         let mut file = create_private_file(&path).unwrap();

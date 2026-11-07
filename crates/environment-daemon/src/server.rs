@@ -204,7 +204,8 @@ async fn run_tcp_listener(runtime: DaemonRuntime, listen: std::net::SocketAddr) 
         Ok(listener) => listener,
         Err(error) => return DaemonExit::Configuration(error),
     };
-    tracing_line(&format!("listener ready on {listen}"));
+    let bound = listener.local_addr().unwrap_or(listen);
+    tracing_line(&format!("listener ready on {bound}"));
     let shutdown = runtime.shutdown().clone();
     loop {
         tokio::select! {

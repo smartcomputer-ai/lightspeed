@@ -19,7 +19,7 @@ pub const DEFAULT_GLOB_LIMIT: usize = 1_000;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GlobArgs {
     pub pattern: String,
-    pub path: Option<FsPath>,
+    pub path: Option<crate::fs::PathInput>,
     pub max_depth: Option<usize>,
     pub limit: Option<usize>,
 }
@@ -301,7 +301,7 @@ mod tests {
             &ctx,
             GlobArgs {
                 pattern: "*.txt".to_string(),
-                path: Some(FsPath::root()),
+                path: Some(FsPath::root().into()),
                 max_depth: None,
                 limit: Some(1),
             },
@@ -334,7 +334,7 @@ mod tests {
             &ctx,
             GlobArgs {
                 pattern: "*.txt".to_string(),
-                path: Some(FsPath::root()),
+                path: Some(FsPath::root().into()),
                 max_depth: None,
                 limit: None,
             },
@@ -425,7 +425,7 @@ mod tests {
             &ctx,
             GlobArgs {
                 pattern: "**/*.rs".to_string(),
-                path: Some(FsPath::root()),
+                path: Some(FsPath::root().into()),
                 max_depth: None,
                 limit: None,
             },

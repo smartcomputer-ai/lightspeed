@@ -866,7 +866,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{fs::FsPath, runtime::decode_args};
+    use crate::runtime::decode_args;
 
     fn target() -> ToolTarget {
         ToolTarget::api_kind(ProviderApiKind::OpenAiResponses)
@@ -1194,7 +1194,7 @@ mod tests {
     #[test]
     fn canonical_args_default_model_omitted_convenience_fields() {
         let list: ListDirArgs = decode_args(json!({})).expect("list args");
-        assert_eq!(list.path, FsPath::root());
+        assert_eq!(list.path, None);
 
         let grep: GrepArgs = decode_args(json!({ "pattern": "struct Foo" })).expect("grep args");
         assert!(!grep.case_sensitive);

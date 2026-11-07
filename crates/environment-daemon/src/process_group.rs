@@ -28,6 +28,7 @@ pub(crate) const OUTPUT_DRAIN_GRACE: Duration = Duration::from_secs(2);
 pub(crate) const OUTPUT_DRAIN_GRACE: Duration = Duration::from_millis(200);
 
 /// How often a terminating group is checked for members during its grace.
+#[cfg(not(windows))]
 const GRACE_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// A signal the daemon sends to a whole process group.
@@ -161,24 +162,47 @@ impl Group {
 
     /// Terminates every process left in the group: `SIGTERM`, up to
     /// `grace` for the members to exit, then `SIGKILL` to whatever remains.
+    /// Windows kills immediately and waits for the owned process objects to exit.
     /// Returns true when the group had members to signal.
     pub async fn terminate(self, grace: Duration) -> bool {
-        if !self.signal(GroupSignal::Terminate) {
-            return false;
+        #[cfg(windows)]
+        {
+            let _ = grace;
+            match &self.job {
+                Some(job) => job.terminate_and_wait().await,
+                None => false,
+            }
         }
-        self.kill_after_grace(grace).await;
-        true
+        #[cfg(not(windows))]
+        {
+            if !self.signal(GroupSignal::Terminate) {
+                return false;
+            }
+            self.kill_after_grace(grace).await;
+            true
+        }
     }
 
     /// Waits up to `grace` for the group to empty, then kills what is left.
+    /// Windows has no grace period but still waits for termination to finish.
     pub async fn kill_after_grace(self, grace: Duration) {
-        let deadline = tokio::time::Instant::now() + grace;
-        while self.alive() {
-            if tokio::time::Instant::now() >= deadline {
-                self.signal(GroupSignal::Kill);
-                return;
+        #[cfg(windows)]
+        {
+            let _ = grace;
+            if let Some(job) = &self.job {
+                job.terminate_and_wait().await;
             }
-            tokio::time::sleep(GRACE_POLL_INTERVAL.min(grace)).await;
+        }
+        #[cfg(not(windows))]
+        {
+            let deadline = tokio::time::Instant::now() + grace;
+            while self.alive() {
+                if tokio::time::Instant::now() >= deadline {
+                    self.signal(GroupSignal::Kill);
+                    return;
+                }
+                tokio::time::sleep(GRACE_POLL_INTERVAL.min(grace)).await;
+            }
         }
     }
 }

@@ -21,6 +21,8 @@
 //!   `notFound`, and graceful `terminate`;
 //! - `job/*` (when the family is present): `requestId` replay versus
 //!   `jobIdInUse`, per-entry `notFound`, and byte-exact paging.
+//! - `transfer/*` when advertised: capture, chunked file publication,
+//!   stale-version rejection at commit, and receipt replay.
 //!
 //! The suite works in a fresh directory below `work_directory` and removes
 //! it at the end. Command fixtures use `/bin/sh` on POSIX or native Windows
@@ -70,6 +72,8 @@ use environment_protocol::{
     paths::{EnvironmentPath, PathConvention, TreePath},
 };
 use thiserror::Error;
+
+mod transfers;
 
 /// What to run the suite against.
 #[derive(Clone)]
@@ -231,6 +235,18 @@ pub async fn run(suite: &DataConformance) -> DataConformanceReport {
     );
     record(&mut report, "fs.searchText", context.search().await);
     record(&mut report, "fs.scan.perRoot", context.scan().await);
+    if initialized
+        .capabilities
+        .filesystem
+        .as_ref()
+        .is_some_and(|fs| fs.transfer)
+    {
+        record(
+            &mut report,
+            "transfer.captureAndPublish",
+            context.transfers().await,
+        );
+    }
     if initialized.capabilities.process.is_some() {
         record(
             &mut report,
@@ -745,7 +761,7 @@ impl Context<'_> {
         for pattern in PATTERNS {
             let args = |root: &FsPath| GlobArgs {
                 pattern: pattern.to_owned(),
-                path: Some(root.clone()),
+                path: Some(root.clone().into()),
                 max_depth: None,
                 limit: None,
             };

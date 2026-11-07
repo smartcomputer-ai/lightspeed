@@ -23,7 +23,7 @@ pub const DEFAULT_GREP_LIMIT: usize = 1_000;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GrepArgs {
     pub pattern: String,
-    pub path: Option<FsPath>,
+    pub path: Option<crate::fs::PathInput>,
     pub include: Option<String>,
     #[serde(default)]
     pub case_sensitive: bool,
@@ -302,7 +302,7 @@ mod tests {
             &ctx,
             GrepArgs {
                 pattern: "lightspeed".to_string(),
-                path: Some(FsPath::root()),
+                path: Some(FsPath::root().into()),
                 include: None,
                 case_sensitive: false,
                 max_depth: None,
@@ -335,7 +335,7 @@ mod tests {
             &ctx,
             GrepArgs {
                 pattern: "target".to_string(),
-                path: Some(FsPath::root()),
+                path: Some(FsPath::root().into()),
                 include: None,
                 case_sensitive: true,
                 max_depth: None,
@@ -374,7 +374,7 @@ mod tests {
             &ctx,
             GrepArgs {
                 pattern: "target".to_string(),
-                path: Some(FsPath::root()),
+                path: Some(FsPath::root().into()),
                 include: None,
                 case_sensitive: true,
                 max_depth: None,
@@ -409,7 +409,7 @@ mod tests {
             &ctx,
             GrepArgs {
                 pattern: "target".to_string(),
-                path: Some(FsPath::root()),
+                path: Some(FsPath::root().into()),
                 include: None,
                 case_sensitive: true,
                 max_depth: None,
@@ -505,7 +505,7 @@ mod tests {
             &ctx,
             GrepArgs {
                 pattern: "target".to_string(),
-                path: Some(FsPath::root()),
+                path: Some(FsPath::root().into()),
                 include: None,
                 case_sensitive: true,
                 max_depth: None,
@@ -543,7 +543,7 @@ mod tests {
             &ctx,
             GrepArgs {
                 pattern: "hello".to_string(),
-                path: Some(FsPath::root()),
+                path: Some(FsPath::root().into()),
                 include: None,
                 case_sensitive: true,
                 max_depth: None,

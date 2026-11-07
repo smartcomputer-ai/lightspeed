@@ -7,7 +7,7 @@ use std::{
     ptr,
 };
 use windows_sys::Win32::{
-    Foundation::{FILETIME, HANDLE},
+    Foundation::{ERROR_INVALID_PARAMETER, FILETIME, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT},
     System::{JobObjects::*, Threading::*},
 };
 
@@ -66,7 +66,62 @@ impl Job {
         unsafe { TerminateJobObject(self.raw(), 1) != 0 }
     }
 
+    pub async fn terminate_and_wait(&self) -> bool {
+        // Retain process objects before termination: neither delayed teardown
+        // nor PID reuse may make a completed job appear to have a live tree.
+        let processes: Vec<_> = self
+            .process_ids()
+            .into_iter()
+            .filter_map(|pid| {
+                let process = process_handle(pid)?;
+                self.contains(&process).then_some(process)
+            })
+            .collect();
+        if !self.terminate() {
+            return false;
+        }
+        while self.alive()
+            || processes.iter().any(|process| {
+                // SAFETY: retained handles have synchronization access.
+                (unsafe { WaitForSingleObject(process.as_raw_handle(), 0) }) != WAIT_OBJECT_0
+            })
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        true
+    }
+
+    fn contains(&self, process: &OwnedHandle) -> bool {
+        let mut member = 0;
+        // SAFETY: both owned handles and the writable boolean are live.
+        let observed = unsafe { IsProcessInJob(process.as_raw_handle(), self.raw(), &mut member) };
+        // Keep an uncertain observation; only a verified nonmember is excluded.
+        observed == 0 || member != 0
+    }
+
     pub fn members(&self) -> Vec<(u32, Option<String>)> {
+        self.process_ids()
+            .into_iter()
+            .filter_map(|pid| {
+                let Some(process) = process_handle(pid) else {
+                    // An invalid PID has already exited; access denial leaves the
+                    // member visible with no image name.
+                    return (io::Error::last_os_error().raw_os_error()
+                        != Some(ERROR_INVALID_PARAMETER as i32))
+                    .then_some((pid, None));
+                };
+                // SAFETY: the process handle has synchronization access.
+                if !self.contains(&process)
+                    || unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } == WAIT_OBJECT_0
+                {
+                    return None;
+                }
+                Some((pid, image_name(&process)))
+            })
+            .collect()
+    }
+
+    fn process_ids(&self) -> Vec<u32> {
         let mut capacity = 32usize;
         loop {
             // The first two u32 values occupy one usize on our x64 target;
@@ -105,17 +160,22 @@ impl Job {
             let mut members: Vec<_> = pids
                 .iter()
                 .filter_map(|pid| u32::try_from(*pid).ok())
-                .map(|pid| (pid, image_name(pid)))
                 .collect();
-            members.sort_by_key(|(pid, _)| *pid);
+            members.sort_unstable();
             return members;
         }
     }
 }
 
 fn process_handle(pid: u32) -> Option<OwnedHandle> {
-    // SAFETY: opens only query access; the result is owned, not inherited.
-    let raw = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    // SAFETY: opens only query/wait access; the result is owned, not inherited.
+    let raw = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+            0,
+            pid,
+        )
+    };
     if raw.is_null() {
         None
     } else {
@@ -142,11 +202,16 @@ pub(crate) fn process_start_time(pid: u32) -> Option<u64> {
     {
         return None;
     }
+    // An exited process remains queryable while any observer retains a handle.
+    // Its creation timestamp must not make it appear to be a live process.
+    // SAFETY: the owned process handle has synchronization access; zero polls.
+    if unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } != WAIT_TIMEOUT {
+        return None;
+    }
     Some((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
 }
 
-fn image_name(pid: u32) -> Option<String> {
-    let process = process_handle(pid)?;
+fn image_name(process: &OwnedHandle) -> Option<String> {
     let mut path = vec![0u16; 32768];
     let mut len = path.len() as u32;
     // SAFETY: path has len writable UTF-16 code units.
@@ -157,4 +222,71 @@ fn image_name(pid: u32) -> Option<String> {
         return None;
     }
     String::from_utf16(&path[..len as usize]).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn terminating_a_job_waits_for_its_retained_process_handles() {
+        use std::os::windows::process::CommandExt;
+        let spec = crate::exec::test_native_command("sleep");
+        let mut child = std::process::Command::new(&spec.argv[0])
+            .args(&spec.argv[1..])
+            .envs(&spec.env)
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let job = Job::new().unwrap();
+        // SAFETY: both objects are owned; the helper only sleeps.
+        assert_ne!(
+            unsafe { AssignProcessToJobObject(job.raw(), child.as_raw_handle()) },
+            0
+        );
+        assert_eq!(
+            job.members()
+                .iter()
+                .map(|(pid, _)| *pid)
+                .collect::<Vec<_>>(),
+            [child.id()]
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(10), job.terminate_and_wait())
+                .await
+                .unwrap()
+        );
+        // Retaining Child prevents PID reuse and observes the actual object.
+        assert_eq!(
+            unsafe { WaitForSingleObject(child.as_raw_handle(), 0) },
+            WAIT_OBJECT_0
+        );
+        assert!(!job.alive());
+        assert!(job.members().is_empty());
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn retained_handle_does_not_make_an_exited_process_live() {
+        let command = crate::exec::test_native_command("sleep");
+        let mut child = std::process::Command::new(&command.argv[0])
+            .args(&command.argv[1..])
+            .envs(command.env)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let retained = process_handle(pid);
+        let started = process_start_time(pid);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(retained.is_some());
+        assert!(started.is_some());
+        assert!(process_start_time(pid).is_none());
+        drop(retained);
+    }
 }

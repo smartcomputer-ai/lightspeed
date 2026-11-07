@@ -144,6 +144,10 @@ impl Resolved {
 }
 
 impl Confinement {
+    #[cfg(windows)]
+    pub(crate) fn root_directory(&self) -> Directory {
+        self.root_directory.clone()
+    }
     /// `root` is canonicalized and opened. `state_dir` is created (private)
     /// when missing and canonicalized; it must not be the root itself.
     pub fn new(root: PathBuf, state_dir: PathBuf) -> Result<Self, ProtocolError> {
@@ -396,7 +400,6 @@ impl Confinement {
 
     /// Remove directories a lookup created (see [`Resolved::created`])
     /// that are still empty, innermost first. Best effort.
-    #[cfg(unix)]
     pub(crate) fn remove_created(&self, created: &[Vec<OsString>]) {
         for segments in created.iter().rev() {
             let Some((name, parent)) = segments.split_last() else {
