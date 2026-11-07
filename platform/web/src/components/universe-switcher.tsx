@@ -1,9 +1,10 @@
 import { slugify, universeSlugSchema } from "@lightspeed-ai/platform-shared";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { AddIcon, SelectedIcon, SwitcherIcon } from "@/icons";
 import { UniverseIcon } from "@/components/universe-icon";
+import { Starscape } from "@/components/starscape/starscape";
 import { api, type Universe } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +33,15 @@ import {
 } from "@/components/ui/sidebar";
 import { memberships, universeHome, useUniverses } from "@/lib/universes";
 
+/// The sky behind the universe icon fades out over this radius, in CSS px.
+/// It reaches past the header into the navigation, which the shell keeps
+/// stacked above it.
+export const HEADER_STARSCAPE_FADE = { start: 16, end: 80 };
+
+/// Covers the fade circle around the icon. The stars are drawn without a sky
+/// and inverted in light mode, where they become dark streaks.
+export const HEADER_STARSCAPE_CLASS = "absolute inset-x-0 top-0 h-28 invert dark:invert-0";
+
 /// Top-of-sidebar universe switcher. Lists memberships only; platform
 /// admins reach the full inventory via Admin → Universes. Creation lives
 /// here (permission-gated) so users find it where they already look.
@@ -49,65 +59,66 @@ export function UniverseSwitcher({
   // Universe creation is platform-admin-only today; the plan is to open
   // this up — flip this gate, nothing else moves.
   const canCreate = admin;
+  const iconRef = useRef<HTMLSpanElement>(null);
 
   return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <SidebarMenuButton
-                size="lg"
-                className="data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-accent-foreground"
-              />
-            }
-          >
-            <UniverseIcon icon={active?.icon} iconColor={active?.iconColor} />
-            <div className="grid flex-1 text-left leading-tight">
-              <span className="truncate text-sm font-medium">
-                {active?.name ?? "Select universe"}
-              </span>
-              <span className="truncate text-xs text-muted-foreground">
-                {active
-                  ? active.status === "archived"
-                    ? "archived"
-                    : "universe"
-                  : "Lightspeed"}
-              </span>
-            </div>
-            <SwitcherIcon className="ml-auto size-4" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="min-w-56" align="start">
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>Universes</DropdownMenuLabel>
-            </DropdownMenuGroup>
-            {mine.map((universe) => (
-              <DropdownMenuItem
-                key={universe.id}
-                onClick={() => navigate(universeHome(universe))}
-              >
-                <UniverseIcon icon={universe.icon} iconColor={universe.iconColor} className="size-6 rounded-md" />
-                <span className="truncate">{universe.name}</span>
-                {universe.id === active?.id && <SelectedIcon className="ml-auto size-4" />}
-              </DropdownMenuItem>
-            ))}
-            {mine.length === 0 && (
-              <DropdownMenuItem disabled>No universes yet</DropdownMenuItem>
-            )}
-            {canCreate && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setCreateOpen(true)}>
-                  <AddIcon />
-                  New universe
+    <>
+      {/* The header's sky: centred on the universe icon, fading out around it. */}
+      <Starscape anchor={iconRef} fade={HEADER_STARSCAPE_FADE} transparentBackground className={HEADER_STARSCAPE_CLASS} />
+      <SidebarMenu className="relative">
+        <SidebarMenuItem>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <SidebarMenuButton
+                  size="lg"
+                  className="data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-accent-foreground"
+                />
+              }
+            >
+              <UniverseIcon ref={iconRef} icon={active?.icon} iconColor={active?.iconColor} />
+              <div className="grid flex-1 text-left leading-tight">
+                <span className="truncate text-sm font-medium">
+                  {active?.name ?? "Select universe"}
+                </span>
+                {active?.status === "archived" && (
+                  <span className="truncate text-xs text-muted-foreground">archived</span>
+                )}
+              </div>
+              <SwitcherIcon className="ml-auto size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="min-w-56" align="start">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Universes</DropdownMenuLabel>
+              </DropdownMenuGroup>
+              {mine.map((universe) => (
+                <DropdownMenuItem
+                  key={universe.id}
+                  onClick={() => navigate(universeHome(universe))}
+                >
+                  <UniverseIcon icon={universe.icon} iconColor={universe.iconColor} className="size-6 rounded-md" />
+                  <span className="truncate">{universe.name}</span>
+                  {universe.id === active?.id && <SelectedIcon className="ml-auto size-4" />}
                 </DropdownMenuItem>
-              </>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <NewUniverseDialog open={createOpen} onOpenChange={setCreateOpen} />
-      </SidebarMenuItem>
-    </SidebarMenu>
+              ))}
+              {mine.length === 0 && (
+                <DropdownMenuItem disabled>No universes yet</DropdownMenuItem>
+              )}
+              {canCreate && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setCreateOpen(true)}>
+                    <AddIcon />
+                    New universe
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <NewUniverseDialog open={createOpen} onOpenChange={setCreateOpen} />
+        </SidebarMenuItem>
+      </SidebarMenu>
+    </>
   );
 }
 

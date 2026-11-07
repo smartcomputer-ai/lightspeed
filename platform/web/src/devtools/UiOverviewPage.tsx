@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { AddIcon, BotIcon, CopyIcon, DarkThemeIcon, DeleteIcon, EmailIcon, InboxIcon, LightThemeIcon, NotificationIcon, SearchIcon, SettingsIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -96,6 +96,10 @@ import ROLES_SOURCE from "@/icons/roles.ts?raw";
 import OWN_SOURCE from "./UiOverviewPage.tsx?raw";
 import { GROUP_ORDER, StepRow, groupStyle } from "@/components/session/tool-trace";
 import { UNIVERSE_NAV } from "@/components/universe-nav";
+import { LightspeedLogo, LightspeedMark } from "@/components/brand/lightspeed-logo";
+import { Starscape } from "@/components/starscape/starscape";
+import { UniverseIcon } from "@/components/universe-icon";
+import { HEADER_STARSCAPE_CLASS, HEADER_STARSCAPE_FADE } from "@/components/universe-switcher";
 import { collectRoleUsage, iconRoles, libraryGlyphs, type IconRole, type RoleGlyph } from "./icon-usage";
 
 /// Every shared UI component and its variations on one page, grouped by
@@ -103,6 +107,7 @@ import { collectRoleUsage, iconRoles, libraryGlyphs, type IconRole, type RoleGly
 /// builds only: the route is not compiled into production.
 
 const CATEGORIES = [
+  { id: "branding", title: "Branding" },
   { id: "typography", title: "Typography" },
   { id: "colors", title: "Colors" },
   { id: "icons", title: "Icons" },
@@ -155,6 +160,7 @@ export function UiOverviewPage() {
               The shared components in <code className="font-mono text-xs">src/components/ui</code> and their variations.
             </p>
           </div>
+          <BrandingSection />
           <TypographySection />
           <ColorsSection />
           <IconsSection />
@@ -232,6 +238,72 @@ function Specimen({ title, note, className, children }: { title: string; note?: 
 
 function Caption({ children }: { children: ReactNode }) {
   return <span className="font-mono text-[11px] text-muted-foreground">{children}</span>;
+}
+
+function BrandingSection() {
+  const markRef = useRef<HTMLDivElement>(null);
+  const iconRef = useRef<HTMLSpanElement>(null);
+  return (
+    <Category id="branding" description="The Lightspeed logo, drawn in currentColor, and the realtime starscape from the Lightspeed site.">
+      <Specimen title="Logo" note="LightspeedLogo, LightspeedMark" className="gap-8">
+        <LightspeedLogo title="Lightspeed" className="h-32 w-auto" />
+        <LightspeedMark title="Lightspeed" className="h-24 w-auto" />
+        {[48, 32, 24, 16].map((size) => (
+          <div key={size} className="grid justify-items-center gap-1.5">
+            <LightspeedMark style={{ height: size }} className="w-auto" />
+            <Caption>{size}px</Caption>
+          </div>
+        ))}
+        <div className="flex items-center gap-4 rounded-lg bg-primary px-4 py-3 text-primary-foreground">
+          <LightspeedMark className="h-8 w-auto" />
+          <span className="text-sm font-medium">On primary</span>
+        </div>
+      </Specimen>
+      <Specimen title="Starscape" note="The site's settings over its 887 × 1252 frame; no fade" className="p-0">
+        <div className="relative h-72 w-full overflow-hidden rounded-xl bg-black">
+          <Starscape className="absolute inset-0" />
+        </div>
+      </Specimen>
+      <div className="grid gap-5 sm:grid-cols-2">
+        <Specimen title="Logo on the starscape" note="anchor, fade 60–480px, transparentBackground" className="p-0">
+          <div className="relative grid h-72 w-full place-items-center overflow-hidden rounded-xl">
+            <Starscape anchor={markRef} fade={{ start: 60, end: 480 }} transparentBackground className="absolute inset-0 invert dark:invert-0" />
+            <div ref={markRef} className="relative">
+              <LightspeedMark title="Lightspeed" className="h-16 w-auto" />
+            </div>
+          </div>
+        </Specimen>
+        <Specimen
+          title="Behind the universe icon"
+          note={`As in the sidebar header: fade ${HEADER_STARSCAPE_FADE.start}–${HEADER_STARSCAPE_FADE.end}px`}
+          className="p-0"
+        >
+          <div className="relative h-72 w-full overflow-hidden rounded-xl bg-sidebar text-sidebar-foreground">
+            <Starscape anchor={iconRef} fade={HEADER_STARSCAPE_FADE} transparentBackground className={HEADER_STARSCAPE_CLASS} />
+            <div className="relative flex h-16 items-center gap-2 px-4">
+              <UniverseIcon ref={iconRef} />
+              <span className="text-sm font-medium">Universe</span>
+            </div>
+            <div className="relative grid gap-1 px-4 text-sm text-muted-foreground">
+              {["Overview", "Sessions", "Bots"].map((item) => <span key={item} className="py-1.5">{item}</span>)}
+            </div>
+          </div>
+        </Specimen>
+      </div>
+      <Specimen title="Scale and still frames" note="scale 0.5 and 2; animate off" className="grid gap-3 p-0 sm:grid-cols-3">
+        {[
+          { label: "scale={0.5}", props: { scale: 0.5 } },
+          { label: "scale={2}", props: { scale: 2 } },
+          { label: "animate={false}", props: { animate: false } },
+        ].map((variant) => (
+          <div key={variant.label} className="relative h-40 overflow-hidden rounded-xl bg-black">
+            <Starscape className="absolute inset-0" {...variant.props} />
+            <span className="absolute bottom-2 left-2 font-mono text-[11px] text-white/70">{variant.label}</span>
+          </div>
+        ))}
+      </Specimen>
+    </Category>
+  );
 }
 
 function TypographySection() {

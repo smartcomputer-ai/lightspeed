@@ -137,14 +137,14 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
       )}
     >
       <Sidebar collapsible="icon">
-        <SidebarHeader>
+        <SidebarHeader className="relative">
           {mode === "universe" ? (
             <UniverseSwitcher active={active} admin={admin} />
           ) : (
             <ModeHeader title={mode === "admin" ? "Platform admin" : "Your account"} />
           )}
         </SidebarHeader>
-        <SidebarContent>
+        <SidebarContent className="relative">
           {mode === "universe" && active && UNIVERSE_NAV.map((group, index) => {
             const items = group.items.filter((item) => navItemVisible(item, permissions.can, active.features));
             if (items.length === 0) return null;
