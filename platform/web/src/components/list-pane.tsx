@@ -58,7 +58,7 @@ export function ListPane({
       className={cn(
         // The CSS bound keeps the detail its room when the window narrows
         // after a drag.
-        "relative w-full shrink-0 flex-col border-r md:flex md:w-[min(var(--list-width),max(16rem,calc(100%_-_24rem)))]",
+        "relative w-full shrink-0 flex-col border-r sheen-list md:flex md:w-[min(var(--list-width),max(16rem,calc(100%_-_24rem)))]",
         detailOpen ? "hidden" : "flex",
       )}
     >

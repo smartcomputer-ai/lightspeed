@@ -9,6 +9,9 @@ import {
   SHADOW_STEPS,
   SHADOW_TOKENS,
   BACKDROP_KEY,
+  SHEEN_ROLES,
+  SIDEBAR_LOGO_TOKENS,
+  sheenToken,
   SURFACE_ROLES,
   applyOverrides,
   exportCss,
@@ -75,6 +78,32 @@ describe("design tokens", () => {
       expect(declared(surfaceToken(key, "blur"))[0], key).toMatch(/^\d+px$/);
       expect(declared(surfaceToken(key, "saturate"))[0], key).toMatch(/^\d+%$/);
     }
+  });
+
+  it("declares each sheen's color and start per theme and draws it as a gradient", () => {
+    const css = readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
+    for (const role of SHEEN_ROLES) {
+      const values = [...css.matchAll(new RegExp(`${sheenToken(role.key)}: ([^;]+);`, "g"))].map((match) => match[1]!);
+      expect(values, role.key).toHaveLength(2);
+      for (const value of values) expect(parseSurfaceColor(value), value).toEqual({ source: "white", percent: 5 });
+      expect(css).toContain(`@utility sheen-${role.key} {`);
+      expect([...css.matchAll(new RegExp(`${sheenToken(role.key, "start")}: 0%;`, "g"))], role.key).toHaveLength(2);
+      expect(css).toContain(
+        `linear-gradient(90deg, transparent var(${sheenToken(role.key, "start")}), var(${sheenToken(role.key)}) 100%)`,
+      );
+    }
+  });
+
+  it("declares the sidebar logo's color and opacity per theme and its geometry once", () => {
+    const css = readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
+    const declared = (token: string) => [...css.matchAll(new RegExp(`${token}: ([^;]+);`, "g"))].map((match) => match[1]!);
+    expect(declared(SIDEBAR_LOGO_TOKENS.color).map((value) => parseSurfaceColor(value)))
+      .toEqual([{ source: "--sidebar-foreground", percent: 20 }, { source: "--sidebar-foreground", percent: 20 }]);
+    expect(declared(SIDEBAR_LOGO_TOKENS.opacity)).toEqual(["0.4", "0.4"]);
+    expect(declared(SIDEBAR_LOGO_TOKENS.rotate)).toEqual(["-30deg"]);
+    expect(declared(SIDEBAR_LOGO_TOKENS.scale)).toEqual(["1.2"]);
+    expect(declared(SIDEBAR_LOGO_TOKENS.offset)).toEqual(["10%"]);
+    expect(css).toContain("@utility sidebar-logo {");
   });
 
   it("declares the icon scale and applies it to every icon role", () => {

@@ -170,6 +170,22 @@
     --surface-backdrop-saturate: 100%;
     --surface-menu-blur: 40px;
     --surface-menu-saturate: 150%;
+    /* A sheen over the main sidebar and over list columns (the aside of
+       Sessions, Bots, Profiles, Workspaces): a left-to-right gradient from
+       transparent to this color, per theme. */
+    --surface-sidebar-gradient: color-mix(in oklab, white 5%, transparent);
+    --surface-list-gradient: color-mix(in oklab, white 5%, transparent);
+    /* Where across the surface each sheen starts to rise from transparent. */
+    --surface-sidebar-gradient-start: 0%;
+    --surface-list-gradient-start: 0%;
+    /* The large LS mark behind the bottom of the sidebar: color and opacity
+       per theme; rotation, size (times the sidebar width) and how far it
+       sinks below the bottom edge (percent of its own height) shared. */
+    --sidebar-logo-color: color-mix(in oklab, var(--sidebar-foreground) 20%, transparent);
+    --sidebar-logo-opacity: 0.4;
+    --sidebar-logo-rotate: -30deg;
+    --sidebar-logo-scale: 1.2;
+    --sidebar-logo-offset: 10%;
     /* Scales every icon (lucide, tabler and the app's own marks) from the
        size its classes give it. */
     --icon-scale: 1;
@@ -221,6 +237,30 @@
     --surface-field: color-mix(in oklab, var(--input) 30%, transparent);
     --surface-field-border: var(--input);
     --surface-backdrop: color-mix(in oklab, black 10%, transparent);
+    --surface-sidebar-gradient: color-mix(in oklab, white 5%, transparent);
+    --surface-list-gradient: color-mix(in oklab, white 5%, transparent);
+    --surface-sidebar-gradient-start: 0%;
+    --surface-list-gradient-start: 0%;
+    --sidebar-logo-color: color-mix(in oklab, var(--sidebar-foreground) 20%, transparent);
+    --sidebar-logo-opacity: 0.4;
+}
+
+/* The sheens over the sidebar and the list columns, drawn on top of their
+   background color. */
+@utility sheen-sidebar {
+    background-image: linear-gradient(90deg, transparent var(--surface-sidebar-gradient-start), var(--surface-sidebar-gradient) 100%);
+}
+@utility sidebar-logo {
+    left: 50%;
+    bottom: 0;
+    width: calc(var(--sidebar-logo-scale) * 100%);
+    height: auto;
+    color: var(--sidebar-logo-color);
+    opacity: var(--sidebar-logo-opacity);
+    transform: translateX(-50%) translateY(var(--sidebar-logo-offset)) rotate(var(--sidebar-logo-rotate));
+}
+@utility sheen-list {
+    background-image: linear-gradient(90deg, transparent var(--surface-list-gradient-start), var(--surface-list-gradient) 100%);
 }
 
 @layer base {

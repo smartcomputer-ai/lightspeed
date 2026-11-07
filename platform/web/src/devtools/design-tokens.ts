@@ -116,10 +116,40 @@ export function surfaceToken(role: string, part: SurfacePart): string {
 /// (color, per theme), `-blur` and `-saturate` (shared).
 export const BACKDROP_KEY = "backdrop";
 
+/// Sheens: a left-to-right gradient from transparent to `--surface-<key>-gradient`
+/// over a surface's background, rising from `-start` across the surface.
+/// The color, its opacity and the start are all per theme.
+export interface SheenRole {
+  key: string;
+  title: string;
+  components: string;
+  /// The surface color the sheen is drawn over, for the preview.
+  over: string;
+}
+
+export const SHEEN_ROLES: SheenRole[] = [
+  { key: "sidebar", title: "Sidebar sheen", components: "The main sidebar", over: "--sidebar" },
+  { key: "list", title: "List sheen", components: "The list column beside a detail: Sessions, Bots, Profiles, Workspaces", over: "--background" },
+];
+
+export function sheenToken(role: string, part: "color" | "start" = "color"): string {
+  return part === "start" ? `--surface-${role}-gradient-start` : `--surface-${role}-gradient`;
+}
+
+/// The large LS mark behind the bottom of the sidebar. Color and opacity
+/// are per theme; the rest is shared.
+export const SIDEBAR_LOGO_TOKENS = {
+  color: "--sidebar-logo-color",
+  opacity: "--sidebar-logo-opacity",
+  rotate: "--sidebar-logo-rotate",
+  scale: "--sidebar-logo-scale",
+  offset: "--sidebar-logo-offset",
+} as const;
+
 /// Colors a surface background or border can be drawn from: theme colors,
 /// plus black and white for backdrops.
 export const SURFACE_COLOR_SOURCES = [
-  "--background", "--card", "--popover", "--muted", "--secondary", "--accent", "--primary", "--sidebar", "--input",
+  "--background", "--card", "--popover", "--muted", "--secondary", "--accent", "--primary", "--sidebar", "--sidebar-foreground", "--input",
   "--border", "--foreground", "--ring", "black", "white",
 ] as const;
 

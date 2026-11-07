@@ -1,4 +1,5 @@
 import { useActionPermissions } from "@/lib/permissions";
+import { LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { useEffect, type ComponentType, type CSSProperties } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
 import { ApiKeyIcon, AppearanceIcon, AuditLogIcon, BackIcon, ChannelIcon, EnvironmentProviderIcon, SecurityIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
@@ -137,6 +138,11 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
       )}
     >
       <Sidebar collapsible="icon">
+        {/* The large mark behind the sidebar's lower part, cut off by its edges. */}
+        <LightspeedMark
+          data-sidebar-logo=""
+          className="sidebar-logo pointer-events-none absolute -z-10 group-data-[collapsible=icon]:hidden"
+        />
         <SidebarHeader className="relative">
           {mode === "universe" ? (
             <UniverseSwitcher active={active} admin={admin} />

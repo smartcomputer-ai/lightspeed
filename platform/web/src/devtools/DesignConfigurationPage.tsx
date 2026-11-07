@@ -20,6 +20,8 @@ import {
   SHADOW_STEPS,
   SHADOW_TOKENS,
   BACKDROP_KEY,
+  SHEEN_ROLES,
+  SIDEBAR_LOGO_TOKENS,
   SURFACE_COLOR_SOURCES,
   SURFACE_ROLES,
   TEXT_SIZE_TOKENS,
@@ -33,13 +35,16 @@ import {
   saveOverrides,
   shadowValues,
   surfaceColorValue,
+  sheenToken,
   surfaceToken,
   type DesignMessage,
   type DesignOverrides,
   type ShadowParams,
+  type SheenRole,
   type SurfaceRole,
   type ThemeName,
 } from "./design-tokens";
+import { LightspeedMark } from "@/components/brand/lightspeed-logo";
 
 type Scope = "shared" | ThemeName;
 
@@ -193,6 +198,24 @@ export function DesignConfigurationPage() {
               saturate={role.effects ? token("shared", surfaceToken(role.key, "saturate")) : undefined}
             />
           ))}
+          {SHEEN_ROLES.map((role) => (
+            <SheenEditor
+              key={`${colorTheme}${role.key}`}
+              role={role}
+              resolve={(name) => valueOf(colorTheme, name)}
+              color={token(colorTheme, sheenToken(role.key))}
+              start={token(colorTheme, sheenToken(role.key, "start"))}
+            />
+          ))}
+          <SidebarLogoEditor
+            key={`${colorTheme}sidebar-logo`}
+            resolve={(name) => valueOf(colorTheme, name)}
+            color={token(colorTheme, SIDEBAR_LOGO_TOKENS.color)}
+            opacity={token(colorTheme, SIDEBAR_LOGO_TOKENS.opacity)}
+            rotate={token("shared", SIDEBAR_LOGO_TOKENS.rotate)}
+            scale={token("shared", SIDEBAR_LOGO_TOKENS.scale)}
+            offset={token("shared", SIDEBAR_LOGO_TOKENS.offset)}
+          />
           <BackdropEditor
             key={`${colorTheme}backdrop`}
             resolve={(name) => valueOf(colorTheme, name)}
@@ -454,7 +477,7 @@ function RangeRow({ name, value, changed, onChange, onReset, min, max, step, uni
   min: number;
   max: number;
   step: number;
-  unit: "rem" | "px" | "%" | "";
+  unit: "rem" | "px" | "%" | "deg" | "";
   describe?: (value: number) => string;
   sample?: (value: string) => ReactNode;
 }) {
@@ -559,6 +582,88 @@ function EffectRows({ role, blur, saturate }: { role: string; blur: TokenControl
       <RangeRow name={surfaceToken(role, "blur")} min={0} max={64} step={1} unit="px" {...blur} />
       <RangeRow name={surfaceToken(role, "saturate")} min={0} max={300} step={5} unit="%" {...saturate} />
     </>
+  );
+}
+
+/// A sheen over a surface: the gradient's end color and its opacity.
+function SheenEditor({ role, resolve, color, start }: {
+  role: SheenRole;
+  resolve: (token: string) => string;
+  color: TokenControl;
+  start: TokenControl;
+}) {
+  const end = literalColor(color.value, resolve) ?? color.value;
+  return (
+    <section className="grid gap-3 rounded-lg border p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="grid min-w-0 gap-0.5">
+          <h2 className="text-sm font-medium">{role.title}</h2>
+          <p className="text-xs text-muted-foreground">{role.components}</p>
+          <p className="text-xs text-muted-foreground">
+            A left-to-right gradient that stays transparent up to the start, then rises to this color at the right edge. Each
+            theme has its own.
+          </p>
+        </div>
+        <div
+          aria-hidden
+          className="h-12 w-20 shrink-0 rounded-md border"
+          style={{
+            backgroundColor: resolve(role.over),
+            backgroundImage: `linear-gradient(90deg, transparent ${start.value}, ${end} 100%)`,
+          }}
+        />
+      </div>
+      <SurfaceColorRow label="Color" name={sheenToken(role.key)} resolve={resolve} {...color} />
+      <RangeRow name={sheenToken(role.key, "start")} min={0} max={100} step={1} unit="%" {...start} />
+    </section>
+  );
+}
+
+/// The large LS mark behind the bottom of the sidebar, with a preview the
+/// size of a narrow sidebar.
+function SidebarLogoEditor({ resolve, color, opacity, rotate, scale, offset }: {
+  resolve: (token: string) => string;
+  color: TokenControl;
+  opacity: TokenControl;
+  rotate: TokenControl;
+  scale: TokenControl;
+  offset: TokenControl;
+}) {
+  return (
+    <section className="grid gap-3 rounded-lg border p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="grid min-w-0 gap-0.5">
+          <h2 className="text-sm font-medium">Sidebar logo</h2>
+          <p className="text-xs text-muted-foreground">
+            The LS mark behind the lower part of the sidebar. Color and opacity are per theme; rotation, scale (times the
+            sidebar width) and the bottom offset (percent of its own height, pushing it below the edge) apply to both.
+          </p>
+        </div>
+        <div
+          aria-hidden
+          className="relative h-28 w-16 shrink-0 overflow-hidden rounded-md border"
+          style={{ background: resolve("--sidebar") }}
+        >
+          <LightspeedMark
+            className="absolute"
+            style={{
+              left: "50%",
+              bottom: 0,
+              width: `calc(${scale.value} * 100%)`,
+              height: "auto",
+              color: literalColor(color.value, resolve) ?? color.value,
+              opacity: opacity.value,
+              transform: `translateX(-50%) translateY(${offset.value}) rotate(${rotate.value})`,
+            }}
+          />
+        </div>
+      </div>
+      <SurfaceColorRow label="Color" name={SIDEBAR_LOGO_TOKENS.color} resolve={resolve} {...color} />
+      <RangeRow name={SIDEBAR_LOGO_TOKENS.opacity} min={0} max={1} step={0.01} unit="" {...opacity} />
+      <RangeRow name={SIDEBAR_LOGO_TOKENS.rotate} min={-180} max={180} step={1} unit="deg" {...rotate} />
+      <RangeRow name={SIDEBAR_LOGO_TOKENS.scale} min={0.5} max={3} step={0.05} unit="" describe={(value) => `${round(value * 100)}% wide`} {...scale} />
+      <RangeRow name={SIDEBAR_LOGO_TOKENS.offset} min={-50} max={100} step={1} unit="%" {...offset} />
+    </section>
   );
 }
 
