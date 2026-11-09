@@ -62,13 +62,17 @@ attached only when needed. One worker can therefore manage hundreds of agents.
 
 ## Quick start
 
-To run from source, install the Rust toolchain selected by `rust-toolchain.toml`,
-Node.js 24 or newer, Docker with Compose, and a native build toolchain with
-`protoc`. Then start the local product:
+On macOS, run the dependency setup script before starting Lightspeed from
+source. Complete any first-run prompts and rerun setup if prompted.
 
 ```bash
+./setup-deps.sh
 ./dev.sh
 ```
+
+On other platforms, install the Rust toolchain selected by
+`rust-toolchain.toml`, Node.js 24.21.0 or newer, Docker with Compose, and a
+native build toolchain with `protoc`, then run `./dev.sh`.
 
 When the readiness checks pass in the CLI, open
 [http://localhost:5173/app/](http://localhost:5173/app/) and sign in with the
