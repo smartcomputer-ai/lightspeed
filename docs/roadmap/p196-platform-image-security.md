@@ -120,6 +120,13 @@ numeric-user setting to the previously validated Linux image. This avoids using
 host-staged native dependencies for the Linux startup check. Cluster policies
 that require explicit pod user/group fields still need those fields supplied.
 
+### Dependency version pins
+
+Pinned `@azure/msal-node` to `7.1.2` and `semver` 7.x to `7.8.5`, both older than
+seven days when selected. Database/backend tests, release tests, TypeScript
+checks and runtime packaging passed. Registry acceptance of a newly published
+image remains unverified.
+
 ### Regression protection
 
 The new release test reproduces an optional development peer leaking into a
