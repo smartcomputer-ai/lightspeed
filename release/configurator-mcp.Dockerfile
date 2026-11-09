@@ -10,6 +10,7 @@ LABEL org.opencontainers.image.title="Lightspeed Configurator MCP" \
       org.opencontainers.image.source="https://github.com/smartcomputer-ai/lightspeed"
 WORKDIR /app
 COPY dist/configurator-mcp/ /app/
-USER node
+# Numeric IDs let Kubernetes verify runAsNonRoot from image metadata.
+USER 1000:1000
 EXPOSE 18081
 CMD ["node", "dist/bin.js"]

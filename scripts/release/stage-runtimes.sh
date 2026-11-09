@@ -38,7 +38,6 @@ stage_runtime() {
   shift 2
   local root="$stage_root/runtime-$name"
   local source
-  local -a install_args=(ci --workspace "$workspace" --omit=dev --offline --ignore-scripts)
 
   mkdir -p "$root"
   copy_workspace_manifests "$root"
@@ -46,7 +45,7 @@ stage_runtime() {
     mkdir -p "$root/$(dirname "$source")"
     cp -R "$source" "$root/$source"
   done
-  (cd "$root" && npm "${install_args[@]}")
+  node scripts/release/install-runtime-dependencies.mjs "$root" "$workspace"
   rm -f "$root/package-lock.json"
   # The documentation workspace participates in dependency resolution only.
   rm -rf "$root/docs"
