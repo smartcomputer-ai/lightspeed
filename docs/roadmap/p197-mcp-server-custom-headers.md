@@ -153,9 +153,13 @@ and secret kind `auth.static_token`. The Credentials page calls it **Token**.
 The MCP auth policies `optionalBearer`/`requiredBearer` keep their names,
 because they do mean the `Authorization: Bearer` scheme.
 
-Nothing is rewritten: a database holding `static_bearer` rows fails migration
-15 and has to be reset. The secret kind is bound into the AAD that seals each
-stored value, so existing secrets could not be carried over by SQL anyway.
+Migration 15 relabels existing `static_bearer` grant and provider rows to
+`static_token`, so upgrades keep their tokens. Their secrets keep the kind
+`auth.static_bearer`: a secret's kind is bound into the AAD that seals it and is
+read back from its own row, so it must not change, and nothing compares it with
+the current constant. Replacing a token's value stores it under the new kind.
+Verified by applying migrations 1–15 to a schema holding a v0.7.2 token row,
+and by a store test resolving a secret sealed under the old kind.
 
 ## Replacing a token's value
 

@@ -2432,6 +2432,55 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_token_sealed_under_the_pre_rename_kind_still_resolves() {
+    // Migration 15 relabels v0.7 token grants to static_token but leaves their
+    // secrets under the kind they were sealed with, which is part of the AAD.
+    use auth::{AuthTokenBroker as _, RegistryTokenBroker, TokenAudience};
+
+    let store = Arc::new(live_store("legacy-token-kind", 1024).await);
+    store
+        .put_secret(PutSecretRecord {
+            secret_id: SecretId::new("authsec_legacy"),
+            secret_kind: "auth.static_bearer".to_owned(),
+            value: SecretValue::new("legacy-token"),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("store a secret under the pre-rename kind");
+    store
+        .create_grant(CreateAuthGrantRecord {
+            grant_id: AuthGrantId::new("authgrant_legacy"),
+            provider_id: "static".to_owned(),
+            provider_kind: AuthProviderKind::StaticToken,
+            exposure: auth::AuthGrantExposure::Brokered,
+            created_by: api::Attribution::Local,
+            display_name: None,
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: None,
+            access_token_secret: Some(SecretId::new("authsec_legacy")),
+            refresh_token_secret: None,
+            oauth_client: None,
+            expires_at_ms: None,
+            status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create the relabelled grant");
+    let broker = RegistryTokenBroker::new(store.clone(), store.clone(), store.clone());
+    let token = broker
+        .bearer_token(
+            &AuthGrantId::new("authgrant_legacy"),
+            &TokenAudience::McpResource("https://mcp.example.com/mcp".to_owned()),
+        )
+        .await
+        .expect("the legacy-kind secret resolves");
+    assert_eq!(token.expose(), "legacy-token");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_grant_token_replacement_swaps_only_from_the_expected_value() {
     let store = live_store("grant-replace", 1024).await;
     for (secret, value) in [

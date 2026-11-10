@@ -37,12 +37,17 @@ COMMENT ON COLUMN mcp_server_headers.grant_id IS
 
 -- The pasted single-secret credential is a token sent under whatever header its
 -- consumer chooses, not only `Authorization: Bearer`, so its provider kind is
--- 'static_token'. Nothing is rewritten: a database holding 'static_bearer' rows
--- fails these checks and has to be reset, as this breaking release already
--- requires. Rows could not be carried over anyway, because each secret's kind is
--- bound into the AAD that seals its value.
+-- 'static_token'. Existing rows are relabelled in place. Their sealed secrets keep
+-- the old kind 'auth.static_bearer': a secret's kind is bound into the AAD that
+-- seals its value and is read back from its own row, so it must not change, and
+-- nothing compares it with the current constant. Replacing a token's value stores
+-- it under the new kind.
+ALTER TABLE auth_grants DROP CONSTRAINT auth_grants_provider_kind_known;
+ALTER TABLE auth_providers DROP CONSTRAINT auth_providers_provider_kind_known;
+UPDATE auth_grants SET provider_kind = 'static_token' WHERE provider_kind = 'static_bearer';
+UPDATE auth_providers SET provider_kind = 'static_token' WHERE provider_kind = 'static_bearer';
+
 ALTER TABLE auth_grants
-    DROP CONSTRAINT auth_grants_provider_kind_known,
     ADD CONSTRAINT auth_grants_provider_kind_known
         CHECK (
             provider_kind IN (
@@ -56,7 +61,6 @@ ALTER TABLE auth_grants
         );
 
 ALTER TABLE auth_providers
-    DROP CONSTRAINT auth_providers_provider_kind_known,
     ADD CONSTRAINT auth_providers_provider_kind_known
         CHECK (
             provider_kind IN (
