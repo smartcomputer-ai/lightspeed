@@ -1,8 +1,8 @@
 # P197 — Custom request headers for MCP servers
 
 **Status:** Implemented on `mcp-server-headers`, 2026-11-10, uncommitted. Unit,
-store, migration and gateway live tests pass. User documentation is not yet
-written. Answers
+store, migration and gateway live tests pass. User documentation updated
+(tools and MCP, bots and triggers, environment credentials). Answers
 [issue #138](https://github.com/smartcomputer-ai/lightspeed/issues/138).
 
 ## Goal
@@ -205,5 +205,5 @@ primitive later.
 
 ## Documentation
 
-When implemented, the user documentation for MCP servers and credentials needs
-a section on custom headers, to be reviewed with the owner before it lands.
+The MCP guide documents request headers and replacing a token's value; the
+environment-credentials guide documents **Replace value** for secrets.
