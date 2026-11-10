@@ -1,18 +1,29 @@
 import {
-  MAX_WORKSPACE_UPLOAD_BYTES,
-  MAX_WORKSPACE_UPLOAD_ENTRIES,
+  DEFAULT_WORKSPACE_UPLOAD_LIMITS,
+  formatUploadBytes,
   validWorkspaceTransferPath,
   type WorkspaceUpload,
+  type WorkspaceUploadLimits,
 } from "@lightspeed-ai/platform-shared";
+
+function tooManyEntries(limits: WorkspaceUploadLimits): Error {
+  return new Error(
+    `Select at most ${limits.maxEntries.toLocaleString("en-US")} files and folders per upload.`,
+  );
+}
 
 export type UploadEntry =
   | { kind: "file"; path: string; file: File }
   | { kind: "directory"; path: string };
 
-export function validateUploadEntries(entries: UploadEntry[]) {
+/// Checks a selection against the deployment's limits, which the workspace
+/// tree reports; the defaults apply until it has loaded.
+export function validateUploadEntries(
+  entries: UploadEntry[],
+  limits: WorkspaceUploadLimits = DEFAULT_WORKSPACE_UPLOAD_LIMITS,
+) {
   if (!entries.length) throw new Error("No files or folders selected.");
-  if (entries.length > MAX_WORKSPACE_UPLOAD_ENTRIES)
-    throw new Error("Select at most 10,000 files and folders per upload.");
+  if (entries.length > limits.maxEntries) throw tooManyEntries(limits);
   let bytes = 0;
   const paths = new Set<string>();
   for (const entry of entries) {
@@ -22,8 +33,8 @@ export function validateUploadEntries(entries: UploadEntry[]) {
     paths.add(entry.path);
     if (entry.kind === "file") bytes += entry.file.size;
   }
-  if (bytes > MAX_WORKSPACE_UPLOAD_BYTES)
-    throw new Error("Select up to 32 MiB per upload.");
+  if (bytes > limits.maxBytes)
+    throw new Error(`Select up to ${formatUploadBytes(limits.maxBytes)} per upload.`);
 }
 
 export function selectedFiles(files: FileList | File[]): UploadEntry[] {
@@ -45,13 +56,13 @@ export interface UploadDirectoryHandle {
 
 export async function directoryEntries(
   root: UploadDirectoryHandle,
+  limits: WorkspaceUploadLimits = DEFAULT_WORKSPACE_UPLOAD_LIMITS,
 ): Promise<UploadEntry[]> {
   const entries: UploadEntry[] = [];
   const walk = async (directory: UploadDirectoryHandle, path: string) => {
     entries.push({ kind: "directory", path });
     for await (const child of directory.values()) {
-      if (entries.length >= MAX_WORKSPACE_UPLOAD_ENTRIES)
-        throw new Error("Select at most 10,000 files and folders per upload.");
+      if (entries.length >= limits.maxEntries) throw tooManyEntries(limits);
       const childPath = `${path}/${child.name}`;
       if (child.kind === "directory") await walk(child, childPath);
       else
@@ -63,7 +74,7 @@ export async function directoryEntries(
     }
   };
   await walk(root, root.name);
-  validateUploadEntries(entries);
+  validateUploadEntries(entries, limits);
   return entries;
 }
 
@@ -71,6 +82,7 @@ export async function directoryEntries(
 // the drop handler returns. Directory readers can return multiple batches.
 export async function droppedEntries(
   transfer: DataTransfer,
+  limits: WorkspaceUploadLimits = DEFAULT_WORKSPACE_UPLOAD_LIMITS,
 ): Promise<UploadEntry[]> {
   const items = Array.from(transfer.items ?? []).filter(
     (item) => item.kind === "file",
@@ -82,8 +94,7 @@ export async function droppedEntries(
   const result: UploadEntry[] = [];
   const visit = async (entry: FileSystemEntry, parent: string) => {
     const path = parent ? `${parent}/${entry.name}` : entry.name;
-    if (result.length >= MAX_WORKSPACE_UPLOAD_ENTRIES)
-      throw new Error("Select at most 10,000 files and folders per upload.");
+    if (result.length >= limits.maxEntries) throw tooManyEntries(limits);
     if (entry.isFile) {
       const file = await new Promise<File>((resolve, reject) =>
         (entry as FileSystemFileEntry).file(resolve, reject),
@@ -110,7 +121,7 @@ export async function droppedEntries(
         "Your browser could not read this item. Use Upload files or Upload folder.",
       );
   }
-  validateUploadEntries(result);
+  validateUploadEntries(result, limits);
   return result;
 }
 
@@ -120,8 +131,9 @@ export async function uploadPayload(
   expectedRevision: number,
   replace: boolean,
   progress: (done: number) => void,
+  limits: WorkspaceUploadLimits = DEFAULT_WORKSPACE_UPLOAD_LIMITS,
 ): Promise<WorkspaceUpload> {
-  validateUploadEntries(entries);
+  validateUploadEntries(entries, limits);
   const prefix = destination.trim().replace(/^\/+|\/+$/g, "");
   if (prefix && !validWorkspaceTransferPath(prefix))
     throw new Error("Enter a valid destination folder.");

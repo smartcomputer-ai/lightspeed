@@ -43,8 +43,10 @@ import {
   transcriptionUploadSchema,
   workspaceCreateSchema,
   workspaceRenameSchema,
-  MAX_WORKSPACE_UPLOAD_BODY_BYTES,
-  workspaceUploadSchema,
+  DEFAULT_WORKSPACE_UPLOAD_LIMITS,
+  workspaceUploadSchemaFor,
+  workspaceUploadBodyBytes,
+  formatUploadBytes,
   prepareWorkspaceUpload,
   workspaceDownload,
   WorkspaceTransferError,
@@ -421,6 +423,9 @@ export function deploymentClientFor(ctx: AppContext, endpoint?: string | null): 
 
 export function gatewayRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
+  // One set of limits for the body cap, the schema, and what the web is told.
+  const uploadLimits = ctx.env.workspaceUploadLimits ?? DEFAULT_WORKSPACE_UPLOAD_LIMITS;
+  const uploadSchema = workspaceUploadSchemaFor(uploadLimits);
 
   app.get("/:id/profiles", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
@@ -2120,6 +2125,7 @@ export function gatewayRoutes(ctx: AppContext) {
       return c.json({
         workspace: workspace.result.workspace,
         manifest: snapshot.result.manifest,
+        uploadLimits,
       });
     });
   });
@@ -2127,11 +2133,11 @@ export function gatewayRoutes(ctx: AppContext) {
   app.post(
     "/:id/workspaces/:workspaceId/upload",
     bodyLimit({
-      maxSize: MAX_WORKSPACE_UPLOAD_BODY_BYTES,
+      maxSize: workspaceUploadBodyBytes(uploadLimits),
       onError: (c) =>
         c.json(
           {
-            error: "Upload request is too large. Select fewer files or folders.",
+            error: `Upload request is too large. Select up to ${formatUploadBytes(uploadLimits.maxBytes)} of files.`,
           },
           413,
         ),
@@ -2142,7 +2148,7 @@ export function gatewayRoutes(ctx: AppContext) {
         if (!access) return c.json({ error: "not found" }, 404);
         if (!roleAtLeast(access.role, "contributor"))
           throw new GateRefusal(403, "contributor role required");
-        const body = await parseBody(c, workspaceUploadSchema);
+        const body = await parseBody(c, uploadSchema);
         if (!body.ok) return body.response;
         const client = engineClientFor(ctx, access);
         const workspaceId = c.req.param("workspaceId");

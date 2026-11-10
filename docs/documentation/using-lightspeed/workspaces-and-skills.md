@@ -23,8 +23,13 @@ Open a file, edit its contents, and choose **Save**.
 To bring existing files into the workspace, open **Workspace actions** or a
 folder's actions menu and choose **Upload files** or **Upload folder**. You
 can also drop files and folders onto the workspace or a destination folder.
-An upload supports up to 32 MiB of file content and 10,000 file/directory
-entries. This is a one-time copy; later local edits are not synchronized.
+By default an upload supports up to 32 MiB of file content and 10,000
+file/directory entries; an operator can change both with
+`LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_BYTES` and
+`LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_ENTRIES` (see the
+[environment-variable reference](../reference/environment-variables.md#platform-backend)).
+The upload dialog checks against the deployment's limits before sending.
+This is a one-time copy; later local edits are not synchronized.
 
 Uploads with no conflicts publish directly. If files already exist, review
 the collisions and choose whether to replace them or skip them and upload the

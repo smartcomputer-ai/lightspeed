@@ -595,6 +595,8 @@ export type VfsTreeEntry = VfsFileEntry | VfsDirEntry;
 
 export interface WorkspaceTree {
   workspace: WorkspaceRow;
+  /// The deployment's upload limits; older backends omit them.
+  uploadLimits?: { maxBytes: number; maxEntries: number };
   manifest: {
     schema_version: string;
     root: { entries: Record<string, VfsTreeEntry> };
