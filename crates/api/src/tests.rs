@@ -110,8 +110,23 @@ fn auth_grant_import_params_redact_token_in_debug_output() {
 
     assert!(!debug.contains("super-secret-token"), "{debug}");
     assert!(debug.contains("<redacted>"));
-    assert_eq!(params.token, "super-secret-token");
+    assert_eq!(params.token.as_deref(), Some("super-secret-token"));
     assert_eq!(params.exposure, AuthGrantExposure::Brokered);
+}
+
+#[test]
+fn auth_grant_import_params_redact_header_values_in_debug_output() {
+    let params: AuthGrantImportParams = serde_json::from_value(json!({
+        "headers": [{"name": "X-Upstream-Token", "value": "super-secret-header"}]
+    }))
+    .expect("deserialize header import params");
+
+    let debug = format!("{params:?}");
+
+    assert!(!debug.contains("super-secret-header"), "{debug}");
+    assert!(debug.contains("X-Upstream-Token"), "{debug}");
+    assert_eq!(params.token, None);
+    assert_eq!(params.headers.len(), 1);
 }
 
 #[test]

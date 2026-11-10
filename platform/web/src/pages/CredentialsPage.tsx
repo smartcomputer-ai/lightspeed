@@ -3,7 +3,7 @@ import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, KeyRound, LockKeyhole, Plus, ShieldOff } from "lucide-react";
+import { ChevronRight, KeyRound, LockKeyhole, Plus, ShieldOff, X } from "lucide-react";
 import {
   api,
   type GitHubApp,
@@ -72,11 +72,19 @@ import { GitHubLogo } from "@/components/icons/logos";
 import { isSubscriptionGrant } from "@/lib/subscriptions";
 import { useActiveUniverse } from "@/lib/universes";
 
-type SecretKind = "bearer" | "environment";
+type SecretKind = "bearer" | "headers" | "environment";
 
-/// Grant kinds listed as reusable credentials: pasted tokens and secrets,
-/// GitHub App installations and custom OAuth.
-const REUSABLE_CREDENTIAL_KINDS = new Set(["staticBearer", "gitHubApp", "customOAuth"]);
+/// One editable row of a custom-headers credential.
+interface HeaderRow {
+  name: string;
+  value: string;
+}
+
+const EMPTY_HEADER_ROW: HeaderRow = { name: "", value: "" };
+
+/// Grant kinds listed as reusable credentials: pasted tokens, custom headers
+/// and secrets, GitHub App installations and custom OAuth.
+const REUSABLE_CREDENTIAL_KINDS = new Set(["staticBearer", "staticHeaders", "gitHubApp", "customOAuth"]);
 
 /// A credential made for exactly one thing lives on that thing's page: model
 /// keys and subscription logins on Models, MCP server logins on MCP servers,
@@ -470,14 +478,19 @@ function PasteCredentialDialog({
   const [displayName, setDisplayName] = useState("");
   const [grantId, setGrantId] = useState("");
   const [secret, setSecret] = useState("");
+  const [headers, setHeaders] = useState<HeaderRow[]>([EMPTY_HEADER_ROW]);
   const [retrievable, setRetrievable] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const filledHeaders = headers
+    .map((row) => ({ name: row.name.trim(), value: row.value }))
+    .filter((row) => row.name || row.value);
 
   const reset = () => {
     setKind("environment");
     setDisplayName("");
     setGrantId("");
     setSecret("");
+    setHeaders([EMPTY_HEADER_ROW]);
     setRetrievable(false);
     setError(null);
     create.reset();
@@ -491,6 +504,18 @@ function PasteCredentialDialog({
           `/api/v1/universes/${universeId}/secrets/environment`,
           {
             value: secret,
+            ...(grantId.trim() ? { grantId: grantId.trim() } : {}),
+            ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
+          },
+        );
+      }
+      if (kind === "headers") {
+        return api<SecretGrant>(
+          "POST",
+          `/api/v1/universes/${universeId}/secrets/grants`,
+          {
+            headers: filledHeaders,
+            exposure: "brokered",
             ...(grantId.trim() ? { grantId: grantId.trim() } : {}),
             ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
           },
@@ -523,13 +548,20 @@ function PasteCredentialDialog({
     setKind(nextKind);
     setGrantId("");
     setSecret("");
+    setHeaders([EMPTY_HEADER_ROW]);
     setRetrievable(false);
     setError(null);
   };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!secret) {
+    if (kind === "headers") {
+      const headerError = customHeadersError(filledHeaders);
+      if (headerError) {
+        setError(headerError);
+        return;
+      }
+    } else if (!secret) {
       setError("a secret value is required");
       return;
     }
@@ -567,12 +599,15 @@ function PasteCredentialDialog({
               <SelectContent>
                 <SelectItem value="environment">Environment secret</SelectItem>
                 <SelectItem value="bearer">Bearer token</SelectItem>
+                <SelectItem value="headers">Custom headers</SelectItem>
               </SelectContent>
             </Select>
             <FieldDescription>
               {kind === "environment"
                 ? "Stores an opaque value for injection into an environment variable. Multiline values such as SSH private keys are preserved."
-                : "Creates a revocable access credential that MCP servers or environments can reference."}
+                : kind === "headers"
+                  ? "Sends these HTTP headers on every request to an MCP server that selects this credential. Every value is kept secret."
+                  : "Creates a revocable access credential that MCP servers or environments can reference."}
             </FieldDescription>
           </Field>
           {kind === "bearer" && (
@@ -600,7 +635,9 @@ function PasteCredentialDialog({
               id="secret-name"
               value={displayName}
               onChange={(event) => setDisplayName(event.target.value)}
-              placeholder={kind === "environment" ? "px-dev SSH private key" : "GitHub deploy token"}
+              placeholder={kind === "environment"
+                ? "px-dev SSH private key"
+                : kind === "headers" ? "Tracker gateway" : "GitHub deploy token"}
               autoFocus
             />
           </Field>
@@ -630,6 +667,15 @@ function PasteCredentialDialog({
               </FieldDescription>
             </Field>
           </SettingsDisclosure>
+          {kind === "headers" ? (
+            <CustomHeaderRows
+              rows={headers}
+              onChange={(rows) => {
+                setHeaders(rows);
+                setError(null);
+              }}
+            />
+          ) : (
           <Field>
             <FieldLabel htmlFor="secret-value">Secret value</FieldLabel>
             {kind === "environment" ? (
@@ -659,6 +705,7 @@ function PasteCredentialDialog({
                 : "Whitespace is preserved. Paste the value exactly as issued."}
             </FieldDescription>
           </Field>
+          )}
           {error && <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>
             <Button
@@ -679,6 +726,101 @@ function PasteCredentialDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/// Editable name/value rows. Values are password inputs and are never shown again.
+function CustomHeaderRows({
+  rows,
+  onChange,
+}: {
+  rows: HeaderRow[];
+  onChange: (rows: HeaderRow[]) => void;
+}) {
+  const update = (index: number, patch: Partial<HeaderRow>) =>
+    onChange(rows.map((row, current) => (current === index ? { ...row, ...patch } : row)));
+  return (
+    <Field>
+      <FieldLabel>Headers</FieldLabel>
+      <div className="grid gap-2">
+        {rows.map((row, index) => (
+          <div key={index} className="flex items-center gap-2">
+            <Input
+              value={row.name}
+              onChange={(event) => update(index, { name: event.target.value })}
+              placeholder="X-Upstream-Token"
+              aria-label={`Header ${index + 1} name`}
+              autoComplete="off"
+              spellCheck={false}
+              className="font-mono"
+            />
+            <Input
+              type="password"
+              value={row.value}
+              onChange={(event) => update(index, { value: event.target.value })}
+              placeholder="Value"
+              aria-label={`Header ${index + 1} value`}
+              autoComplete="new-password"
+              spellCheck={false}
+              className="font-mono"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`Remove header ${index + 1}`}
+              disabled={rows.length === 1}
+              onClick={() => onChange(rows.filter((_, current) => current !== index))}
+            >
+              <X />
+            </Button>
+          </div>
+        ))}
+      </div>
+      <div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={rows.length >= MAX_CUSTOM_HEADERS}
+          onClick={() => onChange([...rows, EMPTY_HEADER_ROW])}
+        >
+          <Plus data-icon="inline-start" />
+          Add header
+        </Button>
+      </div>
+      <FieldDescription>
+        Host, Content-Type, Content-Length, Accept, Mcp-* and X-Lightspeed-* headers are reserved.
+        Authorization is allowed for schemes other than Bearer. Values are encrypted and never
+        shown again; to change one, add a new credential.
+      </FieldDescription>
+    </Field>
+  );
+}
+
+const MAX_CUSTOM_HEADERS = 16;
+const RESERVED_HEADER_NAMES = new Set([
+  "accept", "connection", "content-length", "content-type", "host", "keep-alive",
+  "last-event-id", "te", "trailer", "transfer-encoding", "upgrade",
+]);
+
+/// Mirrors the engine's checks so mistakes show before submitting.
+export function customHeadersError(rows: HeaderRow[]): string | null {
+  if (rows.length === 0) return "add at least one header";
+  const seen = new Set<string>();
+  for (const { name, value } of rows) {
+    if (!name) return "every header needs a name";
+    if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(name)) return `${name} is not a valid header name`;
+    const lower = name.toLowerCase();
+    if (RESERVED_HEADER_NAMES.has(lower) || lower.startsWith("mcp-") || lower.startsWith("x-lightspeed-")) {
+      return `${name} is reserved and cannot be set`;
+    }
+    if (seen.has(lower)) return `${name} is listed twice`;
+    seen.add(lower);
+    if (!value) return `${name} needs a value`;
+    if (value.trim() !== value) return `${name} value must not start or end with whitespace`;
+    if (!/^[\t\x20-\x7e]+$/.test(value)) return `${name} value must be printable ASCII without line breaks`;
+  }
+  return null;
 }
 
 function credentialIdConflictMessage(grant: SecretGrant): string {
@@ -709,6 +851,7 @@ function managedBy(grant: SecretGrant): string | null {
 function grantTypeLabel(grant: SecretGrant): string {
   if (grant.providerId === "environment-secret") return "Environment secret";
   if (grant.providerKind === "staticBearer") return "Bearer token";
+  if (grant.providerKind === "staticHeaders") return "Custom headers";
   if (grant.hasRefreshToken) return "OAuth (refreshable)";
   return grant.providerKind;
 }

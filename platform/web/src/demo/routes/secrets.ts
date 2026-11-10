@@ -501,18 +501,35 @@ export function secretRoutes(store: DemoStore): Hono {
       subjectHint?: unknown;
       exposure?: unknown;
       token?: unknown;
+      headers?: unknown;
     }>(c);
-    if (typeof body.token !== "string" || !body.token) return badRequest(c, "token is required");
+    // Like the engine: a bearer token or custom headers, never both; values are dropped.
+    const headers = Array.isArray(body.headers) ? body.headers : null;
+    if (headers) {
+      if (body.token !== undefined) return badRequest(c, "provide exactly one of token or headers");
+      if (headers.length === 0) return badRequest(c, "custom headers must contain at least one header");
+      if (body.exposure === "retrievable") return badRequest(c, "custom-header credentials must be brokered");
+      const names = new Set<string>();
+      for (const header of headers) {
+        const name = typeof header?.name === "string" ? header.name : "";
+        if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(name)) return badRequest(c, "custom header names must be valid HTTP header names");
+        if (typeof header?.value !== "string" || !header.value) return badRequest(c, `custom header ${name} needs a value`);
+        if (names.has(name.toLowerCase())) return badRequest(c, `custom header ${name} is listed twice`);
+        names.add(name.toLowerCase());
+      }
+    } else if (typeof body.token !== "string" || !body.token) {
+      return badRequest(c, "token is required");
+    }
     const grantId = optionalString(body.grantId);
     const existing = grantId ? findGrant(universe, grantId) : undefined;
     if (grantId && existing) return conflict(c, credentialIdConflictMessage(grantId, existing.status));
     const grant = mintGrant(store, universe, {
       grantId,
       providerId: "static",
-      providerKind: "staticBearer",
+      providerKind: headers ? "staticHeaders" : "staticBearer",
       displayName: optionalString(body.displayName),
       subjectHint: optionalString(body.subjectHint),
-      exposure: body.exposure === "retrievable" ? "retrievable" : "brokered",
+      exposure: !headers && body.exposure === "retrievable" ? "retrievable" : "brokered",
     });
     return c.json(grant, 201);
   });

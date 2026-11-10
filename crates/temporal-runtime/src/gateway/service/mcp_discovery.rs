@@ -99,11 +99,42 @@ pub(crate) trait McpToolDiscoverer: Send + Sync {
     async fn discover_tools(
         &self,
         server_url: &str,
-        bearer: Option<&SecretValue>,
+        credential: Option<&McpTransportCredential>,
         trusted_universe: Option<uuid::Uuid>,
         allow_private_network: bool,
         limits: McpToolDiscoveryLimits,
     ) -> Result<DiscoveredMcpInventory, McpToolDiscoveryFailure>;
+}
+
+/// The credential sent on every request to one MCP server: a bearer token in
+/// `Authorization`, or a custom-headers credential's whole header set.
+/// `Debug` output never shows secret values.
+#[derive(Clone, Debug)]
+pub(crate) enum McpTransportCredential {
+    Bearer(SecretValue),
+    Headers(auth::StaticHeaders),
+}
+
+impl McpTransportCredential {
+    /// Interprets a server's resolved grant secret by its auth policy: header
+    /// policies store an encoded header set, every other policy a token.
+    pub(crate) fn for_policy(
+        policy: &mcp::McpServerAuthPolicy,
+        secret: SecretValue,
+    ) -> Result<Self, McpToolDiscoveryFailure> {
+        if policy.uses_headers() {
+            auth::StaticHeaders::from_secret_value(&secret)
+                .map(Self::Headers)
+                .map_err(|_| {
+                    failure(
+                        FailureKind::GrantNeedsReauth,
+                        "The configured custom-headers credential is not usable",
+                    )
+                })
+        } else {
+            Ok(Self::Bearer(secret))
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -606,7 +637,7 @@ impl HttpMcpToolDiscoverer {
         &self,
         client: &reqwest::Client,
         endpoint: &Url,
-        bearer: Option<&SecretValue>,
+        credential: Option<&McpTransportCredential>,
         trusted_universe: Option<uuid::Uuid>,
         max_response_bytes: usize,
         operation: ResponseOperation,
@@ -614,7 +645,7 @@ impl HttpMcpToolDiscoverer {
         let first = start_service_once(
             client,
             endpoint,
-            bearer,
+            credential,
             trusted_universe,
             max_response_bytes,
             operation,
@@ -631,7 +662,7 @@ impl HttpMcpToolDiscoverer {
                 start_service_once(
                     client,
                     endpoint,
-                    bearer,
+                    credential,
                     trusted_universe,
                     max_response_bytes,
                     operation,
@@ -647,7 +678,7 @@ impl HttpMcpToolDiscoverer {
     pub(crate) async fn call_tool(
         &self,
         server_url: &str,
-        bearer: Option<&SecretValue>,
+        credential: Option<&McpTransportCredential>,
         trusted_universe: Option<uuid::Uuid>,
         allow_private_network: bool,
         limits: McpToolDiscoveryLimits,
@@ -670,7 +701,7 @@ impl HttpMcpToolDiscoverer {
                 .start_service(
                     &client,
                     &endpoint,
-                    bearer,
+                    credential,
                     trusted_universe,
                     limits.max_tool_call_response_bytes,
                     ResponseOperation::ToolCall,
@@ -699,7 +730,7 @@ impl McpToolDiscoverer for HttpMcpToolDiscoverer {
     async fn discover_tools(
         &self,
         server_url: &str,
-        bearer: Option<&SecretValue>,
+        credential: Option<&McpTransportCredential>,
         trusted_universe: Option<uuid::Uuid>,
         allow_private_network: bool,
         limits: McpToolDiscoveryLimits,
@@ -722,7 +753,7 @@ impl McpToolDiscoverer for HttpMcpToolDiscoverer {
                 .start_service(
                     &client,
                     &endpoint,
-                    bearer,
+                    credential,
                     trusted_universe,
                     limits.max_response_bytes,
                     ResponseOperation::Discovery,
@@ -761,7 +792,7 @@ struct StartServiceFailure {
 async fn start_service_once(
     client: &reqwest::Client,
     endpoint: &Url,
-    bearer: Option<&SecretValue>,
+    credential: Option<&McpTransportCredential>,
     trusted_universe: Option<uuid::Uuid>,
     max_response_bytes: usize,
     operation: ResponseOperation,
@@ -770,7 +801,7 @@ async fn start_service_once(
     let mut config = StreamableHttpClientTransportConfig::with_uri(endpoint.as_str())
         .max_sse_event_size(max_response_bytes)
         .reinit_on_expired_session(false);
-    config = transport_auth(config, bearer, trusted_universe).map_err(|failure| {
+    config = transport_auth(config, credential, trusted_universe).map_err(|failure| {
         StartServiceFailure {
             failure,
             retry_legacy: false,
@@ -798,17 +829,42 @@ async fn start_service_once(
 
 fn transport_auth(
     mut config: StreamableHttpClientTransportConfig,
-    bearer: Option<&SecretValue>,
+    credential: Option<&McpTransportCredential>,
     trusted_universe: Option<uuid::Uuid>,
 ) -> Result<StreamableHttpClientTransportConfig, McpToolDiscoveryFailure> {
-    if bearer.is_some() && trusted_universe.is_some() {
+    if credential.is_some() && trusted_universe.is_some() {
         return Err(failure(
             FailureKind::InvalidResponse,
-            "MCP transport cannot combine bearer and trusted-header authentication",
+            "MCP transport cannot combine a credential and trusted-header authentication",
         ));
     }
-    if let Some(token) = bearer {
-        config = config.auth_header(token.expose());
+    match credential {
+        Some(McpTransportCredential::Bearer(token)) => {
+            config = config.auth_header(token.expose());
+        }
+        Some(McpTransportCredential::Headers(headers)) => {
+            let mut custom = HashMap::new();
+            for (name, value) in headers.iter() {
+                // Names and values were validated when the credential was
+                // stored; a failure here never echoes the value.
+                let name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
+                    failure(
+                        FailureKind::InvalidResponse,
+                        format!("custom header {name} is not a valid HTTP header name"),
+                    )
+                })?;
+                let mut value = HeaderValue::from_str(value.expose()).map_err(|_| {
+                    failure(
+                        FailureKind::InvalidResponse,
+                        format!("custom header {name} has an invalid value"),
+                    )
+                })?;
+                value.set_sensitive(true);
+                custom.insert(name, value);
+            }
+            config = config.custom_headers(custom);
+        }
+        None => {}
     }
     if let Some(universe_id) = trusted_universe {
         let mut headers = HashMap::new();
@@ -1204,6 +1260,7 @@ mod tests {
         initialized_count: usize,
         tool_call_count: usize,
         authorizations: Vec<String>,
+        upstream_headers: Vec<(String, String)>,
         discover_http_status: Option<StatusCode>,
         oversized_inventory: bool,
         list_delay: Option<Duration>,
@@ -1224,6 +1281,16 @@ mod tests {
                 .unwrap_or_default()
                 .to_owned(),
         );
+        let header = |name: &str| {
+            headers
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned()
+        };
+        state
+            .upstream_headers
+            .push((header("x-upstream-url"), header("x-upstream-token")));
         if let Some(challenge) = state.oauth_challenge.clone() {
             let mut response = StatusCode::UNAUTHORIZED.into_response();
             response.headers_mut().insert(
@@ -1403,7 +1470,9 @@ mod tests {
         assert!(
             transport_auth(
                 StreamableHttpClientTransportConfig::with_uri("http://127.0.0.1:18081/mcp"),
-                Some(&SecretValue::new("not-sent")),
+                Some(&McpTransportCredential::Bearer(SecretValue::new(
+                    "not-sent"
+                ))),
                 Some(universe_id),
             )
             .is_err()
@@ -1611,7 +1680,7 @@ mod tests {
             axum::serve(listener, app).await.expect("serve fixture");
         });
         let discoverer = HttpMcpToolDiscoverer::new();
-        let token = SecretValue::new("test-token-never-log");
+        let token = McpTransportCredential::Bearer(SecretValue::new("test-token-never-log"));
         let endpoint = format!("http://{address}/mcp");
 
         for _ in 0..2 {
@@ -1666,6 +1735,90 @@ mod tests {
                 .all(|value| value == "Bearer test-token-never-log")
         );
         server.abort();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn custom_header_credentials_reach_discovery_and_tool_calls() {
+        let state = Arc::new(Mutex::new(TestMcpState::default()));
+        let app = Router::new()
+            .route("/mcp", post(streamable_handler).delete(shutdown_handler))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fixture");
+        let address = listener.local_addr().expect("fixture address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve fixture");
+        });
+        let stored = auth::StaticHeaders::new([
+            (
+                "X-Upstream-Url".to_owned(),
+                SecretValue::new("https://tracker.example.com"),
+            ),
+            (
+                "X-Upstream-Token".to_owned(),
+                SecretValue::new("upstream-secret"),
+            ),
+        ])
+        .expect("valid headers")
+        .to_secret_value();
+        let credential =
+            McpTransportCredential::for_policy(&mcp::McpServerAuthPolicy::RequiredHeaders, stored)
+                .expect("decode stored headers");
+        assert!(!format!("{credential:?}").contains("upstream-secret"));
+        let discoverer = HttpMcpToolDiscoverer::new();
+        let endpoint = format!("http://{address}/mcp");
+
+        let inventory = discoverer
+            .discover_tools(
+                &endpoint,
+                Some(&credential),
+                None,
+                true,
+                McpToolDiscoveryLimits::default(),
+            )
+            .await
+            .expect("discover with custom headers");
+        assert_eq!(inventory.tools.len(), 2);
+        discoverer
+            .call_tool(
+                &endpoint,
+                Some(&credential),
+                None,
+                true,
+                McpToolDiscoveryLimits::default(),
+                McpToolCallRequest {
+                    tool_name: "search".to_owned(),
+                    arguments: serde_json::Map::new(),
+                },
+            )
+            .await
+            .expect("call with custom headers");
+
+        let state = state.lock().await;
+        assert_eq!(state.tool_call_count, 1);
+        assert!(state.upstream_headers.len() >= 4);
+        assert!(state.upstream_headers.iter().all(|(url, token)| {
+            url == "https://tracker.example.com" && token == "upstream-secret"
+        }));
+        assert!(state.authorizations.iter().all(String::is_empty));
+        server.abort();
+    }
+
+    #[test]
+    fn stored_headers_are_only_decoded_for_header_policies() {
+        let token = SecretValue::new("plain-token");
+        assert!(matches!(
+            McpTransportCredential::for_policy(
+                &mcp::McpServerAuthPolicy::RequiredBearer,
+                token.clone()
+            ),
+            Ok(McpTransportCredential::Bearer(_))
+        ));
+        let error =
+            McpTransportCredential::for_policy(&mcp::McpServerAuthPolicy::RequiredHeaders, token)
+                .expect_err("a bearer token is not a header set");
+        assert!(!error.message.contains("plain-token"));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1836,7 +1989,9 @@ mod tests {
         let error = HttpMcpToolDiscoverer::new()
             .discover_tools(
                 &format!("http://{address}/mcp"),
-                Some(&SecretValue::new("expired-token")),
+                Some(&McpTransportCredential::Bearer(SecretValue::new(
+                    "expired-token",
+                ))),
                 None,
                 true,
                 McpToolDiscoveryLimits::default(),

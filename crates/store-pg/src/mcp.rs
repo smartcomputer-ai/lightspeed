@@ -510,6 +510,8 @@ fn auth_policy_columns(
         McpServerAuthPolicy::None => Ok(("none", serde_json::json!({}))),
         McpServerAuthPolicy::OptionalBearer => Ok(("optional_bearer", serde_json::json!({}))),
         McpServerAuthPolicy::RequiredBearer => Ok(("required_bearer", serde_json::json!({}))),
+        McpServerAuthPolicy::OptionalHeaders => Ok(("optional_headers", serde_json::json!({}))),
+        McpServerAuthPolicy::RequiredHeaders => Ok(("required_headers", serde_json::json!({}))),
         McpServerAuthPolicy::OptionalOAuth {
             resource,
             scopes_default,
@@ -555,6 +557,8 @@ fn auth_policy_from_columns(
         "none" => Ok(McpServerAuthPolicy::None),
         "optional_bearer" => Ok(McpServerAuthPolicy::OptionalBearer),
         "required_bearer" => Ok(McpServerAuthPolicy::RequiredBearer),
+        "optional_headers" => Ok(McpServerAuthPolicy::OptionalHeaders),
+        "required_headers" => Ok(McpServerAuthPolicy::RequiredHeaders),
         "optional_oauth" => {
             let metadata: OAuthAuthMetadata =
                 serde_json::from_value(metadata).map_err(|error| McpRegistryError::Store {

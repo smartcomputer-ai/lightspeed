@@ -115,6 +115,18 @@ token or secret**. Set **Secret type** to **Bearer token**, enter a **Display
 name** and **Secret value**, and choose **Add credential**. Select that
 credential in the MCP form.
 
+For **Custom headers**, the server expects one or more HTTP headers instead
+of a bearer token, such as a gateway that needs `X-Upstream-Url` and
+`X-Upstream-Token`. In **Credentials → Add credential → Paste a token or
+secret**, set **Secret type** to **Custom headers** and add each header name
+and value. Lightspeed sends every header on each request to the server, for
+tool discovery and tool calls. All values are encrypted and never shown again;
+to rotate one, add a new credential and select it on the server. Transport
+headers (`Host`, `Content-Type`, `Content-Length`, `Accept`, `Mcp-*`, and
+`X-Lightspeed-*`) are reserved. `Authorization` is allowed, for a scheme
+other than `Bearer`. Model providers cannot send custom headers, so a server
+using them must keep **Lightspeed connects**.
+
 For **OAuth sign-in**, choose **Add and connect**, then **Open the sign-in**.
 Complete the external service's consent flow and return until the connection
 shows **Connected**. The next step selects which profiles can use it.

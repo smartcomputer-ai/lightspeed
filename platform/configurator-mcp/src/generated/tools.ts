@@ -8319,6 +8319,32 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "object"
             },
             {
+              "description": "Send the headers of a `staticHeaders` credential on every request to\nthe server. Requires `execution: runtime`.",
+              "properties": {
+                "type": {
+                  "const": "optionalHeaders",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Like `optionalHeaders`, but the server is unusable until a credential\nis bound.",
+              "properties": {
+                "type": {
+                  "const": "requiredHeaders",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            {
               "properties": {
                 "authorization_server": {
                   "type": [
@@ -8688,7 +8714,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "resultType": "AgentApiOutcome<AuthGrantImportResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "description": "Import a static bearer credential as an auth grant. This is the one\ndeliberate inbound-plaintext path: `token` is encrypted on receipt and is\nnever returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
+      "description": "Import a static credential as an auth grant: either a bearer `token`\n(`staticBearer`) or a set of custom request `headers` (`staticHeaders`),\nexactly one of the two. This is the one deliberate inbound-plaintext path:\nthe secret material is encrypted on receipt and is never returned by any\nmethod. Custom-header grants are always brokered. `Debug` output redacts\nthe secrets; request logging must never echo these params.",
       "properties": {
         "audience": {
           "type": [
@@ -8723,6 +8749,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "null"
           ]
         },
+        "headers": {
+          "description": "Custom request headers, sent as given on every request to the resource\nthe grant is bound to. Transport-owned headers such as `Host`,\n`Content-Type`, `Accept`, `Mcp-Session-Id`, and `X-Lightspeed-*` are\nrejected; `Authorization` is allowed.",
+          "items": {
+            "$ref": "#/definitions/AuthGrantHeader"
+          },
+          "type": "array"
+        },
         "metadata": {
           "description": "Non-secret, caller-defined metadata stored on the grant and returned\nby reads (for example which product a pasted subscription token\nbelongs to). Must be a JSON object; never put secret material here."
         },
@@ -8745,12 +8778,12 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ]
         },
         "token": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "required": [
-        "token"
-      ],
       "type": "object",
       "definitions": {
         "AuthGrantExposure": {
@@ -8759,6 +8792,22 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "retrievable"
           ],
           "type": "string"
+        },
+        "AuthGrantHeader": {
+          "description": "One custom request header of a `staticHeaders` import. The value is\nsecret; `Debug` output shows only the name.",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "value"
+          ],
+          "type": "object"
         }
       }
     }
@@ -8939,6 +8988,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "AuthProviderKind": {
           "enum": [
             "staticBearer",
+            "staticHeaders",
             "mcpOAuth",
             "gitHubApp",
             "customOAuth",

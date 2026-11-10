@@ -9,7 +9,8 @@ import { badRequest, conflict, notFound, readBody, universeFor } from "./common"
 const APPROVALS = new Set<string>(["always", "never"]);
 const STATUSES = new Set<string>(["active", "needsAuthConfig", "unverified", "disabled"]);
 const OAUTH_POLICIES = new Set<string>(["optionalOAuth", "requiredOAuth"]);
-const REQUIRED_POLICIES = new Set<string>(["requiredBearer", "requiredOAuth"]);
+const REQUIRED_POLICIES = new Set<string>(["requiredBearer", "requiredHeaders", "requiredOAuth"]);
+const HEADER_POLICIES = new Set<string>(["optionalHeaders", "requiredHeaders"]);
 const FLOW_TTL_MS = 10 * 60_000;
 const APPROVAL_DELAY_MS = 2_500;
 
@@ -54,6 +55,12 @@ function materialize(
   }
   if (REQUIRED_POLICIES.has(policyType) && status === "active" && !credential) {
     return { error: "an active MCP server with a required auth policy needs a credential", status: 400 };
+  }
+  if (HEADER_POLICIES.has(policyType) && input.execution === "provider") {
+    return {
+      error: "custom header authentication requires execution runtime (Lightspeed connects); model providers cannot send custom headers",
+      status: 400,
+    };
   }
   if (credential && !universe.secrets.grants.some((grant) => grant.grantId === credential.grantId)) {
     return { error: `auth grant not found: ${credential.grantId}`, status: 404 };

@@ -161,6 +161,12 @@ pub enum McpServerAuthPolicy {
     None,
     OptionalBearer,
     RequiredBearer,
+    /// Send the headers of a `staticHeaders` credential on every request to
+    /// the server. Requires `execution: runtime`.
+    OptionalHeaders,
+    /// Like `optionalHeaders`, but the server is unusable until a credential
+    /// is bound.
+    RequiredHeaders,
     OptionalOAuth {
         resource: String,
         #[serde(default)]

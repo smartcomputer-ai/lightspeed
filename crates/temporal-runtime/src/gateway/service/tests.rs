@@ -610,6 +610,86 @@ fn grant_leases_require_creation_time_retrievable_exposure() {
     require_retrievable_grant(&retrievable).expect("retrievable grant accepted");
 }
 
+fn header_import_params(exposure: api::AuthGrantExposure) -> AuthGrantImportParams {
+    serde_json::from_value(serde_json::json!({
+        "exposure": exposure,
+        "headers": [
+            {"name": "X-Upstream-Url", "value": "https://tracker.example.com"},
+            {"name": "X-Upstream-Token", "value": "upstream-secret"}
+        ]
+    }))
+    .expect("header import params")
+}
+
+#[test]
+fn custom_header_imports_are_validated_before_any_write() {
+    let error = auth_api::auth_grant_import_draft(
+        header_import_params(api::AuthGrantExposure::Retrievable),
+        10,
+    )
+    .err()
+    .expect("retrievable header credentials are rejected");
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+
+    let mut both = header_import_params(api::AuthGrantExposure::Brokered);
+    both.token = Some("also-a-token".to_owned());
+    let error = auth_api::auth_grant_import_draft(both, 10)
+        .err()
+        .expect("token and headers together are rejected");
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+
+    let mut neither = header_import_params(api::AuthGrantExposure::Brokered);
+    neither.headers.clear();
+    let error = auth_api::auth_grant_import_draft(neither, 10)
+        .err()
+        .expect("an import needs a token or headers");
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+
+    let mut reserved = header_import_params(api::AuthGrantExposure::Brokered);
+    reserved.headers[0].name = "Mcp-Session-Id".to_owned();
+    let error = auth_api::auth_grant_import_draft(reserved, 10)
+        .err()
+        .expect("reserved headers are rejected");
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+    assert!(!error.message.contains("upstream-secret"));
+}
+
+#[test]
+fn header_policies_bind_only_custom_header_grants() {
+    let mut record = test_mcp_server_record("tracker", mcp::McpServerStatus::Active);
+    record.execution = mcp::McpExecution::Runtime;
+    record.auth_policy = mcp::McpServerAuthPolicy::RequiredHeaders;
+    let headers = test_auth_grant_record(
+        "authgrant_headers",
+        auth::AuthProviderKind::StaticHeaders,
+        auth::AuthGrantStatus::Active,
+        None,
+    );
+    let bearer = test_auth_grant_record(
+        "authgrant_bearer",
+        auth::AuthProviderKind::StaticBearer,
+        auth::AuthGrantStatus::Active,
+        None,
+    );
+    auth_api::validate_mcp_grant_for_server(&record, &headers)
+        .expect("header policy accepts a header grant");
+    let error = auth_api::validate_mcp_grant_for_server(&record, &bearer)
+        .expect_err("header policy rejects a bearer grant");
+    assert_eq!(error.kind, AgentApiErrorKind::Rejected);
+
+    record.auth_policy = mcp::McpServerAuthPolicy::RequiredBearer;
+    let error = auth_api::validate_mcp_grant_for_server(&record, &headers)
+        .expect_err("bearer policy rejects a header grant");
+    assert_eq!(error.kind, AgentApiErrorKind::Rejected);
+
+    let mut unbound = test_mcp_server_put("tracker", mcp::McpServerStatus::Active);
+    unbound.execution = mcp::McpExecution::Runtime;
+    unbound.auth_policy = mcp::McpServerAuthPolicy::RequiredHeaders;
+    let error = mcp_api::validate_mcp_server_credential(&unbound, None)
+        .expect_err("active required-headers server must have a binding");
+    assert_eq!(error.kind, AgentApiErrorKind::Rejected);
+}
+
 fn mcp_config_attachment() -> harness::McpServerAttachment {
     harness::McpServerAttachment {
         server_id: "crm".to_owned(),

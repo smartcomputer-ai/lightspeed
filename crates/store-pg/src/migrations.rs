@@ -129,9 +129,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "runtime_and_lifecycle_vocabulary",
         sql: include_str!("../migrations/014_runtime_and_lifecycle_vocabulary.sql"),
     },
+    EmbeddedMigration {
+        version: 15,
+        name: "mcp_custom_headers",
+        sql: include_str!("../migrations/015_mcp_custom_headers.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 14;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 15;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

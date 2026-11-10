@@ -297,13 +297,25 @@ const providerCredentialCreateSchema = z.object({
   credential: z.string().min(1),
 });
 
-const bearerGrantCreateSchema = z.object({
-  grantId: z.string().trim().min(1).optional(),
-  displayName: z.string().trim().min(1).max(200).optional(),
-  subjectHint: z.string().trim().min(1).max(200).optional(),
-  exposure: z.enum(["brokered", "retrievable"]).default("brokered"),
-  token: z.string().min(1),
-});
+/// A bearer `token` or a set of custom request `headers`, never both. The
+/// engine validates header names and values and keeps header credentials
+/// brokered.
+const staticGrantCreateSchema = z
+  .object({
+    grantId: z.string().trim().min(1).optional(),
+    displayName: z.string().trim().min(1).max(200).optional(),
+    subjectHint: z.string().trim().min(1).max(200).optional(),
+    exposure: z.enum(["brokered", "retrievable"]).default("brokered"),
+    token: z.string().min(1).optional(),
+    headers: z
+      .array(z.object({ name: z.string().trim().min(1).max(128), value: z.string().min(1) }))
+      .min(1)
+      .max(16)
+      .optional(),
+  })
+  .refine((body) => (body.token === undefined) !== (body.headers === undefined), {
+    message: "provide exactly one of token or headers",
+  });
 
 /// Register an existing GitHub App by its numeric id and private key. The
 /// PEM is forwarded once to the engine, encrypted there, and never read back.
@@ -1411,7 +1423,7 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    const body = await parseBody(c, bearerGrantCreateSchema);
+    const body = await parseBody(c, staticGrantCreateSchema);
     if (!body.ok) {
       return body.response;
     }

@@ -807,6 +807,7 @@ export type InputItem =
 export type MediaKind = "image" | "audio" | "document";
 export type AuthProviderKind =
   | "staticBearer"
+  | "staticHeaders"
   | "mcpOAuth"
   | "gitHubApp"
   | "customOAuth"
@@ -1255,6 +1256,12 @@ export type McpServerAuthPolicy =
     }
   | {
       type: "requiredBearer";
+    }
+  | {
+      type: "optionalHeaders";
+    }
+  | {
+      type: "requiredHeaders";
     }
   | {
       authorization_server?: string | null;
@@ -4964,10 +4971,20 @@ export interface AuthGitHubInstallationListParams {
   providerId: string;
 }
 /**
- * Import a static bearer credential as an auth grant. This is the one
- * deliberate inbound-plaintext path: `token` is encrypted on receipt and is
- * never returned by any method. `Debug` output redacts the token; request
- * logging must never echo these params.
+ * One custom request header of a `staticHeaders` import. The value is
+ * secret; `Debug` output shows only the name.
+ */
+export interface AuthGrantHeader {
+  name: string;
+  value: string;
+}
+/**
+ * Import a static credential as an auth grant: either a bearer `token`
+ * (`staticBearer`) or a set of custom request `headers` (`staticHeaders`),
+ * exactly one of the two. This is the one deliberate inbound-plaintext path:
+ * the secret material is encrypted on receipt and is never returned by any
+ * method. Custom-header grants are always brokered. `Debug` output redacts
+ * the secrets; request logging must never echo these params.
  */
 export interface AuthGrantImportParams {
   audience?: string | null;
@@ -4975,6 +4992,13 @@ export interface AuthGrantImportParams {
   expiresAtMs?: number | null;
   exposure?: AuthGrantExposure & string;
   grantId?: string | null;
+  /**
+   * Custom request headers, sent as given on every request to the resource
+   * the grant is bound to. Transport-owned headers such as `Host`,
+   * `Content-Type`, `Accept`, `Mcp-Session-Id`, and `X-Lightspeed-*` are
+   * rejected; `Authorization` is allowed.
+   */
+  headers?: AuthGrantHeader[];
   /**
    * Non-secret, caller-defined metadata stored on the grant and returned
    * by reads (for example which product a pasted subscription token
@@ -4986,7 +5010,7 @@ export interface AuthGrantImportParams {
   providerId?: string | null;
   scopes?: string[];
   subjectHint?: string | null;
-  token: string;
+  token?: string | null;
 }
 /**
  * Request a current access-token lease for a retrievable grant. Callers must

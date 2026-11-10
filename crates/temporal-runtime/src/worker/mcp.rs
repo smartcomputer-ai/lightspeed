@@ -13,7 +13,7 @@ use harness::RemoteMcpToolSpec;
 use ipnet::IpNet;
 use llm_runtime::{
     McpInventoryError, McpInventoryResolver, RuntimeMcpTool,
-    secrets::{SecretResolveError, SecretResolver, resolve_mcp_bearer},
+    secrets::{SecretResolver, resolve_mcp_bearer, resolve_mcp_headers},
 };
 use mcp::search::McpToolSearchQuery;
 use tokio::sync::Mutex;
@@ -21,7 +21,7 @@ use url::Url;
 
 use crate::gateway::service::mcp_discovery::{
     ConfiguratorTrustedHeaderPolicy, DiscoveredMcpInventory, HttpMcpToolDiscoverer,
-    McpToolCallRequest, McpToolDiscoverer,
+    McpToolCallRequest, McpToolDiscoverer, McpTransportCredential,
 };
 
 pub enum RuntimeMcpExecutionOutcome {
@@ -236,10 +236,10 @@ impl RuntimeMcpInventoryResolver {
             .trusted_header
             .permits(&spec.server_id, &record.server_url)
             .then_some(self.universe_id);
-        let bearer = if trusted_universe.is_some() {
+        let credential = if trusted_universe.is_some() {
             None
         } else {
-            record_bearer(self.secrets.as_ref(), &record)
+            record_credential(self.secrets.as_ref(), &record)
                 .await
                 .map_err(|error| {
                     McpInventoryError::new(format!("resolve MCP credential: {error}"))
@@ -252,7 +252,7 @@ impl RuntimeMcpInventoryResolver {
             .discoverer
             .discover_tools(
                 &record.server_url,
-                bearer.as_ref(),
+                credential.as_ref(),
                 trusted_universe,
                 allow_private,
                 mcp::McpToolDiscoveryLimits::default(),
@@ -307,15 +307,28 @@ async fn usable_record(
     }
 }
 
-async fn record_bearer(
+/// The credential sent to a server, read by its live record: a header set for
+/// header policies, otherwise a bearer token.
+async fn record_credential(
     secrets: &dyn SecretResolver,
     record: &mcp::McpServerRecord,
-) -> Result<Option<SecretValue>, SecretResolveError> {
-    Ok(
-        resolve_mcp_bearer(secrets, record.server_id.as_str(), &record.server_url)
-            .await?
-            .map(|value| SecretValue::new(value.expose())),
-    )
+) -> Result<Option<McpTransportCredential>, String> {
+    let (server_id, server_url) = (record.server_id.as_str(), record.server_url.as_str());
+    let resolved = if record.auth_policy.uses_headers() {
+        resolve_mcp_headers(secrets, server_id, server_url).await
+    } else {
+        resolve_mcp_bearer(secrets, server_id, server_url).await
+    }
+    .map_err(|error| error.to_string())?;
+    resolved
+        .map(|value| {
+            McpTransportCredential::for_policy(
+                &record.auth_policy,
+                SecretValue::new(value.expose()),
+            )
+            .map_err(|failure| failure.message)
+        })
+        .transpose()
 }
 
 impl RuntimeMcpExecutor {
@@ -639,10 +652,10 @@ impl RuntimeMcpExecutor {
             .trusted_header
             .permits(&target.server_id, &record.server_url)
             .then_some(self.universe_id);
-        let bearer = if trusted_universe.is_some() {
+        let credential = if trusted_universe.is_some() {
             None
         } else {
-            record_bearer(self.secrets.as_ref(), &record)
+            record_credential(self.secrets.as_ref(), &record)
                 .await
                 .map_err(|error| format!("resolve MCP credential: {error}"))?
         };
@@ -653,7 +666,7 @@ impl RuntimeMcpExecutor {
             .transport
             .call_tool(
                 &record.server_url,
-                bearer.as_ref(),
+                credential.as_ref(),
                 trusted_universe,
                 allow_private,
                 mcp::McpToolDiscoveryLimits::default(),
@@ -1284,7 +1297,7 @@ mod tests {
         async fn discover_tools(
             &self,
             _server_url: &str,
-            _bearer: Option<&SecretValue>,
+            _credential: Option<&McpTransportCredential>,
             _trusted_universe: Option<uuid::Uuid>,
             _allow_private_network: bool,
             _limits: mcp::McpToolDiscoveryLimits,
@@ -1391,7 +1404,7 @@ mod tests {
         async fn discover_tools(
             &self,
             server_url: &str,
-            _bearer: Option<&SecretValue>,
+            _credential: Option<&McpTransportCredential>,
             _trusted_universe: Option<uuid::Uuid>,
             allow_private_network: bool,
             _limits: mcp::McpToolDiscoveryLimits,
@@ -1670,7 +1683,7 @@ mod tests {
         async fn discover_tools(
             &self,
             _server_url: &str,
-            _bearer: Option<&SecretValue>,
+            _credential: Option<&McpTransportCredential>,
             _trusted_universe: Option<uuid::Uuid>,
             _allow_private_network: bool,
             _limits: mcp::McpToolDiscoveryLimits,
@@ -2254,5 +2267,192 @@ mod tests {
                 role: harness::ContextMessageRole::User
             }
         ));
+    }
+
+    /// Answers MCP only when both custom headers arrive; anything else is a 401.
+    async fn header_gated_mcp(
+        headers: axum::http::HeaderMap,
+        axum::Json(request): axum::Json<serde_json::Value>,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+        if header("x-upstream-url") != Some("https://tracker.example.com")
+            || header("x-upstream-token") != Some("upstream-secret")
+            || headers.contains_key("authorization")
+        {
+            return axum::http::StatusCode::UNAUTHORIZED.into_response();
+        }
+        let id = request.get("id").cloned().unwrap_or_default();
+        let result = match request.get("method").and_then(serde_json::Value::as_str) {
+            Some("initialize") => serde_json::json!({
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "header-fixture", "version": "1"}
+            }),
+            Some("notifications/initialized") => {
+                return axum::http::StatusCode::ACCEPTED.into_response();
+            }
+            Some("tools/list") => serde_json::json!({
+                "tools": [{"name": "lookup", "inputSchema": {"type": "object"}}]
+            }),
+            Some("tools/call") => serde_json::json!({
+                "content": [{"type": "text", "text": "found"}],
+                "isError": false
+            }),
+            _ => {
+                return axum::Json(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": {"code": -32601, "message": "Method not found"}
+                }))
+                .into_response();
+            }
+        };
+        axum::Json(serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}))
+            .into_response()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn custom_header_credentials_authenticate_runtime_discovery_and_calls() {
+        use auth::{AuthGrantStore, SecretStore};
+
+        let app = axum::Router::new().route(
+            "/mcp",
+            axum::routing::post(header_gated_mcp)
+                .delete(|| async { axum::http::StatusCode::NO_CONTENT }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fixture");
+        let address = listener.local_addr().expect("fixture address");
+        let fixture = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve fixture");
+        });
+        let server_url = format!("http://{address}/mcp");
+
+        let grants = Arc::new(auth::InMemoryAuthGrantStore::new());
+        let secrets = Arc::new(auth::InMemorySecretStore::new());
+        let headers = auth::StaticHeaders::new([
+            (
+                "X-Upstream-Url".to_owned(),
+                SecretValue::new("https://tracker.example.com"),
+            ),
+            (
+                "X-Upstream-Token".to_owned(),
+                SecretValue::new("upstream-secret"),
+            ),
+        ])
+        .expect("valid headers");
+        secrets
+            .put_secret(auth::PutSecretRecord {
+                secret_id: auth::SecretId::new("authsec_headers"),
+                secret_kind: auth::SECRET_KIND_STATIC_HEADERS.to_owned(),
+                value: headers.to_secret_value(),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("store headers");
+        grants
+            .create_grant(auth::CreateAuthGrantRecord {
+                grant_id: auth::AuthGrantId::new("authgrant_headers"),
+                provider_id: "static".to_owned(),
+                provider_kind: auth::AuthProviderKind::StaticHeaders,
+                exposure: auth::AuthGrantExposure::Brokered,
+                created_by: api::Attribution::Local,
+                display_name: None,
+                subject_hint: None,
+                scopes: Vec::new(),
+                audience: None,
+                access_token_secret: Some(auth::SecretId::new("authsec_headers")),
+                refresh_token_secret: None,
+                oauth_client: None,
+                expires_at_ms: None,
+                status: auth::AuthGrantStatus::Active,
+                metadata: serde_json::json!({}),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create grant");
+        let servers = Arc::new(mcp::InMemoryMcpRegistryStore::new());
+        servers
+            .put_server(
+                mcp::PutMcpServerRecord {
+                    auth_policy: mcp::McpServerAuthPolicy::RequiredHeaders,
+                    auth_grant_id: Some(auth::AuthGrantId::new("authgrant_headers")),
+                    ..server_input(&server_url, true)
+                },
+                None,
+            )
+            .await
+            .expect("put server");
+        let resolver: Arc<dyn SecretResolver> =
+            Arc::new(crate::worker::secrets::BrokerSecretResolver::new(
+                Arc::new(auth::RegistryTokenBroker::new(
+                    grants,
+                    secrets,
+                    Arc::new(auth::InMemoryGrantLocks::new()),
+                )),
+                servers.clone(),
+            ));
+        let policy = McpPrivateNetworkPolicy::parse(Some("127.0.0.1")).expect("policy");
+        let inventory = RuntimeMcpInventoryResolver::new(
+            servers.clone(),
+            resolver.clone(),
+            policy.clone(),
+            ConfiguratorTrustedHeaderPolicy,
+            uuid::Uuid::nil(),
+        );
+
+        let tools = inventory
+            .list_tools(&spec(1))
+            .await
+            .expect("discover tools");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].remote_name, "lookup");
+
+        // The call path of `RuntimeMcpExecutor::call`, after approval.
+        let runtime = RuntimeMcpExecutor::new(
+            servers.clone(),
+            resolver.clone(),
+            Arc::new(inventory),
+            policy,
+            ConfiguratorTrustedHeaderPolicy,
+            uuid::Uuid::nil(),
+        );
+        let target = harness::RemoteMcpCallTarget {
+            server_id: "test".to_owned(),
+            record_revision: 1,
+            server_label: "test".to_owned(),
+            allowed_tools: None,
+            approval: harness::RemoteMcpApprovalPolicy::Never,
+        };
+        let record = runtime
+            .runtime_record(&target)
+            .await
+            .expect("usable record");
+        let credential = record_credential(resolver.as_ref(), &record)
+            .await
+            .expect("resolve headers");
+        assert!(matches!(
+            credential,
+            Some(McpTransportCredential::Headers(_))
+        ));
+        let result = runtime
+            .transport
+            .call_tool(
+                &record.server_url,
+                credential.as_ref(),
+                None,
+                true,
+                mcp::McpToolDiscoveryLimits::default(),
+                McpToolCallRequest {
+                    tool_name: "lookup".to_owned(),
+                    arguments: serde_json::Map::new(),
+                },
+            )
+            .await
+            .expect("call with custom headers");
+        assert_eq!(result.is_error, Some(false));
+        fixture.abort();
     }
 }

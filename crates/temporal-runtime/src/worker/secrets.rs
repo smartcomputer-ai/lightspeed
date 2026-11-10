@@ -17,13 +17,15 @@ use llm_runtime::provider_keys::{
 };
 use llm_runtime::secrets::{
     EnvSecretResolver, ResolvedSecretValue, SECRET_NAMESPACE_ENV, SECRET_NAMESPACE_MCP_SERVER,
-    SecretRef, SecretResolveError, SecretResolver,
+    SECRET_NAMESPACE_MCP_SERVER_HEADERS, SecretRef, SecretResolveError, SecretResolver,
 };
 use mcp::{McpRegistryError, McpRegistryStore, McpServerAuthPolicy, McpServerId, McpServerStatus};
 
 /// Dispatches on `SecretRef.namespace`: `mcp_server` loads the configured
-/// universe server's current grant and resolves it through the token broker;
-/// `env` falls back to environment variables for development.
+/// universe server's current grant and resolves it through the token broker,
+/// `mcp_server_headers` does the same for servers authenticating with custom
+/// headers (each namespace refuses the other's servers); `env` falls back to
+/// environment variables for development.
 pub struct BrokerSecretResolver {
     broker: Arc<dyn AuthTokenBroker>,
     mcp_servers: Arc<dyn McpRegistryStore>,
@@ -48,7 +50,7 @@ impl SecretResolver for BrokerSecretResolver {
         audience: Option<&str>,
     ) -> Result<ResolvedSecretValue, SecretResolveError> {
         match secret_ref.namespace.as_str() {
-            SECRET_NAMESPACE_MCP_SERVER => {
+            SECRET_NAMESPACE_MCP_SERVER | SECRET_NAMESPACE_MCP_SERVER_HEADERS => {
                 let server_id = McpServerId::try_new(secret_ref.id.clone()).map_err(|error| {
                     SecretResolveError::Backend {
                         namespace: secret_ref.namespace.clone(),
@@ -97,13 +99,29 @@ impl SecretResolver for BrokerSecretResolver {
                         ),
                     });
                 }
-                let (grant_id, required) = match server.auth_policy {
-                    McpServerAuthPolicy::None => (None, false),
-                    McpServerAuthPolicy::OptionalBearer
-                    | McpServerAuthPolicy::OptionalOAuth { .. } => (server.auth_grant_id, false),
-                    McpServerAuthPolicy::RequiredBearer
-                    | McpServerAuthPolicy::RequiredOAuth { .. } => (server.auth_grant_id, true),
+                let wants_headers = secret_ref.namespace == SECRET_NAMESPACE_MCP_SERVER_HEADERS;
+                if server.auth_policy.uses_headers() != wants_headers {
+                    return Err(SecretResolveError::Backend {
+                        namespace: secret_ref.namespace.clone(),
+                        id: secret_ref.id.clone(),
+                        message: if wants_headers {
+                            format!(
+                                "MCP server {} does not authenticate with custom headers",
+                                server.server_id
+                            )
+                        } else {
+                            format!(
+                                "MCP server {} authenticates with custom headers, which only Lightspeed can send",
+                                server.server_id
+                            )
+                        },
+                    });
+                }
+                let grant_id = match server.auth_policy {
+                    McpServerAuthPolicy::None => None,
+                    _ => server.auth_grant_id,
                 };
+                let required = server.auth_policy.requires_credential();
                 let Some(grant_id) = grant_id else {
                     if required {
                         return Err(SecretResolveError::Backend {
@@ -500,6 +518,42 @@ mod tests {
             .put_server(record, Some(revision))
             .await
             .expect("edit MCP server");
+    }
+
+    #[tokio::test]
+    async fn header_credentials_resolve_only_through_their_own_namespace() {
+        let fixture = resolver_with_grant(None).await;
+        let audience = "https://crm.example.com/mcp";
+        let headers_ref = SecretRef {
+            namespace: SECRET_NAMESPACE_MCP_SERVER_HEADERS.to_owned(),
+            id: "crm".to_owned(),
+        };
+
+        let error = fixture
+            .resolver
+            .resolve(&headers_ref, Some(audience))
+            .await
+            .expect_err("a bearer server has no header set");
+        assert!(matches!(error, SecretResolveError::Backend { .. }));
+
+        edit_crm_server(&fixture, |record| {
+            record.execution = mcp::McpExecution::Runtime;
+            record.auth_policy = McpServerAuthPolicy::RequiredHeaders;
+        })
+        .await;
+        // Provider adapters resolve `mcp_server`; they must never receive a header set.
+        let error = fixture
+            .resolver
+            .resolve(&mcp_server_ref("crm"), Some(audience))
+            .await
+            .expect_err("a header server has no bearer token");
+        assert!(matches!(error, SecretResolveError::Backend { .. }));
+        let value = fixture
+            .resolver
+            .resolve(&headers_ref, Some(audience))
+            .await
+            .expect("header server resolves its stored header set");
+        assert_eq!(value.expose(), "token-123");
     }
 
     #[tokio::test]

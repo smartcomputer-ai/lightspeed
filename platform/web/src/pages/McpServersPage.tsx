@@ -117,7 +117,7 @@ function ServerList({ universeId }: { universeId: string }) {
               <TableCell className="hidden max-w-64 sm:table-cell"><ResourceValue mono>{server.serverUrl}</ResourceValue></TableCell>
               <TableCell className="hidden max-w-56 sm:table-cell"><ResourceValue
                 description={server.authPolicy.type.startsWith("optional") ? "Optional" : server.authPolicy.type.startsWith("required") ? "Required" : undefined}>
-                {mcpAuthKind(server.authPolicy.type) === "oauth" ? "OAuth" : mcpAuthKind(server.authPolicy.type) === "bearer" ? "Bearer token" : "No authentication"}
+                {mcpAuthKindLabel(mcpAuthKind(server.authPolicy.type))}
               </ResourceValue></TableCell>
               <TableCell><ResourceStatus status={mcpServerStatus(server)} /></TableCell>
             </ResourceRow>
@@ -224,6 +224,10 @@ function authPolicyLabel(type: string): string {
       return "Bearer token (optional)";
     case "requiredBearer":
       return "Bearer token (required)";
+    case "optionalHeaders":
+      return "Custom headers (optional)";
+    case "requiredHeaders":
+      return "Custom headers (required)";
     case "optionalOAuth":
       return "OAuth (optional)";
     case "requiredOAuth":
@@ -235,7 +239,20 @@ function authPolicyLabel(type: string): string {
 
 /// One dialog for both modes: `server === null` creates; otherwise edits by
 /// replacing the loaded document with its revision as the CAS guard.
-type McpAuthKind = "none" | "bearer" | "oauth";
+type McpAuthKind = "none" | "bearer" | "headers" | "oauth";
+
+function mcpAuthKindLabel(kind: McpAuthKind): string {
+  switch (kind) {
+    case "oauth":
+      return "OAuth";
+    case "bearer":
+      return "Bearer token";
+    case "headers":
+      return "Custom headers";
+    default:
+      return "No authentication";
+  }
+}
 
 function ServerDialog({
   universeId,
@@ -457,7 +474,14 @@ function ServerDialog({
   const chooseAuth = (kind: McpAuthKind) => {
     setAuthTouched(true);
     setCredentialGrantId("");
-    setAuthPolicy(kind === "oauth" ? "requiredOAuth" : kind === "bearer" ? "requiredBearer" : "none");
+    setAuthPolicy(
+      kind === "oauth" ? "requiredOAuth"
+        : kind === "bearer" ? "requiredBearer"
+          : kind === "headers" ? "requiredHeaders"
+            : "none",
+    );
+    // Only Lightspeed can send custom headers.
+    if (kind === "headers") setExecution("runtime");
     if (kind === "oauth" && !oauthResource) {
       setOAuthResource(discovery?.oauth?.resource ?? serverUrl.trim());
     }
@@ -582,6 +606,7 @@ function ServerDialog({
           <SelectContent>
             <SelectItem value="none">No authentication</SelectItem>
             <SelectItem value="bearer">Bearer token</SelectItem>
+            <SelectItem value="headers">Custom headers</SelectItem>
             <SelectItem value="oauth">OAuth sign-in</SelectItem>
           </SelectContent>
         </Select>
@@ -592,6 +617,8 @@ function ServerDialog({
               : "After saving, Lightspeed will open the provider sign-in and finish setup automatically."
             : authKind === "bearer"
               ? "Choose a universe credential to send as a bearer token."
+              : authKind === "headers"
+                ? "Choose a universe credential whose headers are sent on every request. Only Lightspeed can send them, so the model provider cannot connect directly."
               : detectedOAuth
                 ? "The server advertises OAuth, so unauthenticated access may fail."
                 : "Use this for public MCP servers."}
@@ -606,6 +633,16 @@ function ServerDialog({
           boundAvailable={boundGrantAvailable}
           onChange={setCredentialGrantId}
           emptyCopy="Create a bearer credential on the Credentials page, then return here."
+        />
+      )}
+      {authKind === "headers" && (
+        <CredentialSelect
+          grants={compatibleGrants}
+          loading={authGrantsLoading}
+          value={credentialGrantId}
+          boundAvailable={boundGrantAvailable}
+          onChange={setCredentialGrantId}
+          emptyCopy="Create a custom headers credential on the Credentials page, then return here."
         />
       )}
       {authKind === "oauth" && (
@@ -666,7 +703,9 @@ function ServerDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="runtime">Lightspeed connects</SelectItem>
-                <SelectItem value="provider">Model provider connects directly</SelectItem>
+                <SelectItem value="provider" disabled={authKind === "headers"}>
+                  Model provider connects directly
+                </SelectItem>
               </SelectContent>
             </Select>
             <FieldDescription>
@@ -1116,6 +1155,7 @@ export function isOAuthPolicy(authPolicy: string): boolean {
 export function mcpAuthKind(authPolicy: string): McpAuthKind {
   if (isOAuthPolicy(authPolicy)) return "oauth";
   if (authPolicy === "optionalBearer" || authPolicy === "requiredBearer") return "bearer";
+  if (authPolicy === "optionalHeaders" || authPolicy === "requiredHeaders") return "headers";
   return "none";
 }
 
@@ -1228,6 +1268,9 @@ export function mcpGrantCompatible(authPolicy: string, providerKind: string): bo
   if (authPolicy === "optionalBearer" || authPolicy === "requiredBearer") {
     return providerKind === "staticBearer";
   }
+  if (authPolicy === "optionalHeaders" || authPolicy === "requiredHeaders") {
+    return providerKind === "staticHeaders";
+  }
   if (authPolicy === "optionalOAuth" || authPolicy === "requiredOAuth") {
     return providerKind === "mcpOAuth";
   }
@@ -1249,7 +1292,9 @@ export function mcpServerStatusForCredential(
   status: McpServer["status"],
   grantId: string,
 ): McpServer["status"] {
-  const required = authPolicy === "requiredBearer" || authPolicy === "requiredOAuth";
+  const required = authPolicy === "requiredBearer"
+    || authPolicy === "requiredHeaders"
+    || authPolicy === "requiredOAuth";
   if (grantId && status === "needsAuthConfig") return "active";
   if (!grantId && required) return "needsAuthConfig";
   if (!required && status === "needsAuthConfig") return "active";

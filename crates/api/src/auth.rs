@@ -4,6 +4,7 @@ use super::*;
 #[serde(rename_all = "camelCase")]
 pub enum AuthProviderKind {
     StaticBearer,
+    StaticHeaders,
     McpOAuth,
     GitHubApp,
     CustomOAuth,
@@ -71,10 +72,12 @@ fn metadata_is_empty(value: &serde_json::Value) -> bool {
     }
 }
 
-/// Import a static bearer credential as an auth grant. This is the one
-/// deliberate inbound-plaintext path: `token` is encrypted on receipt and is
-/// never returned by any method. `Debug` output redacts the token; request
-/// logging must never echo these params.
+/// Import a static credential as an auth grant: either a bearer `token`
+/// (`staticBearer`) or a set of custom request `headers` (`staticHeaders`),
+/// exactly one of the two. This is the one deliberate inbound-plaintext path:
+/// the secret material is encrypted on receipt and is never returned by any
+/// method. Custom-header grants are always brokered. `Debug` output redacts
+/// the secrets; request logging must never echo these params.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGrantImportParams {
@@ -84,7 +87,14 @@ pub struct AuthGrantImportParams {
     pub provider_id: Option<String>,
     #[serde(default)]
     pub exposure: AuthGrantExposure,
-    pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// Custom request headers, sent as given on every request to the resource
+    /// the grant is bound to. Transport-owned headers such as `Host`,
+    /// `Content-Type`, `Accept`, `Mcp-Session-Id`, and `X-Lightspeed-*` are
+    /// rejected; `Authorization` is allowed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<AuthGrantHeader>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,12 +118,31 @@ impl std::fmt::Debug for AuthGrantImportParams {
             .field("grant_id", &self.grant_id)
             .field("provider_id", &self.provider_id)
             .field("exposure", &self.exposure)
-            .field("token", &"<redacted>")
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("headers", &self.headers)
             .field("display_name", &self.display_name)
             .field("subject_hint", &self.subject_hint)
             .field("scopes", &self.scopes)
             .field("audience", &self.audience)
             .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
+/// One custom request header of a `staticHeaders` import. The value is
+/// secret; `Debug` output shows only the name.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantHeader {
+    pub name: String,
+    pub value: String,
+}
+
+impl std::fmt::Debug for AuthGrantHeader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthGrantHeader")
+            .field("name", &self.name)
+            .field("value", &"<redacted>")
             .finish()
     }
 }

@@ -116,6 +116,7 @@ pub(super) fn validate_mcp_server_credential(
             "MCP servers with auth policy none cannot bind a credential",
         )),
         (mcp::McpServerAuthPolicy::RequiredBearer, None)
+        | (mcp::McpServerAuthPolicy::RequiredHeaders, None)
         | (mcp::McpServerAuthPolicy::RequiredOAuth { .. }, None)
             if record.status != mcp::McpServerStatus::NeedsAuthConfig =>
         {
@@ -437,6 +438,8 @@ fn registry_auth_policy(value: api::McpServerAuthPolicy) -> mcp::McpServerAuthPo
         api::McpServerAuthPolicy::None => mcp::McpServerAuthPolicy::None,
         api::McpServerAuthPolicy::OptionalBearer => mcp::McpServerAuthPolicy::OptionalBearer,
         api::McpServerAuthPolicy::RequiredBearer => mcp::McpServerAuthPolicy::RequiredBearer,
+        api::McpServerAuthPolicy::OptionalHeaders => mcp::McpServerAuthPolicy::OptionalHeaders,
+        api::McpServerAuthPolicy::RequiredHeaders => mcp::McpServerAuthPolicy::RequiredHeaders,
         api::McpServerAuthPolicy::OptionalOAuth {
             resource,
             scopes_default,
@@ -467,6 +470,8 @@ fn api_auth_policy(value: mcp::McpServerAuthPolicy) -> api::McpServerAuthPolicy 
         mcp::McpServerAuthPolicy::None => api::McpServerAuthPolicy::None,
         mcp::McpServerAuthPolicy::OptionalBearer => api::McpServerAuthPolicy::OptionalBearer,
         mcp::McpServerAuthPolicy::RequiredBearer => api::McpServerAuthPolicy::RequiredBearer,
+        mcp::McpServerAuthPolicy::OptionalHeaders => api::McpServerAuthPolicy::OptionalHeaders,
+        mcp::McpServerAuthPolicy::RequiredHeaders => api::McpServerAuthPolicy::RequiredHeaders,
         mcp::McpServerAuthPolicy::OptionalOAuth {
             resource,
             scopes_default,
@@ -555,6 +560,7 @@ fn validate_server_auth(
             "an MCP server credential is only valid with an auth policy",
         )),
         (mcp::McpServerAuthPolicy::RequiredBearer, None)
+        | (mcp::McpServerAuthPolicy::RequiredHeaders, None)
         | (mcp::McpServerAuthPolicy::RequiredOAuth { .. }, None) => Err(AgentApiError::rejected(
             format!("MCP server requires an auth grant: {}", record.server_id),
         )),

@@ -16,6 +16,10 @@ use thiserror::Error;
 
 pub const SECRET_NAMESPACE_ENV: &str = "env";
 pub const SECRET_NAMESPACE_MCP_SERVER: &str = "mcp_server";
+/// The custom-headers credential of one MCP server, resolved as its encoded
+/// header set. Kept apart from [`SECRET_NAMESPACE_MCP_SERVER`] so a header set
+/// can never be resolved as, and sent as, a bearer token.
+pub const SECRET_NAMESPACE_MCP_SERVER_HEADERS: &str = "mcp_server_headers";
 
 /// Placeholder written into persisted provider request blobs where a resolved
 /// auth value was injected into the sent request.
@@ -93,8 +97,33 @@ pub async fn resolve_mcp_bearer(
     server_id: &str,
     server_url: &str,
 ) -> Result<Option<ResolvedSecretValue>, SecretResolveError> {
+    resolve_mcp_credential(secrets, SECRET_NAMESPACE_MCP_SERVER, server_id, server_url).await
+}
+
+/// The live custom-headers credential of one MCP server as its encoded header
+/// set, or `None` when its record lets it be used without one.
+pub async fn resolve_mcp_headers(
+    secrets: &dyn SecretResolver,
+    server_id: &str,
+    server_url: &str,
+) -> Result<Option<ResolvedSecretValue>, SecretResolveError> {
+    resolve_mcp_credential(
+        secrets,
+        SECRET_NAMESPACE_MCP_SERVER_HEADERS,
+        server_id,
+        server_url,
+    )
+    .await
+}
+
+async fn resolve_mcp_credential(
+    secrets: &dyn SecretResolver,
+    namespace: &str,
+    server_id: &str,
+    server_url: &str,
+) -> Result<Option<ResolvedSecretValue>, SecretResolveError> {
     let secret_ref = SecretRef {
-        namespace: SECRET_NAMESPACE_MCP_SERVER.to_owned(),
+        namespace: namespace.to_owned(),
         id: server_id.to_owned(),
     };
     match secrets.resolve(&secret_ref, Some(server_url)).await {

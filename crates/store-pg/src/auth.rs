@@ -654,6 +654,7 @@ fn grant_record_from_row(
 pub(crate) fn provider_kind_to_str(value: AuthProviderKind) -> &'static str {
     match value {
         AuthProviderKind::StaticBearer => "static_bearer",
+        AuthProviderKind::StaticHeaders => "static_headers",
         AuthProviderKind::McpOAuth => "mcp_oauth",
         AuthProviderKind::GitHubApp => "github_app",
         AuthProviderKind::CustomOAuth => "custom_oauth",
@@ -683,6 +684,7 @@ pub(crate) fn grant_exposure_from_str(value: &str) -> Result<AuthGrantExposure, 
 pub(crate) fn provider_kind_from_str(value: &str) -> Result<AuthProviderKind, AuthRegistryError> {
     match value {
         "static_bearer" => Ok(AuthProviderKind::StaticBearer),
+        "static_headers" => Ok(AuthProviderKind::StaticHeaders),
         "mcp_oauth" => Ok(AuthProviderKind::McpOAuth),
         "github_app" => Ok(AuthProviderKind::GitHubApp),
         "custom_oauth" => Ok(AuthProviderKind::CustomOAuth),

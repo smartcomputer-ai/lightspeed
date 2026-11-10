@@ -23,16 +23,49 @@ pub(super) fn auth_grant_import_draft(
         auth::SecretId::try_new(format!("authsec_{}", uuid::Uuid::new_v4().simple()))
             .map_err(|error| AgentApiError::internal(format!("generate secret id: {error}")))?;
 
+    let (provider_kind, secret_kind, value) = match (params.token, params.headers.is_empty()) {
+        (Some(token), true) => (
+            auth::AuthProviderKind::StaticBearer,
+            auth::SECRET_KIND_STATIC_BEARER,
+            auth::SecretValue::new(token),
+        ),
+        (None, false) => {
+            // Headers go out only through Lightspeed's own MCP transport, so a
+            // lease would hand out a value no other client knows how to send.
+            if params.exposure != api::AuthGrantExposure::Brokered {
+                return Err(AgentApiError::invalid_request(
+                    "custom-header credentials must be brokered",
+                ));
+            }
+            let headers = auth::StaticHeaders::new(
+                params
+                    .headers
+                    .into_iter()
+                    .map(|header| (header.name, auth::SecretValue::new(header.value))),
+            )
+            .map_err(map_auth_error)?;
+            (
+                auth::AuthProviderKind::StaticHeaders,
+                auth::SECRET_KIND_STATIC_HEADERS,
+                headers.to_secret_value(),
+            )
+        }
+        _ => {
+            return Err(AgentApiError::invalid_request(
+                "provide exactly one of token or headers",
+            ));
+        }
+    };
     let secret = auth::PutSecretRecord {
         secret_id: secret_id.clone(),
-        secret_kind: auth::SECRET_KIND_STATIC_BEARER.to_owned(),
-        value: auth::SecretValue::new(params.token),
+        secret_kind: secret_kind.to_owned(),
+        value,
         created_at_ms: now_ms,
     };
     let grant = auth::CreateAuthGrantRecord {
         grant_id,
         provider_id: params.provider_id.unwrap_or_else(|| "static".to_owned()),
-        provider_kind: auth::AuthProviderKind::StaticBearer,
+        provider_kind,
         exposure: registry_auth_grant_exposure(params.exposure),
         created_by: crate::gateway::request_context::request_attribution()?,
         display_name: params.display_name,
@@ -184,6 +217,9 @@ pub(super) fn validate_mcp_grant_for_server(
         mcp::McpServerAuthPolicy::OptionalBearer | mcp::McpServerAuthPolicy::RequiredBearer => {
             grant.provider_kind == auth::AuthProviderKind::StaticBearer
         }
+        mcp::McpServerAuthPolicy::OptionalHeaders | mcp::McpServerAuthPolicy::RequiredHeaders => {
+            grant.provider_kind == auth::AuthProviderKind::StaticHeaders
+        }
         mcp::McpServerAuthPolicy::OptionalOAuth { .. }
         | mcp::McpServerAuthPolicy::RequiredOAuth { .. } => {
             grant.provider_kind == auth::AuthProviderKind::McpOAuth
@@ -225,6 +261,7 @@ pub(super) fn validate_mcp_grant_for_server(
 pub(super) fn api_auth_provider_kind(value: auth::AuthProviderKind) -> api::AuthProviderKind {
     match value {
         auth::AuthProviderKind::StaticBearer => api::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticHeaders => api::AuthProviderKind::StaticHeaders,
         auth::AuthProviderKind::McpOAuth => api::AuthProviderKind::McpOAuth,
         auth::AuthProviderKind::GitHubApp => api::AuthProviderKind::GitHubApp,
         auth::AuthProviderKind::CustomOAuth => api::AuthProviderKind::CustomOAuth,

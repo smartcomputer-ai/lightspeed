@@ -16,6 +16,16 @@ describe("MCP server credential ownership", () => {
     expect(mcpGrantCompatible("requiredOAuth", "mcpOAuth")).toBe(true);
     expect(mcpGrantCompatible("optionalOAuth", "staticBearer")).toBe(false);
     expect(mcpGrantCompatible("none", "staticBearer")).toBe(false);
+    expect(mcpGrantCompatible("requiredHeaders", "staticHeaders")).toBe(true);
+    expect(mcpGrantCompatible("requiredHeaders", "staticBearer")).toBe(false);
+    expect(mcpGrantCompatible("requiredBearer", "staticHeaders")).toBe(false);
+  });
+
+  it("treats custom headers as their own required authentication kind", () => {
+    expect(mcpAuthKind("requiredHeaders")).toBe("headers");
+    expect(mcpAuthKind("optionalHeaders")).toBe("headers");
+    expect(mcpServerStatusForCredential("requiredHeaders", "active", ""))
+      .toBe("needsAuthConfig");
   });
 
   it("moves required-auth servers through needs-auth-config with their binding", () => {

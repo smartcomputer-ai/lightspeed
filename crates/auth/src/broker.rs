@@ -173,14 +173,16 @@ impl OAuthRefreshRuntime {
 
 /// Provider kinds whose grants carry a stored access token (optionally
 /// refreshable through OAuth). Served by [`StoredTokenSource`].
-const STORED_TOKEN_KINDS: [AuthProviderKind; 3] = [
+const STORED_TOKEN_KINDS: [AuthProviderKind; 4] = [
     AuthProviderKind::StaticBearer,
+    AuthProviderKind::StaticHeaders,
     AuthProviderKind::McpOAuth,
     AuthProviderKind::CustomOAuth,
 ];
 
-/// Token source for grants with stored access tokens: static bearer imports
-/// and OAuth grants. With an [`OAuthRefreshRuntime`] configured, expiring
+/// Token source for grants with stored access tokens: static bearer and
+/// custom-header imports (the encoded header set is the stored token) and
+/// OAuth grants. With an [`OAuthRefreshRuntime`] configured, expiring
 /// OAuth tokens refresh (with rotation persisted atomically); without one,
 /// stored tokens are served until they expire.
 struct StoredTokenSource {

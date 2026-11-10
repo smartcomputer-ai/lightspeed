@@ -12,6 +12,10 @@ use crate::{
 pub enum AuthProviderKind {
     #[serde(rename = "static_bearer")]
     StaticBearer,
+    /// A set of custom HTTP request headers stored as one secret; see
+    /// [`crate::StaticHeaders`].
+    #[serde(rename = "static_headers")]
+    StaticHeaders,
     #[serde(rename = "mcp_oauth")]
     McpOAuth,
     #[serde(rename = "github_app")]

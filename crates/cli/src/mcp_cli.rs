@@ -177,6 +177,8 @@ enum McpAuthPolicyArg {
     None,
     OptionalBearer,
     RequiredBearer,
+    OptionalHeaders,
+    RequiredHeaders,
     OptionalOauth,
     RequiredOauth,
 }
@@ -187,6 +189,8 @@ impl std::fmt::Display for McpAuthPolicyArg {
             Self::None => "none",
             Self::OptionalBearer => "optional-bearer",
             Self::RequiredBearer => "required-bearer",
+            Self::OptionalHeaders => "optional-headers",
+            Self::RequiredHeaders => "required-headers",
             Self::OptionalOauth => "optional-oauth",
             Self::RequiredOauth => "required-oauth",
         })
@@ -212,6 +216,8 @@ fn auth_policy_from_args(args: &McpServerPutArgs) -> Result<api::McpServerAuthPo
         McpAuthPolicyArg::None
         | McpAuthPolicyArg::OptionalBearer
         | McpAuthPolicyArg::RequiredBearer
+        | McpAuthPolicyArg::OptionalHeaders
+        | McpAuthPolicyArg::RequiredHeaders
             if oauth_flags_used =>
         {
             anyhow::bail!(
@@ -221,6 +227,8 @@ fn auth_policy_from_args(args: &McpServerPutArgs) -> Result<api::McpServerAuthPo
         McpAuthPolicyArg::None => Ok(api::McpServerAuthPolicy::None),
         McpAuthPolicyArg::OptionalBearer => Ok(api::McpServerAuthPolicy::OptionalBearer),
         McpAuthPolicyArg::RequiredBearer => Ok(api::McpServerAuthPolicy::RequiredBearer),
+        McpAuthPolicyArg::OptionalHeaders => Ok(api::McpServerAuthPolicy::OptionalHeaders),
+        McpAuthPolicyArg::RequiredHeaders => Ok(api::McpServerAuthPolicy::RequiredHeaders),
         McpAuthPolicyArg::OptionalOauth => {
             let (resource, scopes_default, protected_resource_metadata_url, authorization_server) =
                 oauth_fields();
@@ -492,7 +500,9 @@ async fn put_server_credential(
     server.credential = grant_id.map(|grant_id| api::McpServerCredential::AuthGrant { grant_id });
     let required = matches!(
         server.auth_policy,
-        api::McpServerAuthPolicy::RequiredBearer | api::McpServerAuthPolicy::RequiredOAuth { .. }
+        api::McpServerAuthPolicy::RequiredBearer
+            | api::McpServerAuthPolicy::RequiredHeaders
+            | api::McpServerAuthPolicy::RequiredOAuth { .. }
     );
     if server.credential.is_some() && server.status == api::McpServerStatus::NeedsAuthConfig {
         server.status = api::McpServerStatus::Active;
@@ -598,7 +608,9 @@ async fn server_put(args: McpServerPutArgs) -> Result<()> {
     let auth_policy = auth_policy_from_args(&args)?;
     let required_auth = matches!(
         auth_policy,
-        api::McpServerAuthPolicy::RequiredBearer | api::McpServerAuthPolicy::RequiredOAuth { .. }
+        api::McpServerAuthPolicy::RequiredBearer
+            | api::McpServerAuthPolicy::RequiredHeaders
+            | api::McpServerAuthPolicy::RequiredOAuth { .. }
     );
     let mut status: api::McpServerStatus = args.status.into();
     if required_auth && args.auth_grant_id.is_none() && status == api::McpServerStatus::Active {

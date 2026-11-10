@@ -108,6 +108,7 @@ mod oauth;
 mod providers;
 mod safe_http;
 mod secrets;
+mod static_headers;
 
 pub use api_keys::{
     API_KEY_DISPLAY_PREFIX_LEN, API_KEY_LAST_USED_RESOLUTION_MS, API_KEY_SECRET_PREFIX,
@@ -163,6 +164,7 @@ pub use secrets::{
     PutSecretRecord, SECRET_KIND_MODEL_API_KEY, SECRET_KIND_STATIC_BEARER, SecretRecordMeta,
     SecretStore, SecretValue, generate_prefixed_secret, secret_display_prefix, secret_sha256_hex,
 };
+pub use static_headers::{MAX_STATIC_HEADERS, SECRET_KIND_STATIC_HEADERS, StaticHeaders};
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AuthRegistryError {
     #[error("auth grant already exists: {grant_id}")]

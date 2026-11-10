@@ -58,6 +58,7 @@ use input::{context_entry_input_from_api, refuse_oversized_text, run_input_from_
 use mcp_api::{map_mcp_error, mcp_server_view, parse_mcp_server_id, put_mcp_server_record};
 use mcp_discovery::{
     ConfiguratorTrustedHeaderPolicy, HttpMcpToolDiscoverer, McpDiscoveryGate, McpToolDiscoverer,
+    McpTransportCredential,
 };
 pub(crate) use models_api::ModelDiscoveryService;
 use models_api::stored_provider_key_resolver;
@@ -4058,12 +4059,7 @@ impl AgentApiService for GatewayAgentApi {
             )));
         }
         if record.status == mcp::McpServerStatus::NeedsAuthConfig
-            || (record.auth_grant_id.is_none()
-                && matches!(
-                    record.auth_policy,
-                    mcp::McpServerAuthPolicy::RequiredBearer
-                        | mcp::McpServerAuthPolicy::RequiredOAuth { .. }
-                ))
+            || (record.auth_grant_id.is_none() && record.auth_policy.requires_credential())
         {
             return Ok(AgentApiOutcome::new(mcp_api::mcp_tool_discovery_failure(
                 mcp::McpToolDiscoveryFailure::new(
@@ -4083,7 +4079,7 @@ impl AgentApiService for GatewayAgentApi {
             .configurator_trusted_header
             .permits(server_id.as_str(), &record.server_url)
             .then_some(self.store.config().universe_id);
-        let bearer = match (trusted_universe, record.auth_grant_id.as_ref()) {
+        let secret = match (trusted_universe, record.auth_grant_id.as_ref()) {
             (Some(_), _) => None,
             (None, Some(grant_id)) => match self
                 .auth_token_broker
@@ -4116,11 +4112,22 @@ impl AgentApiService for GatewayAgentApi {
             },
             (None, None) => None,
         };
+        let credential = match secret
+            .map(|secret| McpTransportCredential::for_policy(&record.auth_policy, secret))
+            .transpose()
+        {
+            Ok(credential) => credential,
+            Err(failure) => {
+                return Ok(AgentApiOutcome::new(mcp_api::mcp_tool_discovery_failure(
+                    failure,
+                )));
+            }
+        };
         let response = match self
             .mcp_tool_discoverer
             .discover_tools(
                 &record.server_url,
-                bearer.as_ref(),
+                credential.as_ref(),
                 trusted_universe,
                 self.mcp_private_networks
                     .permits(&record.server_url, record.allow_private_network),

@@ -286,6 +286,13 @@ impl McpServerRecord {
             self.allowed_tools.as_deref(),
         )?;
         self.auth_policy.validate()?;
+        if self.auth_policy.uses_headers() && self.execution == McpExecution::Provider {
+            // Provider MCP connectors accept one authorization token, so the
+            // headers would be silently dropped.
+            return Err(McpRegistryError::InvalidInput {
+                message: "custom header authentication requires execution runtime (Lightspeed connects); model providers cannot send custom headers".to_owned(),
+            });
+        }
         if matches!(self.auth_policy, McpServerAuthPolicy::None) && self.auth_grant_id.is_some() {
             return Err(McpRegistryError::InvalidInput {
                 message: "MCP servers with auth policy none cannot bind an auth grant".to_owned(),
@@ -444,6 +451,10 @@ pub enum McpServerAuthPolicy {
     None,
     OptionalBearer,
     RequiredBearer,
+    /// Sends a custom-headers credential's header set on every request.
+    /// Only Lightspeed can send them, so these policies require runtime execution.
+    OptionalHeaders,
+    RequiredHeaders,
     OptionalOAuth {
         resource: String,
         scopes_default: Vec<String>,
@@ -459,9 +470,26 @@ pub enum McpServerAuthPolicy {
 }
 
 impl McpServerAuthPolicy {
+    /// Whether the bound credential is a set of custom request headers.
+    pub fn uses_headers(&self) -> bool {
+        matches!(self, Self::OptionalHeaders | Self::RequiredHeaders)
+    }
+
+    /// Whether the server cannot be used until a credential is bound.
+    pub fn requires_credential(&self) -> bool {
+        matches!(
+            self,
+            Self::RequiredBearer | Self::RequiredHeaders | Self::RequiredOAuth { .. }
+        )
+    }
+
     pub fn validate(&self) -> Result<(), McpRegistryError> {
         match self {
-            Self::None | Self::OptionalBearer | Self::RequiredBearer => Ok(()),
+            Self::None
+            | Self::OptionalBearer
+            | Self::RequiredBearer
+            | Self::OptionalHeaders
+            | Self::RequiredHeaders => Ok(()),
             Self::OptionalOAuth {
                 resource,
                 scopes_default,
@@ -945,6 +973,24 @@ mod tests {
             .validate()
             .expect_err("no-auth server must reject a grant binding");
 
+        assert!(matches!(error, McpRegistryError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn header_auth_requires_runtime_execution() {
+        let mut record = put_request("echo", McpServerStatus::Active).into_record();
+        record.auth_policy = McpServerAuthPolicy::RequiredHeaders;
+        record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
+        record.execution = McpExecution::Runtime;
+        record
+            .validate()
+            .expect("runtime execution can send headers");
+
+        record.execution = McpExecution::Provider;
+        record.exposure = McpExposure::Inject;
+        let error = record
+            .validate()
+            .expect_err("provider execution cannot send custom headers");
         assert!(matches!(error, McpRegistryError::InvalidInput { .. }));
     }
 
