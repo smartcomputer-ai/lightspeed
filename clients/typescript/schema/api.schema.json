@@ -3922,7 +3922,7 @@
     },
     "AuthProviderKind": {
       "enum": [
-        "staticBearer",
+        "staticToken",
         "mcpOAuth",
         "gitHubApp",
         "customOAuth",

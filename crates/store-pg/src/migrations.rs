@@ -40,6 +40,7 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "environment_registration_key_secrets",
     "environment_registration_keys",
     "environments",
+    "mcp_server_headers",
     "mcp_servers",
     "session_activity",
     "session_checkpoints",
@@ -131,8 +132,8 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 15,
-        name: "mcp_server_headers",
-        sql: include_str!("../migrations/015_mcp_server_headers.sql"),
+        name: "mcp_headers_and_static_tokens",
+        sql: include_str!("../migrations/015_mcp_headers_and_static_tokens.sql"),
     },
 ];
 

@@ -256,7 +256,7 @@ export interface SecretProvider {
   /// False only for legacy/malformed rows that the model runtime will ignore.
   usableForModels: boolean;
   providerKind:
-    | "staticBearer"
+    | "staticToken"
     | "mcpOAuth"
     | "gitHubApp"
     | "customOAuth"

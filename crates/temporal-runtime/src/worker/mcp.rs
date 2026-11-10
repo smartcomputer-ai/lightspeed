@@ -20,8 +20,8 @@ use tokio::sync::Mutex;
 use url::Url;
 
 use crate::gateway::service::mcp_discovery::{
-    ConfiguratorTrustedHeaderPolicy, DiscoveredMcpInventory, HttpMcpToolDiscoverer,
-    McpRequestAuth, McpToolCallRequest, McpToolDiscoverer, resolve_mcp_request_headers,
+    ConfiguratorTrustedHeaderPolicy, DiscoveredMcpInventory, HttpMcpToolDiscoverer, McpRequestAuth,
+    McpToolCallRequest, McpToolDiscoverer, resolve_mcp_request_headers,
 };
 
 pub enum RuntimeMcpExecutionOutcome {

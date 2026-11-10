@@ -322,7 +322,7 @@ function ServerDialog({
   );
   const currentOAuthScopes = oauthScopes.split(",").map((scope) => scope.trim()).filter(Boolean);
   const headerGrants = authGrants
-    .filter((grant) => grant.providerKind === "staticBearer" && grant.status === "active")
+    .filter((grant) => grant.providerKind === "staticToken" && grant.status === "active")
     .slice()
     .sort((left, right) => authGrantLabel(left).localeCompare(authGrantLabel(right)));
   const headerInput = mcpHeadersInput(headerRows);
@@ -633,7 +633,7 @@ function ServerDialog({
           value={credentialGrantId}
           boundAvailable={boundGrantAvailable}
           onChange={setCredentialGrantId}
-          emptyCopy="Create a bearer credential on the Credentials page, then return here."
+          emptyCopy="Create a token credential on the Credentials page, then return here."
         />
       )}
       {authKind === "oauth" && (
@@ -1381,7 +1381,7 @@ function oauthPolicyScopes(policy: McpServer["authPolicy"] | undefined): string[
 
 export function mcpGrantCompatible(authPolicy: string, providerKind: string): boolean {
   if (authPolicy === "optionalBearer" || authPolicy === "requiredBearer") {
-    return providerKind === "staticBearer";
+    return providerKind === "staticToken";
   }
   if (authPolicy === "optionalOAuth" || authPolicy === "requiredOAuth") {
     return providerKind === "mcpOAuth";

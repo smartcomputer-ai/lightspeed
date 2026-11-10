@@ -4,7 +4,7 @@ use auth::{
     AuthFlowId, AuthFlowStore, AuthGrantId, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
     AuthProviderKind, AuthRegistryError, CreateAuthFlowRecord, CreateAuthGrantRecord,
     CreateOAuthClientRecord, FinishAuthFlow, GrantRefreshLock, ListAuthGrants, OAuthClientId,
-    OAuthClientStore, PutSecretRecord, SECRET_KIND_STATIC_BEARER, SecretId, SecretStore,
+    OAuthClientStore, PutSecretRecord, SECRET_KIND_STATIC_TOKEN, SecretId, SecretStore,
     SecretValue, TokenEndpointAuthMethod, state_hash,
 };
 use environment_protocol::{ids::ProviderTargetId, routes::DataRouteBase};
@@ -2330,7 +2330,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
 
     left.put_secret(PutSecretRecord {
         secret_id: SecretId::new("authsec_mcp_crm"),
-        secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+        secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
         value: SecretValue::new("crm-token"),
         created_at_ms: 10,
     })
@@ -2339,7 +2339,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
     left.create_grant(CreateAuthGrantRecord {
         grant_id: AuthGrantId::new("authgrant_mcp_crm"),
         provider_id: "static".to_owned(),
-        provider_kind: AuthProviderKind::StaticBearer,
+        provider_kind: AuthProviderKind::StaticToken,
         exposure: auth::AuthGrantExposure::Brokered,
         created_by: api::Attribution::Local,
         display_name: Some("CRM MCP".to_owned()),
@@ -2439,7 +2439,7 @@ async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
     store
         .put_secret(PutSecretRecord {
             secret_id: SecretId::new("authsec_upstream"),
-            secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+            secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
             value: SecretValue::new("upstream-token"),
             created_at_ms: 10,
         })
@@ -2450,7 +2450,7 @@ async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
         .create_grant(CreateAuthGrantRecord {
             grant_id: grant_id.clone(),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticBearer,
+            provider_kind: AuthProviderKind::StaticToken,
             exposure: auth::AuthGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: Some("Upstream".to_owned()),
@@ -2487,10 +2487,7 @@ async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
         .await
         .expect("create server with headers");
     assert_eq!(created.headers, input.headers);
-    assert_eq!(
-        store.read_server(&server_id).await.expect("read"),
-        created
-    );
+    assert_eq!(store.read_server(&server_id).await.expect("read"), created);
     let listed = store
         .list_servers(ListMcpServers::default())
         .await
@@ -2543,8 +2540,8 @@ async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
         sqlx::query_scalar("SELECT count(*) FROM mcp_server_headers WHERE universe_id = $1")
             .bind(store.config().universe_id)
             .fetch_one(store.pool())
-        .await
-        .expect("count header rows");
+            .await
+            .expect("count header rows");
     assert_eq!(remaining, 0);
 }
 
@@ -2558,7 +2555,7 @@ async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
 
     left.put_secret(PutSecretRecord {
         secret_id: secret_id.clone(),
-        secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+        secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
         value: SecretValue::new(token),
         created_at_ms: 10,
     })
@@ -2568,7 +2565,7 @@ async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
     assert!(matches!(
         left.put_secret(PutSecretRecord {
             secret_id: secret_id.clone(),
-            secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+            secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
             value: SecretValue::new(token),
             created_at_ms: 11,
         })
@@ -2577,7 +2574,7 @@ async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
     ));
 
     let (meta, value) = left.read_secret(&secret_id).await.expect("read secret");
-    assert_eq!(meta.secret_kind, SECRET_KIND_STATIC_BEARER);
+    assert_eq!(meta.secret_kind, SECRET_KIND_STATIC_TOKEN);
     assert_eq!(value.expose(), token);
 
     let row = sqlx::query(
@@ -2630,7 +2627,7 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
         .create_grant(CreateAuthGrantRecord {
             grant_id: grant_id.clone(),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticBearer,
+            provider_kind: AuthProviderKind::StaticToken,
             exposure: auth::AuthGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: Some("CRM token".to_owned()),
@@ -2656,7 +2653,7 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
                 ..CreateAuthGrantRecord {
                     grant_id: grant_id.clone(),
                     provider_id: "static".to_owned(),
-                    provider_kind: AuthProviderKind::StaticBearer,
+                    provider_kind: AuthProviderKind::StaticToken,
                     exposure: auth::AuthGrantExposure::Brokered,
                     created_by: api::Attribution::Local,
                     display_name: None,
@@ -3125,13 +3122,13 @@ async fn pg_live_environment_credentials_round_trip() {
         .await
         .expect("create environment");
 
-    // Subscription credentials are ordinary static_bearer grants carrying
+    // Subscription credentials are ordinary static_token grants carrying
     // metadata, so exercise two stored-secret grants.
     for (grant_id, kind, provider) in [
-        ("authgrant_codex", AuthProviderKind::StaticBearer, "openai"),
+        ("authgrant_codex", AuthProviderKind::StaticToken, "openai"),
         (
             "authgrant_claude",
-            AuthProviderKind::StaticBearer,
+            AuthProviderKind::StaticToken,
             "anthropic",
         ),
     ] {
@@ -3284,7 +3281,7 @@ async fn pg_live_universe_delete_removes_registered_environments_and_credential_
     store
         .put_secret(PutSecretRecord {
             secret_id: secret_id.clone(),
-            secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+            secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
             value: SecretValue::new("token"),
             created_at_ms: 3,
         })

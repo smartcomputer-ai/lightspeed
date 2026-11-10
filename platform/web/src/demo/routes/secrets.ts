@@ -146,7 +146,7 @@ function revokeGrant(grant: SecretGrant): SecretGrant {
 
 /// Subscription grants are ordinary bearer grants tagged at import time.
 function isSubscriptionGrant(grant: SecretGrant): boolean {
-  return grant.providerKind === "staticBearer"
+  return grant.providerKind === "staticToken"
     && (grant.metadata?.subscription === "claudeCode" || grant.metadata?.subscription === "codex");
 }
 
@@ -387,7 +387,7 @@ function finishConfiguratorInstall(
   grant ??= mintGrant(store, universe, {
     grantId: `authgrant_lightspeed_configurator_${hex()}`,
     providerId: "lightspeed-configurator",
-    providerKind: "staticBearer",
+    providerKind: "staticToken",
     displayName: "Lightspeed Configurator setup",
     audience: CONFIGURATOR_MCP_URL,
   });
@@ -509,7 +509,7 @@ export function secretRoutes(store: DemoStore): Hono {
     const grant = mintGrant(store, universe, {
       grantId,
       providerId: "static",
-      providerKind: "staticBearer",
+      providerKind: "staticToken",
       displayName: optionalString(body.displayName),
       subjectHint: optionalString(body.subjectHint),
       exposure: body.exposure === "retrievable" ? "retrievable" : "brokered",
@@ -531,7 +531,7 @@ export function secretRoutes(store: DemoStore): Hono {
     const grant = mintGrant(store, universe, {
       grantId,
       providerId: ENVIRONMENT_SECRET_PROVIDER_ID,
-      providerKind: "staticBearer",
+      providerKind: "staticToken",
       displayName: optionalString(body.displayName),
     });
     return c.json(grant, 201);
@@ -666,7 +666,7 @@ export function secretRoutes(store: DemoStore): Hono {
     if ("error" in parsed) return badRequest(c, parsed.error);
     const grant = mintGrant(store, universe, {
       providerId: parsed.providerId,
-      providerKind: "staticBearer",
+      providerKind: "staticToken",
       displayName: optionalString(body.displayName),
       subjectHint: parsed.subjectHint,
       expiresAtMs: parsed.expiresAtMs,

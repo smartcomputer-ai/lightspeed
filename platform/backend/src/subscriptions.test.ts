@@ -87,8 +87,8 @@ describe("Codex credential", () => {
 
 describe("subscription grant recognition and guards", () => {
   it("recognises grants by metadata, not kind", () => {
-    expect(isSubscriptionGrant({ providerKind: "staticBearer", metadata: { subscription: "codex" } })).toBe(true);
-    expect(isSubscriptionGrant({ providerKind: "staticBearer", metadata: {} })).toBe(false);
+    expect(isSubscriptionGrant({ providerKind: "staticToken", metadata: { subscription: "codex" } })).toBe(true);
+    expect(isSubscriptionGrant({ providerKind: "staticToken", metadata: {} })).toBe(false);
     expect(isSubscriptionGrant({ providerKind: "mcpOAuth", metadata: { subscription: "codex" } })).toBe(false);
   });
 

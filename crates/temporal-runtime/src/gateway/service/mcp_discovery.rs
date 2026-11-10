@@ -855,12 +855,11 @@ async fn start_service_once(
     let mut config = StreamableHttpClientTransportConfig::with_uri(endpoint.as_str())
         .max_sse_event_size(max_response_bytes)
         .reinit_on_expired_session(false);
-    config = transport_auth(config, auth, trusted_universe).map_err(|failure| {
-        StartServiceFailure {
+    config =
+        transport_auth(config, auth, trusted_universe).map_err(|failure| StartServiceFailure {
             failure,
             retry_legacy: false,
-        }
-    })?;
+        })?;
     let client = BoundedReqwestClient::new(client.clone(), max_response_bytes, operation);
     let diagnostics = client.diagnostics.clone();
     let transport = StreamableHttpClientTransport::with_client(client, config);

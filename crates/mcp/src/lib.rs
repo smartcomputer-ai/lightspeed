@@ -574,7 +574,19 @@ fn validate_server_header_name(name: &str) -> Result<(), McpRegistryError> {
         ch.is_ascii_alphanumeric()
             || matches!(
                 ch,
-                '!' | '#' | '$' | '%' | '&' | '\'' | '*' | '+' | '-' | '.' | '^' | '_' | '`' | '|'
+                '!' | '#'
+                    | '$'
+                    | '%'
+                    | '&'
+                    | '\''
+                    | '*'
+                    | '+'
+                    | '-'
+                    | '.'
+                    | '^'
+                    | '_'
+                    | '`'
+                    | '|'
                     | '~'
             )
     };
@@ -1129,7 +1141,9 @@ mod tests {
     fn headers_require_runtime_execution() {
         let mut record = put_request("echo", McpServerStatus::Active).into_record();
         assert_eq!(record.execution, McpExecution::Provider);
-        record.headers.insert("x-tenant".to_owned(), literal("acme"));
+        record
+            .headers
+            .insert("x-tenant".to_owned(), literal("acme"));
         assert!(matches!(
             record.validate(),
             Err(McpRegistryError::InvalidInput { .. })
@@ -1150,7 +1164,10 @@ mod tests {
             let mut record = runtime_record();
             record.headers.insert(name.to_owned(), literal("value"));
             assert!(
-                matches!(record.validate(), Err(McpRegistryError::InvalidInput { .. })),
+                matches!(
+                    record.validate(),
+                    Err(McpRegistryError::InvalidInput { .. })
+                ),
                 "{name:?} must be rejected"
             );
         }
@@ -1172,7 +1189,10 @@ mod tests {
             let mut record = runtime_record();
             record.headers.insert("x-tenant".to_owned(), literal(value));
             assert!(
-                matches!(record.validate(), Err(McpRegistryError::InvalidInput { .. })),
+                matches!(
+                    record.validate(),
+                    Err(McpRegistryError::InvalidInput { .. })
+                ),
                 "{value:?} must be rejected"
             );
         }

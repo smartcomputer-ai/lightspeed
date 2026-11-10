@@ -653,7 +653,7 @@ fn grant_record_from_row(
 
 pub(crate) fn provider_kind_to_str(value: AuthProviderKind) -> &'static str {
     match value {
-        AuthProviderKind::StaticBearer => "static_bearer",
+        AuthProviderKind::StaticToken => "static_token",
         AuthProviderKind::McpOAuth => "mcp_oauth",
         AuthProviderKind::GitHubApp => "github_app",
         AuthProviderKind::CustomOAuth => "custom_oauth",
@@ -682,7 +682,7 @@ pub(crate) fn grant_exposure_from_str(value: &str) -> Result<AuthGrantExposure, 
 
 pub(crate) fn provider_kind_from_str(value: &str) -> Result<AuthProviderKind, AuthRegistryError> {
     match value {
-        "static_bearer" => Ok(AuthProviderKind::StaticBearer),
+        "static_token" => Ok(AuthProviderKind::StaticToken),
         "mcp_oauth" => Ok(AuthProviderKind::McpOAuth),
         "github_app" => Ok(AuthProviderKind::GitHubApp),
         "custom_oauth" => Ok(AuthProviderKind::CustomOAuth),
@@ -733,6 +733,30 @@ mod tests {
     use base64::Engine as _;
 
     use super::*;
+
+    const PROVIDER_KIND_MIGRATION: &str =
+        include_str!("../migrations/015_mcp_headers_and_static_tokens.sql");
+
+    #[test]
+    fn stored_provider_kinds_round_trip_and_pass_the_latest_check() {
+        for kind in [
+            AuthProviderKind::StaticToken,
+            AuthProviderKind::McpOAuth,
+            AuthProviderKind::GitHubApp,
+            AuthProviderKind::CustomOAuth,
+            AuthProviderKind::ModelApiKey,
+            AuthProviderKind::ModelOAuth,
+            AuthProviderKind::ModelEndpoint,
+        ] {
+            let stored = provider_kind_to_str(kind);
+            assert_eq!(provider_kind_from_str(stored).unwrap(), kind);
+            assert!(
+                PROVIDER_KIND_MIGRATION.contains(&format!("'{stored}'")),
+                "{stored}"
+            );
+        }
+        assert!(provider_kind_from_str("static_bearer").is_err());
+    }
 
     #[test]
     fn persisted_aes_gcm_ciphertext_remains_readable_and_bound_to_its_aad() {

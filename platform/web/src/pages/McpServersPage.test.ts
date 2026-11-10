@@ -14,11 +14,11 @@ import {
 
 describe("MCP server credential ownership", () => {
   it("accepts only grants matching the server authentication policy", () => {
-    expect(mcpGrantCompatible("requiredBearer", "staticBearer")).toBe(true);
+    expect(mcpGrantCompatible("requiredBearer", "staticToken")).toBe(true);
     expect(mcpGrantCompatible("optionalBearer", "mcpOAuth")).toBe(false);
     expect(mcpGrantCompatible("requiredOAuth", "mcpOAuth")).toBe(true);
-    expect(mcpGrantCompatible("optionalOAuth", "staticBearer")).toBe(false);
-    expect(mcpGrantCompatible("none", "staticBearer")).toBe(false);
+    expect(mcpGrantCompatible("optionalOAuth", "staticToken")).toBe(false);
+    expect(mcpGrantCompatible("none", "staticToken")).toBe(false);
   });
 
   it("moves required-auth servers through needs-auth-config with their binding", () => {

@@ -72,11 +72,11 @@ import { GitHubLogo } from "@/components/icons/logos";
 import { isSubscriptionGrant } from "@/lib/subscriptions";
 import { useActiveUniverse } from "@/lib/universes";
 
-type SecretKind = "bearer" | "environment";
+type SecretKind = "token" | "environment";
 
 /// Grant kinds listed as reusable credentials: pasted tokens and secrets,
 /// GitHub App installations and custom OAuth.
-const REUSABLE_CREDENTIAL_KINDS = new Set(["staticBearer", "gitHubApp", "customOAuth"]);
+const REUSABLE_CREDENTIAL_KINDS = new Set(["staticToken", "gitHubApp", "customOAuth"]);
 
 /// A credential made for exactly one thing lives on that thing's page: model
 /// keys and subscription logins on Models, MCP server logins on MCP servers,
@@ -566,16 +566,16 @@ function PasteCredentialDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="environment">Environment secret</SelectItem>
-                <SelectItem value="bearer">Bearer token</SelectItem>
+                <SelectItem value="token">Token</SelectItem>
               </SelectContent>
             </Select>
             <FieldDescription>
               {kind === "environment"
                 ? "Stores an opaque value for injection into an environment variable. Multiline values such as SSH private keys are preserved."
-                : "Creates a revocable access credential that MCP servers or environments can reference."}
+                : "Creates a revocable token that MCP servers, bots or environments can reference, as a bearer token or in a header of their own."}
             </FieldDescription>
           </Field>
-          {kind === "bearer" && (
+          {kind === "token" && (
             <Field className="rounded-lg border bg-muted/15 p-3">
               <label className="flex items-start gap-3">
                 <Checkbox
@@ -708,7 +708,7 @@ function managedBy(grant: SecretGrant): string | null {
 
 function grantTypeLabel(grant: SecretGrant): string {
   if (grant.providerId === "environment-secret") return "Environment secret";
-  if (grant.providerKind === "staticBearer") return "Bearer token";
+  if (grant.providerKind === "staticToken") return "Token";
   if (grant.hasRefreshToken) return "OAuth (refreshable)";
   return grant.providerKind;
 }

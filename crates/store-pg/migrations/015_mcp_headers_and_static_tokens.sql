@@ -34,3 +34,38 @@ COMMENT ON COLUMN mcp_server_headers.literal_value IS
     'Plain, non-secret header value returned by reads.';
 COMMENT ON COLUMN mcp_server_headers.grant_id IS
     'Universe auth grant whose token is resolved per request and sent raw; the token never enters this table.';
+
+-- The pasted single-secret credential is a token sent under whatever header its
+-- consumer chooses, not only `Authorization: Bearer`, so its provider kind is
+-- 'static_token'. Nothing is rewritten: a database holding 'static_bearer' rows
+-- fails these checks and has to be reset, as this breaking release already
+-- requires. Rows could not be carried over anyway, because each secret's kind is
+-- bound into the AAD that seals its value.
+ALTER TABLE auth_grants
+    DROP CONSTRAINT auth_grants_provider_kind_known,
+    ADD CONSTRAINT auth_grants_provider_kind_known
+        CHECK (
+            provider_kind IN (
+                'static_token',
+                'mcp_oauth',
+                'github_app',
+                'custom_oauth',
+                'model_api_key',
+                'model_oauth'
+            )
+        );
+
+ALTER TABLE auth_providers
+    DROP CONSTRAINT auth_providers_provider_kind_known,
+    ADD CONSTRAINT auth_providers_provider_kind_known
+        CHECK (
+            provider_kind IN (
+                'static_token',
+                'mcp_oauth',
+                'github_app',
+                'custom_oauth',
+                'model_api_key',
+                'model_oauth',
+                'model_endpoint'
+            )
+        );

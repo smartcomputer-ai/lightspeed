@@ -64,17 +64,17 @@ impl BrokerSecretResolver {
                 secret_ref.namespace
             )));
         };
-        let server = self
-            .mcp_servers
-            .read_server(&server_id)
-            .await
-            .map_err(|error| match error {
-                McpRegistryError::NotFound { .. } => SecretResolveError::NotFound {
-                    namespace: secret_ref.namespace.clone(),
-                    id: secret_ref.id.clone(),
-                },
-                other => backend(other.to_string()),
-            })?;
+        let server =
+            self.mcp_servers
+                .read_server(&server_id)
+                .await
+                .map_err(|error| match error {
+                    McpRegistryError::NotFound { .. } => SecretResolveError::NotFound {
+                        namespace: secret_ref.namespace.clone(),
+                        id: secret_ref.id.clone(),
+                    },
+                    other => backend(other.to_string()),
+                })?;
         if server.server_url != audience {
             return Err(backend(
                 "MCP server URL changed while resolving its credential".to_owned(),
@@ -353,7 +353,7 @@ mod tests {
     use auth::{
         AuthGrantId, AuthGrantStatus, AuthGrantStore, AuthProviderKind, CreateAuthGrantRecord,
         InMemoryAuthGrantStore, InMemoryGrantLocks, InMemorySecretStore, PutSecretRecord,
-        RegistryTokenBroker, SECRET_KIND_STATIC_BEARER, SecretId, SecretStore, SecretValue,
+        RegistryTokenBroker, SECRET_KIND_STATIC_TOKEN, SecretId, SecretStore, SecretValue,
     };
     use mcp::{
         InMemoryMcpRegistryStore, McpApprovalPolicy, McpRegistryStore, McpServerAuthPolicy,
@@ -376,7 +376,7 @@ mod tests {
             .create_grant(CreateAuthGrantRecord {
                 grant_id: AuthGrantId::new("authgrant_1"),
                 provider_id: "static".to_owned(),
-                provider_kind: AuthProviderKind::StaticBearer,
+                provider_kind: AuthProviderKind::StaticToken,
                 exposure: auth::AuthGrantExposure::Brokered,
                 created_by: api::Attribution::Local,
                 display_name: None,
@@ -396,7 +396,7 @@ mod tests {
         secrets
             .put_secret(PutSecretRecord {
                 secret_id: SecretId::new("authsec_1"),
-                secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+                secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
                 value: SecretValue::new("token-123"),
                 created_at_ms: 10,
             })
@@ -642,7 +642,7 @@ mod tests {
             .create_grant(CreateAuthGrantRecord {
                 grant_id: AuthGrantId::new("authgrant_2"),
                 provider_id: "static".to_owned(),
-                provider_kind: AuthProviderKind::StaticBearer,
+                provider_kind: AuthProviderKind::StaticToken,
                 exposure: auth::AuthGrantExposure::Brokered,
                 created_by: api::Attribution::Local,
                 display_name: None,
@@ -663,7 +663,7 @@ mod tests {
             .secrets
             .put_secret(PutSecretRecord {
                 secret_id: SecretId::new("authsec_2"),
-                secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+                secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
                 value: SecretValue::new("token-456"),
                 created_at_ms: 20,
             })
@@ -779,7 +779,11 @@ mod tests {
         .await;
         fixture
             .grants
-            .update_grant_status(&AuthGrantId::new("authgrant_1"), AuthGrantStatus::Revoked, 30)
+            .update_grant_status(
+                &AuthGrantId::new("authgrant_1"),
+                AuthGrantStatus::Revoked,
+                30,
+            )
             .await
             .expect("revoke grant");
         let revoked = fixture

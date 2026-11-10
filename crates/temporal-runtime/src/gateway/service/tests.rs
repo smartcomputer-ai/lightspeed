@@ -598,7 +598,7 @@ fn test_auth_grant_record(
 fn grant_leases_require_creation_time_retrievable_exposure() {
     let brokered = test_auth_grant_record(
         "authgrant_brokered",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         None,
     );
@@ -698,7 +698,7 @@ fn mcp_header_credentials_must_be_active_static_tokens_covering_the_server() {
         &record,
         header,
         &grant(
-            auth::AuthProviderKind::StaticBearer,
+            auth::AuthProviderKind::StaticToken,
             auth::AuthGrantStatus::Active,
             Some("https://gateway.example.com"),
         ),
@@ -712,23 +712,24 @@ fn mcp_header_credentials_must_be_active_static_tokens_covering_the_server() {
             None,
         ),
         (
-            auth::AuthProviderKind::StaticBearer,
+            auth::AuthProviderKind::StaticToken,
             auth::AuthGrantStatus::Revoked,
             None,
         ),
         (
-            auth::AuthProviderKind::StaticBearer,
+            auth::AuthProviderKind::StaticToken,
             auth::AuthGrantStatus::Active,
             Some("https://elsewhere.example.com"),
         ),
     ] {
-        let error = mcp_api::validate_mcp_header_grant(
-            &record,
-            header,
-            &grant(kind, status, audience),
-        )
-        .expect_err("refused header credential");
-        assert_eq!(error.kind, AgentApiErrorKind::Rejected, "{kind:?} {status:?}");
+        let error =
+            mcp_api::validate_mcp_header_grant(&record, header, &grant(kind, status, audience))
+                .expect_err("refused header credential");
+        assert_eq!(
+            error.kind,
+            AgentApiErrorKind::Rejected,
+            "{kind:?} {status:?}"
+        );
     }
 }
 
@@ -759,7 +760,7 @@ fn mcp_attachment_leaves_url_and_credential_out_of_durable_state() {
     record.allow_private_network = true;
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         Some("https://crm.example.com"),
     );
@@ -789,7 +790,7 @@ fn mcp_attachment_rejects_revoked_grant() {
     record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Revoked,
         None,
     );
@@ -813,7 +814,7 @@ fn mcp_attachment_rejects_grant_kind_incompatible_with_auth_policy() {
     record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         None,
     );
@@ -832,7 +833,7 @@ fn mcp_attachment_rejects_grant_audience_that_does_not_cover_server() {
     record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         Some("https://other.example.com"),
     );
@@ -876,7 +877,7 @@ fn two_server_ids_can_share_an_endpoint_with_distinct_credentials() {
     work.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_work"));
     let work_grant = test_auth_grant_record(
         "authgrant_work",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         Some("https://crm.example.com"),
     );
@@ -887,7 +888,7 @@ fn two_server_ids_can_share_an_endpoint_with_distinct_credentials() {
     personal.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_personal"));
     let personal_grant = test_auth_grant_record(
         "authgrant_personal",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         Some("https://crm.example.com"),
     );
@@ -921,7 +922,7 @@ fn mcp_attachment_rejects_grant_for_no_auth_server() {
     let record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         None,
     );
@@ -2475,7 +2476,7 @@ fn auth_client_drafts_without_secret_default_to_public_client() {
 #[test]
 fn auth_client_drafts_reject_non_oauth_kinds() {
     let mut params = client_create_params();
-    params.provider_kind = api::AuthProviderKind::StaticBearer;
+    params.provider_kind = api::AuthProviderKind::StaticToken;
 
     let error = oauth_api::auth_client_create_draft(params, 10)
         .expect_err("static bearer kind must be rejected");

@@ -806,7 +806,7 @@ export type InputItem =
     };
 export type MediaKind = "image" | "audio" | "document";
 export type AuthProviderKind =
-  | "staticBearer"
+  | "staticToken"
   | "mcpOAuth"
   | "gitHubApp"
   | "customOAuth"

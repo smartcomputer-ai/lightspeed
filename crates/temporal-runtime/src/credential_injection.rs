@@ -331,7 +331,7 @@ mod tests {
     use async_trait::async_trait;
     use auth::{
         InMemoryAuthGrantStore, InMemoryAuthProviderStore, InMemorySecretStore, PutSecretRecord,
-        SECRET_KIND_STATIC_BEARER, SecretId, SecretStore, SecretValue,
+        SECRET_KIND_STATIC_TOKEN, SecretId, SecretStore, SecretValue,
     };
     use environments::{
         EnvironmentCredentialRecord, EnvironmentRegistryError, ListEnvironmentCredentials,
@@ -382,7 +382,7 @@ mod tests {
         secrets
             .put_secret(PutSecretRecord {
                 secret_id: secret_id.clone(),
-                secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+                secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
                 value: SecretValue::new("environment-token"),
                 created_at_ms: 1,
             })
@@ -457,7 +457,7 @@ mod tests {
         secrets
             .put_secret(PutSecretRecord {
                 secret_id: secret_id.clone(),
-                secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+                secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
                 value: SecretValue::new("environment-token"),
                 created_at_ms: 1,
             })
@@ -526,7 +526,7 @@ mod tests {
         let grant = AuthGrantRecord {
             grant_id: auth::AuthGrantId::new("grant_1"),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticBearer,
+            provider_kind: AuthProviderKind::StaticToken,
             exposure: auth::AuthGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: None,

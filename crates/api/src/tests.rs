@@ -120,7 +120,7 @@ fn auth_grant_lease_response_redacts_token_in_debug_output() {
         token: "super-secret-leased-token".to_owned(),
         expires_at_ms: Some(1234),
         grant_id: "authgrant_1".to_owned(),
-        provider_kind: AuthProviderKind::StaticBearer,
+        provider_kind: AuthProviderKind::StaticToken,
     };
 
     let debug = format!("{response:?}");
@@ -2881,7 +2881,7 @@ impl AgentApiService for TestService {
             token: "leased-token".to_owned(),
             expires_at_ms: None,
             grant_id: params.grant_id,
-            provider_kind: AuthProviderKind::StaticBearer,
+            provider_kind: AuthProviderKind::StaticToken,
         }))
     }
 
@@ -3321,7 +3321,7 @@ fn test_auth_grant(grant_id: String, status: AuthGrantStatus) -> AuthGrantView {
     AuthGrantView {
         grant_id,
         provider_id: "static".to_owned(),
-        provider_kind: AuthProviderKind::StaticBearer,
+        provider_kind: AuthProviderKind::StaticToken,
         exposure: AuthGrantExposure::Brokered,
         created_by: Attribution::Key {
             prefix: "lsk_abcdefgh".into(),

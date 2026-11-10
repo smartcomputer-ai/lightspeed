@@ -91,7 +91,7 @@ pub(super) fn validate_mcp_header_grant(
             grant.grant_id, grant.status
         )));
     }
-    if grant.provider_kind != auth::AuthProviderKind::StaticBearer {
+    if grant.provider_kind != auth::AuthProviderKind::StaticToken {
         return Err(AgentApiError::rejected(format!(
             "credential {} for MCP header {header:?} must be a static token, not {:?}",
             grant.grant_id, grant.provider_kind

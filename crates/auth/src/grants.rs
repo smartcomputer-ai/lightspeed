@@ -10,8 +10,8 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AuthProviderKind {
-    #[serde(rename = "static_bearer")]
-    StaticBearer,
+    #[serde(rename = "static_token")]
+    StaticToken,
     #[serde(rename = "mcp_oauth")]
     McpOAuth,
     #[serde(rename = "github_app")]
@@ -253,7 +253,7 @@ mod tests {
         CreateAuthGrantRecord {
             grant_id: AuthGrantId::new(grant_id),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticBearer,
+            provider_kind: AuthProviderKind::StaticToken,
             exposure: AuthGrantExposure::Brokered,
             created_by: Attribution::Local,
             display_name: Some("CRM token".to_owned()),

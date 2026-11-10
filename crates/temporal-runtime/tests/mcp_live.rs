@@ -1203,7 +1203,10 @@ async fn run_custom_headers_live_client(
         created.headers.keys()
     );
     let view = serde_json::to_string(&created)?;
-    anyhow::ensure!(!view.contains(&token), "a server view must never carry the token");
+    anyhow::ensure!(
+        !view.contains(&token),
+        "a server view must never carry the token"
+    );
 
     let tools = discover_count(&api, &server_id).await?;
     anyhow::ensure!(tools > 0, "the fixture advertises tools");
@@ -1238,7 +1241,8 @@ async fn run_custom_headers_live_client(
         "nothing is sent once the credential is revoked"
     );
 
-    api.delete_mcp_server(McpServerDeleteParams { server_id }).await?;
+    api.delete_mcp_server(McpServerDeleteParams { server_id })
+        .await?;
     Ok(())
 }
 

@@ -25,14 +25,14 @@ pub(super) fn auth_grant_import_draft(
 
     let secret = auth::PutSecretRecord {
         secret_id: secret_id.clone(),
-        secret_kind: auth::SECRET_KIND_STATIC_BEARER.to_owned(),
+        secret_kind: auth::SECRET_KIND_STATIC_TOKEN.to_owned(),
         value: auth::SecretValue::new(params.token),
         created_at_ms: now_ms,
     };
     let grant = auth::CreateAuthGrantRecord {
         grant_id,
         provider_id: params.provider_id.unwrap_or_else(|| "static".to_owned()),
-        provider_kind: auth::AuthProviderKind::StaticBearer,
+        provider_kind: auth::AuthProviderKind::StaticToken,
         exposure: registry_auth_grant_exposure(params.exposure),
         created_by: crate::gateway::request_context::request_attribution()?,
         display_name: params.display_name,
@@ -182,7 +182,7 @@ pub(super) fn validate_mcp_grant_for_server(
     let kind_compatible = match &record.auth_policy {
         mcp::McpServerAuthPolicy::None => false,
         mcp::McpServerAuthPolicy::OptionalBearer | mcp::McpServerAuthPolicy::RequiredBearer => {
-            grant.provider_kind == auth::AuthProviderKind::StaticBearer
+            grant.provider_kind == auth::AuthProviderKind::StaticToken
         }
         mcp::McpServerAuthPolicy::OptionalOAuth { .. }
         | mcp::McpServerAuthPolicy::RequiredOAuth { .. } => {
@@ -224,7 +224,7 @@ pub(super) fn validate_mcp_grant_for_server(
 
 pub(super) fn api_auth_provider_kind(value: auth::AuthProviderKind) -> api::AuthProviderKind {
     match value {
-        auth::AuthProviderKind::StaticBearer => api::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken => api::AuthProviderKind::StaticToken,
         auth::AuthProviderKind::McpOAuth => api::AuthProviderKind::McpOAuth,
         auth::AuthProviderKind::GitHubApp => api::AuthProviderKind::GitHubApp,
         auth::AuthProviderKind::CustomOAuth => api::AuthProviderKind::CustomOAuth,

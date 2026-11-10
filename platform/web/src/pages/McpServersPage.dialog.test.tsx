@@ -201,7 +201,7 @@ it("edits request headers as plain values and credentials and shows only credent
   mocks.api.mockImplementation(async (method, path, body) => {
     if (path.endsWith("/auth-grants")) {
       return [
-        { grantId: "authgrant_upstream", providerId: "static", providerKind: "staticBearer", displayName: "Tracker token", status: "active", exposure: "brokered" },
+        { grantId: "authgrant_upstream", providerId: "static", providerKind: "staticToken", displayName: "Tracker token", status: "active", exposure: "brokered" },
         { grantId: "authgrant_oauth", providerId: "crm", providerKind: "mcpOAuth", displayName: "CRM sign-in", status: "active", exposure: "brokered" },
       ];
     }

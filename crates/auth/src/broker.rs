@@ -174,7 +174,7 @@ impl OAuthRefreshRuntime {
 /// Provider kinds whose grants carry a stored access token (optionally
 /// refreshable through OAuth). Served by [`StoredTokenSource`].
 const STORED_TOKEN_KINDS: [AuthProviderKind; 3] = [
-    AuthProviderKind::StaticBearer,
+    AuthProviderKind::StaticToken,
     AuthProviderKind::McpOAuth,
     AuthProviderKind::CustomOAuth,
 ];
@@ -598,14 +598,14 @@ mod tests {
     use crate::{
         CreateAuthGrantRecord, CreateOAuthClientRecord, InMemoryAuthGrantStore, InMemoryGrantLocks,
         InMemoryOAuthClientStore, InMemorySecretStore, OAuthClientId, OAuthTokenResponse,
-        SECRET_KIND_STATIC_BEARER, TokenEndpointAuthMethod,
+        SECRET_KIND_STATIC_TOKEN, TokenEndpointAuthMethod,
     };
 
     fn grant_request(grant_id: &str, audience: Option<&str>) -> CreateAuthGrantRecord {
         CreateAuthGrantRecord {
             grant_id: AuthGrantId::new(grant_id),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticBearer,
+            provider_kind: AuthProviderKind::StaticToken,
             exposure: crate::AuthGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: None,
@@ -630,7 +630,7 @@ mod tests {
             secrets
                 .put_secret(PutSecretRecord {
                     secret_id: SecretId::new("authsec_1"),
-                    secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+                    secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
                     value: SecretValue::new(token),
                     created_at_ms: 10,
                 })
@@ -669,7 +669,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn broker_resolves_active_static_bearer_grant() {
+    async fn broker_resolves_active_static_token_grant() {
         let broker = broker_with(
             grant_request("authgrant_1", Some("https://crm.example.com")),
             Some("token-123"),

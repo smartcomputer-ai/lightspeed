@@ -8984,7 +8984,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "definitions": {
         "AuthProviderKind": {
           "enum": [
-            "staticBearer",
+            "staticToken",
             "mcpOAuth",
             "gitHubApp",
             "customOAuth",

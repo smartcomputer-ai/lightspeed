@@ -96,7 +96,7 @@ Server writes are transactional: the server row, then its header rows
 replaced, then the whole record read back. Reads fold the header rows into
 the server row with one `jsonb_agg` subquery.
 
-Migration 15 adds the table; `REQUIRED_SCHEMA_REVISION` and
+Migration 15 (`mcp_headers_and_static_tokens`) adds the table; `REQUIRED_SCHEMA_REVISION` and
 `LIGHTSPEED_SCHEMA_REVISION` are both 15.
 
 ### Resolution
@@ -143,6 +143,20 @@ when one is configured.
 - **Generated consumers:** regenerate the API contract, the TypeScript client
   and the Configurator MCP tools. Update the browser demo fixtures and stubs.
 
+## Credential naming
+
+The pasted single-secret credential was named for `Authorization: Bearer`, but
+headers, bot polls, subscriptions and model keys send it under other headers
+too. It is renamed throughout: provider kind `staticToken` on the wire,
+`static_token` in storage (migration 15 also replaces the provider-kind checks),
+and secret kind `auth.static_token`. The Credentials page calls it **Token**.
+The MCP auth policies `optionalBearer`/`requiredBearer` keep their names,
+because they do mean the `Authorization: Bearer` scheme.
+
+Nothing is rewritten: a database holding `static_bearer` rows fails migration
+15 and has to be reset. The secret kind is bound into the AAD that seals each
+stored value, so existing secrets could not be carried over by SQL anyway.
+
 ## Out of scope
 
 - **`Authorization` as a custom header, and a `scheme` prefix.** Needed for
@@ -151,8 +165,7 @@ when one is configured.
 - **Provider-direct execution with headers.** OpenAI's MCP tool accepts
   headers and could be supported later; Anthropic's connector accepts a single
   authorization token.
-- **Renaming the "Bearer token" credential label to "Token".** Cosmetic and
-  separable.
+
 
 ## Tests
 

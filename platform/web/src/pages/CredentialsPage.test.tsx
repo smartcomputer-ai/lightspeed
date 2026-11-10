@@ -19,14 +19,14 @@ function grant(grantId: string, providerKind: string, extra: Partial<SecretGrant
   };
 }
 const reusable = [
-  grant("bearer", "staticBearer"),
-  grant("environment", "staticBearer", { providerId: "environment-secret" }),
+  grant("bearer", "staticToken"),
+  grant("environment", "staticToken", { providerId: "environment-secret" }),
   grant("installation", "gitHubApp", { providerId: "github-app:1" }),
   grant("oauth", "customOAuth", { hasRefreshToken: true }),
 ];
 const hidden = [
-  grant("claude", "staticBearer", { providerId: "anthropic", metadata: { subscription: "claudeCode" } }),
-  grant("telegram-bot", "staticBearer", { providerId: "telegram" }),
+  grant("claude", "staticToken", { providerId: "anthropic", metadata: { subscription: "claudeCode" } }),
+  grant("telegram-bot", "staticToken", { providerId: "telegram" }),
   grant("mcp-login", "mcpOAuth"),
   grant("model-login", "modelOAuth"),
   grant("model-key", "modelApiKey"),

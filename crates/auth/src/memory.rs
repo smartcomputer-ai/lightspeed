@@ -451,13 +451,13 @@ impl SecretStore for InMemorySecretStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AuthProviderKind, SECRET_KIND_STATIC_BEARER};
+    use crate::{AuthProviderKind, SECRET_KIND_STATIC_TOKEN};
 
     fn grant_request(grant_id: &str) -> CreateAuthGrantRecord {
         CreateAuthGrantRecord {
             grant_id: AuthGrantId::new(grant_id),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticBearer,
+            provider_kind: AuthProviderKind::StaticToken,
             exposure: crate::AuthGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: None,
@@ -540,19 +540,19 @@ mod tests {
         let meta = store
             .put_secret(PutSecretRecord {
                 secret_id: SecretId::new("authsec_1"),
-                secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+                secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
                 value: SecretValue::new("token-123"),
                 created_at_ms: 10,
             })
             .await
             .expect("put secret");
-        assert_eq!(meta.secret_kind, SECRET_KIND_STATIC_BEARER);
+        assert_eq!(meta.secret_kind, SECRET_KIND_STATIC_TOKEN);
 
         assert!(matches!(
             store
                 .put_secret(PutSecretRecord {
                     secret_id: SecretId::new("authsec_1"),
-                    secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+                    secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
                     value: SecretValue::new("token-456"),
                     created_at_ms: 11,
                 })
