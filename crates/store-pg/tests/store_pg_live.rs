@@ -4037,6 +4037,30 @@ async fn pg_live_concurrent_puts_leave_one_readable_object() {
     assert_eq!(cold.read_bytes(&expected).await.expect("cold read"), bytes);
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_concurrent_inline_puts_of_the_same_bytes_all_succeed() {
+    // Identical tool results stored by sibling calls race to insert one
+    // inline row; every writer must get the ref, none a duplicate-key error.
+    let store = Arc::new(live_store("concurrent-inline-puts", 1024).await);
+    for round in 0..64 {
+        let bytes = format!("the same concurrent inline result {round}").into_bytes();
+        let expected = BlobRef::from_bytes(&bytes);
+        let writers = (0..8)
+            .map(|_| {
+                let store = store.clone();
+                let bytes = bytes.clone();
+                tokio::spawn(async move { store.put_bytes(bytes).await })
+            })
+            .collect::<Vec<_>>();
+        for writer in writers {
+            let result = writer.await.expect("writer task");
+            assert_eq!(result.expect("concurrent inline put"), expected);
+        }
+        assert_eq!(store.read_bytes(&expected).await.expect("read"), bytes);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Environments
 // ---------------------------------------------------------------------------
