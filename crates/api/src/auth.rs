@@ -77,9 +77,9 @@ fn metadata_is_empty(value: &serde_json::Value) -> bool {
     }
 }
 
-/// Import a static bearer credential as an auth grant. This is the one
-/// deliberate inbound-plaintext path: `token` is encrypted on receipt and is
-/// never returned by any method. `Debug` output redacts the token; request
+/// Import a token credential as an auth grant. Together with
+/// [`AuthGrantReplaceParams`] this is the deliberate inbound-plaintext path:
+/// `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
 /// logging must never echo these params.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -186,6 +186,38 @@ pub struct AuthGrantReadParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGrantReadResponse {
+    pub grant: AuthGrantView,
+}
+
+/// Replace the token of an active token credential (`staticToken`). The
+/// credential keeps its id, display name, audience, exposure and everything
+/// that references it, so MCP servers, headers, bot polls and environment
+/// variables use the new value from their next request or process. `token` is
+/// encrypted on receipt and never returned; `Debug` output redacts it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantReplaceParams {
+    pub grant_id: String,
+    pub token: String,
+    /// When the new token expires. Absent means it does not expire; the old
+    /// token's expiry is not carried over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<i64>,
+}
+
+impl std::fmt::Debug for AuthGrantReplaceParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthGrantReplaceParams")
+            .field("grant_id", &self.grant_id)
+            .field("token", &"<redacted>")
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantReplaceResponse {
     pub grant: AuthGrantView,
 }
 

@@ -110,6 +110,30 @@ impl AuthGrantStore for InMemoryAuthGrantStore {
         Ok(record.clone())
     }
 
+    async fn replace_grant_token(
+        &self,
+        grant_id: &AuthGrantId,
+        expected: &SecretId,
+        replacement: AuthGrantTokenRefresh,
+    ) -> Result<Option<AuthGrantRecord>, AuthRegistryError> {
+        let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
+        let record = inner
+            .get_mut(grant_id)
+            .ok_or_else(|| AuthRegistryError::GrantNotFound {
+                grant_id: grant_id.clone(),
+            })?;
+        if record.access_token_secret.as_ref() != Some(expected) {
+            return Ok(None);
+        }
+        let mut next = record.clone();
+        next.access_token_secret = Some(replacement.access_token_secret);
+        next.expires_at_ms = replacement.expires_at_ms;
+        next.updated_at_ms = replacement.updated_at_ms;
+        next.validate()?;
+        *record = next.clone();
+        Ok(Some(next))
+    }
+
     async fn record_grant_lease(
         &self,
         grant_id: &AuthGrantId,
@@ -529,6 +553,67 @@ mod tests {
             .expect("delete grant");
         assert!(matches!(
             store.read_grant(&created.grant_id).await,
+            Err(AuthRegistryError::GrantNotFound { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn in_memory_grant_token_replacement_swaps_only_from_the_expected_value() {
+        let store = InMemoryAuthGrantStore::new();
+        let grant_id = AuthGrantId::new("authgrant_1");
+        store
+            .create_grant(grant_request("authgrant_1"))
+            .await
+            .expect("create grant");
+        let replacement = |secret: &str| AuthGrantTokenRefresh {
+            access_token_secret: SecretId::new(secret),
+            refresh_token_secret: None,
+            expires_at_ms: Some(50),
+            updated_at_ms: 20,
+        };
+
+        let swapped = store
+            .replace_grant_token(
+                &grant_id,
+                &SecretId::new("authsec_1"),
+                replacement("authsec_2"),
+            )
+            .await
+            .expect("replace")
+            .expect("expected value matched");
+        assert_eq!(
+            swapped.access_token_secret,
+            Some(SecretId::new("authsec_2"))
+        );
+        assert_eq!(swapped.expires_at_ms, Some(50));
+
+        // A writer that read the old value loses and changes nothing.
+        let stale = store
+            .replace_grant_token(
+                &grant_id,
+                &SecretId::new("authsec_1"),
+                replacement("authsec_3"),
+            )
+            .await
+            .expect("replace");
+        assert!(stale.is_none());
+        assert_eq!(
+            store
+                .read_grant(&grant_id)
+                .await
+                .expect("read")
+                .access_token_secret,
+            Some(SecretId::new("authsec_2"))
+        );
+
+        assert!(matches!(
+            store
+                .replace_grant_token(
+                    &AuthGrantId::new("authgrant_missing"),
+                    &SecretId::new("authsec_1"),
+                    replacement("authsec_4"),
+                )
+                .await,
             Err(AuthRegistryError::GrantNotFound { .. })
         ));
     }

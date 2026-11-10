@@ -58,6 +58,68 @@ pub(super) fn auth_grant_import_draft(
     Ok(AuthGrantImportDraft { secret, grant })
 }
 
+/// What a token replacement writes: the new sealed secret and the grant as it
+/// will read once its pointer is swapped. Refuses anything that is not an
+/// active token credential, so OAuth, GitHub App and model grants keep their
+/// own refresh and reconnect paths and a revoked credential stays revoked.
+pub(super) struct AuthGrantReplaceDraft {
+    pub(super) expected: auth::SecretId,
+    pub(super) secret: auth::PutSecretRecord,
+    pub(super) replacement: auth::AuthGrantTokenRefresh,
+}
+
+pub(super) fn auth_grant_replace_draft(
+    current: &auth::AuthGrantRecord,
+    token: String,
+    expires_at_ms: Option<i64>,
+    now_ms: i64,
+) -> Result<AuthGrantReplaceDraft, AgentApiError> {
+    if current.provider_kind != auth::AuthProviderKind::StaticToken {
+        return Err(AgentApiError::rejected(format!(
+            "auth grant {} is a {:?} credential; only token credentials can have their value replaced",
+            current.grant_id, current.provider_kind
+        )));
+    }
+    if current.status != auth::AuthGrantStatus::Active {
+        return Err(AgentApiError::rejected(format!(
+            "auth grant {} is not active: {:?}",
+            current.grant_id, current.status
+        )));
+    }
+    let Some(expected) = current.access_token_secret.clone() else {
+        return Err(AgentApiError::internal(format!(
+            "token credential {} has no stored value",
+            current.grant_id
+        )));
+    };
+    let secret_id =
+        auth::SecretId::try_new(format!("authsec_{}", uuid::Uuid::new_v4().simple()))
+            .map_err(|error| AgentApiError::internal(format!("generate secret id: {error}")))?;
+    let secret = auth::PutSecretRecord {
+        secret_id: secret_id.clone(),
+        secret_kind: auth::SECRET_KIND_STATIC_TOKEN.to_owned(),
+        value: auth::SecretValue::new(token),
+        created_at_ms: now_ms,
+    };
+    secret.validate().map_err(map_auth_error)?;
+    let replacement = auth::AuthGrantTokenRefresh {
+        access_token_secret: secret_id.clone(),
+        refresh_token_secret: None,
+        expires_at_ms,
+        updated_at_ms: now_ms,
+    };
+    let mut preview = current.clone();
+    preview.access_token_secret = Some(secret_id);
+    preview.expires_at_ms = expires_at_ms;
+    preview.updated_at_ms = now_ms.max(current.updated_at_ms);
+    preview.validate().map_err(map_auth_error)?;
+    Ok(AuthGrantReplaceDraft {
+        expected,
+        secret,
+        replacement,
+    })
+}
+
 pub(super) fn auth_grant_view(record: auth::AuthGrantRecord) -> api::AuthGrantView {
     api::AuthGrantView {
         grant_id: record.grant_id.as_str().to_owned(),

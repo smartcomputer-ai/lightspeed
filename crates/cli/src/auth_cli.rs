@@ -313,8 +313,11 @@ struct AuthGrantArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 enum AuthGrantCommand {
-    /// Import a reusable bearer token as an external credential.
+    /// Import a reusable token as an external credential.
     Import(AuthGrantImportArgs),
+    /// Replace the value of a token credential, keeping its id and every
+    /// server, header or environment variable that references it.
+    Replace(AuthGrantReplaceArgs),
     /// List stored external credentials.
     List(AuthGrantListArgs),
     /// Inspect external credential metadata without returning secret values.
@@ -338,14 +341,14 @@ struct AuthGrantImportArgs {
     /// Optional provider id recorded on the grant. Defaults to "static".
     #[arg(long = "provider-id")]
     provider_id: Option<String>,
-    /// Bearer token value. Prefer --token-stdin or --token-env to keep the
-    /// value out of shell history.
+    /// Token value. Prefer --token-stdin or --token-env to keep the value out
+    /// of shell history.
     #[arg(long, group = "token_source")]
     token: Option<String>,
-    /// Read the bearer token from this environment variable.
+    /// Read the token from this environment variable.
     #[arg(long = "token-env", group = "token_source")]
     token_env: Option<String>,
-    /// Read the bearer token from stdin.
+    /// Read the token from stdin.
     #[arg(long = "token-stdin", group = "token_source")]
     token_stdin: bool,
     /// Optional display name.
@@ -374,6 +377,45 @@ impl std::fmt::Debug for AuthGrantImportArgs {
             .field("token_env", &self.token_env)
             .field("token_stdin", &self.token_stdin)
             .field("audience", &self.audience)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Args, Clone)]
+#[command(group(ArgGroup::new("token_source").required(true)))]
+struct AuthGrantReplaceArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(skip)]
+    api_url: String,
+    /// Emit the updated grant as JSON.
+    #[arg(long)]
+    json: bool,
+    /// Token credential whose value to replace.
+    grant_id: String,
+    /// New token value. Prefer --token-stdin or --token-env to keep the value
+    /// out of shell history.
+    #[arg(long, group = "token_source")]
+    token: Option<String>,
+    /// Read the new token from this environment variable.
+    #[arg(long = "token-env", group = "token_source")]
+    token_env: Option<String>,
+    /// Read the new token from stdin.
+    #[arg(long = "token-stdin", group = "token_source")]
+    token_stdin: bool,
+    /// Expiry of the new token in unix milliseconds. Omit for a token that
+    /// does not expire; the old token's expiry is not carried over.
+    #[arg(long = "expires-at-ms")]
+    expires_at_ms: Option<i64>,
+}
+
+impl std::fmt::Debug for AuthGrantReplaceArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthGrantReplaceArgs")
+            .field("api_url", &self.api_url)
+            .field("grant_id", &self.grant_id)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("token_env", &self.token_env)
+            .field("token_stdin", &self.token_stdin)
             .finish_non_exhaustive()
     }
 }
@@ -680,17 +722,22 @@ async fn client(args: AuthClientArgs) -> Result<()> {
 async fn grant(args: AuthGrantArgs) -> Result<()> {
     match args.command {
         AuthGrantCommand::Import(args) => grant_import(args).await,
+        AuthGrantCommand::Replace(args) => grant_replace(args).await,
         AuthGrantCommand::List(args) => grant_list(args).await,
         AuthGrantCommand::Read(args) => grant_read(args).await,
         AuthGrantCommand::Revoke(args) => grant_revoke(args).await,
     }
 }
 
-fn resolve_token(args: &AuthGrantImportArgs) -> Result<String> {
-    if let Some(token) = &args.token {
+fn resolve_token(
+    token: Option<&String>,
+    token_env: Option<&String>,
+    _token_stdin: bool,
+) -> Result<String> {
+    if let Some(token) = token {
         return Ok(token.clone());
     }
-    if let Some(name) = &args.token_env {
+    if let Some(name) = token_env {
         return std::env::var(name)
             .with_context(|| format!("environment variable {name} is not set"))
             .and_then(|value| {
@@ -713,7 +760,11 @@ fn resolve_token(args: &AuthGrantImportArgs) -> Result<String> {
 }
 
 async fn grant_import(args: AuthGrantImportArgs) -> Result<()> {
-    let token = resolve_token(&args)?;
+    let token = resolve_token(
+        args.token.as_ref(),
+        args.token_env.as_ref(),
+        args.token_stdin,
+    )?;
     let api = HttpAgentApi::new(args.api_url.clone());
     let response = api
         .import_auth_grant(api::AuthGrantImportParams {
@@ -727,6 +778,30 @@ async fn grant_import(args: AuthGrantImportArgs) -> Result<()> {
             audience: args.audience.clone(),
             expires_at_ms: args.expires_at_ms,
             metadata: None,
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    print_grant(&response.grant);
+    Ok(())
+}
+
+async fn grant_replace(args: AuthGrantReplaceArgs) -> Result<()> {
+    let token = resolve_token(
+        args.token.as_ref(),
+        args.token_env.as_ref(),
+        args.token_stdin,
+    )?;
+    let api = HttpAgentApi::new(args.api_url.clone());
+    let response = api
+        .replace_auth_grant(api::AuthGrantReplaceParams {
+            grant_id: args.grant_id.clone(),
+            token,
+            expires_at_ms: args.expires_at_ms,
         })
         .await
         .map_err(crate::api_client::api_error)?
@@ -1375,4 +1450,51 @@ fn print_client(client: &api::OAuthClientView) {
 
 fn print_grant(grant: &api::AuthGrantView) {
     crate::output::show(false, grant).expect("serializable credential metadata");
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    #[derive(Parser)]
+    struct GrantCommand {
+        #[command(subcommand)]
+        command: AuthGrantCommand,
+    }
+
+    #[test]
+    fn grant_replace_needs_one_token_source_and_redacts_the_token() {
+        let parsed = GrantCommand::try_parse_from([
+            "grants",
+            "replace",
+            "authgrant_upstream",
+            "--token",
+            "never-printed",
+        ])
+        .expect("parse");
+        let AuthGrantCommand::Replace(args) = parsed.command else {
+            panic!("expected replace");
+        };
+        assert_eq!(args.grant_id, "authgrant_upstream");
+        assert!(!format!("{args:?}").contains("never-printed"));
+
+        assert!(
+            GrantCommand::try_parse_from(["grants", "replace", "authgrant_upstream"]).is_err(),
+            "a token source is required"
+        );
+        assert!(
+            GrantCommand::try_parse_from([
+                "grants",
+                "replace",
+                "authgrant_upstream",
+                "--token",
+                "a",
+                "--token-stdin",
+            ])
+            .is_err(),
+            "token sources are exclusive"
+        );
+    }
 }

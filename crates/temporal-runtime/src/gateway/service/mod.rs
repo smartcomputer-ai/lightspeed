@@ -4324,6 +4324,56 @@ impl AgentApiService for GatewayAgentApi {
         }))
     }
 
+    async fn replace_auth_grant(
+        &self,
+        params: AuthGrantReplaceParams,
+    ) -> Result<AgentApiOutcome<AuthGrantReplaceResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GRANTS_REPLACE, None)
+            .await?;
+        let grant_id = parse_auth_grant_id(params.grant_id)?;
+        let current = self
+            .store
+            .read_grant(&grant_id)
+            .await
+            .map_err(map_auth_error)?;
+        let draft = auth_api::auth_grant_replace_draft(
+            &current,
+            params.token,
+            params.expires_at_ms,
+            now_ms()?,
+        )?;
+        self.store
+            .put_secret(draft.secret.clone())
+            .await
+            .map_err(map_auth_error)?;
+        // Swap only if nobody replaced the value since the read, so two
+        // concurrent replacements never strand each other's secrets.
+        let swapped = self
+            .store
+            .replace_grant_token(&grant_id, &draft.expected, draft.replacement)
+            .await;
+        let record = match swapped {
+            Ok(Some(record)) => record,
+            other => {
+                let _ = self.store.delete_secret(&draft.secret.secret_id).await;
+                return Err(match other {
+                    Ok(_) => AgentApiError::conflict(format!(
+                        "auth grant {grant_id} was changed while its value was being replaced; retry"
+                    )),
+                    Err(error) => map_auth_error(error),
+                });
+            }
+        };
+        // The old value is unreferenced now. A failed delete leaves an
+        // unreachable sealed value behind, never a broken credential.
+        if let Err(error) = self.store.delete_secret(&draft.expected).await {
+            tracing::warn!(grant_id = %grant_id, %error, "could not delete a replaced credential value");
+        }
+        Ok(AgentApiOutcome::new(AuthGrantReplaceResponse {
+            grant: auth_grant_view(record),
+        }))
+    }
+
     async fn revoke_auth_grant(
         &self,
         params: AuthGrantRevokeParams,

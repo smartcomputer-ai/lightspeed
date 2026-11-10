@@ -544,6 +544,24 @@ export function secretRoutes(store: DemoStore): Hono {
     return c.json(revokeGrant(grant));
   });
 
+  /// A new value for an active token or environment secret, kept under the
+  /// same id like the engine's in-place replacement. The demo stores no
+  /// values, so only the grant's timestamps move.
+  app.post("/:id/secrets/grants/:grantId/replace", async (c) => {
+    const universe = universeFor(store, c);
+    const grant = universe ? findGrant(universe, c.req.param("grantId")) : undefined;
+    if (!grant) return notFound(c);
+    const body = await readBody(c);
+    if (typeof body.value !== "string" || !body.value) {
+      return badRequest(c, "a new value is required");
+    }
+    if (grant.providerKind !== "staticToken" || grant.status !== "active") {
+      return badRequest(c, "only active token credentials can have their value replaced");
+    }
+    grant.updatedAtMs = Date.now();
+    return c.json(grant);
+  });
+
   /// Active grants for MCP-server credential selection.
   app.get("/:id/auth-grants", (c) => {
     const universe = universeFor(store, c);

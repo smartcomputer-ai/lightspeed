@@ -239,6 +239,16 @@ pub trait AuthGrantStore: Send + Sync {
         refresh: AuthGrantTokenRefresh,
     ) -> Result<AuthGrantRecord, AuthRegistryError>;
 
+    /// Point the grant at a replacement access-token secret and expiry, only
+    /// if it still points at `expected`. `Ok(None)` means another writer
+    /// replaced it first; the caller still owns the secret it stored.
+    async fn replace_grant_token(
+        &self,
+        grant_id: &AuthGrantId,
+        expected: &SecretId,
+        replacement: AuthGrantTokenRefresh,
+    ) -> Result<Option<AuthGrantRecord>, AuthRegistryError>;
+
     /// Record the expiry of a token minted on demand without persisting the
     /// token itself (for example a GitHub App installation token).
     async fn record_grant_mint_expiry(

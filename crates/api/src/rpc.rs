@@ -516,13 +516,15 @@ api_methods! {
     METHOD_MCP_SERVERS_DELETE => delete_mcp_server(McpServerDeleteParams) -> McpServerDeleteResponse =>
         ["Delete an MCP server record", "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GRANTS_IMPORT => import_auth_grant(AuthGrantImportParams) -> AuthGrantImportResponse =>
-        ["Import a static bearer grant", "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Import a token credential", "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GRANTS_LEASE => lease_auth_grant(AuthGrantLeaseParams) -> AuthGrantLeaseResponse =>
         ["Lease a retrievable authentication grant", "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads."], access: MethodAccess::Service,
     METHOD_AUTH_GRANTS_READ => read_auth_grant(AuthGrantReadParams) -> AuthGrantReadResponse =>
         ["Read authentication grant metadata", "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_AUTH_GRANTS_LIST => list_auth_grants(AuthGrantListParams) -> AuthGrantListResponse =>
         ["List authentication grants", "Lists non-secret grant metadata for the universe, optionally filtered by status."], access: MethodAccess::Universe(UniverseAction::Read),
+    METHOD_AUTH_GRANTS_REPLACE => replace_auth_grant(AuthGrantReplaceParams) -> AuthGrantReplaceResponse =>
+        ["Replace a token credential's value", "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GRANTS_REVOKE => revoke_auth_grant(AuthGrantRevokeParams) -> AuthGrantRevokeResponse =>
         ["Revoke an authentication grant", "Marks the grant unusable by token consumers while retaining non-secret audit metadata."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_CLIENTS_CREATE => create_auth_client(AuthClientCreateParams) -> AuthClientCreateResponse =>

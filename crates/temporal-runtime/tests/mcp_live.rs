@@ -1218,6 +1218,36 @@ async fn run_custom_headers_live_client(
         "every request carries both headers: {seen:?}"
     );
 
+    // Replacing the credential's value reaches the server on the next request
+    // without editing the server.
+    let rotated = format!("upstream-live-token-rotated-{suffix}");
+    let replaced = api
+        .replace_auth_grant(api::AuthGrantReplaceParams {
+            grant_id: grant_id.clone(),
+            token: rotated.clone(),
+            expires_at_ms: None,
+        })
+        .await?
+        .result
+        .grant;
+    anyhow::ensure!(
+        replaced.grant_id == grant_id,
+        "replacement keeps the credential id"
+    );
+    let before_rotation = fixture.seen.lock().await.len();
+    // Discovery of one server is rate-limited to one attempt every two seconds.
+    tokio::time::sleep(Duration::from_millis(2_100)).await;
+    discover_count(&api, &server_id).await?;
+    let after = fixture.seen.lock().await[before_rotation..].to_vec();
+    anyhow::ensure!(
+        !after.is_empty(),
+        "discovery after replacement reached the fixture"
+    );
+    anyhow::ensure!(
+        after.iter().all(|(_, sent)| sent == &rotated),
+        "every request after the replacement carries the new token: {after:?}"
+    );
+
     // A revoked credential is never sent: discovery fails before any request.
     api.revoke_auth_grant(api::AuthGrantRevokeParams {
         grant_id: grant_id.clone(),

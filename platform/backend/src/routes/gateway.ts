@@ -9,6 +9,7 @@ import {
   type AgentProfileInput,
   type AuthFlowStatusResponse,
   type AuthGrantImportParams,
+  type AuthGrantReplaceParams,
   type AuthGitHubInstallationGrantParams,
   type AuthGitHubInstallationListParams,
   type AuthGrantListParams,
@@ -297,7 +298,7 @@ const providerCredentialCreateSchema = z.object({
   credential: z.string().min(1),
 });
 
-const bearerGrantCreateSchema = z.object({
+const tokenGrantCreateSchema = z.object({
   grantId: z.string().trim().min(1).optional(),
   displayName: z.string().trim().min(1).max(200).optional(),
   subjectHint: z.string().trim().min(1).max(200).optional(),
@@ -330,6 +331,28 @@ const environmentSecretCreateSchema = z.object({
 });
 
 export const ENVIRONMENT_SECRET_PROVIDER_ID = "environment-secret";
+
+/// A new value for an existing token credential or environment secret; both
+/// are token grants underneath, so environment-secret limits apply to either.
+const credentialReplaceSchema = z.object({
+  value: z
+    .string()
+    .min(1)
+    .max(1_000_000)
+    .refine((value) => !value.includes("\0"), "credential values cannot contain NUL bytes"),
+  expiresAtMs: z.number().int().nonnegative().optional(),
+});
+
+export function credentialReplaceParams(
+  grantId: string,
+  input: z.infer<typeof credentialReplaceSchema>,
+): AuthGrantReplaceParams {
+  return {
+    grantId,
+    token: input.value,
+    ...(input.expiresAtMs === undefined ? {} : { expiresAtMs: input.expiresAtMs }),
+  };
+}
 
 export function environmentSecretGrantParams(
   input: z.infer<typeof environmentSecretCreateSchema>,
@@ -1411,7 +1434,7 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    const body = await parseBody(c, bearerGrantCreateSchema);
+    const body = await parseBody(c, tokenGrantCreateSchema);
     if (!body.ok) {
       return body.response;
     }
@@ -1492,6 +1515,28 @@ export function gatewayRoutes(ctx: AppContext) {
         }
         throw error;
       }
+    });
+  });
+
+  /// Replace a token credential's value in place. The engine keeps the grant
+  /// id, so every server, header, poll and environment variable that names
+  /// it picks up the new value without being edited.
+  app.post("/:id/secrets/grants/:grantId/replace", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) {
+      return c.json({ error: "not found" }, 404);
+    }
+    const body = await parseBody(c, credentialReplaceSchema);
+    if (!body.ok) {
+      return body.response;
+    }
+    return withGateway(c, async () => {
+      const client = engineClientFor(ctx, access);
+      const response = await client.call(
+        "auth/grants/replace",
+        credentialReplaceParams(c.req.param("grantId"), body.data),
+      );
+      return c.json(response.result.grant);
     });
   });
 

@@ -2906,6 +2906,15 @@ impl AgentApiService for TestService {
         }))
     }
 
+    async fn replace_auth_grant(
+        &self,
+        params: AuthGrantReplaceParams,
+    ) -> Result<AgentApiOutcome<AuthGrantReplaceResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(AuthGrantReplaceResponse {
+            grant: test_auth_grant(params.grant_id, AuthGrantStatus::Active),
+        }))
+    }
+
     async fn revoke_auth_grant(
         &self,
         params: AuthGrantRevokeParams,

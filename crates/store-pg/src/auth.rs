@@ -444,6 +444,42 @@ impl AuthGrantStore for PgStore {
         grant_record_from_row(&row)
     }
 
+    async fn replace_grant_token(
+        &self,
+        grant_id: &AuthGrantId,
+        expected: &SecretId,
+        replacement: AuthGrantTokenRefresh,
+    ) -> Result<Option<AuthGrantRecord>, AuthRegistryError> {
+        let query = format!(
+            r#"
+            UPDATE auth_grants
+            SET access_token_secret_id = $4,
+                expires_at_ms = $5,
+                updated_at_ms = $6
+            WHERE universe_id = $1 AND grant_id = $2 AND access_token_secret_id = $3
+            RETURNING {GRANT_COLUMNS}
+            "#
+        );
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(self.config.universe_id)
+            .bind(grant_id.as_str())
+            .bind(expected.as_str())
+            .bind(replacement.access_token_secret.as_str())
+            .bind(replacement.expires_at_ms)
+            .bind(replacement.updated_at_ms)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| auth_sql_error("replace auth grant token", error))?;
+        match row {
+            Some(row) => grant_record_from_row(&row).map(Some),
+            None => {
+                // Distinguish a lost race from a missing grant.
+                self.read_grant(grant_id).await?;
+                Ok(None)
+            }
+        }
+    }
+
     async fn record_grant_lease(
         &self,
         grant_id: &AuthGrantId,

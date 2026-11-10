@@ -88,6 +88,7 @@ export const METHODS = [
   "auth/grants/lease",
   "auth/grants/read",
   "auth/grants/list",
+  "auth/grants/replace",
   "auth/grants/revoke",
   "auth/clients/create",
   "auth/clients/read",
@@ -626,7 +627,7 @@ export const METHOD_INFO = {
   "auth/grants/import": {
     scope: "universe",
     access: {"action":"configureResource","kind":"universe"},
-    summary: "Import a static bearer grant",
+    summary: "Import a token credential",
     description: "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
   },
   "auth/grants/lease": {
@@ -646,6 +647,12 @@ export const METHOD_INFO = {
     access: {"action":"read","kind":"universe"},
     summary: "List authentication grants",
     description: "Lists non-secret grant metadata for the universe, optionally filtered by status.",
+  },
+  "auth/grants/replace": {
+    scope: "universe",
+    access: {"action":"configureResource","kind":"universe"},
+    summary: "Replace a token credential's value",
+    description: "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.",
   },
   "auth/grants/revoke": {
     scope: "universe",
@@ -1721,7 +1728,7 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfMcpServerDeleteResponse;
   };
   /**
-   * Import a static bearer grant
+   * Import a token credential
    *
    * Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.
    */
@@ -1755,6 +1762,15 @@ export interface MethodMap {
   "auth/grants/list": {
     params: Api.AuthGrantListParams;
     result: Api.AgentApiOutcomeOfAuthGrantListResponse;
+  };
+  /**
+   * Replace a token credential's value
+   *
+   * Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.
+   */
+  "auth/grants/replace": {
+    params: Api.AuthGrantReplaceParams;
+    result: Api.AgentApiOutcomeOfAuthGrantReplaceResponse;
   };
   /**
    * Revoke an authentication grant

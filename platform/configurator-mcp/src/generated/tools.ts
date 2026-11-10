@@ -8728,13 +8728,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_auth_grants_import",
     "method": "auth/grants/import",
     "group": "auth",
-    "summary": "Import a static bearer grant",
+    "summary": "Import a token credential",
     "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
     "paramsType": "AuthGrantImportParams",
     "resultType": "AgentApiOutcome<AuthGrantImportResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "description": "Import a static bearer credential as an auth grant. This is the one\ndeliberate inbound-plaintext path: `token` is encrypted on receipt and is\nnever returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
+      "description": "Import a token credential as an auth grant. Together with\n[`AuthGrantReplaceParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
       "properties": {
         "audience": {
           "type": [
@@ -8864,6 +8864,40 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "type": "string"
         }
       }
+    }
+  },
+  {
+    "name": "lightspeed_auth_grants_replace",
+    "method": "auth/grants/replace",
+    "group": "auth",
+    "summary": "Replace a token credential's value",
+    "description": "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.",
+    "paramsType": "AuthGrantReplaceParams",
+    "resultType": "AgentApiOutcome<AuthGrantReplaceResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Replace the token of an active token credential (`staticToken`). The\ncredential keeps its id, display name, audience, exposure and everything\nthat references it, so MCP servers, headers, bot polls and environment\nvariables use the new value from their next request or process. `token` is\nencrypted on receipt and never returned; `Debug` output redacts it.",
+      "properties": {
+        "expiresAtMs": {
+          "description": "When the new token expires. Absent means it does not expire; the old\ntoken's expiry is not carried over.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "grantId": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "grantId",
+        "token"
+      ],
+      "type": "object"
     }
   },
   {

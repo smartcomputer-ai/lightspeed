@@ -2432,6 +2432,112 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_grant_token_replacement_swaps_only_from_the_expected_value() {
+    let store = live_store("grant-replace", 1024).await;
+    for (secret, value) in [
+        ("authsec_replace_old", "old-token"),
+        ("authsec_replace_new", "new-token"),
+        ("authsec_replace_late", "late-token"),
+    ] {
+        store
+            .put_secret(PutSecretRecord {
+                secret_id: SecretId::new(secret),
+                secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
+                value: SecretValue::new(value),
+                created_at_ms: 10,
+            })
+            .await
+            .expect("store secret");
+    }
+    let grant_id = AuthGrantId::new("authgrant_replace");
+    store
+        .create_grant(CreateAuthGrantRecord {
+            grant_id: grant_id.clone(),
+            provider_id: "static".to_owned(),
+            provider_kind: AuthProviderKind::StaticToken,
+            exposure: auth::AuthGrantExposure::Brokered,
+            created_by: api::Attribution::Local,
+            display_name: Some("Replaced".to_owned()),
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: None,
+            access_token_secret: Some(SecretId::new("authsec_replace_old")),
+            refresh_token_secret: None,
+            oauth_client: None,
+            expires_at_ms: None,
+            status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create grant");
+    let replacement = |secret: &str| auth::AuthGrantTokenRefresh {
+        access_token_secret: SecretId::new(secret),
+        refresh_token_secret: None,
+        expires_at_ms: Some(500),
+        updated_at_ms: 20,
+    };
+
+    let swapped = store
+        .replace_grant_token(
+            &grant_id,
+            &SecretId::new("authsec_replace_old"),
+            replacement("authsec_replace_new"),
+        )
+        .await
+        .expect("replace")
+        .expect("expected value matched");
+    assert_eq!(
+        swapped.access_token_secret,
+        Some(SecretId::new("authsec_replace_new"))
+    );
+    assert_eq!(swapped.expires_at_ms, Some(500));
+    assert_eq!(swapped.display_name.as_deref(), Some("Replaced"));
+
+    // The old value is unreferenced and can go; a stale writer changes nothing.
+    store
+        .delete_secret(&SecretId::new("authsec_replace_old"))
+        .await
+        .expect("delete replaced value");
+    assert!(
+        store
+            .replace_grant_token(
+                &grant_id,
+                &SecretId::new("authsec_replace_old"),
+                replacement("authsec_replace_late"),
+            )
+            .await
+            .expect("replace")
+            .is_none()
+    );
+    let current = store.read_grant(&grant_id).await.expect("read");
+    assert_eq!(
+        current.access_token_secret,
+        Some(SecretId::new("authsec_replace_new"))
+    );
+    assert_eq!(
+        store
+            .read_secret(&SecretId::new("authsec_replace_new"))
+            .await
+            .expect("read new value")
+            .1
+            .expose(),
+        "new-token"
+    );
+    assert!(matches!(
+        store
+            .replace_grant_token(
+                &AuthGrantId::new("authgrant_replace_missing"),
+                &SecretId::new("authsec_replace_new"),
+                replacement("authsec_replace_late"),
+            )
+            .await,
+        Err(AuthRegistryError::GrantNotFound { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
     let store = live_store("mcp-headers", 1024).await;
     let server_id = McpServerId::new("gateway");

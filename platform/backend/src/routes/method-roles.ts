@@ -17,6 +17,7 @@ export const METHOD_ROLES: Readonly<Record<string, UniverseRole>> = {
   "auth/grants/import": "operator",
   "auth/grants/list": "viewer",
   "auth/grants/read": "viewer",
+  "auth/grants/replace": "operator",
   "auth/grants/revoke": "operator",
   "auth/providers/create": "operator",
   "auth/providers/delete": "operator",

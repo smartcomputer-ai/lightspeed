@@ -2680,6 +2680,13 @@ export interface AgentApiOutcomeOfAuthGrantReadResponse {
 export interface AuthGrantReadResponse {
   grant: AuthGrantView;
 }
+export interface AgentApiOutcomeOfAuthGrantReplaceResponse {
+  notifications?: AgentNotification[];
+  result: AuthGrantReplaceResponse;
+}
+export interface AuthGrantReplaceResponse {
+  grant: AuthGrantView;
+}
 export interface AgentApiOutcomeOfAuthGrantRevokeResponse {
   notifications?: AgentNotification[];
   result: AuthGrantRevokeResponse;
@@ -4991,9 +4998,9 @@ export interface AuthGitHubInstallationListParams {
   providerId: string;
 }
 /**
- * Import a static bearer credential as an auth grant. This is the one
- * deliberate inbound-plaintext path: `token` is encrypted on receipt and is
- * never returned by any method. `Debug` output redacts the token; request
+ * Import a token credential as an auth grant. Together with
+ * [`AuthGrantReplaceParams`] this is the deliberate inbound-plaintext path:
+ * `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
  * logging must never echo these params.
  */
 export interface AuthGrantImportParams {
@@ -5030,6 +5037,22 @@ export interface AuthGrantListParams {
 }
 export interface AuthGrantReadParams {
   grantId: string;
+}
+/**
+ * Replace the token of an active token credential (`staticToken`). The
+ * credential keeps its id, display name, audience, exposure and everything
+ * that references it, so MCP servers, headers, bot polls and environment
+ * variables use the new value from their next request or process. `token` is
+ * encrypted on receipt and never returned; `Debug` output redacts it.
+ */
+export interface AuthGrantReplaceParams {
+  /**
+   * When the new token expires. Absent means it does not expire; the old
+   * token's expiry is not carried over.
+   */
+  expiresAtMs?: number | null;
+  grantId: string;
+  token: string;
 }
 export interface AuthGrantRevokeParams {
   grantId: string;

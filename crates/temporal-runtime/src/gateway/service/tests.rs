@@ -635,6 +635,71 @@ fn mcp_server_put_enforces_required_and_optional_binding_states() {
         .expect("optional-auth server may be active and unbound");
 }
 
+#[test]
+fn auth_grant_replacement_only_swaps_active_token_credentials() {
+    let token = test_auth_grant_record(
+        "authgrant_upstream",
+        auth::AuthProviderKind::StaticToken,
+        auth::AuthGrantStatus::Active,
+        Some("https://tracker.example.com"),
+    );
+    let expected = token
+        .access_token_secret
+        .clone()
+        .expect("token has a value");
+    let draft =
+        auth_api::auth_grant_replace_draft(&token, "new-token".to_owned(), Some(5_000), 4_000)
+            .expect("an active token credential can be replaced");
+    assert_eq!(draft.expected, expected);
+    assert_ne!(
+        draft.secret.secret_id, expected,
+        "the new value is a new sealed secret"
+    );
+    assert_eq!(draft.secret.secret_kind, auth::SECRET_KIND_STATIC_TOKEN);
+    assert_eq!(draft.secret.value.expose(), "new-token");
+    assert_eq!(
+        draft.replacement.access_token_secret,
+        draft.secret.secret_id
+    );
+    assert_eq!(draft.replacement.expires_at_ms, Some(5_000));
+    assert!(
+        format!(
+            "{:?}",
+            api::AuthGrantReplaceParams {
+                grant_id: "authgrant_upstream".to_owned(),
+                token: "never-logged".to_owned(),
+                expires_at_ms: None,
+            }
+        )
+        .contains("<redacted>")
+    );
+
+    for (kind, status) in [
+        (
+            auth::AuthProviderKind::McpOAuth,
+            auth::AuthGrantStatus::Active,
+        ),
+        (
+            auth::AuthProviderKind::GitHubApp,
+            auth::AuthGrantStatus::Active,
+        ),
+        (
+            auth::AuthProviderKind::StaticToken,
+            auth::AuthGrantStatus::Revoked,
+        ),
+    ] {
+        let grant = test_auth_grant_record("authgrant_other", kind, status, None);
+        let error = auth_api::auth_grant_replace_draft(&grant, "new-token".to_owned(), None, 4_000)
+            .err()
+            .expect("refused replacement");
+        assert_eq!(
+            error.kind,
+            AgentApiErrorKind::Rejected,
+            "{kind:?} {status:?}"
+        );
+    }
+}
+
 fn header_input(headers: serde_json::Value) -> api::McpServerInput {
     serde_json::from_value(serde_json::json!({
         "serverId": "gateway",

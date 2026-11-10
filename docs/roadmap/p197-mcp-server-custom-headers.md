@@ -157,6 +157,30 @@ Nothing is rewritten: a database holding `static_bearer` rows fails migration
 15 and has to be reset. The secret kind is bound into the AAD that seals each
 stored value, so existing secrets could not be carried over by SQL anyway.
 
+## Replacing a token's value
+
+Issue #138 asks that rotating a token mean editing the credential, not the
+server. `auth/grants/replace` gives an active `staticToken` credential a new
+value under the same grant id, so every server, header, bot poll and
+environment variable naming it uses the new value from its next request or
+process, without being edited. Running processes and leases already issued
+keep the old value.
+
+The new value is sealed as a new secret; a compare-and-swap moves the grant's
+pointer only if it still names the secret the caller read, so concurrent
+replacements cannot strand each other's values; then the old secret is
+deleted. A lost race deletes the caller's own secret and reports a conflict.
+OAuth, GitHub App and model grants are refused, since they renew or reconnect
+on their own. The new token's expiry is whatever the request gives.
+
+The word follows existing usage: *rotate* is for secrets Lightspeed mints
+(`deployment/api-keys/rotate`, `environments/registration-keys/rotate`);
+*replace* is for values the user supplies, as with model keys' "Replace key".
+The Credentials page offers **Replace value** for tokens and environment
+secrets; the CLI has `auth grants replace`. Model API keys still replace by
+delete and recreate in Platform and could move onto the same engine
+primitive later.
+
 ## Out of scope
 
 - **`Authorization` as a custom header, and a `scheme` prefix.** Needed for

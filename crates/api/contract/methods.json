@@ -1996,7 +1996,7 @@
       },
       "role": "operator",
       "scope": "universe",
-      "summary": "Import a static bearer grant",
+      "summary": "Import a token credential",
       "target": null
     },
     {
@@ -2071,6 +2071,31 @@
       "role": "viewer",
       "scope": "universe",
       "summary": "List authentication grants",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "description": "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.",
+      "group": "auth",
+      "method": "auth/grants/replace",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/AuthGrantReplaceParams"
+        },
+        "type": "AuthGrantReplaceParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantReplaceResponse"
+        },
+        "type": "AgentApiOutcome<AuthGrantReplaceResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Replace a token credential's value",
       "target": null
     },
     {
