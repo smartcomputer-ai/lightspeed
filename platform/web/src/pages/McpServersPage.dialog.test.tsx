@@ -144,7 +144,7 @@ it("names the server first, then confirms the connection with everything else be
   const headings = [...dialog().querySelectorAll('[role="group"][aria-labelledby]')].map(
     (group) => document.getElementById(group.getAttribute("aria-labelledby")!)?.textContent,
   );
-  expect(headings).toEqual(["Tools", "Network"]);
+  expect(headings).toEqual(["Tools", "Request headers", "Network"]);
   await choose("MCP execution", "runtime");
   await choose("MCP tool exposure", "search");
   await choose("Tool approval", "always");
@@ -193,6 +193,69 @@ it("edits on one page with the status switch as the first row", async () => {
   await click(button("Save"));
   const put = mocks.api.mock.calls.find(([method]) => method === "PUT")?.[2];
   expect(put).toMatchObject({ serverId: "tools", revision: 4, status: "active", exposure: "search" });
+});
+
+it("edits request headers as plain values and credentials and shows only credential names", async () => {
+  servers = [{ ...saved, status: "active" }];
+  const implementation = mocks.api.getMockImplementation()!;
+  mocks.api.mockImplementation(async (method, path, body) => {
+    if (path.endsWith("/auth-grants")) {
+      return [
+        { grantId: "authgrant_upstream", providerId: "static", providerKind: "staticBearer", displayName: "Tracker token", status: "active", exposure: "brokered" },
+        { grantId: "authgrant_oauth", providerId: "crm", providerKind: "mcpOAuth", displayName: "CRM sign-in", status: "active", exposure: "brokered" },
+      ];
+    }
+    return implementation(method, path, body);
+  });
+  await show();
+  await click(container.querySelector<HTMLButtonElement>('[aria-label="Details for Research tools"]'));
+  await click(button("Edit server"));
+  await click(field('[aria-label="Customize connection options"]') as HTMLButtonElement);
+
+  await click(button("Add header"));
+  await type('[aria-label="Header 1 name"]', "X-Upstream-Url");
+  await type('[aria-label="Header 1 value"]', "https://tracker.example.com");
+  await click(button("Add header"));
+  await type('[aria-label="Header 2 name"]', "X-Upstream-Token");
+  await choose("Header 2 source", "credential");
+  // Only static tokens can be sent as a header.
+  const options = [...dialog().querySelectorAll<HTMLOptionElement>('select[aria-label="Header 2 credential"] option')]
+    .map((option) => option.textContent);
+  expect(options).toEqual(["Choose a credential", "Tracker token (static)"]);
+
+  // An incomplete header is caught before saving.
+  await click(button("Save"));
+  expect(dialog().textContent).toContain("Choose a credential for the header X-Upstream-Token.");
+  expect(mocks.api.mock.calls.some(([method]) => method === "PUT")).toBe(false);
+
+  await choose("Header 2 credential", "authgrant_upstream");
+  expect(summary()).toContain("2 request headers");
+  await click(button("Save"));
+  const put = mocks.api.mock.calls.find(([method]) => method === "PUT")?.[2];
+  expect(put).toMatchObject({
+    headers: {
+      "X-Upstream-Url": { type: "literal", value: "https://tracker.example.com" },
+      "X-Upstream-Token": { type: "credential", grantId: "authgrant_upstream" },
+    },
+  });
+});
+
+it("refuses request headers when the model provider connects", async () => {
+  servers = [{
+    ...saved,
+    status: "active",
+    headers: { "x-tenant": { type: "literal", value: "acme" } },
+  } as typeof saved];
+  await show();
+  await click(container.querySelector<HTMLButtonElement>('[aria-label="Details for Research tools"]'));
+  expect(dialog().textContent).toContain("x-tenant: acme");
+  await click(button("Edit server"));
+  await click(field('[aria-label="Customize connection options"]') as HTMLButtonElement);
+  expect((field('[aria-label="Header 1 name"]') as HTMLInputElement).value).toBe("x-tenant");
+  await choose("MCP execution", "provider");
+  await click(button("Save"));
+  expect(dialog().textContent).toContain("Request headers need Lightspeed to connect.");
+  expect(mocks.api.mock.calls.some(([method]) => method === "PUT")).toBe(false);
 });
 
 it("summarizes OAuth details and private-network access only when they differ", () => {

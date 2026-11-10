@@ -8411,6 +8411,45 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           ]
         },
+        "McpServerHeader": {
+          "description": "Value of one extra MCP request header.",
+          "oneOf": [
+            {
+              "description": "Sent as written. Not secret: reads return the value.",
+              "properties": {
+                "type": {
+                  "const": "literal",
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "The token of a static-token credential in this universe, resolved at\neach request and sent raw, without a scheme prefix.",
+              "properties": {
+                "grantId": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "credential",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "grantId"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "McpServerInput": {
           "additionalProperties": {
             "not": {}
@@ -8496,6 +8535,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 }
               ],
               "default": "inject"
+            },
+            "headers": {
+              "additionalProperties": {
+                "$ref": "#/definitions/McpServerHeader"
+              },
+              "description": "Extra request headers sent on every request to the server, alongside\nany `Authorization` the auth policy produces. Names are\ncase-insensitive and stored lowercased; transport headers,\n`authorization` and `x-lightspeed-*` are reserved. Requires `runtime`\nexecution.",
+              "type": "object"
             },
             "serverId": {
               "type": "string"

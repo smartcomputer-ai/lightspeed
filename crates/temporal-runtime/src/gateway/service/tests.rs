@@ -635,6 +635,121 @@ fn mcp_server_put_enforces_required_and_optional_binding_states() {
         .expect("optional-auth server may be active and unbound");
 }
 
+fn header_input(headers: serde_json::Value) -> api::McpServerInput {
+    serde_json::from_value(serde_json::json!({
+        "serverId": "gateway",
+        "serverUrl": "https://gateway.example.com/mcp",
+        "defaultServerLabel": "gateway",
+        "execution": "runtime",
+        "headers": headers,
+    }))
+    .expect("valid MCP server input")
+}
+
+#[test]
+fn mcp_server_put_lowercases_header_names_and_refuses_case_duplicates() {
+    let record = mcp_api::put_mcp_server_record(
+        header_input(serde_json::json!({
+            "X-Upstream-Url": {"type": "literal", "value": "https://tracker.example.com"},
+            "X-Upstream-Token": {"type": "credential", "grantId": "authgrant_upstream"},
+        })),
+        1,
+    )
+    .expect("headers convert");
+    assert_eq!(
+        record.headers.keys().collect::<Vec<_>>(),
+        vec!["x-upstream-token", "x-upstream-url"]
+    );
+    assert_eq!(
+        record.headers["x-upstream-token"].grant_id(),
+        Some(&auth::AuthGrantId::new("authgrant_upstream"))
+    );
+
+    let error = mcp_api::put_mcp_server_record(
+        header_input(serde_json::json!({
+            "X-Tenant": {"type": "literal", "value": "a"},
+            "x-tenant": {"type": "literal", "value": "b"},
+        })),
+        1,
+    )
+    .expect_err("case-insensitive duplicate");
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+
+    let error = mcp_api::put_mcp_server_record(
+        header_input(serde_json::json!({
+            "Authorization": {"type": "literal", "value": "Token x"},
+        })),
+        1,
+    )
+    .expect_err("reserved header");
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[test]
+fn mcp_header_credentials_must_be_active_static_tokens_covering_the_server() {
+    let record = mcp_api::put_mcp_server_record(header_input(serde_json::json!({})), 1)
+        .expect("server converts");
+    let header = "x-upstream-token";
+    let grant = |kind, status, audience| {
+        test_auth_grant_record("authgrant_upstream", kind, status, audience)
+    };
+
+    mcp_api::validate_mcp_header_grant(
+        &record,
+        header,
+        &grant(
+            auth::AuthProviderKind::StaticBearer,
+            auth::AuthGrantStatus::Active,
+            Some("https://gateway.example.com"),
+        ),
+    )
+    .expect("an active static token covering the URL is accepted");
+
+    for (kind, status, audience) in [
+        (
+            auth::AuthProviderKind::McpOAuth,
+            auth::AuthGrantStatus::Active,
+            None,
+        ),
+        (
+            auth::AuthProviderKind::StaticBearer,
+            auth::AuthGrantStatus::Revoked,
+            None,
+        ),
+        (
+            auth::AuthProviderKind::StaticBearer,
+            auth::AuthGrantStatus::Active,
+            Some("https://elsewhere.example.com"),
+        ),
+    ] {
+        let error = mcp_api::validate_mcp_header_grant(
+            &record,
+            header,
+            &grant(kind, status, audience),
+        )
+        .expect_err("refused header credential");
+        assert_eq!(error.kind, AgentApiErrorKind::Rejected, "{kind:?} {status:?}");
+    }
+}
+
+#[test]
+fn mcp_server_view_returns_header_names_and_grant_ids_only() {
+    let mut record = test_mcp_server_record("gateway", mcp::McpServerStatus::Active);
+    record.headers.insert(
+        "x-upstream-token".to_owned(),
+        mcp::McpServerHeaderValue::Credential {
+            grant_id: auth::AuthGrantId::new("authgrant_upstream"),
+        },
+    );
+    let view = serde_json::to_value(mcp_server_view(record)).expect("serialize view");
+    assert_eq!(
+        view["headers"],
+        serde_json::json!({
+            "x-upstream-token": {"type": "credential", "grantId": "authgrant_upstream"}
+        })
+    );
+}
+
 #[test]
 fn mcp_attachment_leaves_url_and_credential_out_of_durable_state() {
     let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
@@ -2307,6 +2422,7 @@ fn test_mcp_server_put(server_id: &str, status: mcp::McpServerStatus) -> mcp::Pu
         allow_private_network: false,
         auth_policy: mcp::McpServerAuthPolicy::None,
         auth_grant_id: None,
+        headers: Default::default(),
         status,
         now_ms: 1,
     }

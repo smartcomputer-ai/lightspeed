@@ -43,7 +43,7 @@ pub use provider_keys::{
 pub use result::{LlmDebugDumps, LlmGenerationExecution, failed_generation_result};
 pub use secrets::{
     EnvSecretResolver, REDACTED_SECRET_PLACEHOLDER, ResolvedSecretValue, SECRET_NAMESPACE_ENV,
-    SECRET_NAMESPACE_MCP_SERVER, SecretRef, SecretResolveError, SecretResolver,
-    StaticSecretResolver, UnconfiguredSecretResolver,
+    SECRET_NAMESPACE_MCP_SERVER, SECRET_NAMESPACE_MCP_SERVER_HEADER, SecretRef,
+    SecretResolveError, SecretResolver, StaticSecretResolver, UnconfiguredSecretResolver,
 };
 mod tool_catalog;

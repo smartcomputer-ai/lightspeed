@@ -3626,6 +3626,7 @@ fn test_mcp_server(server_id: String) -> McpServerView {
         allow_private_network: false,
         auth_policy: McpServerAuthPolicy::None,
         credential: None,
+        headers: Default::default(),
         status: McpServerStatus::Active,
         revision: 1,
         created_at_ms: 1,

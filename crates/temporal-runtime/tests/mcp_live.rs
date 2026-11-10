@@ -629,6 +629,7 @@ async fn put_fixture_server(
             allow_private_network: true,
             auth_policy: api::McpServerAuthPolicy::None,
             credential: None,
+            headers: Default::default(),
             status: McpServerStatus::Active,
         },
         expected_revision: None,
@@ -1074,6 +1075,173 @@ async fn temporal_live_unavailable_mcp_server_degrades_runs_and_refuses_only_new
     run_with_live_worker(activities, run_unavailable_server_live_client).await
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra and LIGHTSPEED_MCP_PRIVATE_NETWORKS allowing loopback"]
+async fn temporal_live_mcp_custom_headers_reach_the_server_and_follow_the_credential()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_custom_headers_live_client).await
+}
+
+/// Records the custom headers of every request, then answers as the small
+/// acceptance fixture.
+#[derive(Clone)]
+struct HeaderFixture {
+    inner: Arc<Mutex<FixtureState>>,
+    seen: Arc<Mutex<Vec<(String, String)>>>,
+}
+
+async fn header_fixture_handler(
+    State(fixture): State<HeaderFixture>,
+    headers: axum::http::HeaderMap,
+    body: Json<Value>,
+) -> Response {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    fixture
+        .seen
+        .lock()
+        .await
+        .push((header("x-upstream-url"), header("x-upstream-token")));
+    fixture_handler(Path("small".to_owned()), State(fixture.inner), body).await
+}
+
+async fn run_custom_headers_live_client(
+    client: Client,
+    task_queue: String,
+    _session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let api = GatewayAgentApi::builder(client, store)
+        .with_task_queue(task_queue)
+        .build();
+    let fixture = HeaderFixture {
+        inner: Arc::new(Mutex::new(FixtureState {
+            large_tool_count: 0,
+            calls: Vec::new(),
+        })),
+        seen: Arc::new(Mutex::new(Vec::new())),
+    };
+    let app = Router::new()
+        .route("/mcp", post(header_fixture_handler).delete(fixture_delete))
+        .with_state(fixture.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let server_url = format!("http://{}/mcp", listener.local_addr()?);
+    let _server = FixtureTask(tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    }));
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let grant_id = format!("authgrant_upstream_{suffix}");
+    let token = format!("upstream-live-token-{suffix}");
+    api.import_auth_grant(api::AuthGrantImportParams {
+        grant_id: Some(grant_id.clone()),
+        provider_id: None,
+        exposure: api::AuthGrantExposure::Brokered,
+        token: token.clone(),
+        display_name: Some("Upstream tracker".to_owned()),
+        subject_hint: None,
+        scopes: Vec::new(),
+        audience: None,
+        expires_at_ms: None,
+        metadata: None,
+    })
+    .await?;
+
+    let server_id = format!("gateway_{suffix}");
+    let headers = std::collections::BTreeMap::from([
+        (
+            "X-Upstream-Url".to_owned(),
+            api::McpServerHeader::Literal {
+                value: "https://tracker.example.com".to_owned(),
+            },
+        ),
+        (
+            "X-Upstream-Token".to_owned(),
+            api::McpServerHeader::Credential {
+                grant_id: grant_id.clone(),
+            },
+        ),
+    ]);
+    let created = api
+        .put_mcp_server(McpServerPutParams {
+            server: McpServerInput {
+                server_id: server_id.clone(),
+                display_name: Some("Header gateway".to_owned()),
+                server_url,
+                default_server_label: "gateway".to_owned(),
+                description: None,
+                allowed_tools: None,
+                execution: RemoteMcpExecution::Runtime,
+                exposure: RemoteMcpExposure::Inject,
+                approval: RemoteMcpApprovalPolicy::Never,
+                defer_loading: None,
+                allow_private_network: true,
+                auth_policy: api::McpServerAuthPolicy::None,
+                credential: None,
+                headers,
+                status: McpServerStatus::Active,
+            },
+            expected_revision: None,
+        })
+        .await?
+        .result
+        .server;
+    // Names come back lowercased; the credential is named, never its token.
+    anyhow::ensure!(
+        created.headers.keys().collect::<Vec<_>>() == vec!["x-upstream-token", "x-upstream-url"],
+        "unexpected stored header names: {:?}",
+        created.headers.keys()
+    );
+    let view = serde_json::to_string(&created)?;
+    anyhow::ensure!(!view.contains(&token), "a server view must never carry the token");
+
+    let tools = discover_count(&api, &server_id).await?;
+    anyhow::ensure!(tools > 0, "the fixture advertises tools");
+    let seen = fixture.seen.lock().await.clone();
+    anyhow::ensure!(!seen.is_empty(), "discovery reached the fixture");
+    anyhow::ensure!(
+        seen.iter()
+            .all(|(url, sent)| url == "https://tracker.example.com" && sent == &token),
+        "every request carries both headers: {seen:?}"
+    );
+
+    // A revoked credential is never sent: discovery fails before any request.
+    api.revoke_auth_grant(api::AuthGrantRevokeParams {
+        grant_id: grant_id.clone(),
+    })
+    .await?;
+    let requests_before = fixture.seen.lock().await.len();
+    // Discovery of one server is rate-limited to one attempt every two seconds.
+    tokio::time::sleep(Duration::from_millis(2_100)).await;
+    let revoked = api
+        .discover_mcp_server_tools(McpServerToolsDiscoverParams {
+            server_id: server_id.clone(),
+        })
+        .await?
+        .result;
+    anyhow::ensure!(
+        matches!(revoked, McpServerToolsDiscoverResponse::Failure { .. }),
+        "discovery with a revoked header credential must fail: {revoked:?}"
+    );
+    anyhow::ensure!(
+        fixture.seen.lock().await.len() == requests_before,
+        "nothing is sent once the credential is revoked"
+    );
+
+    api.delete_mcp_server(McpServerDeleteParams { server_id }).await?;
+    Ok(())
+}
+
 async fn run_unavailable_server_live_client(
     client: Client,
     task_queue: String,
@@ -1106,6 +1274,7 @@ async fn run_unavailable_server_live_client(
                     allow_private_network: false,
                     auth_policy: api::McpServerAuthPolicy::None,
                     credential: None,
+                    headers: Default::default(),
                     status,
                 },
                 expected_revision: revision,
@@ -1841,6 +2010,7 @@ async fn run_runtime_mcp_live_client(
             allow_private_network: true,
             auth_policy: api::McpServerAuthPolicy::None,
             credential: None,
+            headers: Default::default(),
             status: McpServerStatus::Active,
         },
         expected_revision: None,
@@ -1958,6 +2128,7 @@ async fn run_mcp_live_client(
                 allow_private_network: true,
                 auth_policy: api::McpServerAuthPolicy::None,
                 credential: None,
+                headers: Default::default(),
                 status: McpServerStatus::Active,
             },
             expected_revision: None,
@@ -2512,6 +2683,7 @@ async fn run_mixed_batch_live_client(
             allow_private_network: true,
             auth_policy: api::McpServerAuthPolicy::None,
             credential: None,
+            headers: Default::default(),
             status: McpServerStatus::Active,
         },
         expected_revision: None,

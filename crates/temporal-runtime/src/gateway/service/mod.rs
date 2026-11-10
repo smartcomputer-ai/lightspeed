@@ -3992,6 +3992,16 @@ impl AgentApiService for GatewayAgentApi {
             None => None,
         };
         mcp_api::validate_mcp_server_credential(&record, grant.as_ref())?;
+        for (header, value) in &record.headers {
+            if let Some(grant_id) = value.grant_id() {
+                let grant = self
+                    .store
+                    .read_grant(grant_id)
+                    .await
+                    .map_err(map_auth_error)?;
+                mcp_api::validate_mcp_header_grant(&record, header, &grant)?;
+            }
+        }
         let server = self
             .store
             .put_server(record, params.expected_revision)
@@ -4116,11 +4126,33 @@ impl AgentApiService for GatewayAgentApi {
             },
             (None, None) => None,
         };
+        let header_secrets = crate::worker::BrokerSecretResolver::new(
+            self.auth_token_broker.clone(),
+            self.store.clone(),
+        );
+        let headers =
+            match mcp_discovery::resolve_mcp_request_headers(&header_secrets, &record).await {
+                Ok(headers) => headers,
+                Err(error) => {
+                    tracing::info!(
+                        server_id = %server_id,
+                        outcome = "credential_unresolved",
+                        "MCP header credential could not be resolved"
+                    );
+                    return Ok(AgentApiOutcome::new(mcp_api::mcp_tool_discovery_failure(
+                        mcp::McpToolDiscoveryFailure::new(
+                            mcp::McpToolDiscoveryFailureKind::GrantNeedsReauth,
+                            format!("A custom header credential could not be resolved: {error}"),
+                        ),
+                    )));
+                }
+            };
+        let request_auth = mcp_discovery::McpRequestAuth { bearer, headers };
         let response = match self
             .mcp_tool_discoverer
             .discover_tools(
                 &record.server_url,
-                bearer.as_ref(),
+                &request_auth,
                 trusted_universe,
                 self.mcp_private_networks
                     .permits(&record.server_url, record.allow_private_network),

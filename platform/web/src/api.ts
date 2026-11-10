@@ -325,6 +325,10 @@ export interface GitHubIntegration {
   grants: SecretGrant[];
 }
 
+export type McpServerHeader =
+  | { type: "literal"; value: string }
+  | { type: "credential"; grantId: string };
+
 /// Engine MCP server record (mcp/servers/list view). The optional credential
 /// is a non-secret universe-owned grant reference; token material is never returned.
 export interface McpServer {
@@ -341,6 +345,9 @@ export interface McpServer {
   allowPrivateNetwork: boolean;
   authPolicy: { type: string } & Record<string, unknown>;
   credential?: { type: "authGrant"; grantId: string } | null;
+  /// Extra request headers keyed by lowercased name. A credential header shows
+  /// only its grant id; the token is never returned.
+  headers?: Record<string, McpServerHeader> | null;
   status: "active" | "needsAuthConfig" | "unverified" | "disabled";
   revision: number;
   createdAtMs: number;

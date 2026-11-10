@@ -1287,6 +1287,18 @@ export type McpServerCredential = {
  */
 export type RemoteMcpExecution = "provider" | "runtime";
 export type RemoteMcpExposure = "inject" | "search";
+/**
+ * Value of one extra MCP request header.
+ */
+export type McpServerHeader =
+  | {
+      type: "literal";
+      value: string;
+    }
+  | {
+      grantId: string;
+      type: "credential";
+    };
 export type McpServerStatus = "active" | "needsAuthConfig" | "unverified" | "disabled";
 /**
  * The result of one live MCP `tools/list` exchange. Operational connection
@@ -4331,6 +4343,13 @@ export interface McpServerView {
   displayName?: string | null;
   execution: RemoteMcpExecution;
   exposure: RemoteMcpExposure;
+  /**
+   * Extra request headers, keyed by lowercased name. Credential headers
+   * show only the credential id; the token is never returned.
+   */
+  headers?: {
+    [k: string]: McpServerHeader;
+  };
   revision: number;
   serverId: string;
   serverUrl: string;
@@ -5799,6 +5818,16 @@ export interface McpServerInput {
   displayName?: string | null;
   execution?: RemoteMcpExecution & string;
   exposure?: RemoteMcpExposure & string;
+  /**
+   * Extra request headers sent on every request to the server, alongside
+   * any `Authorization` the auth policy produces. Names are
+   * case-insensitive and stored lowercased; transport headers,
+   * `authorization` and `x-lightspeed-*` are reserved. Requires `runtime`
+   * execution.
+   */
+  headers?: {
+    [k: string]: McpServerHeader;
+  };
   serverId: string;
   serverUrl: string;
   status?: McpServerStatus & string;

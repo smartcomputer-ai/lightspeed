@@ -2432,6 +2432,124 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
+    let store = live_store("mcp-headers", 1024).await;
+    let server_id = McpServerId::new("gateway");
+
+    store
+        .put_secret(PutSecretRecord {
+            secret_id: SecretId::new("authsec_upstream"),
+            secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+            value: SecretValue::new("upstream-token"),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("store header secret");
+    let grant_id = AuthGrantId::new("authgrant_upstream");
+    store
+        .create_grant(CreateAuthGrantRecord {
+            grant_id: grant_id.clone(),
+            provider_id: "static".to_owned(),
+            provider_kind: AuthProviderKind::StaticBearer,
+            exposure: auth::AuthGrantExposure::Brokered,
+            created_by: api::Attribution::Local,
+            display_name: Some("Upstream".to_owned()),
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: None,
+            access_token_secret: Some(SecretId::new("authsec_upstream")),
+            refresh_token_secret: None,
+            oauth_client: None,
+            expires_at_ms: None,
+            status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create header grant");
+
+    let mut input = put_mcp_server("gateway", McpServerStatus::Active);
+    input.execution = mcp::McpExecution::Runtime;
+    input.headers.insert(
+        "x-upstream-url".to_owned(),
+        mcp::McpServerHeaderValue::Literal {
+            value: "https://tracker.example.com".to_owned(),
+        },
+    );
+    input.headers.insert(
+        "x-upstream-token".to_owned(),
+        mcp::McpServerHeaderValue::Credential {
+            grant_id: grant_id.clone(),
+        },
+    );
+    let created = store
+        .put_server(input.clone(), None)
+        .await
+        .expect("create server with headers");
+    assert_eq!(created.headers, input.headers);
+    assert_eq!(
+        store.read_server(&server_id).await.expect("read"),
+        created
+    );
+    let listed = store
+        .list_servers(ListMcpServers::default())
+        .await
+        .expect("list");
+    assert_eq!(listed, vec![created.clone()]);
+
+    // A credential held by a header cannot be deleted.
+    assert!(
+        store.delete_grant(&grant_id).await.is_err(),
+        "a credential referenced by a header must not be deletable"
+    );
+
+    // A header naming a credential that does not exist is refused whole.
+    let mut unknown = input.clone();
+    unknown.headers.insert(
+        "x-other-token".to_owned(),
+        mcp::McpServerHeaderValue::Credential {
+            grant_id: AuthGrantId::new("authgrant_missing"),
+        },
+    );
+    assert!(matches!(
+        store.put_server(unknown, None).await,
+        Err(McpRegistryError::InvalidInput { .. })
+    ));
+    assert_eq!(
+        store.read_server(&server_id).await.expect("unchanged"),
+        created
+    );
+
+    // Replacement replaces the header set.
+    let mut replacement = input;
+    replacement.headers.remove("x-upstream-token");
+    replacement.now_ms = 20;
+    let replaced = store
+        .put_server(replacement, Some(created.revision))
+        .await
+        .expect("replace headers");
+    assert_eq!(replaced.revision, 2);
+    assert_eq!(
+        replaced.headers.keys().collect::<Vec<_>>(),
+        vec!["x-upstream-url"]
+    );
+
+    // With no header holding it, the credential can go; deleting the server
+    // removes its headers.
+    store.delete_grant(&grant_id).await.expect("delete grant");
+    let deleted = store.delete_server(&server_id).await.expect("delete");
+    assert_eq!(deleted, replaced);
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM mcp_server_headers WHERE universe_id = $1")
+            .bind(store.config().universe_id)
+            .fetch_one(store.pool())
+        .await
+        .expect("count header rows");
+    assert_eq!(remaining, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
     let left = live_store("auth-left", 1024).await;
     let right = live_store("auth-right", 1024).await;
@@ -3442,6 +3560,7 @@ fn put_mcp_server(server_id: &str, status: McpServerStatus) -> PutMcpServerRecor
         allow_private_network: false,
         auth_policy: McpServerAuthPolicy::None,
         auth_grant_id: None,
+        headers: mcp::McpServerHeaders::new(),
         status,
         now_ms: 10,
     }
