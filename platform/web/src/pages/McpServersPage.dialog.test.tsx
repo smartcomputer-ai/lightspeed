@@ -238,6 +238,10 @@ it("edits request headers as plain values and credentials and shows only credent
       "X-Upstream-Token": { type: "credential", grantId: "authgrant_upstream" },
     },
   });
+  // The saved server authenticates through its header, and the table says so.
+  const row = container.querySelector("tbody tr")!;
+  expect(row.textContent).toContain("Request headers");
+  expect(row.textContent).not.toContain("No authentication");
 });
 
 it("refuses request headers when the model provider connects", async () => {
@@ -249,6 +253,8 @@ it("refuses request headers when the model provider connects", async () => {
   await show();
   await click(container.querySelector<HTMLButtonElement>('[aria-label="Details for Research tools"]'));
   expect(dialog().textContent).toContain("x-tenant: acme");
+  // A plain header is not a credential, so the server still reads as public.
+  expect(dialog().textContent).toContain("No authentication");
   await click(button("Edit server"));
   await click(field('[aria-label="Customize connection options"]') as HTMLButtonElement);
   expect((field('[aria-label="Header 1 name"]') as HTMLInputElement).value).toBe("x-tenant");

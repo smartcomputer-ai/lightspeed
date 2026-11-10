@@ -118,7 +118,7 @@ function ServerList({ universeId }: { universeId: string }) {
               <TableCell className="hidden max-w-64 sm:table-cell"><ResourceValue mono>{server.serverUrl}</ResourceValue></TableCell>
               <TableCell className="hidden max-w-56 sm:table-cell"><ResourceValue
                 description={server.authPolicy.type.startsWith("optional") ? "Optional" : server.authPolicy.type.startsWith("required") ? "Required" : undefined}>
-                {mcpAuthKind(server.authPolicy.type) === "oauth" ? "OAuth" : mcpAuthKind(server.authPolicy.type) === "bearer" ? "Bearer token" : "No authentication"}
+                {mcpAuthenticationSummary(server)}
               </ResourceValue></TableCell>
               <TableCell><ResourceStatus status={mcpServerStatus(server)} /></TableCell>
             </ResourceRow>
@@ -172,7 +172,7 @@ function ServerDetails({ universeId, server, authGrants, authGrantsLoading, onCh
         <ResourceDetail label="Server ID" mono>{server.serverId}</ResourceDetail>
         <ResourceDetail label="Status"><ResourceStatus status={mcpServerStatus(server)} /></ResourceDetail>
         <ResourceDetail label="URL" mono>{server.serverUrl}</ResourceDetail>
-        <ResourceDetail label="Authentication">{authPolicyLabel(server.authPolicy.type)}</ResourceDetail>
+        <ResourceDetail label="Authentication">{mcpHasCredentialHeader(server.headers) && server.authPolicy.type === "none" ? "Credential in request headers" : authPolicyLabel(server.authPolicy.type)}</ResourceDetail>
         {server.authPolicy.type !== "none" && <ResourceDetail label="Credential">
           {grant ? authGrantLabel(grant) : server.credential?.grantId ?? "No credential connected"}
         </ResourceDetail>}
@@ -228,6 +228,19 @@ function ServerDetails({ universeId, server, authGrants, authGrantsLoading, onCh
         server={writable && oauthOpen ? server : null} onOpenChange={setOAuthOpen} onDone={onChanged} />
     </>
   );
+}
+
+export function mcpHasCredentialHeader(headers: McpServer["headers"]): boolean {
+  return Object.values(headers ?? {}).some((header) => header.type === "credential");
+}
+
+/// The table's one-word answer to how a server authenticates. A server whose
+/// only credential travels in a custom header is not unauthenticated.
+export function mcpAuthenticationSummary(server: Pick<McpServer, "authPolicy" | "headers">): string {
+  const kind = mcpAuthKind(server.authPolicy.type);
+  if (kind === "oauth") return "OAuth";
+  if (kind === "bearer") return "Bearer token";
+  return mcpHasCredentialHeader(server.headers) ? "Request headers" : "No authentication";
 }
 
 function authPolicyLabel(type: string): string {
@@ -620,9 +633,11 @@ function ServerDialog({
               : "After saving, Lightspeed will open the provider sign-in and finish setup automatically."
             : authKind === "bearer"
               ? "Choose a universe credential to send as a bearer token."
-              : detectedOAuth
-                ? "The server advertises OAuth, so unauthenticated access may fail."
-                : "Use this for public MCP servers."}
+              : Object.values(headerInput.headers).some((header) => header.type === "credential")
+                ? "No Authorization header is sent; the server authenticates with the credentials in its request headers."
+                : detectedOAuth
+                  ? "The server advertises OAuth, so unauthenticated access may fail."
+                  : "Use this for public MCP servers. For a server that takes its credential in a custom header, add it under Customize → Request headers."}
         </FieldDescription>
       </Field>
 

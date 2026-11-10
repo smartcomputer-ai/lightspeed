@@ -4,6 +4,7 @@ import {
   isValidMcpUrl,
   mcpAuthPolicyInput,
   mcpAuthKind,
+  mcpAuthenticationSummary,
   mcpGrantCompatible,
   mcpHeaderRows,
   mcpHeadersExecutionError,
@@ -116,6 +117,25 @@ describe("MCP request headers", () => {
     expect(mcpHeadersExecutionError("provider", headers)).toContain("Lightspeed");
     expect(mcpHeadersExecutionError("runtime", headers)).toBeNull();
     expect(mcpHeadersExecutionError("provider", {})).toBeNull();
+  });
+});
+
+describe("MCP authentication summary", () => {
+  it("names header credentials instead of calling the server unauthenticated", () => {
+    const none = { authPolicy: { type: "none" } };
+    expect(mcpAuthenticationSummary(none)).toBe("No authentication");
+    expect(mcpAuthenticationSummary({
+      ...none,
+      headers: { "x-tenant": { type: "literal", value: "acme" } },
+    })).toBe("No authentication");
+    expect(mcpAuthenticationSummary({
+      ...none,
+      headers: { "x-upstream-token": { type: "credential", grantId: "authgrant_upstream" } },
+    })).toBe("Request headers");
+    expect(mcpAuthenticationSummary({
+      authPolicy: { type: "requiredBearer" },
+      headers: { "x-upstream-token": { type: "credential", grantId: "authgrant_upstream" } },
+    })).toBe("Bearer token");
   });
 });
 
