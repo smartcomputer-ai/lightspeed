@@ -4,7 +4,7 @@ use auth::{
     AuthFlowId, AuthFlowStore, AuthGrantId, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
     AuthProviderKind, AuthRegistryError, CreateAuthFlowRecord, CreateAuthGrantRecord,
     CreateOAuthClientRecord, FinishAuthFlow, GrantRefreshLock, ListAuthGrants, OAuthClientId,
-    OAuthClientStore, PutSecretRecord, SECRET_KIND_STATIC_BEARER, SecretId, SecretStore,
+    OAuthClientStore, PutSecretRecord, SECRET_KIND_STATIC_TOKEN, SecretId, SecretStore,
     SecretValue, TokenEndpointAuthMethod, state_hash,
 };
 use environment_protocol::{ids::ProviderTargetId, routes::DataRouteBase};
@@ -2330,7 +2330,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
 
     left.put_secret(PutSecretRecord {
         secret_id: SecretId::new("authsec_mcp_crm"),
-        secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+        secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
         value: SecretValue::new("crm-token"),
         created_at_ms: 10,
     })
@@ -2339,7 +2339,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
     left.create_grant(CreateAuthGrantRecord {
         grant_id: AuthGrantId::new("authgrant_mcp_crm"),
         provider_id: "static".to_owned(),
-        provider_kind: AuthProviderKind::StaticBearer,
+        provider_kind: AuthProviderKind::StaticToken,
         exposure: auth::AuthGrantExposure::Brokered,
         created_by: api::Attribution::Local,
         display_name: Some("CRM MCP".to_owned()),
@@ -2432,6 +2432,276 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_token_sealed_under_the_pre_rename_kind_still_resolves() {
+    // Migration 15 relabels v0.7 token grants to static_token but leaves their
+    // secrets under the kind they were sealed with, which is part of the AAD.
+    use auth::{AuthTokenBroker as _, RegistryTokenBroker, TokenAudience};
+
+    let store = Arc::new(live_store("legacy-token-kind", 1024).await);
+    store
+        .put_secret(PutSecretRecord {
+            secret_id: SecretId::new("authsec_legacy"),
+            secret_kind: "auth.static_bearer".to_owned(),
+            value: SecretValue::new("legacy-token"),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("store a secret under the pre-rename kind");
+    store
+        .create_grant(CreateAuthGrantRecord {
+            grant_id: AuthGrantId::new("authgrant_legacy"),
+            provider_id: "static".to_owned(),
+            provider_kind: AuthProviderKind::StaticToken,
+            exposure: auth::AuthGrantExposure::Brokered,
+            created_by: api::Attribution::Local,
+            display_name: None,
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: None,
+            access_token_secret: Some(SecretId::new("authsec_legacy")),
+            refresh_token_secret: None,
+            oauth_client: None,
+            expires_at_ms: None,
+            status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create the relabelled grant");
+    let broker = RegistryTokenBroker::new(store.clone(), store.clone(), store.clone());
+    let token = broker
+        .bearer_token(
+            &AuthGrantId::new("authgrant_legacy"),
+            &TokenAudience::McpResource("https://mcp.example.com/mcp".to_owned()),
+        )
+        .await
+        .expect("the legacy-kind secret resolves");
+    assert_eq!(token.expose(), "legacy-token");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_grant_token_replacement_swaps_only_from_the_expected_value() {
+    let store = live_store("grant-replace", 1024).await;
+    for (secret, value) in [
+        ("authsec_replace_old", "old-token"),
+        ("authsec_replace_new", "new-token"),
+        ("authsec_replace_late", "late-token"),
+    ] {
+        store
+            .put_secret(PutSecretRecord {
+                secret_id: SecretId::new(secret),
+                secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
+                value: SecretValue::new(value),
+                created_at_ms: 10,
+            })
+            .await
+            .expect("store secret");
+    }
+    let grant_id = AuthGrantId::new("authgrant_replace");
+    store
+        .create_grant(CreateAuthGrantRecord {
+            grant_id: grant_id.clone(),
+            provider_id: "static".to_owned(),
+            provider_kind: AuthProviderKind::StaticToken,
+            exposure: auth::AuthGrantExposure::Brokered,
+            created_by: api::Attribution::Local,
+            display_name: Some("Replaced".to_owned()),
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: None,
+            access_token_secret: Some(SecretId::new("authsec_replace_old")),
+            refresh_token_secret: None,
+            oauth_client: None,
+            expires_at_ms: None,
+            status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create grant");
+    let replacement = |secret: &str| auth::AuthGrantTokenRefresh {
+        access_token_secret: SecretId::new(secret),
+        refresh_token_secret: None,
+        expires_at_ms: Some(500),
+        updated_at_ms: 20,
+    };
+
+    let swapped = store
+        .replace_grant_token(
+            &grant_id,
+            &SecretId::new("authsec_replace_old"),
+            replacement("authsec_replace_new"),
+        )
+        .await
+        .expect("replace")
+        .expect("expected value matched");
+    assert_eq!(
+        swapped.access_token_secret,
+        Some(SecretId::new("authsec_replace_new"))
+    );
+    assert_eq!(swapped.expires_at_ms, Some(500));
+    assert_eq!(swapped.display_name.as_deref(), Some("Replaced"));
+
+    // The old value is unreferenced and can go; a stale writer changes nothing.
+    store
+        .delete_secret(&SecretId::new("authsec_replace_old"))
+        .await
+        .expect("delete replaced value");
+    assert!(
+        store
+            .replace_grant_token(
+                &grant_id,
+                &SecretId::new("authsec_replace_old"),
+                replacement("authsec_replace_late"),
+            )
+            .await
+            .expect("replace")
+            .is_none()
+    );
+    let current = store.read_grant(&grant_id).await.expect("read");
+    assert_eq!(
+        current.access_token_secret,
+        Some(SecretId::new("authsec_replace_new"))
+    );
+    assert_eq!(
+        store
+            .read_secret(&SecretId::new("authsec_replace_new"))
+            .await
+            .expect("read new value")
+            .1
+            .expose(),
+        "new-token"
+    );
+    assert!(matches!(
+        store
+            .replace_grant_token(
+                &AuthGrantId::new("authgrant_replace_missing"),
+                &SecretId::new("authsec_replace_new"),
+                replacement("authsec_replace_late"),
+            )
+            .await,
+        Err(AuthRegistryError::GrantNotFound { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
+    let store = live_store("mcp-headers", 1024).await;
+    let server_id = McpServerId::new("gateway");
+
+    store
+        .put_secret(PutSecretRecord {
+            secret_id: SecretId::new("authsec_upstream"),
+            secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
+            value: SecretValue::new("upstream-token"),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("store header secret");
+    let grant_id = AuthGrantId::new("authgrant_upstream");
+    store
+        .create_grant(CreateAuthGrantRecord {
+            grant_id: grant_id.clone(),
+            provider_id: "static".to_owned(),
+            provider_kind: AuthProviderKind::StaticToken,
+            exposure: auth::AuthGrantExposure::Brokered,
+            created_by: api::Attribution::Local,
+            display_name: Some("Upstream".to_owned()),
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: None,
+            access_token_secret: Some(SecretId::new("authsec_upstream")),
+            refresh_token_secret: None,
+            oauth_client: None,
+            expires_at_ms: None,
+            status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create header grant");
+
+    let mut input = put_mcp_server("gateway", McpServerStatus::Active);
+    input.execution = mcp::McpExecution::Runtime;
+    input.headers.insert(
+        "x-upstream-url".to_owned(),
+        mcp::McpServerHeaderValue::Literal {
+            value: "https://tracker.example.com".to_owned(),
+        },
+    );
+    input.headers.insert(
+        "x-upstream-token".to_owned(),
+        mcp::McpServerHeaderValue::Credential {
+            grant_id: grant_id.clone(),
+        },
+    );
+    let created = store
+        .put_server(input.clone(), None)
+        .await
+        .expect("create server with headers");
+    assert_eq!(created.headers, input.headers);
+    assert_eq!(store.read_server(&server_id).await.expect("read"), created);
+    let listed = store
+        .list_servers(ListMcpServers::default())
+        .await
+        .expect("list");
+    assert_eq!(listed, vec![created.clone()]);
+
+    // A credential held by a header cannot be deleted.
+    assert!(
+        store.delete_grant(&grant_id).await.is_err(),
+        "a credential referenced by a header must not be deletable"
+    );
+
+    // A header naming a credential that does not exist is refused whole.
+    let mut unknown = input.clone();
+    unknown.headers.insert(
+        "x-other-token".to_owned(),
+        mcp::McpServerHeaderValue::Credential {
+            grant_id: AuthGrantId::new("authgrant_missing"),
+        },
+    );
+    assert!(matches!(
+        store.put_server(unknown, None).await,
+        Err(McpRegistryError::InvalidInput { .. })
+    ));
+    assert_eq!(
+        store.read_server(&server_id).await.expect("unchanged"),
+        created
+    );
+
+    // Replacement replaces the header set.
+    let mut replacement = input;
+    replacement.headers.remove("x-upstream-token");
+    replacement.now_ms = 20;
+    let replaced = store
+        .put_server(replacement, Some(created.revision))
+        .await
+        .expect("replace headers");
+    assert_eq!(replaced.revision, 2);
+    assert_eq!(
+        replaced.headers.keys().collect::<Vec<_>>(),
+        vec!["x-upstream-url"]
+    );
+
+    // With no header holding it, the credential can go; deleting the server
+    // removes its headers.
+    store.delete_grant(&grant_id).await.expect("delete grant");
+    let deleted = store.delete_server(&server_id).await.expect("delete");
+    assert_eq!(deleted, replaced);
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM mcp_server_headers WHERE universe_id = $1")
+            .bind(store.config().universe_id)
+            .fetch_one(store.pool())
+            .await
+            .expect("count header rows");
+    assert_eq!(remaining, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
     let left = live_store("auth-left", 1024).await;
     let right = live_store("auth-right", 1024).await;
@@ -2440,7 +2710,7 @@ async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
 
     left.put_secret(PutSecretRecord {
         secret_id: secret_id.clone(),
-        secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+        secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
         value: SecretValue::new(token),
         created_at_ms: 10,
     })
@@ -2450,7 +2720,7 @@ async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
     assert!(matches!(
         left.put_secret(PutSecretRecord {
             secret_id: secret_id.clone(),
-            secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+            secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
             value: SecretValue::new(token),
             created_at_ms: 11,
         })
@@ -2459,7 +2729,7 @@ async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
     ));
 
     let (meta, value) = left.read_secret(&secret_id).await.expect("read secret");
-    assert_eq!(meta.secret_kind, SECRET_KIND_STATIC_BEARER);
+    assert_eq!(meta.secret_kind, SECRET_KIND_STATIC_TOKEN);
     assert_eq!(value.expose(), token);
 
     let row = sqlx::query(
@@ -2512,7 +2782,7 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
         .create_grant(CreateAuthGrantRecord {
             grant_id: grant_id.clone(),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticBearer,
+            provider_kind: AuthProviderKind::StaticToken,
             exposure: auth::AuthGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: Some("CRM token".to_owned()),
@@ -2538,7 +2808,7 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
                 ..CreateAuthGrantRecord {
                     grant_id: grant_id.clone(),
                     provider_id: "static".to_owned(),
-                    provider_kind: AuthProviderKind::StaticBearer,
+                    provider_kind: AuthProviderKind::StaticToken,
                     exposure: auth::AuthGrantExposure::Brokered,
                     created_by: api::Attribution::Local,
                     display_name: None,
@@ -3007,13 +3277,13 @@ async fn pg_live_environment_credentials_round_trip() {
         .await
         .expect("create environment");
 
-    // Subscription credentials are ordinary static_bearer grants carrying
+    // Subscription credentials are ordinary static_token grants carrying
     // metadata, so exercise two stored-secret grants.
     for (grant_id, kind, provider) in [
-        ("authgrant_codex", AuthProviderKind::StaticBearer, "openai"),
+        ("authgrant_codex", AuthProviderKind::StaticToken, "openai"),
         (
             "authgrant_claude",
-            AuthProviderKind::StaticBearer,
+            AuthProviderKind::StaticToken,
             "anthropic",
         ),
     ] {
@@ -3166,7 +3436,7 @@ async fn pg_live_universe_delete_removes_registered_environments_and_credential_
     store
         .put_secret(PutSecretRecord {
             secret_id: secret_id.clone(),
-            secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+            secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
             value: SecretValue::new("token"),
             created_at_ms: 3,
         })
@@ -3442,6 +3712,7 @@ fn put_mcp_server(server_id: &str, status: McpServerStatus) -> PutMcpServerRecor
         allow_private_network: false,
         auth_policy: McpServerAuthPolicy::None,
         auth_grant_id: None,
+        headers: mcp::McpServerHeaders::new(),
         status,
         now_ms: 10,
     }
@@ -3919,6 +4190,30 @@ async fn pg_live_concurrent_puts_leave_one_readable_object() {
         store.config().clone(),
     );
     assert_eq!(cold.read_bytes(&expected).await.expect("cold read"), bytes);
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_concurrent_inline_puts_of_the_same_bytes_all_succeed() {
+    // Identical tool results stored by sibling calls race to insert one
+    // inline row; every writer must get the ref, none a duplicate-key error.
+    let store = Arc::new(live_store("concurrent-inline-puts", 1024).await);
+    for round in 0..64 {
+        let bytes = format!("the same concurrent inline result {round}").into_bytes();
+        let expected = BlobRef::from_bytes(&bytes);
+        let writers = (0..8)
+            .map(|_| {
+                let store = store.clone();
+                let bytes = bytes.clone();
+                tokio::spawn(async move { store.put_bytes(bytes).await })
+            })
+            .collect::<Vec<_>>();
+        for writer in writers {
+            let result = writer.await.expect("writer task");
+            assert_eq!(result.expect("concurrent inline put"), expected);
+        }
+        assert_eq!(store.read_bytes(&expected).await.expect("read"), bytes);
+    }
 }
 
 // ---------------------------------------------------------------------------

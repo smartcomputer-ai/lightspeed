@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { unzipSync } from "fflate";
 import {
-  MAX_WORKSPACE_UPLOAD_BYTES,
+  DEFAULT_WORKSPACE_UPLOAD_LIMITS,
+  type WorkspaceUploadLimits,
   workspaceUploadSchema,
 } from "@lightspeed-ai/platform-shared";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -92,8 +93,38 @@ it("protects folder deletion with permissions and revision checks", async () => 
   ).toBe(404);
   expect(revision).toBe(1);
 });
+it("enforces and reports the deployment's configured upload limits", async () => {
+  const limits = { maxBytes: 4, maxEntries: 2 };
+  const tree = await app(limits).request("/u/workspaces/docs/tree");
+  expect(((await tree.json()) as { uploadLimits: unknown }).uploadLimits).toEqual(limits);
+
+  const send = (items: unknown[]) =>
+    app(limits).request("/u/workspaces/docs/upload", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expectedRevision: revision, entries: items }),
+    });
+  calls = [];
+  const tooLarge = await send([
+    { kind: "file", path: "big.bin", contentBase64: Buffer.alloc(5).toString("base64") },
+  ]);
+  expect(tooLarge.status).toBe(400);
+  const tooMany = await send([
+    { kind: "directory", path: "a" },
+    { kind: "directory", path: "b" },
+    { kind: "directory", path: "c" },
+  ]);
+  expect(tooMany.status).toBe(400);
+  expect(calls).not.toContain("blobs/put");
+
+  const fits = await send([
+    { kind: "file", path: "small.bin", contentBase64: Buffer.alloc(4).toString("base64") },
+  ]);
+  expect(fits.status).toBe(200);
+});
+
 it("validates the full upload size without recursive regex overflow", () => {
-  const contentBase64 = Buffer.alloc(MAX_WORKSPACE_UPLOAD_BYTES).toString(
+  const contentBase64 = Buffer.alloc(DEFAULT_WORKSPACE_UPLOAD_LIMITS.maxBytes).toString(
     "base64",
   );
   const entry = { kind: "file", path: "large.bin", contentBase64 };
@@ -238,7 +269,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function app() {
+function app(workspaceUploadLimits?: WorkspaceUploadLimits) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.route(
     "/",
@@ -246,6 +277,7 @@ function app() {
       env: {
         lightspeedApiUrl: "https://engine.example/rpc",
         lightspeedApiKey: "lsk_fixture",
+        workspaceUploadLimits,
       },
     } as AppContext),
   );

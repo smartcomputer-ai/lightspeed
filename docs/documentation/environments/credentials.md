@@ -142,11 +142,18 @@ launch environment, which should be configured consistently.
 
 ## Rotate or remove an assignment
 
-The current static-secret UI does not edit an existing secret value in place.
-Create a replacement credential, assign the same environment-variable name
-to it, and verify a new process. Revoke the old credential once its other
-users no longer need it. Custom credential IDs must be unique; a revoked ID
-cannot be reused for the replacement.
+To change a secret's value, choose **Replace value** on its row in
+**Credentials** and paste the new value. The credential keeps its ID, so
+every variable bound to it supplies the new value to the next process or job
+without any binding changing. Processes already running and jobs already
+admitted keep the old value. Environment secrets and tokens can be replaced;
+OAuth and GitHub App credentials renew themselves instead. From the CLI, use
+`lightspeed auth grants replace ID --token-stdin`.
+
+To move a variable to a different credential instead, assign the same
+environment-variable name to that credential and verify a new process. Revoke
+the old credential once its other users no longer need it. Custom credential
+IDs must be unique; a revoked ID cannot be reused.
 
 Choose **Unassign variable** to remove a binding while retaining its stored
 credential. Removing a binding or revoking a grant affects future resolution;

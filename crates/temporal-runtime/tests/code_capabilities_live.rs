@@ -485,6 +485,7 @@ async fn runtime_mcp_case(fixture: Fixture) -> anyhow::Result<()> {
                     allow_private_network: true,
                     auth_policy: api::McpServerAuthPolicy::None,
                     credential: None,
+                    headers: Default::default(),
                     status: api::McpServerStatus::Active,
                 },
                 expected_revision: None,

@@ -837,7 +837,7 @@ mod tests {
     #[test]
     fn oauth_client_records_reject_non_oauth_kinds() {
         let mut record = client_record();
-        record.provider_kind = AuthProviderKind::StaticBearer;
+        record.provider_kind = AuthProviderKind::StaticToken;
 
         assert!(matches!(
             record.validate(),

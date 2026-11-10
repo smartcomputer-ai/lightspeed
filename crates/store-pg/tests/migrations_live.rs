@@ -110,8 +110,8 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
     }
 
     // The environment baseline is folded into one migration; the ledger
-    // ends at revision 14.
-    if REQUIRED_SCHEMA_REVISION != 14 {
+    // ends at revision 15.
+    if REQUIRED_SCHEMA_REVISION != 15 {
         return Err(format!(
             "unexpected required schema revision {REQUIRED_SCHEMA_REVISION}"
         ));
@@ -129,6 +129,7 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
          WHERE source.relnamespace = current_schema()::regnamespace
            AND constraint_row.conname IN (
                'environments_registration_key_fk',
+               'mcp_server_headers_grant_fk',
                'mcp_servers_auth_grant_fk'
            )
          ORDER BY constraint_row.conname",
@@ -147,6 +148,7 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
                 false,
                 true,
             ),
+            ("mcp_server_headers_grant_fk".to_owned(), true, false, true),
             ("mcp_servers_auth_grant_fk".to_owned(), false, false, true),
         ]
     {

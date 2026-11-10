@@ -805,8 +805,16 @@ export type InputItem =
       type: "catalog";
     };
 export type MediaKind = "image" | "audio" | "document";
+/**
+ * On a grant, how its token is obtained; on a provider, what it configures.
+ * `staticToken` is a pasted secret, sent under whatever header its consumer
+ * uses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured
+ * endpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted
+ * on demand. The `model*` kinds configure model providers; `modelEndpoint`
+ * is a provider without a credential and never appears on a grant.
+ */
 export type AuthProviderKind =
-  | "staticBearer"
+  | "staticToken"
   | "mcpOAuth"
   | "gitHubApp"
   | "customOAuth"
@@ -1287,6 +1295,18 @@ export type McpServerCredential = {
  */
 export type RemoteMcpExecution = "provider" | "runtime";
 export type RemoteMcpExposure = "inject" | "search";
+/**
+ * Value of one extra MCP request header.
+ */
+export type McpServerHeader =
+  | {
+      type: "literal";
+      value: string;
+    }
+  | {
+      grantId: string;
+      type: "credential";
+    };
 export type McpServerStatus = "active" | "needsAuthConfig" | "unverified" | "disabled";
 /**
  * The result of one live MCP `tools/list` exchange. Operational connection
@@ -2660,6 +2680,13 @@ export interface AgentApiOutcomeOfAuthGrantReadResponse {
 export interface AuthGrantReadResponse {
   grant: AuthGrantView;
 }
+export interface AgentApiOutcomeOfAuthGrantReplaceResponse {
+  notifications?: AgentNotification[];
+  result: AuthGrantReplaceResponse;
+}
+export interface AuthGrantReplaceResponse {
+  grant: AuthGrantView;
+}
 export interface AgentApiOutcomeOfAuthGrantRevokeResponse {
   notifications?: AgentNotification[];
   result: AuthGrantRevokeResponse;
@@ -2710,6 +2737,13 @@ export interface AgentApiOutcomeOfAuthProviderReadResponse {
   result: AuthProviderReadResponse;
 }
 export interface AuthProviderReadResponse {
+  provider: AuthProviderView;
+}
+export interface AgentApiOutcomeOfAuthProviderReplaceResponse {
+  notifications?: AgentNotification[];
+  result: AuthProviderReplaceResponse;
+}
+export interface AuthProviderReplaceResponse {
   provider: AuthProviderView;
 }
 export interface AgentApiOutcomeOfBlobHasResponse {
@@ -4331,6 +4365,13 @@ export interface McpServerView {
   displayName?: string | null;
   execution: RemoteMcpExecution;
   exposure: RemoteMcpExposure;
+  /**
+   * Extra request headers, keyed by lowercased name. Credential headers
+   * show only the credential id; the token is never returned.
+   */
+  headers?: {
+    [k: string]: McpServerHeader;
+  };
   revision: number;
   serverId: string;
   serverUrl: string;
@@ -4964,9 +5005,9 @@ export interface AuthGitHubInstallationListParams {
   providerId: string;
 }
 /**
- * Import a static bearer credential as an auth grant. This is the one
- * deliberate inbound-plaintext path: `token` is encrypted on receipt and is
- * never returned by any method. `Debug` output redacts the token; request
+ * Import a token credential as an auth grant. Together with
+ * [`AuthGrantReplaceParams`] this is the deliberate inbound-plaintext path:
+ * `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
  * logging must never echo these params.
  */
 export interface AuthGrantImportParams {
@@ -5004,6 +5045,22 @@ export interface AuthGrantListParams {
 export interface AuthGrantReadParams {
   grantId: string;
 }
+/**
+ * Replace the token of an active token credential (`staticToken`). The
+ * credential keeps its id, display name, audience, exposure and everything
+ * that references it, so MCP servers, headers, bot polls and environment
+ * variables use the new value from their next request or process. `token` is
+ * encrypted on receipt and never returned; `Debug` output redacts it.
+ */
+export interface AuthGrantReplaceParams {
+  /**
+   * When the new token expires. Absent means it does not expire; the old
+   * token's expiry is not carried over.
+   */
+  expiresAtMs?: number | null;
+  grantId: string;
+  token: string;
+}
 export interface AuthGrantRevokeParams {
   grantId: string;
 }
@@ -5024,6 +5081,20 @@ export interface AuthProviderDeleteParams {
 }
 export interface AuthProviderListParams {}
 export interface AuthProviderReadParams {
+  providerId: string;
+}
+/**
+ * Replace an existing provider's configuration and credential in place, as
+ * if it were created again under the same id. The new settings are validated
+ * before anything changes, so a rejected replacement leaves the provider as
+ * it was; sessions and environment variables referencing the id keep working
+ * throughout. `credential` is encrypted on receipt and never returned;
+ * `Debug` output redacts it.
+ */
+export interface AuthProviderReplaceParams {
+  config: AuthProviderConfigInput;
+  credential?: string | null;
+  displayName?: string | null;
   providerId: string;
 }
 export interface BlobHasParams {
@@ -5799,6 +5870,16 @@ export interface McpServerInput {
   displayName?: string | null;
   execution?: RemoteMcpExecution & string;
   exposure?: RemoteMcpExposure & string;
+  /**
+   * Extra request headers sent on every request to the server, alongside
+   * any `Authorization` the auth policy produces. Names are
+   * case-insensitive and stored lowercased; transport headers,
+   * `authorization` and `x-lightspeed-*` are reserved. Requires `runtime`
+   * execution.
+   */
+  headers?: {
+    [k: string]: McpServerHeader;
+  };
   serverId: string;
   serverUrl: string;
   status?: McpServerStatus & string;

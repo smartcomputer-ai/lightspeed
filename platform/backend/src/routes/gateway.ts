@@ -9,6 +9,7 @@ import {
   type AgentProfileInput,
   type AuthFlowStatusResponse,
   type AuthGrantImportParams,
+  type AuthGrantReplaceParams,
   type AuthGitHubInstallationGrantParams,
   type AuthGitHubInstallationListParams,
   type AuthGrantListParams,
@@ -42,8 +43,10 @@ import {
   transcriptionUploadSchema,
   workspaceCreateSchema,
   workspaceRenameSchema,
-  MAX_WORKSPACE_UPLOAD_BODY_BYTES,
-  workspaceUploadSchema,
+  DEFAULT_WORKSPACE_UPLOAD_LIMITS,
+  workspaceUploadSchemaFor,
+  workspaceUploadBodyBytes,
+  formatUploadBytes,
   prepareWorkspaceUpload,
   workspaceDownload,
   WorkspaceTransferError,
@@ -297,7 +300,7 @@ const providerCredentialCreateSchema = z.object({
   credential: z.string().min(1),
 });
 
-const bearerGrantCreateSchema = z.object({
+const tokenGrantCreateSchema = z.object({
   grantId: z.string().trim().min(1).optional(),
   displayName: z.string().trim().min(1).max(200).optional(),
   subjectHint: z.string().trim().min(1).max(200).optional(),
@@ -330,6 +333,28 @@ const environmentSecretCreateSchema = z.object({
 });
 
 export const ENVIRONMENT_SECRET_PROVIDER_ID = "environment-secret";
+
+/// A new value for an existing token credential or environment secret; both
+/// are token grants underneath, so environment-secret limits apply to either.
+const credentialReplaceSchema = z.object({
+  value: z
+    .string()
+    .min(1)
+    .max(1_000_000)
+    .refine((value) => !value.includes("\0"), "credential values cannot contain NUL bytes"),
+  expiresAtMs: z.number().int().nonnegative().optional(),
+});
+
+export function credentialReplaceParams(
+  grantId: string,
+  input: z.infer<typeof credentialReplaceSchema>,
+): AuthGrantReplaceParams {
+  return {
+    grantId,
+    token: input.value,
+    ...(input.expiresAtMs === undefined ? {} : { expiresAtMs: input.expiresAtMs }),
+  };
+}
 
 export function environmentSecretGrantParams(
   input: z.infer<typeof environmentSecretCreateSchema>,
@@ -398,6 +423,9 @@ export function deploymentClientFor(ctx: AppContext, endpoint?: string | null): 
 
 export function gatewayRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
+  // One set of limits for the body cap, the schema, and what the web is told.
+  const uploadLimits = ctx.env.workspaceUploadLimits ?? DEFAULT_WORKSPACE_UPLOAD_LIMITS;
+  const uploadSchema = workspaceUploadSchemaFor(uploadLimits);
 
   app.get("/:id/profiles", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
@@ -1195,8 +1223,10 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   /// Model provider API keys for Lightspeed sessions (`model:<provider>` rows).
-  /// `replace` swaps an existing key: the row is deleted and recreated because
-  /// `auth/providers/create` has no update semantics.
+  /// `replace` swaps an existing row in place through `auth/providers/replace`:
+  /// the engine validates first, so a rejected replacement keeps the old key,
+  /// and sessions or environment variables using the provider never see it
+  /// missing.
   app.post("/:id/integrations/model-keys", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
@@ -1209,15 +1239,6 @@ export function gatewayRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const providerId = modelProviderCredentialId(body.data.provider);
-      if (body.data.replace) {
-        try {
-          await client.call("auth/providers/delete", { providerId });
-        } catch (error) {
-          if (!(error instanceof LightspeedRpcError && error.kind === "notFound")) {
-            throw error;
-          }
-        }
-      }
       const config: AuthProviderCreateParams["config"] = body.data.endpoint
         ? body.data.credential
           ? { type: "modelApiKey", endpoint: body.data.endpoint }
@@ -1229,6 +1250,17 @@ export function gatewayRoutes(ctx: AppContext) {
         config,
         credential: body.data.credential,
       };
+      if (body.data.replace) {
+        try {
+          const replaced = await client.call("auth/providers/replace", { ...params, providerId });
+          return c.json(modelProviderCredentialView(replaced.result.provider));
+        } catch (error) {
+          // Nothing to replace yet: fall through and create it.
+          if (!(error instanceof LightspeedRpcError && error.kind === "notFound")) {
+            throw error;
+          }
+        }
+      }
       const response = await client.call("auth/providers/create", params);
       return c.json(modelProviderCredentialView(response.result.provider), 201);
     });
@@ -1411,7 +1443,7 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    const body = await parseBody(c, bearerGrantCreateSchema);
+    const body = await parseBody(c, tokenGrantCreateSchema);
     if (!body.ok) {
       return body.response;
     }
@@ -1492,6 +1524,28 @@ export function gatewayRoutes(ctx: AppContext) {
         }
         throw error;
       }
+    });
+  });
+
+  /// Replace a token credential's value in place. The engine keeps the grant
+  /// id, so every server, header, poll and environment variable that names
+  /// it picks up the new value without being edited.
+  app.post("/:id/secrets/grants/:grantId/replace", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) {
+      return c.json({ error: "not found" }, 404);
+    }
+    const body = await parseBody(c, credentialReplaceSchema);
+    if (!body.ok) {
+      return body.response;
+    }
+    return withGateway(c, async () => {
+      const client = engineClientFor(ctx, access);
+      const response = await client.call(
+        "auth/grants/replace",
+        credentialReplaceParams(c.req.param("grantId"), body.data),
+      );
+      return c.json(response.result.grant);
     });
   });
 
@@ -2071,6 +2125,7 @@ export function gatewayRoutes(ctx: AppContext) {
       return c.json({
         workspace: workspace.result.workspace,
         manifest: snapshot.result.manifest,
+        uploadLimits,
       });
     });
   });
@@ -2078,11 +2133,11 @@ export function gatewayRoutes(ctx: AppContext) {
   app.post(
     "/:id/workspaces/:workspaceId/upload",
     bodyLimit({
-      maxSize: MAX_WORKSPACE_UPLOAD_BODY_BYTES,
+      maxSize: workspaceUploadBodyBytes(uploadLimits),
       onError: (c) =>
         c.json(
           {
-            error: "Upload request is too large. Select fewer files or folders.",
+            error: `Upload request is too large. Select up to ${formatUploadBytes(uploadLimits.maxBytes)} of files.`,
           },
           413,
         ),
@@ -2093,7 +2148,7 @@ export function gatewayRoutes(ctx: AppContext) {
         if (!access) return c.json({ error: "not found" }, 404);
         if (!roleAtLeast(access.role, "contributor"))
           throw new GateRefusal(403, "contributor role required");
-        const body = await parseBody(c, workspaceUploadSchema);
+        const body = await parseBody(c, uploadSchema);
         if (!body.ok) return body.response;
         const client = engineClientFor(ctx, access);
         const workspaceId = c.req.param("workspaceId");

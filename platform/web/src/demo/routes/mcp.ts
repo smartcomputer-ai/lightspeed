@@ -2,7 +2,7 @@
 /// semantics, advisory auth discovery, and an OAuth flow that approves
 /// itself so the sign-in dialog's polling path runs end to end.
 import { Hono } from "hono";
-import type { McpOAuthFlow, McpServer, SecretGrant } from "@/api";
+import type { McpOAuthFlow, McpServer, McpServerHeader, SecretGrant } from "@/api";
 import type { DemoStore, UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
 
@@ -58,6 +58,27 @@ function materialize(
   if (credential && !universe.secrets.grants.some((grant) => grant.grantId === credential.grantId)) {
     return { error: `auth grant not found: ${credential.grantId}`, status: 404 };
   }
+  const headers: Record<string, McpServerHeader> = {};
+  for (const [rawName, value] of Object.entries(isRecord(input.headers) ? input.headers : {})) {
+    const name = rawName.toLowerCase();
+    if (name in headers) {
+      return { error: `duplicate MCP header "${name}"; header names are case-insensitive`, status: 400 };
+    }
+    if (isRecord(value) && value.type === "literal" && typeof value.value === "string") {
+      headers[name] = { type: "literal", value: value.value };
+    } else if (isRecord(value) && value.type === "credential" && typeof value.grantId === "string") {
+      const grantId = value.grantId;
+      if (!universe.secrets.grants.some((grant) => grant.grantId === grantId)) {
+        return { error: `auth grant not found: ${grantId}`, status: 404 };
+      }
+      headers[name] = { type: "credential", grantId };
+    } else {
+      return { error: `MCP header "${name}" needs a literal value or a credential`, status: 400 };
+    }
+  }
+  if (input.execution === "provider" && Object.keys(headers).length > 0) {
+    return { error: "custom headers require runtime MCP execution", status: 400 };
+  }
   const now = Date.now();
   const allowedTools = stringList(input.allowedTools);
   return {
@@ -79,6 +100,7 @@ function materialize(
       allowPrivateNetwork: input.allowPrivateNetwork === true,
       authPolicy,
       credential,
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
       status,
       revision: existing ? existing.revision + 1 : 1,
       createdAtMs: existing?.createdAtMs ?? now,

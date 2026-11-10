@@ -17,13 +17,17 @@ use llm_runtime::provider_keys::{
 };
 use llm_runtime::secrets::{
     EnvSecretResolver, ResolvedSecretValue, SECRET_NAMESPACE_ENV, SECRET_NAMESPACE_MCP_SERVER,
-    SecretRef, SecretResolveError, SecretResolver,
+    SECRET_NAMESPACE_MCP_SERVER_HEADER, SecretRef, SecretResolveError, SecretResolver,
 };
-use mcp::{McpRegistryError, McpRegistryStore, McpServerAuthPolicy, McpServerId, McpServerStatus};
+use mcp::{
+    McpRegistryError, McpRegistryStore, McpServerAuthPolicy, McpServerHeaderValue, McpServerId,
+    McpServerRecord, McpServerStatus,
+};
 
 /// Dispatches on `SecretRef.namespace`: `mcp_server` loads the configured
 /// universe server's current grant and resolves it through the token broker;
-/// `env` falls back to environment variables for development.
+/// `mcp_server_header` does the same for one of its credential headers; `env`
+/// falls back to environment variables for development.
 pub struct BrokerSecretResolver {
     broker: Arc<dyn AuthTokenBroker>,
     mcp_servers: Arc<dyn McpRegistryStore>,
@@ -38,6 +42,55 @@ impl BrokerSecretResolver {
             env: EnvSecretResolver,
         }
     }
+
+    /// The server's live record, provided it is usable and still at the URL
+    /// the value is about to be sent to.
+    async fn live_server(
+        &self,
+        secret_ref: &SecretRef,
+        server_id: &str,
+        audience: Option<&str>,
+    ) -> Result<McpServerRecord, SecretResolveError> {
+        let backend = |message: String| SecretResolveError::Backend {
+            namespace: secret_ref.namespace.clone(),
+            id: secret_ref.id.clone(),
+            message,
+        };
+        let server_id = McpServerId::try_new(server_id.to_owned())
+            .map_err(|error| backend(format!("invalid MCP server id: {error}")))?;
+        let Some(audience) = audience else {
+            return Err(backend(format!(
+                "{} resolution requires a target audience",
+                secret_ref.namespace
+            )));
+        };
+        let server =
+            self.mcp_servers
+                .read_server(&server_id)
+                .await
+                .map_err(|error| match error {
+                    McpRegistryError::NotFound { .. } => SecretResolveError::NotFound {
+                        namespace: secret_ref.namespace.clone(),
+                        id: secret_ref.id.clone(),
+                    },
+                    other => backend(other.to_string()),
+                })?;
+        if server.server_url != audience {
+            return Err(backend(
+                "MCP server URL changed while resolving its credential".to_owned(),
+            ));
+        }
+        if matches!(
+            server.status,
+            McpServerStatus::Disabled | McpServerStatus::NeedsAuthConfig
+        ) {
+            return Err(backend(format!(
+                "MCP server {} is not usable: {:?}",
+                server.server_id, server.status
+            )));
+        }
+        Ok(server)
+    }
 }
 
 #[async_trait]
@@ -49,60 +102,20 @@ impl SecretResolver for BrokerSecretResolver {
     ) -> Result<ResolvedSecretValue, SecretResolveError> {
         match secret_ref.namespace.as_str() {
             SECRET_NAMESPACE_MCP_SERVER => {
-                let server_id = McpServerId::try_new(secret_ref.id.clone()).map_err(|error| {
-                    SecretResolveError::Backend {
-                        namespace: secret_ref.namespace.clone(),
-                        id: secret_ref.id.clone(),
-                        message: format!("invalid MCP server id: {error}"),
-                    }
-                })?;
-                let Some(audience) = audience else {
-                    return Err(SecretResolveError::Backend {
-                        namespace: secret_ref.namespace.clone(),
-                        id: secret_ref.id.clone(),
-                        message: "mcp_server resolution requires a target audience".to_owned(),
-                    });
-                };
-                let server =
-                    self.mcp_servers.read_server(&server_id).await.map_err(
-                        |error| match error {
-                            McpRegistryError::NotFound { .. } => SecretResolveError::NotFound {
-                                namespace: secret_ref.namespace.clone(),
-                                id: secret_ref.id.clone(),
-                            },
-                            other => SecretResolveError::Backend {
-                                namespace: secret_ref.namespace.clone(),
-                                id: secret_ref.id.clone(),
-                                message: other.to_string(),
-                            },
-                        },
-                    )?;
-                if server.server_url != audience {
-                    return Err(SecretResolveError::Backend {
-                        namespace: secret_ref.namespace.clone(),
-                        id: secret_ref.id.clone(),
-                        message: "MCP server URL changed while resolving its credential".to_owned(),
-                    });
-                }
-                if matches!(
-                    server.status,
-                    McpServerStatus::Disabled | McpServerStatus::NeedsAuthConfig
-                ) {
-                    return Err(SecretResolveError::Backend {
-                        namespace: secret_ref.namespace.clone(),
-                        id: secret_ref.id.clone(),
-                        message: format!(
-                            "MCP server {} is not usable: {:?}",
-                            server.server_id, server.status
-                        ),
-                    });
-                }
+                let server = self
+                    .live_server(secret_ref, secret_ref.id.as_str(), audience)
+                    .await?;
+                let audience = server.server_url.as_str();
                 let (grant_id, required) = match server.auth_policy {
                     McpServerAuthPolicy::None => (None, false),
                     McpServerAuthPolicy::OptionalBearer
-                    | McpServerAuthPolicy::OptionalOAuth { .. } => (server.auth_grant_id, false),
+                    | McpServerAuthPolicy::OptionalOAuth { .. } => {
+                        (server.auth_grant_id.clone(), false)
+                    }
                     McpServerAuthPolicy::RequiredBearer
-                    | McpServerAuthPolicy::RequiredOAuth { .. } => (server.auth_grant_id, true),
+                    | McpServerAuthPolicy::RequiredOAuth { .. } => {
+                        (server.auth_grant_id.clone(), true)
+                    }
                 };
                 let Some(grant_id) = grant_id else {
                     if required {
@@ -123,6 +136,42 @@ impl SecretResolver for BrokerSecretResolver {
                 let token = self
                     .broker
                     .bearer_token(&grant_id, &TokenAudience::McpResource(audience.to_owned()))
+                    .await
+                    .map_err(|error| broker_error_to_resolve_error(secret_ref, error))?;
+                Ok(ResolvedSecretValue::new(token.expose()))
+            }
+            SECRET_NAMESPACE_MCP_SERVER_HEADER => {
+                let backend = |message: String| SecretResolveError::Backend {
+                    namespace: secret_ref.namespace.clone(),
+                    id: secret_ref.id.clone(),
+                    message,
+                };
+                let Some((server_id, header)) = secret_ref.id.split_once('/') else {
+                    return Err(backend(
+                        "mcp_server_header ids are <server_id>/<header>".to_owned(),
+                    ));
+                };
+                let server = self.live_server(secret_ref, server_id, audience).await?;
+                let grant_id = match server.headers.get(header) {
+                    Some(McpServerHeaderValue::Credential { grant_id }) => grant_id.clone(),
+                    Some(McpServerHeaderValue::Literal { .. }) => {
+                        return Err(backend(format!(
+                            "MCP header {header:?} is a plain value, not a credential"
+                        )));
+                    }
+                    None => {
+                        return Err(SecretResolveError::NotFound {
+                            namespace: secret_ref.namespace.clone(),
+                            id: secret_ref.id.clone(),
+                        });
+                    }
+                };
+                let token = self
+                    .broker
+                    .bearer_token(
+                        &grant_id,
+                        &TokenAudience::McpResource(server.server_url.clone()),
+                    )
                     .await
                     .map_err(|error| broker_error_to_resolve_error(secret_ref, error))?;
                 Ok(ResolvedSecretValue::new(token.expose()))
@@ -304,7 +353,7 @@ mod tests {
     use auth::{
         AuthGrantId, AuthGrantStatus, AuthGrantStore, AuthProviderKind, CreateAuthGrantRecord,
         InMemoryAuthGrantStore, InMemoryGrantLocks, InMemorySecretStore, PutSecretRecord,
-        RegistryTokenBroker, SECRET_KIND_STATIC_BEARER, SecretId, SecretStore, SecretValue,
+        RegistryTokenBroker, SECRET_KIND_STATIC_TOKEN, SecretId, SecretStore, SecretValue,
     };
     use mcp::{
         InMemoryMcpRegistryStore, McpApprovalPolicy, McpRegistryStore, McpServerAuthPolicy,
@@ -327,7 +376,7 @@ mod tests {
             .create_grant(CreateAuthGrantRecord {
                 grant_id: AuthGrantId::new("authgrant_1"),
                 provider_id: "static".to_owned(),
-                provider_kind: AuthProviderKind::StaticBearer,
+                provider_kind: AuthProviderKind::StaticToken,
                 exposure: auth::AuthGrantExposure::Brokered,
                 created_by: api::Attribution::Local,
                 display_name: None,
@@ -347,7 +396,7 @@ mod tests {
         secrets
             .put_secret(PutSecretRecord {
                 secret_id: SecretId::new("authsec_1"),
-                secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+                secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
                 value: SecretValue::new("token-123"),
                 created_at_ms: 10,
             })
@@ -371,6 +420,7 @@ mod tests {
                     allow_private_network: false,
                     auth_policy: McpServerAuthPolicy::RequiredBearer,
                     auth_grant_id: Some(AuthGrantId::new("authgrant_1")),
+                    headers: Default::default(),
                     status: McpServerStatus::Active,
                     now_ms: 10,
                 },
@@ -491,6 +541,7 @@ mod tests {
             allow_private_network: current.allow_private_network,
             auth_policy: current.auth_policy,
             auth_grant_id: current.auth_grant_id,
+            headers: current.headers,
             status: current.status,
             now_ms: 20,
         };
@@ -591,7 +642,7 @@ mod tests {
             .create_grant(CreateAuthGrantRecord {
                 grant_id: AuthGrantId::new("authgrant_2"),
                 provider_id: "static".to_owned(),
-                provider_kind: AuthProviderKind::StaticBearer,
+                provider_kind: AuthProviderKind::StaticToken,
                 exposure: auth::AuthGrantExposure::Brokered,
                 created_by: api::Attribution::Local,
                 display_name: None,
@@ -612,7 +663,7 @@ mod tests {
             .secrets
             .put_secret(PutSecretRecord {
                 secret_id: SecretId::new("authsec_2"),
-                secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+                secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
                 value: SecretValue::new("token-456"),
                 created_at_ms: 20,
             })
@@ -630,6 +681,117 @@ mod tests {
             .await
             .expect("resolve replacement binding");
         assert_eq!(rotated.expose(), "token-456");
+    }
+
+    fn mcp_header_ref(id: &str) -> SecretRef {
+        SecretRef {
+            namespace: SECRET_NAMESPACE_MCP_SERVER_HEADER.to_owned(),
+            id: id.to_owned(),
+        }
+    }
+
+    /// Moves the fixture server to runtime execution with one credential
+    /// header (bound to the fixture grant) and one plain header.
+    async fn add_crm_headers(fixture: &McpResolverFixture) {
+        edit_crm_server(fixture, |record| {
+            record.execution = mcp::McpExecution::Runtime;
+            record.headers.insert(
+                "x-upstream-token".to_owned(),
+                McpServerHeaderValue::Credential {
+                    grant_id: AuthGrantId::new("authgrant_1"),
+                },
+            );
+            record.headers.insert(
+                "x-tenant".to_owned(),
+                McpServerHeaderValue::Literal {
+                    value: "acme".to_owned(),
+                },
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn resolves_mcp_header_refs_through_the_header_grant() {
+        let fixture = resolver_with_grant(Some("https://crm.example.com")).await;
+        add_crm_headers(&fixture).await;
+        let audience = "https://crm.example.com/mcp";
+
+        let value = fixture
+            .resolver
+            .resolve(&mcp_header_ref("crm/x-upstream-token"), Some(audience))
+            .await
+            .expect("resolve header credential");
+        assert_eq!(value.expose(), "token-123");
+
+        let literal = fixture
+            .resolver
+            .resolve(&mcp_header_ref("crm/x-tenant"), Some(audience))
+            .await
+            .expect_err("a plain header has no credential");
+        assert!(matches!(literal, SecretResolveError::Backend { .. }));
+
+        let missing = fixture
+            .resolver
+            .resolve(&mcp_header_ref("crm/x-other"), Some(audience))
+            .await
+            .expect_err("unknown header");
+        assert!(matches!(missing, SecretResolveError::NotFound { .. }));
+
+        let malformed = fixture
+            .resolver
+            .resolve(&mcp_header_ref("crm"), Some(audience))
+            .await
+            .expect_err("header refs name a header");
+        assert!(matches!(malformed, SecretResolveError::Backend { .. }));
+
+        let moved = fixture
+            .resolver
+            .resolve(
+                &mcp_header_ref("crm/x-upstream-token"),
+                Some("https://elsewhere.example.com/mcp"),
+            )
+            .await
+            .expect_err("the value must go to the record's URL");
+        assert!(matches!(moved, SecretResolveError::Backend { .. }));
+    }
+
+    #[tokio::test]
+    async fn revoked_or_uncovering_header_credentials_fail() {
+        let fixture = resolver_with_grant(Some("https://crm.example.com")).await;
+        add_crm_headers(&fixture).await;
+        let secret_ref = mcp_header_ref("crm/x-upstream-token");
+
+        edit_crm_server(&fixture, |record| {
+            record.server_url = "https://other.example.com/mcp".to_owned();
+        })
+        .await;
+        let uncovered = fixture
+            .resolver
+            .resolve(&secret_ref, Some("https://other.example.com/mcp"))
+            .await
+            .expect_err("the grant's audience does not cover the new URL");
+        assert!(matches!(uncovered, SecretResolveError::Backend { .. }));
+
+        edit_crm_server(&fixture, |record| {
+            record.server_url = "https://crm.example.com/mcp".to_owned();
+        })
+        .await;
+        fixture
+            .grants
+            .update_grant_status(
+                &AuthGrantId::new("authgrant_1"),
+                AuthGrantStatus::Revoked,
+                30,
+            )
+            .await
+            .expect("revoke grant");
+        let revoked = fixture
+            .resolver
+            .resolve(&secret_ref, Some("https://crm.example.com/mcp"))
+            .await
+            .expect_err("a revoked credential is never sent");
+        assert!(matches!(revoked, SecretResolveError::Backend { .. }));
     }
 
     /// Broker over empty stores: good enough for the api-key paths, which

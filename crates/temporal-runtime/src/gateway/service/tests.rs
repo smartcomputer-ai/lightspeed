@@ -598,7 +598,7 @@ fn test_auth_grant_record(
 fn grant_leases_require_creation_time_retrievable_exposure() {
     let brokered = test_auth_grant_record(
         "authgrant_brokered",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         None,
     );
@@ -636,6 +636,187 @@ fn mcp_server_put_enforces_required_and_optional_binding_states() {
 }
 
 #[test]
+fn auth_grant_replacement_only_swaps_active_token_credentials() {
+    let token = test_auth_grant_record(
+        "authgrant_upstream",
+        auth::AuthProviderKind::StaticToken,
+        auth::AuthGrantStatus::Active,
+        Some("https://tracker.example.com"),
+    );
+    let expected = token
+        .access_token_secret
+        .clone()
+        .expect("token has a value");
+    let draft =
+        auth_api::auth_grant_replace_draft(&token, "new-token".to_owned(), Some(5_000), 4_000)
+            .expect("an active token credential can be replaced");
+    assert_eq!(draft.expected, expected);
+    assert_ne!(
+        draft.secret.secret_id, expected,
+        "the new value is a new sealed secret"
+    );
+    assert_eq!(draft.secret.secret_kind, auth::SECRET_KIND_STATIC_TOKEN);
+    assert_eq!(draft.secret.value.expose(), "new-token");
+    assert_eq!(
+        draft.replacement.access_token_secret,
+        draft.secret.secret_id
+    );
+    assert_eq!(draft.replacement.expires_at_ms, Some(5_000));
+    assert!(
+        format!(
+            "{:?}",
+            api::AuthGrantReplaceParams {
+                grant_id: "authgrant_upstream".to_owned(),
+                token: "never-logged".to_owned(),
+                expires_at_ms: None,
+            }
+        )
+        .contains("<redacted>")
+    );
+
+    for (kind, status) in [
+        (
+            auth::AuthProviderKind::McpOAuth,
+            auth::AuthGrantStatus::Active,
+        ),
+        (
+            auth::AuthProviderKind::GitHubApp,
+            auth::AuthGrantStatus::Active,
+        ),
+        (
+            auth::AuthProviderKind::StaticToken,
+            auth::AuthGrantStatus::Revoked,
+        ),
+    ] {
+        let grant = test_auth_grant_record("authgrant_other", kind, status, None);
+        let error = auth_api::auth_grant_replace_draft(&grant, "new-token".to_owned(), None, 4_000)
+            .err()
+            .expect("refused replacement");
+        assert_eq!(
+            error.kind,
+            AgentApiErrorKind::Rejected,
+            "{kind:?} {status:?}"
+        );
+    }
+}
+
+fn header_input(headers: serde_json::Value) -> api::McpServerInput {
+    serde_json::from_value(serde_json::json!({
+        "serverId": "gateway",
+        "serverUrl": "https://gateway.example.com/mcp",
+        "defaultServerLabel": "gateway",
+        "execution": "runtime",
+        "headers": headers,
+    }))
+    .expect("valid MCP server input")
+}
+
+#[test]
+fn mcp_server_put_lowercases_header_names_and_refuses_case_duplicates() {
+    let record = mcp_api::put_mcp_server_record(
+        header_input(serde_json::json!({
+            "X-Upstream-Url": {"type": "literal", "value": "https://tracker.example.com"},
+            "X-Upstream-Token": {"type": "credential", "grantId": "authgrant_upstream"},
+        })),
+        1,
+    )
+    .expect("headers convert");
+    assert_eq!(
+        record.headers.keys().collect::<Vec<_>>(),
+        vec!["x-upstream-token", "x-upstream-url"]
+    );
+    assert_eq!(
+        record.headers["x-upstream-token"].grant_id(),
+        Some(&auth::AuthGrantId::new("authgrant_upstream"))
+    );
+
+    let error = mcp_api::put_mcp_server_record(
+        header_input(serde_json::json!({
+            "X-Tenant": {"type": "literal", "value": "a"},
+            "x-tenant": {"type": "literal", "value": "b"},
+        })),
+        1,
+    )
+    .expect_err("case-insensitive duplicate");
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+
+    let error = mcp_api::put_mcp_server_record(
+        header_input(serde_json::json!({
+            "Authorization": {"type": "literal", "value": "Token x"},
+        })),
+        1,
+    )
+    .expect_err("reserved header");
+    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
+}
+
+#[test]
+fn mcp_header_credentials_must_be_active_static_tokens_covering_the_server() {
+    let record = mcp_api::put_mcp_server_record(header_input(serde_json::json!({})), 1)
+        .expect("server converts");
+    let header = "x-upstream-token";
+    let grant = |kind, status, audience| {
+        test_auth_grant_record("authgrant_upstream", kind, status, audience)
+    };
+
+    mcp_api::validate_mcp_header_grant(
+        &record,
+        header,
+        &grant(
+            auth::AuthProviderKind::StaticToken,
+            auth::AuthGrantStatus::Active,
+            Some("https://gateway.example.com"),
+        ),
+    )
+    .expect("an active static token covering the URL is accepted");
+
+    for (kind, status, audience) in [
+        (
+            auth::AuthProviderKind::McpOAuth,
+            auth::AuthGrantStatus::Active,
+            None,
+        ),
+        (
+            auth::AuthProviderKind::StaticToken,
+            auth::AuthGrantStatus::Revoked,
+            None,
+        ),
+        (
+            auth::AuthProviderKind::StaticToken,
+            auth::AuthGrantStatus::Active,
+            Some("https://elsewhere.example.com"),
+        ),
+    ] {
+        let error =
+            mcp_api::validate_mcp_header_grant(&record, header, &grant(kind, status, audience))
+                .expect_err("refused header credential");
+        assert_eq!(
+            error.kind,
+            AgentApiErrorKind::Rejected,
+            "{kind:?} {status:?}"
+        );
+    }
+}
+
+#[test]
+fn mcp_server_view_returns_header_names_and_grant_ids_only() {
+    let mut record = test_mcp_server_record("gateway", mcp::McpServerStatus::Active);
+    record.headers.insert(
+        "x-upstream-token".to_owned(),
+        mcp::McpServerHeaderValue::Credential {
+            grant_id: auth::AuthGrantId::new("authgrant_upstream"),
+        },
+    );
+    let view = serde_json::to_value(mcp_server_view(record)).expect("serialize view");
+    assert_eq!(
+        view["headers"],
+        serde_json::json!({
+            "x-upstream-token": {"type": "credential", "grantId": "authgrant_upstream"}
+        })
+    );
+}
+
+#[test]
 fn mcp_attachment_leaves_url_and_credential_out_of_durable_state() {
     let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
     record.server_url = "https://crm.example.com/s/PATH_SECRET/mcp?api_key=QUERY_SECRET".to_owned();
@@ -644,7 +825,7 @@ fn mcp_attachment_leaves_url_and_credential_out_of_durable_state() {
     record.allow_private_network = true;
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         Some("https://crm.example.com"),
     );
@@ -674,7 +855,7 @@ fn mcp_attachment_rejects_revoked_grant() {
     record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Revoked,
         None,
     );
@@ -698,7 +879,7 @@ fn mcp_attachment_rejects_grant_kind_incompatible_with_auth_policy() {
     record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         None,
     );
@@ -717,7 +898,7 @@ fn mcp_attachment_rejects_grant_audience_that_does_not_cover_server() {
     record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         Some("https://other.example.com"),
     );
@@ -761,7 +942,7 @@ fn two_server_ids_can_share_an_endpoint_with_distinct_credentials() {
     work.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_work"));
     let work_grant = test_auth_grant_record(
         "authgrant_work",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         Some("https://crm.example.com"),
     );
@@ -772,7 +953,7 @@ fn two_server_ids_can_share_an_endpoint_with_distinct_credentials() {
     personal.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_personal"));
     let personal_grant = test_auth_grant_record(
         "authgrant_personal",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         Some("https://crm.example.com"),
     );
@@ -806,7 +987,7 @@ fn mcp_attachment_rejects_grant_for_no_auth_server() {
     let record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
     let grant = test_auth_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticBearer,
+        auth::AuthProviderKind::StaticToken,
         auth::AuthGrantStatus::Active,
         None,
     );
@@ -2307,6 +2488,7 @@ fn test_mcp_server_put(server_id: &str, status: mcp::McpServerStatus) -> mcp::Pu
         allow_private_network: false,
         auth_policy: mcp::McpServerAuthPolicy::None,
         auth_grant_id: None,
+        headers: Default::default(),
         status,
         now_ms: 1,
     }
@@ -2359,7 +2541,7 @@ fn auth_client_drafts_without_secret_default_to_public_client() {
 #[test]
 fn auth_client_drafts_reject_non_oauth_kinds() {
     let mut params = client_create_params();
-    params.provider_kind = api::AuthProviderKind::StaticBearer;
+    params.provider_kind = api::AuthProviderKind::StaticToken;
 
     let error = oauth_api::auth_client_create_draft(params, 10)
         .expect_err("static bearer kind must be rejected");

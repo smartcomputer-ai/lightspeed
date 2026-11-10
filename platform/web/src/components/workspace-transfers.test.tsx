@@ -190,6 +190,17 @@ async function render(withTree = false) {
     ),
   );
   await waitForUi(() => expect(client.getQueryState(["workspace-tree", "u", "ws"])?.status).toBe("success"));
+  // Folders start collapsed; these tests drag into and out of nested ones.
+  if (withTree) await expandAllFolders();
+}
+async function expandAllFolders() {
+  for (;;) {
+    const collapsed = container.querySelector<HTMLElement>(
+      '[role="treeitem"][aria-expanded="false"] [data-tree-entry]',
+    );
+    if (!collapsed) return;
+    await act(async () => collapsed.click());
+  }
 }
 async function click(element: Element | null | undefined) {
   if (!element) throw new Error("Expected a clickable element");

@@ -11,7 +11,7 @@ type GrantLike = Pick<SecretGrant, "providerKind" | "metadata">;
 /// import time: `metadata.subscription = "claudeCode" | "codex"`. Core knows
 /// nothing vendor-specific about them.
 export function subscriptionProviderOf(grant: GrantLike): SubscriptionProvider | null {
-  if (grant.providerKind !== "staticBearer") return null;
+  if (grant.providerKind !== "staticToken") return null;
   if (grant.metadata?.subscription === "claudeCode") return "anthropic";
   if (grant.metadata?.subscription === "codex") return "openAi";
   return null;

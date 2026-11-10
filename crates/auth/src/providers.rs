@@ -410,6 +410,17 @@ pub trait AuthProviderStore: Send + Sync {
         &self,
         provider_id: &AuthProviderId,
     ) -> Result<AuthProviderRecord, AuthRegistryError>;
+
+    /// Rewrite an existing provider in place (kind, display name, config,
+    /// credential secret, status, `updated_at_ms`; the id and `created_at_ms`
+    /// stay), only if it still references `expected_credential`. `Ok(None)`
+    /// means another writer changed it first; the caller still owns any secret
+    /// it stored for the replacement.
+    async fn replace_auth_provider(
+        &self,
+        record: AuthProviderRecord,
+        expected_credential: Option<&SecretId>,
+    ) -> Result<Option<AuthProviderRecord>, AuthRegistryError>;
 }
 
 #[cfg(test)]

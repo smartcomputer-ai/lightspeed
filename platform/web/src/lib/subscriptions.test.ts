@@ -8,7 +8,7 @@ import {
 
 describe("subscription grant bindings", () => {
   it("maps Claude Code grants to the OAuth token variable", () => {
-    const grant = { providerKind: "staticBearer", metadata: { subscription: "claudeCode" } };
+    const grant = { providerKind: "staticToken", metadata: { subscription: "claudeCode" } };
     expect(subscriptionProviderOf(grant)).toBe("anthropic");
     expect(subscriptionBinding(grant)).toMatchObject({
       envName: "CLAUDE_CODE_OAUTH_TOKEN",
@@ -17,8 +17,8 @@ describe("subscription grant bindings", () => {
   });
 
   it("distinguishes Codex token sets from Enterprise access tokens", () => {
-    const tokenSet = { providerKind: "staticBearer", metadata: { subscription: "codex", credential: "tokenSet" } };
-    const accessToken = { providerKind: "staticBearer", metadata: { subscription: "codex", credential: "token" } };
+    const tokenSet = { providerKind: "staticToken", metadata: { subscription: "codex", credential: "tokenSet" } };
+    const accessToken = { providerKind: "staticToken", metadata: { subscription: "codex", credential: "token" } };
     expect(isCodexTokenSet(tokenSet)).toBe(true);
     expect(subscriptionBinding(tokenSet)).toMatchObject({ envName: "CODEX_AUTH_JSON", authJson: true });
     expect(isCodexTokenSet(accessToken)).toBe(false);
@@ -29,7 +29,7 @@ describe("subscription grant bindings", () => {
   });
 
   it("ignores non-subscription grants", () => {
-    expect(subscriptionProviderOf({ providerKind: "staticBearer", metadata: {} })).toBeNull();
+    expect(subscriptionProviderOf({ providerKind: "staticToken", metadata: {} })).toBeNull();
     expect(subscriptionBinding({ providerKind: "gitHubApp", metadata: {} })).toBeNull();
   });
 
