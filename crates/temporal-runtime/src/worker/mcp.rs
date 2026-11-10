@@ -2410,7 +2410,7 @@ mod tests {
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].remote_name, "lookup");
 
-        // The call path of `RuntimeMcpExecutor::call`, after approval.
+        // A model-issued call through the executor's public entry point.
         let runtime = RuntimeMcpExecutor::new(
             servers.clone(),
             resolver.clone(),
@@ -2426,33 +2426,47 @@ mod tests {
             allowed_tools: None,
             approval: harness::RemoteMcpApprovalPolicy::Never,
         };
-        let record = runtime
-            .runtime_record(&target)
-            .await
-            .expect("usable record");
-        let credential = record_credential(resolver.as_ref(), &record)
-            .await
-            .expect("resolve headers");
-        assert!(matches!(
-            credential,
-            Some(McpTransportCredential::Headers(_))
-        ));
-        let result = runtime
-            .transport
-            .call_tool(
-                &record.server_url,
-                credential.as_ref(),
-                None,
-                true,
-                mcp::McpToolDiscoveryLimits::default(),
-                McpToolCallRequest {
-                    tool_name: "lookup".to_owned(),
-                    arguments: serde_json::Map::new(),
-                },
-            )
+        let request = harness::ToolInvocationCallRequest {
+            session_id: harness::SessionId::new("session-headers"),
+            run_id: harness::RunId::new(1),
+            turn_id: harness::TurnId::new(1),
+            batch_id: harness::ToolBatchId::new(1),
+            workspace_attachments: Vec::new(),
+            vfs_working_directory: None,
+            active_environment_id: None,
+            environment_policy: None,
+            subagents_policy: None,
+            code_mode_policy: None,
+            promise_id_base: 1,
+            call: harness::ToolInvocationRequest {
+                builtin: None,
+                call_id: harness::ToolCallId::new("call-lookup"),
+                tool_id: None,
+                tool_name: harness::ToolName::new("test__lookup"),
+                arguments_ref: harness::BlobRef::from_bytes(b"{}"),
+                workflow_tool: None,
+                promise_control: None,
+                remote_mcp: Some(harness::RemoteMcpCallRuntime::Injected {
+                    target,
+                    remote_tool_name: "lookup".to_owned(),
+                    approval_decision: None,
+                }),
+            },
+            sibling_tool_ids: Vec::new(),
+            execution: harness::ToolExecutionSpec::default(),
+        };
+        let outcome = runtime
+            .execute(&request, serde_json::json!({}))
             .await
             .expect("call with custom headers");
-        assert_eq!(result.is_error, Some(false));
+        let RuntimeMcpExecutionOutcome::Completed {
+            visible, is_error, ..
+        } = outcome
+        else {
+            panic!("a never-approve server completes the call");
+        };
+        assert!(!is_error);
+        assert!(visible.contains("found"), "{visible}");
         fixture.abort();
     }
 }

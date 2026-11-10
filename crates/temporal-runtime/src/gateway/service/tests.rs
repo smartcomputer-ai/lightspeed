@@ -689,6 +689,28 @@ async fn custom_header_imports_record_names_but_never_values() {
 }
 
 #[test]
+fn token_consumers_refuse_to_bind_custom_header_grants() {
+    let headers = test_auth_grant_record(
+        "authgrant_headers",
+        auth::AuthProviderKind::StaticHeaders,
+        auth::AuthGrantStatus::Active,
+        None,
+    );
+    let error = auth_api::require_token_grant(&headers, "a model provider")
+        .expect_err("header grants cannot back a model provider");
+    assert_eq!(error.kind, AgentApiErrorKind::Rejected);
+    assert!(error.message.contains("custom-headers"));
+    let bearer = test_auth_grant_record(
+        "authgrant_bearer",
+        auth::AuthProviderKind::StaticBearer,
+        auth::AuthGrantStatus::Active,
+        None,
+    );
+    auth_api::require_token_grant(&bearer, "an environment variable")
+        .expect("token grants bind as before");
+}
+
+#[test]
 fn only_custom_header_grants_expose_header_names() {
     let mut bearer = test_auth_grant_record(
         "authgrant_bearer",

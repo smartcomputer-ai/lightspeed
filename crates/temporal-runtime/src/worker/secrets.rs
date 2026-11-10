@@ -138,12 +138,19 @@ impl SecretResolver for BrokerSecretResolver {
                         id: secret_ref.id.clone(),
                     });
                 };
-                let token = self
-                    .broker
-                    .bearer_token(&grant_id, &TokenAudience::McpResource(audience.to_owned()))
-                    .await
-                    .map_err(|error| broker_error_to_resolve_error(secret_ref, error))?;
-                Ok(ResolvedSecretValue::new(token.expose()))
+                let audience = TokenAudience::McpResource(audience.to_owned());
+                let value = if wants_headers {
+                    // Re-encoded for the string boundary; only the MCP
+                    // transport decodes it.
+                    self.broker
+                        .custom_headers(&grant_id, &audience)
+                        .await
+                        .map(|headers| headers.to_secret_value())
+                } else {
+                    self.broker.bearer_token(&grant_id, &audience).await
+                }
+                .map_err(|error| broker_error_to_resolve_error(secret_ref, error))?;
+                Ok(ResolvedSecretValue::new(value.expose()))
             }
             SECRET_NAMESPACE_ENV => self.env.resolve(secret_ref, audience).await,
             other => Err(SecretResolveError::UnsupportedNamespace {
@@ -536,9 +543,47 @@ mod tests {
             .expect_err("a bearer server has no header set");
         assert!(matches!(error, SecretResolveError::Backend { .. }));
 
+        let headers = auth::StaticHeaders::new([(
+            "X-Upstream-Token".to_owned(),
+            SecretValue::new("upstream-secret"),
+        )])
+        .expect("valid headers");
+        fixture
+            .secrets
+            .put_secret(PutSecretRecord {
+                secret_id: SecretId::new("authsec_headers"),
+                secret_kind: auth::SECRET_KIND_STATIC_HEADERS.to_owned(),
+                value: headers.to_secret_value(),
+                created_at_ms: 10,
+            })
+            .await
+            .expect("put header secret");
+        fixture
+            .grants
+            .create_grant(CreateAuthGrantRecord {
+                grant_id: AuthGrantId::new("authgrant_headers"),
+                provider_id: "static".to_owned(),
+                provider_kind: AuthProviderKind::StaticHeaders,
+                exposure: auth::AuthGrantExposure::Brokered,
+                created_by: api::Attribution::Local,
+                display_name: None,
+                subject_hint: None,
+                scopes: Vec::new(),
+                audience: None,
+                access_token_secret: Some(SecretId::new("authsec_headers")),
+                refresh_token_secret: None,
+                oauth_client: None,
+                expires_at_ms: None,
+                status: AuthGrantStatus::Active,
+                metadata: serde_json::Value::Object(Default::default()),
+                created_at_ms: 10,
+            })
+            .await
+            .expect("create header grant");
         edit_crm_server(&fixture, |record| {
             record.execution = mcp::McpExecution::Runtime;
             record.auth_policy = McpServerAuthPolicy::RequiredHeaders;
+            record.auth_grant_id = Some(AuthGrantId::new("authgrant_headers"));
         })
         .await;
         // Provider adapters resolve `mcp_server`; they must never receive a header set.
@@ -548,12 +593,29 @@ mod tests {
             .await
             .expect_err("a header server has no bearer token");
         assert!(matches!(error, SecretResolveError::Backend { .. }));
+        assert!(!error.to_string().contains("upstream-secret"));
         let value = fixture
             .resolver
             .resolve(&headers_ref, Some(audience))
             .await
             .expect("header server resolves its stored header set");
-        assert_eq!(value.expose(), "token-123");
+        assert_eq!(
+            auth::StaticHeaders::from_secret_value(&SecretValue::new(value.expose()))
+                .expect("decodes"),
+            headers
+        );
+
+        // Even if a bearer server were bound to a header grant, the broker refuses.
+        edit_crm_server(&fixture, |record| {
+            record.auth_policy = McpServerAuthPolicy::RequiredBearer;
+        })
+        .await;
+        let error = fixture
+            .resolver
+            .resolve(&mcp_server_ref("crm"), Some(audience))
+            .await
+            .expect_err("the broker never releases a header set as a token");
+        assert!(!error.to_string().contains("upstream-secret"));
     }
 
     #[tokio::test]
@@ -856,6 +918,19 @@ mod tests {
         grant_audience: Option<&str>,
         binding_audience: Option<&str>,
     ) -> StoredProviderKeyResolver {
+        model_oauth_resolver_for(
+            AuthProviderKind::CustomOAuth,
+            grant_audience,
+            binding_audience,
+        )
+        .await
+    }
+
+    async fn model_oauth_resolver_for(
+        provider_kind: AuthProviderKind,
+        grant_audience: Option<&str>,
+        binding_audience: Option<&str>,
+    ) -> StoredProviderKeyResolver {
         let providers = Arc::new(auth::InMemoryAuthProviderStore::new());
         let grants = Arc::new(InMemoryAuthGrantStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
@@ -863,7 +938,7 @@ mod tests {
             .create_grant(CreateAuthGrantRecord {
                 grant_id: AuthGrantId::new("authgrant_model"),
                 provider_id: "custom".to_owned(),
-                provider_kind: AuthProviderKind::CustomOAuth,
+                provider_kind,
                 exposure: auth::AuthGrantExposure::Brokered,
                 created_by: api::Attribution::Local,
                 display_name: None,
@@ -954,6 +1029,17 @@ mod tests {
             .await
             .expect_err("audience-bound grant must fail without binding audience");
         assert!(matches!(error, ProviderKeyError::NotUsable { .. }));
+    }
+
+    #[tokio::test]
+    async fn model_oauth_bindings_never_send_a_custom_header_set() {
+        let resolver = model_oauth_resolver_for(AuthProviderKind::StaticHeaders, None, None).await;
+        let error = resolver
+            .resolve_model_provider("anthropic")
+            .await
+            .expect_err("a header grant is not a model provider token");
+        assert!(matches!(error, ProviderKeyError::NotUsable { .. }));
+        assert!(!error.to_string().contains("oauth-access-token"));
     }
 
     #[tokio::test]

@@ -10,7 +10,7 @@ use crate::{
     AuthProviderKind, AuthRegistryError, GrantRefreshLock, McpOAuthTokenContext, OAuthClientStore,
     OAuthTokenClient, OAuthTokenError, OAuthTokenGrant, OAuthTokenRequest, PutSecretRecord,
     SECRET_KIND_OAUTH_ACCESS_TOKEN, SECRET_KIND_OAUTH_REFRESH_TOKEN, SecretId, SecretStore,
-    SecretValue, random_auth_id,
+    SecretValue, StaticHeaders, random_auth_id,
 };
 
 /// The resource a resolved token is about to be sent to. Audience enforcement
@@ -84,6 +84,15 @@ pub enum AuthBrokerError {
         provider_kind: AuthProviderKind,
     },
 
+    /// The grant holds a different kind of credential than the caller can
+    /// send: a custom-headers set is never released as a bearer token, and a
+    /// token is never read as a header set.
+    #[error("auth grant {grant_id} is a {provider_kind:?} credential, which cannot be used here")]
+    CredentialKindMismatch {
+        grant_id: AuthGrantId,
+        provider_kind: AuthProviderKind,
+    },
+
     #[error("auth broker store failure: {message}")]
     Store { message: String },
 }
@@ -94,11 +103,22 @@ pub trait AuthTokenBroker: Send + Sync {
     /// expiry, and audience, renewing (refreshing/minting) when needed. Fails
     /// with a typed error; never returns a silent absence. Whether a credential
     /// may be absent is decided from the server record before the broker is asked.
+    /// Fails with [`AuthBrokerError::CredentialKindMismatch`] for custom-headers
+    /// grants, whose material is only released through [`Self::custom_headers`].
     async fn bearer_token(
         &self,
         grant_id: &AuthGrantId,
         audience: &TokenAudience,
     ) -> Result<SecretValue, AuthBrokerError>;
+
+    /// Resolve the header set of a custom-headers grant, with the same status,
+    /// expiry, and audience enforcement as [`Self::bearer_token`]. Fails with
+    /// [`AuthBrokerError::CredentialKindMismatch`] for every other grant kind.
+    async fn custom_headers(
+        &self,
+        grant_id: &AuthGrantId,
+        audience: &TokenAudience,
+    ) -> Result<StaticHeaders, AuthBrokerError>;
 }
 
 /// Provider-kind-specific token resolution behind the generic broker. The
@@ -555,14 +575,22 @@ pub(crate) fn system_now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-#[async_trait]
-impl AuthTokenBroker for RegistryTokenBroker {
-    async fn bearer_token(
+impl RegistryTokenBroker {
+    /// Resolves the grant's stored or renewed material, but only when its kind
+    /// matches what the caller sends: a header set or a token.
+    async fn resolve_material(
         &self,
         grant_id: &AuthGrantId,
         audience: &TokenAudience,
+        wants_headers: bool,
     ) -> Result<SecretValue, AuthBrokerError> {
         let grant = self.read_checked_grant(grant_id, audience).await?;
+        if (grant.provider_kind == AuthProviderKind::StaticHeaders) != wants_headers {
+            return Err(AuthBrokerError::CredentialKindMismatch {
+                grant_id: grant.grant_id,
+                provider_kind: grant.provider_kind,
+            });
+        }
         let Some(source) = self.sources.get(&grant.provider_kind).cloned() else {
             return Err(AuthBrokerError::SourceNotConfigured {
                 grant_id: grant.grant_id,
@@ -588,6 +616,30 @@ impl AuthTokenBroker for RegistryTokenBroker {
             return Ok(token);
         }
         source.renew_token(&grant, (self.now_ms)()).await
+    }
+}
+
+#[async_trait]
+impl AuthTokenBroker for RegistryTokenBroker {
+    async fn bearer_token(
+        &self,
+        grant_id: &AuthGrantId,
+        audience: &TokenAudience,
+    ) -> Result<SecretValue, AuthBrokerError> {
+        self.resolve_material(grant_id, audience, false).await
+    }
+
+    async fn custom_headers(
+        &self,
+        grant_id: &AuthGrantId,
+        audience: &TokenAudience,
+    ) -> Result<StaticHeaders, AuthBrokerError> {
+        let value = self.resolve_material(grant_id, audience, true).await?;
+        // The stored set was validated on import; a corrupt one is unusable,
+        // and the error never echoes it.
+        StaticHeaders::from_secret_value(&value).map_err(|_| AuthBrokerError::SecretMissing {
+            grant_id: grant_id.clone(),
+        })
     }
 }
 
@@ -687,6 +739,66 @@ mod tests {
             .expect("resolve token");
 
         assert_eq!(token.expose(), "token-123");
+    }
+
+    #[tokio::test]
+    async fn custom_header_grants_are_never_released_as_bearer_tokens() {
+        let headers = StaticHeaders::new([(
+            "X-Upstream-Token".to_owned(),
+            SecretValue::new("upstream-secret"),
+        )])
+        .expect("valid headers");
+        let mut grant = grant_request("authgrant_headers", None);
+        grant.provider_kind = AuthProviderKind::StaticHeaders;
+        let broker = broker_with(grant, Some(headers.to_secret_value().expose())).await;
+        let grant_id = AuthGrantId::new("authgrant_headers");
+
+        // Every bearer consumer: MCP bearer, model OAuth, service leases
+        // (bot polls), and environment credential injection.
+        for audience in [
+            mcp_audience("https://crm.example.com/mcp"),
+            TokenAudience::ModelProvider("https://api.example.com".to_owned()),
+            TokenAudience::ServiceLease("https://poll.example.com".to_owned()),
+            TokenAudience::ServiceLease("environment:env_1".to_owned()),
+        ] {
+            let error = broker
+                .bearer_token(&grant_id, &audience)
+                .await
+                .expect_err("header grants never resolve as bearer tokens");
+            assert!(matches!(
+                error,
+                AuthBrokerError::CredentialKindMismatch {
+                    provider_kind: AuthProviderKind::StaticHeaders,
+                    ..
+                }
+            ));
+            assert!(!error.to_string().contains("upstream-secret"));
+        }
+
+        let resolved = broker
+            .custom_headers(&grant_id, &mcp_audience("https://crm.example.com/mcp"))
+            .await
+            .expect("the MCP header path resolves the set");
+        assert_eq!(resolved, headers);
+    }
+
+    #[tokio::test]
+    async fn bearer_grants_are_never_read_as_header_sets() {
+        let broker = broker_with(grant_request("authgrant_1", None), Some("token-123")).await;
+        let error = broker
+            .custom_headers(
+                &AuthGrantId::new("authgrant_1"),
+                &mcp_audience("https://crm.example.com/mcp"),
+            )
+            .await
+            .expect_err("a bearer grant is not a header set");
+        assert!(matches!(
+            error,
+            AuthBrokerError::CredentialKindMismatch {
+                provider_kind: AuthProviderKind::StaticBearer,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]

@@ -129,6 +129,21 @@ pub(super) fn auth_grant_view(record: auth::AuthGrantRecord) -> api::AuthGrantVi
     }
 }
 
+/// Token consumers (model providers, environment variables) send one value;
+/// a custom-headers credential is a header set only MCP servers can send.
+pub(crate) fn require_token_grant(
+    grant: &auth::AuthGrantRecord,
+    consumer: &str,
+) -> Result<(), AgentApiError> {
+    if grant.provider_kind == auth::AuthProviderKind::StaticHeaders {
+        return Err(AgentApiError::rejected(format!(
+            "auth grant {} is a custom-headers credential, which only MCP servers can use; {consumer} needs a token credential",
+            grant.grant_id
+        )));
+    }
+    Ok(())
+}
+
 pub(super) fn require_retrievable_grant(
     grant: &auth::AuthGrantRecord,
 ) -> Result<(), AgentApiError> {
@@ -153,7 +168,8 @@ pub(super) fn map_auth_broker_error(error: auth::AuthBrokerError) -> AgentApiErr
         | auth::AuthBrokerError::SecretMissing { .. }
         | auth::AuthBrokerError::RefreshFailed { .. }
         | auth::AuthBrokerError::MintFailed { .. }
-        | auth::AuthBrokerError::SourceNotConfigured { .. } => {
+        | auth::AuthBrokerError::SourceNotConfigured { .. }
+        | auth::AuthBrokerError::CredentialKindMismatch { .. } => {
             AgentApiError::rejected(error.to_string())
         }
         auth::AuthBrokerError::Store { message } => AgentApiError::internal(message),

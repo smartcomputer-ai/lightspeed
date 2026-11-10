@@ -1261,6 +1261,8 @@ mod tests {
         tool_call_count: usize,
         authorizations: Vec<String>,
         upstream_headers: Vec<(String, String)>,
+        /// `x-upstream-token` seen on non-POST requests, by method.
+        other_method_tokens: Vec<(&'static str, String)>,
         discover_http_status: Option<StatusCode>,
         oversized_inventory: bool,
         list_delay: Option<Duration>,
@@ -1416,6 +1418,39 @@ mod tests {
 
     async fn shutdown_handler() -> StatusCode {
         StatusCode::NO_CONTENT
+    }
+
+    fn upstream_token(headers: &HeaderMap) -> String {
+        headers
+            .get("x-upstream-token")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    /// Session close: records the credential it carried.
+    async fn recording_delete_handler(
+        State(state): State<Arc<Mutex<TestMcpState>>>,
+        headers: HeaderMap,
+    ) -> StatusCode {
+        let token = upstream_token(&headers);
+        state
+            .lock()
+            .await
+            .other_method_tokens
+            .push(("DELETE", token));
+        StatusCode::NO_CONTENT
+    }
+
+    /// Standalone SSE stream: records the credential, then declines the
+    /// stream, which a Streamable HTTP server may do.
+    async fn recording_get_handler(
+        State(state): State<Arc<Mutex<TestMcpState>>>,
+        headers: HeaderMap,
+    ) -> StatusCode {
+        let token = upstream_token(&headers);
+        state.lock().await.other_method_tokens.push(("GET", token));
+        StatusCode::METHOD_NOT_ALLOWED
     }
 
     fn tool(value: Value) -> Tool {
@@ -1741,7 +1776,12 @@ mod tests {
     async fn custom_header_credentials_reach_discovery_and_tool_calls() {
         let state = Arc::new(Mutex::new(TestMcpState::default()));
         let app = Router::new()
-            .route("/mcp", post(streamable_handler).delete(shutdown_handler))
+            .route(
+                "/mcp",
+                post(streamable_handler)
+                    .get(recording_get_handler)
+                    .delete(recording_delete_handler),
+            )
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -1802,6 +1842,17 @@ mod tests {
             url == "https://tracker.example.com" && token == "upstream-secret"
         }));
         assert!(state.authorizations.iter().all(String::is_empty));
+        // Each operation opens the standalone SSE stream (GET) and closes its
+        // session (DELETE); both carry the credential like every POST.
+        assert_eq!(
+            state.other_method_tokens,
+            vec![
+                ("GET", "upstream-secret".to_owned()),
+                ("DELETE", "upstream-secret".to_owned()),
+                ("GET", "upstream-secret".to_owned()),
+                ("DELETE", "upstream-secret".to_owned()),
+            ]
+        );
         server.abort();
     }
 

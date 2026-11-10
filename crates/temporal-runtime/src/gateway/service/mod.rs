@@ -4079,48 +4079,45 @@ impl AgentApiService for GatewayAgentApi {
             .configurator_trusted_header
             .permits(server_id.as_str(), &record.server_url)
             .then_some(self.store.config().universe_id);
-        let secret = match (trusted_universe, record.auth_grant_id.as_ref()) {
-            (Some(_), _) => None,
-            (None, Some(grant_id)) => match self
-                .auth_token_broker
-                .bearer_token(
-                    grant_id,
-                    &TokenAudience::McpResource(record.server_url.clone()),
-                )
-                .await
-            {
-                Ok(token) => Some(token),
-                Err(auth::AuthBrokerError::AudienceMismatch { .. }) => {
-                    return Ok(AgentApiOutcome::new(mcp_api::mcp_tool_discovery_failure(
-                        mcp::McpToolDiscoveryFailure::new(
-                            mcp::McpToolDiscoveryFailureKind::GrantAudienceMismatch,
-                            "The configured credential does not cover this MCP server",
-                        ),
-                    )));
+        let credential = match (trusted_universe, record.auth_grant_id.as_ref()) {
+            (Some(_), _) | (None, None) => None,
+            (None, Some(grant_id)) => {
+                let audience = TokenAudience::McpResource(record.server_url.clone());
+                // Header policies bind header grants; the broker releases each
+                // kind only through its own method.
+                let resolved = if record.auth_policy.uses_headers() {
+                    self.auth_token_broker
+                        .custom_headers(grant_id, &audience)
+                        .await
+                        .map(McpTransportCredential::Headers)
+                } else {
+                    self.auth_token_broker
+                        .bearer_token(grant_id, &audience)
+                        .await
+                        .map(McpTransportCredential::Bearer)
+                };
+                match resolved {
+                    Ok(credential) => Some(credential),
+                    Err(auth::AuthBrokerError::AudienceMismatch { .. }) => {
+                        return Ok(AgentApiOutcome::new(mcp_api::mcp_tool_discovery_failure(
+                            mcp::McpToolDiscoveryFailure::new(
+                                mcp::McpToolDiscoveryFailureKind::GrantAudienceMismatch,
+                                "The configured credential does not cover this MCP server",
+                            ),
+                        )));
+                    }
+                    Err(auth::AuthBrokerError::Store { message }) => {
+                        return Err(AgentApiError::internal(message));
+                    }
+                    Err(_) => {
+                        return Ok(AgentApiOutcome::new(mcp_api::mcp_tool_discovery_failure(
+                            mcp::McpToolDiscoveryFailure::new(
+                                mcp::McpToolDiscoveryFailureKind::GrantNeedsReauth,
+                                "The configured credential must be reconnected",
+                            ),
+                        )));
+                    }
                 }
-                Err(auth::AuthBrokerError::Store { message }) => {
-                    return Err(AgentApiError::internal(message));
-                }
-                Err(_) => {
-                    return Ok(AgentApiOutcome::new(mcp_api::mcp_tool_discovery_failure(
-                        mcp::McpToolDiscoveryFailure::new(
-                            mcp::McpToolDiscoveryFailureKind::GrantNeedsReauth,
-                            "The configured credential must be reconnected",
-                        ),
-                    )));
-                }
-            },
-            (None, None) => None,
-        };
-        let credential = match secret
-            .map(|secret| McpTransportCredential::for_policy(&record.auth_policy, secret))
-            .transpose()
-        {
-            Ok(credential) => credential,
-            Err(failure) => {
-                return Ok(AgentApiOutcome::new(mcp_api::mcp_tool_discovery_failure(
-                    failure,
-                )));
             }
         };
         let response = match self
@@ -4481,6 +4478,7 @@ impl AgentApiService for GatewayAgentApi {
                     grant.grant_id, grant.status
                 )));
             }
+            auth_api::require_token_grant(&grant, "a model provider")?;
         }
         // The secret must exist before the provider row: auth_providers
         // carries a foreign key into auth_secrets.

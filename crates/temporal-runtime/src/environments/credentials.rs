@@ -1,5 +1,5 @@
 use super::*;
-use crate::gateway::service::auth_api::map_auth_error;
+use crate::gateway::service::auth_api::{map_auth_error, require_token_grant};
 
 use ::environments::{
     EnvironmentCredentialRecord, EnvironmentCredentialSource, EnvironmentCredentialStore,
@@ -85,6 +85,7 @@ impl EnvironmentService {
                         "auth grant is not active: {grant_id}"
                     )));
                 }
+                require_token_grant(&grant, "an environment variable")?;
                 Ok(EnvironmentCredentialSource::AuthGrant { grant_id })
             }
             EnvironmentCredentialSourceView::AuthProviderCredential { provider_id } => {

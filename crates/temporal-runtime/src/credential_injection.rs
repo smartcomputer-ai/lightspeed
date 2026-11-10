@@ -413,6 +413,78 @@ mod tests {
         assert_eq!(resolved["GH_TOKEN"].expose(), "environment-token");
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn custom_header_grants_never_reach_environment_variables() {
+        use auth::AuthGrantStore;
+
+        let environment_id = EnvironmentId::new("environment_1");
+        let secrets = Arc::new(InMemorySecretStore::new());
+        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        let headers = auth::StaticHeaders::new([(
+            "X-Upstream-Token".to_owned(),
+            SecretValue::new("upstream-secret"),
+        )])
+        .expect("valid headers");
+        secrets
+            .put_secret(PutSecretRecord {
+                secret_id: SecretId::new("authsec_headers"),
+                secret_kind: auth::SECRET_KIND_STATIC_HEADERS.to_owned(),
+                value: headers.to_secret_value(),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("store header secret");
+        grants
+            .create_grant(auth::CreateAuthGrantRecord {
+                grant_id: auth::AuthGrantId::new("authgrant_headers"),
+                provider_id: "static".to_owned(),
+                provider_kind: AuthProviderKind::StaticHeaders,
+                exposure: auth::AuthGrantExposure::Brokered,
+                created_by: api::Attribution::Local,
+                display_name: None,
+                subject_hint: None,
+                scopes: Vec::new(),
+                audience: None,
+                access_token_secret: Some(SecretId::new("authsec_headers")),
+                refresh_token_secret: None,
+                oauth_client: None,
+                expires_at_ms: None,
+                status: auth::AuthGrantStatus::Active,
+                metadata: serde_json::Value::Object(Default::default()),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create header grant");
+        let broker: Arc<dyn AuthTokenBroker> = Arc::new(auth::RegistryTokenBroker::new(
+            grants.clone(),
+            secrets.clone(),
+            Arc::new(auth::InMemoryGrantLocks::new()),
+        ));
+        let resolver = EnvironmentCredentialResolver::new(
+            Arc::new(FixedCredentialStore {
+                credentials: vec![EnvironmentCredentialRecord {
+                    environment_id: environment_id.clone(),
+                    env_name: "UPSTREAM".to_owned(),
+                    source: EnvironmentCredentialSource::AuthGrant {
+                        grant_id: auth::AuthGrantId::new("authgrant_headers"),
+                    },
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                }],
+            }),
+            grants,
+            Arc::new(InMemoryAuthProviderStore::new()),
+            secrets,
+            Some(broker),
+        );
+
+        let error = resolver
+            .resolve_secret_env(&environment_id, &BTreeMap::new())
+            .await
+            .expect_err("a header set is never injected as a variable");
+        assert!(!error.to_string().contains("upstream-secret"), "{error}");
+    }
+
     #[derive(Default)]
     struct RecordingJobExecutor {
         started: std::sync::Mutex<Vec<StartJobsParams>>,
