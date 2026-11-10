@@ -23,6 +23,7 @@ export const METHOD_ROLES: Readonly<Record<string, UniverseRole>> = {
   "auth/providers/delete": "operator",
   "auth/providers/list": "viewer",
   "auth/providers/read": "viewer",
+  "auth/providers/replace": "operator",
   "blobs/has": "viewer",
   "blobs/put": "contributor",
   "blobs/read": "viewer",

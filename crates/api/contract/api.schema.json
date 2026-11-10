@@ -472,6 +472,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfAuthProviderReplaceResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/AuthProviderReplaceResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfBlobHasResponse": {
       "properties": {
         "notifications": {
@@ -4012,6 +4029,45 @@
       "type": "object"
     },
     "AuthProviderReadResponse": {
+      "properties": {
+        "provider": {
+          "$ref": "#/definitions/AuthProviderView"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "AuthProviderReplaceParams": {
+      "description": "Replace an existing provider's configuration and credential in place, as\nif it were created again under the same id. The new settings are validated\nbefore anything changes, so a rejected replacement leaves the provider as\nit was; sessions and environment variables referencing the id keep working\nthroughout. `credential` is encrypted on receipt and never returned;\n`Debug` output redacts it.",
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/AuthProviderConfigInput"
+        },
+        "credential": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "config"
+      ],
+      "type": "object"
+    },
+    "AuthProviderReplaceResponse": {
       "properties": {
         "provider": {
           "$ref": "#/definitions/AuthProviderView"

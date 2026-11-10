@@ -300,6 +300,29 @@ impl AuthProviderStore for InMemoryAuthProviderStore {
                 provider_id: provider_id.clone(),
             })
     }
+
+    async fn replace_auth_provider(
+        &self,
+        record: AuthProviderRecord,
+        expected_credential: Option<&SecretId>,
+    ) -> Result<Option<AuthProviderRecord>, AuthRegistryError> {
+        let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
+        let current = inner.get_mut(&record.provider_id).ok_or_else(|| {
+            AuthRegistryError::ProviderNotFound {
+                provider_id: record.provider_id.clone(),
+            }
+        })?;
+        if current.credential_secret.as_ref() != expected_credential {
+            return Ok(None);
+        }
+        let next = AuthProviderRecord {
+            created_at_ms: current.created_at_ms,
+            ..record
+        };
+        next.validate()?;
+        *current = next.clone();
+        Ok(Some(next))
+    }
 }
 
 #[derive(Clone, Default)]
@@ -616,6 +639,56 @@ mod tests {
                 .await,
             Err(AuthRegistryError::GrantNotFound { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn in_memory_provider_replacement_swaps_only_from_the_expected_credential() {
+        use crate::{AuthProviderConfig, AuthProviderId, AuthProviderStatus, ModelApiKeyConfig};
+
+        let store = InMemoryAuthProviderStore::new();
+        let provider = |secret: &str, at: i64| CreateAuthProviderRecord {
+            provider_id: AuthProviderId::new("model:openai"),
+            display_name: None,
+            config: AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
+            credential_secret: Some(SecretId::new(secret)),
+            status: AuthProviderStatus::Active,
+            created_at_ms: at,
+        };
+        store
+            .create_auth_provider(provider("authsec_1", 10))
+            .await
+            .expect("create provider");
+
+        let replaced = store
+            .replace_auth_provider(
+                provider("authsec_2", 20).into_record(),
+                Some(&SecretId::new("authsec_1")),
+            )
+            .await
+            .expect("replace")
+            .expect("expected credential matched");
+        assert_eq!(replaced.credential_secret, Some(SecretId::new("authsec_2")));
+        assert_eq!(replaced.created_at_ms, 10, "creation time is kept");
+
+        // A writer that read the old credential loses and changes nothing.
+        assert!(
+            store
+                .replace_auth_provider(
+                    provider("authsec_3", 30).into_record(),
+                    Some(&SecretId::new("authsec_1")),
+                )
+                .await
+                .expect("replace")
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .read_auth_provider(&AuthProviderId::new("model:openai"))
+                .await
+                .expect("read")
+                .credential_secret,
+            Some(SecretId::new("authsec_2"))
+        );
     }
 
     #[tokio::test]

@@ -569,6 +569,43 @@ pub struct AuthProviderCreateResponse {
     pub provider: AuthProviderView,
 }
 
+/// Replace an existing provider's configuration and credential in place, as
+/// if it were created again under the same id. The new settings are validated
+/// before anything changes, so a rejected replacement leaves the provider as
+/// it was; sessions and environment variables referencing the id keep working
+/// throughout. `credential` is encrypted on receipt and never returned;
+/// `Debug` output redacts it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderReplaceParams {
+    pub provider_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub config: AuthProviderConfigInput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
+impl std::fmt::Debug for AuthProviderReplaceParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthProviderReplaceParams")
+            .field("provider_id", &self.provider_id)
+            .field("display_name", &self.display_name)
+            .field("config", &self.config)
+            .field(
+                "credential",
+                &self.credential.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderReplaceResponse {
+    pub provider: AuthProviderView,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthProviderListParams {}

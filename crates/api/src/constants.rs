@@ -137,6 +137,7 @@ pub const METHOD_AUTH_CLIENTS_DELETE: &str = "auth/clients/delete";
 pub const METHOD_AUTH_FLOWS_START: &str = "auth/flows/start";
 pub const METHOD_AUTH_FLOWS_READ: &str = "auth/flows/read";
 pub const METHOD_AUTH_PROVIDERS_CREATE: &str = "auth/providers/create";
+pub const METHOD_AUTH_PROVIDERS_REPLACE: &str = "auth/providers/replace";
 pub const METHOD_AUTH_PROVIDERS_READ: &str = "auth/providers/read";
 pub const METHOD_AUTH_PROVIDERS_LIST: &str = "auth/providers/list";
 pub const METHOD_AUTH_PROVIDERS_DELETE: &str = "auth/providers/delete";

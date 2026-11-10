@@ -4582,6 +4582,81 @@ impl AgentApiService for GatewayAgentApi {
         }
     }
 
+    async fn replace_auth_provider(
+        &self,
+        params: AuthProviderReplaceParams,
+    ) -> Result<AgentApiOutcome<AuthProviderReplaceResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_PROVIDERS_REPLACE, None)
+            .await?;
+        let provider_id = parse_auth_provider_id(params.provider_id.clone())?;
+        let current = self
+            .store
+            .read_auth_provider(&provider_id)
+            .await
+            .map_err(map_auth_error)?;
+        // Same validation as create, so the rules cannot drift; nothing is
+        // written until the whole replacement is known to be valid.
+        let draft = auth_provider_create_draft(
+            AuthProviderCreateParams {
+                provider_id: Some(params.provider_id),
+                display_name: params.display_name,
+                config: params.config,
+                credential: params.credential,
+            },
+            now_ms()?,
+        )?;
+        if let auth::AuthProviderConfig::ModelOAuth(config) = &draft.provider.config {
+            let grant = self
+                .store
+                .read_grant(&config.grant_id)
+                .await
+                .map_err(map_auth_error)?;
+            if grant.status != auth::AuthGrantStatus::Active {
+                return Err(AgentApiError::rejected(format!(
+                    "auth grant {} is not active: {:?}",
+                    grant.grant_id, grant.status
+                )));
+            }
+        }
+        if let Some(secret) = &draft.secret {
+            self.store
+                .put_secret(secret.clone())
+                .await
+                .map_err(map_auth_error)?;
+        }
+        let replacement = draft.provider.into_record();
+        let swapped = self
+            .store
+            .replace_auth_provider(replacement, current.credential_secret.as_ref())
+            .await;
+        let record = match swapped {
+            Ok(Some(record)) => record,
+            other => {
+                if let Some(secret) = &draft.secret {
+                    let _ = self.store.delete_secret(&secret.secret_id).await;
+                }
+                return Err(match other {
+                    Ok(_) => AgentApiError::conflict(format!(
+                        "auth provider {provider_id} was changed while it was being replaced; retry"
+                    )),
+                    Err(error) => map_auth_error(error),
+                });
+            }
+        };
+        self.model_discovery
+            .invalidate_auth_provider(record.provider_id.as_str());
+        // The old credential is unreferenced now. A failed delete leaves an
+        // unreachable sealed value behind, never a broken provider.
+        if let Some(old) = &current.credential_secret
+            && let Err(error) = self.store.delete_secret(old).await
+        {
+            tracing::warn!(provider_id = %provider_id, %error, "could not delete a replaced provider credential");
+        }
+        Ok(AgentApiOutcome::new(AuthProviderReplaceResponse {
+            provider: auth_provider_view(record),
+        }))
+    }
+
     async fn list_auth_providers(
         &self,
         _params: AuthProviderListParams,

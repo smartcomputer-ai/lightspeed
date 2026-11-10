@@ -97,6 +97,7 @@ export const METHODS = [
   "auth/flows/start",
   "auth/flows/read",
   "auth/providers/create",
+  "auth/providers/replace",
   "auth/providers/read",
   "auth/providers/list",
   "auth/providers/delete",
@@ -701,6 +702,12 @@ export const METHOD_INFO = {
     access: {"action":"configureResource","kind":"universe"},
     summary: "Register an authentication provider",
     description: "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
+  },
+  "auth/providers/replace": {
+    scope: "universe",
+    access: {"action":"configureResource","kind":"universe"},
+    summary: "Replace an authentication provider",
+    description: "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
   },
   "auth/providers/read": {
     scope: "universe",
@@ -1843,6 +1850,15 @@ export interface MethodMap {
   "auth/providers/create": {
     params: Api.AuthProviderCreateParams;
     result: Api.AgentApiOutcomeOfAuthProviderCreateResponse;
+  };
+  /**
+   * Replace an authentication provider
+   *
+   * Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.
+   */
+  "auth/providers/replace": {
+    params: Api.AuthProviderReplaceParams;
+    result: Api.AgentApiOutcomeOfAuthProviderReplaceResponse;
   };
   /**
    * Read authentication provider metadata

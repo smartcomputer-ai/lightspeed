@@ -497,6 +497,11 @@ pub trait AgentApiService: Send + Sync {
         params: AuthProviderCreateParams,
     ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError>;
 
+    async fn replace_auth_provider(
+        &self,
+        params: AuthProviderReplaceParams,
+    ) -> Result<AgentApiOutcome<AuthProviderReplaceResponse>, AgentApiError>;
+
     async fn list_auth_providers(
         &self,
         params: AuthProviderListParams,

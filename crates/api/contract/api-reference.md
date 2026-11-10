@@ -1214,6 +1214,19 @@ Creates a model or GitHub credential source. Plaintext API keys/private keys are
 - Params: `AuthProviderCreateParams`
 - Result: `AgentApiOutcome<AuthProviderCreateResponse>`
 
+### `auth/providers/replace`
+
+**Replace an authentication provider**
+
+Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.
+
+- Access: `{"kind":"universe","action":"configureResource"}`
+- Group: `auth`
+- Role: `operator`
+- Target: `none`
+- Params: `AuthProviderReplaceParams`
+- Result: `AgentApiOutcome<AuthProviderReplaceResponse>`
+
 ### `auth/providers/read`
 
 **Read authentication provider metadata**

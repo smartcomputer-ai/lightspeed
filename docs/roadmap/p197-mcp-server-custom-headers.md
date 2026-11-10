@@ -177,9 +177,13 @@ The word follows existing usage: *rotate* is for secrets Lightspeed mints
 (`deployment/api-keys/rotate`, `environments/registration-keys/rotate`);
 *replace* is for values the user supplies, as with model keys' "Replace key".
 The Credentials page offers **Replace value** for tokens and environment
-secrets; the CLI has `auth grants replace`. Model API keys still replace by
-delete and recreate in Platform and could move onto the same engine
-primitive later.
+secrets; the CLI has `auth grants replace`. Model API keys use the same pattern
+through `auth/providers/replace`: the new settings are validated with create's
+rules before anything changes, the provider row is swapped in place only if it
+still names the credential the caller read, and the old key is then deleted.
+This replaces Platform's former delete-then-create, which lost the key when
+the new settings were rejected, briefly left sessions without the provider,
+and could not replace a key bound to an environment variable.
 
 ## Out of scope
 

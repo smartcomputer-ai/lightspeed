@@ -2739,6 +2739,13 @@ export interface AgentApiOutcomeOfAuthProviderReadResponse {
 export interface AuthProviderReadResponse {
   provider: AuthProviderView;
 }
+export interface AgentApiOutcomeOfAuthProviderReplaceResponse {
+  notifications?: AgentNotification[];
+  result: AuthProviderReplaceResponse;
+}
+export interface AuthProviderReplaceResponse {
+  provider: AuthProviderView;
+}
 export interface AgentApiOutcomeOfBlobHasResponse {
   notifications?: AgentNotification[];
   result: BlobHasResponse;
@@ -5074,6 +5081,20 @@ export interface AuthProviderDeleteParams {
 }
 export interface AuthProviderListParams {}
 export interface AuthProviderReadParams {
+  providerId: string;
+}
+/**
+ * Replace an existing provider's configuration and credential in place, as
+ * if it were created again under the same id. The new settings are validated
+ * before anything changes, so a rejected replacement leaves the provider as
+ * it was; sessions and environment variables referencing the id keep working
+ * throughout. `credential` is encrypted on receipt and never returned;
+ * `Debug` output redacts it.
+ */
+export interface AuthProviderReplaceParams {
+  config: AuthProviderConfigInput;
+  credential?: string | null;
+  displayName?: string | null;
   providerId: string;
 }
 export interface BlobHasParams {

@@ -2300,6 +2300,31 @@
     },
     {
       "access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "description": "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
+      "group": "auth",
+      "method": "auth/providers/replace",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/AuthProviderReplaceParams"
+        },
+        "type": "AuthProviderReplaceParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderReplaceResponse"
+        },
+        "type": "AgentApiOutcome<AuthProviderReplaceResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Replace an authentication provider",
+      "target": null
+    },
+    {
+      "access": {
         "action": "read",
         "kind": "universe"
       },

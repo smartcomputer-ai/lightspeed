@@ -472,6 +472,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfAuthProviderReplaceResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AuthProviderReplaceResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfBlobHasResponse": {
         "properties": {
           "notifications": {
@@ -4012,6 +4029,45 @@
         "type": "object"
       },
       "AuthProviderReadResponse": {
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/AuthProviderView"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "AuthProviderReplaceParams": {
+        "description": "Replace an existing provider's configuration and credential in place, as\nif it were created again under the same id. The new settings are validated\nbefore anything changes, so a rejected replacement leaves the provider as\nit was; sessions and environment variables referencing the id keep working\nthroughout. `credential` is encrypted on receipt and never returned;\n`Debug` output redacts it.",
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/AuthProviderConfigInput"
+          },
+          "credential": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "providerId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId",
+          "config"
+        ],
+        "type": "object"
+      },
+      "AuthProviderReplaceResponse": {
         "properties": {
           "provider": {
             "$ref": "#/components/schemas/AuthProviderView"
@@ -22069,6 +22125,34 @@
         }
       },
       "summary": "Register an authentication provider",
+      "x-lightspeed-access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
+    },
+    {
+      "description": "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
+      "name": "auth/providers/replace",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/AuthProviderReplaceParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderReplaceResponse"
+        }
+      },
+      "summary": "Replace an authentication provider",
       "x-lightspeed-access": {
         "action": "configureResource",
         "kind": "universe"

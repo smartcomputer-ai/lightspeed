@@ -1087,6 +1087,96 @@ async fn temporal_live_mcp_custom_headers_reach_the_server_and_follow_the_creden
     run_with_live_worker(activities, run_custom_headers_live_client).await
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_model_key_replacement_is_validated_first_and_swaps_in_place()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_model_key_replacement_live_client).await
+}
+
+async fn run_model_key_replacement_live_client(
+    client: Client,
+    task_queue: String,
+    _session_id: SessionId,
+) -> anyhow::Result<()> {
+    use auth::{AuthProviderStore as _, SecretStore as _};
+
+    let store = pg_store_from_env().await?;
+    let api = GatewayAgentApi::builder(client, store.clone())
+        .with_task_queue(task_queue)
+        .build();
+    let provider_id = format!("model:replace_{}", uuid::Uuid::new_v4().simple());
+    let row_id = auth::AuthProviderId::new(provider_id.clone());
+    let stored_key = |store: Arc<store_pg::PgStore>, row_id: auth::AuthProviderId| async move {
+        let record = store.read_auth_provider(&row_id).await?;
+        let secret = record
+            .credential_secret
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("model key provider has no credential"))?;
+        let (_, value) = store.read_secret(&secret).await?;
+        anyhow::Ok((secret, value.expose().to_owned()))
+    };
+
+    api.create_auth_provider(api::AuthProviderCreateParams {
+        provider_id: Some(provider_id.clone()),
+        display_name: Some("Replaceable key".to_owned()),
+        config: api::AuthProviderConfigInput::ModelApiKey { endpoint: None },
+        credential: Some("key-one".to_owned()),
+    })
+    .await?;
+    let (first_secret, first_value) = stored_key(store.clone(), row_id.clone()).await?;
+    anyhow::ensure!(first_value == "key-one");
+
+    // A replacement the engine rejects changes nothing: the old key stays.
+    let rejected = api
+        .replace_auth_provider(api::AuthProviderReplaceParams {
+            provider_id: provider_id.clone(),
+            display_name: None,
+            config: api::AuthProviderConfigInput::ModelApiKey {
+                endpoint: Some(api::ModelEndpointConfig {
+                    base_url: "https://models.example.com/v1".to_owned(),
+                    headers: Default::default(),
+                    api_kinds: Vec::new(),
+                }),
+            },
+            credential: Some("key-two".to_owned()),
+        })
+        .await;
+    anyhow::ensure!(rejected.is_err(), "an empty API-kind list must be refused");
+    anyhow::ensure!(
+        stored_key(store.clone(), row_id.clone()).await? == (first_secret.clone(), first_value),
+        "a rejected replacement must keep the old key"
+    );
+
+    // A valid replacement swaps the key in place and deletes the old value.
+    let replaced = api
+        .replace_auth_provider(api::AuthProviderReplaceParams {
+            provider_id: provider_id.clone(),
+            display_name: Some("Replaced key".to_owned()),
+            config: api::AuthProviderConfigInput::ModelApiKey { endpoint: None },
+            credential: Some("key-two".to_owned()),
+        })
+        .await?
+        .result
+        .provider;
+    anyhow::ensure!(replaced.provider_id == provider_id);
+    let (second_secret, second_value) = stored_key(store.clone(), row_id.clone()).await?;
+    anyhow::ensure!(second_value == "key-two" && second_secret != first_secret);
+    anyhow::ensure!(
+        store.read_secret(&first_secret).await.is_err(),
+        "the replaced key is deleted"
+    );
+
+    api.delete_auth_provider(api::AuthProviderDeleteParams { provider_id })
+        .await?;
+    Ok(())
+}
+
 /// Records the custom headers of every request, then answers as the small
 /// acceptance fixture.
 #[derive(Clone)]

@@ -3004,6 +3004,15 @@ impl AgentApiService for TestService {
         }))
     }
 
+    async fn replace_auth_provider(
+        &self,
+        params: AuthProviderReplaceParams,
+    ) -> Result<AgentApiOutcome<AuthProviderReplaceResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(AuthProviderReplaceResponse {
+            provider: test_auth_provider(params.provider_id),
+        }))
+    }
+
     async fn list_auth_providers(
         &self,
         _params: AuthProviderListParams,

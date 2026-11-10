@@ -9335,6 +9335,169 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
+    "name": "lightspeed_auth_providers_replace",
+    "method": "auth/providers/replace",
+    "group": "auth",
+    "summary": "Replace an authentication provider",
+    "description": "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
+    "paramsType": "AuthProviderReplaceParams",
+    "resultType": "AgentApiOutcome<AuthProviderReplaceResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Replace an existing provider's configuration and credential in place, as\nif it were created again under the same id. The new settings are validated\nbefore anything changes, so a rejected replacement leaves the provider as\nit was; sessions and environment variables referencing the id keep working\nthroughout. `credential` is encrypted on receipt and never returned;\n`Debug` output redacts it.",
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/AuthProviderConfigInput"
+        },
+        "credential": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "config"
+      ],
+      "type": "object",
+      "definitions": {
+        "AuthProviderConfigInput": {
+          "oneOf": [
+            {
+              "properties": {
+                "apiBaseUrl": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "appId": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "githubApp",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "appId"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Stored model provider API key; the key arrives via `credential` and is\nencrypted on receipt.",
+              "properties": {
+                "endpoint": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/ModelEndpointConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": {
+                  "const": "modelApiKey",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Bind an existing auth grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
+              "properties": {
+                "audience": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "endpoint": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/ModelEndpointConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "grantId": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "modelOAuth",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "grantId"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Register an endpoint that requires no provider credential.",
+              "properties": {
+                "endpoint": {
+                  "$ref": "#/definitions/ModelEndpointConfig"
+                },
+                "type": {
+                  "const": "modelEndpoint",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "endpoint"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "ModelEndpointConfig": {
+          "properties": {
+            "apiKinds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "baseUrl": {
+              "type": "string"
+            },
+            "headers": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "baseUrl",
+            "apiKinds"
+          ],
+          "type": "object"
+        }
+      }
+    }
+  },
+  {
     "name": "lightspeed_auth_providers_read",
     "method": "auth/providers/read",
     "group": "auth",

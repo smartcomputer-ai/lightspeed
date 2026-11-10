@@ -147,6 +147,50 @@ impl AuthProviderStore for PgStore {
         };
         auth_provider_from_row(&row)
     }
+
+    async fn replace_auth_provider(
+        &self,
+        record: AuthProviderRecord,
+        expected_credential: Option<&SecretId>,
+    ) -> Result<Option<AuthProviderRecord>, AuthRegistryError> {
+        record.validate()?;
+        let config_json = record.config.to_json()?;
+        let query = format!(
+            r#"
+            UPDATE auth_providers
+            SET provider_kind = $3,
+                display_name = $4,
+                config_json = $5,
+                credential_secret_id = $6,
+                status = $7,
+                updated_at_ms = GREATEST(updated_at_ms, $8)
+            WHERE universe_id = $1 AND provider_id = $2
+              AND credential_secret_id IS NOT DISTINCT FROM $9
+            RETURNING {AUTH_PROVIDER_COLUMNS}
+            "#
+        );
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(self.config.universe_id)
+            .bind(record.provider_id.as_str())
+            .bind(provider_kind_to_str(record.provider_kind))
+            .bind(record.display_name.as_deref())
+            .bind(&config_json)
+            .bind(record.credential_secret.as_ref().map(SecretId::as_str))
+            .bind(provider_status_to_str(record.status))
+            .bind(record.updated_at_ms)
+            .bind(expected_credential.map(SecretId::as_str))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| auth_sql_error("replace auth provider", error))?;
+        match row {
+            Some(row) => auth_provider_from_row(&row).map(Some),
+            None => {
+                // Distinguish a lost race from a missing provider.
+                self.read_auth_provider(&record.provider_id).await?;
+                Ok(None)
+            }
+        }
+    }
 }
 
 fn provider_status_to_str(value: AuthProviderStatus) -> &'static str {

@@ -1218,8 +1218,10 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   /// Model provider API keys for Lightspeed sessions (`model:<provider>` rows).
-  /// `replace` swaps an existing key: the row is deleted and recreated because
-  /// `auth/providers/create` has no update semantics.
+  /// `replace` swaps an existing row in place through `auth/providers/replace`:
+  /// the engine validates first, so a rejected replacement keeps the old key,
+  /// and sessions or environment variables using the provider never see it
+  /// missing.
   app.post("/:id/integrations/model-keys", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
@@ -1232,15 +1234,6 @@ export function gatewayRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const providerId = modelProviderCredentialId(body.data.provider);
-      if (body.data.replace) {
-        try {
-          await client.call("auth/providers/delete", { providerId });
-        } catch (error) {
-          if (!(error instanceof LightspeedRpcError && error.kind === "notFound")) {
-            throw error;
-          }
-        }
-      }
       const config: AuthProviderCreateParams["config"] = body.data.endpoint
         ? body.data.credential
           ? { type: "modelApiKey", endpoint: body.data.endpoint }
@@ -1252,6 +1245,17 @@ export function gatewayRoutes(ctx: AppContext) {
         config,
         credential: body.data.credential,
       };
+      if (body.data.replace) {
+        try {
+          const replaced = await client.call("auth/providers/replace", { ...params, providerId });
+          return c.json(modelProviderCredentialView(replaced.result.provider));
+        } catch (error) {
+          // Nothing to replace yet: fall through and create it.
+          if (!(error instanceof LightspeedRpcError && error.kind === "notFound")) {
+            throw error;
+          }
+        }
+      }
       const response = await client.call("auth/providers/create", params);
       return c.json(modelProviderCredentialView(response.result.provider), 201);
     });
