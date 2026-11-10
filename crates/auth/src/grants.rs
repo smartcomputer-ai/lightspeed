@@ -8,6 +8,22 @@ use crate::{
     validate_token_component,
 };
 
+/// Names two related things, depending on where it is stored.
+///
+/// On a grant it says how the broker obtains the grant's token: stored as
+/// pasted (`StaticToken`), OAuth with endpoints discovered from an MCP server
+/// (`McpOAuth`) or configured by hand (`CustomOAuth`), a GitHub App
+/// installation token minted from a signed app JWT (`GitHubApp`), or a model
+/// provider credential (`ModelApiKey`, `ModelOAuth`).
+///
+/// On a provider configuration row it says what the row configures: a GitHub
+/// App (`GitHubApp`) or a model provider reached with an API key
+/// (`ModelApiKey`), an OAuth grant (`ModelOAuth`), or no credential at all
+/// (`ModelEndpoint`, which never appears on a grant).
+///
+/// A grant kind is added only for a new token-minting protocol. Standard OAuth
+/// providers use `CustomOAuth` rather than a kind of their own; `GitHubApp`
+/// exists because installation tokens are not OAuth and need GitHub's API.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AuthProviderKind {
     #[serde(rename = "static_token")]

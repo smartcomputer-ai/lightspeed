@@ -3921,6 +3921,7 @@
       "type": "object"
     },
     "AuthProviderKind": {
+      "description": "On a grant, how its token is obtained; on a provider, what it configures.\n`staticToken` is a pasted secret, sent under whatever header its consumer\nuses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured\nendpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted\non demand. The `model*` kinds configure model providers; `modelEndpoint`\nis a provider without a credential and never appears on a grant.",
       "enum": [
         "staticToken",
         "mcpOAuth",

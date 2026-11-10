@@ -805,6 +805,14 @@ export type InputItem =
       type: "catalog";
     };
 export type MediaKind = "image" | "audio" | "document";
+/**
+ * On a grant, how its token is obtained; on a provider, what it configures.
+ * `staticToken` is a pasted secret, sent under whatever header its consumer
+ * uses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured
+ * endpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted
+ * on demand. The `model*` kinds configure model providers; `modelEndpoint`
+ * is a provider without a credential and never appears on a grant.
+ */
 export type AuthProviderKind =
   | "staticToken"
   | "mcpOAuth"
