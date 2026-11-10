@@ -105,6 +105,7 @@ interface GrantInit {
   audience?: string | null;
   expiresAtMs?: number | null;
   hasRefreshToken?: boolean;
+  headerNames?: string[];
   metadata?: Record<string, unknown>;
 }
 
@@ -125,6 +126,7 @@ function mintGrant(store: DemoStore, universe: UniverseState, init: GrantInit): 
     audience: init.audience ?? null,
     hasAccessToken: true,
     hasRefreshToken: init.hasRefreshToken ?? false,
+    ...(init.headerNames ? { headerNames: init.headerNames } : {}),
     expiresAtMs: init.expiresAtMs ?? null,
     lastLeasedAtMs: null,
     leaseCount: 0,
@@ -527,6 +529,7 @@ export function secretRoutes(store: DemoStore): Hono {
       grantId,
       providerId: "static",
       providerKind: headers ? "staticHeaders" : "staticBearer",
+    ...(headers ? { headerNames: headers.map((header) => String(header.name)) } : {}),
       displayName: optionalString(body.displayName),
       subjectHint: optionalString(body.subjectHint),
       exposure: !headers && body.exposure === "retrievable" ? "retrievable" : "brokered",

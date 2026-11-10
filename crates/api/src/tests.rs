@@ -3347,6 +3347,7 @@ fn test_auth_grant(grant_id: String, status: AuthGrantStatus) -> AuthGrantView {
         audience: None,
         has_access_token: true,
         has_refresh_token: false,
+        header_names: Vec::new(),
         expires_at_ms: None,
         status,
         metadata: serde_json::Value::Object(Default::default()),

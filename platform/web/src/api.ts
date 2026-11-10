@@ -238,6 +238,8 @@ export interface SecretGrant extends AuthGrantOption {
   audience?: string | null;
   hasAccessToken: boolean;
   hasRefreshToken: boolean;
+  /// Header names of a Custom headers credential; values are never returned.
+  headerNames?: string[];
   expiresAtMs?: number | null;
   lastLeasedAtMs?: number | null;
   leaseCount: number;

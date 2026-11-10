@@ -50,6 +50,10 @@ pub struct AuthGrantView {
     pub audience: Option<String>,
     pub has_access_token: bool,
     pub has_refresh_token: bool,
+    /// Header names of a `staticHeaders` grant, in the order they were
+    /// entered. Values are secret and never returned.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub header_names: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at_ms: Option<i64>,
     pub status: AuthGrantStatus,

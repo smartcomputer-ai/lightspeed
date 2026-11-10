@@ -2602,6 +2602,11 @@ export interface AuthGrantView {
   grantId: string;
   hasAccessToken: boolean;
   hasRefreshToken: boolean;
+  /**
+   * Header names of a `staticHeaders` grant, in the order they were
+   * entered. Values are secret and never returned.
+   */
+  headerNames?: string[];
   lastLeasedAtMs?: number | null;
   leaseCount: number;
   /**

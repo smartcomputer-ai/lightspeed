@@ -164,7 +164,10 @@ pub use secrets::{
     PutSecretRecord, SECRET_KIND_MODEL_API_KEY, SECRET_KIND_STATIC_BEARER, SecretRecordMeta,
     SecretStore, SecretValue, generate_prefixed_secret, secret_display_prefix, secret_sha256_hex,
 };
-pub use static_headers::{MAX_STATIC_HEADERS, SECRET_KIND_STATIC_HEADERS, StaticHeaders};
+pub use static_headers::{
+    MAX_STATIC_HEADERS, SECRET_KIND_STATIC_HEADERS, STATIC_HEADER_NAMES_METADATA_KEY,
+    StaticHeaders, static_header_names,
+};
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AuthRegistryError {
     #[error("auth grant already exists: {grant_id}")]

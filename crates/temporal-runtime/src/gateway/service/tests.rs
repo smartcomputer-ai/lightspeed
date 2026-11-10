@@ -654,6 +654,52 @@ fn custom_header_imports_are_validated_before_any_write() {
     assert!(!error.message.contains("upstream-secret"));
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn custom_header_imports_record_names_but_never_values() {
+    let mut params = header_import_params(api::AuthGrantExposure::Brokered);
+    // A caller cannot misstate the names: the server records them itself.
+    params.metadata = Some(serde_json::json!({"headerNames": ["Forged"], "team": "ops"}));
+    let Ok(draft) = crate::gateway::request_context::with_request_context(
+        crate::gateway::request_context::RequestContext::local(api::AccessScope::Deployment),
+        async { auth_api::auth_grant_import_draft(params, 10) },
+    )
+    .await
+    else {
+        panic!("header import draft");
+    };
+
+    assert_eq!(
+        draft.grant.provider_kind,
+        auth::AuthProviderKind::StaticHeaders
+    );
+    assert_eq!(
+        draft.grant.metadata,
+        serde_json::json!({"headerNames": ["X-Upstream-Url", "X-Upstream-Token"], "team": "ops"})
+    );
+    assert!(!draft.grant.metadata.to_string().contains("upstream-secret"));
+
+    let view = auth_api::auth_grant_view(draft.grant.into_record());
+    assert_eq!(
+        view.header_names,
+        vec!["X-Upstream-Url", "X-Upstream-Token"]
+    );
+    let wire = serde_json::to_string(&view).expect("serialize view");
+    assert!(wire.contains("\"headerNames\""));
+    assert!(!wire.contains("upstream-secret"));
+}
+
+#[test]
+fn only_custom_header_grants_expose_header_names() {
+    let mut bearer = test_auth_grant_record(
+        "authgrant_bearer",
+        auth::AuthProviderKind::StaticBearer,
+        auth::AuthGrantStatus::Active,
+        None,
+    );
+    bearer.metadata = serde_json::json!({"headerNames": ["X-Not-Headers"]});
+    assert!(auth_api::auth_grant_view(bearer).header_names.is_empty());
+}
+
 #[test]
 fn header_policies_bind_only_custom_header_grants() {
     let mut record = test_mcp_server_record("tracker", mcp::McpServerStatus::Active);

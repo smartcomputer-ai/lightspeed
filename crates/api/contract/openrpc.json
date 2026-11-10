@@ -3627,6 +3627,13 @@
           "hasRefreshToken": {
             "type": "boolean"
           },
+          "headerNames": {
+            "description": "Header names of a `staticHeaders` grant, in the order they were\nentered. Values are secret and never returned.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "lastLeasedAtMs": {
             "format": "int64",
             "type": [

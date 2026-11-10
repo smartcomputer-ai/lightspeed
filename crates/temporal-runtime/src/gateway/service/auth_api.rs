@@ -23,6 +23,9 @@ pub(super) fn auth_grant_import_draft(
         auth::SecretId::try_new(format!("authsec_{}", uuid::Uuid::new_v4().simple()))
             .map_err(|error| AgentApiError::internal(format!("generate secret id: {error}")))?;
 
+    let mut metadata = params
+        .metadata
+        .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
     let (provider_kind, secret_kind, value) = match (params.token, params.headers.is_empty()) {
         (Some(token), true) => (
             auth::AuthProviderKind::StaticBearer,
@@ -44,6 +47,14 @@ pub(super) fn auth_grant_import_draft(
                     .map(|header| (header.name, auth::SecretValue::new(header.value))),
             )
             .map_err(map_auth_error)?;
+            // The names are recorded server-side so callers cannot misstate them;
+            // a non-object metadata value is rejected by grant validation below.
+            if let serde_json::Value::Object(map) = &mut metadata {
+                map.insert(
+                    auth::STATIC_HEADER_NAMES_METADATA_KEY.to_owned(),
+                    headers.names().collect::<Vec<_>>().into(),
+                );
+            }
             (
                 auth::AuthProviderKind::StaticHeaders,
                 auth::SECRET_KIND_STATIC_HEADERS,
@@ -75,9 +86,7 @@ pub(super) fn auth_grant_import_draft(
         access_token_secret: Some(secret_id),
         refresh_token_secret: None,
         oauth_client: None,
-        metadata: params
-            .metadata
-            .unwrap_or_else(|| serde_json::Value::Object(Default::default())),
+        metadata,
         expires_at_ms: params.expires_at_ms,
         status: auth::AuthGrantStatus::Active,
         created_at_ms: now_ms,
@@ -92,7 +101,13 @@ pub(super) fn auth_grant_import_draft(
 }
 
 pub(super) fn auth_grant_view(record: auth::AuthGrantRecord) -> api::AuthGrantView {
+    let header_names = if record.provider_kind == auth::AuthProviderKind::StaticHeaders {
+        auth::static_header_names(&record.metadata)
+    } else {
+        Vec::new()
+    };
     api::AuthGrantView {
+        header_names,
         grant_id: record.grant_id.as_str().to_owned(),
         provider_id: record.provider_id,
         provider_kind: api_auth_provider_kind(record.provider_kind),

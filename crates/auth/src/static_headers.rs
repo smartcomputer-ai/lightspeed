@@ -14,6 +14,25 @@ use crate::{AuthRegistryError, SecretValue};
 
 pub const SECRET_KIND_STATIC_HEADERS: &str = "auth.static_headers";
 
+/// Grant metadata key holding a custom-headers credential's header names.
+/// Names are not secret; they let the credential be recognized after saving.
+pub const STATIC_HEADER_NAMES_METADATA_KEY: &str = "headerNames";
+
+/// The header names recorded on a custom-headers grant's metadata; empty
+/// when absent or malformed.
+pub fn static_header_names(metadata: &serde_json::Value) -> Vec<String> {
+    metadata
+        .get(STATIC_HEADER_NAMES_METADATA_KEY)
+        .and_then(serde_json::Value::as_array)
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(|name| name.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Most headers one credential may carry.
 pub const MAX_STATIC_HEADERS: usize = 16;
 const MAX_HEADER_NAME_BYTES: usize = 128;

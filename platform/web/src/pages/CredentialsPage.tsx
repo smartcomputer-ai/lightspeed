@@ -848,10 +848,13 @@ function managedBy(grant: SecretGrant): string | null {
   return grant.providerKind === "gitHubApp" ? "GitHub App" : null;
 }
 
-function grantTypeLabel(grant: SecretGrant): string {
+export function grantTypeLabel(grant: SecretGrant): string {
   if (grant.providerId === "environment-secret") return "Environment secret";
   if (grant.providerKind === "staticBearer") return "Bearer token";
-  if (grant.providerKind === "staticHeaders") return "Custom headers";
+  if (grant.providerKind === "staticHeaders") {
+    const names = grant.headerNames ?? [];
+    return names.length > 0 ? `Custom headers · ${names.join(", ")}` : "Custom headers";
+  }
   if (grant.hasRefreshToken) return "OAuth (refreshable)";
   return grant.providerKind;
 }

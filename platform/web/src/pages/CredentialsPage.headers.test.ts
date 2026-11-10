@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { customHeadersError, isReusableCredential } from "./CredentialsPage";
+import type { SecretGrant } from "@/api";
+import { customHeadersError, grantTypeLabel, isReusableCredential } from "./CredentialsPage";
 
 describe("custom headers credentials", () => {
   it("accepts several headers, including a non-Bearer Authorization", () => {
@@ -27,5 +28,14 @@ describe("custom headers credentials", () => {
   it("lists custom headers credentials on the Credentials page", () => {
     expect(isReusableCredential({ providerKind: "staticHeaders", providerId: "static", metadata: {} }))
       .toBe(true);
+  });
+
+  it("labels a custom headers credential with its header names", () => {
+    const grant = {
+      grantId: "authgrant_1", providerId: "static", providerKind: "staticHeaders",
+      headerNames: ["X-Upstream-Url", "X-Upstream-Token"],
+    } as SecretGrant;
+    expect(grantTypeLabel(grant)).toBe("Custom headers · X-Upstream-Url, X-Upstream-Token");
+    expect(grantTypeLabel({ ...grant, headerNames: undefined })).toBe("Custom headers");
   });
 });
