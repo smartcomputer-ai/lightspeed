@@ -93,3 +93,11 @@ def test_manual_step_uses_selected_evidence(app):
     app.slider[0].set_value(1).run()
     assert not app.exception
     assert any("session/runs/start" in item.value for item in app.caption)
+
+
+def test_lightspeed_link_uses_the_configured_platform_url(app, monkeypatch):
+    monkeypatch.setenv("LIGHTSPEED_DEMO_PLATFORM_URL", "https://platform.example/app/")
+    app.run()
+    assert not app.exception
+    links = app.get("link_button")
+    assert any(link.proto.label == "Open Lightspeed" and link.proto.url == "https://platform.example/app/" for link in links)

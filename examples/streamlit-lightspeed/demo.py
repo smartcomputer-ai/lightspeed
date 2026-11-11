@@ -36,6 +36,7 @@ class Settings:
     api_key: str | None = field(repr=False)
     universe: str | None = None
     profile: str | None = None
+    platform_url: str | None = None
     temporal_address: str | None = None
     temporal_namespace: str = "default"
     temporal_ui: str | None = None
@@ -53,6 +54,7 @@ class Settings:
             api_key=value("LIGHTSPEED_API_KEY"),
             universe=value("LIGHTSPEED_UNIVERSE"),
             profile=value("LIGHTSPEED_PROFILE_ID"),
+            platform_url=value("LIGHTSPEED_DEMO_PLATFORM_URL", "http://127.0.0.1:5173/app/"),
             temporal_address=value("LIGHTSPEED_DEMO_TEMPORAL_ADDRESS"),
             temporal_namespace=value("LIGHTSPEED_DEMO_TEMPORAL_NAMESPACE") or "default",
             temporal_ui=value("LIGHTSPEED_DEMO_TEMPORAL_UI"),
