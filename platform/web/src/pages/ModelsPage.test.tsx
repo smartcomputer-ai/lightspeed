@@ -82,7 +82,7 @@ it("lists model providers and subscriptions with the legacy-credential warning",
   expect(container.querySelector("h1")?.textContent).toBe("Models");
   expect(container.textContent).toContain("Provider connections and default models for agents in this universe.");
   expect(container.textContent).toContain("A legacy credential below has an incorrect internal ID");
-  const rows = [...container.querySelectorAll("tbody tr")].map((row) => row.textContent);
+  const rows = [...container.querySelectorAll("table:has(thead) tbody tr")].map((row) => row.textContent);
   expect(rows).toHaveLength(2);
   expect(rows[0]).toContain("Anthropic");
   expect(rows[0]).toContain("Needs attention");
@@ -227,7 +227,7 @@ it("offers default selection after adding a provider without changing it automat
 
 it("configures speech separately from the agent default and clears only speech", async () => {
   await show();
-  const row = () => container.querySelector('[role="group"][aria-label="Speech-to-text"]')!;
+  const row = () => container.querySelector('tr[aria-label="Speech-to-text"]')!;
   expect(row().textContent).toContain("No default selected");
   await act(async () => row().querySelector<HTMLButtonElement>("button")!.click());
   const provider = document.body.querySelector<HTMLInputElement>('input[placeholder="Provider ID"]')!;

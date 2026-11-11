@@ -2,14 +2,20 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-/// Bordered card around a table. `Table` itself owns the horizontal scroll
-/// container, so this must not add another `overflow-x-auto` (nested
-/// scrollers clip the border radius and double the scrollbars).
+/// The card surface around a table: the card's background, radius, border
+/// and shadow tokens, as Card. The border is a real border rather than
+/// Card's inset ring, so row hover backgrounds stop at it instead of
+/// painting over it. `Table` itself owns the horizontal scroll container,
+/// so this must not add another `overflow-x-auto` (nested scrollers clip
+/// the border radius and double the scrollbars).
 function TableCard({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="table-card"
-      className={cn("min-w-0 max-w-full overflow-hidden rounded-xl border", className)}
+      className={cn(
+        "min-w-0 max-w-full overflow-hidden rounded-(--surface-card-radius) border-(length:--surface-card-border-width) border-(--surface-card-border) bg-(--surface-card) text-card-foreground shadow-(--surface-card-shadow)",
+        className
+      )}
       {...props}
     />
   )

@@ -160,8 +160,8 @@
        dialogs, popovers and menus draw the border inside their edge as an
        inset ring, so it takes no space; fields use a real border. */
     --surface-card-border-width: 1px;
-    --surface-card-radius: calc(var(--radius) * 1.4);
-    --surface-card-shadow: var(--shadow-xs);
+    --surface-card-radius: calc(var(--radius) * 0.6);
+    --surface-card-shadow: var(--shadow-lg);
     --surface-dialog-border-width: 1px;
     --surface-dialog-radius: calc(var(--radius) * 1.4);
     --surface-dialog-shadow: var(--shadow-xl);
@@ -262,9 +262,10 @@
     --list-title-font-weight-selected: var(--font-weight-semibold);
     --menu-item-font-weight: var(--font-weight-normal);
     --menu-item-font-weight-selected: var(--font-weight-semibold);
-    /* Tailwind's normal weight (font-normal and the weights above), lighter
-       than 400: IBM Plex Sans is variable, so any weight renders. */
-    --font-weight-normal: 310;
+    /* Tailwind's normal and medium weights (font-normal, font-medium and
+       the weights above): IBM Plex Sans is variable, so any weight renders. */
+    --font-weight-normal: 460;
+    --font-weight-medium: 520;
     /* The standard transition times, one per family of components. Everything
        a time covers shares it and the standard easing, so it moves together.
        Controls: buttons, badges, fields (the composer too), checkboxes,
@@ -328,20 +329,20 @@
     --scrollbar-thumb: color-mix(in oklab, var(--foreground) 22%, transparent);
     --scrollbar-track: transparent;
     --scrollbar-thumb-rest: transparent;
-    --note-info-background: color-mix(in oklab, var(--info) 10%, transparent);
-    --note-info-border: color-mix(in oklab, var(--info) 40%, transparent);
+    --note-info-background: color-mix(in oklab, var(--info) 15%, transparent);
+    --note-info-border: color-mix(in oklab, var(--info) 0%, transparent);
     --note-info-title: var(--info);
-    --note-success-background: color-mix(in oklab, var(--success) 10%, transparent);
-    --note-success-border: color-mix(in oklab, var(--success) 40%, transparent);
+    --note-success-background: color-mix(in oklab, var(--success) 15%, transparent);
+    --note-success-border: color-mix(in oklab, var(--success) 0%, transparent);
     --note-success-title: var(--success);
-    --note-warning-background: color-mix(in oklab, var(--warning) 10%, transparent);
-    --note-warning-border: color-mix(in oklab, var(--warning) 40%, transparent);
+    --note-warning-background: color-mix(in oklab, var(--warning) 15%, transparent);
+    --note-warning-border: color-mix(in oklab, var(--warning) 0%, transparent);
     --note-warning-title: var(--warning);
-    --note-error-background: color-mix(in oklab, var(--danger) 10%, transparent);
-    --note-error-border: color-mix(in oklab, var(--danger) 40%, transparent);
+    --note-error-background: color-mix(in oklab, var(--danger) 15%, transparent);
+    --note-error-border: color-mix(in oklab, var(--danger) 0%, transparent);
     --note-error-title: var(--danger);
     --surface-card: var(--card);
-    --surface-card-border: color-mix(in oklab, var(--foreground) 20%, transparent);
+    --surface-card-border: color-mix(in oklab, var(--foreground) 0%, transparent);
     --surface-dialog: var(--popover);
     --surface-dialog-border: color-mix(in oklab, var(--foreground) 0%, transparent);
     --surface-popover: var(--popover);

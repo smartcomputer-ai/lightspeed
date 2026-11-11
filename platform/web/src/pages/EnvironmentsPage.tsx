@@ -28,7 +28,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { TableCell } from "@/components/ui/table";
+import { IdText, Table, TableBody, TableCard, TableCell, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -1267,7 +1267,7 @@ function ProviderBindings({ bindings }: { bindings: EnvironmentProviderBinding[]
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <section className="mt-6 rounded-xl border">
+      <TableCard className="mt-6">
         <CollapsibleTrigger className="flex w-full items-center gap-3 px-4 py-3 text-left outline-none hover:bg-muted/30 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/50 md:px-5">
           <span className="text-sm font-medium">Provider configuration</span>
           <span className="text-xs text-muted-foreground">
@@ -1276,30 +1276,34 @@ function ProviderBindings({ bindings }: { bindings: EnvironmentProviderBinding[]
           <DropdownCaretIcon className={`ml-auto size-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="divide-y border-t">
-            {bindings.map((binding) => (
-              <div key={binding.providerId} className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:px-5">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm font-medium">{humanizeIdentifier(binding.providerId)}</p>
-                    {binding.enabled ? (
-                      <Badge variant="secondary">enabled</Badge>
-                    ) : (
-                      <Badge variant="outline" className="border-destructive/50 text-destructive">disabled</Badge>
-                    )}
-                  </div>
-                  <p className="mt-2 font-mono text-xs text-muted-foreground">
-                    {binding.providerId}
-                  </p>
-                </div>
-                <div className="text-xs text-muted-foreground md:text-right">
-                  <p>Updated {relativeTime(binding.updatedAtMs)}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+          {/* A table without a header: the provider's name, its state and id, and
+              when it changed. */}
+          <Table aria-label="Provider configuration" className="border-t [&_td]:px-4 [&_td]:py-3 md:[&_td]:px-5">
+            <TableBody>
+              {bindings.map((binding) => (
+                <TableRow key={binding.providerId} className="hover:bg-transparent">
+                  <TableCell className="w-full max-w-0">
+                    <div className="grid min-w-0 gap-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{humanizeIdentifier(binding.providerId)}</span>
+                        {binding.enabled ? (
+                          <Badge variant="secondary">enabled</Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-destructive/50 text-destructive">disabled</Badge>
+                        )}
+                      </div>
+                      <IdText className="text-muted-foreground">{binding.providerId}</IdText>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">
+                    Updated {relativeTime(binding.updatedAtMs)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </CollapsibleContent>
-      </section>
+      </TableCard>
     </Collapsible>
   );
 }
