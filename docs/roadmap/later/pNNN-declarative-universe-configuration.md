@@ -48,8 +48,8 @@ client-chosen identifiers:
 | Resource | Method | Stable key |
 | --- | --- | --- |
 | Universe | `deployment/universes/create` (idempotent) | handle |
-| Token credential | `auth/grants/import`, `auth/grants/replace` | `grantId` |
-| Model or GitHub provider | `auth/providers/create`, `auth/providers/replace` | `providerId` |
+| Token credential | `auth/grants/put` (supplied token) | `grantId` |
+| Model or GitHub provider | `auth/providers/put` (supplied credential) | `providerId` |
 | Model defaults | `models/defaults/put` | purpose slot |
 | Profile | `profiles/put` | `profileId` |
 | MCP server | `mcp/servers/put` | `serverId` |
@@ -60,8 +60,9 @@ client-chosen identifiers:
 | Environment registration key | `environments/registration-keys/put` (supplied secret) | `registrationKeyId` |
 
 `apply` reads current state, compares it with the document, and calls the
-write method where they differ, passing `expectedRevision` where the method
-accepts one.
+write method where they differ. `expectedRevision` is optional on every
+method that takes one, so `apply` passes it only where it read the revision
+it is replacing.
 
 ### Identity
 
@@ -137,9 +138,12 @@ A document never contains secret material. It names a source (`env` or
 `file`), which the process running `apply` resolves. In a cluster the values
 come from the platform's secret store, mounted into the job.
 
-The runtime never returns token material, so `apply` cannot compare values. It
-stores a fingerprint of the applied value in the credential's `metadata` and
-calls `auth/grants/replace` only when the fingerprint changes.
+The runtime never returns token material, so `apply` cannot compare values
+itself. It does not need to: `auth/grants/put` and `auth/providers/put` take
+the supplied value, compare it with the stored one on the server, and write
+only what differs. Each reports whether it created the resource and whether
+the secret was replaced, and each accepts `dryRun`, which is how `diff`
+reports a pending secret change without making it.
 
 Keys that Lightspeed itself accepts work the same way, with the direction
 reversed from minting: the secret is generated outside, in the secret store,
@@ -272,8 +276,8 @@ content approaches that.
    providers, model defaults, profiles, MCP servers, environment provider
    enablement, environments and their credential bindings, API keys and
    registration keys (as references).
-2. **`diff` and `apply`** for the same set, with the credential fingerprint,
-   managed marker and round-trip tests.
+2. **`diff` and `apply`** for the same set, with the managed marker and
+   round-trip tests.
 3. **Platform organization** creation and naming with a service credential.
 4. **The CLI image.**
 
@@ -298,8 +302,5 @@ content approaches that.
   Platform call for naming?
 - Should a fully managed mode exist, where `apply` prunes everything not in
   the document, or is `--prune` over marked resources sufficient?
-- Model defaults require the current `expectedRevision` on every write. Is a
-  read-then-put per slot acceptable, or does `apply` want an unconditional
-  form?
 - Where does the managed marker live for resources without `metadata`
   (model defaults, provider enablement)?

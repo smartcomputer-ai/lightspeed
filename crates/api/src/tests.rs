@@ -2922,12 +2922,14 @@ impl AgentApiService for TestService {
         }))
     }
 
-    async fn replace_auth_grant(
+    async fn put_auth_grant(
         &self,
-        params: AuthGrantReplaceParams,
-    ) -> Result<AgentApiOutcome<AuthGrantReplaceResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthGrantReplaceResponse {
+        params: AuthGrantPutParams,
+    ) -> Result<AgentApiOutcome<AuthGrantPutResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(AuthGrantPutResponse {
             grant: test_auth_grant(params.grant_id, AuthGrantStatus::Active),
+            created: false,
+            token_replaced: !params.dry_run,
         }))
     }
 
@@ -3020,12 +3022,14 @@ impl AgentApiService for TestService {
         }))
     }
 
-    async fn replace_auth_provider(
+    async fn put_auth_provider(
         &self,
-        params: AuthProviderReplaceParams,
-    ) -> Result<AgentApiOutcome<AuthProviderReplaceResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthProviderReplaceResponse {
+        params: AuthProviderPutParams,
+    ) -> Result<AgentApiOutcome<AuthProviderPutResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(AuthProviderPutResponse {
             provider: test_auth_provider(params.provider_id),
+            created: true,
+            credential_replaced: false,
         }))
     }
 

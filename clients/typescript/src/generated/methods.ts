@@ -89,7 +89,7 @@ export const METHODS = [
   "auth/grants/lease",
   "auth/grants/read",
   "auth/grants/list",
-  "auth/grants/replace",
+  "auth/grants/put",
   "auth/grants/revoke",
   "auth/clients/create",
   "auth/clients/read",
@@ -98,7 +98,7 @@ export const METHODS = [
   "auth/flows/start",
   "auth/flows/read",
   "auth/providers/create",
-  "auth/providers/replace",
+  "auth/providers/put",
   "auth/providers/read",
   "auth/providers/list",
   "auth/providers/delete",
@@ -499,7 +499,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"configureResource","kind":"universe"},
     summary: "Set a universe model default",
-    description: "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
+    description: "Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
   },
   "models/list": {
     scope: "universe",
@@ -657,11 +657,11 @@ export const METHOD_INFO = {
     summary: "List authentication grants",
     description: "Lists non-secret grant metadata for the universe, optionally filtered by status.",
   },
-  "auth/grants/replace": {
+  "auth/grants/put": {
     scope: "universe",
     access: {"action":"configureResource","kind":"universe"},
-    summary: "Replace a token credential's value",
-    description: "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.",
+    summary: "Declare a token credential",
+    description: "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.",
   },
   "auth/grants/revoke": {
     scope: "universe",
@@ -711,11 +711,11 @@ export const METHOD_INFO = {
     summary: "Register an authentication provider",
     description: "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
   },
-  "auth/providers/replace": {
+  "auth/providers/put": {
     scope: "universe",
     access: {"action":"configureResource","kind":"universe"},
-    summary: "Replace an authentication provider",
-    description: "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
+    summary: "Declare an authentication provider",
+    description: "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.",
   },
   "auth/providers/read": {
     scope: "universe",
@@ -1553,7 +1553,7 @@ export interface MethodMap {
   /**
    * Set a universe model default
    *
-   * Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
+   * Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
    */
   "models/defaults/put": {
     params: Api.ModelDefaultsPutParams;
@@ -1794,13 +1794,13 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfAuthGrantListResponse;
   };
   /**
-   * Replace a token credential's value
+   * Declare a token credential
    *
-   * Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.
+   * Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.
    */
-  "auth/grants/replace": {
-    params: Api.AuthGrantReplaceParams;
-    result: Api.AgentApiOutcomeOfAuthGrantReplaceResponse;
+  "auth/grants/put": {
+    params: Api.AuthGrantPutParams;
+    result: Api.AgentApiOutcomeOfAuthGrantPutResponse;
   };
   /**
    * Revoke an authentication grant
@@ -1875,13 +1875,13 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfAuthProviderCreateResponse;
   };
   /**
-   * Replace an authentication provider
+   * Declare an authentication provider
    *
-   * Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.
+   * Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.
    */
-  "auth/providers/replace": {
-    params: Api.AuthProviderReplaceParams;
-    result: Api.AgentApiOutcomeOfAuthProviderReplaceResponse;
+  "auth/providers/put": {
+    params: Api.AuthProviderPutParams;
+    result: Api.AgentApiOutcomeOfAuthProviderPutResponse;
   };
   /**
    * Read authentication provider metadata

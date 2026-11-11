@@ -74,8 +74,11 @@ pub struct ModelDefaultsPutParams {
     #[serde(deserialize_with = "Option::deserialize")]
     #[schemars(required, schema_with = "required_nullable_model_schema")]
     pub model: Option<ModelConfig>,
-    /// Revision returned by read/put; zero for a universe with no updates.
-    pub expected_revision: u64,
+    /// Write only if the defaults are still at this revision, as returned by
+    /// read or put; zero for a universe with no updates. Omit it to write
+    /// whatever the current revision is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -121,19 +124,25 @@ mod tests {
     }
 
     #[test]
-    fn clearing_requires_an_explicit_null_and_a_revision() {
+    fn clearing_requires_an_explicit_null_and_the_revision_is_optional() {
         let request = serde_json::json!({"slot":"agentRun", "model":null, "expectedRevision":4});
+        let parsed = serde_json::from_value::<ModelDefaultsPutParams>(request.clone()).unwrap();
+        assert_eq!(parsed.model, None);
+        assert_eq!(parsed.expected_revision, Some(4));
+        let mut without_model = request.clone();
+        without_model.as_object_mut().unwrap().remove("model");
+        assert!(serde_json::from_value::<ModelDefaultsPutParams>(without_model).is_err());
+        let mut unconditional = request;
+        unconditional
+            .as_object_mut()
+            .unwrap()
+            .remove("expectedRevision");
         assert_eq!(
-            serde_json::from_value::<ModelDefaultsPutParams>(request.clone())
+            serde_json::from_value::<ModelDefaultsPutParams>(unconditional)
                 .unwrap()
-                .model,
+                .expected_revision,
             None
         );
-        for field in ["model", "expectedRevision"] {
-            let mut missing = request.clone();
-            missing.as_object_mut().unwrap().remove(field);
-            assert!(serde_json::from_value::<ModelDefaultsPutParams>(missing).is_err());
-        }
     }
 
     #[test]

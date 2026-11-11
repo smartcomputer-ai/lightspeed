@@ -757,7 +757,7 @@ Returns the revision and independent agentRun and speechToText selections. Revis
 
 **Set a universe model default**
 
-Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
+Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `models`
@@ -1110,18 +1110,18 @@ Lists non-secret grant metadata for the universe, optionally filtered by status.
 - Params: `AuthGrantListParams`
 - Result: `AgentApiOutcome<AuthGrantListResponse>`
 
-### `auth/grants/replace`
+### `auth/grants/put`
 
-**Replace a token credential's value**
+**Declare a token credential**
 
-Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.
+Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthGrantReplaceParams`
-- Result: `AgentApiOutcome<AuthGrantReplaceResponse>`
+- Params: `AuthGrantPutParams`
+- Result: `AgentApiOutcome<AuthGrantPutResponse>`
 
 ### `auth/grants/revoke`
 
@@ -1227,18 +1227,18 @@ Creates a model or GitHub credential source. Plaintext API keys/private keys are
 - Params: `AuthProviderCreateParams`
 - Result: `AgentApiOutcome<AuthProviderCreateResponse>`
 
-### `auth/providers/replace`
+### `auth/providers/put`
 
-**Replace an authentication provider**
+**Declare an authentication provider**
 
-Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.
+Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthProviderReplaceParams`
-- Result: `AgentApiOutcome<AuthProviderReplaceResponse>`
+- Params: `AuthProviderPutParams`
+- Result: `AgentApiOutcome<AuthProviderPutResponse>`
 
 ### `auth/providers/read`
 

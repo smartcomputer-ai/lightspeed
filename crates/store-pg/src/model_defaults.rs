@@ -35,31 +35,51 @@ impl PgStore {
         if let Some(model) = &params.model {
             params.slot.validate_model(model)?;
         }
-        let expected = i64::try_from(params.expected_revision)
-            .ok()
-            .filter(|value| *value < i64::MAX)
-            .ok_or_else(|| {
-                api::AgentApiError::invalid_request("expectedRevision is out of range")
-            })?;
+        let expected = params
+            .expected_revision
+            .map(|revision| {
+                i64::try_from(revision)
+                    .ok()
+                    .filter(|value| *value < i64::MAX)
+                    .ok_or_else(|| {
+                        api::AgentApiError::invalid_request("expectedRevision is out of range")
+                    })
+            })
+            .transpose()?;
         let model = params
             .model
             .as_ref()
             .map(serde_json::to_value)
             .transpose()?;
-        // An untouched universe uses a unique insert. Later writes use a
-        // revision guard; neither path can overwrite a concurrent winner.
-        let statement = if expected == 0 {
-            "INSERT INTO universe_model_defaults (universe_id, revision, agent_run, speech_to_text)
-             SELECT $1, 1, CASE WHEN $2 THEN $3::jsonb END, CASE WHEN NOT $2 THEN $3::jsonb END
-             WHERE $4::bigint = 0
-             ON CONFLICT (universe_id) DO NOTHING
-             RETURNING revision, agent_run, speech_to_text"
-        } else {
-            "UPDATE universe_model_defaults SET revision = revision + 1,
-             agent_run = CASE WHEN $2 THEN $3::jsonb ELSE agent_run END,
-             speech_to_text = CASE WHEN NOT $2 THEN $3::jsonb ELSE speech_to_text END
-             WHERE universe_id = $1 AND revision = $4
-             RETURNING revision, agent_run, speech_to_text"
+        let statement = match expected {
+            // Unconditional: create the row or advance whatever revision it
+            // has.
+            None => {
+                "INSERT INTO universe_model_defaults (universe_id, revision, agent_run, speech_to_text)
+                 VALUES ($1, 1, CASE WHEN $2 THEN $3::jsonb END, CASE WHEN NOT $2 THEN $3::jsonb END)
+                 ON CONFLICT (universe_id) DO UPDATE SET
+                     revision = universe_model_defaults.revision + 1,
+                     agent_run = CASE WHEN $2 THEN $3::jsonb ELSE universe_model_defaults.agent_run END,
+                     speech_to_text = CASE WHEN NOT $2 THEN $3::jsonb ELSE universe_model_defaults.speech_to_text END
+                 WHERE $4::bigint IS NULL
+                 RETURNING revision, agent_run, speech_to_text"
+            }
+            // An untouched universe uses a unique insert. Later writes use a
+            // revision guard; neither path can overwrite a concurrent winner.
+            Some(0) => {
+                "INSERT INTO universe_model_defaults (universe_id, revision, agent_run, speech_to_text)
+                 SELECT $1, 1, CASE WHEN $2 THEN $3::jsonb END, CASE WHEN NOT $2 THEN $3::jsonb END
+                 WHERE $4::bigint = 0
+                 ON CONFLICT (universe_id) DO NOTHING
+                 RETURNING revision, agent_run, speech_to_text"
+            }
+            Some(_) => {
+                "UPDATE universe_model_defaults SET revision = revision + 1,
+                 agent_run = CASE WHEN $2 THEN $3::jsonb ELSE agent_run END,
+                 speech_to_text = CASE WHEN NOT $2 THEN $3::jsonb ELSE speech_to_text END
+                 WHERE universe_id = $1 AND revision = $4
+                 RETURNING revision, agent_run, speech_to_text"
+            }
         };
         let row = sqlx::query(statement)
             .bind(self.config.universe_id)
@@ -69,7 +89,7 @@ impl PgStore {
             .fetch_optional(&self.pool)
             .await?
             .ok_or(ModelDefaultsStoreError::Conflict {
-                expected: params.expected_revision,
+                expected: params.expected_revision.unwrap_or_default(),
             })?;
         decode(&row)
     }

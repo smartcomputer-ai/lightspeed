@@ -409,11 +409,11 @@ impl HttpAgentApi {
         self.request(METHOD_AUTH_GRANTS_READ, params).await
     }
 
-    pub(crate) async fn replace_auth_grant(
+    pub(crate) async fn put_auth_grant(
         &self,
-        params: api::AuthGrantReplaceParams,
-    ) -> Result<AgentApiOutcome<api::AuthGrantReplaceResponse>, AgentApiError> {
-        self.request(api::METHOD_AUTH_GRANTS_REPLACE, params).await
+        params: api::AuthGrantPutParams,
+    ) -> Result<AgentApiOutcome<api::AuthGrantPutResponse>, AgentApiError> {
+        self.request(api::METHOD_AUTH_GRANTS_PUT, params).await
     }
 
     pub(crate) async fn revoke_auth_grant(

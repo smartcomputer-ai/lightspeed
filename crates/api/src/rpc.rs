@@ -472,7 +472,7 @@ api_methods! {
     METHOD_MODELS_DEFAULTS_READ => read_model_defaults(ModelDefaultsReadParams) -> ModelDefaultsResponse =>
         ["Read universe model defaults", "Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_MODELS_DEFAULTS_PUT => put_model_defaults(ModelDefaultsPutParams) -> ModelDefaultsResponse =>
-        ["Set a universe model default", "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Set a universe model default", "Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_MODELS_LIST => list_models(ModelListParams) -> ModelListResponse =>
         ["Discover available models", "Queries supported providers directly, with a brief process-local burst cache, and returns best-effort selectable routes. One provider failure does not discard successful results from others."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_PROFILES_CREATE => create_profile(ProfileCreateParams) -> ProfileCreateResponse =>
@@ -525,8 +525,8 @@ api_methods! {
         ["Read authentication grant metadata", "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_AUTH_GRANTS_LIST => list_auth_grants(AuthGrantListParams) -> AuthGrantListResponse =>
         ["List authentication grants", "Lists non-secret grant metadata for the universe, optionally filtered by status."], access: MethodAccess::Universe(UniverseAction::Read),
-    METHOD_AUTH_GRANTS_REPLACE => replace_auth_grant(AuthGrantReplaceParams) -> AuthGrantReplaceResponse =>
-        ["Replace a token credential's value", "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_AUTH_GRANTS_PUT => put_auth_grant(AuthGrantPutParams) -> AuthGrantPutResponse =>
+        ["Declare a token credential", "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GRANTS_REVOKE => revoke_auth_grant(AuthGrantRevokeParams) -> AuthGrantRevokeResponse =>
         ["Revoke an authentication grant", "Marks the grant unusable by token consumers while retaining non-secret audit metadata."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_CLIENTS_CREATE => create_auth_client(AuthClientCreateParams) -> AuthClientCreateResponse =>
@@ -543,8 +543,8 @@ api_methods! {
         ["Read OAuth flow status", "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_PROVIDERS_CREATE => create_auth_provider(AuthProviderCreateParams) -> AuthProviderCreateResponse =>
         ["Register an authentication provider", "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_PROVIDERS_REPLACE => replace_auth_provider(AuthProviderReplaceParams) -> AuthProviderReplaceResponse =>
-        ["Replace an authentication provider", "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_AUTH_PROVIDERS_PUT => put_auth_provider(AuthProviderPutParams) -> AuthProviderPutResponse =>
+        ["Declare an authentication provider", "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_PROVIDERS_READ => read_auth_provider(AuthProviderReadParams) -> AuthProviderReadResponse =>
         ["Read authentication provider metadata", "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_AUTH_PROVIDERS_LIST => list_auth_providers(AuthProviderListParams) -> AuthProviderListResponse =>

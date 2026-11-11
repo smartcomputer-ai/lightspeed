@@ -9,7 +9,8 @@ import {
   type AgentProfileInput,
   type AuthFlowStatusResponse,
   type AuthGrantImportParams,
-  type AuthGrantReplaceParams,
+  type AuthGrantPutParams,
+  type AuthGrantView,
   type AuthGitHubInstallationGrantParams,
   type AuthGitHubInstallationListParams,
   type AuthGrantListParams,
@@ -345,13 +346,23 @@ const credentialReplaceSchema = z.object({
   expiresAtMs: z.number().int().nonnegative().optional(),
 });
 
+/// Replacing a credential's value declares the credential again as it is,
+/// with the new token: its settings are carried over, the old token's expiry
+/// is not.
 export function credentialReplaceParams(
-  grantId: string,
+  current: AuthGrantView,
   input: z.infer<typeof credentialReplaceSchema>,
-): AuthGrantReplaceParams {
+): AuthGrantPutParams {
   return {
-    grantId,
+    grantId: current.grantId,
+    providerId: current.providerId,
+    exposure: current.exposure,
     token: input.value,
+    ...(current.displayName == null ? {} : { displayName: current.displayName }),
+    ...(current.subjectHint == null ? {} : { subjectHint: current.subjectHint }),
+    ...(current.scopes?.length ? { scopes: current.scopes } : {}),
+    ...(current.audience == null ? {} : { audience: current.audience }),
+    ...(current.metadata == null ? {} : { metadata: current.metadata }),
     ...(input.expiresAtMs === undefined ? {} : { expiresAtMs: input.expiresAtMs }),
   };
 }
@@ -1223,10 +1234,10 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   /// Model provider API keys for Lightspeed sessions (`model:<provider>` rows).
-  /// `replace` swaps an existing row in place through `auth/providers/replace`:
-  /// the engine validates first, so a rejected replacement keeps the old key,
-  /// and sessions or environment variables using the provider never see it
-  /// missing.
+  /// `replace` declares the row through `auth/providers/put`, which swaps an
+  /// existing one in place: the engine validates first, so a rejected
+  /// replacement keeps the old key, and sessions or environment variables
+  /// using the provider never see it missing.
   app.post("/:id/integrations/model-keys", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
@@ -1251,15 +1262,9 @@ export function gatewayRoutes(ctx: AppContext) {
         credential: body.data.credential,
       };
       if (body.data.replace) {
-        try {
-          const replaced = await client.call("auth/providers/replace", { ...params, providerId });
-          return c.json(modelProviderCredentialView(replaced.result.provider));
-        } catch (error) {
-          // Nothing to replace yet: fall through and create it.
-          if (!(error instanceof LightspeedRpcError && error.kind === "notFound")) {
-            throw error;
-          }
-        }
+        // Creates the row when there is nothing to replace yet.
+        const put = await client.call("auth/providers/put", { ...params, providerId });
+        return c.json(modelProviderCredentialView(put.result.provider), put.result.created ? 201 : 200);
       }
       const response = await client.call("auth/providers/create", params);
       return c.json(modelProviderCredentialView(response.result.provider), 201);
@@ -1541,10 +1546,8 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const response = await client.call(
-        "auth/grants/replace",
-        credentialReplaceParams(c.req.param("grantId"), body.data),
-      );
+      const current = await client.call("auth/grants/read", { grantId: c.req.param("grantId") });
+      const response = await client.call("auth/grants/put", credentialReplaceParams(current.result.grant, body.data));
       return c.json(response.result.grant);
     });
   });

@@ -315,8 +315,12 @@ struct AuthGrantArgs {
 enum AuthGrantCommand {
     /// Import a reusable token as an external credential.
     Import(AuthGrantImportArgs),
-    /// Replace the value of a token credential, keeping its id and every
-    /// server, header or environment variable that references it.
+    /// Declare a token credential: afterwards the credential of this id
+    /// exists with these settings and holds exactly this token. Repeating
+    /// the command changes nothing; unset flags clear their setting.
+    Put(AuthGrantPutArgs),
+    /// Replace the value of a token credential, keeping its settings, its id
+    /// and every server, header or environment variable that references it.
     Replace(AuthGrantReplaceArgs),
     /// List stored external credentials.
     List(AuthGrantListArgs),
@@ -371,6 +375,63 @@ struct AuthGrantImportArgs {
 impl std::fmt::Debug for AuthGrantImportArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuthGrantImportArgs")
+            .field("api_url", &self.api_url)
+            .field("grant_id", &self.grant_id)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("token_env", &self.token_env)
+            .field("token_stdin", &self.token_stdin)
+            .field("audience", &self.audience)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Args, Clone)]
+#[command(group(ArgGroup::new("token_source").required(true)))]
+struct AuthGrantPutArgs {
+    /// JSON-RPC agent API URL.
+    #[arg(skip)]
+    api_url: String,
+    /// Emit the result as JSON.
+    #[arg(long)]
+    json: bool,
+    /// The credential's id.
+    grant_id: String,
+    /// Provider id recorded on the credential. Defaults to "static" and
+    /// cannot be changed afterwards.
+    #[arg(long = "provider-id")]
+    provider_id: Option<String>,
+    /// Token value. Prefer --token-stdin or --token-env to keep the value out
+    /// of shell history.
+    #[arg(long, group = "token_source")]
+    token: Option<String>,
+    /// Read the token from this environment variable.
+    #[arg(long = "token-env", group = "token_source")]
+    token_env: Option<String>,
+    /// Read the token from stdin.
+    #[arg(long = "token-stdin", group = "token_source")]
+    token_stdin: bool,
+    #[arg(long = "display-name")]
+    display_name: Option<String>,
+    /// Subject hint (for example an account or user name).
+    #[arg(long = "subject-hint")]
+    subject_hint: Option<String>,
+    /// Scope entry. Repeat to record multiple.
+    #[arg(long = "scope")]
+    scopes: Vec<String>,
+    /// Audience the credential is bound to (for MCP: the server URL).
+    #[arg(long)]
+    audience: Option<String>,
+    /// Expiry in unix milliseconds. Omit for a token that does not expire.
+    #[arg(long = "expires-at-ms")]
+    expires_at_ms: Option<i64>,
+    /// Report what would change without changing it.
+    #[arg(long = "dry-run")]
+    dry_run: bool,
+}
+
+impl std::fmt::Debug for AuthGrantPutArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthGrantPutArgs")
             .field("api_url", &self.api_url)
             .field("grant_id", &self.grant_id)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
@@ -722,6 +783,7 @@ async fn client(args: AuthClientArgs) -> Result<()> {
 async fn grant(args: AuthGrantArgs) -> Result<()> {
     match args.command {
         AuthGrantCommand::Import(args) => grant_import(args).await,
+        AuthGrantCommand::Put(args) => grant_put(args).await,
         AuthGrantCommand::Replace(args) => grant_replace(args).await,
         AuthGrantCommand::List(args) => grant_list(args).await,
         AuthGrantCommand::Read(args) => grant_read(args).await,
@@ -790,6 +852,34 @@ async fn grant_import(args: AuthGrantImportArgs) -> Result<()> {
     Ok(())
 }
 
+async fn grant_put(args: AuthGrantPutArgs) -> Result<()> {
+    let token = resolve_token(
+        args.token.as_ref(),
+        args.token_env.as_ref(),
+        args.token_stdin,
+    )?;
+    let response = HttpAgentApi::new(args.api_url.clone())
+        .put_auth_grant(api::AuthGrantPutParams {
+            grant_id: args.grant_id.clone(),
+            provider_id: args.provider_id.clone(),
+            exposure: api::AuthGrantExposure::Brokered,
+            token,
+            display_name: args.display_name.clone(),
+            subject_hint: args.subject_hint.clone(),
+            scopes: args.scopes.clone(),
+            audience: args.audience.clone(),
+            expires_at_ms: args.expires_at_ms,
+            metadata: None,
+            dry_run: args.dry_run,
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    print_put(&response, args.dry_run, args.json)
+}
+
+/// Replace only the value: the credential is declared again with the
+/// settings it has and the new token.
 async fn grant_replace(args: AuthGrantReplaceArgs) -> Result<()> {
     let token = resolve_token(
         args.token.as_ref(),
@@ -797,11 +887,28 @@ async fn grant_replace(args: AuthGrantReplaceArgs) -> Result<()> {
         args.token_stdin,
     )?;
     let api = HttpAgentApi::new(args.api_url.clone());
-    let response = api
-        .replace_auth_grant(api::AuthGrantReplaceParams {
+    let current = api
+        .read_auth_grant(api::AuthGrantReadParams {
             grant_id: args.grant_id.clone(),
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result
+        .grant;
+    let response = api
+        .put_auth_grant(api::AuthGrantPutParams {
+            grant_id: current.grant_id,
+            provider_id: Some(current.provider_id),
+            exposure: current.exposure,
             token,
+            display_name: current.display_name,
+            subject_hint: current.subject_hint,
+            scopes: current.scopes,
+            audience: current.audience,
+            // The old token's expiry is not carried over.
             expires_at_ms: args.expires_at_ms,
+            metadata: Some(current.metadata),
+            dry_run: false,
         })
         .await
         .map_err(crate::api_client::api_error)?
@@ -810,6 +917,26 @@ async fn grant_replace(args: AuthGrantReplaceArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
     }
+    print_grant(&response.grant);
+    Ok(())
+}
+
+fn print_put(response: &api::AuthGrantPutResponse, dry_run: bool, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(response)?);
+        return Ok(());
+    }
+    println!(
+        "{}",
+        match (dry_run, response.created, response.token_replaced) {
+            (false, true, _) => "Credential created.",
+            (false, false, true) => "Credential now holds the supplied token.",
+            (false, false, false) => "Credential is as declared.",
+            (true, true, _) => "Would create the credential.",
+            (true, false, true) => "Would replace the credential's token.",
+            (true, false, false) => "Would not replace the credential's token.",
+        }
+    );
     print_grant(&response.grant);
     Ok(())
 }

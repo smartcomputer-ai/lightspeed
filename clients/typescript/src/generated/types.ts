@@ -2673,18 +2673,30 @@ export interface AgentApiOutcomeOfAuthGrantListResponse {
 export interface AuthGrantListResponse {
   grants?: AuthGrantView[];
 }
+export interface AgentApiOutcomeOfAuthGrantPutResponse {
+  notifications?: AgentNotification[];
+  result: AuthGrantPutResponse;
+}
+export interface AuthGrantPutResponse {
+  /**
+   * False when the credential already existed.
+   */
+  created: boolean;
+  /**
+   * The credential as declared: as it is now, or as it would be for a
+   * dry run.
+   */
+  grant: AuthGrantView;
+  /**
+   * True when an existing credential held a different token.
+   */
+  tokenReplaced: boolean;
+}
 export interface AgentApiOutcomeOfAuthGrantReadResponse {
   notifications?: AgentNotification[];
   result: AuthGrantReadResponse;
 }
 export interface AuthGrantReadResponse {
-  grant: AuthGrantView;
-}
-export interface AgentApiOutcomeOfAuthGrantReplaceResponse {
-  notifications?: AgentNotification[];
-  result: AuthGrantReplaceResponse;
-}
-export interface AuthGrantReplaceResponse {
   grant: AuthGrantView;
 }
 export interface AgentApiOutcomeOfAuthGrantRevokeResponse {
@@ -2732,18 +2744,31 @@ export interface AgentApiOutcomeOfAuthProviderListResponse {
 export interface AuthProviderListResponse {
   providers?: AuthProviderView[];
 }
+export interface AgentApiOutcomeOfAuthProviderPutResponse {
+  notifications?: AgentNotification[];
+  result: AuthProviderPutResponse;
+}
+export interface AuthProviderPutResponse {
+  /**
+   * False when the provider already existed.
+   */
+  created: boolean;
+  /**
+   * True when an existing provider held a different credential, or gained
+   * or lost one.
+   */
+  credentialReplaced: boolean;
+  /**
+   * The provider as declared: as it is now, or as it would be for a dry
+   * run.
+   */
+  provider: AuthProviderView;
+}
 export interface AgentApiOutcomeOfAuthProviderReadResponse {
   notifications?: AgentNotification[];
   result: AuthProviderReadResponse;
 }
 export interface AuthProviderReadResponse {
-  provider: AuthProviderView;
-}
-export interface AgentApiOutcomeOfAuthProviderReplaceResponse {
-  notifications?: AgentNotification[];
-  result: AuthProviderReplaceResponse;
-}
-export interface AuthProviderReplaceResponse {
   provider: AuthProviderView;
 }
 export interface AgentApiOutcomeOfBlobHasResponse {
@@ -5051,8 +5076,9 @@ export interface AuthGitHubInstallationListParams {
   providerId: string;
 }
 /**
- * Import a token credential as an auth grant. Together with
- * [`AuthGrantReplaceParams`] this is the deliberate inbound-plaintext path:
+ * Import a new token credential as an auth grant, under the given id or an
+ * allocated one; an id already in use is a conflict. Together with
+ * [`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:
  * `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
  * logging must never echo these params.
  */
@@ -5088,24 +5114,52 @@ export interface AuthGrantLeaseParams {
 export interface AuthGrantListParams {
   status?: AuthGrantStatus | null;
 }
-export interface AuthGrantReadParams {
-  grantId: string;
-}
 /**
- * Replace the token of an active token credential (`staticToken`). The
- * credential keeps its id, display name, audience, exposure and everything
- * that references it, so MCP servers, headers, bot polls and environment
- * variables use the new value from their next request or process. `token` is
- * encrypted on receipt and never returned; `Debug` output redacts it.
+ * Declare a token credential (`staticToken`): its id, its settings and the
+ * token it holds. A credential that is missing is created. One that exists
+ * has its settings replaced by these (an absent field is unset) and, when it
+ * holds a different token, that token replaced, so MCP servers, headers,
+ * bot polls and environment variables referencing the id use the new value
+ * from their next request or process. Declaring it again changes nothing.
+ *
+ * `token` is encrypted on receipt and never returned; `Debug` output redacts
+ * it and request logging must never echo these params.
  */
-export interface AuthGrantReplaceParams {
+export interface AuthGrantPutParams {
+  audience?: string | null;
+  displayName?: string | null;
   /**
-   * When the new token expires. Absent means it does not expire; the old
-   * token's expiry is not carried over.
+   * Report what the declaration would do without doing it.
+   */
+  dryRun?: boolean;
+  /**
+   * When the token expires. Absent means it does not expire.
    */
   expiresAtMs?: number | null;
+  /**
+   * Whether the token may be leased in plaintext. It cannot be changed
+   * afterwards.
+   */
+  exposure?: AuthGrantExposure & string;
   grantId: string;
+  /**
+   * Non-secret, caller-defined metadata. Must be a JSON object; never put
+   * secret material here.
+   */
+  metadata?: {
+    [k: string]: unknown;
+  };
+  /**
+   * Label recorded on the credential; `static` when absent. It cannot be
+   * changed afterwards.
+   */
+  providerId?: string | null;
+  scopes?: string[];
+  subjectHint?: string | null;
   token: string;
+}
+export interface AuthGrantReadParams {
+  grantId: string;
 }
 export interface AuthGrantRevokeParams {
   grantId: string;
@@ -5126,21 +5180,31 @@ export interface AuthProviderDeleteParams {
   providerId: string;
 }
 export interface AuthProviderListParams {}
-export interface AuthProviderReadParams {
-  providerId: string;
-}
 /**
- * Replace an existing provider's configuration and credential in place, as
- * if it were created again under the same id. The new settings are validated
- * before anything changes, so a rejected replacement leaves the provider as
- * it was; sessions and environment variables referencing the id keep working
- * throughout. `credential` is encrypted on receipt and never returned;
- * `Debug` output redacts it.
+ * Declare a provider: its id, its configuration and its credential. A
+ * provider that is missing is created. One that exists is rewritten in place
+ * as if it were created again under the same id, where it differs: the new
+ * settings are validated before anything changes, so a rejected declaration
+ * leaves the provider as it was, and sessions and environment variables
+ * referencing the id keep working throughout. Declaring it again changes
+ * nothing. `credential` is encrypted on receipt and never returned; `Debug`
+ * output redacts it.
  */
-export interface AuthProviderReplaceParams {
+export interface AuthProviderPutParams {
   config: AuthProviderConfigInput;
+  /**
+   * The provider's credential, for the kinds that take one. Absent leaves
+   * the provider without a credential.
+   */
   credential?: string | null;
   displayName?: string | null;
+  /**
+   * Report what the declaration would do without doing it.
+   */
+  dryRun?: boolean;
+  providerId: string;
+}
+export interface AuthProviderReadParams {
   providerId: string;
 }
 export interface BlobHasParams {
@@ -6062,9 +6126,11 @@ export interface McpServerToolsDiscoverParams {
 }
 export interface ModelDefaultsPutParams {
   /**
-   * Revision returned by read/put; zero for a universe with no updates.
+   * Write only if the defaults are still at this revision, as returned by
+   * read or put; zero for a universe with no updates. Omit it to write
+   * whatever the current revision is.
    */
-  expectedRevision: number;
+  expectedRevision?: number | null;
   /**
    * Complete selection, or explicit null to clear this slot. Required.
    */

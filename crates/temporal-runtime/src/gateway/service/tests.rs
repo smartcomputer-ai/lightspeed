@@ -635,8 +635,35 @@ fn mcp_server_put_enforces_required_and_optional_binding_states() {
         .expect("optional-auth server may be active and unbound");
 }
 
-#[test]
-fn auth_grant_replacement_only_swaps_active_token_credentials() {
+/// The draft of a declaration of `grant_id`, as an import would validate it.
+async fn token_declaration(
+    grant_id: &str,
+    exposure: api::AuthGrantExposure,
+    provider_id: Option<&str>,
+) -> auth_api::AuthGrantImportDraft {
+    let params = api::AuthGrantImportParams {
+        grant_id: Some(grant_id.to_owned()),
+        provider_id: provider_id.map(str::to_owned),
+        exposure,
+        token: "new-token".to_owned(),
+        display_name: Some("Tracker".to_owned()),
+        subject_hint: None,
+        scopes: vec!["read".to_owned()],
+        audience: Some("https://tracker.example.com".to_owned()),
+        expires_at_ms: Some(5_000),
+        metadata: Some(serde_json::json!({"owner": "ops"})),
+    };
+    // The draft records who is declaring, so it needs a caller.
+    crate::gateway::request_context::with_request_context(
+        crate::gateway::request_context::RequestContext::local(api::AccessScope::Deployment),
+        async move { auth_api::auth_grant_import_draft(params, 4_000) },
+    )
+    .await
+    .expect("valid declaration")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_token_declaration_writes_settings_over_active_token_credentials_only() {
     let token = test_auth_grant_record(
         "authgrant_upstream",
         auth::AuthProviderKind::StaticToken,
@@ -647,33 +674,49 @@ fn auth_grant_replacement_only_swaps_active_token_credentials() {
         .access_token_secret
         .clone()
         .expect("token has a value");
-    let draft =
-        auth_api::auth_grant_replace_draft(&token, "new-token".to_owned(), Some(5_000), 4_000)
-            .expect("an active token credential can be replaced");
-    assert_eq!(draft.expected, expected);
-    assert_ne!(
-        draft.secret.secret_id, expected,
-        "the new value is a new sealed secret"
-    );
+    let draft = token_declaration(
+        "authgrant_upstream",
+        api::AuthGrantExposure::Brokered,
+        Some(&token.provider_id),
+    )
+    .await;
+    let (held, update) = auth_api::token_credential_update(&token, &draft, 4_000)
+        .expect("an active token credential can be declared");
+    assert_eq!(held, expected);
+    // The update keeps pointing at the held value; the caller swaps in the
+    // new sealed secret only when the token differs.
+    assert_eq!(update.access_token_secret, expected);
+    assert_ne!(draft.secret.secret_id, expected);
     assert_eq!(draft.secret.secret_kind, auth::SECRET_KIND_STATIC_TOKEN);
-    assert_eq!(draft.secret.value.expose(), "new-token");
-    assert_eq!(
-        draft.replacement.access_token_secret,
-        draft.secret.secret_id
-    );
-    assert_eq!(draft.replacement.expires_at_ms, Some(5_000));
+    assert_eq!(update.display_name.as_deref(), Some("Tracker"));
+    assert_eq!(update.scopes, ["read"]);
+    assert_eq!(update.metadata, serde_json::json!({"owner": "ops"}));
+    assert_eq!(update.expires_at_ms, Some(5_000));
+    let declared = update.apply(&token);
+    assert_eq!(declared.created_at_ms, token.created_at_ms);
+    assert_eq!(declared.created_by, token.created_by);
+    assert_eq!(declared.status, token.status);
     assert!(
         format!(
             "{:?}",
-            api::AuthGrantReplaceParams {
+            api::AuthGrantPutParams {
                 grant_id: "authgrant_upstream".to_owned(),
+                provider_id: None,
+                exposure: api::AuthGrantExposure::Brokered,
                 token: "never-logged".to_owned(),
+                display_name: None,
+                subject_hint: None,
+                scopes: Vec::new(),
+                audience: None,
                 expires_at_ms: None,
+                metadata: None,
+                dry_run: false,
             }
         )
         .contains("<redacted>")
     );
 
+    // What a declaration never changes is a conflict.
     for (kind, status) in [
         (
             auth::AuthProviderKind::McpOAuth,
@@ -689,14 +732,37 @@ fn auth_grant_replacement_only_swaps_active_token_credentials() {
         ),
     ] {
         let grant = test_auth_grant_record("authgrant_other", kind, status, None);
-        let error = auth_api::auth_grant_replace_draft(&grant, "new-token".to_owned(), None, 4_000)
-            .err()
-            .expect("refused replacement");
+        let draft = token_declaration(
+            "authgrant_other",
+            api::AuthGrantExposure::Brokered,
+            Some(&grant.provider_id),
+        )
+        .await;
+        let error = auth_api::token_credential_update(&grant, &draft, 4_000)
+            .expect_err("refused declaration");
         assert_eq!(
             error.kind,
-            AgentApiErrorKind::Rejected,
+            AgentApiErrorKind::Conflict,
             "{kind:?} {status:?}"
         );
+    }
+    for draft in [
+        token_declaration(
+            "authgrant_upstream",
+            api::AuthGrantExposure::Retrievable,
+            Some(&token.provider_id),
+        )
+        .await,
+        token_declaration(
+            "authgrant_upstream",
+            api::AuthGrantExposure::Brokered,
+            Some("another-provider"),
+        )
+        .await,
+    ] {
+        let error = auth_api::token_credential_update(&token, &draft, 4_000)
+            .expect_err("exposure and provider never change");
+        assert_eq!(error.kind, AgentApiErrorKind::Conflict);
     }
 }
 

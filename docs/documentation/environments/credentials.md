@@ -148,7 +148,11 @@ every variable bound to it supplies the new value to the next process or job
 without any binding changing. Processes already running and jobs already
 admitted keep the old value. Environment secrets and tokens can be replaced;
 OAuth and GitHub App credentials renew themselves instead. From the CLI, use
-`lightspeed auth grants replace ID --token-stdin`.
+`lightspeed credential replace ID --token-stdin`, which keeps the
+credential's settings. A pipeline that holds the value in a secret store can
+declare the whole credential with `lightspeed credential put ID --token-env
+VARIABLE`: it creates the credential when missing, applies changed settings,
+replaces the token only when it differs, and changes nothing when repeated.
 
 To move a variable to a different credential instead, assign the same
 environment-variable name to that credential and verify a new process. Revoke

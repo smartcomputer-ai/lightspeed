@@ -2481,7 +2481,7 @@ async fn pg_live_token_sealed_under_the_pre_rename_kind_still_resolves() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
-async fn pg_live_grant_token_replacement_swaps_only_from_the_expected_value() {
+async fn pg_live_token_credential_update_writes_only_over_the_expected_value() {
     let store = live_store("grant-replace", 1024).await;
     for (secret, value) in [
         ("authsec_replace_old", "old-token"),
@@ -2520,15 +2520,19 @@ async fn pg_live_grant_token_replacement_swaps_only_from_the_expected_value() {
         })
         .await
         .expect("create grant");
-    let replacement = |secret: &str| auth::AuthGrantTokenRefresh {
+    let replacement = |secret: &str| auth::TokenCredentialUpdate {
         access_token_secret: SecretId::new(secret),
-        refresh_token_secret: None,
+        display_name: Some("Replaced".to_owned()),
+        subject_hint: Some("ops".to_owned()),
+        scopes: vec!["read".to_owned(), "write".to_owned()],
+        audience: Some("https://api.example.com".to_owned()),
+        metadata: serde_json::json!({"owner": "ops"}),
         expires_at_ms: Some(500),
         updated_at_ms: 20,
     };
 
     let swapped = store
-        .replace_grant_token(
+        .update_token_credential(
             &grant_id,
             &SecretId::new("authsec_replace_old"),
             replacement("authsec_replace_new"),
@@ -2542,6 +2546,33 @@ async fn pg_live_grant_token_replacement_swaps_only_from_the_expected_value() {
     );
     assert_eq!(swapped.expires_at_ms, Some(500));
     assert_eq!(swapped.display_name.as_deref(), Some("Replaced"));
+    assert_eq!(swapped.subject_hint.as_deref(), Some("ops"));
+    assert_eq!(swapped.scopes, ["read", "write"]);
+    assert_eq!(swapped.audience.as_deref(), Some("https://api.example.com"));
+    assert_eq!(swapped.metadata, serde_json::json!({"owner": "ops"}));
+    assert_eq!((swapped.created_at_ms, swapped.updated_at_ms), (10, 20));
+
+    // Settings alone change under the value the credential already holds,
+    // and unset ones are cleared.
+    let mut settings_only = replacement("authsec_replace_new");
+    settings_only.display_name = None;
+    settings_only.scopes = Vec::new();
+    settings_only.metadata = serde_json::Value::Object(Default::default());
+    let kept = store
+        .update_token_credential(
+            &grant_id,
+            &SecretId::new("authsec_replace_new"),
+            settings_only,
+        )
+        .await
+        .expect("update settings")
+        .expect("expected value matched");
+    assert_eq!(
+        kept.access_token_secret,
+        Some(SecretId::new("authsec_replace_new"))
+    );
+    assert_eq!(kept.display_name, None);
+    assert!(kept.scopes.is_empty());
 
     // The old value is unreferenced and can go; a stale writer changes nothing.
     store
@@ -2550,7 +2581,7 @@ async fn pg_live_grant_token_replacement_swaps_only_from_the_expected_value() {
         .expect("delete replaced value");
     assert!(
         store
-            .replace_grant_token(
+            .update_token_credential(
                 &grant_id,
                 &SecretId::new("authsec_replace_old"),
                 replacement("authsec_replace_late"),
@@ -2575,7 +2606,7 @@ async fn pg_live_grant_token_replacement_swaps_only_from_the_expected_value() {
     );
     assert!(matches!(
         store
-            .replace_grant_token(
+            .update_token_credential(
                 &AuthGrantId::new("authgrant_replace_missing"),
                 &SecretId::new("authsec_replace_new"),
                 replacement("authsec_replace_late"),

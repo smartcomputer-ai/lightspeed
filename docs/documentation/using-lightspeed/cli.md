@@ -267,9 +267,10 @@ lightspeed model defaults clear speech-to-text
 ```
 
 Use a model supported by the configured provider. These commands require the
-`models` method group. `set` and `clear` read the current revision before
-writing; use `--expected-revision REVISION` to require a revision you already
-read. All three commands support `--json`.
+`models` method group. `set` and `clear` write whatever the current defaults
+are; pass `--expected-revision REVISION` to have the write refused if the
+defaults changed since the revision you read. All three commands support
+`--json`.
 
 An explicit session model takes precedence over a profile model, followed by
 the `agent-run` default. Without any of these, creation fails with
@@ -367,6 +368,8 @@ lightspeed mcp tools my-server
 lightspeed mcp login my-server
 lightspeed credential list
 lightspeed credential import --provider-id my-service --token-env SERVICE_TOKEN
+lightspeed credential put my-service-token --token-env SERVICE_TOKEN --display-name "My service"
+lightspeed credential replace my-service-token --token-stdin
 lightspeed model provider list
 lightspeed environment list
 lightspeed profile list
@@ -382,6 +385,13 @@ lightspeed session environment activate ENVIRONMENT_ID --session SESSION_ID
 lightspeed session skill list --session SESSION_ID
 lightspeed session skill use SKILL_ID --session SESSION_ID
 ```
+
+`credential import` adds a new token credential and fails if its id exists.
+`credential put` declares one by id: it is created when missing, its settings
+follow the flags given (unset ones are cleared), its token is replaced only
+when it differs, and repeating the command changes nothing. `--dry-run`
+reports what would change. `credential replace` swaps only the token and
+keeps the settings.
 
 The workspace, MCP and environment groups under `session` each provide
 `attach`, `detach` and `list`. Lists show declared attachments rather than

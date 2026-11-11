@@ -682,7 +682,13 @@ fn model_defaults_commands_round_trip_routes_clear_explicitly_and_guard_revision
         match method {
             "models/defaults/read" => {}
             "models/defaults/put" => {
-                assert_eq!(params["expectedRevision"], defaults["revision"]);
+                // A revision is sent only when the caller gave one; otherwise
+                // the write is unconditional.
+                if params["slot"] == "speechToText" {
+                    assert_eq!(params["expectedRevision"], defaults["revision"]);
+                } else {
+                    assert!(params.get("expectedRevision").is_none());
+                }
                 let slot = params["slot"].as_str().unwrap();
                 assert!(
                     params.get("model").is_some(),
@@ -733,13 +739,14 @@ fn model_defaults_commands_round_trip_routes_clear_explicitly_and_guard_revision
         runtime.json(&["model", "defaults", "read", "--json"]),
         cleared
     );
+    // Writing never reads first: only the explicit read did.
     let requests = runtime.requests.lock().unwrap();
     assert_eq!(
         requests
             .iter()
             .filter(|r| r["method"] == "models/defaults/read")
             .count(),
-        3
+        1
     );
 }
 
@@ -931,5 +938,127 @@ fn a_generated_secret_declares_an_api_key_and_a_registration_key() {
             .run(&["api-key", "revoke", "platform"])
             .status
             .success()
+    );
+}
+
+#[test]
+fn a_credential_is_declared_and_its_value_replaced_with_its_settings_kept() {
+    let grant = |token_marker: &str| json!({"grantId":"tracker-token","providerId":"static","providerKind":"staticToken","exposure":"brokered","createdBy":{"kind":"local"},"displayName":"Tracker","subjectHint":"ci","scopes":["read"],"audience":"https://tracker.example.com/mcp","hasAccessToken":true,"hasRefreshToken":false,"expiresAtMs":99,"status":"active","metadata":{"owner":token_marker},"leaseCount":0,"createdAtMs":1,"updatedAtMs":2});
+    let runtime = Runtime::start(move |method, params| match method {
+        "auth/grants/read" => {
+            assert_eq!(*params, json!({"grantId":"tracker-token"}));
+            json!({"grant": grant("ops")})
+        }
+        "auth/grants/put" => {
+            if params["dryRun"] == true {
+                // A declaration: exactly the settings given, nothing carried over.
+                assert_eq!(
+                    *params,
+                    json!({
+                        "grantId": "tracker-token",
+                        "exposure": "brokered",
+                        "token": "declared-token",
+                        "displayName": "Tracker",
+                        "audience": "https://tracker.example.com/mcp",
+                        "dryRun": true,
+                    })
+                );
+                json!({"grant": grant("ops"), "created": false, "tokenReplaced": true})
+            } else {
+                // A replacement: the settings the credential has, the new
+                // token, and not the old token's expiry.
+                assert_eq!(
+                    *params,
+                    json!({
+                        "grantId": "tracker-token",
+                        "providerId": "static",
+                        "exposure": "brokered",
+                        "token": "replaced-token",
+                        "displayName": "Tracker",
+                        "subjectHint": "ci",
+                        "scopes": ["read"],
+                        "audience": "https://tracker.example.com/mcp",
+                        "metadata": {"owner": "ops"},
+                    })
+                );
+                json!({"grant": grant("ops"), "created": false, "tokenReplaced": true})
+            }
+        }
+        _ => panic!("unexpected request {method}"),
+    });
+    let with_token = |args: &[&str], token: &str| {
+        Command::new(env!("CARGO_BIN_EXE_lightspeed"))
+            .current_dir(runtime.directory.path())
+            .args(args)
+            .env(
+                "LIGHTSPEED_CONFIG_DIR",
+                runtime.directory.path().join("config"),
+            )
+            .env("LIGHTSPEED_API_URL", &runtime.endpoint)
+            .env("LIGHTSPEED_API_KEY", "lsk_fixture")
+            .env(
+                "LIGHTSPEED_UNIVERSE",
+                "00000000-0000-0000-0000-000000000001",
+            )
+            .env("TRACKER_TOKEN", token)
+            .output()
+            .unwrap()
+    };
+
+    let declared = with_token(
+        &[
+            "credential",
+            "put",
+            "tracker-token",
+            "--token-env",
+            "TRACKER_TOKEN",
+            "--display-name",
+            "Tracker",
+            "--audience",
+            "https://tracker.example.com/mcp",
+            "--dry-run",
+        ],
+        "declared-token",
+    );
+    assert!(
+        declared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&declared.stderr)
+    );
+    let stdout = String::from_utf8(declared.stdout).unwrap();
+    assert!(stdout.contains("Would replace the credential's token."));
+    assert!(!stdout.contains("declared-token"));
+
+    let replaced = with_token(
+        &[
+            "credential",
+            "replace",
+            "tracker-token",
+            "--token-env",
+            "TRACKER_TOKEN",
+        ],
+        "replaced-token",
+    );
+    assert!(
+        replaced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replaced.stderr)
+    );
+    assert!(
+        !String::from_utf8(replaced.stdout)
+            .unwrap()
+            .contains("replaced-token")
+    );
+    let methods: Vec<String> = runtime
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|request| request["method"].as_str().unwrap().to_owned())
+        .filter(|method| method.starts_with("auth/"))
+        .collect();
+    assert_eq!(
+        methods,
+        ["auth/grants/put", "auth/grants/read", "auth/grants/put"]
     );
 }

@@ -353,6 +353,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfAuthGrantPutResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AuthGrantPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfAuthGrantReadResponse": {
         "properties": {
           "notifications": {
@@ -363,23 +380,6 @@
           },
           "result": {
             "$ref": "#/components/schemas/AuthGrantReadResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfAuthGrantReplaceResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/AuthGrantReplaceResponse"
           }
         },
         "required": [
@@ -455,6 +455,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfAuthProviderPutResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AuthProviderPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfAuthProviderReadResponse": {
         "properties": {
           "notifications": {
@@ -465,23 +482,6 @@
           },
           "result": {
             "$ref": "#/components/schemas/AuthProviderReadResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfAuthProviderReplaceResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/AuthProviderReplaceResponse"
           }
         },
         "required": [
@@ -3427,7 +3427,7 @@
         "type": "string"
       },
       "AuthGrantImportParams": {
-        "description": "Import a token credential as an auth grant. Together with\n[`AuthGrantReplaceParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
+        "description": "Import a new token credential as an auth grant, under the given id or an\nallocated one; an id already in use is a conflict. Together with\n[`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
         "properties": {
           "audience": {
             "type": [
@@ -3574,6 +3574,103 @@
         },
         "type": "object"
       },
+      "AuthGrantPutParams": {
+        "description": "Declare a token credential (`staticToken`): its id, its settings and the\ntoken it holds. A credential that is missing is created. One that exists\nhas its settings replaced by these (an absent field is unset) and, when it\nholds a different token, that token replaced, so MCP servers, headers,\nbot polls and environment variables referencing the id use the new value\nfrom their next request or process. Declaring it again changes nothing.\n\n`token` is encrypted on receipt and never returned; `Debug` output redacts\nit and request logging must never echo these params.",
+        "properties": {
+          "audience": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dryRun": {
+            "description": "Report what the declaration would do without doing it.",
+            "type": "boolean"
+          },
+          "expiresAtMs": {
+            "description": "When the token expires. Absent means it does not expire.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "exposure": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthGrantExposure"
+              }
+            ],
+            "default": "brokered",
+            "description": "Whether the token may be leased in plaintext. It cannot be changed\nafterwards."
+          },
+          "grantId": {
+            "type": "string"
+          },
+          "metadata": {
+            "description": "Non-secret, caller-defined metadata. Must be a JSON object; never put\nsecret material here."
+          },
+          "providerId": {
+            "description": "Label recorded on the credential; `static` when absent. It cannot be\nchanged afterwards.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "subjectHint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "grantId",
+          "token"
+        ],
+        "type": "object"
+      },
+      "AuthGrantPutResponse": {
+        "properties": {
+          "created": {
+            "description": "False when the credential already existed.",
+            "type": "boolean"
+          },
+          "grant": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthGrantView"
+              }
+            ],
+            "description": "The credential as declared: as it is now, or as it would be for a\ndry run."
+          },
+          "tokenReplaced": {
+            "description": "True when an existing credential held a different token.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "grant",
+          "created",
+          "tokenReplaced"
+        ],
+        "type": "object"
+      },
       "AuthGrantReadParams": {
         "properties": {
           "grantId": {
@@ -3586,41 +3683,6 @@
         "type": "object"
       },
       "AuthGrantReadResponse": {
-        "properties": {
-          "grant": {
-            "$ref": "#/components/schemas/AuthGrantView"
-          }
-        },
-        "required": [
-          "grant"
-        ],
-        "type": "object"
-      },
-      "AuthGrantReplaceParams": {
-        "description": "Replace the token of an active token credential (`staticToken`). The\ncredential keeps its id, display name, audience, exposure and everything\nthat references it, so MCP servers, headers, bot polls and environment\nvariables use the new value from their next request or process. `token` is\nencrypted on receipt and never returned; `Debug` output redacts it.",
-        "properties": {
-          "expiresAtMs": {
-            "description": "When the new token expires. Absent means it does not expire; the old\ntoken's expiry is not carried over.",
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "grantId": {
-            "type": "string"
-          },
-          "token": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "grantId",
-          "token"
-        ],
-        "type": "object"
-      },
-      "AuthGrantReplaceResponse": {
         "properties": {
           "grant": {
             "$ref": "#/components/schemas/AuthGrantView"
@@ -4051,6 +4113,65 @@
         },
         "type": "object"
       },
+      "AuthProviderPutParams": {
+        "description": "Declare a provider: its id, its configuration and its credential. A\nprovider that is missing is created. One that exists is rewritten in place\nas if it were created again under the same id, where it differs: the new\nsettings are validated before anything changes, so a rejected declaration\nleaves the provider as it was, and sessions and environment variables\nreferencing the id keep working throughout. Declaring it again changes\nnothing. `credential` is encrypted on receipt and never returned; `Debug`\noutput redacts it.",
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/AuthProviderConfigInput"
+          },
+          "credential": {
+            "description": "The provider's credential, for the kinds that take one. Absent leaves\nthe provider without a credential.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dryRun": {
+            "description": "Report what the declaration would do without doing it.",
+            "type": "boolean"
+          },
+          "providerId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId",
+          "config"
+        ],
+        "type": "object"
+      },
+      "AuthProviderPutResponse": {
+        "properties": {
+          "created": {
+            "description": "False when the provider already existed.",
+            "type": "boolean"
+          },
+          "credentialReplaced": {
+            "description": "True when an existing provider held a different credential, or gained\nor lost one.",
+            "type": "boolean"
+          },
+          "provider": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthProviderView"
+              }
+            ],
+            "description": "The provider as declared: as it is now, or as it would be for a dry\nrun."
+          }
+        },
+        "required": [
+          "provider",
+          "created",
+          "credentialReplaced"
+        ],
+        "type": "object"
+      },
       "AuthProviderReadParams": {
         "properties": {
           "providerId": {
@@ -4063,45 +4184,6 @@
         "type": "object"
       },
       "AuthProviderReadResponse": {
-        "properties": {
-          "provider": {
-            "$ref": "#/components/schemas/AuthProviderView"
-          }
-        },
-        "required": [
-          "provider"
-        ],
-        "type": "object"
-      },
-      "AuthProviderReplaceParams": {
-        "description": "Replace an existing provider's configuration and credential in place, as\nif it were created again under the same id. The new settings are validated\nbefore anything changes, so a rejected replacement leaves the provider as\nit was; sessions and environment variables referencing the id keep working\nthroughout. `credential` is encrypted on receipt and never returned;\n`Debug` output redacts it.",
-        "properties": {
-          "config": {
-            "$ref": "#/components/schemas/AuthProviderConfigInput"
-          },
-          "credential": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "displayName": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "providerId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "providerId",
-          "config"
-        ],
-        "type": "object"
-      },
-      "AuthProviderReplaceResponse": {
         "properties": {
           "provider": {
             "$ref": "#/components/schemas/AuthProviderView"
@@ -12962,10 +13044,13 @@
         "additionalProperties": false,
         "properties": {
           "expectedRevision": {
-            "description": "Revision returned by read/put; zero for a universe with no updates.",
+            "description": "Write only if the defaults are still at this revision, as returned by\nread or put; zero for a universe with no updates. Omit it to write\nwhatever the current revision is.",
             "format": "uint64",
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "model": {
             "anyOf": [
@@ -12984,8 +13069,7 @@
         },
         "required": [
           "slot",
-          "model",
-          "expectedRevision"
+          "model"
         ],
         "type": "object"
       },
@@ -21387,7 +21471,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
+      "description": "Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
       "name": "models/defaults/put",
       "paramStructure": "by-name",
       "params": [
@@ -22142,25 +22226,25 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.",
-      "name": "auth/grants/replace",
+      "description": "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.",
+      "name": "auth/grants/put",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/AuthGrantReplaceParams"
+            "$ref": "#/components/schemas/AuthGrantPutParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantReplaceResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantPutResponse"
         }
       },
-      "summary": "Replace a token credential's value",
+      "summary": "Declare a token credential",
       "x-lightspeed-access": {
         "action": "configureResource",
         "kind": "universe"
@@ -22394,25 +22478,25 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
-      "name": "auth/providers/replace",
+      "description": "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.",
+      "name": "auth/providers/put",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/AuthProviderReplaceParams"
+            "$ref": "#/components/schemas/AuthProviderPutParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderReplaceResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderPutResponse"
         }
       },
-      "summary": "Replace an authentication provider",
+      "summary": "Declare an authentication provider",
       "x-lightspeed-access": {
         "action": "configureResource",
         "kind": "universe"

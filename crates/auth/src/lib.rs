@@ -130,7 +130,7 @@ pub use github::{
 };
 pub use grants::{
     AuthGrantExposure, AuthGrantRecord, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
-    AuthProviderKind, CreateAuthGrantRecord, ListAuthGrants,
+    AuthProviderKind, CreateAuthGrantRecord, ListAuthGrants, TokenCredentialUpdate,
 };
 pub use locks::{GrantLockGuard, GrantRefreshLock, InMemoryGrantLocks};
 pub use mcp_oauth::{
