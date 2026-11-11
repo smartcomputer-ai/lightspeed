@@ -313,7 +313,7 @@ export function ListRow({
   const className = cn(
     "group/row flex min-h-(--list-row-height) min-w-0 items-center gap-2.5 border-b px-4 py-1.5 text-sm transition-colors duration-(--list-transition-duration) hover:bg-muted/50",
     highlighted && "bg-muted",
-    selection && "cursor-pointer",
+    selection && "cursor-action",
     // Tree lines are laid over the row. Inside a tree there is no separator
     // (min-height counts the border, so the row keeps its height) and the
     // lines run on into the next row unbroken.

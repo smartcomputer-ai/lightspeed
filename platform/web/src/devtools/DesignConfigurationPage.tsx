@@ -25,6 +25,8 @@ import {
   SHADOW_TOKENS,
   BACKDROP_KEY,
   SCROLLBAR_TOKENS,
+  CURSOR_STEPS,
+  CURSOR_TOKENS,
   SCROLLBAR_WIDTH_STEPS,
   SHEEN_ROLES,
   SIDEBAR_LOGO_TOKENS,
@@ -132,6 +134,7 @@ export function DesignConfigurationPage() {
           <TabsTrigger value="shape">Shape</TabsTrigger>
           <TabsTrigger value="shadows">Shadows</TabsTrigger>
           <TabsTrigger value="transitions">Transitions</TabsTrigger>
+          <TabsTrigger value="cursors">Cursors</TabsTrigger>
         </TabsList>
 
         <TabsContent value="colors" className="grid content-start gap-6 pt-3">
@@ -322,6 +325,20 @@ export function DesignConfigurationPage() {
           </Group>
         </TabsContent>
 
+        <TabsContent value="cursors" className="grid content-start gap-6 pt-3">
+          <Group title="Cursors by role" note="The mouse cursor for each kind of element, for the whole app. Hover a row's sample to see it.">
+            {CURSOR_TOKENS.map(({ token: name, label, use }) => (
+              <div key={name} className="grid gap-1">
+                <StepRow label={label} name={name} steps={CURSOR_STEPS} {...token("shared", name)} />
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">{label}.</span> {use}{" "}
+                  <span className="rounded border px-1.5 py-0.5" style={{ cursor: `var(${name})` }}>hover here</span>
+                </p>
+              </div>
+            ))}
+          </Group>
+        </TabsContent>
+
         <TabsContent value="transitions" className="grid content-start gap-6 pt-3">
           <Group title="Standard transition times" note="How long each family of components takes to change state. Everything a token times shares its duration and easing, so it moves together.">
             {TRANSITION_TOKENS.map(({ token: name, label, components }) => (
@@ -452,7 +469,7 @@ function ColorRow({ name, value, changed, onChange, onReset }: TokenProps) {
           aria-label={`Pick ${name}`}
           value={rgba ? toHex(rgba) : "#000000"}
           onChange={(event) => onChange(withAlpha(event.target.value, rgba?.[3] ?? 255))}
-          className="absolute inset-0 size-full cursor-pointer opacity-0"
+          className="absolute inset-0 size-full cursor-action opacity-0"
         />
       </span>
       <TokenName name={name} changed={changed} />
@@ -870,7 +887,7 @@ function SurfaceColorRow({ label, name, value, changed, onChange, onReset, resol
             aria-label={`Pick ${label.toLowerCase()} color`}
             value={rgba ? toHex(rgba) : "#000000"}
             onChange={(event) => onChange(withAlpha(event.target.value, rgba && rgba[3] > 0 ? rgba[3] : 255))}
-            className="absolute inset-0 size-full cursor-pointer opacity-0"
+            className="absolute inset-0 size-full cursor-action opacity-0"
           />
         </span>
         <Select
@@ -972,7 +989,7 @@ function ShadowEditor({ params, values, onChange }: {
             aria-label="Shadow color"
             value={params.color}
             onChange={(event) => onChange({ ...params, color: event.target.value })}
-            className="h-8 w-16 cursor-pointer rounded-md border bg-transparent p-0.5"
+            className="h-8 w-16 cursor-action rounded-md border bg-transparent p-0.5"
           />
           <span className="text-right font-mono text-xs">{params.color}</span>
           <span className="text-xs text-muted-foreground">Opacity ×</span>

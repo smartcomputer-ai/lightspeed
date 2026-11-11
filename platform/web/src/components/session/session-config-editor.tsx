@@ -738,7 +738,7 @@ function ExpandableSetupPanel({
       <button
         type="button"
         aria-expanded={open}
-        className="flex min-h-16 w-full min-w-0 cursor-pointer items-center gap-3 rounded-md px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex min-h-16 w-full min-w-0 cursor-action items-center gap-3 rounded-md px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => setOpen((value) => !value)}
       >
         <Icon className="size-4 shrink-0 text-muted-foreground" />
@@ -1314,7 +1314,7 @@ function FeaturePanel({
           aria-expanded={enabled && configurable ? open : undefined}
           className={cn(
             "-mr-2 flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            enabled && configurable && "cursor-pointer",
+            enabled && configurable && "cursor-action",
           )}
           onClick={() => setOpen((value) => !value)}
         >

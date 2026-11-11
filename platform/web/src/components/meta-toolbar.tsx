@@ -214,7 +214,7 @@ const MARK_CLASS = "inline-flex shrink-0 items-center gap-0.5 rounded-sm text-xs
 /// The expand toggle: a square icon button, kept out of the fitting.
 const TOGGLE_WIDTH = 24;
 
-const ACTS_CLASS = "cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
+const ACTS_CLASS = "cursor-action outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
 
 const present = (node: ReactNode) => node !== undefined && node !== null && node !== false;
 

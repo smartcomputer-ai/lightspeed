@@ -229,6 +229,14 @@
        and nothing at rest; hovering a scroll area (or focusing it from the
        keyboard) shows its thumb, over the track color. */
     --scrollbar-width: thin;
+    /* Mouse cursors, one per role: anything clickable, text to type or
+       select, everything else, the page while an action blocks it, and the
+       page while work goes on in the background. */
+    --cursor-action: pointer;
+    --cursor-text: text;
+    --cursor-default: default;
+    --cursor-wait: wait;
+    --cursor-progress: progress;
     --scrollbar-thumb: color-mix(in oklab, var(--foreground) 22%, transparent);
     --scrollbar-track: transparent;
     --scrollbar-thumb-rest: transparent;
@@ -357,6 +365,14 @@
    covers the border, takes no space, follows the corners and is never
    hidden by what the field holds. A field nested in another that draws the
    ring sets the width to 0px. */
+/* Cursors by role (see --cursor-* above). */
+@utility cursor-action {
+    cursor: var(--cursor-action);
+}
+@utility cursor-select {
+    cursor: var(--cursor-text);
+}
+
 @utility field-focus {
     border-color: var(--surface-field-focus-border);
     outline: var(--surface-field-focus-ring-width) solid var(--surface-field-focus-ring);
@@ -404,6 +420,38 @@
   *:hover,
   *:focus-visible {
     scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+    }
+  /* Cursors. The page rests on the default cursor (not the browser's text
+     cursor over any text); what can be clicked shows the action cursor,
+     what can be typed in or is meant to be copied the text cursor. A
+     component's cursor-* class wins over these. */
+  html {
+    cursor: var(--cursor-default);
+    }
+  a[href], button:not(:disabled), summary, select:not(:disabled),
+  label:has(> input:not(:disabled), > button:not(:disabled)),
+  input:is([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"]):not(:disabled),
+  [role="button"]:not([aria-disabled="true"]), [role="link"], [role="tab"]:not([aria-disabled="true"]),
+  [role="menuitem"]:not([aria-disabled="true"], [data-disabled]), [role="menuitemcheckbox"]:not([aria-disabled="true"], [data-disabled]),
+  [role="menuitemradio"]:not([aria-disabled="true"], [data-disabled]), [role="option"]:not([aria-disabled="true"], [data-disabled]),
+  [role="checkbox"]:not([aria-disabled="true"], [data-disabled]), [role="radio"]:not([aria-disabled="true"], [data-disabled]),
+  [role="switch"]:not([aria-disabled="true"], [data-disabled]), [role="combobox"]:not(input) {
+    cursor: var(--cursor-action);
+    }
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="hidden"]),
+  textarea, [contenteditable]:not([contenteditable="false"]),
+  pre, code, kbd, samp, [role="alert"],
+  [data-slot="dialog-description"], [data-slot="alert-dialog-description"], [data-slot="sheet-description"] {
+    cursor: var(--cursor-text);
+    }
+  /* While an action blocks the UI, the whole page waits; while work goes on
+     in the background, the page shows progress but stays usable (what sets
+     its own cursor keeps it). Set on <html> by BusyCursor. */
+  html[data-cursor="progress"] {
+    cursor: var(--cursor-progress);
+    }
+  html[data-cursor="wait"], html[data-cursor="wait"] * {
+    cursor: var(--cursor-wait) !important;
     }
   svg[data-icon-role] {
     zoom: var(--icon-scale);

@@ -178,6 +178,19 @@ export function surfaceToken(role: string, part: SurfacePart): string {
 /// (color, per theme) and `-filter` (shared).
 export const BACKDROP_KEY = "backdrop";
 
+/// The cursor tokens in index.css, one per role, with what each is for.
+export const CURSOR_TOKENS = [
+  { token: "--cursor-action", label: "Action", use: "Anything clickable: buttons, links, menu items, tabs, clickable tags, checkboxes" },
+  { token: "--cursor-text", label: "Text", use: "Text to type in or meant to be copied: fields, the transcript, code, error messages" },
+  { token: "--cursor-default", label: "Default", use: "Everything else, instead of the browser's text cursor over any text" },
+  { token: "--cursor-wait", label: "Wait", use: "The whole page while an action blocks it (closing or deleting a session)" },
+  { token: "--cursor-progress", label: "Progress", use: "The page while a change is saved in the background; it stays usable" },
+] as const;
+
+/// The cursor keywords the editor offers for every role.
+export const CURSOR_STEPS = ["default", "pointer", "text", "wait", "progress", "help", "crosshair", "cell", "context-menu", "copy", "move", "grab", "not-allowed"]
+  .map((value) => ({ label: value, value }));
+
 /// The scrollbar tokens in index.css: the width every scroll area shares,
 /// and per theme the thumb and track while the area is hovered and the
 /// thumb at rest (transparent hides it).

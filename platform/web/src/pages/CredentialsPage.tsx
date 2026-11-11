@@ -315,7 +315,7 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
                   return (
                     <TableRow
                       key={app.providerId}
-                      className="cursor-pointer"
+                      className="cursor-action"
                       onClick={() => setSelectedApp(app.providerId)}
                     >
                       <TableCell>

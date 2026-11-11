@@ -374,6 +374,7 @@ function SessionList({
   /// The API has no bulk operation by design: the filtered list is the
   /// primitive and the client loops, a few requests at a time.
   const bulk = useMutation({
+    meta: { blocking: true },
     mutationFn: async ({ action, ids }: { action: "close" | "delete"; ids: string[] }) => {
       const actionName = action === "close" ? "closeSession" : "deleteSession";
       if (!permissions.can(actionName)) throw new Error("Session permissions changed. Review the selection.");
@@ -434,7 +435,7 @@ function SessionList({
                 <h2 className="text-sm font-semibold">Filter sessions</h2>
                 <div className="grid gap-2">
                   <span className="text-xs font-medium">Include</span>
-                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <label className="flex cursor-action items-center gap-2 text-sm">
                     <Checkbox
                       checked={showClosed}
                       onCheckedChange={(checked) => setPreferences((current) => ({
@@ -444,7 +445,7 @@ function SessionList({
                     />
                     Closed sessions
                   </label>
-                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <label className="flex cursor-action items-center gap-2 text-sm">
                     <Checkbox
                       checked={showSubagents}
                       onCheckedChange={(checked) => setPreferences((current) => ({
@@ -454,7 +455,7 @@ function SessionList({
                     />
                     Sub-agent sessions
                   </label>
-                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <label className="flex cursor-action items-center gap-2 text-sm">
                     <Checkbox
                       checked={showControlledSessions}
                       onCheckedChange={(checked) => setPreferences((current) => ({
@@ -522,7 +523,7 @@ function SessionList({
                 </div>
                 <div className="grid gap-2 border-t pt-3">
                   <h2 className="text-sm font-semibold">Display</h2>
-                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <label className="flex cursor-action items-center gap-2 text-sm">
                     <Checkbox
                       checked={showSessionIds}
                       onCheckedChange={(checked) => setPreferences((current) => ({
@@ -2003,6 +2004,7 @@ export function SessionDetail({
   };
 
   const closeSession = useMutation({
+    meta: { blocking: true },
     mutationFn: () =>
       api<SessionView>(
         "POST",
@@ -2021,6 +2023,7 @@ export function SessionDetail({
   });
 
   const restartSession = useMutation({
+    meta: { blocking: true },
     mutationFn: () =>
       api<SessionView>(
         "POST",
@@ -2195,7 +2198,7 @@ export function SessionDetail({
         <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport preserveScrollOnPrepend>
             <SessionHistoryLoader tail={tail} />
-            <MessageScrollerContent className="mx-auto w-full max-w-5xl gap-3 px-4 py-6 md:px-8">
+            <MessageScrollerContent className="mx-auto w-full max-w-5xl cursor-select gap-3 px-4 py-6 md:px-8">
               {tail.phase === "loading" && entries.length === 0 && !tail.error && (
                 <LoadingNote />
               )}
@@ -2289,7 +2292,7 @@ export function SessionDetail({
           <div className="mx-auto flex w-full max-w-5xl flex-col gap-2 text-sm md:px-4">
             <p>{item.error}</p>
             <details>
-              <summary className="cursor-pointer text-xs">Saved message</summary>
+              <summary className="cursor-action text-xs">Saved message</summary>
               <p className="max-h-40 overflow-auto whitespace-pre-wrap">{item.message.text}</p>
               {item.message.attachments.map((attachment) => <p key={attachment.blobRef}>{attachment.name}</p>)}
             </details>

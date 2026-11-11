@@ -245,7 +245,7 @@ function EnvironmentList({ universeId }: { universeId: string }) {
             {environments.isFetchingNextPage ? "Loading…" : "Load more"}
           </Button>
         )}
-        <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+        <label className="flex w-fit cursor-action items-center gap-2 text-sm text-muted-foreground">
           <Switch checked={showClosed} onCheckedChange={setShowClosed} />
           Show closed environments
         </label>

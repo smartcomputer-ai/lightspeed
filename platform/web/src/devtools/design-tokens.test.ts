@@ -16,6 +16,8 @@ import {
   FONT_WEIGHT_STEPS,
   ITEM_WEIGHT_TOKENS,
   TRANSITION_TOKENS,
+  CURSOR_STEPS,
+  CURSOR_TOKENS,
   NEUTRAL_FILTER,
   backdropFilterValue,
   parseBackdropFilter,
@@ -112,6 +114,15 @@ describe("design tokens", () => {
         const source = parseSurfaceColor(value!)?.source;
         expect(source && offered.has(source), `${token}: ${value}`).toBe(true);
       }
+    }
+  });
+
+  it("declares every cursor role once, as a cursor the editor offers", () => {
+    const css = readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
+    for (const { token } of CURSOR_TOKENS) {
+      const values = [...css.matchAll(new RegExp(`${token}: ([^;]+);`, "g"))].map((match) => match[1]!);
+      expect(values, token).toHaveLength(1);
+      expect(CURSOR_STEPS.map((step) => step.value), token).toContain(values[0]);
     }
   });
 

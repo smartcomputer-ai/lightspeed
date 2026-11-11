@@ -185,7 +185,7 @@ function ServerDetails({ universeId, server, authGrants, authGrantsLoading, onCh
       </ResourceDetailsGrid>
       {Boolean(server.allowedTools?.length) && (
         <details className="rounded-lg border p-4">
-          <summary className="cursor-pointer text-sm font-medium">View selected tools</summary>
+          <summary className="cursor-action text-sm font-medium">View selected tools</summary>
           <ul className="mt-3 grid max-h-64 gap-2 overflow-y-auto">
             {server.allowedTools!.slice().sort((a, b) => a.localeCompare(b)).map((tool) => <li key={tool} className="break-words font-mono text-xs [overflow-wrap:anywhere]">{tool}</li>)}
           </ul>

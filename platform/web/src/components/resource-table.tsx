@@ -35,7 +35,7 @@ export function ResourceRow({ name, onOpen, children }: {
 }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   return (
-    <TableRow className="cursor-pointer focus-within:bg-muted/50" onClick={() => onOpen(triggerRef.current)}>
+    <TableRow className="cursor-action focus-within:bg-muted/50" onClick={() => onOpen(triggerRef.current)}>
       {children}
       <TableActionsCell>
         <Button ref={triggerRef} variant="ghost" size="icon-sm" className="text-muted-foreground"

@@ -133,7 +133,7 @@ export function ShowHiddenToggle({
 }) {
   if (count === 0) return null;
   return (
-    <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+    <label className="flex w-fit cursor-action items-center gap-2 text-sm text-muted-foreground">
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
       {label} ({count})
     </label>

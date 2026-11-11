@@ -48,7 +48,7 @@ function IdText({
     <span
       data-slot="id-text"
       title={title ?? (typeof children === "string" ? children : undefined)}
-      className={cn("block min-w-0 max-w-full truncate font-mono text-xs", className)}
+      className={cn("block min-w-0 max-w-full cursor-select truncate font-mono text-xs", className)}
       {...props}
     >
       {children}
