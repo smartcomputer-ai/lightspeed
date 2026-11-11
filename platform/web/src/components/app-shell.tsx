@@ -26,6 +26,7 @@ import { useUserPreferences } from "@/lib/user-preferences";
 import { cn } from "@/lib/utils";
 import { isMobileDetailRoute } from "@/lib/shell-navigation";
 import { WelcomeDialog } from "@/components/onboarding/welcome-dialog";
+import { PageNebula } from "@/components/starscape/page-nebula";
 import type { SessionUser } from "@/auth";
 import { rememberUniverse, useUniverses } from "@/lib/universes";
 
@@ -233,7 +234,11 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         </SidebarFooter>
         <ResizeHandle label="Resize menu" handle={sidebarResize.handle} />
       </Sidebar>
-      <SidebarInset className="max-h-svh">
+      {/* Its own stacking context, so the nebula sits over its background and under everything else. */}
+      <SidebarInset className="isolate max-h-svh">
+        {/* The pages' background: behind the content area and the single-column
+            pages (the list pane draws its own surface over it). */}
+        <PageNebula className="absolute inset-0 -z-10" />
         {!isMobileDetailRoute(location.pathname) && (
           <header className="flex h-12 shrink-0 items-center gap-2 px-4 md:hidden">
             <SidebarTrigger />

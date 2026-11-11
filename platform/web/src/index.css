@@ -271,6 +271,9 @@
     --list-row-height: calc(var(--pane-bar-height) * 1.2);
     /* A row of a compressed list (its title alone, no second line). */
     --list-row-height-compressed: calc(var(--pane-bar-height) * 0.75);
+    /* How strongly the nebula shows behind the content area and pages (a
+       subtle wash; drawn dark in the light theme). */
+    --page-nebula-opacity: 0.5;
     /* The text of list and menu items at rest (list titles, sidebar
        navigation): a little dimmer than foreground, full strength on hover,
        focus or selection. Declared again under .dark so it re-resolves in
