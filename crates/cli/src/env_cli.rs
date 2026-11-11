@@ -18,6 +18,9 @@ enum EnvCommand {
     Create(CreateArgs),
     /// Register an existing, Lightspeed-reachable envd WebSocket endpoint.
     Register(RegisterArgs),
+    /// Declare a fixed machine before its daemon registers, or release a
+    /// declared environment from the daemon bound to it.
+    Registered(RegisteredArgs),
     /// Inspect or set the current universe's bindings to environment providers.
     #[command(visible_alias = "bindings")]
     Binding(BindingArgs),
@@ -135,6 +138,11 @@ struct RegistrationKeyPolicyArgs {
     /// away longer than this many minutes.
     #[arg(long = "offline-close-after-min")]
     offline_close_after_min: Option<u64>,
+    /// Persistent keys only: admit only daemons whose registration name
+    /// matches an environment declared under this key
+    /// (`environment registered put`).
+    #[arg(long = "declared-only")]
+    declared_only: bool,
     /// Stop admitting new daemons after this many hours.
     #[arg(long = "expires-in-hours")]
     expires_in_hours: Option<u64>,
@@ -326,6 +334,7 @@ pub(crate) async fn handle(args: EnvArgs) -> Result<()> {
         EnvCommand::Provider(args) => provider(args).await,
         EnvCommand::Create(args) => create(args).await,
         EnvCommand::Register(args) => register(args).await,
+        EnvCommand::Registered(args) => registered(args).await,
         EnvCommand::Binding(args) => binding(args).await,
         EnvCommand::Template(args) => template(args).await,
         EnvCommand::Ingress(args) => ingress(args).await,
@@ -351,6 +360,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                     max_active_environments: args.policy.max_active,
                     ephemeral_disconnect_grace_ms: minutes_ms(args.policy.grace_min),
                     offline_close_after_ms: minutes_ms(args.policy.offline_close_after_min),
+                    declared_only: args.policy.declared_only,
                     expires_at_ms,
                 })
                 .await
@@ -370,6 +380,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                     max_active_environments: args.policy.max_active,
                     ephemeral_disconnect_grace_ms: minutes_ms(args.policy.grace_min),
                     offline_close_after_ms: minutes_ms(args.policy.offline_close_after_min),
+                    declared_only: args.policy.declared_only,
                     expires_at_ms,
                     secret: api::EnvironmentRegistrationSecretView(args.secret.read()?),
                 })
@@ -399,6 +410,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                     max_active_environments: args.policy.max_active,
                     ephemeral_disconnect_grace_ms: minutes_ms(args.policy.grace_min),
                     offline_close_after_ms: minutes_ms(args.policy.offline_close_after_min),
+                    declared_only: args.policy.declared_only,
                     expires_at_ms,
                 })
                 .await
@@ -660,6 +672,9 @@ pub(crate) fn print_json_or<T: serde::Serialize>(
 struct CreateArgs {
     #[command(flatten)]
     common: ResourceArgs,
+    /// The environment's id; allocated when omitted.
+    #[arg(long = "id")]
+    environment_id: Option<String>,
     /// The provider to create the environment with; the universe needs an
     /// enabled binding to it.
     #[arg(long)]
@@ -680,6 +695,9 @@ struct RegisterArgs {
     common: ResourceArgs,
     /// A ws://, wss:// or unix:// endpoint of envd reachable from the runtime.
     endpoint: String,
+    /// The environment's id; allocated when omitted.
+    #[arg(long = "id")]
+    environment_id: Option<String>,
     /// Supply the same request ID when retrying registration.
     #[arg(long)]
     request_id: String,
@@ -688,6 +706,43 @@ struct RegisterArgs {
     #[command(flatten)]
     metadata: crate::session_cli::MetadataPairs,
 }
+#[derive(Args, Debug, Clone)]
+struct RegisteredArgs {
+    #[command(subcommand)]
+    command: RegisteredCommand,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum RegisteredCommand {
+    /// Declare an environment with a chosen id under a persistent
+    /// registration key. It exists at once and waits for its machine: the
+    /// first daemon the key admits under the name is bound to it. Declaring
+    /// it again changes nothing.
+    Put(RegisteredPutArgs),
+    /// Forget the daemon bound to a declared environment and end its
+    /// connection, so that a machine with a new identity can bind. The
+    /// environment keeps its id and everything that references it.
+    Release(EnvironmentResourceArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct RegisteredPutArgs {
+    #[command(flatten)]
+    common: EnvironmentResourceArgs,
+    /// The persistent registration key whose daemons may fill the
+    /// environment.
+    #[arg(long = "key")]
+    registration_key_id: String,
+    /// The name the daemon registers under
+    /// (`LIGHTSPEED_ENVD_REGISTRATION_NAME`), for example its pod name.
+    #[arg(long)]
+    name: String,
+    #[arg(long)]
+    display_name: Option<String>,
+    #[command(flatten)]
+    metadata: crate::session_cli::MetadataPairs,
+}
+
 #[derive(Args, Debug, Clone)]
 struct BindingArgs {
     #[command(subcommand)]
@@ -760,6 +815,7 @@ async fn create(args: CreateArgs) -> Result<()> {
             api::METHOD_ENVIRONMENTS_CREATE,
             api::EnvironmentCreateParams {
                 request_id: args.request_id,
+                environment_id: args.environment_id,
                 provider_id: args.provider,
                 template_id: args.template,
                 display_name: args.display_name,
@@ -786,6 +842,7 @@ async fn register(args: RegisterArgs) -> Result<()> {
             api::METHOD_ENVIRONMENTS_EXTERNAL_CREATE,
             api::EnvironmentExternalCreateParams {
                 request_id: args.request_id,
+                environment_id: args.environment_id,
                 endpoint: args.endpoint,
                 display_name: args.display_name,
                 metadata: args.metadata.map(),
@@ -794,6 +851,66 @@ async fn register(args: RegisterArgs) -> Result<()> {
         .await?
         .result;
     crate::output::show(args.common.json, &response.environment)
+}
+async fn registered(args: RegisteredArgs) -> Result<()> {
+    match args.command {
+        RegisteredCommand::Put(args) => {
+            let response: api::EnvironmentRegisteredPutResponse =
+                HttpAgentApi::new(args.common.api_url)
+                    .request(
+                        api::METHOD_ENVIRONMENTS_REGISTERED_PUT,
+                        api::EnvironmentRegisteredPutParams {
+                            environment_id: args.common.environment_id,
+                            registration_key_id: args.registration_key_id,
+                            name: args.name,
+                            display_name: args.display_name,
+                            metadata: args.metadata.map(),
+                        },
+                    )
+                    .await?
+                    .result;
+            if args.common.json {
+                return crate::output::show(true, &response);
+            }
+            crate::output::show(false, &response.environment)?;
+            println!();
+            println!(
+                "{}",
+                if response.created {
+                    "Declared. It is away until its daemon registers."
+                } else {
+                    "Already declared."
+                }
+            );
+            Ok(())
+        }
+        RegisteredCommand::Release(args) => {
+            let response: api::EnvironmentRegisteredReleaseResponse =
+                HttpAgentApi::new(args.api_url)
+                    .request(
+                        api::METHOD_ENVIRONMENTS_REGISTERED_RELEASE,
+                        api::EnvironmentRegisteredReleaseParams {
+                            environment_id: args.environment_id,
+                        },
+                    )
+                    .await?
+                    .result;
+            if args.json {
+                return crate::output::show(true, &response);
+            }
+            crate::output::show(false, &response.environment)?;
+            println!();
+            println!(
+                "{}",
+                if response.released {
+                    "Released. The next daemon its key admits under the name is bound to it."
+                } else {
+                    "No daemon was bound."
+                }
+            );
+            Ok(())
+        }
+    }
 }
 async fn binding(args: BindingArgs) -> Result<()> {
     let client = HttpAgentApi::new("");

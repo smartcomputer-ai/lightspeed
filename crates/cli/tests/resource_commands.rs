@@ -647,6 +647,139 @@ fn provisioning_and_template_commands_send_current_typed_requests() {
 }
 
 #[test]
+fn a_fixed_machine_is_declared_released_and_given_a_chosen_id() {
+    let runtime = Runtime::start(|method, params| {
+        let waiting = |daemon: Option<&str>| {
+            let mut source = json!({"type":"registered","registrationKeyId":"runners","name":"lightspeed-runner-0","identityMode":"persistent","connected":false,"connectionChangedAtMs":1,"lastSeenAtMs":1});
+            if let Some(daemon) = daemon {
+                source["daemonId"] = json!(daemon);
+            }
+            json!({"environmentId":"build-box","displayName":"Build box","source":source,"state":"open","status":"away","stateChangedAtMs":1,"createdAtMs":1,"updatedAtMs":1})
+        };
+        match method {
+            "environments/registration-keys/create" => {
+                assert_eq!(
+                    *params,
+                    json!({
+                        "registrationKeyId": "runners",
+                        "displayName": "Runners",
+                        "identityMode": "persistent",
+                        "declaredOnly": true,
+                    })
+                );
+                json!({"registrationKey":{"registrationKeyId":"runners","displayName":"Runners","keyPrefix":"lsrk_fixture","identityMode":"persistent","ephemeralDisconnectGraceMs":300000,"declaredOnly":true,"status":"active","registeredEnvironmentCount":0,"activeEnvironmentCount":0,"createdAtMs":1,"updatedAtMs":1},"secret":"lsrk_fixture-secret"})
+            }
+            "environments/registered/put" => {
+                assert_eq!(
+                    *params,
+                    json!({
+                        "environmentId": "build-box",
+                        "registrationKeyId": "runners",
+                        "name": "lightspeed-runner-0",
+                        "displayName": "Build box",
+                        "metadata": {"team": "build"},
+                    })
+                );
+                json!({"environment": waiting(None), "created": true})
+            }
+            "environments/registered/release" => {
+                assert_eq!(*params, json!({"environmentId": "build-box"}));
+                json!({"environment": waiting(None), "released": true})
+            }
+            "environments/external/create" => {
+                assert_eq!(params["environmentId"], "ext-box");
+                json!({"environment":{"environmentId":"ext-box","requestId":params["requestId"],"source":{"type":"external","endpoint":params["endpoint"]},"state":"open","status":"ready","stateChangedAtMs":0,"createdAtMs":0,"updatedAtMs":0}})
+            }
+            "environments/create" => {
+                assert_eq!(params["environmentId"], "sandbox-1");
+                json!({"environment":{"environmentId":"sandbox-1","requestId":params["requestId"],"source":{"type":"provisioned","providerId":"incus","templateId":"linux-v1"},"state":"provisioning","status":"provisioning","stateChangedAtMs":0,"createdAtMs":0,"updatedAtMs":0}})
+            }
+            _ => panic!("unexpected request {method}"),
+        }
+    });
+
+    let key = runtime.json(&[
+        "environment",
+        "registration-key",
+        "create",
+        "--id",
+        "runners",
+        "--name",
+        "Runners",
+        "--declared-only",
+        "--json",
+    ]);
+    assert_eq!(key["registrationKey"]["declaredOnly"], true);
+
+    let declared = runtime.success(&[
+        "environment",
+        "registered",
+        "put",
+        "build-box",
+        "--key",
+        "runners",
+        "--name",
+        "lightspeed-runner-0",
+        "--display-name",
+        "Build box",
+        "--metadata",
+        "team=build",
+    ]);
+    assert!(declared.contains("build-box"), "{declared}");
+    assert!(
+        declared.contains("It is away until its daemon registers."),
+        "{declared}"
+    );
+    // A declaration names its key and the daemon's registration name.
+    assert!(
+        !runtime
+            .run(&["environment", "registered", "put", "build-box"])
+            .status
+            .success()
+    );
+
+    let released = runtime.json(&[
+        "environment",
+        "registered",
+        "release",
+        "build-box",
+        "--json",
+    ]);
+    assert_eq!(released["released"], true);
+    assert!(released["environment"]["source"].get("daemonId").is_none());
+
+    assert_eq!(
+        runtime.json(&[
+            "environment",
+            "register",
+            "wss://env.example/ws",
+            "--id",
+            "ext-box",
+            "--request-id",
+            "retry-1",
+            "--json"
+        ])["environmentId"],
+        "ext-box"
+    );
+    assert_eq!(
+        runtime.json(&[
+            "environment",
+            "create",
+            "--id",
+            "sandbox-1",
+            "--provider",
+            "incus",
+            "--template",
+            "linux-v1",
+            "--request-id",
+            "retry-1",
+            "--json",
+        ])["environmentId"],
+        "sandbox-1"
+    );
+}
+
+#[test]
 fn config_replacement_checks_the_requested_revision_and_outputs_one_document() {
     let runtime = Runtime::start(|method, params| match method {
         "session/read" => {

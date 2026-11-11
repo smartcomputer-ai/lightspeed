@@ -132,6 +132,7 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
                     max_active_environments: Some(1),
                     ephemeral_disconnect_grace_ms: None,
                     offline_close_after_ms: None,
+                    declared_only: false,
                     expires_at_ms: None,
                 })
                 .await?

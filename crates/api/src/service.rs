@@ -244,6 +244,16 @@ pub trait AgentApiService: Send + Sync {
         params: EnvironmentExternalCreateParams,
     ) -> Result<AgentApiOutcome<EnvironmentExternalCreateResponse>, AgentApiError>;
 
+    async fn put_registered_environment(
+        &self,
+        params: EnvironmentRegisteredPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegisteredPutResponse>, AgentApiError>;
+
+    async fn release_registered_environment(
+        &self,
+        params: EnvironmentRegisteredReleaseParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegisteredReleaseResponse>, AgentApiError>;
+
     async fn put_environment_ingress(
         &self,
         params: EnvironmentIngressPutParams,

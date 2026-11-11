@@ -929,6 +929,56 @@
         "action": "configureResource",
         "kind": "universe"
       },
+      "description": "Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.",
+      "group": "environments",
+      "method": "environments/registered/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentRegisteredPutParams"
+        },
+        "type": "EnvironmentRegisteredPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentRegisteredPutResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentRegisteredPutResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Declare a registered environment",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "description": "Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.",
+      "group": "environments",
+      "method": "environments/registered/release",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentRegisteredReleaseParams"
+        },
+        "type": "EnvironmentRegisteredReleaseParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentRegisteredReleaseResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Release a declared environment's daemon",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
       "description": "Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.",
       "group": "environments",
       "method": "environments/ingress/put",

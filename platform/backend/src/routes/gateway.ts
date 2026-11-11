@@ -18,6 +18,7 @@ import {
   type EnvironmentCreateParams,
   type EnvironmentExternalCreateParams,
   type EnvironmentListParams,
+  type EnvironmentRegisteredPutParams,
   type EnvironmentRegistrationKeyCreateParams,
   type EnvironmentRegistrationKeyUpdateParams,
   type McpServerInput,
@@ -224,10 +225,21 @@ const externalEnvironmentCreateSchema = z.object({
   displayName: z.string().trim().min(1).max(200).optional(),
 });
 
+/// A fixed machine declared as an environment before its daemon registers.
+/// The id, the key and the registration name cannot change afterwards.
+const registeredEnvironmentPutSchema = z.object({
+  environmentId: z.string().trim().min(1).max(200),
+  registrationKeyId: z.string().trim().min(1).max(200),
+  name: z.string().trim().min(1).max(128),
+  displayName: z.string().trim().min(1).max(200).optional(),
+  metadata: z.record(z.string(), z.string()).optional(),
+});
+
 /// Registration-key policy as the Environments page submits it. Identity
 /// mode is the key's policy; daemons never choose it.
 const registrationKeySettingsSchema = z.object({
   displayName: z.string().trim().min(1).max(128),
+  declaredOnly: z.boolean().optional(),
   maxActiveEnvironments: z.number().int().min(1).optional(),
   ephemeralDisconnectGraceMs: z.number().int().min(1).optional(),
   offlineCloseAfterMs: z.number().int().min(1).optional(),
@@ -1971,6 +1983,42 @@ export function gatewayRoutes(ctx: AppContext) {
       };
       const response = await client.call("environments/external/create", params);
       return c.json(response.result.environment, 201);
+    });
+  });
+
+  /// Declare a fixed machine as an environment under a persistent
+  /// registration key. Repeating the declaration converges on the same
+  /// environment, so only a first declaration answers 201.
+  app.post("/:id/environments/registered", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) {
+      return c.json({ error: "not found" }, 404);
+    }
+    const body = await parseBody(c, registeredEnvironmentPutSchema);
+    if (!body.ok) {
+      return body.response;
+    }
+    return withGateway(c, async () => {
+      const client = engineClientFor(ctx, access);
+      const params: EnvironmentRegisteredPutParams = body.data;
+      const response = await client.call("environments/registered/put", params);
+      return c.json(response.result.environment, response.result.created ? 201 : 200);
+    });
+  });
+
+  /// Forget the daemon bound to a declared environment so that a machine
+  /// with another identity may bind to it.
+  app.post("/:id/environments/:environmentId/release", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) {
+      return c.json({ error: "not found" }, 404);
+    }
+    return withGateway(c, async () => {
+      const client = engineClientFor(ctx, access);
+      const response = await client.call("environments/registered/release", {
+        environmentId: c.req.param("environmentId"),
+      });
+      return c.json(response.result.environment);
     });
   });
 

@@ -1594,6 +1594,40 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfEnvironmentRegisteredPutResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/EnvironmentRegisteredPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/EnvironmentRegisteredReleaseResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse": {
         "properties": {
           "notifications": {
@@ -9711,6 +9745,13 @@
               "null"
             ]
           },
+          "environmentId": {
+            "description": "The id profiles and bindings use for the environment. Omit it to have\none allocated. An id already in use is a conflict.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "idle": {
             "anyOf": [
               {
@@ -9987,6 +10028,13 @@
           "endpoint": {
             "description": "`ws://`, `wss://` or `unix://` URL of an envd instance reachable from\nLightspeed.",
             "type": "string"
+          },
+          "environmentId": {
+            "description": "The id profiles and bindings use for the environment. Omit it to have\none allocated. An id already in use is a conflict.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "metadata": {
             "additionalProperties": {
@@ -10506,8 +10554,91 @@
         ],
         "type": "object"
       },
+      "EnvironmentRegisteredPutParams": {
+        "description": "Declare a fixed machine as an environment before its daemon registers.\nThe first daemon the key admits under `name` becomes this environment and\nkeeps its id; from then on only that daemon's identity reconnects to it.",
+        "properties": {
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environmentId": {
+            "description": "The id profiles and bindings use for the environment.",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "name": {
+            "description": "The name the daemon registers under: 1 to 128 bytes without control\ncharacters, unique among the open environments of the key. It cannot\nbe changed afterwards.",
+            "type": "string"
+          },
+          "registrationKeyId": {
+            "description": "The persistent registration key whose daemons may fill it. It cannot\nbe changed afterwards.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environmentId",
+          "registrationKeyId",
+          "name"
+        ],
+        "type": "object"
+      },
+      "EnvironmentRegisteredPutResponse": {
+        "properties": {
+          "created": {
+            "description": "False when the environment was already declared.",
+            "type": "boolean"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentView"
+          }
+        },
+        "required": [
+          "environment",
+          "created"
+        ],
+        "type": "object"
+      },
+      "EnvironmentRegisteredReleaseParams": {
+        "description": "Forget the daemon bound to a declared environment so that another\nidentity may bind to it.",
+        "properties": {
+          "environmentId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "environmentId"
+        ],
+        "type": "object"
+      },
+      "EnvironmentRegisteredReleaseResponse": {
+        "properties": {
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentView"
+          },
+          "released": {
+            "description": "False when no daemon was bound.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "environment",
+          "released"
+        ],
+        "type": "object"
+      },
       "EnvironmentRegistrationKeyCreateParams": {
         "properties": {
+          "declaredOnly": {
+            "description": "Persistent keys only: admit only daemons whose registration name\nmatches an environment declared under this key.",
+            "type": "boolean"
+          },
           "displayName": {
             "description": "Group name for the environments this key admits.",
             "type": "string"
@@ -10606,6 +10737,10 @@
       "EnvironmentRegistrationKeyPutParams": {
         "description": "Declare a registration key whose secret the caller supplies: its id, its\ncomplete policy and the secret it answers to. An absent policy field is\nunset.",
         "properties": {
+          "declaredOnly": {
+            "description": "Persistent keys only: admit only daemons whose registration name\nmatches an environment declared under this key.",
+            "type": "boolean"
+          },
           "displayName": {
             "description": "Group name for the environments this key admits.",
             "type": "string"
@@ -10791,6 +10926,10 @@
       "EnvironmentRegistrationKeyUpdateParams": {
         "description": "The complete editable policy of a registration key; an absent field is\nunset. The identity mode is immutable.",
         "properties": {
+          "declaredOnly": {
+            "description": "Persistent keys only: admit only daemons whose registration name\nmatches an environment declared under this key.",
+            "type": "boolean"
+          },
           "displayName": {
             "description": "Group name for the environments this key admits.",
             "type": "string"
@@ -10861,6 +11000,10 @@
           "createdAtMs": {
             "format": "int64",
             "type": "integer"
+          },
+          "declaredOnly": {
+            "description": "The key admits only daemons whose registration name matches one of\nits declared environments.",
+            "type": "boolean"
           },
           "displayName": {
             "description": "The group name shown wherever registered environments are listed.",
@@ -11047,7 +11190,7 @@
             "type": "object"
           },
           {
-            "description": "An envd that dialed the gateway outbound and was admitted by a\nregistration key. The key is the environment's group; the daemon id\nis derived from the daemon's public key and is its identity.",
+            "description": "An envd that dials the gateway outbound and is admitted by a\nregistration key. The key is the environment's group; the daemon id\nis derived from the daemon's public key and is its identity.",
             "properties": {
               "connected": {
                 "description": "The daemon's control connection is up.",
@@ -11059,7 +11202,11 @@
                 "type": "integer"
               },
               "daemonId": {
-                "type": "string"
+                "description": "Absent while a declared environment has no daemon bound: it is\nwaiting for its machine, or its machine was released.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "identityMode": {
                 "allOf": [
@@ -11074,6 +11221,13 @@
                 "format": "int64",
                 "type": "integer"
               },
+              "name": {
+                "description": "Set on a declared environment: the name its daemon registers\nunder.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "registrationKeyId": {
                 "type": "string"
               },
@@ -11085,7 +11239,6 @@
             "required": [
               "type",
               "registrationKeyId",
-              "daemonId",
               "identityMode",
               "connected",
               "connectionChangedAtMs",
@@ -20902,6 +21055,62 @@
         }
       },
       "summary": "Register an external environment",
+      "x-lightspeed-access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
+    },
+    {
+      "description": "Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.",
+      "name": "environments/registered/put",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/EnvironmentRegisteredPutParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentRegisteredPutResponse"
+        }
+      },
+      "summary": "Declare a registered environment",
+      "x-lightspeed-access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
+    },
+    {
+      "description": "Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.",
+      "name": "environments/registered/release",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/EnvironmentRegisteredReleaseParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse"
+        }
+      },
+      "summary": "Release a declared environment's daemon",
       "x-lightspeed-access": {
         "action": "configureResource",
         "kind": "universe"

@@ -36,6 +36,7 @@ impl EnvironmentService {
                 max_active_environments: params.max_active_environments,
                 ephemeral_disconnect_grace_ms: params.ephemeral_disconnect_grace_ms,
                 offline_close_after_ms: params.offline_close_after_ms,
+                declared_only: params.declared_only,
                 expires_at_ms: params.expires_at_ms,
             },
             now,
@@ -85,6 +86,7 @@ impl EnvironmentService {
             max_active_environments: params.max_active_environments,
             ephemeral_disconnect_grace_ms: params.ephemeral_disconnect_grace_ms,
             offline_close_after_ms: params.offline_close_after_ms,
+            declared_only: params.declared_only,
             expires_at_ms: params.expires_at_ms,
         };
         // The secret may already be another key's; the store keeps every
@@ -117,6 +119,7 @@ impl EnvironmentService {
                     max_active_environments: settings.max_active_environments,
                     ephemeral_disconnect_grace_ms: settings.ephemeral_disconnect_grace_ms,
                     offline_close_after_ms: settings.offline_close_after_ms,
+                    declared_only: settings.declared_only,
                     expires_at_ms: settings.expires_at_ms,
                 },
                 secret,
@@ -161,6 +164,7 @@ impl EnvironmentService {
             && existing.max_active_environments == settings.max_active_environments
             && existing.ephemeral_disconnect_grace_ms == settings.ephemeral_disconnect_grace_ms
             && existing.offline_close_after_ms == settings.offline_close_after_ms
+            && existing.declared_only == settings.declared_only
             && existing.expires_at_ms == settings.expires_at_ms;
         if !unchanged {
             record = EnvironmentRegistrationKeyStore::update_registration_key(
@@ -262,6 +266,7 @@ impl EnvironmentService {
                     max_active_environments: params.max_active_environments,
                     ephemeral_disconnect_grace_ms: params.ephemeral_disconnect_grace_ms,
                     offline_close_after_ms: params.offline_close_after_ms,
+                    declared_only: params.declared_only,
                     expires_at_ms: params.expires_at_ms,
                 },
                 updated_at_ms: now,
@@ -398,6 +403,7 @@ pub(crate) fn registration_key_view(
         max_active_environments: record.max_active_environments,
         ephemeral_disconnect_grace_ms: record.ephemeral_disconnect_grace_ms(),
         offline_close_after_ms: record.offline_close_after_ms,
+        declared_only: record.declared_only,
         expires_at_ms: record.expires_at_ms,
         status: match record.status(now_ms) {
             EnvironmentRegistrationKeyStatus::Active => {
@@ -452,6 +458,7 @@ mod tests {
                 max_active_environments: Some(3),
                 ephemeral_disconnect_grace_ms: None,
                 offline_close_after_ms: Some(86_400_000),
+                declared_only: false,
                 expires_at_ms: None,
             },
             5,

@@ -67,6 +67,8 @@ export const METHOD_ROLES: Readonly<Record<string, UniverseRole>> = {
   "environments/provider-bindings/list": "viewer",
   "environments/provider-bindings/read": "viewer",
   "environments/read": "viewer",
+  "environments/registered/put": "operator",
+  "environments/registered/release": "operator",
   "environments/registration-keys/create": "operator",
   "environments/registration-keys/list": "operator",
   "environments/registration-keys/put": "operator",

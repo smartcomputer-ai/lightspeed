@@ -2441,6 +2441,28 @@ impl AgentApiService for TestService {
         }))
     }
 
+    async fn put_registered_environment(
+        &self,
+        params: EnvironmentRegisteredPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegisteredPutResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(EnvironmentRegisteredPutResponse {
+            environment: test_declared_environment(&params),
+            created: true,
+        }))
+    }
+
+    async fn release_registered_environment(
+        &self,
+        params: EnvironmentRegisteredReleaseParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegisteredReleaseResponse>, AgentApiError> {
+        let mut environment = test_external_environment();
+        environment.environment_id = params.environment_id;
+        Ok(AgentApiOutcome::new(EnvironmentRegisteredReleaseResponse {
+            environment,
+            released: true,
+        }))
+    }
+
     async fn put_environment_ingress(
         &self,
         params: EnvironmentIngressPutParams,
@@ -3529,6 +3551,7 @@ fn test_registration_key() -> EnvironmentRegistrationKeyView {
         max_active_environments: Some(8),
         ephemeral_disconnect_grace_ms: 300_000,
         offline_close_after_ms: None,
+        declared_only: false,
         expires_at_ms: None,
         status: EnvironmentRegistrationKeyStatusView::Active,
         registered_environment_count: 1,
@@ -3579,6 +3602,47 @@ async fn dispatch_json_rpc_routes_registration_key_update_and_rotate() {
     assert_eq!(result["secret"], json!("lsrk_rotated-secret"));
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_a_declared_registered_environment() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_ENVIRONMENTS_REGISTERED_PUT.to_owned(),
+            params: Some(json!({
+                "environmentId": "build-box",
+                "registrationKeyId": "runners",
+                "name": "lightspeed-runner-0"
+            })),
+        },
+    )
+    .await;
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let result = &response.result.expect("result")["result"];
+    assert_eq!(result["created"], json!(true));
+    let environment = &result["environment"];
+    assert_eq!(environment["environmentId"], json!("build-box"));
+    assert_eq!(environment["status"], json!("away"));
+    assert_eq!(environment["source"]["type"], json!("registered"));
+    assert_eq!(environment["source"]["name"], json!("lightspeed-runner-0"));
+    // A declared environment that waits for its machine has no daemon.
+    assert!(environment["source"].get("daemonId").is_none());
+
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(2),
+            method: METHOD_ENVIRONMENTS_REGISTERED_RELEASE.to_owned(),
+            params: Some(json!({ "environmentId": "build-box" })),
+        },
+    )
+    .await;
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let result = &response.result.expect("result")["result"];
+    assert_eq!(result["released"], json!(true));
+    assert_eq!(result["environment"]["environmentId"], json!("build-box"));
+}
+
 #[test]
 fn registration_secret_views_redact_debug_output() {
     let response = EnvironmentRegistrationKeyCreateResponse {
@@ -3590,6 +3654,33 @@ fn registration_secret_views_redact_debug_output() {
     assert!(debug.contains("<redacted>"));
     let json = serde_json::to_value(&response).expect("serialize");
     assert_eq!(json["secret"], "lsrk_plaintext");
+}
+
+fn test_declared_environment(params: &EnvironmentRegisteredPutParams) -> EnvironmentView {
+    EnvironmentView {
+        environment_id: params.environment_id.clone(),
+        request_id: None,
+        source: EnvironmentSourceView::Registered {
+            registration_key_id: params.registration_key_id.clone(),
+            name: Some(params.name.clone()),
+            daemon_id: None,
+            identity_mode: EnvironmentIdentityModeView::Persistent,
+            connected: false,
+            connection_changed_at_ms: 10,
+            last_seen_at_ms: 10,
+        },
+        display_name: params.display_name.clone(),
+        state: EnvironmentStateView::Open,
+        status: EnvironmentStatusView::Away,
+        state_message: None,
+        close_reason: None,
+        state_changed_at_ms: 10,
+        daemon: None,
+        metadata: params.metadata.clone(),
+        created_at_ms: 10,
+        updated_at_ms: 10,
+        closed_at_ms: None,
+    }
 }
 
 fn test_external_environment() -> EnvironmentView {

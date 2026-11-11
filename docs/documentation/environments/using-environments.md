@@ -164,6 +164,13 @@ borrowed machine. An ephemeral registration closes when its daemon stops or
 stays away past its disconnect grace period; once closed, that identity
 cannot return and the profile's saved selection becomes unavailable.
 
+A profile can also name a machine that has not connected yet. Declare the
+environment with an ID you choose, attach that ID in the profile, and start
+the machine whenever it is ready; see
+[Declare fixed machines before their daemons register](registered-daemons.md#declare-fixed-machines-before-their-daemons-register).
+Until its daemon connects, the environment shows as disconnected and tools
+that use it wait up to two minutes, then fail.
+
 ## Create an independent machine
 
 Use **Environments → New environment**. Select a **Template**, enter a

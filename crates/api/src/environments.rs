@@ -31,6 +31,10 @@ pub struct EnvironmentCreateParams {
     /// Stable caller-generated retry identity, unique inside the universe.
     /// Retrying with identical inputs returns the same environment.
     pub request_id: EnvironmentProvisionRequestId,
+    /// The id profiles and bindings use for the environment. Omit it to have
+    /// one allocated. An id already in use is a conflict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<EnvironmentId>,
     /// The provider to create the environment with; the universe needs an
     /// enabled binding to it.
     pub provider_id: EnvironmentProviderId,
@@ -200,6 +204,10 @@ pub struct EnvironmentPowerPutResponse {
 pub struct EnvironmentExternalCreateParams {
     /// Stable caller-generated retry identity, unique inside the universe.
     pub request_id: EnvironmentProvisionRequestId,
+    /// The id profiles and bindings use for the environment. Omit it to have
+    /// one allocated. An id already in use is a conflict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<EnvironmentId>,
     /// `ws://`, `wss://` or `unix://` URL of an envd instance reachable from
     /// Lightspeed.
     pub endpoint: String,
@@ -213,6 +221,51 @@ pub struct EnvironmentExternalCreateParams {
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentExternalCreateResponse {
     pub environment: EnvironmentView,
+}
+
+/// Declare a fixed machine as an environment before its daemon registers.
+/// The first daemon the key admits under `name` becomes this environment and
+/// keeps its id; from then on only that daemon's identity reconnects to it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentRegisteredPutParams {
+    /// The id profiles and bindings use for the environment.
+    pub environment_id: EnvironmentId,
+    /// The persistent registration key whose daemons may fill it. It cannot
+    /// be changed afterwards.
+    pub registration_key_id: EnvironmentRegistrationKeyId,
+    /// The name the daemon registers under: 1 to 128 bytes without control
+    /// characters, unique among the open environments of the key. It cannot
+    /// be changed afterwards.
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentRegisteredPutResponse {
+    pub environment: EnvironmentView,
+    /// False when the environment was already declared.
+    pub created: bool,
+}
+
+/// Forget the daemon bound to a declared environment so that another
+/// identity may bind to it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentRegisteredReleaseParams {
+    pub environment_id: EnvironmentId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentRegisteredReleaseResponse {
+    pub environment: EnvironmentView,
+    /// False when no daemon was bound.
+    pub released: bool,
 }
 
 /// The lifecycle Lightspeed owns. External and registered environments are
@@ -343,12 +396,19 @@ pub enum EnvironmentSourceView {
         /// `ws://`, `wss://` or `unix://` URL Lightspeed dials envd at.
         endpoint: String,
     },
-    /// An envd that dialed the gateway outbound and was admitted by a
+    /// An envd that dials the gateway outbound and is admitted by a
     /// registration key. The key is the environment's group; the daemon id
     /// is derived from the daemon's public key and is its identity.
     Registered {
         registration_key_id: EnvironmentRegistrationKeyId,
-        daemon_id: EnvironmentDaemonId,
+        /// Set on a declared environment: the name its daemon registers
+        /// under.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        /// Absent while a declared environment has no daemon bound: it is
+        /// waiting for its machine, or its machine was released.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        daemon_id: Option<EnvironmentDaemonId>,
         /// The admitting key's identity mode.
         identity_mode: EnvironmentIdentityModeView,
         /// The daemon's control connection is up.
@@ -401,6 +461,10 @@ pub struct EnvironmentRegistrationKeyView {
     /// than this are closed; absent keeps them open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offline_close_after_ms: Option<u64>,
+    /// The key admits only daemons whose registration name matches one of
+    /// its declared environments.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub declared_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at_ms: Option<i64>,
     pub status: EnvironmentRegistrationKeyStatusView,
@@ -450,6 +514,10 @@ pub struct EnvironmentRegistrationKeyCreateParams {
     /// longer than this; omit to keep them open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offline_close_after_ms: Option<u64>,
+    /// Persistent keys only: admit only daemons whose registration name
+    /// matches an environment declared under this key.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub declared_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at_ms: Option<i64>,
 }
@@ -483,6 +551,10 @@ pub struct EnvironmentRegistrationKeyPutParams {
     /// longer than this; omit to keep them open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offline_close_after_ms: Option<u64>,
+    /// Persistent keys only: admit only daemons whose registration name
+    /// matches an environment declared under this key.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub declared_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at_ms: Option<i64>,
     /// The secret daemons register with: `lsrk_` followed by 32 random bytes
@@ -520,6 +592,10 @@ pub struct EnvironmentRegistrationKeyUpdateParams {
     /// longer than this; omit to keep them open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offline_close_after_ms: Option<u64>,
+    /// Persistent keys only: admit only daemons whose registration name
+    /// matches an environment declared under this key.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub declared_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at_ms: Option<i64>,
 }

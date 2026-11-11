@@ -493,6 +493,32 @@ Creates an open environment backed by a Lightspeed-reachable envd endpoint, attr
 - Params: `EnvironmentExternalCreateParams`
 - Result: `AgentApiOutcome<EnvironmentExternalCreateResponse>`
 
+### `environments/registered/put`
+
+**Declare a registered environment**
+
+Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.
+
+- Access: `{"kind":"universe","action":"configureResource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
+- Params: `EnvironmentRegisteredPutParams`
+- Result: `AgentApiOutcome<EnvironmentRegisteredPutResponse>`
+
+### `environments/registered/release`
+
+**Release a declared environment's daemon**
+
+Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.
+
+- Access: `{"kind":"universe","action":"configureResource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
+- Params: `EnvironmentRegisteredReleaseParams`
+- Result: `AgentApiOutcome<EnvironmentRegisteredReleaseResponse>`
+
 ### `environments/ingress/put`
 
 **Configure environment public ingress**

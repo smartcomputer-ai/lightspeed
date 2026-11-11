@@ -54,7 +54,8 @@ client-chosen identifiers:
 | Profile | `profiles/put` | `profileId` |
 | MCP server | `mcp/servers/put` | `serverId` |
 | Environment provider enablement | `deployment/environment-providers/bindings/put` | provider id |
-| Environment | `environments/create`, `environments/external/create` | `requestId` |
+| Provisioned or external environment | `environments/create`, `environments/external/create` (chosen `environmentId`) | `environmentId` |
+| Registered environment (a fixed machine) | `environments/registered/put` | `environmentId` |
 | Environment credential binding | `environments/credentials/bind` | environment + variable name |
 | API key | `deployment/api-keys/put` (supplied secret) | scope + `keyId` |
 | Environment registration key | `environments/registration-keys/put` (supplied secret) | `registrationKeyId` |
@@ -122,13 +123,33 @@ mcpServers:
     headers:
       x-upstream-token: { type: credential, grantId: tracker-token }
 environmentProviders: [pods]
+registrationKeys:
+  - registrationKeyId: runners
+    displayName: Runners
+    identityMode: persistent
+    declaredOnly: true
+    maxActiveEnvironments: 2
+    secretFrom: { env: RUNNERS_REGISTRATION_KEY }
 environments:
-  - requestId: build-box
+  - environmentId: sandbox
     providerId: pods
     templateId: default
+  - environmentId: build-box
+    registered: { registrationKeyId: runners, name: lightspeed-runner-0 }
     credentials:
       TRACKER_TOKEN: { type: grant, grantId: tracker-token }
 ```
+
+Every environment is named by an `environmentId` the document chooses, so a
+profile in the same document references `build-box` directly and the
+reference is the same in every deployment. A `registered` entry declares a
+fixed machine that runs outside Lightspeed, for example a StatefulSet pod:
+the environment exists as soon as the document is applied, and the first
+daemon its key admits under that name is bound to it
+([declared registered environments](../p198-declared-registered-environments.md)).
+The universe and the machines can therefore be deployed in either order.
+A provisioned or external entry passes its `environmentId` as the
+`requestId` too, which makes the create idempotent.
 
 Every document carries `schemaVersion`; these files outlive releases.
 
@@ -208,7 +229,10 @@ resources is a later step.
 Documents carry configuration only. Sessions, runs, workspace contents and
 bot state are excluded. Environments are declared but treated as stateful:
 `apply` creates a missing environment and converges its credential bindings,
-and never replaces an existing machine.
+and never replaces an existing machine. For a registered environment that
+includes the daemon bound to it: `apply` never releases one. Replacing a
+machine that lost its identity stays an explicit
+`environment registered release`.
 
 ### Round trip
 

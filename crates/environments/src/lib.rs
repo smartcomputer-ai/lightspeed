@@ -466,6 +466,9 @@ pub struct EnvironmentRegistrationKeyRecord {
     /// Persistent keys only: close an environment whose daemon has been
     /// away longer than this.
     pub offline_close_after_ms: Option<u64>,
+    /// Admit only daemons whose registration name matches an environment
+    /// declared under this key, so nothing undeclared joins the universe.
+    pub declared_only: bool,
     pub expires_at_ms: Option<i64>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
@@ -521,6 +524,11 @@ impl EnvironmentRegistrationKeyRecord {
         {
             return invalid("offline_close_after_ms applies only to persistent keys");
         }
+        if self.declared_only && self.identity_mode != RegisteredIdentityMode::Persistent {
+            return invalid(
+                "declared_only applies only to persistent keys: only they can have declared environments",
+            );
+        }
         validate_timestamps(self.created_at_ms, self.updated_at_ms)?;
         if let Some(expires) = self.expires_at_ms {
             validate_nonnegative_i64(expires, "expires_at_ms")?;
@@ -542,6 +550,7 @@ pub struct RegistrationKeyPolicy {
     pub max_active_environments: Option<u32>,
     pub ephemeral_disconnect_grace_ms: Option<u64>,
     pub offline_close_after_ms: Option<u64>,
+    pub declared_only: bool,
     pub expires_at_ms: Option<i64>,
 }
 
@@ -553,6 +562,7 @@ pub struct RegistrationKeySettings {
     pub max_active_environments: Option<u32>,
     pub ephemeral_disconnect_grace_ms: Option<u64>,
     pub offline_close_after_ms: Option<u64>,
+    pub declared_only: bool,
     pub expires_at_ms: Option<i64>,
 }
 
@@ -632,6 +642,7 @@ pub fn registration_key_with_secret(
         max_active_environments: policy.max_active_environments,
         ephemeral_disconnect_grace_ms: policy.ephemeral_disconnect_grace_ms,
         offline_close_after_ms: policy.offline_close_after_ms,
+        declared_only: policy.declared_only,
         expires_at_ms: policy.expires_at_ms,
         created_at_ms,
         updated_at_ms: created_at_ms,
@@ -675,6 +686,7 @@ impl UpdateEnvironmentRegistrationKey {
             max_active_environments: settings.max_active_environments,
             ephemeral_disconnect_grace_ms: settings.ephemeral_disconnect_grace_ms,
             offline_close_after_ms: settings.offline_close_after_ms,
+            declared_only: settings.declared_only,
             expires_at_ms: settings.expires_at_ms,
             ..record.clone()
         };
@@ -993,10 +1005,15 @@ pub struct ProvisionedSource {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegisteredSource {
     pub registration_key_id: EnvironmentRegistrationKeyId,
+    /// Set on a declared environment: the name a daemon registers under to
+    /// become it. Unique among the open environments of the key.
+    pub registration_name: Option<String>,
     /// Lowercase hex of the daemon's raw Ed25519 public key: the identity.
     /// One key maps to at most one environment in the deployment, ever, so
-    /// a closed environment's daemon can never register again.
-    pub daemon_public_key: String,
+    /// a closed environment's daemon can never register again. Absent only
+    /// on a declared environment no daemon is bound to: one that is still
+    /// waiting for its machine, or whose machine was released.
+    pub daemon_public_key: Option<String>,
     /// Read from the key; not stored on the row.
     pub identity_mode: RegisteredIdentityMode,
     /// The gateway holds a control connection, as far as durable state
@@ -1005,19 +1022,27 @@ pub struct RegisteredSource {
     /// When `connected` last changed (or the gateway restarted).
     pub connection_changed_at_ms: i64,
     /// Coarse liveness: written at connect and disconnect, and at most every
-    /// [`REGISTERED_LIVENESS_STAMP_MS`] while connected.
+    /// [`REGISTERED_LIVENESS_STAMP_MS`] while connected. While no daemon is
+    /// bound it is when the environment was declared or released.
     pub last_seen_at_ms: i64,
 }
 
 impl RegisteredSource {
-    /// The daemon id derived from the public key.
-    pub fn daemon_id(&self) -> EnvironmentDaemonId {
-        match DaemonPublicKey::parse(&self.daemon_public_key) {
+    /// The daemon id derived from the public key; `None` while no daemon is
+    /// bound.
+    pub fn daemon_id(&self) -> Option<EnvironmentDaemonId> {
+        let public_key = self.daemon_public_key.as_deref()?;
+        Some(match DaemonPublicKey::parse(public_key) {
             Ok(key) => EnvironmentDaemonId::from_public_key(key.as_bytes()),
             // A record that passed validation always parses; an unvalidated
             // one still gets a stable id.
-            Err(_) => EnvironmentDaemonId::from_public_key(self.daemon_public_key.as_bytes()),
-        }
+            Err(_) => EnvironmentDaemonId::from_public_key(public_key.as_bytes()),
+        })
+    }
+
+    /// Declared, and no daemon is bound to it.
+    pub fn awaits_daemon(&self) -> bool {
+        self.daemon_public_key.is_none()
     }
 }
 
@@ -1272,14 +1297,16 @@ impl EnvironmentRecord {
             EnvironmentState::Open => match &self.source {
                 EnvironmentSource::Registered(source) if !source.connected => {
                     let away = || {
+                        let waited = compact_duration(
+                            now_ms.saturating_sub(source.connection_changed_at_ms),
+                        );
                         gone(
                             EnvironmentGoneReason::Away,
-                            Some(format!(
-                                "daemon away for {}",
-                                compact_duration(
-                                    now_ms.saturating_sub(source.connection_changed_at_ms)
-                                )
-                            )),
+                            Some(if source.awaits_daemon() {
+                                format!("no daemon has registered for it; waiting for {waited}")
+                            } else {
+                                format!("daemon away for {waited}")
+                            }),
                         )
                     };
                     match source.identity_mode {
@@ -1402,7 +1429,23 @@ impl EnvironmentRecord {
             EnvironmentSource::External { .. } => self.validate_open_or_closed("external")?,
             EnvironmentSource::Registered(source) => {
                 self.validate_open_or_closed("registered")?;
-                parse_daemon_public_key(&source.daemon_public_key)?;
+                match (&source.daemon_public_key, &source.registration_name) {
+                    (None, None) => {
+                        return invalid(
+                            "a registered environment has a daemon identity or a declared name",
+                        );
+                    }
+                    (None, Some(_)) if source.connected => {
+                        return invalid("an environment with no daemon bound is not connected");
+                    }
+                    _ => {}
+                }
+                if let Some(public_key) = &source.daemon_public_key {
+                    parse_daemon_public_key(public_key)?;
+                }
+                if let Some(name) = &source.registration_name {
+                    validate_registration_name(name)?;
+                }
                 validate_nonnegative_i64(
                     source.connection_changed_at_ms,
                     "connection_changed_at_ms",
@@ -1634,7 +1677,8 @@ impl CreateRegisteredEnvironment {
             None,
             EnvironmentSource::Registered(RegisteredSource {
                 registration_key_id: key.registration_key_id.clone(),
-                daemon_public_key: self.daemon_public_key.clone(),
+                registration_name: None,
+                daemon_public_key: Some(self.daemon_public_key.clone()),
                 identity_mode: key.identity_mode,
                 connected: true,
                 connection_changed_at_ms: self.created_at_ms,
@@ -1648,6 +1692,200 @@ impl CreateRegisteredEnvironment {
         );
         record.validate()?;
         Ok(record)
+    }
+}
+
+/// Declare a fixed machine under a persistent registration key: an
+/// environment with a caller-chosen id that exists before its daemon does.
+/// The first daemon the key admits under `name` is bound to it.
+///
+/// The store runs it in one transaction with the key locked: a missing
+/// environment is inserted `open` with no daemon, counting against the key's
+/// active limit; one that exists as this same declaration has its display
+/// name and metadata replaced; anything else under the id, or another open
+/// environment of the key with the name, is `AlreadyExists`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeclareRegisteredEnvironment {
+    pub environment_id: EnvironmentId,
+    pub registration_key_id: EnvironmentRegistrationKeyId,
+    pub name: String,
+    pub display_name: Option<String>,
+    pub metadata: BTreeMap<String, String>,
+    pub declared_at_ms: i64,
+}
+
+impl DeclareRegisteredEnvironment {
+    /// The validated record this declaration inserts under `key`.
+    pub fn record(
+        &self,
+        key: &EnvironmentRegistrationKeyRecord,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        if key.registration_key_id != self.registration_key_id {
+            return invalid("environment declared under another key");
+        }
+        if key.identity_mode != RegisteredIdentityMode::Persistent {
+            return invalid(
+                "only a persistent registration key can have declared environments: an ephemeral environment is closed when its daemon is away",
+            );
+        }
+        key.check_admits(self.declared_at_ms)?;
+        let record = new_record(
+            self.environment_id.clone(),
+            None,
+            EnvironmentSource::Registered(RegisteredSource {
+                registration_key_id: key.registration_key_id.clone(),
+                registration_name: Some(self.name.clone()),
+                daemon_public_key: None,
+                identity_mode: key.identity_mode,
+                connected: false,
+                connection_changed_at_ms: self.declared_at_ms,
+                last_seen_at_ms: self.declared_at_ms,
+            }),
+            EnvironmentState::Open,
+            self.display_name.clone(),
+            self.metadata.clone(),
+            None,
+            self.declared_at_ms,
+        );
+        record.validate()?;
+        Ok(record)
+    }
+
+    /// Bring `existing` in line with this declaration. `Ok(false)` when it
+    /// already is; `AlreadyExists` when the id belongs to something this
+    /// declaration cannot be: another kind of environment, a closed one, or
+    /// one declared under another key or name.
+    pub fn apply(
+        &self,
+        existing: &mut EnvironmentRecord,
+    ) -> Result<bool, EnvironmentRegistryError> {
+        let same_declaration = existing.state == EnvironmentState::Open
+            && existing.registered().is_some_and(|source| {
+                source.registration_key_id == self.registration_key_id
+                    && source.registration_name.as_deref() == Some(self.name.as_str())
+            });
+        if !same_declaration {
+            return Err(EnvironmentRegistryError::AlreadyExists {
+                kind: "environment",
+                id: self.environment_id.to_string(),
+            });
+        }
+        if existing.display_name == self.display_name && existing.metadata == self.metadata {
+            return Ok(false);
+        }
+        existing.display_name = self.display_name.clone();
+        existing.metadata = self.metadata.clone();
+        existing.touch(self.declared_at_ms);
+        existing.validate()?;
+        Ok(true)
+    }
+}
+
+/// What declaring an environment did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeclaredOutcome {
+    Created,
+    Updated,
+    Unchanged,
+}
+
+/// Bind a daemon identity the deployment does not know to the declared
+/// environment its key and name select. The store runs it in one
+/// transaction with the key locked, refusing a secret that is no longer the
+/// key's live one, exactly as an undeclared admission does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BindRegisteredEnvironment {
+    pub environment_id: EnvironmentId,
+    pub registration_key_id: EnvironmentRegistrationKeyId,
+    /// [`registration_key_hash`] of the secret the daemon presented.
+    pub secret_hash: String,
+    /// Lowercase hex of the raw Ed25519 public key.
+    pub daemon_public_key: String,
+    pub daemon_build: DaemonBuild,
+    pub bound_at_ms: i64,
+}
+
+impl BindRegisteredEnvironment {
+    /// The refusal when the presented secret is no longer the key's live
+    /// one.
+    pub fn secret_retired(&self) -> EnvironmentRegistryError {
+        EnvironmentRegistryError::RegistrationKeyUnavailable {
+            registration_key_id: self.registration_key_id.to_string(),
+            reason: "rotated",
+        }
+    }
+
+    /// Bind the daemon: the environment becomes connected under this
+    /// identity. `AlreadyExists` (`daemon_identity`) when another identity
+    /// holds it, so a machine never displaces the one that is bound.
+    pub fn apply(&self, record: &mut EnvironmentRecord) -> Result<(), EnvironmentRegistryError> {
+        parse_daemon_public_key(&self.daemon_public_key)?;
+        validate_nonnegative_i64(self.bound_at_ms, "bound_at_ms")?;
+        if record.state == EnvironmentState::Closed {
+            return invalid("environment closed");
+        }
+        let environment_id = record.environment_id.to_string();
+        let Some(source) = record.registered_mut() else {
+            return invalid("only a registered environment binds a daemon");
+        };
+        if source.registration_key_id != self.registration_key_id {
+            return invalid("environment declared under another key");
+        }
+        match &source.daemon_public_key {
+            Some(bound) if *bound != self.daemon_public_key => {
+                return Err(EnvironmentRegistryError::AlreadyExists {
+                    kind: "daemon_identity",
+                    id: environment_id,
+                });
+            }
+            _ => {}
+        }
+        source.daemon_public_key = Some(self.daemon_public_key.clone());
+        source.connected = true;
+        source.connection_changed_at_ms = self.bound_at_ms;
+        source.last_seen_at_ms = self.bound_at_ms;
+        record.daemon_build = Some(self.daemon_build.clone());
+        record.touch(self.bound_at_ms);
+        record.validate()
+    }
+}
+
+/// Forget the daemon bound to a declared environment, so another identity
+/// may bind. The environment keeps its id, name and everything that
+/// references it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReleaseRegisteredEnvironment {
+    pub environment_id: EnvironmentId,
+    pub released_at_ms: i64,
+}
+
+impl ReleaseRegisteredEnvironment {
+    /// `Ok(false)` when no daemon is bound. Only a declared environment can
+    /// be released: an undeclared one is nothing without its daemon.
+    pub fn apply(&self, record: &mut EnvironmentRecord) -> Result<bool, EnvironmentRegistryError> {
+        validate_nonnegative_i64(self.released_at_ms, "released_at_ms")?;
+        if record.state == EnvironmentState::Closed {
+            return invalid("environment closed");
+        }
+        let Some(source) = record.registered_mut() else {
+            return invalid("only a declared registered environment can be released");
+        };
+        if source.registration_name.is_none() {
+            return invalid(
+                "only a declared registered environment can be released; close an undeclared one instead",
+            );
+        }
+        if source.daemon_public_key.is_none() {
+            return Ok(false);
+        }
+        source.daemon_public_key = None;
+        source.connected = false;
+        source.connection_changed_at_ms = self.released_at_ms;
+        source.last_seen_at_ms = self.released_at_ms;
+        record.daemon_build = None;
+        record.touch(self.released_at_ms);
+        record.validate()?;
+        Ok(true)
     }
 }
 
@@ -1730,6 +1968,9 @@ impl MarkRegisteredConnected {
         let Some(source) = record.registered_mut() else {
             return invalid("connection writes apply only to registered environments");
         };
+        if source.awaits_daemon() {
+            return invalid("no daemon is bound to this environment");
+        }
         source.connected = true;
         source.connection_changed_at_ms = self.at_ms;
         source.last_seen_at_ms = self.at_ms;
@@ -1823,6 +2064,11 @@ pub fn sweep_registered_environment(
     let Some(source) = record.registered_mut() else {
         return (false, None);
     };
+    // Nothing has gone away from an environment no daemon is bound to: it
+    // waits for its machine however long that takes.
+    if source.awaits_daemon() {
+        return (false, None);
+    }
     let mut disconnected = false;
     if source.connected && source.last_seen_at_ms < now_ms.saturating_sub(REGISTERED_STALE_AFTER_MS)
     {
@@ -2305,6 +2551,29 @@ pub trait EnvironmentStore: Send + Sync {
         &self,
         environment_id: &EnvironmentId,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
+    /// See [`DeclareRegisteredEnvironment`]. The flag is whether the
+    /// declaration changed anything.
+    async fn declare_registered_environment(
+        &self,
+        request: DeclareRegisteredEnvironment,
+    ) -> Result<(EnvironmentRecord, DeclaredOutcome), EnvironmentRegistryError>;
+    /// See [`BindRegisteredEnvironment`].
+    async fn bind_registered_environment(
+        &self,
+        request: BindRegisteredEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
+    /// See [`ReleaseRegisteredEnvironment`]. The flag is whether a daemon
+    /// was bound.
+    async fn release_registered_environment(
+        &self,
+        request: ReleaseRegisteredEnvironment,
+    ) -> Result<(EnvironmentRecord, bool), EnvironmentRegistryError>;
+    /// The open environment declared under a key with a registration name.
+    async fn read_declared_environment(
+        &self,
+        registration_key_id: &EnvironmentRegistrationKeyId,
+        name: &str,
+    ) -> Result<Option<EnvironmentRecord>, EnvironmentRegistryError>;
     /// The one environment (closed included) bound to a daemon public key in
     /// this universe.
     async fn read_environment_by_daemon_public_key(
@@ -2443,6 +2712,15 @@ fn validate_timestamps(
     validate_nonnegative_i64(updated_at_ms, "updated_at_ms")?;
     if updated_at_ms < created_at_ms {
         return invalid("updated_at_ms must be >= created_at_ms");
+    }
+    Ok(())
+}
+
+/// A registration name is what a daemon sends as its display name when it
+/// registers: 1 to 128 bytes without control characters.
+pub fn validate_registration_name(value: &str) -> Result<(), EnvironmentRegistryError> {
+    if value.is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
+        return invalid("a registration name is 1 to 128 bytes and contains no control characters");
     }
     Ok(())
 }

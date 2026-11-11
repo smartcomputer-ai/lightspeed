@@ -491,7 +491,24 @@ Outbound daemons use `environment registration-key create|put|list|read|update|r
 supply (`lightspeed generate secret registration-key`), for pipelines that
 keep the secret in a secret store.
 `update` replaces a key's group name and policy, including
-`--offline-close-after-min` for a persistent key; `rotate` prints a new secret
-once and retires the old one. Credentials bound with `environment credential
+`--offline-close-after-min` and `--declared-only` for a persistent key; `rotate`
+prints a new secret once and retires the old one.
+
+A fixed machine can be declared before its daemon registers, under an
+environment ID you choose:
+
+```bash
+lightspeed environment registered put build-box --key ci-runners --name lightspeed-runner-0
+lightspeed environment registered release build-box
+```
+
+`registered put` makes the environment exist, disconnected, until the first
+daemon that key admits under that registration name binds to it; running it
+again changes nothing. `registered release` forgets the bound daemon so that a
+machine with a new identity can take its place. `environment create` and
+`environment register` take `--id` to choose their environment's ID as well.
+See [Run registered daemons](../environments/registered-daemons.md#declare-fixed-machines-before-their-daemons-register).
+
+Credentials bound with `environment credential
 bind` supply the environment's configured secret references; attachment
 access controls the agent's permitted use of the machine.

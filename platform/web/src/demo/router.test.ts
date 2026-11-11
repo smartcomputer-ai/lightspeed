@@ -8,6 +8,7 @@ import type {
   McpServer,
   McpToolDiscovery,
   Environment,
+  EnvironmentRegistrationKey,
   SessionEventsPage,
   SessionListPage,
   SessionView,
@@ -697,6 +698,59 @@ describe("demo router", () => {
     expect(audit.filter((event) => event.targetId === session.id).map((event) => event.action)).toEqual(["session.purge"]);
     const after = ((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments;
     expect(after.find((env) => env.environmentId === existing.environmentId)).toEqual(existing);
+  });
+
+  it("declares registered environments under persistent keys and releases their daemons", async () => {
+    const { call, store } = await boot();
+    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const keys = `${base}/environment-registration-keys`;
+    const mint = async (body: Record<string, unknown>) =>
+      ((await call("POST", keys, body)).json as { registrationKey: EnvironmentRegistrationKey }).registrationKey;
+    expect((await call("POST", keys, { identityMode: "ephemeral", displayName: "Sandboxes", declaredOnly: true })).status).toBe(400);
+    const ephemeral = await mint({ identityMode: "ephemeral", displayName: "Sandboxes" });
+    const key = await mint({ identityMode: "persistent", displayName: "Build machines", declaredOnly: true });
+    expect(key.declaredOnly).toBe(true);
+    // An update is the complete policy: leaving the field out turns it off.
+    const renamed = (await call("PUT", `${keys}/${key.registrationKeyId}`, { displayName: "Build fleet", declaredOnly: true })).json;
+    expect(renamed).toMatchObject({ displayName: "Build fleet", declaredOnly: true });
+    const cleared = (await call("PUT", `${keys}/${key.registrationKeyId}`, { displayName: "Build fleet" })).json as EnvironmentRegistrationKey;
+    expect(cleared.declaredOnly).toBeUndefined();
+
+    const declaration = { environmentId: "build-box-01", registrationKeyId: key.registrationKeyId, name: "build-01" };
+    expect((await call("POST", `${base}/environments/registered`, { ...declaration, registrationKeyId: ephemeral.registrationKeyId })).status).toBe(400);
+    expect((await call("POST", `${base}/environments/registered`, { ...declaration, name: " " })).status).toBe(400);
+    const declared = await call("POST", `${base}/environments/registered`, declaration);
+    expect(declared.status).toBe(201);
+    expect(declared.json).toMatchObject({
+      environmentId: "build-box-01", state: "open", status: "away",
+      source: { type: "registered", registrationKeyId: key.registrationKeyId, name: "build-01", identityMode: "persistent", connected: false },
+    });
+    expect((declared.json as Environment).source).not.toHaveProperty("daemonId");
+    const listed = ((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments;
+    expect(listed.map((environment) => environment.environmentId)).toContain("build-box-01");
+    expect(((await call("GET", keys)).json as EnvironmentRegistrationKey[])
+      .find((candidate) => candidate.registrationKeyId === key.registrationKeyId)).toMatchObject({ activeEnvironmentCount: 1 });
+
+    // Declaring again converges the display name; the key and name are fixed.
+    const again = await call("POST", `${base}/environments/registered`, { ...declaration, displayName: "Build box 01" });
+    expect(again.status).toBe(200);
+    expect(again.json).toMatchObject({ environmentId: "build-box-01", displayName: "Build box 01" });
+    expect((await call("POST", `${base}/environments/registered`, { ...declaration, name: "build-02" })).status).toBe(409);
+    expect((await call("POST", `${base}/environments/registered`, { ...declaration, environmentId: "build-box-02" })).status).toBe(409);
+
+    // Releasing forgets the bound daemon and keeps the environment.
+    const release = `${base}/environments/build-box-01/release`;
+    expect((await call("POST", release)).json).toEqual(again.json);
+    const source = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.environments.get("build-box-01")!.source;
+    if (source.type !== "registered") throw new Error("expected a registered environment");
+    source.daemonId = "daemon_bound";
+    source.connected = true;
+    const released = await call("POST", release);
+    expect(released.status).toBe(200);
+    expect(released.json).toMatchObject({ environmentId: "build-box-01", status: "away", source: { name: "build-01", connected: false } });
+    expect((released.json as Environment).source).not.toHaveProperty("daemonId");
+    const undeclared = listed.find((environment) => environment.source.type !== "registered")!;
+    expect((await call("POST", `${base}/environments/${undeclared.environmentId}/release`)).status).toBe(400);
   });
 
   it("rejects unlisted activation and clears removed selections without filling defaults", async () => {

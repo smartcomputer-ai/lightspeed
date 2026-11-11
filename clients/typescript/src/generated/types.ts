@@ -1159,7 +1159,11 @@ export type EnvironmentSourceView =
        * When the daemon last connected or disconnected.
        */
       connectionChangedAtMs: number;
-      daemonId: string;
+      /**
+       * Absent while a declared environment has no daemon bound: it is
+       * waiting for its machine, or its machine was released.
+       */
+      daemonId?: string | null;
       /**
        * The admitting key's identity mode.
        */
@@ -1170,6 +1174,11 @@ export type EnvironmentSourceView =
        * connected.
        */
       lastSeenAtMs: number;
+      /**
+       * Set on a declared environment: the name its daemon registers
+       * under.
+       */
+      name?: string | null;
       registrationKeyId: string;
       type: "registered";
     };
@@ -4158,6 +4167,28 @@ export interface AgentApiOutcomeOfEnvironmentReadResponse {
 export interface EnvironmentReadResponse {
   environment: EnvironmentView;
 }
+export interface AgentApiOutcomeOfEnvironmentRegisteredPutResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentRegisteredPutResponse;
+}
+export interface EnvironmentRegisteredPutResponse {
+  /**
+   * False when the environment was already declared.
+   */
+  created: boolean;
+  environment: EnvironmentView;
+}
+export interface AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentRegisteredReleaseResponse;
+}
+export interface EnvironmentRegisteredReleaseResponse {
+  environment: EnvironmentView;
+  /**
+   * False when no daemon was bound.
+   */
+  released: boolean;
+}
 export interface AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse {
   notifications?: AgentNotification[];
   result: EnvironmentRegistrationKeyCreateResponse;
@@ -4175,6 +4206,11 @@ export interface EnvironmentRegistrationKeyView {
    */
   activeEnvironmentCount: number;
   createdAtMs: number;
+  /**
+   * The key admits only daemons whose registration name matches one of
+   * its declared environments.
+   */
+  declaredOnly?: boolean;
   /**
    * The group name shown wherever registered environments are listed.
    */
@@ -5744,6 +5780,11 @@ export interface EnvironmentCloseParams {
 export interface EnvironmentCreateParams {
   displayName?: string | null;
   /**
+   * The id profiles and bindings use for the environment. Omit it to have
+   * one allocated. An id already in use is a conflict.
+   */
+  environmentId?: string | null;
+  /**
    * Idle policy passed to the provider in place of the template's `idle`.
    * The provider runs the idle clock; it cannot be changed after create.
    */
@@ -5785,6 +5826,11 @@ export interface EnvironmentExternalCreateParams {
    * Lightspeed.
    */
   endpoint: string;
+  /**
+   * The id profiles and bindings use for the environment. Omit it to have
+   * one allocated. An id already in use is a conflict.
+   */
+  environmentId?: string | null;
   metadata?: {
     [k: string]: string;
   };
@@ -5897,7 +5943,45 @@ export interface EnvironmentProviderBindingReadParams {
 export interface EnvironmentReadParams {
   environmentId: string;
 }
+/**
+ * Declare a fixed machine as an environment before its daemon registers.
+ * The first daemon the key admits under `name` becomes this environment and
+ * keeps its id; from then on only that daemon's identity reconnects to it.
+ */
+export interface EnvironmentRegisteredPutParams {
+  displayName?: string | null;
+  /**
+   * The id profiles and bindings use for the environment.
+   */
+  environmentId: string;
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * The name the daemon registers under: 1 to 128 bytes without control
+   * characters, unique among the open environments of the key. It cannot
+   * be changed afterwards.
+   */
+  name: string;
+  /**
+   * The persistent registration key whose daemons may fill it. It cannot
+   * be changed afterwards.
+   */
+  registrationKeyId: string;
+}
+/**
+ * Forget the daemon bound to a declared environment so that another
+ * identity may bind to it.
+ */
+export interface EnvironmentRegisteredReleaseParams {
+  environmentId: string;
+}
 export interface EnvironmentRegistrationKeyCreateParams {
+  /**
+   * Persistent keys only: admit only daemons whose registration name
+   * matches an environment declared under this key.
+   */
+  declaredOnly?: boolean;
   /**
    * Group name for the environments this key admits.
    */
@@ -5934,6 +6018,11 @@ export interface EnvironmentRegistrationKeyListParams {}
  * unset.
  */
 export interface EnvironmentRegistrationKeyPutParams {
+  /**
+   * Persistent keys only: admit only daemons whose registration name
+   * matches an environment declared under this key.
+   */
+  declaredOnly?: boolean;
   /**
    * Group name for the environments this key admits.
    */
@@ -5982,6 +6071,11 @@ export interface EnvironmentRegistrationKeyRotateParams {
  * unset. The identity mode is immutable.
  */
 export interface EnvironmentRegistrationKeyUpdateParams {
+  /**
+   * Persistent keys only: admit only daemons whose registration name
+   * matches an environment declared under this key.
+   */
+  declaredOnly?: boolean;
   /**
    * Group name for the environments this key admits.
    */

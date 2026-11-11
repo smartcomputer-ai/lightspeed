@@ -28,6 +28,7 @@ use crate::{
 const KEY_COLUMNS: &str = r#"
     k.registration_key_id, k.display_name, k.identity_mode,
     k.max_active_environments, k.ephemeral_disconnect_grace_ms, k.offline_close_after_ms,
+    k.declared_only,
     k.expires_at_ms, k.created_at_ms, k.updated_at_ms, k.revoked_at_ms,
     (
         SELECT s.key_prefix FROM environment_registration_key_secrets s
@@ -59,8 +60,8 @@ impl EnvironmentRegistrationKeyStore for PgStore {
             INSERT INTO environment_registration_keys (
                 universe_id, registration_key_id, display_name, identity_mode,
                 max_active_environments, ephemeral_disconnect_grace_ms, offline_close_after_ms,
-                expires_at_ms, revoked_at_ms, created_at_ms, updated_at_ms
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                expires_at_ms, revoked_at_ms, created_at_ms, updated_at_ms, declared_only
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
             "#,
         )
         .bind(self.config.universe_id)
@@ -74,6 +75,7 @@ impl EnvironmentRegistrationKeyStore for PgStore {
         .bind(record.revoked_at_ms)
         .bind(record.created_at_ms)
         .bind(record.updated_at_ms)
+        .bind(record.declared_only)
         .execute(&mut *tx)
         .await
         .map_err(|error| map_key_write_error(error, &record.registration_key_id))?;
@@ -154,7 +156,7 @@ impl EnvironmentRegistrationKeyStore for PgStore {
             UPDATE environment_registration_keys SET
                 display_name = $3, max_active_environments = $4,
                 ephemeral_disconnect_grace_ms = $5, offline_close_after_ms = $6,
-                expires_at_ms = $7, updated_at_ms = $8
+                expires_at_ms = $7, updated_at_ms = $8, declared_only = $9
             WHERE universe_id = $1 AND registration_key_id = $2
             "#,
         )
@@ -166,6 +168,7 @@ impl EnvironmentRegistrationKeyStore for PgStore {
         .bind(duration_column(record.offline_close_after_ms))
         .bind(record.expires_at_ms)
         .bind(record.updated_at_ms)
+        .bind(record.declared_only)
         .execute(&mut *tx)
         .await
         .map_err(|error| sql_error("update registration key", error))?;
@@ -429,6 +432,9 @@ fn key_from_row(row: &PgRow) -> Result<EnvironmentRegistrationKeyRecord, Environ
             .transpose()?,
         ephemeral_disconnect_grace_ms: duration_from_row(row, "ephemeral_disconnect_grace_ms")?,
         offline_close_after_ms: duration_from_row(row, "offline_close_after_ms")?,
+        declared_only: row
+            .try_get("declared_only")
+            .map_err(|error| sql_error("decode declared only", error))?,
         expires_at_ms: row
             .try_get("expires_at_ms")
             .map_err(|error| sql_error("decode expires", error))?,

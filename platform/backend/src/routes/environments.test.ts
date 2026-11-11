@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
 import { environmentDeploymentRoutes } from "./environment-deployment.js";
 import { gatewayRoutes } from "./gateway.js";
+import { universeForSession } from "./universes.js";
 
 vi.mock("./universes.js", () => ({
   universeForSession: vi.fn(async () => ({
@@ -37,6 +38,12 @@ function engineResult(method: string, params: Record<string, unknown>): unknown 
       return { environments: [{ environmentId: "env_1" }], nextAfter: "env_1" };
     case "environments/update":
       return { environment: { environmentId: params.environmentId } };
+    case "environments/registered/put":
+      return { environment: { environmentId: params.environmentId }, created: params.environmentId !== "declared" };
+    case "environments/registered/release":
+      return { environment: { environmentId: params.environmentId }, released: true };
+    case "environments/registration-keys/create":
+      return { registrationKey: { registrationKeyId: "rk_new" }, secret: "lsr_secret" };
     case "environments/registration-keys/update":
       return { registrationKey: { registrationKeyId: params.registrationKeyId } };
     case "environments/registration-keys/rotate":
@@ -173,6 +180,76 @@ it("passes a registration key update through as the complete policy", async () =
     maxActiveEnvironments: 4,
     offlineCloseAfterMs: 600_000,
   });
+});
+
+it("carries declaredOnly through a registration key create and update", async () => {
+  const created = await request("POST", "/universes/u/environment-registration-keys", {
+    identityMode: "persistent",
+    displayName: "Build machines",
+    declaredOnly: true,
+  });
+  expect(created.status).toBe(201);
+  expect(callsOf("environments/registration-keys/create")[0]?.params).toEqual({
+    identityMode: "persistent",
+    displayName: "Build machines",
+    declaredOnly: true,
+  });
+  await request("PUT", "/universes/u/environment-registration-keys/rk_1", {
+    displayName: "Build machines",
+    declaredOnly: true,
+  });
+  expect(callsOf("environments/registration-keys/update")[0]?.params).toEqual({
+    registrationKeyId: "rk_1",
+    displayName: "Build machines",
+    declaredOnly: true,
+  });
+});
+
+it("declares a registered environment and answers 201 only when it is new", async () => {
+  const body = { registrationKeyId: "rk_1", name: " build-01 ", displayName: "Build 01" };
+  const first = await request("POST", "/universes/u/environments/registered", { environmentId: "build-01", ...body });
+  expect(first.status).toBe(201);
+  expect(await first.json()).toEqual({ environmentId: "build-01" });
+  expect(callsOf("environments/registered/put")[0]?.params).toEqual({
+    environmentId: "build-01",
+    registrationKeyId: "rk_1",
+    name: "build-01",
+    displayName: "Build 01",
+  });
+  const again = await request("POST", "/universes/u/environments/registered", { environmentId: "declared", ...body });
+  expect(again.status).toBe(200);
+});
+
+it.each([
+  [{ registrationKeyId: "rk_1", name: "build-01" }],
+  [{ environmentId: "build-01", name: "build-01" }],
+  [{ environmentId: "build-01", registrationKeyId: "rk_1", name: " " }],
+])("rejects an incomplete declaration before calling the engine", async (body) => {
+  const response = await request("POST", "/universes/u/environments/registered", body);
+  expect(response.status).toBe(400);
+  expect(callsOf("environments/registered/put")).toEqual([]);
+});
+
+it("releases a declared environment's daemon", async () => {
+  const response = await request("POST", "/universes/u/environments/build-01/release");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ environmentId: "build-01" });
+  expect(callsOf("environments/registered/release")[0]?.params).toEqual({ environmentId: "build-01" });
+});
+
+it.each([
+  ["POST", "/universes/u/environments/registered", { environmentId: "build-01", registrationKeyId: "rk_1", name: "build-01" }],
+  ["POST", "/universes/u/environments/build-01/release", undefined],
+] as const)("keeps %s %s with operators", async (method, path, body) => {
+  const access = (await universeForSession(ctx, undefined as never, "u"))!;
+  vi.mocked(universeForSession).mockResolvedValueOnce({
+    ...access,
+    role: "contributor",
+    member: { ...access.member, role: "contributor" },
+  });
+  const response = await request(method, path, body);
+  expect(response.status).toBe(403);
+  expect(calls).toEqual([]);
 });
 
 it("rejects a registration key update without a name", async () => {

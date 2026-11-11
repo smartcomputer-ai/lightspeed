@@ -898,9 +898,9 @@ function seedEnvironments(universe: UniverseState): void {
     identityMode: "persistent",
     ephemeralDisconnectGraceMs: 300_000,
     status: "active",
-    registeredEnvironmentCount: 1,
-    activeEnvironmentCount: 1,
-    lastRegisteredAtMs: ago(9 * DAY_MS),
+    registeredEnvironmentCount: 2,
+    activeEnvironmentCount: 2,
+    lastRegisteredAtMs: ago(2 * DAY_MS),
     createdAtMs: ago(9 * DAY_MS),
     updatedAtMs: ago(9 * DAY_MS),
   });
@@ -915,6 +915,20 @@ function seedEnvironments(universe: UniverseState): void {
     displayName: "Ada's laptop",
     createdAtMs: ago(9 * DAY_MS),
     updatedAtMs: ago(3 * HOUR_MS),
+  }));
+  // Declared ahead of the machine: the environment already has its id, and
+  // the first daemon the key admits as "home-server" becomes it.
+  universe.environments.set("env-home-server", registeredEnvironment({
+    environmentId: "env-home-server",
+    registrationKeyId: homeDevicesKey,
+    name: "home-server",
+    identityMode: "persistent",
+    connected: false,
+    connectionChangedAtMs: ago(2 * DAY_MS),
+    lastSeenAtMs: ago(2 * DAY_MS),
+    displayName: "Home server",
+    createdAtMs: ago(2 * DAY_MS),
+    updatedAtMs: ago(2 * DAY_MS),
   }));
   universe.providerBindings.push(
     providerBinding({

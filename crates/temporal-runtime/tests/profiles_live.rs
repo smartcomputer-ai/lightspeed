@@ -54,6 +54,135 @@ async fn temporal_live_a_put_can_swap_the_default_and_refuses_one_it_cannot_sele
     run_with_live_worker(activities, run_default_environment_put_live_client).await
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_a_profile_defaults_to_a_declared_environment_that_awaits_its_daemon()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, run_declared_environment_default_live_client).await
+}
+
+/// A fixed machine is declared before its daemon registers. A profile makes
+/// it its default at once, and a session started from the profile selects
+/// it while it is still waiting.
+async fn run_declared_environment_default_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = support::live::openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
+    let api = GatewayAgentApi::builder(client.clone(), store.clone())
+        .with_task_queue(task_queue)
+        .build();
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let key_id = format!("declared-default-{suffix}");
+    let environment_id = format!("build-box-{suffix}");
+    let profile_id = ProfileId::new(format!("live_declared_default_{suffix}"));
+
+    api.create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
+        registration_key_id: Some(key_id.clone()),
+        display_name: "declared default live".to_owned(),
+        identity_mode: api::EnvironmentIdentityModeView::Persistent,
+        max_active_environments: None,
+        ephemeral_disconnect_grace_ms: None,
+        offline_close_after_ms: None,
+        declared_only: true,
+        expires_at_ms: None,
+    })
+    .await?;
+    let declared = api
+        .put_registered_environment(api::EnvironmentRegisteredPutParams {
+            environment_id: environment_id.clone(),
+            registration_key_id: key_id.clone(),
+            name: "runner-0".to_owned(),
+            display_name: Some("Build box".to_owned()),
+            metadata: Default::default(),
+        })
+        .await?
+        .result;
+    assert!(declared.created);
+    assert_eq!(
+        declared.environment.status,
+        api::EnvironmentStatusView::Away
+    );
+
+    api.create_profile(ProfileCreateParams {
+        profile: profile_with_environments(
+            &profile_id,
+            &model,
+            vec![api::EnvironmentAttachment {
+                environment_id: Some(environment_id.clone()),
+                inherit: false,
+                default: true,
+                access: api::EnvironmentAccess::Read,
+                working_directory: None,
+            }],
+        ),
+    })
+    .await?;
+    api.start_session(SessionStartParams {
+        access: None,
+        session_id: Some(session_id.to_string()),
+        display_name: None,
+        metadata: Default::default(),
+        config: None,
+        delete_after_close_ms: None,
+        profile: Some(ProfileSource::Named {
+            profile_id: profile_id.clone(),
+        }),
+        integration: None,
+    })
+    .await?;
+    assert_eq!(
+        read_session_view(&api, &session_id)
+            .await?
+            .active_environment_id
+            .as_deref(),
+        Some(environment_id.as_str())
+    );
+    // Starting a session neither binds nor closes the waiting environment.
+    let waiting = read_environment_view(&api, &environment_id).await?;
+    assert_eq!(waiting.state, api::EnvironmentStateView::Open);
+    assert!(matches!(
+        waiting.source,
+        api::EnvironmentSourceView::Registered {
+            daemon_id: None,
+            connected: false,
+            ..
+        }
+    ));
+
+    api.close_session(api::SessionCloseParams {
+        session_id: session_id.to_string(),
+        force: false,
+    })
+    .await?;
+    api.delete_session(api::SessionDeleteParams {
+        shared_only: false,
+        soft_delete: false,
+        session_id: session_id.to_string(),
+        cascade: false,
+    })
+    .await?;
+    api.delete_profile(ProfileDeleteParams { profile_id })
+        .await?;
+    let revoked = api
+        .revoke_environment_registration_key(api::EnvironmentRegistrationKeyRevokeParams {
+            registration_key_id: key_id,
+            close_environments: true,
+        })
+        .await?
+        .result;
+    assert_eq!(revoked.closed_environment_ids, [environment_id]);
+    Ok(())
+}
+
 async fn run_default_environment_put_live_client(
     client: Client,
     task_queue: String,
@@ -74,6 +203,7 @@ async fn run_default_environment_put_live_client(
     let create = async |name: &str| -> anyhow::Result<String> {
         Ok(api
             .create_environment(api::EnvironmentCreateParams {
+                environment_id: None,
                 request_id: format!("{name}-{suffix}"),
                 provider_id: provider_id.clone(),
                 template_id: FAKE_TEMPLATE_ID.into(),
@@ -308,19 +438,43 @@ async fn run_profile_environment_selection_live_client(
     let controller = FakeController::start().await?;
     register_fake_provider(&store, &controller, &provider_id).await?;
 
-    let environment = api
-        .create_environment(api::EnvironmentCreateParams {
-            request_id: format!("independent-{suffix}"),
+    // The caller chooses the environment's id. A retry of the request
+    // returns the same environment; the id is otherwise taken.
+    let chosen_id = format!("independent-{suffix}");
+    let create = |request_id: String, environment_id: &str| {
+        api.create_environment(api::EnvironmentCreateParams {
+            environment_id: Some(environment_id.to_owned()),
+            request_id,
             provider_id: provider_id.clone(),
             template_id: FAKE_TEMPLATE_ID.into(),
             display_name: None,
             metadata: BTreeMap::new(),
             idle: None,
         })
+    };
+    let environment = create(format!("independent-{suffix}"), &chosen_id)
         .await?
         .result
         .environment;
     let environment_id = environment.environment_id.clone();
+    assert_eq!(environment_id, chosen_id);
+    assert_eq!(
+        create(format!("independent-{suffix}"), &chosen_id)
+            .await?
+            .result
+            .environment
+            .environment_id,
+        chosen_id
+    );
+    for (request_id, environment_id) in [
+        (format!("independent-{suffix}"), format!("other-{suffix}")),
+        (format!("independent-2-{suffix}"), chosen_id.clone()),
+    ] {
+        assert_eq!(
+            create(request_id, &environment_id).await.unwrap_err().kind,
+            api::AgentApiErrorKind::Conflict
+        );
+    }
     api.create_profile(ProfileCreateParams {
         profile: profile_with_environments(
             &profile_id,

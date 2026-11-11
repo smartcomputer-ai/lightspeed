@@ -61,11 +61,11 @@ use environment_protocol::{
     routes::{CanonicalOrigin, DataRouteRefusal},
 };
 use environments::{
-    BeginCloseEnvironment, CreateRegisteredEnvironment, DaemonBuild, EnvironmentCloseReason,
-    EnvironmentRecord, EnvironmentRegistrationKeyStore, EnvironmentRegistryError, EnvironmentState,
-    EnvironmentStore, MarkRegisteredConnected, MarkRegisteredDisconnected,
-    REGISTERED_LIVENESS_STAMP_MS, RegisteredIdentityMode, RegisteredSweep, StampRegisteredSeen,
-    WAIT_RETRY_AFTER_MS, registration_key_hash,
+    BeginCloseEnvironment, BindRegisteredEnvironment, CreateRegisteredEnvironment, DaemonBuild,
+    EnvironmentCloseReason, EnvironmentRecord, EnvironmentRegistrationKeyStore,
+    EnvironmentRegistryError, EnvironmentState, EnvironmentStore, MarkRegisteredConnected,
+    MarkRegisteredDisconnected, REGISTERED_LIVENESS_STAMP_MS, RegisteredIdentityMode,
+    RegisteredSweep, StampRegisteredSeen, WAIT_RETRY_AFTER_MS, registration_key_hash,
 };
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use uuid::Uuid;
@@ -383,6 +383,9 @@ pub enum AdmissionPlan {
     },
     /// A new identity that a registration key admits.
     Create(CreateRegisteredEnvironment),
+    /// A new identity whose key and registration name select a declared
+    /// environment that no daemon is bound to.
+    Bind(BindRegisteredEnvironment),
 }
 
 impl AdmissionPlan {
@@ -391,6 +394,7 @@ impl AdmissionPlan {
         match self {
             Self::Reconnect { environment, .. } => &environment.environment_id,
             Self::Create(request) => &request.environment_id,
+            Self::Bind(request) => &request.environment_id,
         }
     }
 }
@@ -450,6 +454,12 @@ pub fn verify_register_request(
 /// a known daemon identity reconnects its open environment, a new one is
 /// admitted through its registration key. Reads only; every refusal is
 /// typed.
+///
+/// A new identity never chooses its environment id. It obtains a chosen one
+/// only when an administrator declared an environment for its key and the
+/// name it registers under, and only while no other daemon is bound to that
+/// environment; otherwise it gets an id nothing references, or, under a key
+/// that admits only declared machines, nothing.
 pub async fn plan_admission<S>(
     store: &S,
     params: &RegisterParams,
@@ -484,6 +494,31 @@ where
         .map_err(unavailable)?
         .ok_or_else(unknown_registration_key)?;
     key.check_admits(now_ms).map_err(map_registry_error)?;
+    let name = params.display_name.as_ref().map(|name| name.as_str());
+    if let Some(name) = name
+        && let Some(declared) = store
+            .read_declared_environment(&key.registration_key_id, name)
+            .await
+            .map_err(unavailable)?
+    {
+        if declared
+            .registered()
+            .is_some_and(|source| source.awaits_daemon())
+        {
+            return Ok(AdmissionPlan::Bind(BindRegisteredEnvironment {
+                environment_id: declared.environment_id,
+                registration_key_id: key.registration_key_id.clone(),
+                secret_hash,
+                daemon_public_key,
+                daemon_build,
+                bound_at_ms: now_ms,
+            }));
+        }
+        return Err(declared_environment_bound(&declared.environment_id));
+    }
+    if key.declared_only {
+        return Err(not_declared(name));
+    }
     Ok(AdmissionPlan::Create(CreateRegisteredEnvironment {
         registration_key_id: key.registration_key_id.clone(),
         secret_hash,
@@ -560,6 +595,21 @@ where
                 admission: Admission::Created,
             })
         }
+        AdmissionPlan::Bind(request) => {
+            let environment_id = request.environment_id.clone();
+            match store.bind_registered_environment(request).await {
+                Ok(environment) => Ok(AdmittedEnvironment {
+                    environment,
+                    admission: Admission::Created,
+                }),
+                // Another identity bound it since the plan read it.
+                Err(EnvironmentRegistryError::AlreadyExists {
+                    kind: "daemon_identity",
+                    ..
+                }) => Err(declared_environment_bound(&environment_id)),
+                Err(error) => Err(map_registry_error(error)),
+            }
+        }
     }
 }
 
@@ -595,7 +645,15 @@ fn registration_receipt(
     Ok(RegistrationReceipt {
         environment_id: EnvironmentId::new(environment.environment_id.as_str())
             .map_err(internal)?,
-        daemon_id: DaemonId::new(source.daemon_id().as_str()).map_err(internal)?,
+        daemon_id: DaemonId::new(
+            source
+                .daemon_id()
+                .ok_or_else(|| {
+                    ProtocolError::internal("the admitted environment has no daemon bound")
+                })?
+                .as_str(),
+        )
+        .map_err(internal)?,
         control_connection_id: control_connection_id.clone(),
         identity_mode: match source.identity_mode {
             RegisteredIdentityMode::Persistent => RegistrationIdentityMode::Persistent,
@@ -614,6 +672,42 @@ fn environment_closed(environment: &EnvironmentRecord) -> ProtocolError {
         ),
     )
 }
+
+/// A declared environment already has a daemon, and this is another
+/// identity. It is never displaced: an operator releases the environment
+/// first. Retryable, so a machine that lost its identity binds once that
+/// has happened.
+fn declared_environment_bound(environment_id: &environments::EnvironmentId) -> ProtocolError {
+    ProtocolError::new(
+        environment_protocol::error::ErrorData::Unavailable {
+            retry_after_ms: Some(DECLARATION_RETRY_AFTER_MS),
+        },
+        format!(
+            "environment {environment_id} is bound to another daemon identity; an operator must release it before this daemon can take its place"
+        ),
+    )
+}
+
+/// The key admits only declared machines and none is declared under this
+/// name. Retryable, so a daemon that starts before its declaration binds
+/// once it exists.
+fn not_declared(name: Option<&str>) -> ProtocolError {
+    ProtocolError::new(
+        environment_protocol::error::ErrorData::Unavailable {
+            retry_after_ms: Some(DECLARATION_RETRY_AFTER_MS),
+        },
+        match name {
+            Some(name) => format!(
+                "no environment is declared for registration name {name}, and this key admits only declared machines"
+            ),
+            None => "this key admits only declared machines; register with the name of a declared environment".to_owned(),
+        },
+    )
+}
+
+/// How long a daemon waits before asking again for a declared environment
+/// that is not available to it yet.
+const DECLARATION_RETRY_AFTER_MS: u64 = 15_000;
 
 fn unknown_daemon() -> ProtocolError {
     ProtocolError::not_found_because(
@@ -1373,6 +1467,8 @@ async fn close_departed(store: &Arc<store_pg::PgStore>, environment: &Environmen
 enum SessionEnd {
     Superseded,
     EnvironmentClosed,
+    /// An operator released the declared environment from this daemon.
+    Released,
     Goodbye,
     HeartbeatTimeout,
     DaemonClosed,
@@ -1384,12 +1480,20 @@ impl SessionEnd {
         match self {
             Self::Superseded => "superseded",
             Self::EnvironmentClosed => "environment closed",
+            Self::Released => "released",
             Self::Goodbye => "goodbye",
             Self::HeartbeatTimeout => "heartbeat timeout",
             Self::DaemonClosed => "daemon closed",
             Self::SendFailed => "send failed",
         }
     }
+}
+
+/// Why an environment no longer serves the control session watching it.
+enum EnvironmentGone {
+    Closed,
+    /// Released from this session's daemon, or bound to another since.
+    Released,
 }
 
 struct ControlSession<'a> {
@@ -1461,12 +1565,23 @@ impl ControlSession<'_> {
                     self.closed(socket, ClosedReason::Superseded, "another process with this daemon identity connected").await;
                     return SessionEnd::Superseded;
                 }
-                closed = &mut environment_closed, if watching => {
-                    if closed.is_ok() {
-                        self.closed(socket, ClosedReason::EnvironmentClosed, "the environment was closed").await;
-                        return SessionEnd::EnvironmentClosed;
+                gone = &mut environment_closed, if watching => {
+                    match gone {
+                        Ok(EnvironmentGone::Closed) => {
+                            self.closed(socket, ClosedReason::EnvironmentClosed, "the environment was closed").await;
+                            return SessionEnd::EnvironmentClosed;
+                        }
+                        // The environment lives on without this daemon. Its
+                        // identity is not spent, so the session just ends:
+                        // the daemon may register again.
+                        Ok(EnvironmentGone::Released) => {
+                            let _ = socket
+                                .send(close_message("the environment was released from this daemon"))
+                                .await;
+                            return SessionEnd::Released;
+                        }
+                        Err(_) => watching = false,
                     }
-                    watching = false;
                 }
                 command = commands.recv(), if !commands_closed => {
                     // The channel closes only when a newer connection
@@ -1551,12 +1666,16 @@ impl ControlSession<'_> {
     /// Wait off the session loop for the environment's routes to be
     /// revoked, then re-read the row once, so a slow store never delays
     /// pings, pongs or stream requests. The receiver fires once the
-    /// environment is closed; the watcher stops when the returned guard
-    /// drops.
+    /// environment is closed or no longer bound to this session's daemon;
+    /// the watcher stops when the returned guard drops.
     fn watch_environment_closed(
         &self,
         mut revoked: watch::Receiver<u64>,
-    ) -> (oneshot::Receiver<()>, AbortOnDrop) {
+    ) -> (oneshot::Receiver<EnvironmentGone>, AbortOnDrop) {
+        let bound = self
+            .environment
+            .registered()
+            .and_then(|source| source.daemon_public_key.clone());
         let signals: Arc<EnvironmentSignals> = self.state.signals().clone();
         let store = self.store.clone();
         let universe_id = self.universe_id;
@@ -1572,7 +1691,15 @@ impl ControlSession<'_> {
                 }
                 match EnvironmentStore::read_environment(store.as_ref(), &environment_id).await {
                     Ok(current) if current.state == EnvironmentState::Closed => {
-                        let _ = closed.send(());
+                        let _ = closed.send(EnvironmentGone::Closed);
+                        return;
+                    }
+                    Ok(current)
+                        if current
+                            .registered()
+                            .is_some_and(|source| source.daemon_public_key != bound) =>
+                    {
+                        let _ = closed.send(EnvironmentGone::Released);
                         return;
                     }
                     Ok(_) => {}
@@ -1863,6 +1990,7 @@ mod tests {
             max_active_environments: None,
             ephemeral_disconnect_grace_ms: None,
             offline_close_after_ms: None,
+            declared_only: false,
             expires_at_ms: None,
         }
     }
@@ -2063,7 +2191,10 @@ mod tests {
             receipt.environment_id.as_str(),
             created.environment.environment_id.as_str()
         );
-        assert_eq!(receipt.daemon_id.as_str(), source.daemon_id().as_str());
+        assert_eq!(
+            Some(receipt.daemon_id.as_str()),
+            source.daemon_id().as_ref().map(|id| id.as_str())
+        );
         assert!(receipt.daemon_id.as_str().starts_with("daemon_"));
 
         // A dropped connection, then a reconnect that ignores the key
@@ -2309,6 +2440,312 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(expired.kind(), ProtocolErrorKind::Expired);
+    }
+
+    fn public_key_hex(key: &SigningKey) -> String {
+        DaemonPublicKey::from_bytes(key.verifying_key().to_bytes()).to_hex()
+    }
+
+    fn register_named(key: &SigningKey, secret: Option<&str>, name: &str) -> RegisterParams {
+        RegisterParams {
+            display_name: Some(DisplayName::new(name).unwrap()),
+            ..register(key, secret)
+        }
+    }
+
+    async fn declare(
+        store: &InMemoryEnvironmentRegistryStore,
+        key: &str,
+        environment: &str,
+        name: &str,
+    ) {
+        store
+            .declare_registered_environment(::environments::DeclareRegisteredEnvironment {
+                environment_id: ::environments::EnvironmentId::new(environment),
+                registration_key_id: EnvironmentRegistrationKeyId::new(key),
+                name: name.to_owned(),
+                display_name: None,
+                metadata: Default::default(),
+                declared_at_ms: 1_500,
+            })
+            .await
+            .expect("declare");
+    }
+
+    /// The refusal a daemon retries: the environment it asks for is not
+    /// available to it yet.
+    fn assert_retried_later(error: &ProtocolError) {
+        assert_eq!(
+            error.data,
+            ErrorData::Unavailable {
+                retry_after_ms: Some(DECLARATION_RETRY_AFTER_MS)
+            },
+            "{error}"
+        );
+        assert!(error.is_retryable());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_declared_environment_is_filled_by_the_first_daemon_of_its_key_and_name() {
+        let (store, secret) =
+            store_with_key("runners", policy(RegisteredIdentityMode::Persistent)).await;
+        declare(&store, "runners", "build-box", "runner-0").await;
+        let declared_id = ::environments::EnvironmentId::new("build-box");
+
+        // The name is no credential: without the key's secret it selects
+        // nothing.
+        let wrong_secret = admit_registration(
+            &store,
+            &register_named(&daemon(10), Some("lsrk_nope"), "runner-0"),
+            2_000,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            wrong_secret.data,
+            ErrorData::PermissionDenied {
+                reason: Some(PermissionReason::InvalidRegistrationKey)
+            }
+        ));
+
+        let first = daemon(10);
+        let plan = plan_admission(
+            &store,
+            &register_named(&first, Some(&secret), "runner-0"),
+            2_000,
+        )
+        .await
+        .expect("plan");
+        assert!(matches!(plan, AdmissionPlan::Bind(_)));
+        assert_eq!(plan.environment_id(), &declared_id);
+        let bound = commit_admission(&store, plan, 2_000).await.expect("bind");
+        assert_eq!(bound.admission, Admission::Created);
+        assert_eq!(bound.environment.environment_id, declared_id);
+        let source = bound.environment.registered().expect("registered");
+        assert!(source.connected);
+        assert_eq!(
+            source.daemon_public_key.as_deref(),
+            Some(public_key_hex(&first).as_str())
+        );
+        let receipt = registration_receipt(
+            &bound.environment,
+            &ControlConnectionId::new("connection_1").unwrap(),
+            bound.admission,
+        )
+        .unwrap();
+        assert_eq!(receipt.environment_id.as_str(), "build-box");
+
+        // Another identity with the same secret and name never displaces
+        // the bound machine. It is told to ask again.
+        let second = daemon(11);
+        let displaced = admit_registration(
+            &store,
+            &register_named(&second, Some(&secret), "runner-0"),
+            2_100,
+        )
+        .await
+        .unwrap_err();
+        assert_retried_later(&displaced);
+        assert_eq!(
+            store
+                .read_environment_by_daemon_public_key(&public_key_hex(&second))
+                .await
+                .unwrap(),
+            None,
+            "a refused daemon leaves nothing behind"
+        );
+
+        // The bound machine reconnects by its identity; neither its name nor
+        // a key is consulted again.
+        let reconnected =
+            admit_registration(&store, &register_named(&first, None, "renamed-pod"), 2_200)
+                .await
+                .expect("reconnect");
+        assert_eq!(reconnected.admission, Admission::Reconnected);
+        assert_eq!(reconnected.environment.environment_id, declared_id);
+
+        // A daemon that matches no declaration registers itself as before,
+        // under an id nothing references.
+        for (seed, params_name) in [(12, Some("runner-9")), (13, None)] {
+            let key = daemon(seed);
+            let mut params = register(&key, Some(&secret));
+            params.display_name = params_name.map(|name| DisplayName::new(name).unwrap());
+            let created = admit_registration(&store, &params, 2_300)
+                .await
+                .expect("self-registration");
+            assert_eq!(created.admission, Admission::Created);
+            assert_ne!(created.environment.environment_id, declared_id);
+            assert_eq!(
+                created.environment.registered().unwrap().registration_name,
+                None
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_declaration_belongs_to_its_key_only() {
+        let (store, _) =
+            store_with_key("runners", policy(RegisteredIdentityMode::Persistent)).await;
+        declare(&store, "runners", "build-box", "runner-0").await;
+        let other = mint_registration_key(
+            EnvironmentRegistrationKeyId::new("others"),
+            policy(RegisteredIdentityMode::Persistent),
+            1_000,
+        )
+        .expect("mint");
+        store
+            .create_registration_key(CreateEnvironmentRegistrationKey {
+                secret_hash: other.secret.secret_hash.clone(),
+                record: other.record.clone(),
+            })
+            .await
+            .expect("create key");
+
+        // The same name under another key selects nothing of this key's.
+        let admitted = admit_registration(
+            &store,
+            &register_named(&daemon(14), Some(other.secret.secret.expose()), "runner-0"),
+            2_000,
+        )
+        .await
+        .expect("self-registration under the other key");
+        assert_ne!(
+            admitted.environment.environment_id,
+            ::environments::EnvironmentId::new("build-box")
+        );
+        assert!(
+            store
+                .read_environment(&::environments::EnvironmentId::new("build-box"))
+                .await
+                .unwrap()
+                .registered()
+                .unwrap()
+                .awaits_daemon()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_declared_only_key_admits_nothing_undeclared_and_binds_once_declared() {
+        let (store, secret) = store_with_key(
+            "runners",
+            RegistrationKeyPolicy {
+                declared_only: true,
+                ..policy(RegisteredIdentityMode::Persistent)
+            },
+        )
+        .await;
+        let key = daemon(20);
+        let early = admit_registration(
+            &store,
+            &register_named(&key, Some(&secret), "runner-0"),
+            2_000,
+        )
+        .await
+        .unwrap_err();
+        assert_retried_later(&early);
+        let mut nameless = register(&daemon(21), Some(&secret));
+        nameless.display_name = None;
+        assert_retried_later(
+            &admit_registration(&store, &nameless, 2_000)
+                .await
+                .unwrap_err(),
+        );
+        assert!(
+            store
+                .list_environments(::environments::ListEnvironments::default())
+                .await
+                .unwrap()
+                .environments
+                .is_empty(),
+            "nothing undeclared appears in the universe"
+        );
+
+        // The declaration arrives; the same daemon's next attempt binds.
+        declare(&store, "runners", "build-box", "runner-0").await;
+        let bound = admit_registration(
+            &store,
+            &register_named(&key, Some(&secret), "runner-0"),
+            3_000,
+        )
+        .await
+        .expect("bind");
+        assert_eq!(
+            bound.environment.environment_id,
+            ::environments::EnvironmentId::new("build-box")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_released_environment_binds_the_next_identity_and_racing_binds_admit_one() {
+        let (store, secret) =
+            store_with_key("runners", policy(RegisteredIdentityMode::Persistent)).await;
+        declare(&store, "runners", "build-box", "runner-0").await;
+        let id = ::environments::EnvironmentId::new("build-box");
+
+        // Two identities plan against the unbound environment; one commit
+        // wins and the other is told to ask again.
+        let (first, second) = (daemon(30), daemon(31));
+        let first_plan = plan_admission(
+            &store,
+            &register_named(&first, Some(&secret), "runner-0"),
+            2_000,
+        )
+        .await
+        .expect("first plan");
+        let second_plan = plan_admission(
+            &store,
+            &register_named(&second, Some(&secret), "runner-0"),
+            2_000,
+        )
+        .await
+        .expect("second plan");
+        commit_admission(&store, first_plan, 2_000)
+            .await
+            .expect("first bind");
+        assert_retried_later(
+            &commit_admission(&store, second_plan, 2_000)
+                .await
+                .unwrap_err(),
+        );
+
+        let (_, released) = store
+            .release_registered_environment(::environments::ReleaseRegisteredEnvironment {
+                environment_id: id.clone(),
+                released_at_ms: 3_000,
+            })
+            .await
+            .expect("release");
+        assert!(released);
+
+        // The released identity is unknown again: without a key it is
+        // refused like any stranger.
+        let stranger = admit_registration(&store, &register_named(&first, None, "runner-0"), 3_100)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            stranger.data,
+            ErrorData::NotFound {
+                reason: Some(NotFoundReason::UnknownDaemon)
+            }
+        ));
+
+        let rebound = admit_registration(
+            &store,
+            &register_named(&second, Some(&secret), "runner-0"),
+            3_200,
+        )
+        .await
+        .expect("rebind");
+        assert_eq!(rebound.environment.environment_id, id);
+        assert_retried_later(
+            &admit_registration(
+                &store,
+                &register_named(&first, Some(&secret), "runner-0"),
+                3_300,
+            )
+            .await
+            .unwrap_err(),
+        );
     }
 
     fn text(value: serde_json::Value) -> Message {

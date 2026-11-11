@@ -42,6 +42,8 @@ export const METHODS = [
   "environments/list",
   "environments/close",
   "environments/external/create",
+  "environments/registered/put",
+  "environments/registered/release",
   "environments/ingress/put",
   "environments/power/put",
   "environments/provider-bindings/list",
@@ -374,6 +376,18 @@ export const METHOD_INFO = {
     access: {"action":"configureResource","kind":"universe"},
     summary: "Register an external environment",
     description: "Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use.",
+  },
+  "environments/registered/put": {
+    scope: "universe",
+    access: {"action":"configureResource","kind":"universe"},
+    summary: "Declare a registered environment",
+    description: "Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.",
+  },
+  "environments/registered/release": {
+    scope: "universe",
+    access: {"action":"configureResource","kind":"universe"},
+    summary: "Release a declared environment's daemon",
+    description: "Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.",
   },
   "environments/ingress/put": {
     scope: "universe",
@@ -1369,6 +1383,24 @@ export interface MethodMap {
   "environments/external/create": {
     params: Api.EnvironmentExternalCreateParams;
     result: Api.AgentApiOutcomeOfEnvironmentExternalCreateResponse;
+  };
+  /**
+   * Declare a registered environment
+   *
+   * Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.
+   */
+  "environments/registered/put": {
+    params: Api.EnvironmentRegisteredPutParams;
+    result: Api.AgentApiOutcomeOfEnvironmentRegisteredPutResponse;
+  };
+  /**
+   * Release a declared environment's daemon
+   *
+   * Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.
+   */
+  "environments/registered/release": {
+    params: Api.EnvironmentRegisteredReleaseParams;
+    result: Api.AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse;
   };
   /**
    * Configure environment public ingress

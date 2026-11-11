@@ -137,6 +137,7 @@ async fn cleanup(
 fn create_params(request_id: &str, provider_id: &str) -> EnvironmentCreateParams {
     EnvironmentCreateParams {
         request_id: request_id.to_owned(),
+        environment_id: None,
         provider_id: provider_id.to_owned(),
         template_id: FAKE_TEMPLATE_ID.to_owned(),
         display_name: Some("Provisioned live VM".to_owned()),
@@ -466,6 +467,7 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
         let external = calling(
             caller_a.clone(),
             api_a.create_external_environment(api::EnvironmentExternalCreateParams {
+                environment_id: None,
                 request_id: format!("external-{suffix}"),
                 endpoint: format!("ws://127.0.0.1:1/{suffix}"),
                 display_name: None,

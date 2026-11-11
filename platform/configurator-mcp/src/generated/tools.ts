@@ -5071,6 +5071,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "null"
           ]
         },
+        "environmentId": {
+          "description": "The id profiles and bindings use for the environment. Omit it to have\none allocated. An id already in use is a conflict.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "idle": {
           "anyOf": [
             {
@@ -5348,6 +5355,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "description": "`ws://`, `wss://` or `unix://` URL of an envd instance reachable from\nLightspeed.",
           "type": "string"
         },
+        "environmentId": {
+          "description": "The id profiles and bindings use for the environment. Omit it to have\none allocated. An id already in use is a conflict.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "metadata": {
           "additionalProperties": {
             "type": "string"
@@ -5529,106 +5543,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "templateId"
       ],
       "type": "object"
-    }
-  },
-  {
-    "name": "lightspeed_environments_registration-keys_put",
-    "method": "environments/registration-keys/put",
-    "group": "environments",
-    "summary": "Declare an environment registration key",
-    "description": "Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's.",
-    "paramsType": "EnvironmentRegistrationKeyPutParams",
-    "resultType": "AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "description": "Declare a registration key whose secret the caller supplies: its id, its\ncomplete policy and the secret it answers to. An absent policy field is\nunset.",
-      "properties": {
-        "displayName": {
-          "description": "Group name for the environments this key admits.",
-          "type": "string"
-        },
-        "ephemeralDisconnectGraceMs": {
-          "description": "Disconnect grace for ephemeral environments; omit for the default.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "expiresAtMs": {
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "identityMode": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/EnvironmentIdentityModeView"
-            }
-          ],
-          "description": "Immutable once the key exists."
-        },
-        "maxActiveEnvironments": {
-          "description": "Non-closed environments the key may have at once; omit for unlimited.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "offlineCloseAfterMs": {
-          "description": "Persistent keys only: close environments whose daemon has been away\nlonger than this; omit to keep them open.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "registrationKeyId": {
-          "type": "string"
-        },
-        "secret": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/EnvironmentRegistrationSecretView"
-            }
-          ],
-          "description": "The secret daemons register with: `lsrk_` followed by 32 random bytes\nencoded as base64url without padding. Generate it with a\ncryptographic random source."
-        }
-      },
-      "required": [
-        "registrationKeyId",
-        "displayName",
-        "identityMode",
-        "secret"
-      ],
-      "type": "object",
-      "definitions": {
-        "EnvironmentIdentityModeView": {
-          "description": "What happens to a registered environment while its daemon is\ndisconnected. Policy of the registration key that admitted it.",
-          "oneOf": [
-            {
-              "const": "persistent",
-              "description": "Stays open: tools wait up to two minutes for the daemon to reconnect.\nClosed explicitly, or after the key's `offlineCloseAfterMs`.",
-              "type": "string"
-            },
-            {
-              "const": "ephemeral",
-              "description": "Unusable while disconnected; closed once the daemon has been away\nlonger than the key's disconnect grace, or at once when it says\ngoodbye.",
-              "type": "string"
-            }
-          ]
-        },
-        "EnvironmentRegistrationSecretView": {
-          "description": "A freshly minted registration secret. `Debug` output is redacted so the\nplaintext cannot leak through derived logging; it is shown once.",
-          "type": "string"
-        }
-      }
     }
   },
   {

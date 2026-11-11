@@ -215,6 +215,113 @@ lightspeed environment list --registration-key KEY_ID --metadata k8s.pod=lightsp
 Attach those IDs in profiles explicitly. The ID stays the same for as long as
 the pod's volume exists.
 
+Lightspeed allocates these IDs when each pod first registers. To choose them
+yourself, so that a profile can name a machine before it exists and the IDs
+are the same in every deployment, declare the environments; see the next
+section.
+
+## Declare fixed machines before their daemons register
+
+A registered environment normally appears when its daemon first connects,
+under an ID Lightspeed allocates. For a small set of long-lived machines you
+can instead declare each environment in advance, with an ID you choose:
+
+```bash
+lightspeed environment registration-key put ci-runners \
+  --name "CI runners" --mode persistent --max-active 3 --declared-only \
+  --secret-file ./registration-key
+
+for i in 0 1 2; do
+  lightspeed environment registered put "runner-$i" \
+    --key ci-runners --name "lightspeed-runner-$i"
+done
+```
+
+A declaration names three things: the environment ID that profiles and
+credential bindings use, the persistent registration key whose daemons may
+fill it, and the registration name the daemon presents. That name is the
+daemon's `LIGHTSPEED_ENVD_REGISTRATION_NAME`, the pod name in the manifest
+above and the host name in the systemd unit below. The daemon itself needs no
+other setting.
+
+The environment exists as soon as it is declared. It shows as disconnected,
+and a profile can attach it or make it its default at once. A session that
+uses it starts; a tool call waits up to two minutes for the daemon and then
+fails, as for any persistent machine whose daemon is away.
+
+The first daemon the key admits under the declared name becomes that
+environment and keeps the declared ID. From then on it reconnects with its
+own identity, as every registered daemon does, and its name is not consulted
+again. A daemon whose name matches no declaration registers under an
+allocated ID as before, unless the key admits only declared machines.
+
+Declaring is safe to repeat: running the same command again changes nothing,
+and a changed display name or metadata is applied. The key and the name of a
+declared environment cannot be changed; close it and declare a new one. A
+name fills at most one open environment of its key.
+
+### Admit only declared machines
+
+`--declared-only` on a persistent key makes it admit only daemons whose name
+matches one of its declared environments. Nothing appears in the universe
+that you did not declare, and the order of deployment stops mattering:
+
+| What is deployed first | What happens |
+| --- | --- |
+| The key and the declarations, then the daemons | Each daemon binds to its environment on its first attempt. |
+| The key, then the daemons, then the declarations | With `--declared-only`, each daemon is told to try again and binds once its environment is declared. Without it, a daemon that arrives early registers under an allocated ID and no longer matches its declaration. |
+| The daemons, then the key | A daemon whose key the gateway does not know exits. Under Kubernetes the pod restarts until the key exists. |
+
+Use `--declared-only` for every key whose machines you declare.
+
+### Replace a machine that lost its identity
+
+A declared environment is bound to the identity of the daemon that filled
+it. A machine that returns without its state directory, for example after its
+volume was deleted, has a new identity. It is refused, and keeps retrying,
+because the environment is bound to the old one: Lightspeed never lets a
+second machine take the place of one that profiles and credentials point at.
+
+Release the environment to let the new machine in:
+
+```bash
+lightspeed environment registered release runner-1
+```
+
+The environment forgets its daemon and keeps its ID, its name, its credential
+bindings and every profile that references it. The waiting machine binds on
+its next attempt, within about fifteen seconds. If the released daemon is
+still running, its connection ends and it exits with status 3; when it is
+restarted with its registration key it may bind again, so stop the old
+machine before you release.
+
+### What a declaration does and does not protect
+
+While a declared environment has no daemon, any machine that holds the key's
+secret and presents the declared name can fill it. Treat the key as the
+credential for those environments: use one key per StatefulSet or per group
+of machines you trust equally, keep `--max-active` at the number of declared
+environments, and keep the secret in your secret store. Once a daemon is
+bound, neither the secret nor the name is enough to displace it.
+
+A few more rules:
+
+- Only a persistent key can have declared environments.
+- A declared environment counts against its key's `--max-active` from the
+  moment it is declared.
+- **Close when offline for** closes a declared environment whose daemon has
+  been away that long. It never closes one that is still waiting for its
+  first daemon, or one you released.
+- Closing a declared environment frees its name for a new declaration. Its ID
+  stays with the closed environment.
+- A daemon that already registered under an allocated ID keeps that
+  environment. To move the machine under a declared ID, close that
+  environment and start the daemon with a fresh state directory.
+
+`lightspeed environment create` and `lightspeed environment register` accept
+`--id` in the same way, so provisioned and external environments can have
+chosen IDs too.
+
 Scaling down leaves the volumes, and with them the open, disconnected
 environments; scaling up again brings them back. When you delete a volume,
 its identity is gone for good: close the environment, or let the key's
@@ -396,6 +503,9 @@ directory listed in `ReadWritePaths` and set
 | --- | --- |
 | A pod restarts in a loop with status 3 | The key is invalid, revoked, or expired, or the gateway speaks another protocol version. The log names the reason. |
 | New pods never register, and their logs report the key's capacity | The key is at its active environment limit. The daemon keeps retrying; raise the limit with **Edit** or close environments it admitted. |
+| A daemon keeps retrying and logs that no environment is declared for its registration name | Its key admits only declared machines. Declare an environment with that name, or correct `LIGHTSPEED_ENVD_REGISTRATION_NAME`. |
+| A daemon keeps retrying and logs that its environment is bound to another daemon identity | The machine lost its state directory, or two machines use one name. Release the environment for a replacement; give a second machine its own name and declaration. |
+| A declared environment stays disconnected while its machine registers under another ID | The daemon's name does not match the declaration, or it registered before the declaration existed. Close the stray environment, fix the name, and restart the daemon with a fresh state directory. |
 | A pod logs that its environment is closed and stays idle | The environment was closed and the pod parked. Delete the pod, and for a StatefulSet its volume. |
 | Two pods take turns connecting, one exits with status 5 | Both use one state directory. Give every pod its own volume. |
 | Registration is refused because the signature does not verify | The URL the daemon dials is not the public base URL or one of `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`. |

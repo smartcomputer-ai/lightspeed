@@ -3558,6 +3558,30 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
+    async fn put_registered_environment(
+        &self,
+        params: EnvironmentRegisteredPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegisteredPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTERED_PUT, None)
+            .await?;
+        self.environment_service()
+            .put_registered_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn release_registered_environment(
+        &self,
+        params: EnvironmentRegisteredReleaseParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegisteredReleaseResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTERED_RELEASE, None)
+            .await?;
+        self.environment_service()
+            .release_registered_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
     async fn create_environment_registration_key(
         &self,
         params: EnvironmentRegistrationKeyCreateParams,
