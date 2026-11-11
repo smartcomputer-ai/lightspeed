@@ -158,11 +158,19 @@ export interface SheenRole {
   components: string;
   /// The surface color the sheen is drawn over, for the preview.
   over: string;
+  /// The surface's own background token, edited beside its sheen.
+  background?: string;
 }
 
 export const SHEEN_ROLES: SheenRole[] = [
   { key: "sidebar", title: "Sidebar sheen", components: "The main sidebar", over: "--sidebar" },
-  { key: "list", title: "List sheen", components: "The list column beside a detail: Sessions, Bots, Profiles, Workspaces", over: "--background" },
+  {
+    key: "list",
+    title: "List",
+    components: "The list column beside a detail: Sessions, Bots, Profiles, Workspaces",
+    over: "--background",
+    background: "--surface-list",
+  },
 ];
 
 export function sheenToken(role: string, part: "color" | "start" = "color"): string {
@@ -274,7 +282,13 @@ const SHADOW_LAYERS: Record<(typeof SHADOW_TOKENS)[number], ShadowLayer[]> = {
   "--shadow-2xl": [[0, 25, 50, -12, 0.25]],
 };
 
-export const DEFAULT_SHADOW: ShadowParams = { color: "#000000", opacity: 1, size: 1 };
+/// The generator inputs behind index.css's shadow scale: Tailwind's layers
+/// at half size and four times the opacity (capped at 1).
+export const DEFAULT_SHADOW: ShadowParams = { color: "#000000", opacity: 4, size: 0.5 };
+
+export function isDefaultShadow(params: ShadowParams): boolean {
+  return params.color.toLowerCase() === DEFAULT_SHADOW.color && params.opacity === DEFAULT_SHADOW.opacity && params.size === DEFAULT_SHADOW.size;
+}
 
 export function shadowValues(params: ShadowParams): Record<string, string> {
   const hex = /^#?([0-9a-f]{6})$/i.exec(params.color)?.[1] ?? "000000";

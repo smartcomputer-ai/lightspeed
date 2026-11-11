@@ -12,6 +12,7 @@ import { CodeCopy } from "./CodeCopy";
 import {
   COLOR_GROUPS,
   DEFAULT_SHADOW,
+  isDefaultShadow,
   EMPTY_OVERRIDES,
   FONT_CHOICES,
   FONT_TOKENS,
@@ -216,6 +217,7 @@ export function DesignConfigurationPage() {
               resolve={(name) => valueOf(colorTheme, name)}
               color={token(colorTheme, sheenToken(role.key))}
               start={token(colorTheme, sheenToken(role.key, "start"))}
+              background={role.background ? token(colorTheme, role.background) : undefined}
             />
           ))}
           <SidebarLogoEditor
@@ -307,7 +309,7 @@ export function DesignConfigurationPage() {
             onChange={(params) => {
               const shared = { ...overrides.shared };
               for (const name of SHADOW_TOKENS) delete shared[name];
-              const isDefault = params.color.toLowerCase() === DEFAULT_SHADOW.color && params.opacity === 1 && params.size === 1;
+              const isDefault = isDefaultShadow(params);
               if (isDefault) {
                 publish({ ...overrides, shared, shadow: undefined });
               } else {
@@ -652,13 +654,16 @@ function EffectRows({ role, filter }: { role: string; filter: TokenControl }) {
 }
 
 /// A sheen over a surface: the gradient's end color and its opacity.
-function SheenEditor({ role, resolve, color, start }: {
+function SheenEditor({ role, resolve, color, start, background }: {
   role: SheenRole;
   resolve: (token: string) => string;
   color: TokenControl;
   start: TokenControl;
+  /// The surface's own background, for a surface that has one.
+  background?: TokenControl;
 }) {
   const end = literalColor(color.value, resolve) ?? color.value;
+  const fill = background ? literalColor(background.value, resolve) ?? background.value : undefined;
   return (
     <section className="grid gap-3 rounded-lg border p-3">
       <div className="flex items-start justify-between gap-3">
@@ -675,11 +680,17 @@ function SheenEditor({ role, resolve, color, start }: {
           className="h-12 w-20 shrink-0 rounded-md border"
           style={{
             backgroundColor: resolve(role.over),
-            backgroundImage: `linear-gradient(90deg, transparent ${start.value}, ${end} 100%)`,
+            backgroundImage: [
+              `linear-gradient(90deg, transparent ${start.value}, ${end} 100%)`,
+              ...(fill ? [`linear-gradient(${fill}, ${fill})`] : []),
+            ].join(", "),
           }}
         />
       </div>
-      <SurfaceColorRow label="Color" name={sheenToken(role.key)} resolve={resolve} {...color} />
+      {background && role.background && (
+        <SurfaceColorRow label="Background" name={role.background} resolve={resolve} {...background} />
+      )}
+      <SurfaceColorRow label="Sheen" name={sheenToken(role.key)} resolve={resolve} {...color} />
       <RangeRow name={sheenToken(role.key, "start")} min={0} max={100} step={1} unit="%" {...start} />
     </section>
   );
@@ -892,7 +903,7 @@ function ShadowEditor({ params, values, onChange }: {
   values: Record<string, string>;
   onChange: (params: ShadowParams) => void;
 }) {
-  const changed = params.color.toLowerCase() !== DEFAULT_SHADOW.color || params.opacity !== 1 || params.size !== 1;
+  const changed = !isDefaultShadow(params);
   return (
     <>
       <Group title="Shadow scale" note="Shapes all seven levels, shadow-2xs to shadow-2xl, from Tailwind's defaults.">

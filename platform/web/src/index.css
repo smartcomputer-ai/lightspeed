@@ -90,13 +90,13 @@
     --font-sans: 'IBM Plex Sans Variable', system-ui, sans-serif;
     --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     /* Tailwind's default shadow scale. */
-    --shadow-2xs: 0 1px rgb(0 0 0 / 0.05);
-    --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
-    --shadow-2xl: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+    --shadow-2xs: 0 0.5px 0 0 rgb(0 0 0 / 0.2);
+    --shadow-xs: 0 0.5px 1px 0 rgb(0 0 0 / 0.2);
+    --shadow-sm: 0 0.5px 1.5px 0 rgb(0 0 0 / 0.4), 0 0.5px 1px -0.5px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 2px 3px -0.5px rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 5px 7.5px -1.5px rgb(0 0 0 / 0.4), 0 2px 3px -2px rgb(0 0 0 / 0.4);
+    --shadow-xl: 0 10px 12.5px -2.5px rgb(0 0 0 / 0.4), 0 4px 5px -3px rgb(0 0 0 / 0.4);
+    --shadow-2xl: 0 12.5px 25px -6px rgb(0 0 0 / 1);
     --background: oklch(1 0 0);
     --foreground: oklch(0.141 0.005 285.823);
     --card: oklch(1 0 0);
@@ -143,7 +143,7 @@
     --surface-dialog-border: color-mix(in oklab, var(--foreground) 10%, transparent);
     --surface-popover: var(--popover);
     --surface-popover-border: color-mix(in oklab, var(--foreground) 10%, transparent);
-    --surface-menu: color-mix(in oklab, var(--popover) 70%, transparent);
+    --surface-menu: var(--popover);
     --surface-menu-border: color-mix(in oklab, var(--foreground) 10%, transparent);
     --surface-field: transparent;
     --surface-field-border: var(--input);
@@ -162,11 +162,11 @@
     --surface-dialog-radius: calc(var(--radius) * 1.4);
     --surface-dialog-shadow: var(--shadow-xl);
     --surface-popover-border-width: 1px;
-    --surface-popover-radius: calc(var(--radius) * 1.4);
+    --surface-popover-radius: calc(var(--radius) * 0.8);
     --surface-popover-shadow: var(--shadow-2xl);
     --surface-menu-border-width: 1px;
     --surface-menu-radius: calc(var(--radius) * 0.8);
-    --surface-menu-shadow: var(--shadow-xl);
+    --surface-menu-shadow: var(--shadow-2xl);
     --surface-field-border-width: 1px;
     --surface-field-radius: calc(var(--radius) * 0.6);
     --surface-field-shadow: var(--shadow-xs);
@@ -179,14 +179,17 @@
        blur(0px) saturate(100%), still makes a stacking context and a
        containing block and costs an offscreen pass. */
     --surface-backdrop-filter: saturate(45%);
-    --surface-menu-filter: blur(15px);
-    --surface-popover-filter: blur(15px);
-    --surface-dialog-filter: blur(15px);
+    --surface-menu-filter: none;
+    --surface-popover-filter: none;
+    --surface-dialog-filter: none;
     /* A sheen over the main sidebar and over list columns (the aside of
        Sessions, Bots, Profiles, Workspaces): a left-to-right gradient from
        transparent to this color, per theme. */
     --surface-sidebar-gradient: color-mix(in oklab, black 7%, transparent);
     --surface-list-gradient: color-mix(in oklab, black 5%, transparent);
+    /* The list column's background, under its sheen: the page shows through
+       in light, a neutral charcoal between the page and the sidebar in dark. */
+    --surface-list: transparent;
     /* Where across the surface each sheen starts to rise from transparent. */
     --surface-sidebar-gradient-start: 70%;
     --surface-list-gradient-start: 70%;
@@ -205,6 +208,9 @@
     --sidebar-header-button-height: 2.25rem;
     --sidebar-header-padding: calc(var(--spacing) * 2);
     --pane-bar-height: calc(var(--sidebar-header-button-height) + 2 * var(--sidebar-header-padding));
+    /* Every row of a list pane (Sessions, Bots, Profiles) is at least this
+       tall, one line or two: the pane bar's height unless set apart. */
+    --list-row-height: var(--pane-bar-height);
     /* Scales every icon (lucide, tabler and the app's own marks) from the
        size its classes give it. */
     --icon-scale: 0.9;
@@ -215,7 +221,7 @@
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.21 0.006 285.885);
     --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.21 0.006 285.885);
+    --popover: oklch(0.269 0 0); /* rgb(38 38 38), a step above the sidebar */
     --popover-foreground: oklch(0.985 0 0);
     --primary: oklch(0.92 0.004 286.32);
     --primary-foreground: oklch(0.21 0.006 285.885);
@@ -234,7 +240,7 @@
     --chart-3: oklch(0.442 0.017 285.786);
     --chart-4: oklch(0.37 0.013 285.805);
     --chart-5: oklch(0.274 0.006 286.033);
-    --sidebar: oklch(0.21 0.006 285.885);
+    --sidebar: oklch(0.239 0 0); /* rgb(31 31 31), a neutral charcoal */
     --sidebar-foreground: oklch(0.985 0 0);
     --sidebar-primary: oklch(0.488 0.243 264.376);
     --sidebar-primary-foreground: oklch(0.985 0 0);
@@ -247,24 +253,25 @@
        popups that carry their own dark class. */
     --surface-card: var(--card);
     --surface-card-border: color-mix(in oklab, var(--foreground) 20%, transparent);
-    --surface-dialog: color-mix(in oklab, var(--popover) 60%, transparent);
-    --surface-dialog-border: color-mix(in oklab, var(--foreground) 20%, transparent);
-    --surface-popover: color-mix(in oklab, var(--popover) 60%, transparent);
-    --surface-popover-border: color-mix(in oklab, var(--foreground) 20%, transparent);
-    --surface-menu: color-mix(in oklab, var(--popover) 60%, transparent);
-    --surface-menu-border: color-mix(in oklab, var(--foreground) 20%, transparent);
+    --surface-dialog: var(--popover);
+    --surface-dialog-border: color-mix(in oklab, var(--foreground) 0%, transparent);
+    --surface-popover: var(--popover);
+    --surface-popover-border: color-mix(in oklab, var(--foreground) 0%, transparent);
+    --surface-menu: var(--popover);
+    --surface-menu-border: color-mix(in oklab, var(--foreground) 0%, transparent);
     --surface-field: color-mix(in oklab, var(--input) 30%, transparent);
     --surface-field-border: var(--input);
     --surface-field-focus-border: var(--ring);
     --surface-field-focus-ring: color-mix(in oklab, var(--ring) 0%, transparent);
     --surface-field-invalid-ring: var(--danger);
     --surface-backdrop: color-mix(in oklab, black 70%, transparent);
-    --surface-sidebar-gradient: color-mix(in oklab, white 5%, transparent);
-    --surface-list-gradient: color-mix(in oklab, white 5%, transparent);
+    --surface-sidebar-gradient: color-mix(in oklab, white 0%, transparent);
+    --surface-list-gradient: color-mix(in oklab, white 4%, transparent);
+    --surface-list: oklch(0.2 0 0); /* rgb(22 22 22) */
     --surface-sidebar-gradient-start: 50%;
     --surface-list-gradient-start: 30%;
-    --sidebar-logo-color: color-mix(in oklab, var(--sidebar-foreground) 20%, transparent);
-    --sidebar-logo-opacity: 0.4;
+    --sidebar-logo-color: var(--sidebar-foreground);
+    --sidebar-logo-opacity: 0.05;
 }
 
 /* A surface's backdrop filter, from its --surface-<role>-filter token. It

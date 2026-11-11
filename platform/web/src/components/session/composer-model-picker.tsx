@@ -7,6 +7,7 @@ import {
   type RunChoice,
 } from "@/lib/composer-model";
 import { Button } from "@/components/ui/button";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
@@ -70,10 +71,15 @@ export function ModelPicker({ choice, stored, runActive, canSaveDefault, onChang
       </PopoverTrigger>
       <PopoverContent ref={popup} initialFocus={popup} side="top" align="start" sideOffset={8} className="w-[min(34rem,calc(100vw-2rem))] overflow-hidden p-0">
         <div className="flex max-h-[min(22rem,calc(var(--available-height)-4rem))] min-h-0 flex-col sm:flex-row">
-          <section aria-label="Model" className="flex min-h-0 min-w-0 flex-1 flex-col border-b sm:border-r sm:border-b-0">
-            <label className="m-2 mb-1 flex h-8 items-center gap-2 rounded-md bg-muted px-2 text-muted-foreground focus-within:field-focus">
-              <SearchIcon className="size-3.5 shrink-0" aria-hidden />
-              <input value={query} onChange={(event) => setQuery(event.target.value)}
+          {/* Both columns read like the app's menus: the same heading, padding and
+              rows, with the choice marked by a check. */}
+          <section aria-label="Model" className="flex min-h-0 min-w-0 flex-1 flex-col border-b p-1.5 sm:border-r sm:border-b-0">
+            <h3 className="px-2 pt-1 pb-1.5 text-xs font-medium text-muted-foreground">Model</h3>
+            {/* The shared search field: an input group with the search icon, so it
+                takes the field surface and focus ring like every other input. */}
+            <InputGroup className="mb-1.5 w-auto shrink-0">
+              <InputGroupAddon><SearchIcon aria-hidden /></InputGroupAddon>
+              <InputGroupInput value={query} onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && query.trim()) {
                     event.preventDefault();
@@ -81,10 +87,9 @@ export function ModelPicker({ choice, stored, runActive, canSaveDefault, onChang
                     setQuery("");
                   }
                 }}
-                placeholder={`Search ${choice.route.providerId} models`} aria-label="Search models"
-                className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground" />
-            </label>
-            <div role="radiogroup" aria-label="Model" className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-1.5">
+                placeholder={`Search ${choice.route.providerId} models`} aria-label="Search models" />
+            </InputGroup>
+            <div role="radiogroup" aria-label="Model" className="min-h-0 flex-1 overflow-y-auto">
               {models.map((option) => (
                 <Option key={option.model} checked={option.model === choice.model} onSelect={() => pick({ model: option.model })}>
                   <span className="flex min-w-0 flex-1 flex-col leading-tight">
@@ -92,7 +97,7 @@ export function ModelPicker({ choice, stored, runActive, canSaveDefault, onChang
                     {option.displayName !== option.model && <span className="truncate text-[11px] text-muted-foreground">{option.model}</span>}
                   </span>
                   {option.model === choice.session.model && (
-                    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Session</span>
+                    <span className="shrink-0 rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Session</span>
                   )}
                 </Option>
               ))}
@@ -105,14 +110,14 @@ export function ModelPicker({ choice, stored, runActive, canSaveDefault, onChang
             </div>
           </section>
           <section aria-label="Reasoning effort" className="flex min-h-0 flex-col overflow-y-auto p-1.5 sm:w-48">
-            <h3 className="px-2 pt-1.5 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Reasoning effort</h3>
+            <h3 className="px-2 pt-1 pb-1.5 text-xs font-medium text-muted-foreground">Reasoning effort</h3>
             <div role="radiogroup" aria-label="Reasoning effort">
               {effortOptions.map((effort) => (
                 <Option key={effort ?? "default"} checked={effort === choice.reasoningEffort}
                   onSelect={() => pick({ reasoningEffort: effort })}>
                   <span className="flex-1">{effort ? effortLabel(effort) : "Provider default"}</span>
                   {effort && effort === choice.session.reasoningEffort && (
-                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Session</span>
+                    <span className="rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Session</span>
                   )}
                 </Option>
               ))}
@@ -147,8 +152,12 @@ function Option({ checked, onSelect, children }: { checked: boolean; onSelect: (
   return (
     <button type="button" role="radio" aria-checked={checked} onClick={onSelect}
       className={cn(
-        "flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm outline-none transition-colors hover:bg-muted focus-visible:bg-muted",
-        checked && "bg-muted/70 font-medium",
+        // Selected rows keep a foreground/10 background (with the check);
+        // hover is lighter, so it never reads as a choice, and keyboard focus
+        // is a thin inset ring, so it shows on a selected row too. Foreground
+        // tints show on any popover color.
+        "flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors focus-visible:inset-ring-1 focus-visible:inset-ring-ring",
+        checked ? "bg-foreground/10 font-medium" : "hover:bg-foreground/5",
       )}>
       {children}
       <SelectedIcon className={cn("size-3.5 shrink-0", checked ? "opacity-100" : "opacity-0")} aria-hidden />

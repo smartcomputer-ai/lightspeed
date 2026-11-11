@@ -172,6 +172,10 @@ describe("design tokens", () => {
       expect(css).toContain(
         `linear-gradient(90deg, transparent var(${sheenToken(role.key, "start")}), var(${sheenToken(role.key)}) 100%)`,
       );
+      if (!role.background) continue;
+      // The surface's own background, per theme, in a form the color row reads (a theme color or a literal).
+      const backgrounds = [...css.matchAll(new RegExp(`${role.background}: ([^;]+);`, "g"))].map((match) => match[1]!);
+      expect(backgrounds, role.background).toHaveLength(2);
     }
   });
 

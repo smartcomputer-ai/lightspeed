@@ -58,7 +58,7 @@ export function ListPane({
       className={cn(
         // The CSS bound keeps the detail its room when the window narrows
         // after a drag.
-        "relative w-full shrink-0 flex-col border-r sheen-list md:flex md:w-[min(var(--list-width),max(16rem,calc(100%_-_24rem)))]",
+        "relative w-full shrink-0 flex-col border-r bg-(--surface-list) sheen-list md:flex md:w-[min(var(--list-width),max(16rem,calc(100%_-_24rem)))]",
         detailOpen ? "hidden" : "flex",
       )}
     >
@@ -168,7 +168,9 @@ export interface ListRowSelection {
 /// One row of a list pane: a link to its detail, or, while selecting, a
 /// checkbox label. The first line is the indicator (a status dot), the
 /// title, badges and the meta (a time, a count) on the right; children are
-/// further lines, usually ListRowLines.
+/// further lines, usually ListRowLines. Every row is at least
+/// --list-row-height tall with its content centred, so one-line and
+/// two-line lists share one rhythm with the pane bar above them.
 export function ListRow({
   to,
   active = false,
@@ -200,9 +202,9 @@ export function ListRow({
 }) {
   const highlighted = active || selection?.checked;
   const className = cn(
-    "flex min-w-0 items-center gap-2.5 border-b px-4 py-2.5 text-sm hover:bg-muted/50",
+    "flex min-h-(--list-row-height) min-w-0 items-center gap-2.5 border-b px-4 py-1.5 text-sm hover:bg-muted/50",
     highlighted && "bg-muted",
-    selection && "cursor-pointer items-start",
+    selection && "cursor-pointer",
   );
   const style = depth > 0 ? { paddingLeft: `${1 + depth * 1.25}rem` } : undefined;
   const content = (
@@ -211,7 +213,6 @@ export function ListRow({
         <Checkbox
           checked={selection.checked}
           onCheckedChange={selection.onToggle}
-          className="mt-0.5"
           aria-label={selection.label}
         />
       )}
