@@ -1,4 +1,4 @@
-import { createContext, useContext, type CSSProperties, type ReactNode } from "react";
+import { createContext, useContext, type ComponentProps, type CSSProperties, type HTMLAttributes, type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { ResizeHandle, useResizableWidth } from "@/components/resize-handle";
 import { ListNote } from "@/components/page";
@@ -129,12 +129,12 @@ export type ListMode = "default" | "files";
 /// How the rows of a list are drawn: its mode, and whether it is compressed
 /// (each row its first line alone, shorter, the title centred with its
 /// marks and meta; the second lines are left out).
-interface ListLayout {
+interface ListLayoutValue {
   mode: ListMode;
   compressed: boolean;
 }
 
-const ListLayoutContext = createContext<ListLayout>({ mode: "default", compressed: false });
+const ListLayoutContext = createContext<ListLayoutValue>({ mode: "default", compressed: false });
 
 /// The mode of the list a row is in.
 export function useListMode(): ListMode {
@@ -144,6 +144,16 @@ export function useListMode(): ListMode {
 /// Whether the list a row is in is compressed.
 export function useListCompressed(): boolean {
   return useContext(ListLayoutContext).compressed;
+}
+
+/// A list's layout for the rows inside, for a list that is not in a
+/// ListPaneBody (which sets it itself), e.g. inside its own scrolling area.
+export function ListLayout({ mode = "default", compressed = false, children }: {
+  mode?: ListMode;
+  compressed?: boolean;
+  children: ReactNode;
+}) {
+  return <ListLayoutContext.Provider value={{ mode, compressed }}>{children}</ListLayoutContext.Provider>;
 }
 
 /// The scrolling part of the pane, and the list's layout for its rows: its
@@ -217,6 +227,8 @@ export interface ListRowTree {
   lines?: boolean[];
   /** Child rows follow right below: a line drops from this row to them. */
   children?: boolean;
+  /** The next row is a folder whose children follow (in a files list, a line sets its block apart). */
+  nextOpen?: boolean;
 }
 
 /// The list's left inset (pl-6): room for a row's dot before its content.
@@ -330,6 +342,14 @@ export interface ListRowToggle {
   onToggle: () => void;
 }
 
+/// Attributes for a row's link or button (the entry the row is drawn on):
+/// handlers, focus order and data attributes, for lists that add behavior
+/// (a keyboard tree, dragging). Its handlers run beside the row's own.
+export type ListRowEntryProps = HTMLAttributes<HTMLElement> & {
+  draggable?: boolean;
+  [data: `data-${string}`]: string | number | boolean | undefined;
+};
+
 export interface ListRowSelection {
   checked: boolean;
   onToggle: () => void;
@@ -361,6 +381,8 @@ export function ListRow({
   toggle,
   fileName,
   actions,
+  itemProps,
+  entryProps,
   children,
 }: {
   /** Its detail. A toggle row has none. */
@@ -386,10 +408,15 @@ export function ListRow({
   fileName?: string;
   /**
    * Its actions, e.g. a ⋯ menu: beside the row's link (never inside it), at
-   * its right, shown in place of the meta while the row is hovered or
-   * focused or its menu is open. Not while selecting.
+   * its right, shown in place of the meta while the row is hovered or has
+   * keyboard focus (not focus a click leaves behind) or its menu is open.
+   * Not while selecting.
    */
   actions?: ReactNode;
+  /** Attributes for the row's list item (e.g. a tree item's role, focus order and data). */
+  itemProps?: Omit<ComponentProps<"li">, "children"> & Record<`data-${string}`, string | number | boolean | undefined>;
+  /** Attributes for the row's link or button (see ListRowEntryProps). */
+  entryProps?: ListRowEntryProps;
   children?: ReactNode;
 }) {
   const mode = useListMode();
@@ -406,6 +433,17 @@ export function ListRow({
   // Inside a tree, the next row belongs to the same tree: a dotted separator
   // from the branch line replaces the solid one, and the lines run on unbroken.
   const separatorStart = treeSeparatorStart(tree);
+  // A files list's lines go only around each open folder and what it holds
+  // (above the folder, below its last row), and under the list's last row. A row draws the line below it when the
+  // next row opens a folder, or when it ends a folder (or the list).
+  const filesTree = mode === "files" ? tree : undefined;
+  const lineBelow = filesTree
+    ? Boolean(filesTree.nextOpen || (!filesTree.children && filesTree.last))
+    : separatorStart === null;
+  // A files list's line that meets a branch line is drawn dotted from that
+  // line (it never runs left past the tree); without one it is the row's
+  // full, solid border.
+  const ruleStart = filesTree && lineBelow ? separatorStart : null;
   const className = cn(
     "group/row flex min-w-0 items-center gap-2.5 border-b py-1.5 pr-4 pl-6 text-sm transition-colors duration-(--list-transition-duration) hover:bg-muted/50",
     compressed ? "min-h-(--list-row-height-compressed)" : "min-h-(--list-row-height)",
@@ -414,13 +452,18 @@ export function ListRow({
     // Over its actions (beside the link) the row stays hovered.
     rowActions && "[li:hover>&]:bg-muted/50",
     toggle && !selection && "w-full text-left",
+    // With nothing on the right to give way (marks stay, for their
+    // tooltips), the row leaves room for the actions (always shown on touch
+    // screens), which then sit beside its marks.
+    rowActions && (meta === undefined || meta === null || meta === false) && "pr-11",
     // The dot and tree lines are laid over the row.
     (tree || indicator) && "relative",
     // Inside a tree there is no solid separator; a pixel more padding takes
     // its place, so the row keeps its height and its content sits where it
     // does above a separator (a folder that opens and joins its children
     // stays put).
-    separatorStart !== null && "border-b-0 pb-[calc(0.375rem+1px)]",
+    (!lineBelow || ruleStart !== null) && "border-b-0 pb-[calc(0.375rem+1px)]",
+    entryProps?.className,
   );
   const depth = tree?.depth ?? 0;
   // Nested rows indent their content; while selecting, after the checkbox,
@@ -433,9 +476,10 @@ export function ListRow({
   const content = (
     <>
       {tree && (depth > 0 || tree.children) && <TreeLines tree={tree} plainDot={!indicator} contentLeft={contentLeft} />}
-      {separatorStart !== null && (
+      {separatorStart !== null && !filesTree && (
         <TreeSeparator start={separatorStart} contentLeft={contentLeft} />
       )}
+      {ruleStart !== null && <TreeSeparator start={ruleStart} contentLeft={contentLeft} />}
       {/* The status dot, in the inset left of the content at the row's centre: its node when in a tree. */}
       {indicator && (
         <span
@@ -474,7 +518,7 @@ export function ListRow({
               className={cn(
                 "ml-auto shrink-0 text-xs text-muted-foreground",
                 // Its actions take its place while they show.
-                rowActions && "group-focus-within/row:invisible group-hover/row:invisible group-has-[[data-popup-open]]/row:invisible",
+                rowActions && "group-focus-visible/row:invisible group-has-[:focus-visible]/row:invisible group-hover/row:invisible group-has-[[data-popup-open]]/row:invisible",
               )}
             >
               {meta}
@@ -485,29 +529,45 @@ export function ListRow({
       </span>
     </>
   );
+  const { className: _entryClassName, onClick: entryClick, ...entry } = entryProps ?? {};
+  const { className: itemClassName, ...item } = itemProps ?? {};
   return (
     // With actions the item is the row's hover group too, so the row stays
     // lit (and its title bright) over them.
-    <li className={cn(rowActions && "group/row relative")}>
+    <li {...item} className={cn(rowActions && "group/row relative", itemClassName)}>
       {selection ? (
-        <label className={className} style={style} data-list-mode={mode} data-highlighted={highlighted || undefined}>{content}</label>
+        <label {...entry} className={className} style={style} data-list-mode={mode} data-highlighted={highlighted || undefined}>{content}</label>
       ) : toggle ? (
         <button
           type="button"
+          aria-expanded={toggle.open}
+          {...entry}
           className={className}
           style={style}
-          aria-expanded={toggle.open}
-          onClick={toggle.onToggle}
+          onClick={(event) => {
+            entryClick?.(event);
+            toggle.onToggle();
+          }}
           data-list-mode={mode}
           data-highlighted={highlighted || undefined}
         >
           {content}
         </button>
       ) : (
-        <NavLink to={to ?? ""} className={className} style={style} data-list-mode={mode} data-highlighted={highlighted || undefined}>{content}</NavLink>
+        <NavLink
+          {...entry}
+          to={to ?? ""}
+          className={className}
+          style={style}
+          onClick={entryClick}
+          data-list-mode={mode}
+          data-highlighted={highlighted || undefined}
+        >
+          {content}
+        </NavLink>
       )}
       {rowActions && (
-        <div className="absolute top-1/2 right-2 z-20 flex -translate-y-1/2 items-center opacity-0 transition-opacity duration-(--list-transition-duration) group-focus-within/row:opacity-100 group-hover/row:opacity-100 group-has-[[data-popup-open]]/row:opacity-100">
+        <div className="absolute top-1/2 right-2 z-20 flex -translate-y-1/2 items-center opacity-0 transition-opacity duration-(--list-transition-duration) group-focus-visible/row:opacity-100 group-has-[:focus-visible]/row:opacity-100 group-hover/row:opacity-100 group-has-[[data-popup-open]]/row:opacity-100 [@media(hover:none)]:opacity-100">
           {rowActions}
         </div>
       )}

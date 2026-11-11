@@ -1168,11 +1168,9 @@ export function WorkspaceActionsMenu({
             data-workspace-actions
             tabIndex={tabIndex}
             title={label}
-            className={cn(
-              "shrink-0 text-muted-foreground",
-              kind !== "workspace" &&
-                "absolute right-0 top-1/2 -translate-y-1/2 bg-background group-hover/tree-row:bg-[color-mix(in_oklch,var(--muted)_50%,var(--background))] group-data-[active=true]/tree-row:bg-muted hover:bg-[color-mix(in_oklch,var(--foreground)_15%,var(--background))]! aria-expanded:bg-[color-mix(in_oklch,var(--foreground)_15%,var(--background))]! [@media(hover:hover)_and_(pointer:fine)]:opacity-0 group-hover/tree-row:opacity-100! data-popup-open:opacity-100! focus-visible:opacity-100!",
-            )}
+            // A file's or folder's sits in its list row's actions, which place
+            // and show it.
+            className="shrink-0 text-muted-foreground"
           />
         }
       >

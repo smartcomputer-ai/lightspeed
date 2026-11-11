@@ -213,18 +213,26 @@ function WorkspacePane({
             onValueChange={(value) => navigate(`/u/${slug}/workspaces/${value}`)}
           >
             <SelectTrigger className="w-full" aria-label="Workspace">
-              <WorkspaceIcon className="size-4 shrink-0 text-muted-foreground" />
               <SelectValue>
                 {(value: string) => {
                   const label = workspaces.data?.find((w) => w.workspaceId === value)?.displayName ?? value;
+                  // The icon is part of the value, as it is of each option,
+                  // so the open list lines its icons and names up with it.
                   // Text directly inside the flex value cannot ellipsize.
-                  return <span className="min-w-0 truncate" title={label}>{label}</span>;
+                  return (
+                    <>
+                      <WorkspaceIcon className="size-4 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 truncate" title={label}>{label}</span>
+                    </>
+                  );
                 }}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {workspaces.data.map((workspace) => (
                 <SelectItem key={workspace.workspaceId} value={workspace.workspaceId}>
+                  {/* As in the trigger's value, so each option lines up under it. */}
+                  <WorkspaceIcon className="size-4 shrink-0 text-muted-foreground" />
                   <span className="truncate">{workspace.displayName ?? workspace.workspaceId}</span>
                 </SelectItem>
               ))}
@@ -240,12 +248,12 @@ function WorkspacePane({
       </ListPaneToolbar>
       {/* The scrolling body is the drop target, so a drop anywhere below the
           tree lands in the workspace root. */}
-      <WorkspaceDropArea className="min-h-0 min-w-0 flex-1 overflow-y-auto p-2">
+      <WorkspaceDropArea className="min-h-0 min-w-0 flex-1 overflow-y-auto">
         {tree.error && (
-          <ReadError error={tree.error} loading={!tree.data} className="p-2" />
+          <ReadError error={tree.error} loading={!tree.data} className="p-4" />
         )}
         {tree.data && Object.keys(tree.data.manifest.root.entries).length === 0 && (
-          <p className="p-2 text-sm text-muted-foreground">
+          <p className="p-4 text-sm text-muted-foreground">
             Empty workspace.
           </p>
         )}

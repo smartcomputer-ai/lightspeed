@@ -264,7 +264,7 @@ it("highlights the exact drop destination and uploads to the folder shown", asyn
   await render(true);
   const rootArea = container.querySelector("[data-workspace-root]")!;
   const folderRow = (path: string) =>
-    container.querySelector(`[data-tree-path="${path}"] > div`)!;
+    container.querySelector(`[data-tree-path="${path}"] > [data-tree-entry]`)!;
   const highlighted = () =>
     container.querySelectorAll('[data-workspace-drop-target="true"]');
   await drag("dragenter", rootArea);
@@ -278,7 +278,7 @@ it("highlights the exact drop destination and uploads to the folder shown", asyn
     "/docs",
   );
   const nested = folderRow("docs/nested");
-  await drag("dragover", nested.querySelector("button")!);
+  await drag("dragover", nested.querySelector("span")!);
   expect([...highlighted()]).toEqual([nested]);
   expect(container.querySelector('[role="status"]')?.textContent).toContain(
     "/docs/nested",
@@ -299,7 +299,7 @@ it("highlights the exact drop destination and uploads to the folder shown", asyn
 it("switches back to the root destination and clears the hint when dragging leaves or ends", async () => {
   await render(true);
   const rootArea = container.querySelector("[data-workspace-root]")!;
-  const row = container.querySelector('[data-tree-path="docs"] > div')!;
+  const row = container.querySelector('[data-tree-path="docs"] > [data-tree-entry]')!;
   await drag("dragenter", row);
   await drag("dragover", rootArea);
   expect(rootArea.getAttribute("data-workspace-drop-target")).toBe("true");

@@ -1186,7 +1186,10 @@ function FileListExample() {
       else next.add(id);
       return next;
     });
-  const rows = visibleFiles(WORKSPACE_FILES, open);
+  const rows = visibleFiles(WORKSPACE_FILES, open).map((row, index, all) => ({
+    ...row,
+    tree: { ...row.tree, nextOpen: all[index + 1]?.tree.children ?? false },
+  }));
   return (
     <Specimen
       title="File list"
@@ -1212,7 +1215,8 @@ function FileListExample() {
           )}
           <ListPaneBody mode="files" compressed>
             <ListGroupLabel>Files</ListGroupLabel>
-            <ul>
+            {/* The rows' top line. */}
+            <ul className="border-t">
               {rows.map(({ file, tree }) => {
                 // A folder opens and closes; a file opens its detail.
                 const folder = file.children !== undefined;
