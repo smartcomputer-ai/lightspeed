@@ -10,6 +10,7 @@ import type {
   LlmUsageView,
   RunAcceptedSourceView,
   ResourceAccessSummary,
+  RunFailureKindView,
   RunSummaryView,
   RunView,
   SessionEventKindView,
@@ -379,7 +380,7 @@ export function findRun(session: SessionRecord, runId: string): RunView | null {
 
 export function activeRun(session: SessionRecord): RunView | null {
   return [...session.runs.values()].find(
-    (run) => run.status === "running" || run.status === "cancelling",
+    (run) => run.status === "running" || run.status === "cancelling" || run.status === "parked",
   ) ?? null;
 }
 
@@ -456,11 +457,12 @@ export function startRun(
       joins,
     );
     const respond = session.responder ?? universe.responder;
+    const context = { store, universe, session, turn: session.turns };
     const turn =
-      input.turn ?? respond(responderText(input.text, input.media ?? []), { store, universe, session, turn: session.turns });
-    schedule(session, run, turnSteps(store, session, run, turn, 1), () =>
-      afterTurns(store, universe, session, run, 2, input.onFinished),
-    );
+      input.turn
+      ?? store.debug?.(input.text, { ...context, run })
+      ?? respond(responderText(input.text, input.media ?? []), context);
+    playTurn(store, universe, session, run, turn, 1, input.onFinished);
   };
   if (activeRun(session)) {
     session.queue.push({ runId: run.id, begin });
@@ -496,10 +498,98 @@ function afterTurns(
     { runId: run.id },
   );
   const respond = session.responder ?? universe.responder;
-  const turn = respond(responderText(steer.text, steer.media ?? []), { store, universe, session, turn: session.turns });
-  schedule(session, run, turnSteps(store, session, run, turn, turnIndex), () =>
-    afterTurns(store, universe, session, run, turnIndex + 1, onFinished),
-  );
+  const context = { store, universe, session, turn: session.turns };
+  const turn = store.debug?.(steer.text, { ...context, run })
+    ?? respond(responderText(steer.text, steer.media ?? []), context);
+  playTurn(store, universe, session, run, turn, turnIndex, onFinished);
+}
+
+/// Plays one turn of a run, then what it asks for: the next turn (steering)
+/// or the end of the run, a failure, or a park on an approval.
+function playTurn(
+  store: DemoStore,
+  universe: UniverseState,
+  session: SessionRecord,
+  run: RunView,
+  turn: DemoTurn,
+  turnIndex: number,
+  onFinished?: (run: RunView) => void,
+): void {
+  const finished = (done: RunView) => {
+    onFinished?.(done);
+    turn.finished?.(done);
+  };
+  schedule(session, run, turnSteps(store, session, run, turn, turnIndex), () => {
+    if (turn.fail) {
+      finishRun(session, run, "failed", Date.now(), turn.fail);
+      finished(run);
+    } else if (turn.approval) {
+      parkForApproval(store, universe, session, run, turn.approval, turnIndex + 1, finished);
+    } else {
+      afterTurns(store, universe, session, run, turnIndex + 1, finished);
+    }
+  });
+}
+
+/// Parks a run on one MCP tool call awaiting a decision; deciding it
+/// (see decideApprovals) unparks the run with the turn the decision picks.
+function parkForApproval(
+  store: DemoStore,
+  universe: UniverseState,
+  session: SessionRecord,
+  run: RunView,
+  approval: NonNullable<DemoTurn["approval"]>,
+  turnIndex: number,
+  onFinished: (run: RunView) => void,
+): void {
+  const approvalId = store.nextId("approval");
+  const at = Date.now();
+  const subject = {
+    kind: "mcpToolCall" as const,
+    serverId: approval.serverId,
+    serverLabel: approval.serverLabel,
+    toolName: approval.toolName,
+    argumentsPreview: JSON.stringify(approval.arguments),
+    argumentsRef: store.putText(JSON.stringify(approval.arguments, null, 2)),
+  };
+  run.status = "parked";
+  run.pendingApprovals = [{ approvalId, requestedAtMs: at, subject }];
+  session.view.activity = "waiting";
+  pushEvent(session, { type: "approvalRequested", runId: run.id, approvalId, subject }, { runId: run.id }, at);
+  pushEvent(session, { type: "approvalRunParked", runId: run.id }, { runId: run.id }, at);
+  session.parked ??= new Map();
+  session.parked.set(run.id, (approved) => {
+    session.parked?.delete(run.id);
+    run.status = "running";
+    session.view.activity = "working";
+    pushEvent(session, { type: "approvalRunUnparked", runId: run.id }, { runId: run.id });
+    playTurn(store, universe, session, run, approval.then(approved), turnIndex, onFinished);
+  });
+}
+
+/// Decides a run's pending approvals; once none is left, a parked run goes on.
+export function decideApprovals(
+  session: SessionRecord,
+  run: RunView,
+  decisions: Array<{ approvalId: string; decision: "approve" | "reject" }>,
+): Array<{ approvalId: string; status: "decided" } | { approvalId: string; status: "failed"; failure: { kind: string; message: string } }> {
+  const pending = new Map((run.pendingApprovals ?? []).map((approval) => [approval.approvalId, approval]));
+  let approved = true;
+  const results = decisions.map(({ approvalId, decision }) => {
+    if (!pending.delete(approvalId)) {
+      return { approvalId, status: "failed" as const, failure: { kind: "unknown", message: "approval was not found" } };
+    }
+    if (decision !== "approve") approved = false;
+    pushEvent(session, { type: "approvalDecided", runId: run.id, approvalId, decision });
+    return { approvalId, status: "decided" as const };
+  });
+  run.pendingApprovals = [...pending.values()];
+  if (run.pendingApprovals.length === 0 && run.status === "parked") {
+    const resume = session.parked?.get(run.id);
+    if (resume) resume(approved);
+    else run.status = "running";
+  }
+  return results;
 }
 
 export function finishRun(
@@ -507,11 +597,14 @@ export function finishRun(
   run: RunView,
   status: "completed" | "cancelled" | "failed",
   at = Date.now(),
+  failure: { kind: RunFailureKindView; message: string } = { kind: "internal", message: "demo run failed" },
 ): void {
   for (const timer of session.timers) clearTimeout(timer);
   session.timers.clear();
   run.status = status;
   run.finishedAtMs = at;
+  run.pendingApprovals = [];
+  session.parked?.delete(run.id);
   const joins = { runId: run.id };
   if (status === "completed") {
     completeRunOutput(session, run, at);
@@ -520,7 +613,7 @@ export function finishRun(
   } else {
     pushEvent(
       session,
-      { type: "runFailed", runId: run.id, kind: "internal", message: "demo run failed" },
+      { type: "runFailed", runId: run.id, kind: failure.kind, message: failure.message },
       joins,
       at,
     );
@@ -682,7 +775,7 @@ function turnSteps(
     const calls = toolCallEvents(store, tools);
     const batchId = store.nextId("batch");
     steps.push({
-      delayMs: 700,
+      delayMs: turn.thinkMs ?? 700,
       apply: (at) => {
         const entries: ContextEntryView[] = [];
         if (turn.thinking) entries.push(contextReasoning(store.nextId("entry"), turn.thinking));
@@ -744,15 +837,16 @@ function turnSteps(
   }
 
   steps.push({
-    delayMs: tools.length > 0 ? 900 : turn.thinking ? 1_200 : 800,
+    delayMs: tools.length > 0 ? 900 : turn.thinkMs ?? (turn.thinking ? 1_200 : 800),
     apply: (at) => {
       const entries: ContextEntryView[] = [];
       if (turn.thinking && tools.length === 0) {
         entries.push(contextReasoning(store.nextId("entry"), turn.thinking));
       }
-      entries.push(contextMessage(store.nextId("entry"), "assistant", turn.text));
+      if (turn.text) entries.push(contextMessage(store.nextId("entry"), "assistant", turn.text));
       applyEntries(session, entries, joins(), at);
       closeGeneration(at);
+      turn.landed?.(at);
     },
   });
   return steps;

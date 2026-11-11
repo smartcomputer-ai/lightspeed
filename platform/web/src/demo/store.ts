@@ -37,6 +37,7 @@ import type {
   DeploymentApiKeyView,
   DeploymentEnvironmentProviderView,
   MethodGroup,
+  RunFailureKindView,
   RunView,
   SessionEventView,
   SessionSummaryView,
@@ -73,7 +74,30 @@ export interface DemoTurn {
   thinking?: string;
   tools?: DemoToolCall[];
   text: string;
+  /// How long the model generates before the turn lands (its tool calls,
+  /// or its reply when it calls none); by default a second or so.
+  thinkMs?: number;
+  /// Runs once the turn's reply has landed (debug commands change state here).
+  landed?: (at: number) => void;
+  /// Parks the run on an MCP tool call that needs approval; the decision
+  /// picks the turn that follows.
+  approval?: {
+    serverId: string;
+    serverLabel: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+    then: (approved: boolean) => DemoTurn;
+  };
+  /// Fails the run after this turn instead of completing it.
+  fail?: { kind: RunFailureKindView; message: string };
+  /// Runs once the run has finished, whichever way.
+  finished?: (run: RunView) => void;
 }
+
+/// What a debug message (`debug: …`) runs instead of the scripted reply:
+/// a turn, or null for an ordinary message. Installed by the demo entry in
+/// debug mode only.
+export type DemoDebugHandler = (input: string, context: ResponderContext & { run: RunView }) => DemoTurn | null;
 
 export interface ResponderContext {
   store: DemoStore;
@@ -107,6 +131,8 @@ export interface SessionRecord {
   /// User turns so far (drives scripted responders).
   turns: number;
   responder?: DemoResponder;
+  /// Runs parked on an approval, each with what deciding it resumes.
+  parked?: Map<string, (approved: boolean) => void>;
 }
 
 export interface WorkspaceRecord {
@@ -194,6 +220,8 @@ export class DemoStore {
   channelsStatus: ChannelsStatus = { connectors: [] };
   readonly blobs = new Map<string, BlobContent>();
   readonly defaultInstructionsRef: string;
+  /// Debug commands (`debug: …` messages); see debug-commands.ts.
+  debug?: DemoDebugHandler;
   private readonly counters = new Map<string, number>();
 
   constructor(currentUser: DemoUser) {

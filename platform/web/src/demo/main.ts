@@ -4,7 +4,12 @@ import { mountBanner } from "./banner";
 import { installDemoFetch } from "./fetch";
 import { createDemoStore } from "./fixtures";
 import { createDemoRouter } from "./router";
+import { debugModeEnabled } from "@/devtools/debug-mode";
 
-installDemoFetch(createDemoRouter(createDemoStore()));
+const store = createDemoStore();
+// Debug commands (`debug: …` chat messages) come with debug mode, and only
+// then is their code loaded.
+if (debugModeEnabled) store.debug = (await import("./debug-commands")).debugTurn;
+installDemoFetch(createDemoRouter(store));
 mountBanner();
 await import("../main");
