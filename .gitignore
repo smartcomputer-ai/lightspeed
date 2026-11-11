@@ -189,6 +189,7 @@ activemq-data/
 
 # Environments
 .env
+/examples/streamlit-lightspeed/.env.bootstrap
 .envrc
 .venv
 env/

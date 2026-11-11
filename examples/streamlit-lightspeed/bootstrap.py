@@ -11,6 +11,7 @@ import os
 import stat
 import sys
 from collections.abc import Awaitable
+from io import StringIO
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlsplit
@@ -134,13 +135,14 @@ def model_override(args: argparse.Namespace) -> ModelConfig | None:
     selected = (args.model_provider, args.model_api_kind, args.model)
     if all(selected):
         return {"providerId": selected[0], "apiKind": selected[1], "model": selected[2]}
-    if any(selected) or os.environ.get("LIGHTSPEED_DEMO_MODEL_API_KEY"):
+    if any(selected):
         raise SetupError("Pass --model-provider, --model-api-kind, and --model together.")
     return None
 
 
-async def ensure_model_provider(client: AsyncLightspeedClient, model: ModelConfig) -> None:
-    credential = os.environ.get("LIGHTSPEED_DEMO_MODEL_API_KEY")
+async def ensure_model_provider(
+    client: AsyncLightspeedClient, model: ModelConfig, credential: str,
+) -> None:
     if not credential:
         return
     provider = f"model:{model['providerId']}"
@@ -240,6 +242,14 @@ async def update_profile_model(
 
 async def initialize(args: argparse.Namespace) -> None:
     values = dotenv_values(args.env_file, interpolate=False)
+    secrets = (
+        dotenv_values(stream=StringIO(private_read(args.setup_env_file)), interpolate=False)
+        if args.setup_env_file.exists() else {}
+    )
+
+    def secret(key: str) -> str:
+        return (os.environ.get(key, secrets.get(key)) or "").strip()
+
     handoff = launcher_handoff()
     configured_gateway = values.get("LIGHTSPEED_API_URL") or DEFAULT_GATEWAY
     endpoint = gateway_url(
@@ -247,13 +257,14 @@ async def initialize(args: argparse.Namespace) -> None:
         or handoff.get("endpoint") or DEFAULT_GATEWAY,
     )
     launcher = endpoint == handoff.get("endpoint") and urlsplit(endpoint).hostname in {"127.0.0.1", "::1", "localhost"}
-    admin_key = os.environ.get("LIGHTSPEED_DEMO_ADMIN_API_KEY")
+    admin_key = secret("LIGHTSPEED_DEMO_ADMIN_API_KEY")
     if not admin_key and launcher and handoff.get("credentialFile"):
         admin_key = private_read(Path(handoff["credentialFile"]))
     if not admin_key:
         raise SetupError("Start authenticated ./dev.sh or set LIGHTSPEED_DEMO_ADMIN_API_KEY for this gateway.")
 
     model = model_override(args)
+    model_credential = secret("LIGHTSPEED_DEMO_MODEL_API_KEY")
     profile = args.profile or os.environ.get("LIGHTSPEED_PROFILE_ID") or values.get("LIGHTSPEED_PROFILE_ID") or "internals-demo"
     app_key = values.get("LIGHTSPEED_API_KEY") if endpoint == configured_gateway else None
     access = await read_access(endpoint, app_key or "")
@@ -273,10 +284,14 @@ async def initialize(args: argparse.Namespace) -> None:
         universe = await resolve_universe(admin, selector)
         async with AsyncLightspeedClient(endpoint, api_key=admin_key, universe=universe) as client:
             if model:
-                await ensure_model_provider(client, model)
+                await ensure_model_provider(client, model, model_credential)
             effective_model = await ensure_profile(client, profile, args, launcher, model)
             if effective_model is None:
                 effective_model = (await client.read_model_defaults())["defaults"].get("agentRun")
+            if model_credential and model is None:
+                if effective_model is None:
+                    raise SetupError("Choose an agent-run model or pass the model route options before registering its key.")
+                await ensure_model_provider(client, effective_model, model_credential)
         key_message = await ensure_app_key(admin, endpoint, universe, access)
 
     print(f"Configured Lightspeed universe {universe} on {endpoint}.")
@@ -292,6 +307,10 @@ async def initialize(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, default=EXAMPLE / ".env", help="Read existing connection settings from this file")
+    parser.add_argument(
+        "--setup-env-file", type=Path, default=EXAMPLE / ".env.bootstrap",
+        help="Read provisioning credentials from this owner-only file",
+    )
     parser.add_argument("--gateway", help="Gateway /rpc URL")
     parser.add_argument("--universe", help="Existing Lightspeed universe UUID or slug")
     parser.add_argument("--profile", help="Demo profile ID")

@@ -12,7 +12,8 @@ TEST_UNIVERSE = "6c696768-7473-4065-8064-000000000010"
 
 def arguments(path, **overrides):
     return Namespace(**{
-        "env_file": path, "gateway": None, "universe": None, "profile": None,
+        "env_file": path, "setup_env_file": path.with_name(".env.bootstrap"),
+        "gateway": None, "universe": None, "profile": None,
         "environment_id": None, "envd_endpoint": None, "model_provider": None,
         "model_api_kind": None, "model": None, **overrides,
     })
@@ -28,11 +29,16 @@ def test_explicit_remote_target_does_not_use_local_handoff_key(monkeypatch, tmp_
         asyncio.run(bootstrap.initialize(args))
 
 
-def test_local_setup_targets_platform_test_universe_and_leaves_app_config(monkeypatch, tmp_path):
+@pytest.mark.parametrize("provider_credential", ["", "fixture-provider-key"])
+def test_local_setup_targets_platform_test_universe_and_leaves_app_config(monkeypatch, tmp_path, provider_credential):
     calls = []
     env_file = tmp_path / ".env"
     original = "LIGHTSPEED_API_URL=http://127.0.0.1:18080/rpc\nUSER_SETTING=keep\n"
     env_file.write_text(original)
+    if provider_credential:
+        setup_file = tmp_path / ".env.bootstrap"
+        setup_file.write_text(f"LIGHTSPEED_DEMO_MODEL_API_KEY={provider_credential}\n")
+        setup_file.chmod(0o600)
     key_file = tmp_path / "launcher.key"
     key_file.write_text("launcher-key")
     key_file.chmod(0o600)
@@ -77,6 +83,12 @@ def test_local_setup_targets_platform_test_universe_and_leaves_app_config(monkey
                 return {"result": {"snapshotRef": "snapshot"}}
             if method == "deployment/api-keys/create":
                 return {"result": {"apiKey": {"keyPrefix": "prefix"}, "secret": "scoped-key"}}
+            if method == "auth/providers/read":
+                if any(call[1] == "auth/providers/create" for call in calls):
+                    return {"result": {"provider": {}}}
+                raise bootstrap.LightspeedRpcError({"code": -32004, "message": "missing"})
+            if method == "auth/providers/create":
+                return {"result": {"provider": {}}}
             raise AssertionError(f"Unexpected method {method}")
 
         async def read_profile(self, profile_id):
@@ -116,6 +128,13 @@ def test_local_setup_targets_platform_test_universe_and_leaves_app_config(monkey
     assert len(key_calls) == 1
     assert key_calls[0]["scope"] == {"kind": "universe", "universeId": TEST_UNIVERSE}
     assert env_file.read_text() == original
+    provider_calls = [(universe, params) for universe, method, params in calls if method == "auth/providers/create"]
+    if provider_credential:
+        assert provider_calls == [(TEST_UNIVERSE, {
+            "providerId": "model:openai", "config": {"type": "modelApiKey"}, "credential": provider_credential,
+        })]
+    else:
+        assert provider_calls == []
     key = next((tmp_path / ".lightspeed-dev").glob("streamlit-bootstrap/*/api-key"))
     assert key.read_text() == "scoped-key\n"
     assert key.stat().st_mode & 0o777 == 0o600

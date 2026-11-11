@@ -36,19 +36,33 @@ For a different deployment, specify its gateway and target universe:
   --environment-id "$DEMO_ENVIRONMENT_ID"
 ```
 
-Connect a real model in **Models** in Lightspeed and choose **Models → Defaults
-→ Agent runs**, or give the demo profile its own route:
+### Supply a model key
+
+Copy the bootstrap template to the gitignored, owner-only file
+`.env.bootstrap` in this directory:
+
+```sh
+install -m 600 .env.bootstrap.example .env.bootstrap
+```
+
+Set `LIGHTSPEED_DEMO_MODEL_API_KEY` in that file and run
+`./init-env.sh --universe test`. The initializer registers the key in
+Lightspeed for the provider selected by the demo profile or the universe's
+**Agent runs** default. Use a credential for that provider. You can also put
+`LIGHTSPEED_DEMO_ADMIN_API_KEY` here when provisioning a different gateway.
+Exported variables override the file.
+
+To give the demo profile its own model route, pass all three model options:
 
 ```sh
 ./init-env.sh --universe test --model-provider openai \
   --model-api-kind openai:responses --model "$DEMO_MODEL"
 ```
 
-If that provider is missing, set `LIGHTSPEED_DEMO_MODEL_API_KEY` in the setup
-shell to register its credential on the selected Lightspeed universe. Setup
-preserves existing credentials and universe model defaults. Repeating setup
-reuses the workspace, profile, and key. The initializer reads connection
-settings from `.env` and leaves that file available for you to configure separately.
+Setup preserves existing credentials and universe model defaults. Rotate an
+existing provider key in Lightspeed. Repeating setup reuses the workspace,
+profile, and key. Streamlit reads its connection settings separately from
+`.env`.
 
 ## Connect Streamlit
 
