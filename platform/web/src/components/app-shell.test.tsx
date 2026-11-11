@@ -18,8 +18,8 @@ vi.mock("@/lib/universes", async (original) => ({
 vi.mock("@/components/universe-switcher", () => ({ UniverseSwitcher: () => null }));
 vi.mock("@/components/user-menu", () => ({ UserMenu: () => null }));
 
-const WORK = ["Bots", "Sessions"];
-const SETUP = ["Profiles", "Workspaces", "Environments", "MCP servers", "Models"];
+const WORK = ["Bots", "Sessions", "Workspaces"];
+const SETUP = ["Profiles", "Environments", "MCP servers", "Models"];
 
 let root: Root;
 let container: HTMLDivElement;
@@ -102,7 +102,7 @@ it("leaves switched-off channels out of the menu", async () => {
 
 it("leaves bots, and the channels they need, out of the menu", async () => {
   expect(await sidebarFor("admin", { bots: false, channels: false })).toMatchObject({
-    "": ["Sessions"],
+    "": ["Sessions", "Workspaces"],
     Settings: ["General", "Templates"],
   });
 });
@@ -110,8 +110,8 @@ it("leaves bots, and the channels they need, out of the menu", async () => {
 it("links each page at its flat route", async () => {
   await sidebarFor("admin");
   expect([...container.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
-    "/u/test/bots", "/u/test/sessions",
-    "/u/test/profiles", "/u/test/workspaces", "/u/test/environments", "/u/test/mcp-servers", "/u/test/models",
+    "/u/test/bots", "/u/test/sessions", "/u/test/workspaces",
+    "/u/test/profiles", "/u/test/environments", "/u/test/mcp-servers", "/u/test/models",
     "/u/test/credentials", "/u/test/api-keys", "/u/test/members",
     "/u/test/settings/general", "/u/test/settings/channels", "/u/test/settings/templates",
   ]);

@@ -37,7 +37,7 @@ const SETTINGS_NAV: UniverseNavItem[] = [
   { path: "settings/templates", label: "Templates", icon: TemplateIcon, action: "configureResource" },
 ];
 
-/// The work itself, the setup agents are made from, access (credentials,
+/// The work itself (with the workspaces that hold it), the setup agents are made from, access (credentials,
 /// keys and members), and the universe's settings. A group renders only when
 /// one of its items is visible.
 export const UNIVERSE_NAV: UniverseNavGroup[] = [
@@ -46,6 +46,7 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
     items: [
       { path: "bots", label: "Bots", icon: BotIcon, action: "read", feature: "bots" },
       { path: "sessions", label: "Sessions", icon: SessionIcon, action: "read" },
+      { path: "workspaces", label: "Workspaces", icon: WorkspaceIcon, action: "read" },
     ],
   },
   {
@@ -53,7 +54,6 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
     label: "Setup",
     items: [
       { path: "profiles", label: "Profiles", icon: ProfileIcon, action: "read" },
-      { path: "workspaces", label: "Workspaces", icon: WorkspaceIcon, action: "read" },
       { path: "environments", label: "Environments", icon: EnvironmentIcon, action: "read" },
       { path: "mcp-servers", label: "MCP servers", icon: McpServerIcon, action: "read" },
       { path: "models", label: "Models", icon: ModelIcon, action: "read" },
