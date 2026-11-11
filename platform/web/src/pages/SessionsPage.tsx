@@ -62,6 +62,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DIALOG_WARP_MS,
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -265,6 +266,12 @@ function SessionList({
     refetchIntervalInBackground: false,
   });
   const [createOpen, setCreateOpen] = useCreateParam("session");
+  // The new-session dialog stays mounted until it has finished closing, so
+  // its close (and a warp's fade-out) can play.
+  const [createShown, setCreateShown] = useState(createOpen);
+  useEffect(() => {
+    if (createOpen) setCreateShown(true);
+  }, [createOpen]);
   const [selecting, setSelecting] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -699,11 +706,12 @@ function SessionList({
           </Button>
         </ListPaneFooter>
       )}
-      {canCreate && createOpen && <NewSessionDialog
+      {canCreate && (createOpen || createShown) && <NewSessionDialog
         universeId={universeId}
         slug={slug}
         open={createOpen}
         onOpenChange={setCreateOpen}
+        onClosed={() => setCreateShown(false)}
         search={listSearch}
       />}
     </>
@@ -937,12 +945,15 @@ function NewSessionDialog({
   slug,
   open,
   onOpenChange,
+  onClosed,
   search,
 }: {
   universeId: string;
   slug: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Its close has finished (animations included). */
+  onClosed?: () => void;
   search: string;
 }) {
   const canSetRetention = useActionPermissions(universeId).can("setSessionRetention");
@@ -990,6 +1001,15 @@ function NewSessionDialog({
       <ProviderReadinessBanner universeId={universeId} slug={slug} model={effectiveModel.model ?? (defaults.data ? null : undefined)} enabled={open && !modelPending} className="rounded-lg border" />
     </div>
   );
+  // Creating sends the dialog off to warp (see launch): it closes once the
+  // session exists and the warp has built up, fading out over the new
+  // session, which opens behind it.
+  const [warp, setWarp] = useState(false);
+  const warpStarted = useRef(0);
+  useEffect(() => {
+    if (open) setWarp(false);
+  }, [open]);
+
   const create = useMutation({
     mutationFn: () =>
       api<SessionView>("POST", `/api/v1/universes/${universeId}/sessions`, {
@@ -998,7 +1018,6 @@ function NewSessionDialog({
       }),
     onSuccess: async (session) => {
       await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
-      onOpenChange(false);
       const target = session.id;
       setDisplayName("");
       setProfileId("");
@@ -1007,12 +1026,32 @@ function NewSessionDialog({
       setConfigError(null);
       setRetentionError(null);
       setError(null);
+      // The new session opens behind the warp; the dialog (open while the
+      // address asks for it) stays until the warp has built up, then closes,
+      // which fades it all out over the session.
+      const path = `/u/${slug}/sessions/${target}`;
       const nextSearch = new URLSearchParams(search);
+      navigate(`${path}?${nextSearch}`);
       nextSearch.delete("new");
-      navigate(`/u/${slug}/sessions/${target}${nextSearch.size ? `?${nextSearch}` : ""}`);
+      const remaining = Math.max(0, DIALOG_WARP_MS - (performance.now() - warpStarted.current));
+      window.setTimeout(
+        () => navigate(`${path}${nextSearch.size ? `?${nextSearch}` : ""}`, { replace: true }),
+        remaining,
+      );
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      // Called off: the dialog comes back with the error.
+      setWarp(false);
+      setError(err.message);
+    },
   });
+
+  /// Creates the session and sends the dialog off to warp meanwhile.
+  const launch = () => {
+    warpStarted.current = performance.now();
+    setWarp(true);
+    create.mutate();
+  };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -1024,7 +1063,7 @@ function NewSessionDialog({
       setError(configError ? `Config: ${configError}` : retentionError ? `Retention: ${retentionError}` : resourceError);
       return;
     }
-    create.mutate();
+    launch();
   };
 
   const changeOpen = (next: boolean) => {
@@ -1058,8 +1097,10 @@ function NewSessionDialog({
     : null;
 
   return (
-    <Dialog open={open} onOpenChange={changeOpen}>
+    <Dialog open={open} onOpenChange={changeOpen} onOpenChangeComplete={(next) => { if (!next) onClosed?.(); }}>
       <DialogContent
+        starscape
+        warp={warp}
         className={step === "setup"
           ? "h-[min(92dvh,900px)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 p-0 sm:max-w-4xl"
           : undefined}
@@ -1182,7 +1223,7 @@ function NewSessionDialog({
                 <Button
                   type="button"
                   disabled={create.isPending || modelPending || modelMissing || Boolean(configError || retentionError || resourceFeatureError)}
-                  onClick={() => create.mutate()}
+                  onClick={launch}
                 >
                   {create.isPending ? "Creating…" : "Create session"}
                 </Button>

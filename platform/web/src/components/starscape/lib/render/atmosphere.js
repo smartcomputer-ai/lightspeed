@@ -146,16 +146,26 @@ export class Atmosphere {
   paintNebula(ctx, view, config, transparent = false) {
     if (config.nebulaAmount <= 0.001) return;
 
+    // The haze covers the frame and the window together: a window reaching
+    // past the frame (a wide host around a tall frame) would otherwise show
+    // the clouds stopping at the frame's edge. Generated at that shape, so
+    // it is not stretched; a window inside the frame leaves it the frame.
+    const left = Math.min(0, view.viewX);
+    const top = Math.min(0, view.viewY);
+    const width = Math.max(view.width, view.viewX + view.viewWidth) - left;
+    const height = Math.max(view.height, view.viewY + view.viewHeight) - top;
+    const aspect = width / height;
+
     const key = [
       transparent,
       config.seed | 0,
       Math.round(config.nebulaScale * 100),
       Math.round(config.nebulaHue),
-      Math.round(view.aspect * 100),
+      Math.round(aspect * 100),
     ].join(':');
 
     if (this.nebulaTextureKey !== key) {
-      this.nebulaTexture = buildNebulaTexture(config, view.aspect, transparent);
+      this.nebulaTexture = buildNebulaTexture(config, aspect, transparent);
       this.nebulaTextureKey = key;
     }
 
@@ -164,7 +174,7 @@ export class Atmosphere {
     ctx.imageSmoothingQuality = 'high';
     // Scaled well down: the haze should register as depth, never as scenery.
     ctx.globalAlpha = clamp(config.nebulaAmount * config.exposure * 0.42, 0, 1);
-    ctx.drawImage(this.nebulaTexture, 0, 0, view.width, view.height);
+    ctx.drawImage(this.nebulaTexture, left, top, width, height);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
   }

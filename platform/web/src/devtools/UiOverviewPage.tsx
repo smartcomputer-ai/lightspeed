@@ -851,7 +851,7 @@ function MenusSection() {
 function OverlaysSection() {
   return (
     <Category id="overlays">
-      <Specimen title="Dialog">
+      <Specimen title="Dialog" note="and with the starscape on its backdrop (DialogContent starscape), as a new session's">
         <Dialog>
           <DialogTrigger render={<Button variant="outline" />}>Open dialog</DialogTrigger>
           <DialogContent>
@@ -863,6 +863,20 @@ function OverlaysSection() {
             <DialogFooter>
               <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
               <DialogClose render={<Button />}>Save</DialogClose>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog>
+          <DialogTrigger render={<Button variant="outline" />}>Open with starscape</DialogTrigger>
+          <DialogContent starscape>
+            <DialogHeader>
+              <DialogTitle>New session</DialogTitle>
+              <DialogDescription>Start from a named profile or customize an inline setup.</DialogDescription>
+            </DialogHeader>
+            <Input placeholder="Scratch chat" aria-label="Session name" />
+            <DialogFooter>
+              <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+              <DialogClose render={<Button />}>Create</DialogClose>
             </DialogFooter>
           </DialogContent>
         </Dialog>
