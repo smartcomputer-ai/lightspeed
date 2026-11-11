@@ -120,7 +120,7 @@ fn auth_grant_lease_response_redacts_token_in_debug_output() {
         token: "super-secret-leased-token".to_owned(),
         expires_at_ms: Some(1234),
         grant_id: "authgrant_1".to_owned(),
-        provider_kind: AuthProviderKind::StaticBearer,
+        provider_kind: AuthProviderKind::StaticToken,
     };
 
     let debug = format!("{response:?}");
@@ -2881,7 +2881,7 @@ impl AgentApiService for TestService {
             token: "leased-token".to_owned(),
             expires_at_ms: None,
             grant_id: params.grant_id,
-            provider_kind: AuthProviderKind::StaticBearer,
+            provider_kind: AuthProviderKind::StaticToken,
         }))
     }
 
@@ -2902,6 +2902,15 @@ impl AgentApiService for TestService {
         params: AuthGrantReadParams,
     ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(AuthGrantReadResponse {
+            grant: test_auth_grant(params.grant_id, AuthGrantStatus::Active),
+        }))
+    }
+
+    async fn replace_auth_grant(
+        &self,
+        params: AuthGrantReplaceParams,
+    ) -> Result<AgentApiOutcome<AuthGrantReplaceResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(AuthGrantReplaceResponse {
             grant: test_auth_grant(params.grant_id, AuthGrantStatus::Active),
         }))
     }
@@ -2992,6 +3001,15 @@ impl AgentApiService for TestService {
                     .provider_id
                     .unwrap_or_else(|| "lightspeed-github".to_owned()),
             ),
+        }))
+    }
+
+    async fn replace_auth_provider(
+        &self,
+        params: AuthProviderReplaceParams,
+    ) -> Result<AgentApiOutcome<AuthProviderReplaceResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(AuthProviderReplaceResponse {
+            provider: test_auth_provider(params.provider_id),
         }))
     }
 
@@ -3321,7 +3339,7 @@ fn test_auth_grant(grant_id: String, status: AuthGrantStatus) -> AuthGrantView {
     AuthGrantView {
         grant_id,
         provider_id: "static".to_owned(),
-        provider_kind: AuthProviderKind::StaticBearer,
+        provider_kind: AuthProviderKind::StaticToken,
         exposure: AuthGrantExposure::Brokered,
         created_by: Attribution::Key {
             prefix: "lsk_abcdefgh".into(),
@@ -3626,6 +3644,7 @@ fn test_mcp_server(server_id: String) -> McpServerView {
         allow_private_network: false,
         auth_policy: McpServerAuthPolicy::None,
         credential: None,
+        headers: Default::default(),
         status: McpServerStatus::Active,
         revision: 1,
         created_at_ms: 1,

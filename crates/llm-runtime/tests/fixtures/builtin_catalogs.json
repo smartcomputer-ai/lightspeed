@@ -332,7 +332,7 @@
             "additionalProperties": false,
             "properties": {
               "path": {
-                "description": "Directory path to list. Defaults to the workspace root.",
+                "description": "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
                 "type": "string"
               }
             },
@@ -778,17 +778,17 @@
           "type": "function"
         },
         {
-          "description": "Runs a command in a shell (a PTY when `tty` is true), returning output or a session ID for ongoing interaction. A command may leave services running for later calls; they keep running until stopped or the environment closes. Operates only in the active environment; attached VFS files are not implicitly available.",
+          "description": "Runs command text in the selected environment shell (a PTY when `tty` is true), returning output or a session ID for ongoing interaction. A command may leave services running for later calls; they keep running until stopped or the environment closes. Operates only in the active environment; attached VFS files are not implicitly available.",
           "name": "exec_command",
           "parameters": {
             "additionalProperties": false,
             "properties": {
               "cmd": {
-                "description": "Shell command to execute.",
+                "description": "Command text interpreted by the selected shell.",
                 "type": "string"
               },
               "login": {
-                "description": "Run in a login shell. Defaults to true.",
+                "description": "Load shell profiles. Defaults to true for bash, false for other shells.",
                 "type": [
                   "boolean",
                   "null"
@@ -804,6 +804,20 @@
                   {
                     "type": "null"
                   }
+                ]
+              },
+              "shell": {
+                "description": "Select an installed shell from the environment context. Omission uses its default shell.",
+                "enum": [
+                  "bash",
+                  "powerShell",
+                  "windowsPowerShell",
+                  "gitBash",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "tty": {
@@ -959,7 +973,7 @@
             "additionalProperties": false,
             "properties": {
               "path": {
-                "description": "Directory path to list. Defaults to the workspace root.",
+                "description": "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
                 "type": "string"
               }
             },
@@ -1429,17 +1443,17 @@
           "type": "function"
         },
         {
-          "description": "Runs a command to completion and returns its output. The process is terminated on timeout or cancellation and cannot be resumed. Operates only in the active environment; attached VFS files are not implicitly available.",
+          "description": "Runs command text in the selected environment shell to completion and returns its output. The process is terminated on timeout or cancellation and cannot be resumed. Operates only in the active environment; attached VFS files are not implicitly available.",
           "name": "exec_command",
           "parameters": {
             "additionalProperties": false,
             "properties": {
               "cmd": {
-                "description": "Shell command to execute.",
+                "description": "Command text interpreted by the selected shell.",
                 "type": "string"
               },
               "login": {
-                "description": "Run in a login shell. Defaults to true.",
+                "description": "Load shell profiles. Defaults to true for bash, false for other shells.",
                 "type": [
                   "boolean",
                   "null"
@@ -1455,6 +1469,20 @@
                   {
                     "type": "null"
                   }
+                ]
+              },
+              "shell": {
+                "description": "Select an installed shell from the environment context. Omission uses its default shell.",
+                "enum": [
+                  "bash",
+                  "powerShell",
+                  "windowsPowerShell",
+                  "gitBash",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "timeout_ms": {
@@ -1603,7 +1631,7 @@
             "additionalProperties": false,
             "properties": {
               "path": {
-                "description": "Directory path to list. Defaults to the workspace root.",
+                "description": "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
                 "type": "string"
               }
             },
@@ -2251,7 +2279,7 @@
             "additionalProperties": false,
             "properties": {
               "path": {
-                "description": "Directory path to list. Defaults to the workspace root.",
+                "description": "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
                 "type": "string"
               }
             },
@@ -2305,13 +2333,13 @@
           "type": "function"
         },
         {
-          "description": "Run a command. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
+          "description": "Run an executable directly, with no implicit shell. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
           "name": "run_process",
           "parameters": {
             "additionalProperties": false,
             "properties": {
               "argv": {
-                "description": "Command and arguments.",
+                "description": "Executable in argv[0], followed by separate arguments; no shell parsing or expansion. For shell syntax, invoke a shell explicitly, e.g. [\"bash\", \"-c\", \"...\"].",
                 "items": {
                   "type": "string"
                 },
@@ -3058,14 +3086,14 @@
           "type": "function"
         },
         {
-          "description": "Run one durable environment job and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control. Operates only in the active environment; attached VFS files are not implicitly available.",
+          "description": "Run one durable environment job from argv, with no implicit shell, and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control. Operates only in the active environment; attached VFS files are not implicitly available.",
           "name": "job_run",
           "parameters": {
             "additionalProperties": false,
             "description": "job_run",
             "properties": {
               "argv": {
-                "description": "Process argv for the single durable job.",
+                "description": "Executable in argv[0], followed by separate arguments; no shell parsing or expansion. For shell syntax, invoke a shell explicitly, e.g. [\"bash\", \"-c\", \"...\"].",
                 "items": {
                   "type": "string"
                 },
@@ -3121,7 +3149,7 @@
           "type": "function"
         },
         {
-          "description": "Start one or more durable environment jobs asynchronously. Returns one Promise per job; use await, cancel, or detach when appropriate. Operates only in the active environment; attached VFS files are not implicitly available.",
+          "description": "Start one or more durable environment jobs asynchronously from argv, with no implicit shell. Returns one Promise per job; use await, cancel, or detach when appropriate. Operates only in the active environment; attached VFS files are not implicitly available.",
           "name": "job_submit",
           "parameters": {
             "additionalProperties": false,
@@ -3132,6 +3160,7 @@
                   "additionalProperties": false,
                   "properties": {
                     "argv": {
+                      "description": "Executable in argv[0], followed by separate arguments; no shell parsing or expansion. For shell syntax, invoke a shell explicitly, e.g. [\"bash\", \"-c\", \"...\"].",
                       "items": {
                         "type": "string"
                       },
@@ -3471,7 +3500,7 @@
             "additionalProperties": false,
             "properties": {
               "path": {
-                "description": "Directory path to list. Defaults to the workspace root.",
+                "description": "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
                 "type": "string"
               }
             },
@@ -3824,12 +3853,12 @@
       },
       "tools": [
         {
-          "description": "Executes a shell command. Waits for it to finish, killing it at `timeout`, unless `run_in_background` is true, in which case it returns at once with an ID for BashOutput and KillShell. A command may leave services running; they keep running until stopped or the environment is closed. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
+          "description": "Executes command text in the selected environment shell. Waits for it to finish, killing it at `timeout`, unless `run_in_background` is true, in which case it returns at once with an ID for BashOutput and KillShell. A command may leave services running; they keep running until stopped or the environment is closed. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
               "command": {
-                "description": "The command to execute.",
+                "description": "Command text interpreted by the selected shell.",
                 "type": "string"
               },
               "dangerouslyDisableSandbox": {
@@ -3850,6 +3879,20 @@
                 "description": "Run the command in the background and return its ID at once. Read its output with BashOutput and stop it with KillShell.",
                 "type": [
                   "boolean",
+                  "null"
+                ]
+              },
+              "shell": {
+                "description": "Select an installed shell from the environment context. Omission uses its default shell.",
+                "enum": [
+                  "bash",
+                  "powerShell",
+                  "windowsPowerShell",
+                  "gitBash",
+                  null
+                ],
+                "type": [
+                  "string",
                   "null"
                 ]
               },
@@ -4137,7 +4180,7 @@
             "additionalProperties": false,
             "properties": {
               "path": {
-                "description": "Directory path to list. Defaults to the workspace root.",
+                "description": "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
                 "type": "string"
               }
             },
@@ -4535,12 +4578,12 @@
       },
       "tools": [
         {
-          "description": "Executes a shell command and waits for it to finish, killing it at `timeout`. A command may leave services running; they keep running until stopped or the environment is closed. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
+          "description": "Executes command text in the selected environment shell and waits for it to finish, killing it at `timeout`. A command may leave services running; they keep running until stopped or the environment is closed. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
               "command": {
-                "description": "The command to execute.",
+                "description": "Command text interpreted by the selected shell.",
                 "type": "string"
               },
               "dangerouslyDisableSandbox": {
@@ -4552,6 +4595,20 @@
               },
               "description": {
                 "description": "Clear, concise description of what this command does.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "shell": {
+                "description": "Select an installed shell from the environment context. Omission uses its default shell.",
+                "enum": [
+                  "bash",
+                  "powerShell",
+                  "windowsPowerShell",
+                  "gitBash",
+                  null
+                ],
                 "type": [
                   "string",
                   "null"
@@ -4788,7 +4845,7 @@
             "additionalProperties": false,
             "properties": {
               "path": {
-                "description": "Directory path to list. Defaults to the workspace root.",
+                "description": "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
                 "type": "string"
               }
             },
@@ -5668,7 +5725,7 @@
             "additionalProperties": false,
             "properties": {
               "path": {
-                "description": "Directory path to list. Defaults to the workspace root.",
+                "description": "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
                 "type": "string"
               }
             },
@@ -5719,12 +5776,12 @@
           "name": "read_file"
         },
         {
-          "description": "Run a command. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
+          "description": "Run an executable directly, with no implicit shell. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
           "input_schema": {
             "additionalProperties": false,
             "properties": {
               "argv": {
-                "description": "Command and arguments.",
+                "description": "Executable in argv[0], followed by separate arguments; no shell parsing or expansion. For shell syntax, invoke a shell explicitly, e.g. [\"bash\", \"-c\", \"...\"].",
                 "items": {
                   "type": "string"
                 },
@@ -6429,13 +6486,13 @@
           "name": "detach"
         },
         {
-          "description": "Run one durable environment job and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control. Operates only in the active environment; attached VFS files are not implicitly available.",
+          "description": "Run one durable environment job from argv, with no implicit shell, and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control. Operates only in the active environment; attached VFS files are not implicitly available.",
           "input_schema": {
             "additionalProperties": false,
             "description": "job_run",
             "properties": {
               "argv": {
-                "description": "Process argv for the single durable job.",
+                "description": "Executable in argv[0], followed by separate arguments; no shell parsing or expansion. For shell syntax, invoke a shell explicitly, e.g. [\"bash\", \"-c\", \"...\"].",
                 "items": {
                   "type": "string"
                 },
@@ -6490,7 +6547,7 @@
           "name": "job_run"
         },
         {
-          "description": "Start one or more durable environment jobs asynchronously. Returns one Promise per job; use await, cancel, or detach when appropriate. Operates only in the active environment; attached VFS files are not implicitly available.",
+          "description": "Start one or more durable environment jobs asynchronously from argv, with no implicit shell. Returns one Promise per job; use await, cancel, or detach when appropriate. Operates only in the active environment; attached VFS files are not implicitly available.",
           "input_schema": {
             "additionalProperties": false,
             "description": "job_submit",
@@ -6500,6 +6557,7 @@
                   "additionalProperties": false,
                   "properties": {
                     "argv": {
+                      "description": "Executable in argv[0], followed by separate arguments; no shell parsing or expansion. For shell syntax, invoke a shell explicitly, e.g. [\"bash\", \"-c\", \"...\"].",
                       "items": {
                         "type": "string"
                       },
@@ -6983,7 +7041,7 @@
               "additionalProperties": false,
               "properties": {
                 "path": {
-                  "description": "Directory path to list. Defaults to the workspace root.",
+                  "description": "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
                   "type": "string"
                 }
               },
@@ -7476,17 +7534,17 @@
         },
         {
           "function": {
-            "description": "Runs a command in a shell (a PTY when `tty` is true), returning output or a session ID for ongoing interaction. A command may leave services running for later calls; they keep running until stopped or the environment closes. Operates only in the active environment; attached VFS files are not implicitly available.",
+            "description": "Runs command text in the selected environment shell (a PTY when `tty` is true), returning output or a session ID for ongoing interaction. A command may leave services running for later calls; they keep running until stopped or the environment closes. Operates only in the active environment; attached VFS files are not implicitly available.",
             "name": "exec_command",
             "parameters": {
               "additionalProperties": false,
               "properties": {
                 "cmd": {
-                  "description": "Shell command to execute.",
+                  "description": "Command text interpreted by the selected shell.",
                   "type": "string"
                 },
                 "login": {
-                  "description": "Run in a login shell. Defaults to true.",
+                  "description": "Load shell profiles. Defaults to true for bash, false for other shells.",
                   "type": [
                     "boolean",
                     "null"
@@ -7502,6 +7560,20 @@
                     {
                       "type": "null"
                     }
+                  ]
+                },
+                "shell": {
+                  "description": "Select an installed shell from the environment context. Omission uses its default shell.",
+                  "enum": [
+                    "bash",
+                    "powerShell",
+                    "windowsPowerShell",
+                    "gitBash",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "tty": {
@@ -7663,7 +7735,7 @@
               "additionalProperties": false,
               "properties": {
                 "path": {
-                  "description": "Directory path to list. Defaults to the workspace root.",
+                  "description": "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
                   "type": "string"
                 }
               },
@@ -8180,17 +8252,17 @@
         },
         {
           "function": {
-            "description": "Runs a command to completion and returns its output. The process is terminated on timeout or cancellation and cannot be resumed. Operates only in the active environment; attached VFS files are not implicitly available.",
+            "description": "Runs command text in the selected environment shell to completion and returns its output. The process is terminated on timeout or cancellation and cannot be resumed. Operates only in the active environment; attached VFS files are not implicitly available.",
             "name": "exec_command",
             "parameters": {
               "additionalProperties": false,
               "properties": {
                 "cmd": {
-                  "description": "Shell command to execute.",
+                  "description": "Command text interpreted by the selected shell.",
                   "type": "string"
                 },
                 "login": {
-                  "description": "Run in a login shell. Defaults to true.",
+                  "description": "Load shell profiles. Defaults to true for bash, false for other shells.",
                   "type": [
                     "boolean",
                     "null"
@@ -8206,6 +8278,20 @@
                     {
                       "type": "null"
                     }
+                  ]
+                },
+                "shell": {
+                  "description": "Select an installed shell from the environment context. Omission uses its default shell.",
+                  "enum": [
+                    "bash",
+                    "powerShell",
+                    "windowsPowerShell",
+                    "gitBash",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "timeout_ms": {
@@ -8360,7 +8446,7 @@
               "additionalProperties": false,
               "properties": {
                 "path": {
-                  "description": "Directory path to list. Defaults to the workspace root.",
+                  "description": "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
                   "type": "string"
                 }
               },
@@ -9038,7 +9124,7 @@
               "additionalProperties": false,
               "properties": {
                 "path": {
-                  "description": "Directory path to list. Defaults to the workspace root.",
+                  "description": "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
                   "type": "string"
                 }
               },
@@ -9096,13 +9182,13 @@
         },
         {
           "function": {
-            "description": "Run a command. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
+            "description": "Run an executable directly, with no implicit shell. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`. Paths are resolved within the configured filesystem scope. Operates only in the active environment; attached VFS files are not implicitly available.",
             "name": "run_process",
             "parameters": {
               "additionalProperties": false,
               "properties": {
                 "argv": {
-                  "description": "Command and arguments.",
+                  "description": "Executable in argv[0], followed by separate arguments; no shell parsing or expansion. For shell syntax, invoke a shell explicitly, e.g. [\"bash\", \"-c\", \"...\"].",
                   "items": {
                     "type": "string"
                   },
@@ -9864,14 +9950,14 @@
         },
         {
           "function": {
-            "description": "Run one durable environment job and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control. Operates only in the active environment; attached VFS files are not implicitly available.",
+            "description": "Run one durable environment job from argv, with no implicit shell, and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control. Operates only in the active environment; attached VFS files are not implicitly available.",
             "name": "job_run",
             "parameters": {
               "additionalProperties": false,
               "description": "job_run",
               "properties": {
                 "argv": {
-                  "description": "Process argv for the single durable job.",
+                  "description": "Executable in argv[0], followed by separate arguments; no shell parsing or expansion. For shell syntax, invoke a shell explicitly, e.g. [\"bash\", \"-c\", \"...\"].",
                   "items": {
                     "type": "string"
                   },
@@ -9929,7 +10015,7 @@
         },
         {
           "function": {
-            "description": "Start one or more durable environment jobs asynchronously. Returns one Promise per job; use await, cancel, or detach when appropriate. Operates only in the active environment; attached VFS files are not implicitly available.",
+            "description": "Start one or more durable environment jobs asynchronously from argv, with no implicit shell. Returns one Promise per job; use await, cancel, or detach when appropriate. Operates only in the active environment; attached VFS files are not implicitly available.",
             "name": "job_submit",
             "parameters": {
               "additionalProperties": false,
@@ -9940,6 +10026,7 @@
                     "additionalProperties": false,
                     "properties": {
                       "argv": {
+                        "description": "Executable in argv[0], followed by separate arguments; no shell parsing or expansion. For shell syntax, invoke a shell explicitly, e.g. [\"bash\", \"-c\", \"...\"].",
                         "items": {
                           "type": "string"
                         },

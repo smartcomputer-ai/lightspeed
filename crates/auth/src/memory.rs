@@ -110,6 +110,30 @@ impl AuthGrantStore for InMemoryAuthGrantStore {
         Ok(record.clone())
     }
 
+    async fn replace_grant_token(
+        &self,
+        grant_id: &AuthGrantId,
+        expected: &SecretId,
+        replacement: AuthGrantTokenRefresh,
+    ) -> Result<Option<AuthGrantRecord>, AuthRegistryError> {
+        let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
+        let record = inner
+            .get_mut(grant_id)
+            .ok_or_else(|| AuthRegistryError::GrantNotFound {
+                grant_id: grant_id.clone(),
+            })?;
+        if record.access_token_secret.as_ref() != Some(expected) {
+            return Ok(None);
+        }
+        let mut next = record.clone();
+        next.access_token_secret = Some(replacement.access_token_secret);
+        next.expires_at_ms = replacement.expires_at_ms;
+        next.updated_at_ms = replacement.updated_at_ms;
+        next.validate()?;
+        *record = next.clone();
+        Ok(Some(next))
+    }
+
     async fn record_grant_lease(
         &self,
         grant_id: &AuthGrantId,
@@ -275,6 +299,29 @@ impl AuthProviderStore for InMemoryAuthProviderStore {
             .ok_or_else(|| AuthRegistryError::ProviderNotFound {
                 provider_id: provider_id.clone(),
             })
+    }
+
+    async fn replace_auth_provider(
+        &self,
+        record: AuthProviderRecord,
+        expected_credential: Option<&SecretId>,
+    ) -> Result<Option<AuthProviderRecord>, AuthRegistryError> {
+        let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
+        let current = inner.get_mut(&record.provider_id).ok_or_else(|| {
+            AuthRegistryError::ProviderNotFound {
+                provider_id: record.provider_id.clone(),
+            }
+        })?;
+        if current.credential_secret.as_ref() != expected_credential {
+            return Ok(None);
+        }
+        let next = AuthProviderRecord {
+            created_at_ms: current.created_at_ms,
+            ..record
+        };
+        next.validate()?;
+        *current = next.clone();
+        Ok(Some(next))
     }
 }
 
@@ -451,13 +498,13 @@ impl SecretStore for InMemorySecretStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AuthProviderKind, SECRET_KIND_STATIC_BEARER};
+    use crate::{AuthProviderKind, SECRET_KIND_STATIC_TOKEN};
 
     fn grant_request(grant_id: &str) -> CreateAuthGrantRecord {
         CreateAuthGrantRecord {
             grant_id: AuthGrantId::new(grant_id),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticBearer,
+            provider_kind: AuthProviderKind::StaticToken,
             exposure: crate::AuthGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: None,
@@ -534,25 +581,136 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn in_memory_grant_token_replacement_swaps_only_from_the_expected_value() {
+        let store = InMemoryAuthGrantStore::new();
+        let grant_id = AuthGrantId::new("authgrant_1");
+        store
+            .create_grant(grant_request("authgrant_1"))
+            .await
+            .expect("create grant");
+        let replacement = |secret: &str| AuthGrantTokenRefresh {
+            access_token_secret: SecretId::new(secret),
+            refresh_token_secret: None,
+            expires_at_ms: Some(50),
+            updated_at_ms: 20,
+        };
+
+        let swapped = store
+            .replace_grant_token(
+                &grant_id,
+                &SecretId::new("authsec_1"),
+                replacement("authsec_2"),
+            )
+            .await
+            .expect("replace")
+            .expect("expected value matched");
+        assert_eq!(
+            swapped.access_token_secret,
+            Some(SecretId::new("authsec_2"))
+        );
+        assert_eq!(swapped.expires_at_ms, Some(50));
+
+        // A writer that read the old value loses and changes nothing.
+        let stale = store
+            .replace_grant_token(
+                &grant_id,
+                &SecretId::new("authsec_1"),
+                replacement("authsec_3"),
+            )
+            .await
+            .expect("replace");
+        assert!(stale.is_none());
+        assert_eq!(
+            store
+                .read_grant(&grant_id)
+                .await
+                .expect("read")
+                .access_token_secret,
+            Some(SecretId::new("authsec_2"))
+        );
+
+        assert!(matches!(
+            store
+                .replace_grant_token(
+                    &AuthGrantId::new("authgrant_missing"),
+                    &SecretId::new("authsec_1"),
+                    replacement("authsec_4"),
+                )
+                .await,
+            Err(AuthRegistryError::GrantNotFound { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn in_memory_provider_replacement_swaps_only_from_the_expected_credential() {
+        use crate::{AuthProviderConfig, AuthProviderId, AuthProviderStatus, ModelApiKeyConfig};
+
+        let store = InMemoryAuthProviderStore::new();
+        let provider = |secret: &str, at: i64| CreateAuthProviderRecord {
+            provider_id: AuthProviderId::new("model:openai"),
+            display_name: None,
+            config: AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
+            credential_secret: Some(SecretId::new(secret)),
+            status: AuthProviderStatus::Active,
+            created_at_ms: at,
+        };
+        store
+            .create_auth_provider(provider("authsec_1", 10))
+            .await
+            .expect("create provider");
+
+        let replaced = store
+            .replace_auth_provider(
+                provider("authsec_2", 20).into_record(),
+                Some(&SecretId::new("authsec_1")),
+            )
+            .await
+            .expect("replace")
+            .expect("expected credential matched");
+        assert_eq!(replaced.credential_secret, Some(SecretId::new("authsec_2")));
+        assert_eq!(replaced.created_at_ms, 10, "creation time is kept");
+
+        // A writer that read the old credential loses and changes nothing.
+        assert!(
+            store
+                .replace_auth_provider(
+                    provider("authsec_3", 30).into_record(),
+                    Some(&SecretId::new("authsec_1")),
+                )
+                .await
+                .expect("replace")
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .read_auth_provider(&AuthProviderId::new("model:openai"))
+                .await
+                .expect("read")
+                .credential_secret,
+            Some(SecretId::new("authsec_2"))
+        );
+    }
+
+    #[tokio::test]
     async fn in_memory_secret_store_round_trips_values() {
         let store = InMemorySecretStore::new();
 
         let meta = store
             .put_secret(PutSecretRecord {
                 secret_id: SecretId::new("authsec_1"),
-                secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+                secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
                 value: SecretValue::new("token-123"),
                 created_at_ms: 10,
             })
             .await
             .expect("put secret");
-        assert_eq!(meta.secret_kind, SECRET_KIND_STATIC_BEARER);
+        assert_eq!(meta.secret_kind, SECRET_KIND_STATIC_TOKEN);
 
         assert!(matches!(
             store
                 .put_secret(PutSecretRecord {
                     secret_id: SecretId::new("authsec_1"),
-                    secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+                    secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
                     value: SecretValue::new("token-456"),
                     created_at_ms: 11,
                 })

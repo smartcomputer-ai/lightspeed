@@ -16,12 +16,9 @@ use crate::{
         tools::{ContinueProcessArgs, RunProcessArgs, invoke_continue_process, invoke_run_process},
     },
     error::{ToolError, ToolResult},
-    fs::{
-        FsPath,
-        tools::{
-            EditFileArgs, GlobArgs, GrepArgs, GrepResult, ReadFileArgs, WriteFileArgs,
-            invoke_edit_file, invoke_glob, invoke_grep, invoke_read_file, invoke_write_file,
-        },
+    fs::tools::{
+        EditFileArgs, GlobArgs, GrepArgs, GrepResult, ReadFileArgs, WriteFileArgs,
+        invoke_edit_file, invoke_glob, invoke_grep, invoke_read_file, invoke_write_file,
     },
     limits::ToolLimits,
     runtime::{ToolInvocationOutput, decode_args, encode_output},
@@ -65,10 +62,10 @@ pub(super) fn description(tool: BuiltinTool, scoped_paths: bool) -> ToolResult<S
         (BuiltinToolOperation::Grep, _) => "Searches file contents with a regular expression.",
         (BuiltinToolOperation::Glob, _) => "Finds files by glob pattern.",
         (BuiltinToolOperation::RunProcess, _) if tool.one_shot() => {
-            "Executes a shell command and waits for it to finish, killing it at `timeout`. A command may leave services running; they keep running until stopped or the environment is closed."
+            "Executes command text in the selected environment shell and waits for it to finish, killing it at `timeout`. A command may leave services running; they keep running until stopped or the environment is closed."
         }
         (BuiltinToolOperation::RunProcess, _) => {
-            "Executes a shell command. Waits for it to finish, killing it at `timeout`, unless `run_in_background` is true, in which case it returns at once with an ID for BashOutput and KillShell. A command may leave services running; they keep running until stopped or the environment is closed."
+            "Executes command text in the selected environment shell. Waits for it to finish, killing it at `timeout`, unless `run_in_background` is true, in which case it returns at once with an ID for BashOutput and KillShell. A command may leave services running; they keep running until stopped or the environment is closed."
         }
         (BuiltinToolOperation::ContinueProcess, BuiltinToolVariant::Primary) => {
             "Wait up to `timeout` for a background command to finish and return the output produced since the last call. Returns at once if it has already exited, with its exit code."
@@ -218,7 +215,14 @@ pub(super) fn input_schema(tool: BuiltinTool) -> ToolResult<Value> {
         ),
         (BuiltinToolOperation::RunProcess, _) if tool.one_shot() => object(
             [
-                ("command", string("The command to execute.")),
+                (
+                    "command",
+                    string("Command text interpreted by the selected shell."),
+                ),
+                (
+                    "shell",
+                    serde_json::json!({"type": ["string", "null"], "enum": ["bash", "powerShell", "windowsPowerShell", "gitBash", null], "description": "Select an installed shell from the environment context. Omission uses its default shell."}),
+                ),
                 (
                     "timeout",
                     nullable_integer("Optional kill deadline in milliseconds. Defaults to 60000."),
@@ -236,7 +240,14 @@ pub(super) fn input_schema(tool: BuiltinTool) -> ToolResult<Value> {
         ),
         (BuiltinToolOperation::RunProcess, _) => object(
             [
-                ("command", string("The command to execute.")),
+                (
+                    "command",
+                    string("Command text interpreted by the selected shell."),
+                ),
+                (
+                    "shell",
+                    serde_json::json!({"type": ["string", "null"], "enum": ["bash", "powerShell", "windowsPowerShell", "gitBash", null], "description": "Select an installed shell from the environment context. Omission uses its default shell."}),
+                ),
                 (
                     "timeout",
                     nullable_integer(
@@ -384,11 +395,8 @@ pub(super) async fn invoke_json(
             let args: ClaudeCodeBashArgs = decode_args(arguments)?;
             let env_ctx = ctx.environment()?;
             let background = !tool.one_shot() && args.run_in_background.unwrap_or(false);
-            let result = invoke_run_process(
-                env_ctx,
-                args.into_run_process_args(background, &env_ctx.limits),
-            )
-            .await?;
+            let request = args.into_run_process_args(background, env_ctx)?;
+            let result = invoke_run_process(env_ctx, request).await?;
             encode_process_output(result, ProcessPresentation::ClaudeBash { background })
         }
         (BuiltinToolOperation::ContinueProcess, BuiltinToolVariant::Primary) => {
@@ -591,6 +599,7 @@ impl ClaudeCodeGlobArgs {
 
 #[derive(Debug, Deserialize)]
 struct ClaudeCodeBashArgs {
+    shell: Option<environment_protocol::data::platform::ShellKind>,
     command: String,
     timeout: Option<u64>,
     #[allow(dead_code)]
@@ -605,7 +614,19 @@ impl ClaudeCodeBashArgs {
     /// A background start is a zero yield with no kill deadline; a foreground
     /// command waits to exit under `timeout` as a kill deadline, as in
     /// Claude Code.
-    fn into_run_process_args(self, background: bool, limits: &ToolLimits) -> RunProcessArgs {
+    fn into_run_process_args(
+        self,
+        background: bool,
+        ctx: &crate::environment::EnvironmentToolContext,
+    ) -> ToolResult<RunProcessArgs> {
+        let limits = &ctx.limits;
+        let argv = ctx.shell_argv(
+            &self.command,
+            environment_client::shell::ShellOptions {
+                shell: self.shell,
+                ..Default::default()
+            },
+        )?;
         let (yield_ms, timeout_ms) = if background {
             (Some(0), None)
         } else {
@@ -614,8 +635,8 @@ impl ClaudeCodeBashArgs {
                 Some(self.timeout.unwrap_or(limits.default_process_timeout_ms)),
             )
         };
-        RunProcessArgs {
-            argv: vec!["bash".to_string(), "-lc".to_string(), self.command],
+        Ok(RunProcessArgs {
+            argv,
             cwd: None,
             env: BTreeMap::new(),
             stdin: None,
@@ -623,7 +644,7 @@ impl ClaudeCodeBashArgs {
             yield_ms,
             timeout_ms,
             max_output_bytes: None,
-        }
+        })
     }
 }
 
@@ -662,10 +683,8 @@ impl ClaudeCodeKillShellArgs {
     }
 }
 
-fn parse_fs_path(path: String) -> ToolResult<FsPath> {
-    FsPath::new(path)
-        .map_err(crate::fs::FsError::from)
-        .map_err(ToolError::from)
+fn parse_fs_path(path: String) -> ToolResult<crate::fs::PathInput> {
+    Ok(path.into())
 }
 
 fn claude_code_grep_visible(
@@ -736,21 +755,26 @@ mod tests {
     #[test]
     fn bash_maps_background_to_a_zero_yield_and_foreground_to_a_kill_deadline() {
         let limits = ToolLimits::default();
+        let ctx = crate::environment::EnvironmentToolContext::new(
+            None,
+            std::sync::Arc::new(harness::storage::InMemoryBlobStore::new()),
+        )
+        .with_limits(limits);
         let background: ClaudeCodeBashArgs =
             decode_args(json!({ "command": "make", "run_in_background": true })).expect("args");
-        let args = background.into_run_process_args(true, &limits);
+        let args = background.into_run_process_args(true, &ctx).unwrap();
         assert_eq!(args.argv, ["bash", "-lc", "make"]);
         assert_eq!(args.yield_ms, Some(0));
         assert_eq!(args.timeout_ms, None);
 
         let foreground: ClaudeCodeBashArgs =
             decode_args(json!({ "command": "make", "timeout": 5000 })).expect("args");
-        let args = foreground.into_run_process_args(false, &limits);
+        let args = foreground.into_run_process_args(false, &ctx).unwrap();
         assert_eq!(args.yield_ms, None);
         assert_eq!(args.timeout_ms, Some(5000));
 
         let defaulted: ClaudeCodeBashArgs = decode_args(json!({ "command": "ls" })).expect("args");
-        let args = defaulted.into_run_process_args(false, &limits);
+        let args = defaulted.into_run_process_args(false, &ctx).unwrap();
         assert_eq!(args.timeout_ms, Some(limits.default_process_timeout_ms));
         assert!(!args.tty);
     }

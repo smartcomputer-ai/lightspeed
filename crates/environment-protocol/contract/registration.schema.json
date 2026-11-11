@@ -1088,7 +1088,7 @@
       ]
     }
   },
-  "description": "Every wire type of the registration plane, protocol version 4.",
+  "description": "Every wire type of the registration plane, protocol version 5.",
   "title": "Lightspeed environment registration channel",
   "x-lightspeed-bootstrap": {
     "buildFacts": {

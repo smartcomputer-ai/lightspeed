@@ -290,12 +290,12 @@ async fn plan_hunks(
     for hunk in hunks {
         match hunk {
             Hunk::AddFile { path, contents } => {
-                let path = resolve_patch_path(cwd, path)?;
+                let path = resolve_patch_path(fs, cwd, path)?;
                 plan.check_file_target(fs, &path).await?;
                 plan.plan_add(path, contents.clone());
             }
             Hunk::DeleteFile { path } => {
-                let path = resolve_patch_path(cwd, path)?;
+                let path = resolve_patch_path(fs, cwd, path)?;
                 plan.plan_delete(fs, path).await?;
             }
             Hunk::UpdateFile {
@@ -303,11 +303,11 @@ async fn plan_hunks(
                 move_path,
                 chunks,
             } => {
-                let path = resolve_patch_path(cwd, path)?;
+                let path = resolve_patch_path(fs, cwd, path)?;
                 plan.plan_update(fs, max_file_read_bytes, path.clone(), chunks)
                     .await?;
                 if let Some(move_path) = move_path {
-                    let destination = resolve_patch_path(cwd, move_path)?;
+                    let destination = resolve_patch_path(fs, cwd, move_path)?;
                     if destination != path {
                         plan.check_file_target(fs, &destination).await?;
                         plan.plan_move(path, destination);
@@ -403,21 +403,15 @@ fn invalid_patch(message: impl Into<String>) -> ToolError {
     }
 }
 
-fn resolve_patch_path(cwd: Option<&FsPath>, path: &Path) -> ToolResult<FsPath> {
+fn resolve_patch_path(
+    fs: &dyn FileSystem,
+    cwd: Option<&FsPath>,
+    path: &Path,
+) -> ToolResult<FsPath> {
     let path = path.to_str().ok_or_else(|| FsError::InvalidInput {
         message: "patch path is not valid UTF-8".to_string(),
     })?;
-    let path = FsPath::new(path).map_err(FsError::from)?;
-    if path.is_absolute() {
-        return Ok(path);
-    }
-    if let Some(cwd) = cwd {
-        return cwd
-            .join_path(&path)
-            .map_err(FsError::from)
-            .map_err(Into::into);
-    }
-    Ok(path)
+    fs.resolve_input_path(cwd, path).map_err(Into::into)
 }
 
 async fn create_parent_directories(fs: &dyn FileSystem, path: &FsPath) -> FsResult<()> {

@@ -17,7 +17,7 @@ const legacy = {
   config: { type: "modelApiKey" }, hasCredential: true, status: "active", createdAtMs: 1, updatedAtMs: 1,
 };
 const subscription = {
-  grantId: "claude", providerId: "anthropic", providerKind: "staticBearer", displayName: "Team Max", status: "active",
+  grantId: "claude", providerId: "anthropic", providerKind: "staticToken", displayName: "Team Max", status: "active",
   exposure: "brokered", createdBy: { kind: "local" }, hasAccessToken: true, hasRefreshToken: false, leaseCount: 0,
   metadata: { subscription: "claudeCode" }, createdAtMs: 1, updatedAtMs: 1,
 };

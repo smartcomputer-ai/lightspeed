@@ -202,7 +202,13 @@ function Directory({
   entries: Record<string, VfsTreeEntry>;
 }) {
   const drag = useWorkspaceEntryDrag();
-  const [open, setOpen] = useState(true);
+  // Folders start collapsed so a large workspace renders only its top level;
+  // the folders holding the file being viewed open so it stays visible.
+  const holdsActive = props.activePath?.startsWith(`${path}/`) ?? false;
+  const [open, setOpen] = useState(holdsActive);
+  useEffect(() => {
+    if (holdsActive) setOpen(true);
+  }, [holdsActive, props.activePath]);
   const focused = props.focusedPath === path;
   const dropTarget = useWorkspaceDropTarget() === path;
   return (

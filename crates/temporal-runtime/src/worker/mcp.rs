@@ -20,8 +20,8 @@ use tokio::sync::Mutex;
 use url::Url;
 
 use crate::gateway::service::mcp_discovery::{
-    ConfiguratorTrustedHeaderPolicy, DiscoveredMcpInventory, HttpMcpToolDiscoverer,
-    McpToolCallRequest, McpToolDiscoverer,
+    ConfiguratorTrustedHeaderPolicy, DiscoveredMcpInventory, HttpMcpToolDiscoverer, McpRequestAuth,
+    McpToolCallRequest, McpToolDiscoverer, resolve_mcp_request_headers,
 };
 
 pub enum RuntimeMcpExecutionOutcome {
@@ -236,15 +236,9 @@ impl RuntimeMcpInventoryResolver {
             .trusted_header
             .permits(&spec.server_id, &record.server_url)
             .then_some(self.universe_id);
-        let bearer = if trusted_universe.is_some() {
-            None
-        } else {
-            record_bearer(self.secrets.as_ref(), &record)
-                .await
-                .map_err(|error| {
-                    McpInventoryError::new(format!("resolve MCP credential: {error}"))
-                })?
-        };
+        let auth = record_auth(self.secrets.as_ref(), &record, trusted_universe.is_some())
+            .await
+            .map_err(|error| McpInventoryError::new(format!("resolve MCP credential: {error}")))?;
         let allow_private = self
             .private_networks
             .permits(&record.server_url, record.allow_private_network);
@@ -252,7 +246,7 @@ impl RuntimeMcpInventoryResolver {
             .discoverer
             .discover_tools(
                 &record.server_url,
-                bearer.as_ref(),
+                &auth,
                 trusted_universe,
                 allow_private,
                 mcp::McpToolDiscoveryLimits::default(),
@@ -307,15 +301,22 @@ async fn usable_record(
     }
 }
 
-async fn record_bearer(
+/// The live record's bearer and extra headers. A trusted-header server takes
+/// no bearer but still receives its configured headers.
+async fn record_auth(
     secrets: &dyn SecretResolver,
     record: &mcp::McpServerRecord,
-) -> Result<Option<SecretValue>, SecretResolveError> {
-    Ok(
+    trusted: bool,
+) -> Result<McpRequestAuth, SecretResolveError> {
+    let bearer = if trusted {
+        None
+    } else {
         resolve_mcp_bearer(secrets, record.server_id.as_str(), &record.server_url)
             .await?
-            .map(|value| SecretValue::new(value.expose())),
-    )
+            .map(|value| SecretValue::new(value.expose()))
+    };
+    let headers = resolve_mcp_request_headers(secrets, record).await?;
+    Ok(McpRequestAuth { bearer, headers })
 }
 
 impl RuntimeMcpExecutor {
@@ -639,13 +640,9 @@ impl RuntimeMcpExecutor {
             .trusted_header
             .permits(&target.server_id, &record.server_url)
             .then_some(self.universe_id);
-        let bearer = if trusted_universe.is_some() {
-            None
-        } else {
-            record_bearer(self.secrets.as_ref(), &record)
-                .await
-                .map_err(|error| format!("resolve MCP credential: {error}"))?
-        };
+        let auth = record_auth(self.secrets.as_ref(), &record, trusted_universe.is_some())
+            .await
+            .map_err(|error| format!("resolve MCP credential: {error}"))?;
         let allow_private = self
             .private_networks
             .permits(&record.server_url, record.allow_private_network);
@@ -653,7 +650,7 @@ impl RuntimeMcpExecutor {
             .transport
             .call_tool(
                 &record.server_url,
-                bearer.as_ref(),
+                &auth,
                 trusted_universe,
                 allow_private,
                 mcp::McpToolDiscoveryLimits::default(),
@@ -1284,7 +1281,7 @@ mod tests {
         async fn discover_tools(
             &self,
             _server_url: &str,
-            _bearer: Option<&SecretValue>,
+            _auth: &McpRequestAuth,
             _trusted_universe: Option<uuid::Uuid>,
             _allow_private_network: bool,
             _limits: mcp::McpToolDiscoveryLimits,
@@ -1339,6 +1336,7 @@ mod tests {
             allow_private_network,
             auth_policy: mcp::McpServerAuthPolicy::None,
             auth_grant_id: None,
+            headers: Default::default(),
             status: mcp::McpServerStatus::Active,
             now_ms: 1,
         }
@@ -1391,7 +1389,7 @@ mod tests {
         async fn discover_tools(
             &self,
             server_url: &str,
-            _bearer: Option<&SecretValue>,
+            _auth: &McpRequestAuth,
             _trusted_universe: Option<uuid::Uuid>,
             allow_private_network: bool,
             _limits: mcp::McpToolDiscoveryLimits,
@@ -1670,7 +1668,7 @@ mod tests {
         async fn discover_tools(
             &self,
             _server_url: &str,
-            _bearer: Option<&SecretValue>,
+            _auth: &McpRequestAuth,
             _trusted_universe: Option<uuid::Uuid>,
             _allow_private_network: bool,
             _limits: mcp::McpToolDiscoveryLimits,

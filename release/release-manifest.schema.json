@@ -11,6 +11,9 @@
     "rustVersion",
     "target",
     "envdTarget",
+    "envdTargets",
+    "envdBinaries",
+    "envdBuilds",
     "buildImage",
     "protocolVersion",
     "envdProtocolVersion",
@@ -31,6 +34,29 @@
     "rustVersion": { "type": "string", "minLength": 1 },
     "target": { "const": "x86_64-unknown-linux-gnu" },
     "envdTarget": { "type": "string", "pattern": "-linux-musl$" },
+    "envdTargets": {
+      "type": "array", "minItems": 2, "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9_]+(-[a-z0-9_]+)+$" }
+    },
+    "envdBinaries": {
+      "type": "object", "minProperties": 2,
+      "additionalProperties": { "$ref": "#/$defs/binaryArtifact" }
+    },
+    "envdBuilds": {
+      "type": "object", "additionalProperties": false,
+      "required": ["x86_64-unknown-linux-musl", "x86_64-pc-windows-msvc"],
+      "properties": {
+        "x86_64-unknown-linux-musl": {
+          "type": "object", "additionalProperties": false,
+          "required": ["buildImage", "rustVersion"],
+          "properties": {
+            "buildImage": { "type": "string", "pattern": "@sha256:[0-9a-f]{64}$" },
+            "rustVersion": { "type": "string", "minLength": 1 }
+          }
+        },
+        "x86_64-pc-windows-msvc": { "$ref": "#/$defs/windowsBuild" }
+      }
+    },
     "buildImage": { "type": "string", "pattern": "@sha256:[0-9a-f]{64}$" },
     "protocolVersion": { "type": "string", "minLength": 1 },
     "envdProtocolVersion": { "type": "integer", "minimum": 1 },
@@ -95,6 +121,28 @@
     }
   },
   "$defs": {
+    "windowsBuild": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "gitSha", "target", "protocolVersion", "file", "sha256",
+        "rustVersion", "cargoVersion", "cargoLockSha256", "osVersion", "msvcVersion",
+        "windowsSdkVersion", "linkerVersion", "rustFlags"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "gitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "target": { "const": "x86_64-pc-windows-msvc" },
+        "protocolVersion": { "type": "integer", "minimum": 1 },
+        "file": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "cargoLockSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "rustVersion": { "type": "string", "minLength": 1 },
+        "cargoVersion": { "type": "string", "minLength": 1 },
+        "osVersion": { "type": "string", "minLength": 1 },
+        "msvcVersion": { "type": "string", "minLength": 1 },
+        "windowsSdkVersion": { "type": "string", "minLength": 1 },
+        "linkerVersion": { "type": "string", "minLength": 1 },
+        "rustFlags": { "const": "-C target-feature=+crt-static" }
+      }
+    },
     "imageReference": {
       "type": ["string", "null"],
       "pattern": "@sha256:[0-9a-f]{64}$"

@@ -3,7 +3,7 @@ import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AddIcon, CredentialIcon, GitHubLogo, RevokeIcon, RowLinkIcon, SecretIcon } from "@/icons";
+import { AddIcon, CredentialIcon, GitHubLogo, RevokeIcon, RotateSecretIcon, RowLinkIcon, SecretIcon } from "@/icons";
 import {
   api,
   type GitHubApp,
@@ -71,11 +71,11 @@ import {
 import { isSubscriptionGrant } from "@/lib/subscriptions";
 import { useActiveUniverse } from "@/lib/universes";
 
-type SecretKind = "bearer" | "environment";
+type SecretKind = "token" | "environment";
 
 /// Grant kinds listed as reusable credentials: pasted tokens and secrets,
 /// GitHub App installations and custom OAuth.
-const REUSABLE_CREDENTIAL_KINDS = new Set(["staticBearer", "gitHubApp", "customOAuth"]);
+const REUSABLE_CREDENTIAL_KINDS = new Set(["staticToken", "gitHubApp", "customOAuth"]);
 
 /// A credential made for exactly one thing lives on that thing's page: model
 /// keys and subscription logins on Models, MCP server logins on MCP servers,
@@ -135,6 +135,7 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
     onSuccess: () => void invalidate(),
   });
 
+  const [replacing, setReplacing] = useState<SecretGrant | null>(null);
   const [showRevoked, setShowRevoked] = useState(false);
   const allGrants = inventory.data?.grants ?? [];
   const reusable = allGrants
@@ -237,6 +238,17 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
                     <GrantStatusBadge status={grant.status} />
                   </TableCell>
                   <TableActionsCell>
+                    {isReplaceable(grant) && (
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Replace value of ${grant.displayName ?? grant.grantId}`}
+                        title="Replace value"
+                        onClick={() => setReplacing(grant)}
+                      >
+                        <RotateSecretIcon />
+                      </Button>
+                    )}
                     {grant.status !== "revoked" && (
                       <AlertDialog>
                         <AlertDialogTrigger
@@ -279,6 +291,15 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
           </Table>
         </TableCard>
       )}
+      <ReplaceValueDialog
+        key={replacing?.grantId ?? "closed"}
+        universeId={universeId}
+        grant={replacing}
+        onOpenChange={(open) => {
+          if (!open) setReplacing(null);
+        }}
+        onReplaced={() => void invalidate()}
+      />
       {inventory.data && reusable.length > 0 && grants.length === 0 && (
         <p className="text-sm text-muted-foreground">Every credential here is revoked.</p>
       )}
@@ -565,16 +586,16 @@ function PasteCredentialDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="environment">Environment secret</SelectItem>
-                <SelectItem value="bearer">Bearer token</SelectItem>
+                <SelectItem value="token">Token</SelectItem>
               </SelectContent>
             </Select>
             <FieldDescription>
               {kind === "environment"
                 ? "Stores an opaque value for injection into an environment variable. Multiline values such as SSH private keys are preserved."
-                : "Creates a revocable access credential that MCP servers or environments can reference."}
+                : "Creates a revocable token that MCP servers, bots or environments can reference, as a bearer token or in a header of their own."}
             </FieldDescription>
           </Field>
-          {kind === "bearer" && (
+          {kind === "token" && (
             <Field className="rounded-lg border bg-muted/15 p-3">
               <label className="flex items-start gap-3">
                 <Checkbox
@@ -680,6 +701,109 @@ function PasteCredentialDialog({
   );
 }
 
+/// Active tokens and environment secrets take a new value in place; OAuth and
+/// GitHub App credentials renew themselves or reconnect instead.
+export function isReplaceable(grant: Pick<SecretGrant, "providerKind" | "status">): boolean {
+  return grant.providerKind === "staticToken" && grant.status === "active";
+}
+
+function ReplaceValueDialog({
+  universeId,
+  grant,
+  onOpenChange,
+  onReplaced,
+}: {
+  universeId: string;
+  grant: SecretGrant | null;
+  onOpenChange: (open: boolean) => void;
+  onReplaced: () => void;
+}) {
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const environment = grant?.providerId === "environment-secret";
+  const replace = useMutation<SecretGrant, Error, void>({
+    mutationFn: () =>
+      api<SecretGrant>(
+        "POST",
+        `/api/v1/universes/${universeId}/secrets/grants/${encodeURIComponent(grant!.grantId)}/replace`,
+        { value },
+      ),
+    onSuccess: () => {
+      setValue("");
+      onReplaced();
+      onOpenChange(false);
+    },
+    onError: (reason) => setError(reason.message),
+  });
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!value) {
+      setError("a new value is required");
+      return;
+    }
+    replace.mutate();
+  };
+  return (
+    <Dialog open={grant !== null} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Replace value</DialogTitle>
+          <DialogDescription>
+            {grant?.displayName ?? grant?.grantId} keeps its ID{" "}
+            <span className="font-mono text-xs">{grant?.grantId}</span>, so MCP servers, bot
+            triggers and environment variables using it switch to the new value on their next
+            request or process. Processes already running keep the old value. The old value is
+            deleted and the new one is never shown again.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="grid gap-4">
+          <Field>
+            <FieldLabel htmlFor="replace-value">New value</FieldLabel>
+            {environment ? (
+              <Textarea
+                id="replace-value"
+                value={value}
+                onChange={(event) => {
+                  setValue(event.target.value);
+                  setError(null);
+                }}
+                autoComplete="off"
+                spellCheck={false}
+                className="min-h-36 resize-y font-mono"
+                placeholder="Paste the value exactly, including any line breaks"
+                autoFocus
+              />
+            ) : (
+              <Input
+                id="replace-value"
+                type="password"
+                value={value}
+                onChange={(event) => {
+                  setValue(event.target.value);
+                  setError(null);
+                }}
+                autoComplete="new-password"
+                spellCheck={false}
+                className="font-mono"
+                autoFocus
+              />
+            )}
+          </Field>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={replace.isPending}>
+              {replace.isPending ? "Encrypting…" : "Replace value"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function credentialIdConflictMessage(grant: SecretGrant): string {
   return grant.status === "revoked"
     ? `Credential ID "${grant.grantId}" belongs to a revoked access credential and cannot be reused. Leave it blank to generate a new ID or choose another.`
@@ -707,7 +831,7 @@ function managedBy(grant: SecretGrant): string | null {
 
 function grantTypeLabel(grant: SecretGrant): string {
   if (grant.providerId === "environment-secret") return "Environment secret";
-  if (grant.providerKind === "staticBearer") return "Bearer token";
+  if (grant.providerKind === "staticToken") return "Token";
   if (grant.hasRefreshToken) return "OAuth (refreshable)";
   return grant.providerKind;
 }

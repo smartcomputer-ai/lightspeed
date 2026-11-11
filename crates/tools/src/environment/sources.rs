@@ -6,34 +6,7 @@ use environment_protocol::{
     },
     paths::EnvironmentPath,
 };
-use std::{
-    collections::BTreeSet,
-    path::{Component, Path, PathBuf},
-};
-
-pub fn absolute(base: &Path, value: &str) -> Result<PathBuf, String> {
-    let path = if Path::new(value).is_absolute() {
-        PathBuf::from(value)
-    } else {
-        base.join(value)
-    };
-    let mut normalized = PathBuf::new();
-    for part in path.components() {
-        match part {
-            Component::ParentDir => {
-                if !normalized.pop() {
-                    return Err("path escapes root".into());
-                }
-            }
-            Component::CurDir => {}
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-    if !normalized.is_absolute() {
-        return Err("working directory must be absolute".into());
-    }
-    Ok(normalized)
-}
+use std::collections::BTreeSet;
 
 pub fn scan_query(
     overrides: Option<&[String]>,
@@ -41,26 +14,28 @@ pub fn scan_query(
     home: Option<&str>,
     source: &str,
 ) -> Result<ScanParams, String> {
-    if !Path::new(cwd).is_absolute() {
-        return Err("working directory must be absolute".into());
-    }
-    let cwd = absolute(Path::new("/"), cwd)?;
+    let cwd = EnvironmentPath::new(cwd).map_err(|error| error.to_string())?;
     let mut roots = BTreeSet::new();
     if let Some(overrides) = overrides {
         if overrides.is_empty() {
             return Err("source root overrides must not be empty".into());
         }
         for root in overrides {
-            roots.insert(absolute(&cwd, root)?);
+            roots.insert(
+                environment_client::paths::resolve(&cwd, root)
+                    .map_err(|error| error.to_string())?,
+            );
         }
     } else {
         let home = home.ok_or("endpoint does not advertise execution user home directory")?;
-        if !Path::new(home).is_absolute() {
-            return Err("endpoint home directory must be absolute".into());
-        }
-        for base in [&cwd, &absolute(Path::new("/"), home)?] {
+        let home = environment_client::paths::absolute(home, cwd.convention())
+            .map_err(|error| error.to_string())?;
+        for base in [&cwd, &home] {
             for prefix in [".agents", ".lightspeed"] {
-                roots.insert(base.join(prefix).join(source));
+                roots.insert(
+                    environment_client::paths::resolve(base, &format!("{prefix}/{source}"))
+                        .map_err(|error| error.to_string())?,
+                );
             }
         }
     }
@@ -74,15 +49,12 @@ pub fn scan_query(
     Ok(ScanParams {
         roots: roots
             .into_iter()
-            .map(|path| {
-                Ok(ScanRoot {
-                    path: EnvironmentPath::new(path.to_string_lossy())
-                        .map_err(|e| e.to_string())?,
-                    if_none_match: None,
-                    max_depth: None,
-                })
+            .map(|path| ScanRoot {
+                path,
+                if_none_match: None,
+                max_depth: None,
             })
-            .collect::<Result<_, String>>()?,
+            .collect(),
         filter: TreeFilter {
             include: if source == "prompts" {
                 vec!["*.md".into(), "*.txt".into()]
@@ -121,6 +93,31 @@ pub fn with_working_directory_probe(params: &mut ScanParams, cwd: &EnvironmentPa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_source_roots_are_resolved_independently_of_controller_os() {
+        let query = scan_query(None, "C:/work/project", Some(r"D:\Users\dev"), "skills").unwrap();
+        let roots: Vec<_> = query.roots.iter().map(|root| root.path.as_str()).collect();
+        assert_eq!(
+            roots,
+            [
+                "C:/work/project/.agents/skills",
+                "C:/work/project/.lightspeed/skills",
+                "D:/Users/dev/.agents/skills",
+                "D:/Users/dev/.lightspeed/skills"
+            ]
+        );
+        let query = scan_query(
+            Some(&[r"..\shared".into(), r"E:\skills".into()]),
+            "C:/work/project",
+            None,
+            "skills",
+        )
+        .unwrap();
+        assert_eq!(query.roots[0].path.as_str(), "C:/work/shared");
+        assert_eq!(query.roots[1].path.as_str(), "E:/skills");
+        assert!(scan_query(Some(&[r"\rooted".into()]), "C:/work", None, "skills").is_err());
+    }
 
     #[test]
     fn discovery_scans_select_by_name_and_probe_the_working_directory() {

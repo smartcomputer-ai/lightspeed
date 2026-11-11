@@ -7,6 +7,7 @@ beforeEach(() => {
   }
   for (const name of [
     "LIGHTSPEED_PLATFORM_DATABASE_URL",
+    "LIGHTSPEED_PLATFORM_DATABASE_AUTH_MODE",
     "LIGHTSPEED_PLATFORM_AUTH_SECRET",
     "LIGHTSPEED_PLATFORM_DEV_SEED",
     "LIGHTSPEED_PLATFORM_BASE_URL",
@@ -16,6 +17,8 @@ beforeEach(() => {
     "LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN",
     "LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK",
     "LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER",
+    "LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_BYTES",
+    "LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_ENTRIES",
   ]) {
     vi.stubEnv(name, "");
   }
@@ -26,6 +29,33 @@ afterEach(() => {
 });
 
 describe("platform environment", () => {
+  test("selects database workload identity only when asked", () => {
+    vi.stubEnv("LIGHTSPEED_PLATFORM_DATABASE_URL", "postgres://platform");
+    vi.stubEnv("LIGHTSPEED_PLATFORM_AUTH_SECRET", "platform-secret");
+    vi.stubEnv("AZURE_CLIENT_ID", "client-id");
+    vi.stubEnv("AZURE_TENANT_ID", "tenant-id");
+    vi.stubEnv("AZURE_FEDERATED_TOKEN_FILE", "/var/run/token");
+    expect(loadEnv().databaseWorkloadIdentity).toBeNull();
+
+    vi.stubEnv("LIGHTSPEED_PLATFORM_DATABASE_AUTH_MODE", "workload_identity");
+    expect(loadEnv().databaseWorkloadIdentity).toMatchObject({ clientId: "client-id" });
+  });
+
+  test("reads workspace upload limits with today's defaults and refuses nonsense", () => {
+    vi.stubEnv("LIGHTSPEED_PLATFORM_DATABASE_URL", "postgres://platform");
+    vi.stubEnv("LIGHTSPEED_PLATFORM_AUTH_SECRET", "platform-secret");
+    expect(loadEnv().workspaceUploadLimits).toEqual({ maxBytes: 32 * 1024 * 1024, maxEntries: 10_000 });
+
+    vi.stubEnv("LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_BYTES", String(200 * 1024 * 1024));
+    vi.stubEnv("LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_ENTRIES", "50000");
+    expect(loadEnv().workspaceUploadLimits).toEqual({ maxBytes: 200 * 1024 * 1024, maxEntries: 50_000 });
+
+    for (const value of ["0", "1.5", "lots", String(512 * 1024 * 1024)]) {
+      vi.stubEnv("LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_BYTES", value);
+      expect(() => loadEnv(), value).toThrow("LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_BYTES");
+    }
+  });
+
   test("loads the Lightspeed platform names", () => {
     vi.stubEnv("LIGHTSPEED_PLATFORM_DATABASE_URL", "postgres://platform");
     vi.stubEnv("LIGHTSPEED_PLATFORM_AUTH_SECRET", "platform-secret");

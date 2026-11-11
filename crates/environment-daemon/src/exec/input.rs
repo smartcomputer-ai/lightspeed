@@ -15,7 +15,9 @@ use std::{
 };
 
 use environment_protocol::error::{PreconditionReason, ProtocolError};
-use tokio::{io::AsyncWriteExt as _, process::ChildStdin, sync::mpsc};
+use tokio::sync::mpsc;
+#[cfg(not(windows))]
+use tokio::{io::AsyncWriteExt as _, process::ChildStdin};
 
 /// `VEOF` in the default terminal settings (Ctrl-D): end of input for a
 /// canonical-mode reader at the start of a line.
@@ -23,7 +25,10 @@ const PTY_END_OF_INPUT: u8 = 0x04;
 
 /// Where queued input goes.
 pub(crate) enum InputSink {
+    #[cfg(not(windows))]
     Pipe(ChildStdin),
+    #[cfg(windows)]
+    NativePipe(std::fs::File),
     Pty(Box<dyn std::io::Write + Send>),
 }
 
@@ -107,8 +112,20 @@ impl Input {
         };
         let shared = self.shared.clone();
         match sink {
+            #[cfg(not(windows))]
             InputSink::Pipe(stdin) => {
                 tokio::spawn(write_pipe(stdin, receiver, shared));
+            }
+            #[cfg(windows)]
+            InputSink::NativePipe(writer) => {
+                let closed = shared.clone();
+                if std::thread::Builder::new()
+                    .name("envd-pipe-writer".into())
+                    .spawn(move || write_native_pipe(writer, receiver, shared))
+                    .is_err()
+                {
+                    closed.closed.store(true, Ordering::Release);
+                }
             }
             InputSink::Pty(writer) => {
                 // A thread of its own, not the blocking pool: a write the
@@ -183,6 +200,7 @@ impl Input {
     }
 }
 
+#[cfg(not(windows))]
 async fn write_pipe(
     stdin: ChildStdin,
     mut receiver: mpsc::UnboundedReceiver<Message>,
@@ -216,10 +234,28 @@ fn write_pty(
     shared: Arc<Shared>,
 ) {
     let mut writer = Some(writer);
+    #[cfg(windows)]
+    let mut previous_cr = false;
     while let Some(message) = receiver.blocking_recv() {
         let (data, close) = match message {
             Message::Data(data) => (data, false),
             Message::Close => (vec![PTY_END_OF_INPUT], true),
+        };
+        let queued_bytes = data.len() as u64;
+        #[cfg(windows)]
+        let data = {
+            let mut normalized = Vec::with_capacity(data.len());
+            for byte in data {
+                if byte == b'\n' {
+                    if !previous_cr {
+                        normalized.push(b'\r');
+                    }
+                } else {
+                    normalized.push(byte);
+                }
+                previous_cr = byte == b'\r';
+            }
+            normalized
         };
         if let Some(pty) = writer.as_mut()
             && pty.write_all(&data).and_then(|()| pty.flush()).is_err()
@@ -230,9 +266,30 @@ fn write_pty(
         if close {
             shared.closed.store(true, Ordering::Release);
         } else {
-            shared.queued.fetch_sub(data.len() as u64, Ordering::AcqRel);
+            shared.queued.fetch_sub(queued_bytes, Ordering::AcqRel);
         }
     }
+}
+
+#[cfg(windows)]
+fn write_native_pipe(
+    mut writer: std::fs::File,
+    mut receiver: mpsc::UnboundedReceiver<Message>,
+    shared: Arc<Shared>,
+) {
+    while let Some(message) = receiver.blocking_recv() {
+        match message {
+            Message::Data(data) => {
+                let failed = writer.write_all(&data).is_err();
+                shared.queued.fetch_sub(data.len() as u64, Ordering::AcqRel);
+                if failed {
+                    break;
+                }
+            }
+            Message::Close => break,
+        }
+    }
+    shared.closed.store(true, Ordering::Release);
 }
 
 #[cfg(test)]

@@ -169,6 +169,28 @@ controller, served on loopback with a bearer credential, with the real
 database and reconciler; it does not require Incus. The same fake controller
 runs the client's controller conformance suite in the ordinary test run.
 
+The native Windows daemon suite launches the built `lightspeed-envd.exe` on
+ephemeral loopback WebSocket ports. It needs no hosted server, database,
+registration credentials or model provider. Run from a Visual Studio Developer
+PowerShell with Rust/MSVC available, PowerShell 7 on PATH, Windows PowerShell
+5.1, Git for Windows in a standard installation, and permission to create
+symbolic links (Developer Mode or the corresponding account privilege):
+
+```powershell
+cargo test -p environment-daemon --test windows_live --locked -- --ignored --nocapture
+cargo test -p environment-daemon --test client_round_trip --locked model_tools_with_powershell_seven_and_git_bash -- --ignored
+```
+
+The live suite covers shared data conformance against the real executable,
+installed shell selection, direct argv and binary pipe reconnection, ConPTY
+input/interruption, read-only capabilities, daemon death and durable job
+recovery, interrupted transfers at three phases, concurrent publishers on
+independent sockets, and receipt replay after restart. Tests use separate
+temporary workspaces/state and own their daemon processes, so they may run in
+parallel. Missing prerequisites fail explicitly. The additional model-tool test
+exercises edit/build/test through the shell adapters. Neither suite establishes
+Linux-hosted execution, service installation, or upgrade behavior.
+
 VFS transfer coverage uses real Temporal, PostgreSQL, MinIO, and an envd that
 registers with a temporary local gateway. Its scripted model exercises each
 provider's tool presentation without a model key. On Linux or macOS, run:

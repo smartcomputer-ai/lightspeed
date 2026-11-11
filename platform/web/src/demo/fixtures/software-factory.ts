@@ -1391,7 +1391,7 @@ function seedIntegrations(universe: UniverseState): void {
     {
       grantId: GRANT.linear,
       providerId: "linear",
-      providerKind: "staticBearer",
+      providerKind: "staticToken",
       displayName: "Linear API key (acme workspace)",
       subjectHint: "ops@acme.example",
       status: "needsReauth",
@@ -1409,7 +1409,7 @@ function seedIntegrations(universe: UniverseState): void {
     {
       grantId: GRANT.linearWebhook,
       providerId: "linear-webhooks",
-      providerKind: "staticBearer",
+      providerKind: "staticToken",
       displayName: "Linear webhook signing secret",
       subjectHint: "intake · linear-webhook",
       status: "active",

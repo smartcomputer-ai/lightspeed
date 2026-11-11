@@ -444,6 +444,7 @@ async fn run_profiles_live_client(
             allow_private_network: false,
             auth_policy: api::McpServerAuthPolicy::None,
             credential: None,
+            headers: Default::default(),
             status: McpServerStatus::Active,
         },
         expected_revision: None,

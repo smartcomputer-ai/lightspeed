@@ -857,7 +857,7 @@ function seedIntegrations(universe: UniverseState): void {
     {
       grantId: GRANT.statuspage,
       providerId: MCP.statuspage,
-      providerKind: "staticBearer",
+      providerKind: "staticToken",
       displayName: "Statuspage API token",
       subjectHint: "northwind",
       status: "active",
@@ -917,7 +917,7 @@ function seedIntegrations(universe: UniverseState): void {
     {
       grantId: GRANT.pagerdutySigning,
       providerId: "pagerduty",
-      providerKind: "staticBearer",
+      providerKind: "staticToken",
       displayName: "PagerDuty webhook signing secret",
       subjectHint: "northwind-api",
       status: "active",
@@ -934,7 +934,7 @@ function seedIntegrations(universe: UniverseState): void {
     {
       grantId: GRANT.pagerdutyApi,
       providerId: "pagerduty",
-      providerKind: "staticBearer",
+      providerKind: "staticToken",
       displayName: "PagerDuty API token",
       subjectHint: "oncall-bot@northwind.dev",
       status: "needsReauth",

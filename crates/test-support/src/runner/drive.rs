@@ -2251,7 +2251,9 @@ mod tests {
         let current_skill = tools::fs::tools::invoke_read_file(
             &FsToolContext::new(Arc::new(current_fs), blob_store.clone()).with_cwd(FsPath::root()),
             tools::fs::tools::ReadFileArgs {
-                path: FsPath::new("/skills/system/deploy-review/SKILL.md").unwrap(),
+                path: FsPath::new("/skills/system/deploy-review/SKILL.md")
+                    .unwrap()
+                    .into(),
                 offset: None,
                 limit: None,
             },

@@ -953,7 +953,9 @@ fn validate_environment_attachments(
             defaults += 1;
         }
         if let Some(cwd) = &attachment.working_directory
-            && (!cwd.starts_with('/') || cwd.contains('\0'))
+            && (!(cwd.starts_with('/')
+                || matches!(cwd.as_bytes(), [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic()))
+                || cwd.contains('\0'))
         {
             return Err(DomainError::InvariantViolation(format!(
                 "environment {} working directory must be absolute",
@@ -2244,6 +2246,30 @@ mod tests {
         assert_eq!(feature.tool_access(), Some(EnvironmentAccess::Jobs));
         assert!(feature.is_attached("env_b"));
         assert!(!feature.is_attached("env_c"));
+
+        // Configuration is host-independent. The selected environment validates
+        // its own path grammar when resolving this absolute working directory.
+        for cwd in ["C:/work", r"c:\work\日本語", "/srv/app"] {
+            config.features.environments.as_mut().unwrap().environments[0].working_directory =
+                Some(cwd.to_owned());
+            config
+                .validate()
+                .expect("absolute remote working directory");
+        }
+        for cwd in [
+            "C:relative",
+            r"\rooted",
+            r"\\server\share",
+            r"\\?\C:\work",
+            "C:/bad\0",
+        ] {
+            config.features.environments.as_mut().unwrap().environments[0].working_directory =
+                Some(cwd.to_owned());
+            assert!(matches!(
+                config.validate(),
+                Err(DomainError::InvariantViolation(_))
+            ));
+        }
 
         let invalid = [
             vec![attachment("env_a"), attachment("env_a")],

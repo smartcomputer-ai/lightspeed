@@ -34,6 +34,10 @@ impl ReadOnlyFileSystem {
 
 #[async_trait]
 impl FileSystem for ReadOnlyFileSystem {
+    fn resolve_input_path(&self, cwd: Option<&FsPath>, value: &str) -> FsResult<FsPath> {
+        self.inner.resolve_input_path(cwd, value)
+    }
+
     async fn export_vfs(&self, path: &FsPath) -> FsResult<::vfs::VfsEntry> {
         self.inner.export_vfs(path).await
     }

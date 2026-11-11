@@ -1041,7 +1041,7 @@ function seedIntegrations(universe: UniverseState): void {
     {
       grantId: GRANT.slack,
       providerId: MCP.slack,
-      providerKind: "staticBearer",
+      providerKind: "staticToken",
       displayName: "Slack bot token (lumen.slack)",
       subjectHint: "@ada-assistant",
       status: "active",
@@ -1059,7 +1059,7 @@ function seedIntegrations(universe: UniverseState): void {
     {
       grantId: GRANT.stripe,
       providerId: MCP.stripe,
-      providerKind: "staticBearer",
+      providerKind: "staticToken",
       displayName: "Stripe restricted key (read)",
       subjectHint: "rk_live_…7Qx2",
       status: "active",
@@ -1077,7 +1077,7 @@ function seedIntegrations(universe: UniverseState): void {
     {
       grantId: GRANT.stripeSigning,
       providerId: "stripe-webhooks",
-      providerKind: "staticBearer",
+      providerKind: "staticToken",
       displayName: "Stripe webhook signing secret",
       subjectHint: "metrics · stripe-webhook",
       status: "active",

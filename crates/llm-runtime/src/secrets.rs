@@ -3,7 +3,8 @@
 //! `llm-runtime` owns this narrow boundary and stays free of auth-store
 //! dependencies. Hosting runtimes adapt their token broker to [`SecretResolver`]
 //! and dispatch on `SecretRef.namespace` (`mcp_server` -> the configured
-//! universe server credential, `env` -> environment lookup for development).
+//! universe server credential, `mcp_server_header` -> one of its credential
+//! headers, `env` -> environment lookup for development).
 //! Resolution happens immediately before
 //! a provider request is sent; resolved values never enter persisted request
 //! blobs, which carry `<redacted>` placeholders instead.
@@ -16,6 +17,9 @@ use thiserror::Error;
 
 pub const SECRET_NAMESPACE_ENV: &str = "env";
 pub const SECRET_NAMESPACE_MCP_SERVER: &str = "mcp_server";
+/// One credential-backed extra header of a configured MCP server. The id is
+/// `<server_id>/<header name>`; neither part can contain `/`.
+pub const SECRET_NAMESPACE_MCP_SERVER_HEADER: &str = "mcp_server_header";
 
 /// Placeholder written into persisted provider request blobs where a resolved
 /// auth value was injected into the sent request.

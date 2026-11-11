@@ -28,8 +28,8 @@ pub(crate) const REEXEC_REGISTRATION_KEY_ENV: &str = "LIGHTSPEED_ENVD_REEXEC_REG
 /// gateway protocol version the upgrade targeted. A later challenge naming
 /// that same version is refused instead of upgrading again.
 pub(crate) const AUTO_UPGRADE_ATTEMPTED_ENV: &str = "LIGHTSPEED_ENVD_AUTO_UPGRADE_ATTEMPTED";
-/// Name of the state directory below `$XDG_STATE_HOME` (or
-/// `$HOME/.local/state`).
+/// Name below the execution account's local application data on Windows, or
+/// `$XDG_STATE_HOME` (else `$HOME/.local/state`) on Unix.
 pub const STATE_DIR_NAME: &str = "lightspeed-envd";
 
 #[derive(Parser, Debug)]
@@ -125,7 +125,8 @@ pub struct DaemonArgs {
 
     /// Daemon key, job records and transfer journal. Defaults to
     /// `$XDG_STATE_HOME/lightspeed-envd`, else
-    /// `$HOME/.local/state/lightspeed-envd`. The data plane never addresses
+    /// `$HOME/.local/state/lightspeed-envd` on Unix; the execution account's
+    /// LocalAppData/lightspeed-envd on Windows. The data plane never addresses
     /// it, wherever it lives.
     #[arg(long, env = "LIGHTSPEED_ENVD_STATE_DIR")]
     pub state_dir: Option<PathBuf>,
@@ -251,7 +252,9 @@ pub struct RegistrationConfig {
 #[derive(Clone)]
 pub(crate) struct RestartInvocation {
     pub(crate) executable: PathBuf,
+    #[cfg(unix)]
     pub(crate) arg0: OsString,
+    #[cfg(unix)]
     pub(crate) args: Vec<OsString>,
 }
 
@@ -384,10 +387,22 @@ pub fn gateway_urls(url: &str, allow_insecure: bool) -> Result<GatewayUrls> {
 pub fn scrubbed_env_names() -> Vec<String> {
     let mut names: Vec<String> = std::env::vars_os()
         .filter_map(|(name, _)| name.into_string().ok())
-        .filter(|name| name.starts_with(ENV_PREFIX))
+        .filter(|name| is_daemon_env_name(name))
         .collect();
     names.sort();
     names
+}
+
+fn is_daemon_env_name(name: &str) -> bool {
+    #[cfg(windows)]
+    {
+        name.get(..ENV_PREFIX.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(ENV_PREFIX))
+    }
+    #[cfg(not(windows))]
+    {
+        name.starts_with(ENV_PREFIX)
+    }
 }
 
 impl DaemonArgs {
@@ -503,9 +518,11 @@ fn registration_config(
         .then(|| -> Result<RestartInvocation> {
             Ok(RestartInvocation {
                 executable: started_executable().context("find the started envd executable")?,
+                #[cfg(unix)]
                 arg0: std::env::args_os()
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("process has no argv[0]"))?,
+                #[cfg(unix)]
                 args: std::env::args_os().skip(1).collect(),
             })
         })
@@ -564,7 +581,7 @@ fn registration_config(
     Ok(registration)
 }
 
-/// The state directory, created `0700` and canonical. A defaulted
+/// The state directory, created with native private permissions and canonical. A defaulted
 /// directory must not lie inside `cwd`, the agent's working tree; an
 /// explicitly configured one may (confinement refuses data-plane access to
 /// it wherever it lives). A relative explicit path is taken against `cwd`.
@@ -573,6 +590,10 @@ fn resolve_state_dir(
     cwd: &Path,
     env: impl Fn(&str) -> Option<OsString>,
 ) -> Result<PathBuf> {
+    #[cfg(windows)]
+    if let Some(path) = &configured {
+        validate_configured_path(path)?;
+    }
     let (path, defaulted) = match configured {
         Some(path) if path.is_absolute() => (path, false),
         Some(path) => (cwd.join(path), false),
@@ -591,6 +612,7 @@ fn resolve_state_dir(
 
 /// `$XDG_STATE_HOME/lightspeed-envd` when that variable is an absolute
 /// path, else `$HOME/.local/state/lightspeed-envd`.
+#[cfg(not(windows))]
 fn default_state_dir(env: impl Fn(&str) -> Option<OsString>) -> Result<PathBuf> {
     if let Some(state_home) = env("XDG_STATE_HOME").map(PathBuf::from)
         && state_home.is_absolute()
@@ -607,9 +629,25 @@ fn default_state_dir(env: impl Fn(&str) -> Option<OsString>) -> Result<PathBuf> 
     }
 }
 
-/// Create the state directory when missing (`0700`; parents with default
-/// permissions), restrict it, and return its canonical path.
+#[cfg(windows)]
+fn default_state_dir(_: impl Fn(&str) -> Option<OsString>) -> Result<PathBuf> {
+    crate::windows_security::local_app_data()
+        .map(|directory| directory.join(STATE_DIR_NAME))
+        .context(
+            "resolve execution account LocalAppData: set LIGHTSPEED_ENVD_STATE_DIR if unavailable",
+        )
+}
+
+/// Create and restrict the state directory (`0700` on Unix, a protected
+/// user/SYSTEM DACL on Windows), and return its canonical path.
 pub fn prepare_state_dir(path: &Path) -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        validate_configured_path(path)?;
+        crate::windows_security::prepare_private_directory(path)
+            .with_context(|| format!("prepare private state dir {}", path.display()))?;
+    }
+    #[cfg(not(windows))]
     std::fs::create_dir_all(path)
         .with_context(|| format!("create state dir {}", path.display()))?;
     #[cfg(unix)]
@@ -674,13 +712,37 @@ fn native_filesystem_root(path: &Path) -> PathBuf {
 }
 
 fn canonical_dir(path: PathBuf, label: &str) -> Result<PathBuf> {
+    #[cfg(windows)]
+    validate_configured_path(&path)?;
     let canonical = path
         .canonicalize()
         .with_context(|| format!("canonicalize {label}: {}", path.display()))?;
     if !canonical.is_dir() {
         bail!("{label} must be a directory: {}", canonical.display());
     }
+    #[cfg(windows)]
+    let canonical = crate::windows_security::local_drive_path(&canonical)?;
     Ok(canonical)
+}
+
+#[cfg(windows)]
+fn validate_configured_path(path: &Path) -> Result<()> {
+    use std::path::{Component, Prefix};
+    if let Some(Component::Prefix(prefix)) = path.components().next()
+        && (!matches!(prefix.kind(), Prefix::Disk(_)) || !path.is_absolute())
+    {
+        bail!(
+            "configured paths require an ordinary local drive path: {}",
+            path.display()
+        );
+    }
+    if path.has_root() && !path.is_absolute() {
+        bail!(
+            "drive-relative configured paths are unsupported: {}",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -957,6 +1019,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn the_default_state_dir_follows_xdg_and_stays_out_of_cwd() {
         let env = |pairs: &'static [(&'static str, &'static str)]| {
             move |name: &str| {
@@ -1024,6 +1087,43 @@ mod tests {
         assert_eq!(
             parsed.discovery_url.as_deref(),
             Some("https://downloads.example/envd.json")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_state_defaults_use_the_execution_account_and_explicit_paths_stay_private() {
+        let expected = crate::windows_security::local_app_data()
+            .unwrap()
+            .join(STATE_DIR_NAME);
+        assert_eq!(
+            default_state_dir(|_| Some(OsString::from(r"C:\unrelated\profile"))).unwrap(),
+            expected
+        );
+        let temp = temp();
+        let cwd = canonical_dir(temp.path().join("work"), "test cwd").unwrap();
+        let state = resolve_state_dir(Some(PathBuf::from(".envd")), &cwd, |_| None).unwrap();
+        assert_eq!(state, cwd.join(".envd"));
+        assert!(state.is_dir());
+        assert!(!state.as_os_str().to_string_lossy().starts_with(r"\\?\"));
+        for path in [
+            r"\\?\C:\state",
+            r"\\server\share\state",
+            r"C:state",
+            r"\state",
+        ] {
+            assert!(validate_configured_path(Path::new(path)).is_err(), "{path}");
+        }
+    }
+
+    #[test]
+    fn daemon_environment_namespace_follows_native_name_comparison() {
+        assert!(is_daemon_env_name("LIGHTSPEED_ENVD_REGISTRATION_KEY"));
+        assert!(!is_daemon_env_name("PATH"));
+        assert!(!is_daemon_env_name("LIGHTSPEED_ENVD"));
+        assert_eq!(
+            is_daemon_env_name("Lightspeed_Envd_Registration_Key"),
+            cfg!(windows)
         );
     }
 

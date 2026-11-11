@@ -1,9 +1,39 @@
 import { Zip, ZipDeflate } from "fflate";
 import { z } from "zod";
 
-export const MAX_WORKSPACE_UPLOAD_BYTES = 32 * 1024 * 1024;
-export const MAX_WORKSPACE_UPLOAD_ENTRIES = 10_000;
-export const MAX_WORKSPACE_UPLOAD_BODY_BYTES = 48 * 1024 * 1024;
+/// How much one workspace upload may carry: total file content and entries.
+/// The Platform reads them from its environment and reports them to the web,
+/// so browser and server validate against the same values.
+export interface WorkspaceUploadLimits {
+  maxBytes: number;
+  maxEntries: number;
+}
+
+const MIB = 1024 * 1024;
+
+export const DEFAULT_WORKSPACE_UPLOAD_LIMITS: WorkspaceUploadLimits = {
+  maxBytes: 32 * MIB,
+  maxEntries: 10_000,
+};
+
+/// The highest configurable content limit. An upload travels as one JSON
+/// request with base64 content, and its body must stay within what one
+/// JavaScript string can hold.
+export const MAX_CONFIGURABLE_WORKSPACE_UPLOAD_BYTES = 256 * MIB;
+
+/// Request body budget for an upload: base64 grows content by a third, plus
+/// room for paths and JSON, never less than 1 MiB so a small content limit
+/// still admits the request around it. 32 MiB of content allows a 48 MiB body.
+export function workspaceUploadBodyBytes(limits: WorkspaceUploadLimits): number {
+  return Math.max(Math.ceil(limits.maxBytes * 1.5), MIB);
+}
+
+export function formatUploadBytes(bytes: number): string {
+  if (bytes >= 1024 * MIB) return `${+(bytes / (1024 * MIB)).toFixed(1)} GiB`;
+  if (bytes >= MIB) return `${+(bytes / MIB).toFixed(1)} MiB`;
+  if (bytes >= 1024) return `${+(bytes / 1024).toFixed(1)} KiB`;
+  return `${bytes} bytes`;
+}
 
 export function validWorkspaceTransferPath(path: string): boolean {
   return (
@@ -32,50 +62,62 @@ export const workspaceEntryRenameSchema = workspaceEntryDeleteSchema.extend({
 export const workspaceEntryMoveSchema = workspaceEntryDeleteSchema.extend({
   destination: pathSchema,
 });
-const fileSchema = z.object({
-  kind: z.literal("file"),
-  path: pathSchema,
-  contentBase64: z
-    .string()
-    .max(Math.ceil(MAX_WORKSPACE_UPLOAD_BYTES / 3) * 4)
-    .refine((value) => {
-      const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
-      return (
-        value.length % 4 === 0 &&
-        !/[^A-Za-z0-9+/]/.test(value.slice(0, value.length - padding))
-      );
-    }, "Invalid base64 content"),
-  mediaType: z.string().max(255).optional(),
-});
-export const workspaceUploadSchema = z
-  .object({
-    expectedRevision: z.number().int().nonnegative(),
-    replace: z.boolean().default(false),
-    entries: z
-      .array(
-        z.discriminatedUnion("kind", [
-          fileSchema,
-          z.object({ kind: z.literal("directory"), path: pathSchema }),
-        ]),
-      )
-      .min(1)
-      .max(MAX_WORKSPACE_UPLOAD_ENTRIES),
-  })
-  .superRefine((value, ctx) => {
-    let bytes = 0;
-    const paths = new Set<string>();
-    for (const entry of value.entries) {
-      if (paths.has(entry.path))
+const base64Content = z.string().refine((value) => {
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return (
+    value.length % 4 === 0 &&
+    !/[^A-Za-z0-9+/]/.test(value.slice(0, value.length - padding))
+  );
+}, "Invalid base64 content");
+
+/// The upload request schema for a deployment's limits.
+export function workspaceUploadSchemaFor(limits: WorkspaceUploadLimits) {
+  const fileSchema = z.object({
+    kind: z.literal("file"),
+    path: pathSchema,
+    contentBase64: z
+      .string()
+      .max(Math.ceil(limits.maxBytes / 3) * 4)
+      .pipe(base64Content),
+    mediaType: z.string().max(255).optional(),
+  });
+  return z
+    .object({
+      expectedRevision: z.number().int().nonnegative(),
+      replace: z.boolean().default(false),
+      entries: z
+        .array(
+          z.discriminatedUnion("kind", [
+            fileSchema,
+            z.object({ kind: z.literal("directory"), path: pathSchema }),
+          ]),
+        )
+        .min(1)
+        .max(limits.maxEntries),
+    })
+    .superRefine((value, ctx) => {
+      let bytes = 0;
+      const paths = new Set<string>();
+      for (const entry of value.entries) {
+        if (paths.has(entry.path))
+          ctx.addIssue({
+            code: "custom",
+            message: `Duplicate path: ${entry.path}`,
+          });
+        paths.add(entry.path);
+        if (entry.kind === "file") bytes += base64Size(entry.contentBase64);
+      }
+      if (bytes > limits.maxBytes)
         ctx.addIssue({
           code: "custom",
-          message: `Duplicate path: ${entry.path}`,
+          message: `Upload exceeds ${formatUploadBytes(limits.maxBytes)}`,
         });
-      paths.add(entry.path);
-      if (entry.kind === "file") bytes += base64Size(entry.contentBase64);
-    }
-    if (bytes > MAX_WORKSPACE_UPLOAD_BYTES)
-      ctx.addIssue({ code: "custom", message: "Upload exceeds 32 MiB" });
-  });
+    });
+}
+
+export const workspaceUploadSchema = workspaceUploadSchemaFor(
+  DEFAULT_WORKSPACE_UPLOAD_LIMITS,
+);
 export type WorkspaceUpload = z.infer<typeof workspaceUploadSchema>;
 
 function base64Size(value: string): number {
@@ -251,7 +293,7 @@ export function prepareWorkspaceUpload<T extends TransferManifest>(
 ) {
   const manifest = structuredClone(source);
   const files: Array<{
-    input: z.infer<typeof fileSchema>;
+    input: Extract<WorkspaceUpload["entries"][number], { kind: "file" }>;
     entry: TransferFile;
   }> = [];
   for (const input of upload.entries) {

@@ -27,8 +27,8 @@ use super::{
     BuiltinTool, BuiltinToolContext, BuiltinToolOperation,
     process_output::encode_process_output,
     shared::{
-        ProcessPresentation, array_of_strings, boolean, nullable_integer, nullable_string, object,
-        optional_enum, string, string_map, visible_with_search_stop,
+        ARGV_DESCRIPTION, ProcessPresentation, array_of_strings, boolean, nullable_integer,
+        nullable_string, object, optional_enum, string, string_map, visible_with_search_stop,
     },
 };
 
@@ -85,19 +85,19 @@ Example patch text:
             "Capture an environment file or tree into a writable VFS workspace. Replaces the selected destination by default. Fails publication if the workspace changed concurrently; returns the captured snapshot for recovery."
         }
         BuiltinToolOperation::RunProcess if tool.one_shot() => {
-            "Run a command and wait until it exits, returning its output. With `timeout_ms` the command is killed at that deadline. A command may leave services running; they keep running until stopped or the environment closes. Interactive programs need `tty: true`."
+            "Run an executable directly, with no implicit shell, and wait until it exits, returning its output. With `timeout_ms` the command is killed at that deadline. A command may leave services running; they keep running until stopped or the environment closes. Interactive programs need `tty: true`."
         }
         BuiltinToolOperation::RunProcess => {
-            "Run a command. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`."
+            "Run an executable directly, with no implicit shell. Waits until it exits, or until `yield_ms` if set, and returns its output. If it is still running you get a handle for `continue_process`. With `timeout_ms` the command is killed at that deadline; without it a running command keeps running until stopped or the environment closes. Interactive programs need `tty: true`."
         }
         BuiltinToolOperation::ContinueProcess => {
             "Continue with a running handle: optionally send input or a signal, then wait up to `wait_ms` and return the output produced since the last call. With nothing but the handle it only waits. Once the process has exited it returns the remaining output and the exit code."
         }
         BuiltinToolOperation::JobSubmit => {
-            "Start one or more durable environment jobs asynchronously. Returns one Promise per job; use await, cancel, or detach when appropriate."
+            "Start one or more durable environment jobs asynchronously from argv, with no implicit shell. Returns one Promise per job; use await, cancel, or detach when appropriate."
         }
         BuiltinToolOperation::JobRun => {
-            "Run one durable environment job and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control."
+            "Run one durable environment job from argv, with no implicit shell, and wait for its terminal readable result. Use job_submit for dependency groups, longer work, or explicit Promise control."
         }
         BuiltinToolOperation::JobRead => {
             "Read durable environment job status and bounded output tails."
@@ -212,13 +212,15 @@ pub(super) fn input_schema(tool: BuiltinTool) -> Value {
         BuiltinToolOperation::ListDir => object(
             [(
                 "path",
-                string("Directory path to list. Defaults to the workspace root."),
+                string(
+                    "Directory path to list. Defaults to the workspace root, or the working directory in a Windows environment.",
+                ),
             )],
             [],
         ),
         BuiltinToolOperation::RunProcess if tool.one_shot() => object(
             [
-                ("argv", array_of_strings("Command and arguments.")),
+                ("argv", array_of_strings(ARGV_DESCRIPTION)),
                 (
                     "cwd",
                     nullable_string("Working directory. Defaults to the environment's."),
@@ -250,7 +252,7 @@ pub(super) fn input_schema(tool: BuiltinTool) -> Value {
         ),
         BuiltinToolOperation::RunProcess => object(
             [
-                ("argv", array_of_strings("Command and arguments.")),
+                ("argv", array_of_strings(ARGV_DESCRIPTION)),
                 (
                     "cwd",
                     nullable_string("Working directory. Defaults to the environment's."),
@@ -500,7 +502,7 @@ fn job_submit_schema() -> Value {
                             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
                             "description": "Your name for this run of the job (for example \"build\"). It keys the job's promise in the result and identifies the job to job_read. An id names one run: to run a command again, choose a new id."
                         },
-                        "argv": { "type": "array", "items": { "type": "string" } },
+                        "argv": { "type": "array", "items": { "type": "string" }, "description": ARGV_DESCRIPTION },
                         "cwd": { "type": ["string", "null"] },
                         "env": { "type": "object", "additionalProperties": { "type": "string" } },
                         "stdin": { "type": ["string", "null"] },
@@ -539,7 +541,7 @@ fn job_run_schema() -> Value {
                 "type": "array",
                 "items": { "type": "string" },
                 "minItems": 1,
-                "description": "Process argv for the single durable job."
+                "description": ARGV_DESCRIPTION
             },
             "cwd": { "type": ["string", "null"] },
             "env": { "type": "object", "additionalProperties": { "type": "string" } },

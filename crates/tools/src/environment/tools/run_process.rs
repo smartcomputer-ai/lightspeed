@@ -8,7 +8,6 @@ use crate::{
     environment::EnvironmentToolContext,
     environment::process::{ProcessOutput, ProcessRequest},
     error::ToolResult,
-    fs::{FsError, FsPath},
 };
 
 use super::{invalid_request, unsupported_process_capability};
@@ -16,7 +15,7 @@ use super::{invalid_request, unsupported_process_capability};
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RunProcessArgs {
     pub argv: Vec<String>,
-    pub cwd: Option<FsPath>,
+    pub cwd: Option<crate::fs::PathInput>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     pub stdin: Option<String>,
@@ -44,7 +43,7 @@ pub async fn invoke_run_process(
         .as_ref()
         .ok_or_else(unsupported_process_capability)?;
     let cwd = match args.cwd {
-        Some(cwd) => Some(resolve_process_cwd(ctx, &cwd)?),
+        Some(cwd) => Some(ctx.resolve_cwd(cwd.as_str())?),
         None => ctx.process_cwd.clone(),
     };
     // Every wait is bounded by the same ceiling the process activity
@@ -70,20 +69,6 @@ pub async fn invoke_run_process(
         .map_err(Into::into)
 }
 
-fn resolve_process_cwd(ctx: &EnvironmentToolContext, cwd: &FsPath) -> ToolResult<FsPath> {
-    if cwd.is_absolute() {
-        return Ok(cwd.clone());
-    }
-
-    let Some(base) = &ctx.process_cwd else {
-        return Ok(cwd.clone());
-    };
-
-    base.join_path(cwd)
-        .map_err(FsError::from)
-        .map_err(Into::into)
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -101,6 +86,7 @@ mod tests {
             ProcessStatus, StreamOutput,
         },
         error::ToolError,
+        fs::FsPath,
     };
 
     #[derive(Default)]
@@ -143,6 +129,113 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn model_shells_follow_remote_facts_on_every_controller_os() {
+        use crate::builtin::{
+            BuiltinTool, BuiltinToolContext, BuiltinToolOperation as Op,
+            BuiltinToolSurface as Surface,
+        };
+        use environment_protocol::{
+            data::platform::{OperatingSystem, PlatformFacts, ShellInfo, ShellKind},
+            paths::EnvironmentPath,
+        };
+        use serde_json::json;
+        let process = Arc::new(RecordingProcessExecutor::default());
+        let mut ctx = context(Some(process.clone())).with_process_cwd(FsPath::from_environment(
+            EnvironmentPath::new("C:/project/src").unwrap(),
+        ));
+        let mut platform = PlatformFacts::without_shells(OperatingSystem::Windows);
+        platform.shells = vec![
+            ShellInfo {
+                kind: ShellKind::WindowsPowerShell,
+                executable: EnvironmentPath::new("C:/Windows/powershell.exe").unwrap(),
+                version: "5.1.0".into(),
+            },
+            ShellInfo {
+                kind: ShellKind::GitBash,
+                executable: EnvironmentPath::new("C:/Program Files/Git/bin/bash.exe").unwrap(),
+                version: "5.2.0".into(),
+            },
+        ];
+        platform.default_shell = Some(ShellKind::WindowsPowerShell);
+        ctx.platform = Some(platform);
+        let invoke = async |surface, args| {
+            BuiltinTool::environment(Op::RunProcess, surface)
+                .invoke_json(BuiltinToolContext::Environment(&ctx), args)
+                .await
+        };
+        invoke(
+            Surface::CodexLike,
+            json!({"cmd": "Write-Output '雪'", "workdir": "..\\tests"}),
+        )
+        .await
+        .unwrap();
+        invoke(
+            Surface::ClaudeCodeLike,
+            json!({"command": "Write-Output '雪'"}),
+        )
+        .await
+        .unwrap();
+        invoke(
+            Surface::CodexLike,
+            json!({"cmd": "echo '$literal'", "shell": "gitBash", "login": false}),
+        )
+        .await
+        .unwrap();
+        invoke(
+            Surface::CodexLike,
+            json!({"cmd": "Write-Output profile", "login": true, "tty": true}),
+        )
+        .await
+        .unwrap();
+        invoke(
+            Surface::Canonical,
+            json!({"argv": ["C:\\bin\\tool.exe", "a b", "$literal"], "cwd": "D:\\build"}),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            invoke(
+                Surface::CodexLike,
+                json!({"cmd": "anything", "shell": "powerShell"})
+            )
+            .await,
+            Err(ToolError::UnsupportedCapability { .. })
+        ));
+        let requests = process.requests.lock().unwrap();
+        assert_eq!(
+            requests.len(),
+            5,
+            "unavailable shell never starts a process"
+        );
+        for request in &requests[..2] {
+            assert_eq!(request.argv[0], r"C:\Windows\powershell.exe");
+            assert!(request.argv.iter().any(|arg| arg == "-NoProfile"));
+            assert!(request.argv.iter().any(|arg| arg == "-NonInteractive"));
+            assert!(request.argv.last().unwrap().contains("Write-Output '雪'"));
+        }
+        assert_eq!(
+            requests[0].cwd.as_ref().unwrap().as_str(),
+            "C:/project/tests"
+        );
+        assert_eq!(
+            requests[2].argv,
+            [
+                r"C:\Program Files\Git\bin\bash.exe",
+                "-c",
+                "echo '$literal'"
+            ]
+        );
+        assert!(
+            !requests[3]
+                .argv
+                .iter()
+                .any(|arg| arg == "-NoProfile" || arg == "-NonInteractive")
+        );
+        assert_eq!(requests[4].argv, [r"C:\bin\tool.exe", "a b", "$literal"]);
+        assert_eq!(requests[4].cwd.as_ref().unwrap().as_str(), "D:/build");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn invoke_run_process_applies_bounds_and_resolves_cwd() {
         let process = Arc::new(RecordingProcessExecutor::default());
         let ctx = context(Some(process.clone()))
@@ -152,7 +245,7 @@ mod tests {
             &ctx,
             RunProcessArgs {
                 argv: vec!["echo".to_string(), "hello".to_string()],
-                cwd: Some(FsPath::new("subdir").expect("relative cwd")),
+                cwd: Some(FsPath::new("subdir").expect("relative cwd").into()),
                 env: BTreeMap::new(),
                 stdin: Some("input".to_string()),
                 tty: false,

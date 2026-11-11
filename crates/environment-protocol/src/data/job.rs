@@ -4,7 +4,8 @@
 //! `requestId` of the `job/start` that created it. Its record and output
 //! survive daemon restarts; a job that was queued or running when the
 //! daemon stopped is `interrupted`. When a job's root process finishes, the
-//! daemon sweeps the job's process group and reports what it swept.
+//! daemon sweeps the ownership unit advertised by `capabilities.job.tree`
+//! (a process group or Windows Job Object) and reports what it swept.
 
 use serde::{Deserialize, Serialize};
 
@@ -174,8 +175,8 @@ pub struct CancelJobsParams {
     /// `job` by default.
     #[serde(default, skip_serializing_if = "JobCancelScope::is_default")]
     pub scope: JobCancelScope,
-    /// Kill at once instead of `SIGTERM`, `limits.job.cancelGraceMs`, then
-    /// `SIGKILL`.
+    /// Force tree termination at once instead of using the advertised
+    /// `termination` mode and `limits.job.cancelGraceMs`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub force: bool,
 }

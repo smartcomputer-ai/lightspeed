@@ -42,6 +42,8 @@ impl SpawnRecord {
         Group {
             pgid: self.pgid,
             leader_start_time: self.leader_start_time,
+            #[cfg(windows)]
+            job: None,
         }
     }
 
@@ -52,6 +54,7 @@ impl SpawnRecord {
 
     /// The recorded group still has members, and they are the recorded
     /// group's. Only meaningful for a record of the current boot.
+    #[cfg(not(windows))]
     pub fn group_survives(&self) -> bool {
         self.group().alive()
     }
@@ -67,15 +70,17 @@ pub(crate) fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> std::io
     std::fs::rename(&temp, path)
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::*;
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test(flavor = "current_thread")]
     async fn a_live_group_survives_and_a_reused_leader_does_not() {
-        let mut command = tokio::process::Command::new("/bin/sh");
-        command.args(["-c", "sleep 30"]);
+        // Keep the group to one child: reaping a shell does not wait for its
+        // descendants to exit or for their zombies to be reaped on Linux.
+        let mut command = tokio::process::Command::new("sleep");
+        command.arg("30").kill_on_drop(true);
         process_group::spawn_in_own_group(&mut command);
         let mut child = command.spawn().expect("spawn");
         let pgid = child.id().expect("pid");

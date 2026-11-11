@@ -18,9 +18,7 @@ use crate::{
         process::ProcessSignal,
         tools::{ContinueProcessArgs, RunProcessArgs, invoke_continue_process, invoke_run_process},
     },
-    error::{ToolError, ToolResult},
-    fs::FsPath,
-    limits::ToolLimits,
+    error::ToolResult,
     runtime::{ToolInvocationOutput, decode_args},
 };
 
@@ -54,10 +52,10 @@ pub(super) fn description(tool: BuiltinTool, scoped_paths: bool) -> String {
             description
         }
         BuiltinToolOperation::RunProcess if tool.one_shot() => {
-            "Runs a command to completion and returns its output. The process is terminated on timeout or cancellation and cannot be resumed.".to_owned()
+            "Runs command text in the selected environment shell to completion and returns its output. The process is terminated on timeout or cancellation and cannot be resumed.".to_owned()
         }
         BuiltinToolOperation::RunProcess => {
-            "Runs a command in a shell (a PTY when `tty` is true), returning output or a session ID for ongoing interaction. A command may leave services running for later calls; they keep running until stopped or the environment closes.".to_owned()
+            "Runs command text in the selected environment shell (a PTY when `tty` is true), returning output or a session ID for ongoing interaction. A command may leave services running for later calls; they keep running until stopped or the environment closes.".to_owned()
         }
         BuiltinToolOperation::ContinueProcess => {
             "Writes characters to an existing unified exec session and returns recent output. Empty `chars` polls without writing; Ctrl-C (\\u0003) interrupts the session.".to_owned()
@@ -70,7 +68,14 @@ pub(super) fn input_schema(tool: BuiltinTool) -> Value {
     match tool.operation() {
         BuiltinToolOperation::RunProcess if tool.one_shot() => object(
             [
-                ("cmd", string("Shell command to execute.")),
+                (
+                    "cmd",
+                    string("Command text interpreted by the selected shell."),
+                ),
+                (
+                    "shell",
+                    serde_json::json!({"type": ["string", "null"], "enum": ["bash", "powerShell", "windowsPowerShell", "gitBash", null], "description": "Select an installed shell from the environment context. Omission uses its default shell."}),
+                ),
                 (
                     "workdir",
                     nullable_string(
@@ -89,14 +94,23 @@ pub(super) fn input_schema(tool: BuiltinTool) -> Value {
                 ),
                 (
                     "login",
-                    optional_boolean("Run in a login shell. Defaults to true."),
+                    optional_boolean(
+                        "Load shell profiles. Defaults to true for bash, false for other shells.",
+                    ),
                 ),
             ],
             ["cmd"],
         ),
         BuiltinToolOperation::RunProcess => object(
             [
-                ("cmd", string("Shell command to execute.")),
+                (
+                    "cmd",
+                    string("Command text interpreted by the selected shell."),
+                ),
+                (
+                    "shell",
+                    serde_json::json!({"type": ["string", "null"], "enum": ["bash", "powerShell", "windowsPowerShell", "gitBash", null], "description": "Select an installed shell from the environment context. Omission uses its default shell."}),
+                ),
                 (
                     "workdir",
                     nullable_string(
@@ -121,7 +135,9 @@ pub(super) fn input_schema(tool: BuiltinTool) -> Value {
                 ),
                 (
                     "login",
-                    optional_boolean("Run in a login shell. Defaults to true."),
+                    optional_boolean(
+                        "Load shell profiles. Defaults to true for bash, false for other shells.",
+                    ),
                 ),
             ],
             ["cmd"],
@@ -164,12 +180,9 @@ pub(super) async fn invoke_json(
         BuiltinToolOperation::RunProcess => {
             let args: CodexExecCommandArgs = decode_args(arguments)?;
             let env_ctx = ctx.environment()?;
+            let request = args.into_run_process_args(tool.one_shot(), env_ctx)?;
             let started = Instant::now();
-            let result = invoke_run_process(
-                env_ctx,
-                args.into_run_process_args(tool.one_shot(), &env_ctx.limits)?,
-            )
-            .await?;
+            let result = invoke_run_process(env_ctx, request).await?;
             encode_process_output(
                 result,
                 ProcessPresentation::Codex {
@@ -196,6 +209,7 @@ pub(super) async fn invoke_json(
 
 #[derive(Debug, Deserialize)]
 struct CodexExecCommandArgs {
+    shell: Option<environment_protocol::data::platform::ShellKind>,
     cmd: String,
     workdir: Option<String>,
     tty: Option<bool>,
@@ -211,13 +225,17 @@ impl CodexExecCommandArgs {
     fn into_run_process_args(
         self,
         one_shot: bool,
-        limits: &ToolLimits,
+        ctx: &crate::environment::EnvironmentToolContext,
     ) -> ToolResult<RunProcessArgs> {
-        let shell_flag = if self.login.unwrap_or(true) {
-            "-lc"
-        } else {
-            "-c"
-        };
+        let limits = &ctx.limits;
+        let argv = ctx.shell_argv(
+            &self.cmd,
+            environment_client::shell::ShellOptions {
+                shell: self.shell,
+                login: self.login,
+                tty: self.tty.unwrap_or(false),
+            },
+        )?;
         let (yield_ms, timeout_ms) = if one_shot {
             (
                 None,
@@ -234,8 +252,8 @@ impl CodexExecCommandArgs {
             )
         };
         Ok(RunProcessArgs {
-            argv: vec!["bash".to_owned(), shell_flag.to_owned(), self.cmd],
-            cwd: self.workdir.map(parse_fs_path).transpose()?,
+            argv,
+            cwd: self.workdir.map(Into::into),
             env: BTreeMap::new(),
             stdin: None,
             tty: self.tty.unwrap_or(false),
@@ -305,17 +323,21 @@ fn output_bytes_for_tokens(max_output_tokens: Option<u64>) -> u64 {
         .saturating_mul(BYTES_PER_OUTPUT_TOKEN)
 }
 
-fn parse_fs_path(path: String) -> ToolResult<FsPath> {
-    FsPath::new(path)
-        .map_err(crate::fs::FsError::from)
-        .map_err(ToolError::from)
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::fs::FsPath;
+    use crate::limits::ToolLimits;
+
+    fn context(limits: &ToolLimits) -> crate::environment::EnvironmentToolContext {
+        crate::environment::EnvironmentToolContext::new(
+            None,
+            std::sync::Arc::new(harness::storage::InMemoryBlobStore::new()),
+        )
+        .with_limits(*limits)
+    }
 
     fn exec_args(value: Value) -> CodexExecCommandArgs {
         decode_args(value).expect("exec_command args")
@@ -329,7 +351,7 @@ mod tests {
     fn exec_command_maps_to_a_shell_string_with_codex_defaults_and_no_kill() {
         let limits = ToolLimits::default();
         let args = exec_args(json!({ "cmd": "sleep 30" }))
-            .into_run_process_args(false, &limits)
+            .into_run_process_args(false, &context(&limits))
             .expect("args");
         assert_eq!(args.argv, ["bash", "-lc", "sleep 30"]);
         assert_eq!(args.yield_ms, Some(EXEC_DEFAULT_YIELD_MS));
@@ -348,16 +370,19 @@ mod tests {
             "max_output_tokens": 100,
             "login": false
         }))
-        .into_run_process_args(false, &limits)
+        .into_run_process_args(false, &context(&limits))
         .expect("args");
         assert_eq!(args.argv, ["bash", "-c", "python3 -i"]);
-        assert_eq!(args.cwd, Some(FsPath::new("/workspace").expect("cwd")));
+        assert_eq!(
+            args.cwd,
+            Some(FsPath::new("/workspace").expect("cwd").into())
+        );
         assert!(args.tty);
         assert_eq!(args.yield_ms, Some(EXEC_MIN_YIELD_MS), "floored at 250 ms");
         assert_eq!(args.max_output_bytes, Some(400));
 
         let args = exec_args(json!({ "cmd": "true", "yield_time_ms": 999_999_999 }))
-            .into_run_process_args(false, &limits)
+            .into_run_process_args(false, &context(&limits))
             .expect("args");
         assert_eq!(args.yield_ms, Some(EXEC_MAX_YIELD_MS));
     }
@@ -366,13 +391,13 @@ mod tests {
     fn one_shot_exec_command_waits_to_exit_with_a_default_kill_deadline() {
         let limits = ToolLimits::default();
         let args = exec_args(json!({ "cmd": "make" }))
-            .into_run_process_args(true, &limits)
+            .into_run_process_args(true, &context(&limits))
             .expect("args");
         assert_eq!(args.yield_ms, None);
         assert_eq!(args.timeout_ms, Some(limits.default_process_timeout_ms));
 
         let args = exec_args(json!({ "cmd": "make", "timeout_ms": 5000 }))
-            .into_run_process_args(true, &limits)
+            .into_run_process_args(true, &context(&limits))
             .expect("args");
         assert_eq!(args.timeout_ms, Some(5000));
     }

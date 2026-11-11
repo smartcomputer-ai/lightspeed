@@ -516,13 +516,15 @@ api_methods! {
     METHOD_MCP_SERVERS_DELETE => delete_mcp_server(McpServerDeleteParams) -> McpServerDeleteResponse =>
         ["Delete an MCP server record", "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GRANTS_IMPORT => import_auth_grant(AuthGrantImportParams) -> AuthGrantImportResponse =>
-        ["Import a static bearer grant", "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Import a token credential", "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GRANTS_LEASE => lease_auth_grant(AuthGrantLeaseParams) -> AuthGrantLeaseResponse =>
         ["Lease a retrievable authentication grant", "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads."], access: MethodAccess::Service,
     METHOD_AUTH_GRANTS_READ => read_auth_grant(AuthGrantReadParams) -> AuthGrantReadResponse =>
         ["Read authentication grant metadata", "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_AUTH_GRANTS_LIST => list_auth_grants(AuthGrantListParams) -> AuthGrantListResponse =>
         ["List authentication grants", "Lists non-secret grant metadata for the universe, optionally filtered by status."], access: MethodAccess::Universe(UniverseAction::Read),
+    METHOD_AUTH_GRANTS_REPLACE => replace_auth_grant(AuthGrantReplaceParams) -> AuthGrantReplaceResponse =>
+        ["Replace a token credential's value", "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GRANTS_REVOKE => revoke_auth_grant(AuthGrantRevokeParams) -> AuthGrantRevokeResponse =>
         ["Revoke an authentication grant", "Marks the grant unusable by token consumers while retaining non-secret audit metadata."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_CLIENTS_CREATE => create_auth_client(AuthClientCreateParams) -> AuthClientCreateResponse =>
@@ -539,6 +541,8 @@ api_methods! {
         ["Read OAuth flow status", "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_PROVIDERS_CREATE => create_auth_provider(AuthProviderCreateParams) -> AuthProviderCreateResponse =>
         ["Register an authentication provider", "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_AUTH_PROVIDERS_REPLACE => replace_auth_provider(AuthProviderReplaceParams) -> AuthProviderReplaceResponse =>
+        ["Replace an authentication provider", "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_PROVIDERS_READ => read_auth_provider(AuthProviderReadParams) -> AuthProviderReadResponse =>
         ["Read authentication provider metadata", "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_AUTH_PROVIDERS_LIST => list_auth_providers(AuthProviderListParams) -> AuthProviderListResponse =>

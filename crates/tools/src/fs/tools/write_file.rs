@@ -12,7 +12,7 @@ use super::resolve_path;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WriteFileArgs {
-    pub path: FsPath,
+    pub path: crate::fs::PathInput,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -100,7 +100,7 @@ pub async fn invoke_write_file(
     };
 
     Ok(WriteFileResult {
-        path: args.path,
+        path: args.path.presented(&resolved_path),
         resolved_path,
         bytes_written,
         receipt: None,
@@ -131,7 +131,9 @@ mod tests {
         let result = invoke_write_file(
             &ctx,
             WriteFileArgs {
-                path: FsPath::new("nested/file.txt").expect("relative path"),
+                path: FsPath::new("nested/file.txt")
+                    .expect("relative path")
+                    .into(),
                 content: Some("hello".to_string()),
                 content_ref: None,
             },
@@ -160,7 +162,7 @@ mod tests {
         let error = invoke_write_file(
             &ctx,
             WriteFileArgs {
-                path: FsPath::new("/file.txt").expect("path"),
+                path: FsPath::new("/file.txt").expect("path").into(),
                 content: Some("hello".to_string()),
                 content_ref: None,
             },

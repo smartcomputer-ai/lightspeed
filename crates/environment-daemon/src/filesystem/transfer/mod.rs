@@ -23,6 +23,8 @@ mod journal;
 mod publish;
 #[cfg(test)]
 mod tests;
+#[cfg(windows)]
+mod windows;
 
 use std::{
     collections::BTreeMap,
@@ -142,6 +144,7 @@ impl Transfers {
         writable: bool,
     ) -> Result<Self, ProtocolError> {
         let journal = confinement.state_dir().join("transfers");
+        #[cfg(unix)]
         {
             use std::os::unix::fs::DirBuilderExt;
             std::fs::DirBuilder::new()
@@ -150,6 +153,9 @@ impl Transfers {
                 .create(&journal)
                 .map_err(|error| io_error(error, journal.display()))?;
         }
+        #[cfg(windows)]
+        crate::windows_security::prepare_private_directory(&journal)
+            .map_err(|error| io_error(error, journal.display()))?;
         let shared = Arc::new(Shared {
             confinement,
             journal,
@@ -356,6 +362,7 @@ impl Shared {
         };
         state.work = Work::Finished;
         let record = Record {
+            format: journal::JournalFormat::native(),
             params: operation.params.clone(),
             status: state.status.clone(),
             stage,
@@ -436,9 +443,10 @@ impl Shared {
             let overlaps = destination.as_ref().is_some_and(|destination| {
                 active.values().any(|other| {
                     !other.finished.load(Ordering::Acquire)
-                        && other.destination.as_ref().is_some_and(|other| {
-                            other.starts_with(destination) || destination.starts_with(other)
-                        })
+                        && other
+                            .destination
+                            .as_ref()
+                            .is_some_and(|other| overlaps(other, destination))
                 })
             });
             if overlaps {
@@ -457,6 +465,7 @@ impl Shared {
                 &self.journal,
                 &id,
                 &Record {
+                    format: journal::JournalFormat::native(),
                     params: params.clone(),
                     status: status.clone(),
                     stage,
@@ -947,6 +956,7 @@ impl Shared {
                             &shared.journal,
                             &operation.id,
                             &Record {
+                                format: journal::JournalFormat::native(),
                                 params: operation.params.clone(),
                                 status: state.status.clone(),
                                 stage: publish.created_stage_record(),
@@ -1011,13 +1021,17 @@ impl Shared {
 
     /// Remove the staging directory and spool a record names.
     fn release(&self, record: &mut Record) {
-        if let Some(stage) = record.stage.take() {
-            publish::discard_stage(&self.confinement, &stage);
+        if let Some(stage) = record.stage.take()
+            && !publish::discard_stage(&self.confinement, &stage)
+        {
+            record.stage = Some(stage);
         }
         if let Some(spool) = record.spool.take()
             && spool.parent() == Some(self.journal.as_path())
+            && let Err(error) = std::fs::remove_dir_all(&spool)
+            && error.kind() != std::io::ErrorKind::NotFound
         {
-            let _ = std::fs::remove_dir_all(spool);
+            record.spool = Some(spool);
         }
     }
 
@@ -1031,7 +1045,11 @@ impl Shared {
             .is_none_or(|expires| expires <= now);
         if expired {
             self.release(&mut record);
-            journal::remove(&self.journal, id);
+            if record.stage.is_none() && record.spool.is_none() {
+                journal::remove(&self.journal, id);
+            } else if let Err(error) = journal::write(&self.journal, id, &record) {
+                eprintln!("lightspeed-envd: retaining transfer cleanup {id}: {error}");
+            }
         } else if record.stage.is_some() || record.spool.is_some() {
             self.release(&mut record);
             if let Err(error) = journal::write(&self.journal, id, &record) {
@@ -1094,6 +1112,19 @@ impl Shared {
             }
         }
     }
+}
+
+fn overlaps(left: &[std::ffi::OsString], right: &[std::ffi::OsString]) -> bool {
+    left.iter().zip(right).all(|(a, b)| {
+        #[cfg(unix)]
+        {
+            a == b
+        }
+        #[cfg(windows)]
+        {
+            windows::NameKey::new(a) == windows::NameKey::new(b)
+        }
+    })
 }
 
 fn sweep_loop(shared: Weak<Shared>) {

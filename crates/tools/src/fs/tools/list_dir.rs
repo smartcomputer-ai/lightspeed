@@ -11,8 +11,7 @@ use super::resolve_path;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ListDirArgs {
-    #[serde(default = "FsPath::root")]
-    pub path: FsPath,
+    pub path: Option<crate::fs::PathInput>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -30,7 +29,18 @@ pub struct ListDirResult {
 }
 
 pub async fn invoke_list_dir(ctx: &FsToolContext, args: ListDirArgs) -> ToolResult<ListDirResult> {
-    let resolved_path = resolve_path(ctx, &args.path)?;
+    let path = args.path.unwrap_or_else(|| {
+        if ctx
+            .fs_cwd
+            .as_ref()
+            .is_some_and(|cwd| cwd.environment_path().is_some())
+        {
+            FsPath::current_dir().into()
+        } else {
+            FsPath::root().into()
+        }
+    });
+    let resolved_path = resolve_path(ctx, &path)?;
     let mut entries = ctx
         .fs
         .read_directory(&resolved_path)
@@ -45,7 +55,7 @@ pub async fn invoke_list_dir(ctx: &FsToolContext, args: ListDirArgs) -> ToolResu
     entries.sort_by(|left, right| left.file_name.cmp(&right.file_name));
 
     Ok(ListDirResult {
-        path: args.path,
+        path: path.presented(&resolved_path),
         resolved_path,
         entries,
     })
@@ -90,13 +100,21 @@ mod tests {
         let result = invoke_list_dir(
             &ctx,
             ListDirArgs {
-                path: FsPath::current_dir(),
+                path: Some(FsPath::current_dir().into()),
             },
         )
         .await
         .expect("list dir");
 
         assert_eq!(result.resolved_path, FsPath::new("/workspace").unwrap());
+        let defaulted = invoke_list_dir(&ctx, ListDirArgs { path: None })
+            .await
+            .unwrap();
+        assert_eq!(
+            defaulted.resolved_path,
+            FsPath::root(),
+            "logical paths retain their root default"
+        );
         assert_eq!(
             result.entries,
             vec![

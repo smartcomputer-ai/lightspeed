@@ -4,12 +4,15 @@ mod exec;
 pub mod filesystem;
 pub mod identity;
 pub mod jobs;
+mod platform;
 pub mod process;
 mod process_group;
 mod redaction;
 pub mod registration;
 pub mod server;
 pub mod upgrade;
+#[cfg(windows)]
+mod windows_security;
 
 use std::{
     sync::{
@@ -31,6 +34,7 @@ use environment_protocol::{
             ScanCeilings, SearchCeilings, TransferCeilings,
         },
         idle::GetIdleResponse,
+        platform::{InterruptCapabilities, PlatformFacts, ProcessTree, TerminationMode},
     },
     error::{Capability, ProtocolError},
     handshake::{ImplementationInfo, Plane},
@@ -58,6 +62,7 @@ pub struct DaemonRuntime {
 }
 
 struct RuntimeInner {
+    platform: PlatformFacts,
     config: DaemonConfig,
     instance_id: DaemonInstanceId,
     server_info: ImplementationInfo,
@@ -119,8 +124,8 @@ pub fn install_crypto_provider() {
 }
 
 impl DaemonRuntime {
-    /// Build the managers over one shared [`Confinement`]. A missing state
-    /// directory is created `0700`.
+    /// Build the managers over one shared [`Confinement`]. State is restricted
+    /// to the execution account (`0700` on Unix, user/SYSTEM ACL on Windows).
     pub fn new(mut config: DaemonConfig) -> anyhow::Result<Self> {
         install_crypto_provider();
         config.state_dir = config::prepare_state_dir(&config.state_dir)?;
@@ -163,6 +168,7 @@ impl DaemonRuntime {
         .context("job manager")?;
         Ok(Self {
             inner: Arc::new(RuntimeInner {
+                platform: platform::facts(&config.scrubbed_env),
                 config,
                 instance_id,
                 server_info: server_info(),
@@ -223,6 +229,7 @@ impl DaemonRuntime {
             plane: Plane::Data,
             daemon_instance_id: self.inner.instance_id.clone(),
             server_info: self.inner.server_info.clone(),
+            platform: self.inner.platform.clone(),
             capabilities: self.inner.capabilities.clone(),
             limits: self.inner.limits.clone(),
             default_cwd: self.inner.default_cwd.clone(),
@@ -292,16 +299,38 @@ impl DaemonRuntime {
     }
 }
 
-/// PTYs are served wherever `portable-pty` has a Unix backend.
-const PTY_SUPPORTED: bool = cfg!(unix);
+/// Unix portable-pty and the native Windows ConPTY backend.
+const PTY_SUPPORTED: bool = cfg!(any(unix, windows));
 
 fn data_capabilities(config: &DaemonConfig) -> DataCapabilities {
+    if !cfg!(any(unix, windows)) {
+        return DataCapabilities::default();
+    }
+    let tree = if cfg!(windows) {
+        ProcessTree::WindowsJobObject
+    } else {
+        ProcessTree::PosixProcessGroup
+    };
+    let termination = if cfg!(windows) {
+        TerminationMode::ImmediateKill
+    } else {
+        TerminationMode::GracefulThenKill
+    };
     DataCapabilities {
         filesystem: Some(FilesystemCapabilities {
             write: !config.read_only_fs,
+            transfer: true,
         }),
-        process: Some(ProcessCapabilities { pty: PTY_SUPPORTED }),
-        job: Some(JobCapabilities {}),
+        process: Some(ProcessCapabilities {
+            pty: PTY_SUPPORTED,
+            tree,
+            interrupt: InterruptCapabilities {
+                pipe: cfg!(unix),
+                pty: PTY_SUPPORTED,
+            },
+            termination,
+        }),
+        job: Some(JobCapabilities { tree, termination }),
     }
 }
 
@@ -322,7 +351,7 @@ pub fn data_limits() -> DataLimits {
             retention_after_exit_ms: 60_000,
             unread_retention_ms: 7_200_000,
             max_exited_retained_bytes: 64 * MIB,
-            terminate_grace_ms: 5_000,
+            terminate_grace_ms: if cfg!(windows) { 0 } else { 5_000 },
             max_input_queue_bytes: MIB,
         },
         job: JobLimits {
@@ -330,7 +359,7 @@ pub fn data_limits() -> DataLimits {
             max_request_jobs: 64,
             max_retained_output_bytes: 2 * MIB,
             record_retention_ms: 604_800_000,
-            cancel_grace_ms: 5_000,
+            cancel_grace_ms: if cfg!(windows) { 0 } else { 5_000 },
         },
         filesystem: FilesystemLimits {
             max_read_file_bytes: 8 * MIB,
@@ -396,16 +425,31 @@ fn mint_instance_id() -> anyhow::Result<DaemonInstanceId> {
 }
 
 fn environment_path(path: &std::path::Path) -> anyhow::Result<EnvironmentPath> {
+    #[cfg(windows)]
+    let native_path = windows_security::local_drive_path(path)?;
+    #[cfg(windows)]
+    let path = native_path.as_path();
     let text = path
         .to_str()
         .with_context(|| format!("{} is not UTF-8", path.display()))?;
-    Ok(EnvironmentPath::new(text)?)
+    Ok(EnvironmentPath::from_native(
+        text,
+        if cfg!(windows) {
+            environment_protocol::paths::PathConvention::Windows
+        } else {
+            environment_protocol::paths::PathConvention::Posix
+        },
+    )?)
 }
 
 /// `$HOME` when it is a valid path inside the filesystem root.
 fn home_directory(config: &DaemonConfig) -> Option<EnvironmentPath> {
+    #[cfg(not(windows))]
     let home = std::env::var_os("HOME")?;
+    #[cfg(not(windows))]
     let home = std::path::PathBuf::from(home);
+    #[cfg(windows)]
+    let home = windows_security::user_home().ok()?;
     if !home.starts_with(&config.fs_root) {
         return None;
     }
@@ -446,6 +490,27 @@ pub fn build_facts() -> BuildFacts {
 pub(crate) mod test_support {
     use super::*;
 
+    pub(crate) fn shell(posix: &str, windows: &str) -> Vec<String> {
+        if cfg!(windows) {
+            [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                windows,
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+        } else {
+            ["/bin/sh", "-c", posix]
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        }
+    }
+
     /// A runtime rooted in a fresh temporary directory, its state dir
     /// beside the root rather than inside it.
     pub(crate) fn runtime() -> (tempfile::TempDir, DaemonRuntime) {
@@ -457,6 +522,8 @@ pub(crate) mod test_support {
     ) -> (tempfile::TempDir, DaemonRuntime) {
         let temp = tempfile::tempdir().expect("tempdir");
         let base = temp.path().canonicalize().expect("canonical temp");
+        #[cfg(windows)]
+        let base = windows_security::local_drive_path(&base).expect("local test path");
         let root = base.join("root");
         let state = base.join("state");
         std::fs::create_dir_all(&root).expect("root");
@@ -534,12 +601,15 @@ mod tests {
     async fn initialize_reports_the_instance_cwd_and_capability_families() {
         let (_temp, runtime) = runtime();
         let response = runtime.initialize_response();
+        response
+            .validate_platform()
+            .expect("consistent platform facts");
         assert_eq!(response.protocol_version, ENVD_PROTOCOL_VERSION);
         assert_eq!(response.plane, Plane::Data);
         assert_eq!(&response.daemon_instance_id, runtime.instance_id());
         assert_eq!(
-            response.default_cwd.as_str(),
-            runtime.config().cwd.to_str().unwrap()
+            response.default_cwd,
+            environment_path(&runtime.config().cwd).unwrap()
         );
         let filesystem = response.capabilities.filesystem.expect("filesystem");
         assert!(filesystem.write);
@@ -558,7 +628,7 @@ mod tests {
             &runtime,
             &RequestContext::detached(),
             "fs/writeFile",
-            json!({"path": path.to_str().unwrap(), "data": "aGk="}),
+            json!({"path": environment_path(&path).unwrap(), "data": "aGk="}),
         )
         .await
         .unwrap_err();
@@ -580,7 +650,7 @@ mod tests {
             ProcessStart::NAME,
             json!({
                 "processId": "sleeper",
-                "command": {"argv": ["/bin/sh", "-c", "sleep 30"], "timeoutMs": 60000},
+                "command": {"argv": test_support::shell("sleep 30", "Start-Sleep -Seconds 30"), "timeoutMs": 60000},
             }),
         )
         .await;

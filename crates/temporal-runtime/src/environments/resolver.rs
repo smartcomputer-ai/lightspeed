@@ -699,25 +699,30 @@ mod tests {
         let before = route.counts();
         let disabled_feature = harness::EnvironmentsFeature::default();
         let disabled = refresh_sources(&disabled_feature, None).await;
+        assert!(disabled.platform_entry.is_none());
         assert!(disabled.skill_command.is_none());
         assert!(disabled.prompt_entries.is_empty());
-        let mut controller_owned = edited.clone();
-        controller_owned.origin = Some("controller".into());
-        assert!(
-            refresh_sources(&feature, Some(&controller_owned))
-                .await
-                .skill_command
-                .is_none()
-        );
         assert_eq!(
             route.counts(),
             before,
-            "disabled and controller-owned sources need no connection"
+            "unattached environments are not dialed"
+        );
+        let mut controller_owned = edited.clone();
+        controller_owned.origin = Some("controller".into());
+        let result = refresh_sources(&feature, Some(&controller_owned)).await;
+        assert!(result.platform_entry.is_some());
+        assert!(result.skill_command.is_none());
+        assert!(result.prompt_entries.is_empty());
+        assert_eq!(
+            route.counts(),
+            (before.0 + 1, before.1 + 1, before.2),
+            "platform discovery connects without scanning controller-owned sources"
         );
         let result = refresh_sources(&both, Some(&controller_owned)).await;
+        assert!(result.platform_entry.is_some());
         assert!(result.skill_command.is_none());
         assert!(result.prompt_entries.contains_key(&prompt_key));
-        assert_eq!(route.counts(), (before.0 + 1, before.1 + 1, before.2 + 1));
+        assert_eq!(route.counts(), (before.0 + 2, before.1 + 2, before.2 + 1));
 
         // A timed-out skill scan does not delay the prompt scan, which runs
         // on a fresh connection.
@@ -781,7 +786,9 @@ mod tests {
         // unavailable, with no scan.
         route.unsupported.store(true, SeqCst);
         let before = route.counts().2;
-        let unsupported = entry(refresh(Some(&degraded)).await.unwrap());
+        let result = refresh_sources(&feature, Some(&degraded)).await;
+        assert!(result.platform_entry.is_some());
+        let unsupported = entry(result.skill_command);
         assert_eq!(route.counts().2, before);
         assert_eq!(
             catalog_of(&unsupported).await.availability,
@@ -837,11 +844,19 @@ mod tests {
             "a revoked domain grant cannot retain advertised paths"
         );
         route.stall.store(true, SeqCst);
+        let before = route.counts();
         let start = std::time::Instant::now();
-        let timed_out = entry(refresh(Some(&available)).await.unwrap());
+        let result = refresh_sources(&both, Some(&available)).await;
+        assert!(result.platform_entry.is_none());
+        let timed_out = entry(result.skill_command);
         assert!(
             start.elapsed() < std::time::Duration::from_secs(6),
             "unresponsive endpoint must remain bounded"
+        );
+        assert_eq!(
+            route.counts(),
+            (before.0 + 1, before.1, before.2),
+            "failed platform discovery is shared by skills and prompts"
         );
         assert_eq!(
             catalog_of(&timed_out).await.availability,

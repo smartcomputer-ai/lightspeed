@@ -131,6 +131,18 @@ pub async fn handle_request(
     if let Some(capability) = spec.capability {
         runtime.require_capability(capability)?;
     }
+    if spec.family == manifest::Family::Transfer
+        && !runtime
+            .capabilities()
+            .filesystem
+            .as_ref()
+            .is_some_and(|fs| fs.transfer)
+    {
+        return Err(ProtocolError::capability_unavailable(
+            Capability::Filesystem,
+            "this filesystem does not support transfers",
+        ));
+    }
     if spec.activity == Some(Activity::Use) {
         runtime.touch_activity();
     }

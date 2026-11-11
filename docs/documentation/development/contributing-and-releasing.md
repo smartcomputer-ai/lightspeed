@@ -156,7 +156,9 @@ four component images and runs basic identity/import smoke checks. It does
 not recompile Rust or rebuild the UI. `make release` runs both targets in
 order.
 
-Official images and executable archives target Linux amd64 today. Local
+Official images target Linux amd64; envd archives target Linux musl and Windows
+MSVC x64. Windows builds run on the protected hz01 Windows VM, using the same
+commit, product version, Rust pin and Cargo lockfile as Linux. Local
 image builds use the Docker daemon's default platform, so use a Linux amd64
 build environment for the complete image workflow. The separate macOS
 workflow checks native Apple Silicon compilation and executable identity;
@@ -167,7 +169,8 @@ The outputs have distinct jobs:
 
 | Output | Purpose |
 | --- | --- |
-| `dist/bin/` and `dist/archives/` | Four Linux executables and their archives, plus the static demo and docs archives. |
+| `dist/bin/` and `dist/archives/` | Linux executables and archives, the assembled Windows envd archive, and static demo/docs archives. |
+| `dist/provenance/` | Windows compiler, SDK, OS, lockfile and artifact identity. |
 | `dist/npm/` | The publishable `@lightspeed-ai/sdk` package. |
 | `dist/contracts/` | Generated public API contracts. |
 | `dist/configurator-mcp/` and `dist/runtime/` | Staged inputs for component images. |
@@ -181,7 +184,8 @@ The demo and documentation site are separate static archives served under
 `/demo/` and `/docs/`.
 
 A local build verifies construction, but it does not publish an official
-release. Publication fills in component references and digests that can be
+release. Linux-only packaging creates an explicitly partial manifest; final
+assembly requires both daemon targets. Publication fills in component references and digests that can be
 absent from a local manifest. The
 [release implementation guide](../../releasing.md) covers the packaging and
 publication details, and the
@@ -226,8 +230,8 @@ git tag -a v0.3.0 -F release/notes/v0.3.0.md
 git push origin v0.3.0
 ```
 
-Pushing the tag starts publication. The protected Linux amd64 `hz01` runner
-must be online, GHCR publishing must be enabled, and the `official-release`
+Pushing the tag starts publication. The protected Linux amd64 and Windows x64
+`hz01` runners must be online, GHCR publishing must be enabled, and the `official-release`
 environment must contain `NPM_TOKEN`. The environment only pauses publication
 if approval rules have actually been configured in GitHub.
 

@@ -1996,7 +1996,7 @@
       },
       "role": "operator",
       "scope": "universe",
-      "summary": "Import a static bearer grant",
+      "summary": "Import a token credential",
       "target": null
     },
     {
@@ -2071,6 +2071,31 @@
       "role": "viewer",
       "scope": "universe",
       "summary": "List authentication grants",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "description": "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.",
+      "group": "auth",
+      "method": "auth/grants/replace",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/AuthGrantReplaceParams"
+        },
+        "type": "AuthGrantReplaceParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantReplaceResponse"
+        },
+        "type": "AgentApiOutcome<AuthGrantReplaceResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Replace a token credential's value",
       "target": null
     },
     {
@@ -2271,6 +2296,31 @@
       "role": "operator",
       "scope": "universe",
       "summary": "Register an authentication provider",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "description": "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
+      "group": "auth",
+      "method": "auth/providers/replace",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/AuthProviderReplaceParams"
+        },
+        "type": "AuthProviderReplaceParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderReplaceResponse"
+        },
+        "type": "AgentApiOutcome<AuthProviderReplaceResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Replace an authentication provider",
       "target": null
     },
     {

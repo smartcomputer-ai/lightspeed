@@ -5,18 +5,10 @@ use crate::{
     fs::{FsError, FsPath, FsToolContext},
 };
 
-pub(crate) fn resolve_path(ctx: &FsToolContext, path: &FsPath) -> ToolResult<FsPath> {
-    if path.is_absolute() {
-        return Ok(path.clone());
-    }
-
-    let Some(cwd) = &ctx.fs_cwd else {
-        return Ok(path.clone());
-    };
-
-    cwd.join_path(path)
-        .map_err(FsError::from)
-        .map_err(ToolError::from)
+pub(crate) fn resolve_path(ctx: &FsToolContext, path: &impl AsRef<str>) -> ToolResult<FsPath> {
+    ctx.fs
+        .resolve_input_path(ctx.fs_cwd.as_ref(), path.as_ref())
+        .map_err(Into::into)
 }
 
 pub(crate) fn invalid_request(message: impl Into<String>) -> ToolError {

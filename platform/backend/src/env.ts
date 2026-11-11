@@ -1,3 +1,10 @@
+import { databaseWorkloadIdentityFromEnv, type DatabaseWorkloadIdentity } from "@lightspeed-ai/platform-db";
+import {
+  DEFAULT_WORKSPACE_UPLOAD_LIMITS,
+  MAX_CONFIGURABLE_WORKSPACE_UPLOAD_BYTES,
+  type WorkspaceUploadLimits,
+} from "@lightspeed-ai/platform-shared";
+
 export interface OidcConfig {
   issuer: string;
   discoveryUrl: string;
@@ -16,6 +23,8 @@ export interface OidcConfig {
 
 export interface ServerEnv {
   databaseUrl: string;
+  /// Set when the database login uses a Microsoft Entra token instead of a password.
+  databaseWorkloadIdentity?: DatabaseWorkloadIdentity | null;
   authSecret: string;
   /// Public origin the platform is served from.
   baseUrl: string;
@@ -48,6 +57,8 @@ export interface ServerEnv {
   /// (started by ./dev.sh) offered as the default when registering an
   /// external environment. Never set in deployed configuration.
   devEnvdEndpoint: string | null;
+  /// Workspace upload limits for the web UI and the upload route.
+  workspaceUploadLimits?: WorkspaceUploadLimits;
 }
 
 function required(name: string): string {
@@ -81,6 +92,7 @@ export function loadEnv(): ServerEnv {
   }
   return {
     databaseUrl: required("LIGHTSPEED_PLATFORM_DATABASE_URL"),
+    databaseWorkloadIdentity: databaseWorkloadIdentityFromEnv(process.env),
     authSecret: required("LIGHTSPEED_PLATFORM_AUTH_SECRET"),
     baseUrl: process.env.LIGHTSPEED_PLATFORM_BASE_URL ?? "http://localhost:3000",
     trustedOrigins: csv(process.env.LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS),
@@ -104,7 +116,31 @@ export function loadEnv(): ServerEnv {
     ),
     channelsHealthUrls: csv(process.env.LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS),
     devEnvdEndpoint: process.env.LIGHTSPEED_PLATFORM_DEV_ENVD_ENDPOINT ?? null,
+    workspaceUploadLimits: {
+      maxBytes: integerEnv(
+        "LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_BYTES",
+        DEFAULT_WORKSPACE_UPLOAD_LIMITS.maxBytes,
+        1,
+        MAX_CONFIGURABLE_WORKSPACE_UPLOAD_BYTES,
+      ),
+      maxEntries: integerEnv(
+        "LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_ENTRIES",
+        DEFAULT_WORKSPACE_UPLOAD_LIMITS.maxEntries,
+        1,
+        1_000_000,
+      ),
+    },
   };
+}
+
+function integerEnv(name: string, fallback: number, min: number, max: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be an integer from ${min} to ${max}`);
+  }
+  return value;
 }
 
 function loadOidc(): OidcConfig | null {

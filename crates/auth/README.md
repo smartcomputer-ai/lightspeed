@@ -10,7 +10,7 @@ execution — never in the harness or the session log.
 ## What it provides
 
 - `grants` — `AuthGrantRecord` / `CreateAuthGrantRecord` and the
-  `AuthGrantStore` trait: a grant binds a provider kind (`static_bearer`,
+  `AuthGrantStore` trait: a grant binds a provider kind (`static_token`,
   `mcp_oauth`, GitHub kinds, `custom_oauth`), a principal, a status lifecycle
   (`active`, `needs_reauth`, `revoked`, `failed`), an optional `audience`
   (the resource URL the credential may be sent to), and references to stored
@@ -73,7 +73,7 @@ token), `auth/clients/create` (client secret), and `auth/providers/create`
 
 Vendor-specific credentials that a *tool inside an environment* consumes
 (a Claude Code `setup-token`, a Codex `auth.json`, a kubeconfig) are not
-modelled in core: they are ordinary `static_bearer` grants imported through
+modelled in core: they are ordinary `static_token` grants imported through
 `auth/grants/import` with caller-defined `metadata`, and injected verbatim
 into environments through credential bindings. Parsing, validation, and any
 vendor login flow live in the client that imports them (Platform), and

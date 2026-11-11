@@ -247,7 +247,7 @@ pub(crate) struct EntryStat {
     pub mode: u32,
     pub size: u64,
     pub dev: u64,
-    pub ino: u64,
+    pub ino: u128,
     pub modified: (i64, i64),
     pub changed: (i64, i64),
     pub birth_ms: Option<i64>,
@@ -267,7 +267,7 @@ impl EntryStat {
             mode: stat.st_mode as u32 & 0o7777,
             size: stat.st_size as u64,
             dev: stat.st_dev as u64,
-            ino: stat.st_ino as u64,
+            ino: stat.st_ino as u128,
             modified: (stat.st_mtime as i64, stat.st_mtime_nsec as i64),
             changed: (stat.st_ctime as i64, stat.st_ctime_nsec as i64),
             birth_ms: None,
@@ -299,7 +299,7 @@ impl EntryStat {
     }
 
     /// Device and inode.
-    pub fn identity(&self) -> (u64, u64) {
+    pub fn identity(&self) -> (u64, u128) {
         (self.dev, self.ino)
     }
 

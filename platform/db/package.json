@@ -8,16 +8,21 @@
   },
   "scripts": {
     "generate": "drizzle-kit generate",
+    "test": "vitest run",
     "test:migrations": "tsx scripts/check-migrations.ts"
   },
   "dependencies": {
+    "@azure/identity": "^4.14.1",
     "drizzle-orm": "^0.45.3",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "pg-connection-string": "^2.14.1"
   },
   "devDependencies": {
+    "@azure/core-rest-pipeline": "^1.25.0",
     "@types/pg": "^8.23.1",
     "better-auth": "1.7.7",
-    "drizzle-kit": "^0.31.11"
+    "drizzle-kit": "^0.31.11",
+    "vitest": "^5.0.3"
   },
   "engines": {
     "node": ">=24"

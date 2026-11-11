@@ -24,7 +24,7 @@ const IDLE_STAGES = ["pauseAfterMs", "suspendAfterMs", "stopAfterMs", "closeAfte
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const ENVD_ENDPOINT = /^(wss?:\/\/|unix:\/\/\/)[^\s]+$/;
 const DEV_ENVD_ENDPOINT = "ws://127.0.0.1:19091";
-const DEMO_DAEMON = { version: "0.1.0", protocolVersion: 4 };
+const DEMO_DAEMON = { version: "0.1.0", protocolVersion: 5 };
 const LIST_DEFAULT_LIMIT = 100;
 
 export interface ProvisionParams {

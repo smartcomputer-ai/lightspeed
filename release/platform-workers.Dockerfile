@@ -10,5 +10,6 @@ LABEL org.opencontainers.image.title="Lightspeed connector host" \
       org.opencontainers.image.source="https://github.com/smartcomputer-ai/lightspeed"
 WORKDIR /app
 ADD --chown=node:node dist/runtime/platform-workers.tar.gz /app/
-USER node
+# Numeric IDs let Kubernetes verify runAsNonRoot from image metadata.
+USER 1000:1000
 ENTRYPOINT ["node", "--import", "tsx", "platform/connectors/src/host/main.ts"]

@@ -1188,8 +1188,8 @@ impl SessionTools {
                 return Err(io_error(error).into());
             }
         };
-        let remote_connection = RemoteEnvironmentConnection::new(client)
-            .with_cwd(FsPath::new(cwd.as_str()).map_err(io_error)?);
+        let remote_connection =
+            RemoteEnvironmentConnection::new(client).with_cwd(FsPath::from_environment(cwd));
         let (_fs_context, mut environment_context) =
             remote_connection.clone().into_contexts(self.blobs.clone());
         if let Some(credentials) = &self.environment_credentials {
@@ -1456,14 +1456,7 @@ async fn environment_working_directory(
     let initialized = client.initialize_response();
     let cwd = match configured {
         Some(value) => {
-            if !value.starts_with('/') {
-                return Err(format!(
-                    "environment working directory must be absolute: {value}"
-                ));
-            }
-            let normalized =
-                tools::environment::sources::absolute(std::path::Path::new("/"), value)?;
-            EnvironmentPath::new(normalized.to_string_lossy())
+            environment_client::paths::absolute(value, initialized.platform.path_convention)
                 .map_err(|error| format!("environment working directory {value}: {error}"))?
         }
         None => initialized.default_cwd.clone(),

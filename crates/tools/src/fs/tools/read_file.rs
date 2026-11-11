@@ -20,7 +20,7 @@ pub const DEFAULT_READ_FILE_LINE_LIMIT: usize = 10_000;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ReadFileArgs {
-    pub path: FsPath,
+    pub path: crate::fs::PathInput,
     pub offset: Option<usize>,
     pub limit: Option<usize>,
 }
@@ -141,7 +141,7 @@ pub async fn invoke_read_file(
             line.push_str(" (offset and limit do not apply to media files)");
         }
         return Ok(ReadFileResult {
-            path: args.path,
+            path: args.path.presented(&resolved_path),
             resolved_path,
             text: String::new(),
             line_numbered_text: line,
@@ -186,7 +186,7 @@ pub async fn invoke_read_file(
     let truncated = start_index < total_lines && start_index + line_count < total_lines;
 
     Ok(ReadFileResult {
-        path: args.path,
+        path: args.path.presented(&resolved_path),
         resolved_path,
         text,
         line_numbered_text,
@@ -236,7 +236,7 @@ mod tests {
         let result = invoke_read_file(
             &ctx,
             ReadFileArgs {
-                path: FsPath::new("file.txt").expect("relative path"),
+                path: FsPath::new("file.txt").expect("relative path").into(),
                 offset: None,
                 limit: None,
             },
@@ -266,7 +266,7 @@ mod tests {
         let result = invoke_read_file(
             &ctx,
             ReadFileArgs {
-                path: FsPath::new("/file.txt").expect("path"),
+                path: FsPath::new("/file.txt").expect("path").into(),
                 offset: Some(2),
                 limit: Some(2),
             },
@@ -299,7 +299,7 @@ mod tests {
         let error = invoke_read_file(
             &ctx,
             ReadFileArgs {
-                path: FsPath::new("/file.txt").expect("path"),
+                path: FsPath::new("/file.txt").expect("path").into(),
                 offset: None,
                 limit: None,
             },
@@ -388,7 +388,7 @@ mod tests {
         let error = invoke_read_file(
             &ctx,
             ReadFileArgs {
-                path: FsPath::new("/huge.bin").expect("path"),
+                path: FsPath::new("/huge.bin").expect("path").into(),
                 offset: None,
                 limit: None,
             },
@@ -416,7 +416,7 @@ mod tests {
         let result = invoke_read_file(
             &ctx,
             ReadFileArgs {
-                path: FsPath::new("/file.txt").expect("path"),
+                path: FsPath::new("/file.txt").expect("path").into(),
                 offset: None,
                 limit: None,
             },
@@ -454,7 +454,7 @@ mod tests {
         invoke_read_file(
             ctx,
             ReadFileArgs {
-                path: FsPath::new(path).expect("path"),
+                path: FsPath::new(path).expect("path").into(),
                 offset: None,
                 limit: None,
             },
@@ -565,7 +565,7 @@ mod tests {
         let result = invoke_read_file(
             &ctx,
             ReadFileArgs {
-                path: FsPath::new("/photo.png").expect("path"),
+                path: FsPath::new("/photo.png").expect("path").into(),
                 offset: Some(3),
                 limit: Some(2),
             },

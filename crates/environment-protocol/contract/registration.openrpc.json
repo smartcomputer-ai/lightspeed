@@ -1090,9 +1090,9 @@
     }
   },
   "info": {
-    "description": "JSON-RPC 2.0 over WebSocket text frames of at most 16777216 bytes. Exact-match protocolVersion 4. Errors carry code, message and data.kind; see x-lightspeed-error-kinds.",
+    "description": "JSON-RPC 2.0 over WebSocket text frames of at most 16777216 bytes. Exact-match protocolVersion 5. Errors carry code, message and data.kind; see x-lightspeed-error-kinds.",
     "title": "Lightspeed environment registration channel",
-    "version": "4"
+    "version": "5"
   },
   "methods": [
     {

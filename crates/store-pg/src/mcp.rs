@@ -1,7 +1,7 @@
 use ::mcp::{
     ListMcpServers, McpApprovalPolicy, McpExecution, McpExposure, McpRegistryError,
-    McpRegistryStore, McpServerAuthPolicy, McpServerId, McpServerRecord, McpServerStatus,
-    PutMcpServerRecord, RemoteMcpTransport,
+    McpRegistryStore, McpServerAuthPolicy, McpServerHeaderValue, McpServerHeaders, McpServerId,
+    McpServerRecord, McpServerStatus, PutMcpServerRecord, RemoteMcpTransport,
 };
 use async_trait::async_trait;
 use sqlx::Row;
@@ -67,118 +67,31 @@ impl McpRegistryStore for PgStore {
         &self,
         server_id: &McpServerId,
     ) -> Result<McpServerRecord, McpRegistryError> {
-        let row = sqlx::query(
-            r#"
-            SELECT
-                server_id,
-                display_name,
-                server_url,
-                transport,
-                default_server_label,
-                description,
-                allowed_tools,
-                execution,
-                exposure,
-                approval_default,
-                defer_loading_default,
-                allow_private_network,
-                auth_policy,
-                auth_metadata_json,
-                auth_grant_id,
-                status,
-                revision,
-                created_at_ms,
-                updated_at_ms
-            FROM mcp_servers
-            WHERE universe_id = $1 AND server_id = $2
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(server_id.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| mcp_sql_error("read mcp server", error))?;
-
-        let Some(row) = row else {
-            return Err(McpRegistryError::NotFound {
+        select_server(&self.pool, self.config.universe_id, server_id, false)
+            .await?
+            .ok_or_else(|| McpRegistryError::NotFound {
                 server_id: server_id.clone(),
-            });
-        };
-        server_record_from_row(&row)
+            })
     }
 
     async fn list_servers(
         &self,
         request: ListMcpServers,
     ) -> Result<Vec<McpServerRecord>, McpRegistryError> {
-        let rows = match request.status {
-            Some(status) => {
-                sqlx::query(
-                    r#"
-                    SELECT
-                        server_id,
-                        display_name,
-                        server_url,
-                        transport,
-                        default_server_label,
-                        description,
-                        allowed_tools,
-                        execution,
-                        exposure,
-                        approval_default,
-                        defer_loading_default,
-                        allow_private_network,
-                        auth_policy,
-                        auth_metadata_json,
-                        auth_grant_id,
-                        status,
-                        revision,
-                        created_at_ms,
-                        updated_at_ms
-                    FROM mcp_servers
-                    WHERE universe_id = $1 AND status = $2
-                    ORDER BY server_id
-                    "#,
-                )
-                .bind(self.config.universe_id)
-                .bind(status_to_str(status))
-                .fetch_all(&self.pool)
-                .await
-            }
-            None => {
-                sqlx::query(
-                    r#"
-                    SELECT
-                        server_id,
-                        display_name,
-                        server_url,
-                        transport,
-                        default_server_label,
-                        description,
-                        allowed_tools,
-                        execution,
-                        exposure,
-                        approval_default,
-                        defer_loading_default,
-                        allow_private_network,
-                        auth_policy,
-                        auth_metadata_json,
-                        auth_grant_id,
-                        status,
-                        revision,
-                        created_at_ms,
-                        updated_at_ms
-                    FROM mcp_servers
-                    WHERE universe_id = $1
-                    ORDER BY server_id
-                    "#,
-                )
-                .bind(self.config.universe_id)
-                .fetch_all(&self.pool)
-                .await
-            }
-        }
-        .map_err(|error| mcp_sql_error("list mcp servers", error))?;
+        let query = format!(
+            r#"
+            SELECT {SERVER_COLUMNS}
+            FROM mcp_servers AS s
+            WHERE s.universe_id = $1 AND ($2::text IS NULL OR s.status = $2)
+            ORDER BY s.server_id
+            "#
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(self.config.universe_id)
+            .bind(request.status.map(status_to_str))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| mcp_sql_error("list mcp servers", error))?;
 
         rows.iter().map(server_record_from_row).collect()
     }
@@ -190,44 +103,29 @@ impl McpRegistryStore for PgStore {
         self.ensure_universe()
             .await
             .map_err(|error| mcp_store_error("ensure universe", error))?;
-        let row = sqlx::query(
-            r#"
-            DELETE FROM mcp_servers
-            WHERE universe_id = $1 AND server_id = $2
-            RETURNING
-                server_id,
-                display_name,
-                server_url,
-                transport,
-                default_server_label,
-                description,
-                allowed_tools,
-                execution,
-                exposure,
-                approval_default,
-                defer_loading_default,
-                allow_private_network,
-                auth_policy,
-                auth_metadata_json,
-                auth_grant_id,
-                status,
-                revision,
-                created_at_ms,
-                updated_at_ms
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(server_id.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| mcp_sql_error("delete mcp server", error))?;
-
-        let Some(row) = row else {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| mcp_sql_error("begin mcp server delete", error))?;
+        let Some(record) =
+            select_server(&mut *tx, self.config.universe_id, server_id, true).await?
+        else {
             return Err(McpRegistryError::NotFound {
                 server_id: server_id.clone(),
             });
         };
-        server_record_from_row(&row)
+        // Header rows cascade with the server.
+        sqlx::query("DELETE FROM mcp_servers WHERE universe_id = $1 AND server_id = $2")
+            .bind(self.config.universe_id)
+            .bind(server_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| mcp_sql_error("delete mcp server", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| mcp_sql_error("commit mcp server delete", error))?;
+        Ok(record)
     }
 }
 
@@ -241,7 +139,12 @@ impl PgStore {
         let record = record.into_record();
         record.validate()?;
         let (auth_policy, auth_metadata_json) = auth_policy_columns(&record.auth_policy)?;
-        let row = sqlx::query(
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| mcp_sql_error("begin mcp server insert", error))?;
+        let inserted = sqlx::query(
             r#"
             INSERT INTO mcp_servers (
                 universe_id,
@@ -267,26 +170,7 @@ impl PgStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             ON CONFLICT (universe_id, server_id) DO NOTHING
-            RETURNING
-                server_id,
-                display_name,
-                server_url,
-                transport,
-                default_server_label,
-                description,
-                allowed_tools,
-                execution,
-                exposure,
-                approval_default,
-                defer_loading_default,
-                allow_private_network,
-                auth_policy,
-                auth_metadata_json,
-                auth_grant_id,
-                status,
-                revision,
-                created_at_ms,
-                updated_at_ms
+            RETURNING server_id
             "#,
         )
         .bind(self.config.universe_id)
@@ -314,16 +198,17 @@ impl PgStore {
         .bind(u64_to_i64(record.revision, "revision")?)
         .bind(record.created_at_ms)
         .bind(record.updated_at_ms)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|error| mcp_sql_error("insert mcp server", error))?;
 
-        let Some(row) = row else {
+        if inserted.is_none() {
             return Err(McpRegistryError::AlreadyExists {
                 server_id: record.server_id,
             });
-        };
-        server_record_from_row(&row)
+        }
+        let written = self.finish_server_write(tx, &record).await?;
+        Ok(written)
     }
 
     /// Write `replaced` over the row currently at `guard_revision`. Returns
@@ -334,7 +219,12 @@ impl PgStore {
         guard_revision: u64,
     ) -> Result<Option<McpServerRecord>, McpRegistryError> {
         let (auth_policy, auth_metadata_json) = auth_policy_columns(&replaced.auth_policy)?;
-        let row = sqlx::query(
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| mcp_sql_error("begin mcp server write", error))?;
+        let updated = sqlx::query(
             r#"
             UPDATE mcp_servers SET
                 display_name = $3,
@@ -355,26 +245,7 @@ impl PgStore {
                 revision = $18,
                 updated_at_ms = $19
             WHERE universe_id = $1 AND server_id = $2 AND revision = $20
-            RETURNING
-                server_id,
-                display_name,
-                server_url,
-                transport,
-                default_server_label,
-                description,
-                allowed_tools,
-                execution,
-                exposure,
-                approval_default,
-                defer_loading_default,
-                allow_private_network,
-                auth_policy,
-                auth_metadata_json,
-                auth_grant_id,
-                status,
-                revision,
-                created_at_ms,
-                updated_at_ms
+            RETURNING server_id
             "#,
         )
         .bind(self.config.universe_id)
@@ -402,11 +273,192 @@ impl PgStore {
         .bind(u64_to_i64(replaced.revision, "revision")?)
         .bind(replaced.updated_at_ms)
         .bind(u64_to_i64(guard_revision, "revision")?)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|error| mcp_sql_error("write mcp server", error))?;
-        row.as_ref().map(server_record_from_row).transpose()
+        if updated.is_none() {
+            return Ok(None);
+        }
+        self.finish_server_write(tx, replaced).await.map(Some)
     }
+
+    /// Replace the server's header rows, read the whole record back inside
+    /// the same transaction, and commit.
+    async fn finish_server_write(
+        &self,
+        mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+        record: &McpServerRecord,
+    ) -> Result<McpServerRecord, McpRegistryError> {
+        let universe_id = self.config.universe_id;
+        sqlx::query("DELETE FROM mcp_server_headers WHERE universe_id = $1 AND server_id = $2")
+            .bind(universe_id)
+            .bind(record.server_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| mcp_sql_error("clear mcp server headers", error))?;
+        if !record.headers.is_empty() {
+            let mut names = Vec::with_capacity(record.headers.len());
+            let mut literals = Vec::with_capacity(record.headers.len());
+            let mut grants = Vec::with_capacity(record.headers.len());
+            for (name, value) in &record.headers {
+                names.push(name.clone());
+                match value {
+                    McpServerHeaderValue::Literal { value } => {
+                        literals.push(Some(value.clone()));
+                        grants.push(None);
+                    }
+                    McpServerHeaderValue::Credential { grant_id } => {
+                        literals.push(None);
+                        grants.push(Some(grant_id.as_str().to_owned()));
+                    }
+                }
+            }
+            sqlx::query(
+                r#"
+                INSERT INTO mcp_server_headers (universe_id, server_id, name, literal_value, grant_id)
+                SELECT $1, $2, header.name, header.literal_value, header.grant_id
+                FROM UNNEST($3::text[], $4::text[], $5::text[])
+                    AS header (name, literal_value, grant_id)
+                "#,
+            )
+            .bind(universe_id)
+            .bind(record.server_id.as_str())
+            .bind(&names)
+            .bind(&literals)
+            .bind(&grants)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| {
+                if foreign_key_constraint(&error) == Some(HEADER_GRANT_FK) {
+                    McpRegistryError::InvalidInput {
+                        message: "a custom header references a credential that does not exist"
+                            .to_owned(),
+                    }
+                } else {
+                    mcp_sql_error("write mcp server headers", error)
+                }
+            })?;
+        }
+        let written = select_server(&mut *tx, universe_id, &record.server_id, false)
+            .await?
+            .ok_or_else(|| McpRegistryError::Store {
+                message: format!("mcp server {} vanished during write", record.server_id),
+            })?;
+        tx.commit()
+            .await
+            .map_err(|error| mcp_sql_error("commit mcp server write", error))?;
+        Ok(written)
+    }
+}
+
+const HEADER_GRANT_FK: &str = "mcp_server_headers_grant_fk";
+
+/// Every column of a server row plus its header rows folded into one JSON
+/// array, so reads, lists and post-write reads decode the whole document.
+const SERVER_COLUMNS: &str = r#"
+    s.server_id,
+    s.display_name,
+    s.server_url,
+    s.transport,
+    s.default_server_label,
+    s.description,
+    s.allowed_tools,
+    s.execution,
+    s.exposure,
+    s.approval_default,
+    s.defer_loading_default,
+    s.allow_private_network,
+    s.auth_policy,
+    s.auth_metadata_json,
+    s.auth_grant_id,
+    s.status,
+    s.revision,
+    s.created_at_ms,
+    s.updated_at_ms,
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'name', h.name,
+                    'literal_value', h.literal_value,
+                    'grant_id', h.grant_id
+                )
+                ORDER BY h.name
+            )
+            FROM mcp_server_headers AS h
+            WHERE h.universe_id = s.universe_id AND h.server_id = s.server_id
+        ),
+        '[]'::jsonb
+    ) AS headers_json
+"#;
+
+async fn select_server<'e, E>(
+    executor: E,
+    universe_id: uuid::Uuid,
+    server_id: &McpServerId,
+    for_update: bool,
+) -> Result<Option<McpServerRecord>, McpRegistryError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let lock = if for_update { "FOR UPDATE OF s" } else { "" };
+    let query = format!(
+        r#"
+        SELECT {SERVER_COLUMNS}
+        FROM mcp_servers AS s
+        WHERE s.universe_id = $1 AND s.server_id = $2
+        {lock}
+        "#
+    );
+    let row = sqlx::query(sqlx::AssertSqlSafe(query))
+        .bind(universe_id)
+        .bind(server_id.as_str())
+        .fetch_optional(executor)
+        .await
+        .map_err(|error| mcp_sql_error("read mcp server", error))?;
+    row.as_ref().map(server_record_from_row).transpose()
+}
+
+fn foreign_key_constraint(error: &sqlx::Error) -> Option<&str> {
+    let database = error.as_database_error()?;
+    if database.code().as_deref() != Some("23503") {
+        return None;
+    }
+    database.constraint()
+}
+
+#[derive(serde::Deserialize)]
+struct HeaderRow {
+    name: String,
+    literal_value: Option<String>,
+    grant_id: Option<String>,
+}
+
+fn headers_from_json(value: serde_json::Value) -> Result<McpServerHeaders, McpRegistryError> {
+    let rows: Vec<HeaderRow> =
+        serde_json::from_value(value).map_err(|error| McpRegistryError::Store {
+            message: format!("decode mcp server headers: {error}"),
+        })?;
+    rows.into_iter()
+        .map(|row| {
+            let value = match (row.literal_value, row.grant_id) {
+                (Some(value), None) => McpServerHeaderValue::Literal { value },
+                (None, Some(grant_id)) => McpServerHeaderValue::Credential {
+                    grant_id: auth::AuthGrantId::try_new(grant_id).map_err(|error| {
+                        McpRegistryError::Store {
+                            message: format!("decode mcp header grant id: {error}"),
+                        }
+                    })?,
+                },
+                _ => {
+                    return Err(McpRegistryError::Store {
+                        message: format!("mcp header {} has no single value source", row.name),
+                    });
+                }
+            };
+            Ok((row.name, value))
+        })
+        .collect()
 }
 
 fn server_record_from_row(
@@ -442,6 +494,9 @@ fn server_record_from_row(
     let revision: i64 = row
         .try_get("revision")
         .map_err(|error| mcp_sql_error("decode mcp revision", error))?;
+    let headers_json: serde_json::Value = row
+        .try_get("headers_json")
+        .map_err(|error| mcp_sql_error("decode mcp headers", error))?;
 
     let record = McpServerRecord {
         server_id: McpServerId::try_new(server_id).map_err(|error| McpRegistryError::Store {
@@ -479,6 +534,7 @@ fn server_record_from_row(
             .map_err(|error| McpRegistryError::Store {
                 message: format!("decode mcp auth grant id: {error}"),
             })?,
+        headers: headers_from_json(headers_json)?,
         status: status_from_str(&status)?,
         revision: i64_to_u64(revision, "revision")?,
         created_at_ms: row
