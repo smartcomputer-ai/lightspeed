@@ -23,6 +23,8 @@ from temporalio.client import Client as TemporalClient
 from lightspeed_ai import AsyncLightspeedClient, generate_submission_id
 from lightspeed_ai.types import EventCursor, RunView, SessionEventView, SessionView
 
+from local_admin import PLATFORM_URL
+
 TERMINAL = {"completed", "failed", "cancelled"}
 MAX_TURNS = 12
 MAX_EVENTS = 250
@@ -54,7 +56,7 @@ class Settings:
             api_key=value("LIGHTSPEED_API_KEY"),
             universe=value("LIGHTSPEED_UNIVERSE"),
             profile=value("LIGHTSPEED_PROFILE_ID"),
-            platform_url=value("LIGHTSPEED_DEMO_PLATFORM_URL", "http://127.0.0.1:5173/app/"),
+            platform_url=value("LIGHTSPEED_DEMO_PLATFORM_URL", PLATFORM_URL),
             temporal_address=value("LIGHTSPEED_DEMO_TEMPORAL_ADDRESS"),
             temporal_namespace=value("LIGHTSPEED_DEMO_TEMPORAL_NAMESPACE") or "default",
             temporal_ui=value("LIGHTSPEED_DEMO_TEMPORAL_UI"),

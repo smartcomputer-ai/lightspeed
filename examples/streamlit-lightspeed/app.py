@@ -13,9 +13,11 @@ from demo import (
     MAX_PREVIEW_BYTES, MAX_TURNS, Chat, Gateway, Settings, Turn, postgres_state, temporal_history, workspace_files,
 )
 from flow import NODES, diagram, steps_for
+from local_admin import LOOPBACK, load_local_admin, start_handoff
 
 st.set_page_config(page_title="Lightspeed internals", layout="wide")
-settings = Settings.load(Path(__file__).resolve().parent)
+EXAMPLE = Path(__file__).resolve().parent
+settings = Settings.load(EXAMPLE)
 gateway = Gateway(settings)
 
 
@@ -283,10 +285,33 @@ def replace_chat(chat: Chat) -> None:
     st.session_state.session_to_open = chat.session_id if chat.opened else ""
 
 
+@st.cache_resource
+def admin_handoff():
+    return start_handoff()
+
+
+def show_platform_link(universe: str | None = None) -> None:
+    if not settings.platform_url:
+        return
+    url = settings.platform_url
+    streamlit_host = f"{LOOPBACK}:{st.get_option('server.port')}"
+    if (
+        st.get_option("server.address") == LOOPBACK
+        and st.context.headers.get("Host") == streamlit_host
+        and st.context.headers.get("Origin") == f"http://{streamlit_host}"
+    ):
+        admin = load_local_admin(EXAMPLE.parents[1], settings.endpoint, url, universe)
+        if admin:
+            try:
+                url = admin_handoff().issue(admin)
+            except OSError:
+                st.sidebar.caption("Local admin sign-in is unavailable.")
+    st.sidebar.link_button("Open Lightspeed", url, width="stretch")
+
+
 st.title("Lightspeed internals")
-if settings.platform_url:
-    st.sidebar.link_button("Open Lightspeed", settings.platform_url, width="stretch")
 if not settings.api_key:
+    show_platform_link()
     st.info("Run ./init-env.sh to prepare Lightspeed, then set LIGHTSPEED_API_KEY in this example's .env file.")
     st.stop()
 
@@ -294,10 +319,12 @@ if "universe" not in st.session_state:
     try:
         st.session_state.universe = gateway.identify_universe()
     except (LightspeedRpcError, LightspeedTransportError) as error:
+        show_platform_link()
         st.error(rpc_message(error))
         st.button("Retry connection")
         st.stop()
 
+show_platform_link(st.session_state.universe)
 if "chat" not in st.session_state:
     replace_chat(Chat())
 

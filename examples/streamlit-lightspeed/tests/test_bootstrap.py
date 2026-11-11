@@ -6,8 +6,7 @@ import pytest
 
 import bootstrap
 from bootstrap import SetupError
-
-TEST_UNIVERSE = "6c696768-7473-4065-8064-000000000010"
+from local_admin import PLATFORM_URL, TEST_UNIVERSE, LocalAdmin, load_local_admin, state_dir
 
 
 def arguments(path, **overrides):
@@ -15,7 +14,7 @@ def arguments(path, **overrides):
         "env_file": path, "setup_env_file": path.with_name(".env.bootstrap"),
         "gateway": None, "universe": None, "profile": None,
         "environment_id": None, "envd_endpoint": None, "model_provider": None,
-        "model_api_kind": None, "model": None, **overrides,
+        "model_api_kind": None, "model": None, "local_admin_login": False, **overrides,
     })
 
 
@@ -47,6 +46,9 @@ def test_local_setup_targets_platform_test_universe_and_leaves_app_config(monkey
     monkeypatch.delenv("LIGHTSPEED_UNIVERSE", raising=False)
     monkeypatch.delenv("LIGHTSPEED_API_URL", raising=False)
     monkeypatch.delenv("LIGHTSPEED_PROFILE_ID", raising=False)
+    monkeypatch.delenv("LIGHTSPEED_DEMO_PLATFORM_URL", raising=False)
+    monkeypatch.setenv("LIGHTSPEED_PLATFORM_ADMIN_EMAIL", "admin@example.test")
+    monkeypatch.setenv("LIGHTSPEED_PLATFORM_ADMIN_PASSWORD", "fixture-password")
     monkeypatch.setattr(bootstrap, "ROOT", tmp_path)
     monkeypatch.setattr(bootstrap, "launcher_handoff", lambda: {
         "endpoint": bootstrap.DEFAULT_GATEWAY, "credentialFile": str(key_file),
@@ -115,7 +117,18 @@ def test_local_setup_targets_platform_test_universe_and_leaves_app_config(monkey
     monkeypatch.setattr(bootstrap, "AsyncLightspeedClient", Client)
     args = arguments(env_file)
     asyncio.run(bootstrap.initialize(args))
+    assert load_local_admin(tmp_path, bootstrap.DEFAULT_GATEWAY, PLATFORM_URL, TEST_UNIVERSE) is None
+    args.local_admin_login = True
+    monkeypatch.setenv("LIGHTSPEED_DEMO_PLATFORM_URL", "https://platform.example/app/")
+    with pytest.raises(SetupError, match="default Platform URL"):
+        asyncio.run(bootstrap.initialize(args))
+    monkeypatch.delenv("LIGHTSPEED_DEMO_PLATFORM_URL")
     asyncio.run(bootstrap.initialize(args))
+    assert load_local_admin(tmp_path, bootstrap.DEFAULT_GATEWAY, PLATFORM_URL, TEST_UNIVERSE) == LocalAdmin(
+        "admin@example.test", "fixture-password",
+    )
+    admin_file = state_dir(tmp_path, bootstrap.DEFAULT_GATEWAY, TEST_UNIVERSE) / "platform-admin.json"
+    assert admin_file.stat().st_mode & 0o777 == 0o600
 
     profile_calls = [call for call in calls if call[1] == "profiles/create"]
     assert len(profile_calls) == 1

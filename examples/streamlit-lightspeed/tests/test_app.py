@@ -1,9 +1,11 @@
 from pathlib import Path
 
 import pytest
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 import demo
+import local_admin
 from demo import Chat, Rpc, Turn
 from lightspeed_ai import LightspeedTransportError
 
@@ -101,3 +103,31 @@ def test_lightspeed_link_uses_the_configured_platform_url(app, monkeypatch):
     assert not app.exception
     links = app.get("link_button")
     assert any(link.proto.label == "Open Lightspeed" and link.proto.url == "https://platform.example/app/" for link in links)
+
+
+def test_admin_link_requires_the_loopback_streamlit_origin(app, monkeypatch):
+    monkeypatch.setenv("LIGHTSPEED_DEMO_PLATFORM_URL", local_admin.PLATFORM_URL)
+    headers = {"Host": "127.0.0.1:8501", "Origin": "http://127.0.0.1:8501"}
+    monkeypatch.setattr(type(st.context), "headers", property(lambda _self: headers))
+    get_option = st.get_option
+
+    def option(key):
+        return {"server.address": "127.0.0.1", "server.port": 8501}.get(key, get_option(key))
+
+    admin = local_admin.LocalAdmin("admin@example.test", "fixture-password")
+
+    class Handoff:
+        def issue(self, credentials):
+            assert credentials == admin
+            return "http://127.0.0.1:6789/open?ticket=fixture"
+
+    monkeypatch.setattr(st, "get_option", option)
+    monkeypatch.setattr(local_admin, "load_local_admin", lambda *_args: admin)
+    monkeypatch.setattr(local_admin, "start_handoff", Handoff)
+    app.run()
+    assert not app.exception
+    assert app.get("link_button")[0].proto.url == "http://127.0.0.1:6789/open?ticket=fixture"
+    headers["Origin"] = "https://elsewhere.example"
+    app.run()
+    assert not app.exception
+    assert app.get("link_button")[0].proto.url == local_admin.PLATFORM_URL

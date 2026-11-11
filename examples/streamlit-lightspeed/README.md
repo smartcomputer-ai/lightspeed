@@ -11,7 +11,7 @@ Start `./dev.sh` from the repository root and wait for the gateway, Platform,
 and daemon to become ready. From this example's directory, run:
 
 ```sh
-./init-env.sh --universe test
+./init-env.sh --universe test --local-admin-login
 ```
 
 The initializer connects to the running Lightspeed gateway and provisions the
@@ -72,6 +72,20 @@ to the gateway, `LIGHTSPEED_API_KEY` to the scoped key, and `LIGHTSPEED_PROFILE_
 to the profile from setup. A universe key selects its universe, so leave
 `LIGHTSPEED_UNIVERSE` blank. Use `LIGHTSPEED_DEMO_PLATFORM_URL` for the
 **Open Lightspeed** link.
+
+The setup command above enables one-click sign-in as the local Platform admin,
+including in a fresh browser. Open Streamlit at `http://127.0.0.1:8501` and
+click **Open Lightspeed** to land on the **Test** sessions page. Streamlit
+issues a single-use link that expires after five minutes. Reload Streamlit to
+get a new link.
+
+This option requires the authenticated local dev launcher, the seeded **Test**
+universe, and the default Platform URL. Setup uses the launcher’s admin
+credentials and saves them in an owner-only, gitignored file. If you started
+`./dev.sh` with custom `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and
+`LIGHTSPEED_PLATFORM_ADMIN_PASSWORD` values, provide those same values in your
+shell or `.env.bootstrap` when running setup. Platform issues its usual session
+cookie when you click the link.
 
 The example file includes the local Temporal address, namespace, and UI.
 Set `LIGHTSPEED_DEMO_POSTGRES_DSN` using the [read-only grants below](#enable-read-only-postgresql-evidence)

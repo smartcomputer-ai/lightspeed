@@ -5,10 +5,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import fcntl
-import hashlib
 import json
 import os
-import stat
 import sys
 from collections.abc import Awaitable
 from io import StringIO
@@ -23,6 +21,8 @@ from lightspeed_ai import AsyncLightspeedClient, LightspeedRpcError, LightspeedT
 from lightspeed_ai.types import (
     AgentProfile, AgentProfileInput, AuthProviderCreateParams, CallerAccess, ModelConfig, SessionConfig,
 )
+
+from local_admin import LocalAdmin, PLATFORM_URL, local_test_target, private_read, save_local_admin, state_dir
 
 EXAMPLE = Path(__file__).resolve().parent
 ROOT = EXAMPLE.parents[1]
@@ -47,13 +47,6 @@ def gateway_url(value: str) -> str:
     if url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password:
         raise SetupError("Gateway must be an HTTP or HTTPS URL without credentials.")
     return value
-
-
-def private_read(path: Path) -> str:
-    mode = path.lstat().st_mode
-    if not stat.S_ISREG(mode) or mode & 0o077:
-        raise SetupError(f"Expected an owner-only regular file at {path}.")
-    return path.read_text().strip()
 
 
 def launcher_handoff() -> dict:
@@ -110,8 +103,7 @@ async def ensure_app_key(
     if usable_key(access, universe):
         return "Existing Streamlit configuration already has a usable universe key."
 
-    identity = hashlib.sha256(f"{endpoint}\n{universe}".encode()).hexdigest()[:20]
-    directory = ROOT / ".lightspeed-dev/streamlit-bootstrap" / identity
+    directory = state_dir(ROOT, endpoint, universe)
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     key_path = directory / "api-key"
     with (directory / "lock").open("a") as lock:
@@ -292,6 +284,10 @@ async def initialize(args: argparse.Namespace) -> None:
         if (await admin.initialize())["caller"]["scope"]["kind"] != "deployment":
             raise SetupError("Initialization requires a deployment API key.")
         universe = await resolve_universe(admin, selector)
+        if args.local_admin_login:
+            platform_url = os.environ.get("LIGHTSPEED_DEMO_PLATFORM_URL", values.get("LIGHTSPEED_DEMO_PLATFORM_URL", PLATFORM_URL))
+            if not launcher or not local_test_target(endpoint, (platform_url or "").strip(), universe):
+                raise SetupError("Local admin sign-in requires the authenticated dev launcher, its Test universe, and the default Platform URL.")
         async with AsyncLightspeedClient(endpoint, api_key=admin_key, universe=universe) as client:
             response = await optional(client.read_profile(profile))
             existing = response["profile"] if response else None
@@ -315,6 +311,17 @@ async def initialize(args: argparse.Namespace) -> None:
     else:
         print("Select an agent-run model in Lightspeed or rerun with the --model options.")
     print(key_message)
+    if args.local_admin_login:
+        launcher_env = dotenv_values(ROOT / ".env", interpolate=False)
+        email = secret("LIGHTSPEED_PLATFORM_ADMIN_EMAIL") or launcher_env.get("LIGHTSPEED_PLATFORM_ADMIN_EMAIL") or "admin@lightspeed.dev"
+        password = (
+            os.environ.get("LIGHTSPEED_PLATFORM_ADMIN_PASSWORD")
+            or secrets.get("LIGHTSPEED_PLATFORM_ADMIN_PASSWORD")
+            or launcher_env.get("LIGHTSPEED_PLATFORM_ADMIN_PASSWORD")
+            or "lightspeed-dev-password"
+        )
+        save_local_admin(state_dir(ROOT, endpoint, universe), LocalAdmin(email, password))
+        print("Enabled local Platform admin sign-in from Open Lightspeed.")
     print("Use this universe's scoped key and profile in the Streamlit connection settings.")
 
 
@@ -331,6 +338,7 @@ def main() -> None:
     parser.add_argument("--model-provider", help="Model provider ID, for example openai")
     parser.add_argument("--model-api-kind", help="Model API kind, for example openai:responses")
     parser.add_argument("--model", help="Model name for the demo profile")
+    parser.add_argument("--local-admin-login", action="store_true", help="Enable one-click admin sign-in for the local Platform Test demo")
     environment = parser.add_mutually_exclusive_group()
     environment.add_argument("--environment-id", help="Attach an existing environment")
     environment.add_argument("--envd-endpoint", help="Register a direct daemon endpoint reachable from the gateway")
