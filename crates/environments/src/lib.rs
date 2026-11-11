@@ -569,7 +569,25 @@ pub struct MintedRegistrationSecret {
 /// Mint a registration secret. Only its SHA-256 hash and display prefix are
 /// ever persisted.
 pub fn mint_registration_secret() -> MintedRegistrationSecret {
-    let secret = auth::generate_prefixed_secret(REGISTRATION_KEY_SECRET_PREFIX);
+    registration_secret(auth::generate_prefixed_secret(
+        REGISTRATION_KEY_SECRET_PREFIX,
+    ))
+}
+
+/// Accept a supplied registration secret, in the same 32-byte base64url
+/// representation minted secrets use.
+pub fn import_registration_secret(
+    secret: &str,
+) -> Result<MintedRegistrationSecret, EnvironmentRegistryError> {
+    if !auth::is_prefixed_secret(REGISTRATION_KEY_SECRET_PREFIX, secret) {
+        return invalid(
+            "expected lsrk_ followed by 32 random bytes encoded as base64url without padding",
+        );
+    }
+    Ok(registration_secret(secret.to_owned()))
+}
+
+fn registration_secret(secret: String) -> MintedRegistrationSecret {
     MintedRegistrationSecret {
         secret_hash: auth::secret_sha256_hex(&secret),
         key_prefix: auth::secret_display_prefix(&secret, REGISTRATION_KEY_DISPLAY_PREFIX_LEN),
@@ -591,7 +609,21 @@ pub fn mint_registration_key(
     policy: RegistrationKeyPolicy,
     created_at_ms: i64,
 ) -> Result<MintedRegistrationKey, EnvironmentRegistryError> {
-    let secret = mint_registration_secret();
+    registration_key_with_secret(
+        registration_key_id,
+        policy,
+        mint_registration_secret(),
+        created_at_ms,
+    )
+}
+
+/// A new registration key around a secret, minted or supplied.
+pub fn registration_key_with_secret(
+    registration_key_id: EnvironmentRegistrationKeyId,
+    policy: RegistrationKeyPolicy,
+    secret: MintedRegistrationSecret,
+    created_at_ms: i64,
+) -> Result<MintedRegistrationKey, EnvironmentRegistryError> {
     let record = EnvironmentRegistrationKeyRecord {
         registration_key_id,
         display_name: policy.display_name,

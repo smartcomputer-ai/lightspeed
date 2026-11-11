@@ -11,7 +11,7 @@ import type {
 } from "@lightspeed-ai/sdk";
 import { groupsFor } from "@/lib/method-groups";
 import { DEMO_POWER_STATES } from "../fixtures/builders";
-import type { DemoStore, UniverseState } from "../store";
+import { allocatedKeyId, type DemoStore, type UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody } from "./common";
 
 /// What a fresh binding provisions from when no other universe already
@@ -97,7 +97,7 @@ export function adminRoutes(store: DemoStore): Hono {
     const displayName = body.displayName?.trim();
     if (!displayName || !body.scope) return badRequest(c, "displayName and scope are required");
     const secret = `lsk_${crypto.randomUUID().replaceAll("-", "")}`;
-    const key = { keyPrefix: secret.slice(0, 12), displayName, createdAtMs: Date.now(), revokedAtMs: null, lastUsedAtMs: null };
+    const key = { keyId: allocatedKeyId(), keyPrefix: secret.slice(0, 12), displayName, createdAtMs: Date.now(), revokedAtMs: null, lastUsedAtMs: null };
     const kind = body.scope.kind;
     const groups = body.groups ?? groupsFor(kind);
     const assertActor = body.assertActor ?? false;
@@ -117,21 +117,25 @@ export function adminRoutes(store: DemoStore): Hono {
     return c.json({ apiKey, secret }, 201);
   });
 
-  app.post("/admin/api-keys/:keyPrefix/rotate", (c) => {
-    const prefix = c.req.param("keyPrefix");
-    const apiKey = [...store.deploymentKeys, ...[...store.universes.values()].flatMap((state) => state.apiKeys)]
-      .find((key) => key.keyPrefix === prefix && key.revokedAtMs == null);
-    if (!apiKey) return notFound(c);
+  /// A key id names a key within its scope: the runtime universe in
+  /// `universeId`, or the deployment when absent.
+  const scopedKey = (keyId: string, universeId: string | undefined) => {
+    const keys = universeId === undefined ? store.deploymentKeys
+      : [...store.universes.values()].find((state) => state.universe.lightspeedUniverseId === universeId)?.apiKeys ?? [];
+    return keys.find((key) => key.keyId === keyId);
+  };
+
+  app.post("/admin/api-keys/:keyId/rotate", (c) => {
+    const apiKey = scopedKey(c.req.param("keyId"), c.req.query("universeId"));
+    if (!apiKey || apiKey.revokedAtMs != null) return notFound(c);
     const secret = `lsk_${crypto.randomUUID().replaceAll("-", "")}`;
     apiKey.keyPrefix = secret.slice(0, 12);
     apiKey.lastUsedAtMs = null;
     return c.json({ apiKey, secret });
   });
 
-  app.delete("/admin/api-keys/:keyPrefix", (c) => {
-    const prefix = c.req.param("keyPrefix");
-    const key = store.deploymentKeys.find((candidate) => candidate.keyPrefix === prefix)
-      ?? [...store.universes.values()].flatMap((state) => state.apiKeys).find((candidate) => candidate.keyPrefix === prefix);
+  app.delete("/admin/api-keys/:keyId", (c) => {
+    const key = scopedKey(c.req.param("keyId"), c.req.query("universeId"));
     if (!key) return notFound(c);
     key.revokedAtMs ??= Date.now();
     return c.json(key);

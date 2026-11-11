@@ -314,12 +314,18 @@ export class DemoStore {
   }
 }
 
+/// The id core allocates for a key whose creator chose none.
+export function allocatedKeyId(): string {
+  return `api_key_${crypto.randomUUID().replaceAll("-", "")}`;
+}
+
 /// A key scoped to `state`'s universe, as core lists it.
 export function universeApiKey(
   state: UniverseState,
-  key: { keyPrefix: string; displayName: string; groups: MethodGroup[]; createdAtMs: number; createdBy: string; lastUsedAtMs?: number | null; revokedAtMs?: number | null },
+  key: { keyId?: string; keyPrefix: string; displayName: string; groups: MethodGroup[]; createdAtMs: number; createdBy: string; lastUsedAtMs?: number | null; revokedAtMs?: number | null },
 ): DeploymentApiKeyView {
   return {
+    keyId: key.keyId ?? allocatedKeyId(),
     keyPrefix: key.keyPrefix,
     displayName: key.displayName,
     scope: { kind: "universe", universeId: state.universe.lightspeedUniverseId },

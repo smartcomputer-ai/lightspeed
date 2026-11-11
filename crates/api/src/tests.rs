@@ -2622,6 +2622,22 @@ impl AgentApiService for TestService {
         ))
     }
 
+    async fn put_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>, AgentApiError> {
+        let mut key = test_registration_key();
+        key.registration_key_id = params.registration_key_id;
+        key.display_name = params.display_name;
+        Ok(AgentApiOutcome::new(
+            EnvironmentRegistrationKeyPutResponse {
+                registration_key: key,
+                created: true,
+                secret_replaced: false,
+            },
+        ))
+    }
+
     async fn rotate_environment_registration_key(
         &self,
         params: EnvironmentRegistrationKeyRotateParams,
@@ -3675,6 +3691,7 @@ fn test_deployment_api_key(key_prefix: &str) -> DeploymentApiKeyView {
         groups: vec![MethodGroup::Session],
         assert_actor: false,
         created_by: Attribution::Local,
+        key_id: "coding-agent".to_owned(),
         key_prefix: key_prefix.to_owned(),
         display_name: Some("coding agent".to_owned()),
         created_at_ms: 10,
@@ -3758,6 +3775,19 @@ impl DeploymentApiService for TestDeploymentService {
         }))
     }
 
+    async fn put_api_key(
+        &self,
+        params: DeploymentApiKeyPutParams,
+    ) -> Result<AgentApiOutcome<DeploymentApiKeyPutResponse>, AgentApiError> {
+        let mut api_key = test_deployment_api_key("lsk_supplied");
+        api_key.key_id = params.key_id;
+        Ok(AgentApiOutcome::new(DeploymentApiKeyPutResponse {
+            api_key,
+            created: false,
+            secret_replaced: true,
+        }))
+    }
+
     async fn list_api_keys(
         &self,
         _params: DeploymentApiKeyListParams,
@@ -3771,7 +3801,7 @@ impl DeploymentApiService for TestDeploymentService {
         &self,
         params: DeploymentApiKeyRotateParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
-        assert_eq!(params.key_prefix, "lsk_ab12cd34");
+        assert_eq!(params.key_id, "coding-agent");
         Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
             api_key: test_deployment_api_key("lsk_rotated1"),
             secret: "lsk_rotated_secret".to_owned(),
@@ -4031,8 +4061,31 @@ async fn dispatch_deployment_json_rpc_routes_scoped_api_key_management() {
     )
     .await;
     let result = create.result.expect("create result");
+    assert_eq!(result["result"]["apiKey"]["keyId"], "coding-agent");
     assert_eq!(result["result"]["apiKey"]["keyPrefix"], "lsk_ab12cd34");
     assert_eq!(result["result"]["secret"], "lsk_one_time_secret");
+
+    // A declared key is addressed by scope and key id and returns no secret.
+    let put = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
+        JsonRpcRequest {
+            id: RequestId::Number(5),
+            method: METHOD_DEPLOYMENT_API_KEYS_PUT.to_owned(),
+            params: Some(json!({
+                "scope": { "kind": "universe", "universeId": universe_id },
+                "keyId": "release-bot",
+                "groups": ["session"],
+                "displayName": "release bot",
+                "secret": "lsk_supplied_secret"
+            })),
+        },
+    )
+    .await;
+    let result = put.result.expect("put result");
+    assert_eq!(result["result"]["apiKey"]["keyId"], "release-bot");
+    assert_eq!(result["result"]["created"], false);
+    assert_eq!(result["result"]["secretReplaced"], true);
+    assert!(result["result"].get("secret").is_none());
 
     let list = dispatch_deployment_json_rpc(
         &TestDeploymentService,
@@ -4052,7 +4105,10 @@ async fn dispatch_deployment_json_rpc_routes_scoped_api_key_management() {
         JsonRpcRequest {
             id: RequestId::Number(4),
             method: METHOD_DEPLOYMENT_API_KEYS_ROTATE.to_owned(),
-            params: Some(json!({ "keyPrefix": "lsk_ab12cd34" })),
+            params: Some(json!({
+                "scope": { "kind": "universe", "universeId": universe_id },
+                "keyId": "coding-agent"
+            })),
         },
     )
     .await;
@@ -4065,7 +4121,10 @@ async fn dispatch_deployment_json_rpc_routes_scoped_api_key_management() {
         JsonRpcRequest {
             id: RequestId::Number(3),
             method: METHOD_DEPLOYMENT_API_KEYS_REVOKE.to_owned(),
-            params: Some(json!({ "keyPrefix": "lsk_ab12cd34" })),
+            params: Some(json!({
+                "scope": { "kind": "universe", "universeId": universe_id },
+                "keyId": "coding-agent"
+            })),
         },
     )
     .await;
@@ -4131,4 +4190,19 @@ fn code_mode_feature_defaults_and_public_field_names_are_stable() {
     assert_eq!(value["version"], 1);
     assert_eq!(value["maxOutstandingToolCalls"], 16);
     assert!(serde_json::from_value::<CodeModeFeature>(json!({"maxToolCallz":4})).is_err());
+}
+
+#[test]
+fn deployment_api_key_put_params_redact_the_secret_in_debug_output() {
+    let params = DeploymentApiKeyPutParams {
+        scope: AccessScope::Deployment,
+        key_id: "platform".to_owned(),
+        groups: None,
+        assert_actor: true,
+        display_name: "Platform".to_owned(),
+        secret: "lsk_supplied_secret".to_owned(),
+    };
+    let debug = format!("{params:?}");
+    assert!(debug.contains("platform"));
+    assert!(!debug.contains("lsk_supplied_secret"));
 }

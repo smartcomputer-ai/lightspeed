@@ -56,6 +56,8 @@ client-chosen identifiers:
 | Environment provider enablement | `deployment/environment-providers/bindings/put` | provider id |
 | Environment | `environments/create`, `environments/external/create` | `requestId` |
 | Environment credential binding | `environments/credentials/bind` | environment + variable name |
+| API key | `deployment/api-keys/put` (supplied secret) | scope + `keyId` |
+| Environment registration key | `environments/registration-keys/put` (supplied secret) | `registrationKeyId` |
 
 `apply` reads current state, compares it with the document, and calls the
 write method where they differ, passing `expectedRevision` where the method
@@ -139,6 +141,44 @@ The runtime never returns token material, so `apply` cannot compare values. It
 stores a fingerprint of the applied value in the credential's `metadata` and
 calls `auth/grants/replace` only when the fingerprint changes.
 
+Keys that Lightspeed itself accepts work the same way, with the direction
+reversed from minting: the secret is generated outside, in the secret store,
+and declared to the runtime. `deployment/api-keys/put` and
+`environments/registration-keys/put` take the key's id, its settings and the
+secret. A missing key is created, changed settings are applied, a different
+secret replaces the previous one at once with no overlap, and repeating the
+call changes nothing. Scope, actor assertion and a registration key's
+identity mode never change, and a revoked key is never restored. The service
+that uses the key mounts the same secret, so no step reads a secret out of
+Lightspeed and `apply` needs no outputs.
+
+These need no fingerprint: the runtime keeps the secret's hash and compares
+it itself, and each key's listed prefix (the first characters of its secret)
+lets `diff` report a pending replacement without sending the secret.
+
+```yaml
+apiKeys:
+  - keyId: release-bot
+    displayName: Release bot
+    groups: [session, models]
+    secretFrom: { env: RELEASE_BOT_KEY }
+registrationKeys:
+  - registrationKeyId: build-pool
+    displayName: Build pool
+    identityMode: persistent
+    maxActiveEnvironments: 5
+    secretFrom: { env: BUILD_POOL_REGISTRATION_KEY }
+```
+
+Deployment-scope keys, such as the Platform's and a connector's, are declared
+in `deployment.yaml`. The first key cannot be: nothing can authenticate
+before it exists, so `lightspeed-runtime api-key provision` declares it on
+the server host from `LIGHTSPEED_BOOTSTRAP_API_KEY`, with the same semantics.
+
+A registration key must be declared before the daemons holding its secret
+start, because a daemon treats an unknown key as a permanent refusal and
+exits. An orchestrator that restarts the pod converges anyway.
+
 `export` writes each secret as a reference with a placeholder source name. An
 exported document is structurally complete but needs its secrets bound in the
 target deployment.
@@ -201,11 +241,11 @@ declared universe exists but nobody can sign in to it.
 
 ### Runtime
 
-- `lightspeed-runtime api-key provision` creates a deployment key with every
-  method group. Accept `--group` so a pipeline can supply a narrowly scoped
-  key from its secret store. `apply` needs `deployment/universes`,
-  `deployment/environment-providers`, `auth`, `models`, `profiles`, `mcp` and
-  `environments`, and no actor assertion.
+- None outstanding. `lightspeed-runtime api-key provision` accepts `--key-id`
+  and `--group`, so a pipeline can supply a narrowly scoped key from its
+  secret store. `apply` needs `deployment/universes`,
+  `deployment/environment-providers`, `deployment/api-keys`, `auth`, `models`,
+  `profiles`, `mcp` and `environments`, and no actor assertion.
 
 ### Release
 
@@ -230,17 +270,19 @@ content approaches that.
 1. **Format and `export`.** Read-only, and it shows where the resource model
    lacks stable names. Covers universes, credentials (as references), model
    providers, model defaults, profiles, MCP servers, environment provider
-   enablement, environments and their credential bindings.
+   enablement, environments and their credential bindings, API keys and
+   registration keys (as references).
 2. **`diff` and `apply`** for the same set, with the credential fingerprint,
    managed marker and round-trip tests.
 3. **Platform organization** creation and naming with a service credential.
-4. **Scoped key provisioning and the CLI image.**
+4. **The CLI image.**
 
 ## Later
 
 - Members and role or directory-group mappings.
-- Scoped API keys and environment registration keys. Both return their secret
-  once, so they need the supplied-key pattern the bootstrap key already uses.
+- Overlapping secrets during a key replacement, so consumers can be rolled
+  without a gap.
+- Bot webhook tokens, which the runtime still only generates.
 - Bots and triggers (`bots/put`, `bots/triggers/put`), and channel accounts.
 - Workspace seeds and shared skills, created if missing from a snapshot.
 - Session retention defaults.

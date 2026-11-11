@@ -69,14 +69,19 @@ lightspeed-runtime api-key provision --name "Initial operator"
 
 From source, replace `lightspeed-runtime` with
 `cargo run -p temporal-runtime --`. The provision command prints JSON containing
-the secret; capture it securely. It creates a deployment key with every method
-group and no actor assertion. No universe is needed yet.
+the secret; capture it securely. It creates a deployment key named `bootstrap`
+with every method group and no actor assertion. Choose another name with
+`--key-id`, and limit the key with repeated `--group`. No universe is needed
+yet.
 
-To supply a key from deployment secret configuration, set
+To supply the key from deployment secret configuration, set
 `LIGHTSPEED_BOOTSTRAP_API_KEY` for the provision command. Its format is `lsk_`
-followed by 32 random bytes encoded as unpadded base64url. The command stores
-only its hash and metadata in the normal key store. Repeating it with the
-same active key is idempotent; revoked keys and authority mismatches fail.
+followed by 32 random bytes encoded as unpadded base64url; `lightspeed generate
+secret api-key` prints one. The command stores only its hash and metadata in
+the normal key store, and declares the key: repeating it with the same secret
+changes nothing, changed groups are applied, and a different secret replaces
+the previous one at once. A revoked key and a changed actor flag fail.
+`--require-existing` only verifies that the supplied key exists as described.
 The runtime never authenticates directly against this environment variable,
 and ordinary server startup does not provision keys.
 
@@ -284,13 +289,30 @@ A deployment key with `deployment/api-keys` can issue narrower keys:
 lightspeed api-key create --name "Agent client" --universe-id UNIVERSE_UUID \
   --group session --group models --group vfs --group blobs/put
 lightspeed api-key list
-lightspeed api-key rotate KEY_PREFIX
-lightspeed api-key revoke KEY_PREFIX
+lightspeed api-key rotate KEY_ID --universe-id UNIVERSE_UUID
+lightspeed api-key revoke KEY_ID --universe-id UNIVERSE_UUID
 ```
 
-Rotation replaces the secret immediately and prints its replacement once.
-Use the returned prefix for later key-management commands and update every
-client using the old secret. Scope and permissions stay the same.
+A key is addressed by its key id and its scope: `--universe-id`, or
+`--deployment` for a deployment key. Pass `--key-id` to `create` to choose the
+id; otherwise one is allocated and shown by `list`. Rotation replaces the
+secret immediately and prints its replacement once. Update every client using
+the old secret. The key id, scope and permissions stay the same.
+
+To declare a key whose secret already exists in your secret store, use `put`
+with a secret read from a file, an environment variable or standard input:
+
+```bash
+lightspeed generate secret api-key > agent.key
+lightspeed api-key put --key-id agent-client --name "Agent client" \
+  --universe-id UNIVERSE_UUID --group session --group models \
+  --secret-file agent.key
+```
+
+Repeating `put` changes nothing; changed groups are applied; a different
+secret replaces the previous one at once. See
+[Declare a key with a supplied secret](../access-and-security/api-keys-and-service-access.md#declare-a-key-with-a-supplied-secret).
+`lightspeed generate secret` needs no connection.
 
 Create prints the secret once; use `--json` for machine-readable output. Add `--group auth` if the client needs
 to configure provider credentials, and other groups for the resources it
@@ -454,7 +476,10 @@ environments unless `--include-closed` is given, and returns one page at a
 time; when more remain, it prints the `--after` value for the next page. `environment update`
 replaces the display name and metadata, so omitted flags clear them.
 
-Outbound daemons use `environment registration-key create|list|read|update|rotate|revoke`.
+Outbound daemons use `environment registration-key create|put|list|read|update|rotate|revoke`.
+`create --id` chooses the key's id, and `put` declares a key with a secret you
+supply (`lightspeed generate secret registration-key`), for pipelines that
+keep the secret in a secret store.
 `update` replaces a key's group name and policy, including
 `--offline-close-after-min` for a persistent key; `rotate` prints a new secret
 once and retires the old one. Credentials bound with `environment credential

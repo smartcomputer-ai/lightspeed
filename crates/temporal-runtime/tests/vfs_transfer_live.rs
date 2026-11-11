@@ -126,6 +126,7 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
             let key = state
                 .api
                 .create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
+                    registration_key_id: None,
                     display_name: "VFS transfer live".into(),
                     identity_mode: api::EnvironmentIdentityModeView::Ephemeral,
                     max_active_environments: Some(1),

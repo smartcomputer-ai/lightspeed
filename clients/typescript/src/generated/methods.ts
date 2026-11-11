@@ -52,6 +52,7 @@ export const METHODS = [
   "environments/jobs/read",
   "environments/jobs/cancel",
   "environments/registration-keys/create",
+  "environments/registration-keys/put",
   "environments/registration-keys/read",
   "environments/registration-keys/list",
   "environments/registration-keys/update",
@@ -138,6 +139,7 @@ export const METHODS = [
   "deployment/universes/handle/put",
   "deployment/universes/delete",
   "deployment/api-keys/create",
+  "deployment/api-keys/put",
   "deployment/api-keys/list",
   "deployment/api-keys/rotate",
   "deployment/api-keys/revoke",
@@ -432,6 +434,12 @@ export const METHOD_INFO = {
     access: {"action":"configureResource","kind":"universe"},
     summary: "Mint an environment registration key",
     description: "Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode (immutable), active limit, disconnect grace, offline close-after, and expiry are the key's policy. Treat the secret like a cluster-join credential.",
+  },
+  "environments/registration-keys/put": {
+    scope: "universe",
+    access: {"action":"configureResource","kind":"universe"},
+    summary: "Declare an environment registration key",
+    description: "Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's.",
   },
   "environments/registration-keys/read": {
     scope: "universe",
@@ -947,7 +955,13 @@ export const METHOD_INFO = {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Create a scoped API key",
-    description: "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.",
+    description: "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.",
+  },
+  "deployment/api-keys/put": {
+    scope: "deployment",
+    access: {"kind":"deployment"},
+    summary: "Declare a scoped API key",
+    description: "Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.",
   },
   "deployment/api-keys/list": {
     scope: "deployment",
@@ -959,13 +973,13 @@ export const METHOD_INFO = {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Rotate a scoped API key",
-    description: "Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.",
+    description: "Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.",
   },
   "deployment/api-keys/revoke": {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Revoke a scoped API key",
-    description: "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.",
+    description: "Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.",
   },
   "deployment/environment-providers/put": {
     scope: "deployment",
@@ -1445,6 +1459,15 @@ export interface MethodMap {
   "environments/registration-keys/create": {
     params: Api.EnvironmentRegistrationKeyCreateParams;
     result: Api.AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse;
+  };
+  /**
+   * Declare an environment registration key
+   *
+   * Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's.
+   */
+  "environments/registration-keys/put": {
+    params: Api.EnvironmentRegistrationKeyPutParams;
+    result: Api.AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse;
   };
   /**
    * Read an environment registration key
@@ -2214,11 +2237,20 @@ export interface MethodMap {
   /**
    * Create a scoped API key
    *
-   * Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.
+   * Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.
    */
   "deployment/api-keys/create": {
     params: Api.DeploymentApiKeyCreateParams;
     result: Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse;
+  };
+  /**
+   * Declare a scoped API key
+   *
+   * Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.
+   */
+  "deployment/api-keys/put": {
+    params: Api.DeploymentApiKeyPutParams;
+    result: Api.AgentApiOutcomeOfDeploymentApiKeyPutResponse;
   };
   /**
    * List scoped API keys
@@ -2232,7 +2264,7 @@ export interface MethodMap {
   /**
    * Rotate a scoped API key
    *
-   * Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.
+   * Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.
    */
   "deployment/api-keys/rotate": {
     params: Api.DeploymentApiKeyRotateParams;
@@ -2241,7 +2273,7 @@ export interface MethodMap {
   /**
    * Revoke a scoped API key
    *
-   * Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.
+   * Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.
    */
   "deployment/api-keys/revoke": {
     params: Api.DeploymentApiKeyRevokeParams;

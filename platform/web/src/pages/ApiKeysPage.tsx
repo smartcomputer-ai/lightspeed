@@ -5,6 +5,7 @@ import { KeyRound, Plus, RotateCw, ShieldOff } from "lucide-react";
 import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/sdk";
 import { GroupSummary, KeyPresetField, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
 import { RotateKeyDialog } from "@/components/api-keys/rotate-key-dialog";
+import { keyIdentifier } from "@/lib/api-keys";
 import { ApiKeySecret } from "@/components/api-keys/secret-once";
 import { api } from "@/api";
 import {
@@ -73,10 +74,10 @@ function ApiKeyList({ universeId }: { universeId: string }) {
     queryClient.invalidateQueries({ queryKey: ["api-keys", universeId] });
 
   const revoke = useMutation({
-    mutationFn: (keyPrefix: string) =>
+    mutationFn: (keyId: string) =>
       api<DeploymentApiKeyView>(
         "DELETE",
-        `/api/v1/universes/${universeId}/api-keys/${encodeURIComponent(keyPrefix)}`,
+        `/api/v1/universes/${universeId}/api-keys/${encodeURIComponent(keyId)}`,
       ),
     onSuccess: () => void invalidate(),
   });
@@ -127,10 +128,10 @@ function ApiKeyList({ universeId }: { universeId: string }) {
               {rows.map((key) => {
                 const revoked = key.revokedAtMs != null;
                 return (
-                  <TableRow key={key.keyPrefix}>
+                  <TableRow key={key.keyId}>
                     <TableTitleCell
                       title={key.displayName ?? "Unnamed key"}
-                      subtitle={key.keyPrefix}
+                      subtitle={keyIdentifier(key)}
                     />
                     <TableCell className="text-xs text-muted-foreground">
                       <GroupSummary summary={groupSummary("universe", key.groups)} />
@@ -183,7 +184,7 @@ function ApiKeyList({ universeId }: { universeId: string }) {
                               <AlertDialogCancel>Cancel</AlertDialogCancel>
                               <AlertDialogAction
                                 className="bg-destructive text-white hover:bg-destructive/90"
-                                onClick={() => revoke.mutate(key.keyPrefix)}
+                                onClick={() => revoke.mutate(key.keyId)}
                               >
                                 Revoke key
                               </AlertDialogAction>

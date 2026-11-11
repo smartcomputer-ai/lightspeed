@@ -113,6 +113,7 @@ pub const METHOD_ENVIRONMENTS_JOBS_READ: &str = "environments/jobs/read";
 pub const METHOD_ENVIRONMENTS_JOBS_CANCEL: &str = "environments/jobs/cancel";
 pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_CREATE: &str =
     "environments/registration-keys/create";
+pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_PUT: &str = "environments/registration-keys/put";
 pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_READ: &str = "environments/registration-keys/read";
 pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_LIST: &str = "environments/registration-keys/list";
 pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_UPDATE: &str =
@@ -189,3 +190,12 @@ pub const NOTIFY_ERROR: &str = "error";
 pub const METHOD_TRANSCRIPTIONS_START: &str = "transcriptions/start";
 pub const METHOD_TRANSCRIPTIONS_READ: &str = "transcriptions/read";
 pub const METHOD_TRANSCRIPTIONS_CANCEL: &str = "transcriptions/cancel";
+
+/// Prefix of every API key secret.
+pub const API_KEY_SECRET_PREFIX: &str = "lsk_";
+/// Prefix of every environment registration key secret.
+pub const REGISTRATION_KEY_SECRET_PREFIX: &str = "lsrk_";
+/// Random bytes in a key secret. After its prefix a secret is these bytes
+/// encoded as base64url without padding, whether the runtime generated it or
+/// a caller supplied it.
+pub const KEY_SECRET_RANDOM_BYTES: usize = 32;

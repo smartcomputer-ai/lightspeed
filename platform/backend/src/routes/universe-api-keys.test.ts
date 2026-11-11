@@ -9,12 +9,12 @@ const universe = { id: "platform-universe", organizationId: "org", lightspeedUni
 
 /// Universe key routes for a caller with `role`, over a core that records
 /// each call and a database that answers the universe and membership reads.
-function setup(role: string, keys = [{ keyPrefix: "lsk_abcdefgh", assertActor: false, revokedAtMs: null as number | null }]) {
+function setup(role: string, keys = [{ keyId: "agent", keyPrefix: "lsk_abcdefgh", assertActor: false, revokedAtMs: null as number | null }]) {
   const calls: { method: string; params: Record<string, unknown> }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
     const rpc = JSON.parse(String(init.body));
     calls.push({ method: rpc.method, params: rpc.params });
-    const apiKey = { keyPrefix: "lsk_abcdefgh", groups: rpc.params.groups };
+    const apiKey = { keyId: "agent", keyPrefix: "lsk_abcdefgh", groups: rpc.params.groups };
     return Response.json({ id: rpc.id, result: { result: rpc.method === "deployment/api-keys/list" ? { apiKeys: keys } : { apiKey, secret: "lsk_secret" }, notifications: [] } });
   }));
   const queue: unknown[][] = [[{ universe, handle: "test" }], [{ role }]];
@@ -35,8 +35,9 @@ function setup(role: string, keys = [{ keyPrefix: "lsk_abcdefgh", assertActor: f
   const create = (body: unknown) => app.request("/platform-universe/api-keys", {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  const rotate = (prefix = "lsk_abcdefgh") => app.request(`/platform-universe/api-keys/${prefix}/rotate`, { method: "POST" });
-  return { create, rotate, calls, audit };
+  const rotate = (keyId = "agent") => app.request(`/platform-universe/api-keys/${keyId}/rotate`, { method: "POST" });
+  const revoke = (keyId = "agent") => app.request(`/platform-universe/api-keys/${keyId}`, { method: "DELETE" });
+  return { create, rotate, revoke, calls, audit };
 }
 
 it("mints a universe key with only the groups the admin chose", async () => {
@@ -74,9 +75,19 @@ it("rotates only a key belonging to the administered universe", async () => {
   expect(await response.json()).toMatchObject({ secret: "lsk_secret" });
   expect(calls).toEqual([
     { method: "deployment/api-keys/list", params: { scope: { kind: "universe", universeId: universe.lightspeedUniverseId } } },
-    { method: "deployment/api-keys/rotate", params: { keyPrefix: "lsk_abcdefgh" } },
+    { method: "deployment/api-keys/rotate", params: { scope: { kind: "universe", universeId: universe.lightspeedUniverseId }, keyId: "agent" } },
   ]);
-  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ actorId: "caller", action: "key.rotate", targetId: "lsk_abcdefgh", universeId: universe.id }));
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ actorId: "caller", action: "key.rotate", targetId: "agent", universeId: universe.id }));
+});
+
+it("revokes a key by its id within the administered universe only", async () => {
+  const { revoke, calls, audit } = setup("admin");
+  expect((await revoke()).status).toBe(200);
+  expect(calls).toEqual([
+    { method: "deployment/api-keys/revoke", params: { scope: { kind: "universe", universeId: universe.lightspeedUniverseId }, keyId: "agent" } },
+  ]);
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "key.revoke", targetId: "agent", universeId: universe.id }));
+  expect((await setup("operator").revoke()).status).toBe(404);
 });
 
 it.each(["operator", "contributor", "viewer"])("refuses rotation by a %s", async (role) => {
@@ -87,8 +98,8 @@ it.each(["operator", "contributor", "viewer"])("refuses rotation by a %s", async
 
 it.each([
   ["another universe's key", [], 404],
-  ["revoked key", [{ keyPrefix: "lsk_abcdefgh", assertActor: false, revokedAtMs: 10 }], 404],
-  ["actor-asserting key", [{ keyPrefix: "lsk_abcdefgh", assertActor: true, revokedAtMs: null }], 403],
+  ["revoked key", [{ keyId: "agent", keyPrefix: "lsk_abcdefgh", assertActor: false, revokedAtMs: 10 }], 404],
+  ["actor-asserting key", [{ keyId: "agent", keyPrefix: "lsk_abcdefgh", assertActor: true, revokedAtMs: null }], 403],
 ] as const)("refuses rotation of %s", async (_name, keys, status) => {
   const { rotate, calls, audit } = setup("admin", [...keys]);
   expect((await rotate()).status).toBe(status);

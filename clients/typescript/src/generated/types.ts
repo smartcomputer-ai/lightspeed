@@ -3578,8 +3578,8 @@ export interface DeploymentApiKeyCreateResponse {
   secret: string;
 }
 /**
- * Non-secret key metadata: what the key reaches and may call, and who
- * minted it.
+ * Non-secret key metadata: what the key is called, reaches and may call,
+ * and who minted it.
  */
 export interface DeploymentApiKeyView {
   assertActor: boolean;
@@ -3587,6 +3587,16 @@ export interface DeploymentApiKeyView {
   createdBy: Attribution;
   displayName?: string | null;
   groups: MethodGroup[];
+  /**
+   * The key's name among the keys of its scope. Together with the scope
+   * it addresses the key, and it is kept when the secret is replaced.
+   */
+  keyId: string;
+  /**
+   * The first characters of the key's current secret: enough to tell
+   * which secret the key holds without revealing it. It changes when the
+   * secret does.
+   */
   keyPrefix: string;
   lastUsedAtMs?: number | null;
   revokedAtMs?: number | null;
@@ -3598,6 +3608,22 @@ export interface AgentApiOutcomeOfDeploymentApiKeyListResponse {
 }
 export interface DeploymentApiKeyListResponse {
   apiKeys?: DeploymentApiKeyView[];
+}
+export interface AgentApiOutcomeOfDeploymentApiKeyPutResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentApiKeyPutResponse;
+}
+export interface DeploymentApiKeyPutResponse {
+  apiKey: DeploymentApiKeyView;
+  /**
+   * False when the key already existed.
+   */
+  created: boolean;
+  /**
+   * True when an existing key held a different secret, which no longer
+   * works.
+   */
+  secretReplaced: boolean;
 }
 export interface AgentApiOutcomeOfDeploymentApiKeyRevokeResponse {
   notifications?: AgentNotification[];
@@ -4160,6 +4186,22 @@ export interface AgentApiOutcomeOfEnvironmentRegistrationKeyListResponse {
 }
 export interface EnvironmentRegistrationKeyListResponse {
   registrationKeys?: EnvironmentRegistrationKeyView[];
+}
+export interface AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentRegistrationKeyPutResponse;
+}
+export interface EnvironmentRegistrationKeyPutResponse {
+  /**
+   * False when the key already existed.
+   */
+  created: boolean;
+  registrationKey: EnvironmentRegistrationKeyView;
+  /**
+   * True when an existing key answered to a different secret, which is
+   * now retired.
+   */
+  secretReplaced: boolean;
 }
 export interface AgentApiOutcomeOfEnvironmentRegistrationKeyReadResponse {
   notifications?: AgentNotification[];
@@ -5433,7 +5475,7 @@ export interface DeploymentApiKeyCreateParams {
   /**
    * Whether the key may name the actor a request acts for with the
    * `x-lightspeed-actor` header. Give it only to a gate that authenticates
-   * people, such as the Platform.
+   * people, such as the Platform. It cannot be changed afterwards.
    */
   assertActor?: boolean;
   /**
@@ -5442,10 +5484,15 @@ export interface DeploymentApiKeyCreateParams {
   displayName: string;
   /**
    * The method groups the key may call; absent grants every group its
-   * scope allows. To change what a key may do, revoke
-   * it and mint another.
+   * scope allows.
    */
   groups?: MethodGroup[] | null;
+  /**
+   * The key's id: 1-128 ASCII letters, digits, underscores, hyphens, dots
+   * or colons, starting with a letter or digit, and not yet used by a key
+   * of this scope. Omit it to have one allocated.
+   */
+  keyId?: string | null;
   /**
    * A universe, or the deployment. A deployment key addresses a universe
    * with the `x-lightspeed-universe` header and may hold deployment groups.
@@ -5458,11 +5505,54 @@ export interface DeploymentApiKeyListParams {
    */
   scope?: AccessScope | null;
 }
+/**
+ * Declare a key whose secret the caller supplies. `Debug` redacts the
+ * secret; the serialized request remains sensitive and must not be logged.
+ */
+export interface DeploymentApiKeyPutParams {
+  /**
+   * Whether the key may name the actor a request acts for. It cannot be
+   * changed afterwards.
+   */
+  assertActor?: boolean;
+  /**
+   * Human-readable purpose shown in key-management interfaces.
+   */
+  displayName: string;
+  /**
+   * The method groups the key may call; absent grants every group its
+   * scope allows. An existing key's groups are replaced by these.
+   */
+  groups?: MethodGroup[] | null;
+  /**
+   * The key's id within its scope: 1-128 ASCII letters, digits,
+   * underscores, hyphens, dots or colons, starting with a letter or digit.
+   */
+  keyId: string;
+  /**
+   * A universe, or the deployment. It cannot be changed afterwards.
+   */
+  scope: AccessScope;
+  /**
+   * The secret the key answers to: `lsk_` followed by 32 random bytes
+   * encoded as base64url without padding. Generate it with a
+   * cryptographic random source.
+   */
+  secret: string;
+}
 export interface DeploymentApiKeyRevokeParams {
-  keyPrefix: string;
+  keyId: string;
+  /**
+   * The scope the key belongs to.
+   */
+  scope: AccessScope;
 }
 export interface DeploymentApiKeyRotateParams {
-  keyPrefix: string;
+  keyId: string;
+  /**
+   * The scope the key belongs to.
+   */
+  scope: AccessScope;
 }
 export interface DeploymentChannelAccountListParams {
   /**
@@ -5766,8 +5856,50 @@ export interface EnvironmentRegistrationKeyCreateParams {
    * longer than this; omit to keep them open.
    */
   offlineCloseAfterMs?: number | null;
+  /**
+   * The key's id within the universe: 1-128 ASCII letters, digits,
+   * underscores, hyphens, dots or colons, starting with a letter or digit.
+   * Omit it to have one allocated.
+   */
+  registrationKeyId?: string | null;
 }
 export interface EnvironmentRegistrationKeyListParams {}
+/**
+ * Declare a registration key whose secret the caller supplies: its id, its
+ * complete policy and the secret it answers to. An absent policy field is
+ * unset.
+ */
+export interface EnvironmentRegistrationKeyPutParams {
+  /**
+   * Group name for the environments this key admits.
+   */
+  displayName: string;
+  /**
+   * Disconnect grace for ephemeral environments; omit for the default.
+   */
+  ephemeralDisconnectGraceMs?: number | null;
+  expiresAtMs?: number | null;
+  /**
+   * Immutable once the key exists.
+   */
+  identityMode: EnvironmentIdentityModeView;
+  /**
+   * Non-closed environments the key may have at once; omit for unlimited.
+   */
+  maxActiveEnvironments?: number | null;
+  /**
+   * Persistent keys only: close environments whose daemon has been away
+   * longer than this; omit to keep them open.
+   */
+  offlineCloseAfterMs?: number | null;
+  registrationKeyId: string;
+  /**
+   * The secret daemons register with: `lsrk_` followed by 32 random bytes
+   * encoded as base64url without padding. Generate it with a
+   * cryptographic random source.
+   */
+  secret: EnvironmentRegistrationSecretView;
+}
 export interface EnvironmentRegistrationKeyReadParams {
   registrationKeyId: string;
 }

@@ -631,6 +631,14 @@ impl HttpAgentApi {
             .await
     }
 
+    pub(crate) async fn put_environment_registration_key(
+        &self,
+        params: api::EnvironmentRegistrationKeyPutParams,
+    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyPutResponse>, AgentApiError> {
+        self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_PUT, params)
+            .await
+    }
+
     pub(crate) async fn rotate_environment_registration_key(
         &self,
         params: api::EnvironmentRegistrationKeyRotateParams,

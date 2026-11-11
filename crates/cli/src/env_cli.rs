@@ -57,6 +57,12 @@ struct RegistrationKeyArgs {
 enum RegistrationKeyCommand {
     /// Mint a key. The secret is printed exactly once.
     Create(RegistrationKeyCreateArgs),
+    /// Declare a key with a secret you supply: afterwards the key of this id
+    /// exists with this policy and answers to exactly that secret. Repeating
+    /// the command changes nothing; a different secret retires the previous
+    /// one at once. Generate one with `lightspeed generate secret
+    /// registration-key`.
+    Put(RegistrationKeyPutArgs),
     /// List this universe's registration keys with their environment counts.
     List(ResourceArgs),
     /// Read one registration key.
@@ -82,8 +88,36 @@ struct RegistrationKeyCreateArgs {
     /// grace. Immutable once the key exists.
     #[arg(long, value_enum, default_value_t = IdentityModeArg::Persistent)]
     mode: IdentityModeArg,
+    /// The key's id within the universe; allocated when omitted.
+    #[arg(long = "id")]
+    registration_key_id: Option<String>,
     #[command(flatten)]
     policy: RegistrationKeyPolicyArgs,
+}
+
+#[derive(Args, Debug, Clone)]
+struct RegistrationKeyPutArgs {
+    #[arg(skip)]
+    api_url: String,
+    #[arg(long)]
+    json: bool,
+    registration_key_id: String,
+    /// persistent or ephemeral; it cannot be changed once the key exists.
+    #[arg(long, value_enum, default_value_t = IdentityModeArg::Persistent)]
+    mode: IdentityModeArg,
+    #[command(flatten)]
+    policy: RegistrationKeyPolicyArgs,
+    #[command(flatten)]
+    secret: crate::key_secrets::SecretSourceArgs,
+}
+
+impl IdentityModeArg {
+    fn view(self) -> api::EnvironmentIdentityModeView {
+        match self {
+            Self::Persistent => api::EnvironmentIdentityModeView::Persistent,
+            Self::Ephemeral => api::EnvironmentIdentityModeView::Ephemeral,
+        }
+    }
 }
 
 #[derive(Args, Debug, Clone)]
@@ -311,11 +345,9 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
             let expires_at_ms = args.policy.expires_at_ms()?;
             let response = HttpAgentApi::new(args.api_url)
                 .create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
+                    registration_key_id: args.registration_key_id,
                     display_name: args.policy.name,
-                    identity_mode: match args.mode {
-                        IdentityModeArg::Persistent => api::EnvironmentIdentityModeView::Persistent,
-                        IdentityModeArg::Ephemeral => api::EnvironmentIdentityModeView::Ephemeral,
-                    },
+                    identity_mode: args.mode.view(),
                     max_active_environments: args.policy.max_active,
                     ephemeral_disconnect_grace_ms: minutes_ms(args.policy.grace_min),
                     offline_close_after_ms: minutes_ms(args.policy.offline_close_after_min),
@@ -326,6 +358,36 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                 .result;
             print_json_or(args.json, &response, || {
                 print_registration_secret(&response.registration_key, &response.secret.0)
+            })
+        }
+        RegistrationKeyCommand::Put(args) => {
+            let expires_at_ms = args.policy.expires_at_ms()?;
+            let response = HttpAgentApi::new(args.api_url)
+                .put_environment_registration_key(api::EnvironmentRegistrationKeyPutParams {
+                    registration_key_id: args.registration_key_id,
+                    display_name: args.policy.name,
+                    identity_mode: args.mode.view(),
+                    max_active_environments: args.policy.max_active,
+                    ephemeral_disconnect_grace_ms: minutes_ms(args.policy.grace_min),
+                    offline_close_after_ms: minutes_ms(args.policy.offline_close_after_min),
+                    expires_at_ms,
+                    secret: api::EnvironmentRegistrationSecretView(args.secret.read()?),
+                })
+                .await
+                .map_err(crate::api_client::api_error)?
+                .result;
+            print_json_or(args.json, &response, || {
+                print_registration_key(&response.registration_key);
+                println!();
+                println!(
+                    "{}",
+                    match (response.created, response.secret_replaced) {
+                        (true, _) => "Created with the supplied secret.",
+                        (false, true) =>
+                            "Now answers to the supplied secret. The previous secret is retired.",
+                        (false, false) => "Already as declared.",
+                    }
+                );
             })
         }
         RegistrationKeyCommand::Update(args) => {

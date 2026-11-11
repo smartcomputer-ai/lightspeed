@@ -110,8 +110,8 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
     }
 
     // The environment baseline is folded into one migration; the ledger
-    // ends at revision 16.
-    if REQUIRED_SCHEMA_REVISION != 16 {
+    // ends at revision 17.
+    if REQUIRED_SCHEMA_REVISION != 17 {
         return Err(format!(
             "unexpected required schema revision {REQUIRED_SCHEMA_REVISION}"
         ));

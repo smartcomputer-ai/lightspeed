@@ -80,6 +80,7 @@ async fn issue(
 ) -> MintedApiKey {
     let key = auth::mint_api_key(
         ApiKeySpec {
+            key_id: None,
             scope,
             groups: groups.map(|groups| groups.iter().copied().collect::<BTreeSet<_>>()),
             assert_actor,
@@ -297,7 +298,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         refused(duplicated, "session/read").await.kind,
         AgentApiErrorKind::Unauthenticated
     );
-    keys.revoke_api_key(&universe_key.record.key_prefix, 30)
+    keys.revoke_api_key(universe_key.record.scope, &universe_key.record.key_id, 30)
         .await
         .unwrap();
     let refusal = refused(headers(&universe_key, None, None), "session/read").await;

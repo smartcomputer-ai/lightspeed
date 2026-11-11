@@ -5,6 +5,7 @@ import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup 
 import { api, type Universe } from "@/api";
 import { GroupSummary, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
 import { RotateKeyDialog } from "@/components/api-keys/rotate-key-dialog";
+import { keyIdentifier, keyScopeQuery } from "@/lib/api-keys";
 import { ApiKeySecret } from "@/components/api-keys/secret-once";
 import { ReadError } from "@/components/read-error";
 import {
@@ -65,8 +66,8 @@ export function AdminApiKeysPage() {
     universes.data?.find((universe) => universe.lightspeedUniverseId === lightspeedUniverseId)?.name ?? lightspeedUniverseId;
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["admin-api-keys"] });
   const revoke = useMutation({
-    mutationFn: (keyPrefix: string) =>
-      api<DeploymentApiKeyView>("DELETE", `/api/v1/admin/api-keys/${encodeURIComponent(keyPrefix)}`),
+    mutationFn: (key: DeploymentApiKeyView) =>
+      api<DeploymentApiKeyView>("DELETE", `/api/v1/admin/api-keys/${encodeURIComponent(key.keyId)}${keyScopeQuery(key)}`),
     onSuccess: () => void invalidate(),
   });
   const [showRevoked, setShowRevoked] = useState(false);
@@ -113,8 +114,8 @@ export function AdminApiKeysPage() {
               {rows.map((key) => {
                 const revoked = key.revokedAtMs != null;
                 return (
-                  <TableRow key={key.keyPrefix}>
-                    <TableTitleCell title={key.displayName ?? "Unnamed key"} subtitle={key.keyPrefix} />
+                  <TableRow key={`${key.scope.kind === "universe" ? key.scope.universeId : ""}/${key.keyId}`}>
+                    <TableTitleCell title={key.displayName ?? "Unnamed key"} subtitle={keyIdentifier(key)} />
                     <TableCell>
                       {key.scope.kind === "deployment" ? "Deployment" : universeName(key.scope.universeId)}
                       {key.assertActor && (
@@ -162,7 +163,7 @@ export function AdminApiKeysPage() {
                               <AlertDialogCancel>Cancel</AlertDialogCancel>
                               <AlertDialogAction
                                 className="bg-destructive text-white hover:bg-destructive/90"
-                                onClick={() => revoke.mutate(key.keyPrefix)}
+                                onClick={() => revoke.mutate(key)}
                               >
                                 Revoke key
                               </AlertDialogAction>
@@ -192,6 +193,7 @@ export function AdminApiKeysPage() {
       {rotatingKey && <RotateKeyDialog
         apiKey={rotatingKey}
         basePath={"/api/v1/admin/api-keys"}
+        query={keyScopeQuery(rotatingKey)}
         onClose={() => setRotatingKey(null)}
         onRotated={() => void invalidate()}
       />}

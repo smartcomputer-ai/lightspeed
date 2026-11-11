@@ -17,8 +17,8 @@ let container: HTMLDivElement;
 let client: QueryClient;
 const universeScope = { kind: "universe", universeId: "core-universe" };
 const keys = [
-  { keyPrefix: "lsk_agent", displayName: "Agent", scope: universeScope, groups: ["session", "blobs/put"], assertActor: false, createdAtMs: 2, createdBy: { kind: "local" } },
-  { keyPrefix: "lsk_old", displayName: "Old", scope: universeScope, groups: ["session"], assertActor: false, createdAtMs: 3, revokedAtMs: 4, createdBy: { kind: "local" } },
+  { keyId: "agent", keyPrefix: "lsk_agent", displayName: "Agent", scope: universeScope, groups: ["session", "blobs/put"], assertActor: false, createdAtMs: 2, createdBy: { kind: "local" } },
+  { keyId: "old", keyPrefix: "lsk_old", displayName: "Old", scope: universeScope, groups: ["session"], assertActor: false, createdAtMs: 3, revokedAtMs: 4, createdBy: { kind: "local" } },
 ];
 beforeEach(() => {
   vi.useFakeTimers();
@@ -107,7 +107,7 @@ it("rotates a key after confirmation and clears the displayed secret on close", 
     : keys.map((key) => key.keyPrefix === "lsk_agent" ? { ...key, keyPrefix: "lsk_new" } : key));
   await act(async () => button("Rotate key")!.click());
   await settle();
-  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/platform-universe/api-keys/lsk_agent/rotate");
+  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/platform-universe/api-keys/agent/rotate");
   expect(document.querySelector<HTMLInputElement>("#api-key-secret")?.value).toBe("lsk_new_secret");
   await act(async () => button("I saved the key")!.click());
   await settle();
@@ -130,7 +130,7 @@ it("keeps rotation failures visible without showing a secret", async () => {
 });
 
 it("does not offer rotation for revoked or actor-asserting keys", async () => {
-  mocks.api.mockResolvedValue([...keys, { ...keys[0], keyPrefix: "lsk_actor", displayName: "Actor", assertActor: true }]);
+  mocks.api.mockResolvedValue([...keys, { ...keys[0], keyId: "actor", keyPrefix: "lsk_actor", displayName: "Actor", assertActor: true }]);
   await render();
   const toggle = [...container.querySelectorAll("label")].find((label) => label.textContent?.includes("Show revoked keys (1)"));
   await act(async () => toggle!.querySelector<HTMLElement>('[role="switch"]')!.click());

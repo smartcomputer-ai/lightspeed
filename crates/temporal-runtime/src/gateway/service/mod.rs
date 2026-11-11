@@ -3569,6 +3569,18 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
+    async fn put_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTRATION_KEYS_PUT, None)
+            .await?;
+        self.environment_service()
+            .put_environment_registration_key_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
     async fn read_environment_registration_key(
         &self,
         params: EnvironmentRegistrationKeyReadParams,

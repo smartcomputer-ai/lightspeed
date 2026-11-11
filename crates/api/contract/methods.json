@@ -1179,6 +1179,31 @@
         "action": "configureResource",
         "kind": "universe"
       },
+      "description": "Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's.",
+      "group": "environments",
+      "method": "environments/registration-keys/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentRegistrationKeyPutParams"
+        },
+        "type": "EnvironmentRegistrationKeyPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Declare an environment registration key",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
       "description": "Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.",
       "group": "environments",
       "method": "environments/registration-keys/read",
@@ -3293,7 +3318,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.",
+      "description": "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.",
       "group": "deployment/api-keys",
       "method": "deployment/api-keys/create",
       "params": {
@@ -3311,6 +3336,30 @@
       "role": null,
       "scope": "deployment",
       "summary": "Create a scoped API key",
+      "target": null
+    },
+    {
+      "access": {
+        "kind": "deployment"
+      },
+      "description": "Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.",
+      "group": "deployment/api-keys",
+      "method": "deployment/api-keys/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/DeploymentApiKeyPutParams"
+        },
+        "type": "DeploymentApiKeyPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentApiKeyPutResponse"
+        },
+        "type": "AgentApiOutcome<DeploymentApiKeyPutResponse>"
+      },
+      "role": null,
+      "scope": "deployment",
+      "summary": "Declare a scoped API key",
       "target": null
     },
     {
@@ -3341,7 +3390,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.",
+      "description": "Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.",
       "group": "deployment/api-keys",
       "method": "deployment/api-keys/rotate",
       "params": {
@@ -3365,7 +3414,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.",
+      "description": "Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.",
       "group": "deployment/api-keys",
       "method": "deployment/api-keys/revoke",
       "params": {

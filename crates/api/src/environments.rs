@@ -431,6 +431,11 @@ impl fmt::Debug for EnvironmentRegistrationSecretView {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentRegistrationKeyCreateParams {
+    /// The key's id within the universe: 1-128 ASCII letters, digits,
+    /// underscores, hyphens, dots or colons, starting with a letter or digit.
+    /// Omit it to have one allocated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_key_id: Option<EnvironmentRegistrationKeyId>,
     /// Group name for the environments this key admits.
     pub display_name: String,
     /// Immutable once the key exists.
@@ -455,6 +460,46 @@ pub struct EnvironmentRegistrationKeyCreateResponse {
     pub registration_key: EnvironmentRegistrationKeyView,
     /// The plaintext secret, returned only here.
     pub secret: EnvironmentRegistrationSecretView,
+}
+
+/// Declare a registration key whose secret the caller supplies: its id, its
+/// complete policy and the secret it answers to. An absent policy field is
+/// unset.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentRegistrationKeyPutParams {
+    pub registration_key_id: EnvironmentRegistrationKeyId,
+    /// Group name for the environments this key admits.
+    pub display_name: String,
+    /// Immutable once the key exists.
+    pub identity_mode: EnvironmentIdentityModeView,
+    /// Non-closed environments the key may have at once; omit for unlimited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_active_environments: Option<u32>,
+    /// Disconnect grace for ephemeral environments; omit for the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_disconnect_grace_ms: Option<u64>,
+    /// Persistent keys only: close environments whose daemon has been away
+    /// longer than this; omit to keep them open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offline_close_after_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<i64>,
+    /// The secret daemons register with: `lsrk_` followed by 32 random bytes
+    /// encoded as base64url without padding. Generate it with a
+    /// cryptographic random source.
+    pub secret: EnvironmentRegistrationSecretView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentRegistrationKeyPutResponse {
+    pub registration_key: EnvironmentRegistrationKeyView,
+    /// False when the key already existed.
+    pub created: bool,
+    /// True when an existing key answered to a different secret, which is
+    /// now retired.
+    pub secret_replaced: bool,
 }
 
 /// The complete editable policy of a registration key; an absent field is

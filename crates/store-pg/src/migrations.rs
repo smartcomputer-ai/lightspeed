@@ -140,9 +140,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "universe_handles",
         sql: include_str!("../migrations/016_universe_handles.sql"),
     },
+    EmbeddedMigration {
+        version: 17,
+        name: "api_key_ids",
+        sql: include_str!("../migrations/017_api_key_ids.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 16;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 17;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

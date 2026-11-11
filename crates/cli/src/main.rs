@@ -4,6 +4,7 @@ mod auth_cli;
 mod chat;
 mod connection;
 mod env_cli;
+mod key_secrets;
 mod mcp_cli;
 mod model_defaults_cli;
 mod output;
@@ -48,6 +49,8 @@ enum Command {
     /// Administer Lightspeed gateway API keys.
     #[command(visible_alias = "api-keys")]
     ApiKey(administration_cli::ApiKeyArgs),
+    /// Generate secrets for declared keys, without contacting a runtime.
+    Generate(key_secrets::GenerateArgs),
     /// Discover models and configure model-provider connections.
     #[command(name = "model", visible_alias = "models")]
     Models(administration_cli::ModelsArgs),
@@ -90,6 +93,11 @@ async fn main() -> Result<()> {
         )
         .await;
     }
+    // Generation is offline: it needs no connection and must work before a
+    // runtime exists.
+    if let Command::Generate(args) = cli.command {
+        return key_secrets::generate(args);
+    }
     let active = connection::resolve(
         cli.connection.as_deref(),
         cli.api_url.as_deref(),
@@ -100,7 +108,7 @@ async fn main() -> Result<()> {
         .set(active)
         .map_err(|_| anyhow::anyhow!("connection already initialized"))?;
     match cli.command {
-        Command::Connect(_) => unreachable!(),
+        Command::Connect(_) | Command::Generate(_) => unreachable!(),
         Command::Universe(args) => administration_cli::universe(args).await,
         Command::ApiKey(args) => administration_cli::api_key(args).await,
         Command::Models(args) => administration_cli::models(args).await,

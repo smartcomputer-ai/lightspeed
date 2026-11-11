@@ -166,7 +166,6 @@ async fn upgrade_keeps_fitting_names_and_derives_the_rest(pool: &sqlx::PgPool) {
         ALTER TABLE universes RENAME COLUMN handle TO slug;
         ALTER TABLE universes ADD CONSTRAINT universes_slug_format
             CHECK (slug IS NULL OR slug ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$');
-        DELETE FROM schema_migrations WHERE version = 16;
         "#,
     ))
     .await
@@ -189,9 +188,7 @@ async fn upgrade_keeps_fitting_names_and_derives_the_rest(pool: &sqlx::PgPool) {
             .unwrap();
     }
 
-    PgStore::migrate(pool)
-        .await
-        .expect("apply the handle migration");
+    apply_migration(pool, 16).await;
 
     assert_eq!(handle(pool, kept).await, "kept-name");
     for id in [unnamed, mixed_case, uuid_shaped] {
@@ -218,4 +215,16 @@ async fn handle(pool: &sqlx::PgPool, id: Uuid) -> String {
         .unwrap()
         .unwrap()
         .handle
+}
+
+/// Run one embedded migration's statements over the schema as it stands. The
+/// ledger is left alone, so migrations added later do not affect this.
+async fn apply_migration(pool: &sqlx::PgPool, version: i64) {
+    let migration = store_pg::MIGRATIONS
+        .iter()
+        .find(|migration| migration.version == version)
+        .expect("embedded migration");
+    pool.execute(sqlx::raw_sql(migration.sql))
+        .await
+        .expect("apply migration");
 }

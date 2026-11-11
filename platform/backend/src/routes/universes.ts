@@ -315,51 +315,45 @@ export function universeRoutes(ctx: AppContext) {
         groups: body.data.groups as MethodGroup[],
         assertActor: false,
       });
-      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.create", targetId: response.result.apiKey.keyPrefix, universeId: access.universe.id });
+      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.create", targetId: response.result.apiKey.keyId, universeId: access.universe.id, details: { keyPrefix: response.result.apiKey.keyPrefix } });
       return c.json(response.result, 201);
     });
   });
 
-  app.post("/:id/api-keys/:keyPrefix/rotate", async (c) => {
+  app.post("/:id/api-keys/:keyId/rotate", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access || access.role !== "admin") {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
       const client = deploymentClientFor(ctx, access.universe.gatewayUrl);
-      const keys = await client.call("deployment/api-keys/list", {
-        scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
-      });
-      const keyPrefix = c.req.param("keyPrefix");
-      const key = keys.result.apiKeys?.find((key) => key.keyPrefix === keyPrefix);
+      const scope = { kind: "universe" as const, universeId: access.universe.lightspeedUniverseId };
+      const keys = await client.call("deployment/api-keys/list", { scope });
+      const keyId = c.req.param("keyId");
+      const key = keys.result.apiKeys?.find((key) => key.keyId === keyId);
       if (!key || key.revokedAtMs != null) return c.json({ error: "not found" }, 404);
       // Rotation reveals a credential: universe admins cannot acquire actor
       // assertion authority that only platform admins may grant.
       if (key.assertActor) return c.json({ error: "Rotate this key from Platform admin" }, 403);
-      const response = await client.call("deployment/api-keys/rotate", { keyPrefix });
-      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.rotate", targetId: keyPrefix, universeId: access.universe.id, details: { newKeyPrefix: response.result.apiKey.keyPrefix } });
+      const response = await client.call("deployment/api-keys/rotate", { scope, keyId });
+      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.rotate", targetId: keyId, universeId: access.universe.id, details: { newKeyPrefix: response.result.apiKey.keyPrefix } });
       return c.json(response.result);
     });
   });
 
-  app.delete("/:id/api-keys/:keyPrefix", async (c) => {
+  app.delete("/:id/api-keys/:keyId", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access || access.role !== "admin") {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
-      const client = deploymentClientFor(ctx, access.universe.gatewayUrl);
-      // Revocation is by prefix across the deployment; only this universe's
+      // The key id is resolved within this universe's scope, so only its own
       // keys are revocable from here.
-      const keys = await client.call("deployment/api-keys/list", {
-        scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
+      const keyId = c.req.param("keyId");
+      const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call("deployment/api-keys/revoke", {
+        scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId }, keyId,
       });
-      const keyPrefix = c.req.param("keyPrefix");
-      if (!(keys.result.apiKeys ?? []).some((key) => key.keyPrefix === keyPrefix)) {
-        return c.json({ error: "not found" }, 404);
-      }
-      const response = await client.call("deployment/api-keys/revoke", { keyPrefix });
-      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.revoke", targetId: keyPrefix, universeId: access.universe.id });
+      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.revoke", targetId: keyId, universeId: access.universe.id });
       return c.json(response.result.apiKey);
     });
   });

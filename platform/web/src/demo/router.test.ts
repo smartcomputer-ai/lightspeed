@@ -475,27 +475,31 @@ describe("demo router", () => {
       displayName: "Connector", scope: { kind: "universe", universeId: universe.universe.id }, groups: ["channels/inbound"],
     });
     expect(created.status).toBe(201);
-    const { apiKey } = created.json as { apiKey: { keyPrefix: string } };
-    const listed = (await call("GET", "/api/v1/admin/api-keys")).json as { keyPrefix: string; groups: string[]; scope: { kind: string } }[];
-    expect(listed.find((key) => key.keyPrefix === apiKey.keyPrefix)).toMatchObject({ groups: ["channels/inbound"], scope: { kind: "universe" } });
-    expect(listed.find((key) => key.keyPrefix === "lsk_platform")).toMatchObject({ scope: { kind: "deployment" } });
-    expect((await call("DELETE", `/api/v1/admin/api-keys/${apiKey.keyPrefix}`)).status).toBe(200);
+    const { apiKey } = created.json as { apiKey: { keyId: string } };
+    const listed = (await call("GET", "/api/v1/admin/api-keys")).json as { keyId: string; groups: string[]; scope: { kind: string } }[];
+    expect(listed.find((key) => key.keyId === apiKey.keyId)).toMatchObject({ groups: ["channels/inbound"], scope: { kind: "universe" } });
+    expect(listed.find((key) => key.keyId === "platform")).toMatchObject({ scope: { kind: "deployment" } });
+    // A key id is resolved within its scope: the universe's key is not a
+    // deployment key of that id.
+    expect((await call("DELETE", `/api/v1/admin/api-keys/${apiKey.keyId}`)).status).toBe(404);
+    const scoped = `?universeId=${universe.universe.lightspeedUniverseId}`;
+    expect((await call("DELETE", `/api/v1/admin/api-keys/${apiKey.keyId}${scoped}`)).status).toBe(200);
   });
 
-  it.each(["admin", "universe"])("rotates %s keys immediately and refuses stale or revoked prefixes", async (scope) => {
+  it.each(["admin", "universe"])("rotates %s keys by id, keeping the id, and refuses revoked keys", async (scope) => {
     const { store, call } = await boot();
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const base = scope === "admin" ? "/api/v1/admin/api-keys" : `/api/v1/universes/${universe.universe.id}/api-keys`;
     const created = await call("POST", base, { displayName: "Rotation test", groups: ["session"], scope: { kind: "deployment" } });
-    const before = created.json as { apiKey: Record<string, unknown> & { keyPrefix: string }; secret: string };
-    const rotated = await call("POST", `${base}/${before.apiKey.keyPrefix}/rotate`);
+    const before = created.json as { apiKey: Record<string, unknown> & { keyId: string; keyPrefix: string }; secret: string };
+    const rotated = await call("POST", `${base}/${before.apiKey.keyId}/rotate`);
     expect(rotated.status).toBe(200);
     const after = rotated.json as typeof before;
     expect(after.secret).not.toBe(before.secret);
     expect(after.apiKey).toEqual({ ...before.apiKey, keyPrefix: after.secret.slice(0, 12), lastUsedAtMs: null });
     expect((await call("POST", `${base}/${before.apiKey.keyPrefix}/rotate`)).status).toBe(404);
-    expect((await call("DELETE", `${base}/${after.apiKey.keyPrefix}`)).status).toBe(200);
-    expect((await call("POST", `${base}/${after.apiKey.keyPrefix}/rotate`)).status).toBe(404);
+    expect((await call("DELETE", `${base}/${after.apiKey.keyId}`)).status).toBe(200);
+    expect((await call("POST", `${base}/${after.apiKey.keyId}/rotate`)).status).toBe(404);
   });
 
   it("updates a user's admin-managed account fields and accepts a password reset", async () => {

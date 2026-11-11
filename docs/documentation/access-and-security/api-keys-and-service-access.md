@@ -68,12 +68,21 @@ authorization decisions.
 
 ## Bootstrap without Platform
 
-Use `lightspeed-runtime api-key provision` on the server host after migrations
-to generate a deployment administrator key, or supply its secret through
-`LIGHTSPEED_BOOTSTRAP_API_KEY`. The command prints JSON for protected capture.
-The key uses the ordinary hash store and remains revocable. Repeated
-provisioning never restores a revoked key or changes its authority. The
-initial deployment key does not require an existing universe.
+The first key of a deployment has no key to authenticate with, so it is made on
+the server host. After migrations, run `lightspeed-runtime api-key provision`
+there to generate a deployment key, or supply its secret through
+`LIGHTSPEED_BOOTSTRAP_API_KEY` to declare one. The command prints JSON for
+protected capture. The key uses the ordinary hash store and remains
+revocable. The initial deployment key does not require an existing universe.
+
+`provision` names the key with `--key-id` (default `bootstrap`) and limits it
+with repeated `--group`; without groups it holds every deployment group. With
+a supplied secret it is a declaration, described under
+[Declare a key with a supplied secret](#declare-a-key-with-a-supplied-secret):
+repeating it changes nothing, changed groups are applied, a different secret
+replaces the previous one at once, and a revoked key is never restored.
+`--require-existing` only checks that the supplied key exists exactly as
+described, and creates or changes nothing.
 
 Connect with `lightspeed connect add`, select with `connect use`, and create
 universes through the CLI. Both development launcher profiles provide an
@@ -152,35 +161,90 @@ does not mean read-only access. Verify it with a profile read through the
 [API client](../integrating-and-extending/api-and-typescript.md), then confirm
 an operation outside that group is refused.
 
-Core stores a SHA-256 hash of the random secret, a display prefix, and key
+Every key has a key id: its name among the keys of its scope, which is one
+universe or the deployment. The id addresses the key and stays the same when
+its secret changes. You may choose it when creating a key (`--key-id`);
+otherwise the runtime allocates one. Two universes can each have a key with
+the same id. Listings also show the display prefix, the first characters of
+the key's current secret, which tells you which secret a key holds and changes
+with it.
+
+Core stores a SHA-256 hash of the random secret, the display prefix, and key
 metadata. Choose **Rotate** on an active key to replace its secret immediately.
 The new secret is shown once and the old secret stops working for subsequent
 requests, with no grace period. Update every client using that key. Rotation
-changes the display prefix and clears last use, while preserving the name,
-scope, groups, actor flag, creator and creation time. Revoked keys cannot be
-rotated. The Platform records the old and new prefixes in its access audit.
-Keys that assert actors must be rotated from **Platform admin → API keys**.
+changes the display prefix and clears last use, while preserving the key id,
+name, scope, groups, actor flag, creator and creation time. Revoked keys
+cannot be rotated. The Platform records the key id and the new prefix in its
+access audit. Keys that assert actors must be rotated from **Platform admin →
+API keys**.
 
-Both CLIs support rotation by the current prefix:
+Both CLIs rotate a key by its id and scope:
 
 ```bash
-lightspeed api-key rotate "<key-prefix>"
-lightspeed-runtime api-key rotate "<key-prefix>"
+lightspeed api-key rotate "<key-id>" --universe-id "<universe-uuid>"
+lightspeed api-key rotate "<key-id>" --deployment
+lightspeed-runtime api-key rotate "<key-id>" --universe-id "<universe-uuid>"
 ```
 
-The first command uses the configured connection; the second accesses the
-store from the server host. Each returns the new secret once. If you rotate
-the credential used by your CLI connection or Platform service, update that
+The first two commands use the configured connection; the third accesses the
+store from the server host, where omitting `--universe-id` addresses a
+deployment key. Each returns the new secret once. If you rotate the
+credential used by your CLI connection or Platform service, update that
 configuration before making further requests.
 
-The scope, groups, and actor flag cannot be edited. To change authority,
-create a replacement, update and verify its consumer, then revoke the old
-key in the UI or by prefix:
+A key's scope and actor flag cannot be changed. To change either, create a
+replacement, update and verify its consumer, then revoke the old key in the
+UI or by id. Its groups can be changed by declaring the key, as described
+below. A revoked key keeps its key id, so a replacement needs a new one.
 
 ```bash
 lightspeed-runtime api-key list
-lightspeed-runtime api-key revoke "<key-prefix>"
+lightspeed-runtime api-key revoke "<key-id>" --universe-id "<universe-uuid>"
 ```
+
+## Declare a key with a supplied secret
+
+Creating a key has the runtime generate the secret and show it once, which
+suits a person at a terminal or in the web app. Automation usually needs the
+opposite: the secret already exists in a secret store, and both Lightspeed
+and the service that will use the key should read it from there. For that,
+declare the key and supply its secret:
+
+```bash
+lightspeed generate secret api-key > platform.key   # or let your secret store generate it
+lightspeed api-key put --key-id platform --name "Platform" --deployment \
+  --assert-actor --secret-file platform.key
+```
+
+`lightspeed generate secret` works offline and prints a secret in the form the
+runtime accepts: `lsk_` followed by 32 random bytes encoded as base64url
+without padding. Any cryptographic random source that produces that form will
+do, for example `printf 'lsk_%s' "$(openssl rand 32 | basenc --base64url | tr -d '=')"`.
+The secret is read from `--secret-file`, `--secret-env`, or `--secret-stdin`,
+never from the command line.
+
+After `put`, the key of that id and scope exists, answers to exactly the
+supplied secret, and holds the given groups and name:
+
+| Situation | Result |
+| --- | --- |
+| The key does not exist | It is created with the supplied secret. |
+| It exists with the same secret | Its groups and name are updated if they differ. Otherwise nothing changes. |
+| It exists with a different secret | The supplied secret replaces it at once. The previous secret stops working with no overlap, so update or restart every consumer. |
+| The declaration changes the actor flag | Conflict. Declare a new key. |
+| The key was revoked | Conflict. A revoked key is never restored; use a new key id and a new secret. |
+| The secret belongs to another key | Conflict. A secret identifies one key. |
+
+Repeating the same declaration is therefore safe, which is what a deployment
+pipeline needs. A key that was created earlier with a generated secret and an
+allocated id can be brought under declaration: supplying that key's secret
+under a chosen id gives the key that id.
+
+The same call is available as `deployment/api-keys/put`, and the server host's
+`api-key provision` applies it without needing a key, for the first key of a
+deployment. Environment registration keys can be declared the same way; see
+[Registered daemons](../environments/registered-daemons.md#declare-the-key-from-a-secret-store).
 
 Rotation and revocation reject subsequent requests using the old secret.
 Already admitted requests, including

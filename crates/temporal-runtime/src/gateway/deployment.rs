@@ -99,6 +99,35 @@ impl GatewayDeploymentApi {
             .ok_or_else(|| AgentApiError::not_found(format!("unknown universe: {reference}")))
     }
 
+    /// What a created or declared key is called and may do, once its name is
+    /// present and its universe is known to exist.
+    async fn api_key_spec(
+        &self,
+        scope: AccessScope,
+        key_id: Option<String>,
+        groups: Option<Vec<api::MethodGroup>>,
+        assert_actor: bool,
+        display_name: &str,
+    ) -> Result<auth::ApiKeySpec, AgentApiError> {
+        let display_name = display_name.trim();
+        if display_name.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "api key displayName must not be empty",
+            ));
+        }
+        if let AccessScope::Universe { universe_id } = scope {
+            self.require_universe(universe_id).await?;
+        }
+        Ok(auth::ApiKeySpec {
+            key_id,
+            scope,
+            groups: groups.map(|groups| groups.into_iter().collect()),
+            assert_actor,
+            created_by: super::request_context::request_context()?.attribution(),
+            display_name: Some(display_name.to_owned()),
+        })
+    }
+
     async fn require_universe(&self, universe_id: Uuid) -> Result<(), AgentApiError> {
         if store_pg::universe_exists(self.pool(), universe_id)
             .await
@@ -629,32 +658,19 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentApiKeyCreateParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_CREATE, async {
-            let display_name = params.display_name.trim();
-            if display_name.is_empty() {
-                return Err(AgentApiError::invalid_request(
-                    "api key displayName must not be empty",
-                ));
-            }
-            if let AccessScope::Universe { universe_id } = params.scope {
-                self.require_universe(universe_id).await?;
-            }
-            let created_by = super::request_context::request_context()?.attribution();
+            let spec = self
+                .api_key_spec(
+                    params.scope,
+                    params.key_id,
+                    params.groups,
+                    params.assert_actor,
+                    &params.display_name,
+                )
+                .await?;
             let store = store_pg::PgApiKeyStore::new(self.pool().clone());
             for _ in 0..3 {
-                let minted = auth::mint_api_key(
-                    auth::ApiKeySpec {
-                        scope: params.scope,
-                        groups: params
-                            .groups
-                            .as_ref()
-                            .map(|groups| groups.iter().copied().collect()),
-                        assert_actor: params.assert_actor,
-                        created_by: created_by.clone(),
-                        display_name: Some(display_name.to_owned()),
-                    },
-                    current_time_ms()?,
-                )
-                .map_err(map_api_key_error)?;
+                let minted = auth::mint_api_key(spec.clone(), current_time_ms()?)
+                    .map_err(map_api_key_error)?;
                 match store.create_api_key(&minted.key_hash, &minted.record).await {
                     Ok(()) => {
                         return Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
@@ -671,6 +687,35 @@ impl DeploymentApiService for GatewayDeploymentApi {
             Err(AgentApiError::internal(
                 "could not allocate a unique api key prefix",
             ))
+        })
+        .await
+    }
+
+    async fn put_api_key(
+        &self,
+        params: api::DeploymentApiKeyPutParams,
+    ) -> Result<AgentApiOutcome<api::DeploymentApiKeyPutResponse>, AgentApiError> {
+        self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_PUT, async {
+            let spec = self
+                .api_key_spec(
+                    params.scope,
+                    Some(params.key_id),
+                    params.groups,
+                    params.assert_actor,
+                    &params.display_name,
+                )
+                .await?;
+            let key = auth::import_api_key(spec, current_time_ms()?, &params.secret)
+                .map_err(map_api_key_error)?;
+            let put = store_pg::PgApiKeyStore::new(self.pool().clone())
+                .put_api_key(&key)
+                .await
+                .map_err(map_api_key_error)?;
+            Ok(AgentApiOutcome::new(api::DeploymentApiKeyPutResponse {
+                api_key: api_key_view(put.record),
+                created: put.created,
+                secret_replaced: put.secret_replaced,
+            }))
         })
         .await
     }
@@ -699,17 +744,11 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentApiKeyRotateParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_ROTATE, async {
-            let key_prefix = params.key_prefix.trim();
-            if key_prefix.is_empty() {
-                return Err(AgentApiError::invalid_request(
-                    "api key keyPrefix must not be empty",
-                ));
-            }
             let rotated = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .rotate_api_key(key_prefix)
+                .rotate_api_key(params.scope, params.key_id.trim())
                 .await
                 .map_err(map_api_key_error)?
-                .ok_or_else(|| AgentApiError::not_found("unknown or revoked api key prefix"))?;
+                .ok_or_else(|| AgentApiError::not_found("unknown or revoked api key"))?;
             Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
                 api_key: api_key_view(rotated.record),
                 secret: rotated.secret.expose().to_owned(),
@@ -723,17 +762,11 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentApiKeyRevokeParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyRevokeResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_REVOKE, async {
-            let key_prefix = params.key_prefix.trim();
-            if key_prefix.is_empty() {
-                return Err(AgentApiError::invalid_request(
-                    "api key keyPrefix must not be empty",
-                ));
-            }
             let record = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .revoke_api_key(key_prefix, current_time_ms()?)
+                .revoke_api_key(params.scope, params.key_id.trim(), current_time_ms()?)
                 .await
                 .map_err(map_api_key_error)?
-                .ok_or_else(|| AgentApiError::not_found("unknown api key prefix"))?;
+                .ok_or_else(|| AgentApiError::not_found("unknown api key"))?;
             Ok(AgentApiOutcome::new(DeploymentApiKeyRevokeResponse {
                 api_key: api_key_view(record),
             }))
@@ -769,6 +802,7 @@ fn universe_view(stats: store_pg::UniverseStats) -> DeploymentUniverseView {
 
 fn api_key_view(record: auth::ApiKeyRecord) -> DeploymentApiKeyView {
     DeploymentApiKeyView {
+        key_id: record.key_id,
         key_prefix: record.key_prefix,
         scope: record.scope,
         groups: record.groups.into_iter().collect(),
@@ -795,6 +829,8 @@ fn map_api_key_error(error: auth::ApiKeyError) -> AgentApiError {
         auth::ApiKeyError::AlreadyExists { .. } => {
             AgentApiError::internal("generated api key prefix collision")
         }
+        error @ auth::ApiKeyError::KeyIdInUse { .. } => AgentApiError::conflict(error.to_string()),
+        auth::ApiKeyError::Conflict { message } => AgentApiError::conflict(message),
         auth::ApiKeyError::Invalid { message } => AgentApiError::invalid_request(message),
         auth::ApiKeyError::Store { message } => AgentApiError::internal(message),
     }

@@ -1,7 +1,7 @@
 // Local credential handoff; all authority remains in the runtime key store.
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { DevError } from "./errors.mjs";
 
 function writePrivate(file, text) {
@@ -42,10 +42,12 @@ export async function prepareCliConnection({ root, env, full, noBootstrap, run }
     if (previous && supplied && previous !== supplied.trim()) throw new DevError(`The supplied ${kind} key differs from the saved development key.`, { hint: "Explicitly provision the replacement and update the protected credential file." });
     const secret = previous ?? supplied?.trim();
     if (noBootstrap && !secret) return null;
-    const args = ["run", "-p", "temporal-runtime", "--", "api-key", "provision", "--name", `Development ${kind}: ${root}`];
+    // One key per kind and checkout, so checkouts sharing a database do not
+    // replace each other's secret.
+    const keyId = `dev-${kind}-${createHash("sha256").update(root).digest("hex").slice(0, 8)}`;
+    const args = ["run", "-p", "temporal-runtime", "--", "api-key", "provision", "--key-id", keyId, "--name", `Development ${kind}: ${root}`];
     if (assertActor) args.push("--assert-actor");
     if (noBootstrap) args.push("--require-existing");
-    else args.push("--refresh-groups");
     const provisioningEnv = { ...env, RUST_LOG: "off" };
     delete provisioningEnv.LIGHTSPEED_BOOTSTRAP_API_KEY;
     if (secret) provisioningEnv.LIGHTSPEED_BOOTSTRAP_API_KEY = secret;

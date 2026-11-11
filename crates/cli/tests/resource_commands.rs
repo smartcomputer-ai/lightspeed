@@ -772,3 +772,164 @@ fn model_defaults_conflict_is_not_retried_with_a_new_revision() {
         1
     );
 }
+
+#[test]
+fn a_generated_secret_declares_an_api_key_and_a_registration_key() {
+    // Generation contacts nothing: it works with no connection configured.
+    let offline = tempfile::tempdir().unwrap();
+    let generate = |kind: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_lightspeed"))
+            .current_dir(offline.path())
+            .args(["generate", "secret", kind])
+            .env("LIGHTSPEED_CONFIG_DIR", offline.path().join("config"))
+            .env_remove("LIGHTSPEED_API_URL")
+            .env_remove("LIGHTSPEED_API_KEY")
+            .env_remove("LIGHTSPEED_UNIVERSE")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    let api_secret = generate("api-key");
+    let registration_secret = generate("registration-key");
+    assert!(api_secret.starts_with("lsk_") && api_secret.len() == 4 + 43);
+    assert!(registration_secret.starts_with("lsrk_") && registration_secret.len() == 5 + 43);
+
+    let (expected_api, expected_registration) = (api_secret.clone(), registration_secret.clone());
+    let runtime = Runtime::start(move |method, params| match method {
+        "deployment/api-keys/put" => {
+            assert_eq!(
+                *params,
+                json!({
+                    "scope": {"kind":"universe","universeId":"00000000-0000-0000-0000-000000000001"},
+                    "keyId": "release-bot",
+                    "groups": ["session", "profiles"],
+                    "assertActor": false,
+                    "displayName": "Release bot",
+                    "secret": expected_api,
+                })
+            );
+            json!({"apiKey":{"keyId":"release-bot","keyPrefix":&expected_api[..12],"scope":params["scope"],"groups":["session","profiles"],"assertActor":false,"createdBy":{"kind":"local"},"displayName":"Release bot","createdAtMs":1},"created":true,"secretReplaced":false})
+        }
+        "deployment/api-keys/rotate" | "deployment/api-keys/revoke" => {
+            assert_eq!(
+                *params,
+                json!({"scope":{"kind":"deployment"},"keyId":"platform"})
+            );
+            let api_key = json!({"keyId":"platform","keyPrefix":"lsk_rotated1","scope":{"kind":"deployment"},"groups":["session"],"assertActor":true,"createdBy":{"kind":"local"},"createdAtMs":1});
+            if method.ends_with("rotate") {
+                json!({"apiKey":api_key,"secret":"lsk_rotated_secret"})
+            } else {
+                json!({"apiKey":api_key})
+            }
+        }
+        "environments/registration-keys/put" => {
+            assert_eq!(
+                *params,
+                json!({
+                    "registrationKeyId": "build-pool",
+                    "displayName": "Build pool",
+                    "identityMode": "ephemeral",
+                    "maxActiveEnvironments": 4,
+                    "secret": expected_registration,
+                })
+            );
+            json!({"registrationKey":{"registrationKeyId":"build-pool","displayName":"Build pool","keyPrefix":&expected_registration[..12],"identityMode":"ephemeral","maxActiveEnvironments":4,"ephemeralDisconnectGraceMs":300000,"status":"active","registeredEnvironmentCount":0,"activeEnvironmentCount":0,"createdAtMs":1,"updatedAtMs":1},"created":false,"secretReplaced":true})
+        }
+        _ => panic!("unexpected request {method}"),
+    });
+
+    // The secret is read from a file or the environment, never an argument.
+    let file = runtime.directory.path().join("api-key");
+    std::fs::write(&file, format!("{api_secret}\n")).unwrap();
+    let output = runtime.json(&[
+        "api-key",
+        "put",
+        "--key-id",
+        "release-bot",
+        "--name",
+        "Release bot",
+        "--universe-id",
+        "00000000-0000-0000-0000-000000000001",
+        "--group",
+        "session",
+        "--group",
+        "profiles",
+        "--secret-file",
+        file.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(output["created"], true);
+    assert!(!output.to_string().contains(&api_secret));
+
+    let declared = Command::new(env!("CARGO_BIN_EXE_lightspeed"))
+        .current_dir(runtime.directory.path())
+        .args([
+            "environment",
+            "registration-key",
+            "put",
+            "build-pool",
+            "--name",
+            "Build pool",
+            "--mode",
+            "ephemeral",
+            "--max-active",
+            "4",
+            "--secret-env",
+            "POOL_SECRET",
+        ])
+        .env(
+            "LIGHTSPEED_CONFIG_DIR",
+            runtime.directory.path().join("config"),
+        )
+        .env("LIGHTSPEED_API_URL", &runtime.endpoint)
+        .env("LIGHTSPEED_API_KEY", "lsk_fixture")
+        .env(
+            "LIGHTSPEED_UNIVERSE",
+            "00000000-0000-0000-0000-000000000001",
+        )
+        .env("POOL_SECRET", &registration_secret)
+        .output()
+        .unwrap();
+    assert!(
+        declared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&declared.stderr)
+    );
+    let stdout = String::from_utf8(declared.stdout).unwrap();
+    assert!(stdout.contains("The previous secret is retired."));
+    assert!(!stdout.contains(&registration_secret));
+
+    // A declared key needs a secret source, and exactly one.
+    for sources in [
+        &[][..],
+        &["--secret-stdin", "--secret-env", "POOL_SECRET"][..],
+    ] {
+        let mut args = vec![
+            "api-key",
+            "put",
+            "--key-id",
+            "x",
+            "--name",
+            "x",
+            "--deployment",
+        ];
+        args.extend_from_slice(sources);
+        assert!(!runtime.run(&args).status.success());
+    }
+
+    // Rotation and revocation address a key by its id and scope.
+    let rotated = runtime.json(&["api-key", "rotate", "platform", "--deployment", "--json"]);
+    assert_eq!(rotated["secret"], "lsk_rotated_secret");
+    runtime.success(&["api-key", "revoke", "platform", "--deployment"]);
+    assert!(
+        !runtime
+            .run(&["api-key", "revoke", "platform"])
+            .status
+            .success()
+    );
+}

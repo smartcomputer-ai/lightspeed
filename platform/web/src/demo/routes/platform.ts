@@ -227,10 +227,10 @@ export function platformRoutes(store: DemoStore): Hono {
     return c.json({ apiKey, secret }, 201);
   });
 
-  app.post("/universes/:id/api-keys/:keyPrefix/rotate", (c) => {
+  app.post("/universes/:id/api-keys/:keyId/rotate", (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
-    const apiKey = state.apiKeys.find((key) => key.keyPrefix === c.req.param("keyPrefix") && key.revokedAtMs == null);
+    const apiKey = state.apiKeys.find((key) => key.keyId === c.req.param("keyId") && key.revokedAtMs == null);
     if (!apiKey) return notFound(c);
     if (apiKey.assertActor) return c.json({ error: "Rotate this key from Platform admin" }, 403);
     const secret = `lsk_${randomHex(24)}`;
@@ -239,10 +239,10 @@ export function platformRoutes(store: DemoStore): Hono {
     return c.json({ apiKey, secret });
   });
 
-  app.delete("/universes/:id/api-keys/:keyPrefix", (c) => {
+  app.delete("/universes/:id/api-keys/:keyId", (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
-    const apiKey = state.apiKeys.find((k) => k.keyPrefix === c.req.param("keyPrefix"));
+    const apiKey = state.apiKeys.find((k) => k.keyId === c.req.param("keyId"));
     if (!apiKey) return notFound(c);
     apiKey.revokedAtMs ??= Date.now();
     return c.json(apiKey);

@@ -172,34 +172,93 @@ pub struct ApiKeyArgs {
     #[command(subcommand)]
     command: ApiKeyCommand,
 }
+/// The scope a key belongs to: the deployment, or one universe.
+#[derive(Debug, Clone, Args)]
+struct KeyScopeArgs {
+    /// A deployment key.
+    #[arg(
+        long,
+        required_unless_present = "universe_id",
+        conflicts_with = "universe_id"
+    )]
+    deployment: bool,
+    /// A key of this universe.
+    #[arg(long)]
+    universe_id: Option<uuid::Uuid>,
+}
+
+impl KeyScopeArgs {
+    fn scope(&self) -> api::AccessScope {
+        self.universe_id
+            .map_or(api::AccessScope::Deployment, |universe_id| {
+                api::AccessScope::Universe { universe_id }
+            })
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum ApiKeyCommand {
     List,
-    /// Create a key; the secret is printed once.
+    /// Create a key with a generated secret, which is printed once.
     Create {
         #[arg(long)]
         name: String,
-        #[arg(
-            long,
-            required_unless_present = "universe_id",
-            conflicts_with = "universe_id"
-        )]
-        deployment: bool,
+        #[command(flatten)]
+        scope: KeyScopeArgs,
+        /// The key's id within its scope; allocated when omitted.
         #[arg(long)]
-        universe_id: Option<uuid::Uuid>,
+        key_id: Option<String>,
         #[arg(long = "group")]
         groups: Vec<String>,
         #[arg(long)]
         assert_actor: bool,
     },
-    /// Replace an active key secret immediately; prints the new secret once.
+    /// Declare a key with a secret you supply: afterwards the key of this id
+    /// exists, answers to exactly that secret, and holds these groups.
+    /// Repeating the command changes nothing; a different secret replaces
+    /// the previous one at once. Generate one with `lightspeed generate
+    /// secret api-key`.
+    Put {
+        #[arg(long)]
+        key_id: String,
+        #[arg(long)]
+        name: String,
+        #[command(flatten)]
+        scope: KeyScopeArgs,
+        /// A method group the key may call (repeatable); omitted grants
+        /// every group its scope allows.
+        #[arg(long = "group")]
+        groups: Vec<String>,
+        #[arg(long)]
+        assert_actor: bool,
+        #[command(flatten)]
+        secret: crate::key_secrets::SecretSourceArgs,
+    },
+    /// Replace an active key's secret with a generated one immediately;
+    /// prints the new secret once.
     Rotate {
-        key_prefix: String,
+        key_id: String,
+        #[command(flatten)]
+        scope: KeyScopeArgs,
     },
     Revoke {
-        key_prefix: String,
+        key_id: String,
+        #[command(flatten)]
+        scope: KeyScopeArgs,
     },
 }
+
+fn parse_groups(groups: &[String]) -> Result<Option<Vec<api::MethodGroup>>> {
+    if groups.is_empty() {
+        return Ok(None);
+    }
+    groups
+        .iter()
+        .map(|g| api::MethodGroup::parse(g).with_context(|| format!("unknown method group {g}")))
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
+}
+
 pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
     let client = HttpAgentApi::new("");
     match args.command {
@@ -217,11 +276,12 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
                 if response.api_keys.is_empty() {
                     println!("No API keys found.");
                 } else {
-                    println!("PREFIX  STATUS  SCOPE  NAME");
+                    println!("KEY ID  PREFIX  STATUS  SCOPE  NAME");
                 }
                 for key in response.api_keys {
                     println!(
-                        "{}  {}  {}  {}",
+                        "{}  {}  {}  {}  {}",
+                        key.key_id,
                         key.key_prefix,
                         if key.revoked_at_ms.is_some() {
                             "revoked"
@@ -236,33 +296,18 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
         }
         ApiKeyCommand::Create {
             name,
-            deployment: _,
-            universe_id,
+            scope,
+            key_id,
             groups,
             assert_actor,
         } => {
-            let groups = if groups.is_empty() {
-                None
-            } else {
-                Some(
-                    groups
-                        .iter()
-                        .map(|g| {
-                            api::MethodGroup::parse(g)
-                                .with_context(|| format!("unknown method group {g}"))
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                )
-            };
-            let scope = universe_id.map_or(api::AccessScope::Deployment, |universe_id| {
-                api::AccessScope::Universe { universe_id }
-            });
             let response: api::DeploymentApiKeyCreateResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_API_KEYS_CREATE,
                     api::DeploymentApiKeyCreateParams {
-                        scope,
-                        groups,
+                        scope: scope.scope(),
+                        key_id,
+                        groups: parse_groups(&groups)?,
                         assert_actor,
                         display_name: name,
                     },
@@ -274,11 +319,49 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
             }
             crate::output::show(args.json, &response)?;
         }
-        ApiKeyCommand::Rotate { key_prefix } => {
+        ApiKeyCommand::Put {
+            key_id,
+            name,
+            scope,
+            groups,
+            assert_actor,
+            secret,
+        } => {
+            let response: api::DeploymentApiKeyPutResponse = client
+                .request(
+                    api::METHOD_DEPLOYMENT_API_KEYS_PUT,
+                    api::DeploymentApiKeyPutParams {
+                        scope: scope.scope(),
+                        key_id,
+                        groups: parse_groups(&groups)?,
+                        assert_actor,
+                        display_name: name,
+                        secret: secret.read()?,
+                    },
+                )
+                .await?
+                .result;
+            if !args.json {
+                println!(
+                    "{}",
+                    match (response.created, response.secret_replaced) {
+                        (true, _) => "API key created with the supplied secret.",
+                        (false, true) =>
+                            "API key now answers to the supplied secret. The previous secret no longer works.",
+                        (false, false) => "API key is as declared.",
+                    }
+                );
+            }
+            crate::output::show(args.json, &response)?;
+        }
+        ApiKeyCommand::Rotate { key_id, scope } => {
             let response: api::DeploymentApiKeyCreateResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_API_KEYS_ROTATE,
-                    api::DeploymentApiKeyRotateParams { key_prefix },
+                    api::DeploymentApiKeyRotateParams {
+                        scope: scope.scope(),
+                        key_id,
+                    },
                 )
                 .await?
                 .result;
@@ -289,11 +372,14 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
             }
             crate::output::show(args.json, &response)?;
         }
-        ApiKeyCommand::Revoke { key_prefix } => {
+        ApiKeyCommand::Revoke { key_id, scope } => {
             let response: api::DeploymentApiKeyRevokeResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_API_KEYS_REVOKE,
-                    api::DeploymentApiKeyRevokeParams { key_prefix },
+                    api::DeploymentApiKeyRevokeParams {
+                        scope: scope.scope(),
+                        key_id,
+                    },
                 )
                 .await?
                 .result;

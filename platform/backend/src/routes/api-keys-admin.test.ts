@@ -15,7 +15,7 @@ function setup(platformRole: string | undefined) {
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
     const rpc = JSON.parse(String(init.body));
     calls.push({ method: rpc.method, params: rpc.params, headers: new Headers(init.headers) });
-    const apiKey = { keyPrefix: "lsk_abcdefgh" };
+    const apiKey = { keyId: "connector", keyPrefix: "lsk_abcdefgh" };
     const result = ["deployment/api-keys/create", "deployment/api-keys/rotate"].includes(rpc.method) ? { apiKey, secret: "lsk_secret" }
       : rpc.method === "deployment/api-keys/list" ? { apiKeys: [apiKey] } : { apiKey };
     return Response.json({ id: rpc.id, result: { result, notifications: [] } });
@@ -42,8 +42,8 @@ it("is for platform admins only", async () => {
   const { request, calls } = setup(undefined);
   expect((await request("GET", "/api-keys")).status).toBe(403);
   expect((await request("POST", "/api-keys", { displayName: "x", scope: { kind: "deployment" } })).status).toBe(403);
-  expect((await request("DELETE", "/api-keys/lsk_abcdefgh")).status).toBe(403);
-  expect((await request("POST", "/api-keys/lsk_abcdefgh/rotate")).status).toBe(403);
+  expect((await request("DELETE", "/api-keys/connector")).status).toBe(403);
+  expect((await request("POST", "/api-keys/connector/rotate")).status).toBe(403);
   expect(calls).toEqual([]);
 });
 
@@ -69,16 +69,29 @@ it("mints a deployment key that may assert actors, and lists and revokes keys", 
   const { request, calls } = setup("admin");
   expect((await request("POST", "/api-keys", { displayName: "Gate", scope: { kind: "deployment" }, assertActor: true })).status).toBe(201);
   expect(calls[0]!.params).toEqual({ scope: { kind: "deployment" }, displayName: "Gate", assertActor: true });
-  expect(await (await request("GET", "/api-keys")).json()).toEqual([{ keyPrefix: "lsk_abcdefgh" }]);
-  expect((await request("DELETE", "/api-keys/lsk_abcdefgh")).status).toBe(200);
+  expect(await (await request("GET", "/api-keys")).json()).toEqual([{ keyId: "connector", keyPrefix: "lsk_abcdefgh" }]);
+  expect((await request("DELETE", "/api-keys/connector")).status).toBe(200);
   expect(calls.map((call) => call.method)).toEqual(["deployment/api-keys/create", "deployment/api-keys/list", "deployment/api-keys/revoke"]);
+  expect(calls[2]!.params).toEqual({ scope: { kind: "deployment" }, keyId: "connector" });
 });
 
 it("rotates an admin key and audits only its identifiers", async () => {
   const { request, calls, audit } = setup("admin");
-  const response = await request("POST", "/api-keys/lsk_previous/rotate");
+  const response = await request("POST", "/api-keys/connector/rotate");
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ apiKey: { keyPrefix: "lsk_abcdefgh" }, secret: "lsk_secret" });
-  expect(calls).toEqual([expect.objectContaining({ method: "deployment/api-keys/rotate", params: { keyPrefix: "lsk_previous" } })]);
-  expect(audit).toHaveBeenCalledWith({ actorId: "admin", action: "key.rotate", targetId: "lsk_previous", details: { newKeyPrefix: "lsk_abcdefgh" }, outcome: "success" });
+  expect(calls).toEqual([expect.objectContaining({ method: "deployment/api-keys/rotate", params: { scope: { kind: "deployment" }, keyId: "connector" } })]);
+  expect(audit).toHaveBeenCalledWith({ actorId: "admin", action: "key.rotate", targetId: "connector", details: { newKeyPrefix: "lsk_abcdefgh" }, outcome: "success" });
+});
+
+it("addresses a universe's key by its id within that universe", async () => {
+  const { request, calls } = setup("admin");
+  const scoped = `?universeId=${universe.lightspeedUniverseId}`;
+  expect((await request("POST", `/api-keys/ci/rotate${scoped}`)).status).toBe(200);
+  expect((await request("DELETE", `/api-keys/ci${scoped}`)).status).toBe(200);
+  const scope = { kind: "universe", universeId: universe.lightspeedUniverseId };
+  expect(calls.map((call) => call.params)).toEqual([{ scope, keyId: "ci" }, { scope, keyId: "ci" }]);
+  // A malformed scope is refused before the runtime is asked anything.
+  expect((await request("DELETE", "/api-keys/ci?universeId=nope")).status).toBe(400);
+  expect(calls).toHaveLength(2);
 });

@@ -5,14 +5,16 @@ import { ApiKeySecret } from "./secret-once";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
-export function RotateKeyDialog({ apiKey, basePath, onClose, onRotated }: {
+export function RotateKeyDialog({ apiKey, basePath, query = "", onClose, onRotated }: {
   apiKey: DeploymentApiKeyView;
   basePath: string;
+  /** Names the key's scope where the route does not already. */
+  query?: string;
   onClose: () => void;
   onRotated: () => void;
 }) {
   const rotate = useMutation({
-    mutationFn: () => api<DeploymentApiKeyCreateResponse>("POST", `${basePath}/${encodeURIComponent(apiKey.keyPrefix)}/rotate`),
+    mutationFn: () => api<DeploymentApiKeyCreateResponse>("POST", `${basePath}/${encodeURIComponent(apiKey.keyId)}/rotate${query}`),
     retry: false,
     gcTime: 0,
     onSuccess: onRotated,

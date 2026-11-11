@@ -1084,6 +1084,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfDeploymentApiKeyPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentApiKeyPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfDeploymentApiKeyRevokeResponse": {
       "properties": {
         "notifications": {
@@ -1604,6 +1621,23 @@
         },
         "result": {
           "$ref": "#/definitions/EnvironmentRegistrationKeyListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentRegistrationKeyPutResponse"
         }
       },
       "required": [
@@ -8639,7 +8673,7 @@
       "properties": {
         "assertActor": {
           "default": false,
-          "description": "Whether the key may name the actor a request acts for with the\n`x-lightspeed-actor` header. Give it only to a gate that authenticates\npeople, such as the Platform.",
+          "description": "Whether the key may name the actor a request acts for with the\n`x-lightspeed-actor` header. Give it only to a gate that authenticates\npeople, such as the Platform. It cannot be changed afterwards.",
           "type": "boolean"
         },
         "displayName": {
@@ -8647,12 +8681,19 @@
           "type": "string"
         },
         "groups": {
-          "description": "The method groups the key may call; absent grants every group its\nscope allows. To change what a key may do, revoke\nit and mint another.",
+          "description": "The method groups the key may call; absent grants every group its\nscope allows.",
           "items": {
             "$ref": "#/definitions/MethodGroup"
           },
           "type": [
             "array",
+            "null"
+          ]
+        },
+        "keyId": {
+          "description": "The key's id: 1-128 ASCII letters, digits, underscores, hyphens, dots\nor colons, starting with a letter or digit, and not yet used by a key\nof this scope. Omit it to have one allocated.",
+          "type": [
+            "string",
             "null"
           ]
         },
@@ -8716,15 +8757,93 @@
       },
       "type": "object"
     },
-    "DeploymentApiKeyRevokeParams": {
+    "DeploymentApiKeyPutParams": {
       "additionalProperties": false,
+      "description": "Declare a key whose secret the caller supplies. `Debug` redacts the\nsecret; the serialized request remains sensitive and must not be logged.",
       "properties": {
-        "keyPrefix": {
+        "assertActor": {
+          "default": false,
+          "description": "Whether the key may name the actor a request acts for. It cannot be\nchanged afterwards.",
+          "type": "boolean"
+        },
+        "displayName": {
+          "description": "Human-readable purpose shown in key-management interfaces.",
+          "type": "string"
+        },
+        "groups": {
+          "description": "The method groups the key may call; absent grants every group its\nscope allows. An existing key's groups are replaced by these.",
+          "items": {
+            "$ref": "#/definitions/MethodGroup"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "keyId": {
+          "description": "The key's id within its scope: 1-128 ASCII letters, digits,\nunderscores, hyphens, dots or colons, starting with a letter or digit.",
+          "type": "string"
+        },
+        "scope": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AccessScope"
+            }
+          ],
+          "description": "A universe, or the deployment. It cannot be changed afterwards."
+        },
+        "secret": {
+          "description": "The secret the key answers to: `lsk_` followed by 32 random bytes\nencoded as base64url without padding. Generate it with a\ncryptographic random source.",
           "type": "string"
         }
       },
       "required": [
-        "keyPrefix"
+        "scope",
+        "keyId",
+        "displayName",
+        "secret"
+      ],
+      "type": "object"
+    },
+    "DeploymentApiKeyPutResponse": {
+      "properties": {
+        "apiKey": {
+          "$ref": "#/definitions/DeploymentApiKeyView"
+        },
+        "created": {
+          "description": "False when the key already existed.",
+          "type": "boolean"
+        },
+        "secretReplaced": {
+          "description": "True when an existing key held a different secret, which no longer\nworks.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "apiKey",
+        "created",
+        "secretReplaced"
+      ],
+      "type": "object"
+    },
+    "DeploymentApiKeyRevokeParams": {
+      "additionalProperties": false,
+      "properties": {
+        "keyId": {
+          "type": "string"
+        },
+        "scope": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AccessScope"
+            }
+          ],
+          "description": "The scope the key belongs to."
+        }
+      },
+      "required": [
+        "scope",
+        "keyId"
       ],
       "type": "object"
     },
@@ -8742,17 +8861,26 @@
     "DeploymentApiKeyRotateParams": {
       "additionalProperties": false,
       "properties": {
-        "keyPrefix": {
+        "keyId": {
           "type": "string"
+        },
+        "scope": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AccessScope"
+            }
+          ],
+          "description": "The scope the key belongs to."
         }
       },
       "required": [
-        "keyPrefix"
+        "scope",
+        "keyId"
       ],
       "type": "object"
     },
     "DeploymentApiKeyView": {
-      "description": "Non-secret key metadata: what the key reaches and may call, and who\nminted it.",
+      "description": "Non-secret key metadata: what the key is called, reaches and may call,\nand who minted it.",
       "properties": {
         "assertActor": {
           "type": "boolean"
@@ -8777,7 +8905,12 @@
           },
           "type": "array"
         },
+        "keyId": {
+          "description": "The key's name among the keys of its scope. Together with the scope\nit addresses the key, and it is kept when the secret is replaced.",
+          "type": "string"
+        },
         "keyPrefix": {
+          "description": "The first characters of the key's current secret: enough to tell\nwhich secret the key holds without revealing it. It changes when the\nsecret does.",
           "type": "string"
         },
         "lastUsedAtMs": {
@@ -8801,6 +8934,7 @@
         }
       },
       "required": [
+        "keyId",
         "keyPrefix",
         "scope",
         "groups",
@@ -10337,6 +10471,13 @@
             "integer",
             "null"
           ]
+        },
+        "registrationKeyId": {
+          "description": "The key's id within the universe: 1-128 ASCII letters, digits,\nunderscores, hyphens, dots or colons, starting with a letter or digit.\nOmit it to have one allocated.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -10378,6 +10519,96 @@
           "type": "array"
         }
       },
+      "type": "object"
+    },
+    "EnvironmentRegistrationKeyPutParams": {
+      "description": "Declare a registration key whose secret the caller supplies: its id, its\ncomplete policy and the secret it answers to. An absent policy field is\nunset.",
+      "properties": {
+        "displayName": {
+          "description": "Group name for the environments this key admits.",
+          "type": "string"
+        },
+        "ephemeralDisconnectGraceMs": {
+          "description": "Disconnect grace for ephemeral environments; omit for the default.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "expiresAtMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "identityMode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EnvironmentIdentityModeView"
+            }
+          ],
+          "description": "Immutable once the key exists."
+        },
+        "maxActiveEnvironments": {
+          "description": "Non-closed environments the key may have at once; omit for unlimited.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "offlineCloseAfterMs": {
+          "description": "Persistent keys only: close environments whose daemon has been away\nlonger than this; omit to keep them open.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "registrationKeyId": {
+          "type": "string"
+        },
+        "secret": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EnvironmentRegistrationSecretView"
+            }
+          ],
+          "description": "The secret daemons register with: `lsrk_` followed by 32 random bytes\nencoded as base64url without padding. Generate it with a\ncryptographic random source."
+        }
+      },
+      "required": [
+        "registrationKeyId",
+        "displayName",
+        "identityMode",
+        "secret"
+      ],
+      "type": "object"
+    },
+    "EnvironmentRegistrationKeyPutResponse": {
+      "properties": {
+        "created": {
+          "description": "False when the key already existed.",
+          "type": "boolean"
+        },
+        "registrationKey": {
+          "$ref": "#/definitions/EnvironmentRegistrationKeyView"
+        },
+        "secretReplaced": {
+          "description": "True when an existing key answered to a different secret, which is\nnow retired.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "registrationKey",
+        "created",
+        "secretReplaced"
+      ],
       "type": "object"
     },
     "EnvironmentRegistrationKeyReadParams": {

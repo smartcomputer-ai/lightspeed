@@ -300,7 +300,7 @@ impl PgStore {
     }
 }
 
-pub use api_keys::PgApiKeyStore;
+pub use api_keys::{PgApiKeyStore, PutApiKey};
 pub use blob_cache::BlobCache;
 pub use cas_sweep::{
     CasObjectDeletion, CasSweepCandidate, CasSweepCursor, CasSweepError, CasSweepLeader,

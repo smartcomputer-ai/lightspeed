@@ -36,8 +36,8 @@ let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
 const keys = [
-  { keyPrefix: "lsk_platform", displayName: "Platform", scope: { kind: "deployment" }, groups: ["session"], assertActor: true, createdAtMs: 1, createdBy: { kind: "local" } },
-  { keyPrefix: "lsk_universe", displayName: "Agent", scope: { kind: "universe", universeId: "core-universe" }, groups: ["session"], assertActor: false, createdAtMs: 2, createdBy: { kind: "local" } },
+  { keyId: "platform", keyPrefix: "lsk_platform", displayName: "Platform", scope: { kind: "deployment" }, groups: ["session"], assertActor: true, createdAtMs: 1, createdBy: { kind: "local" } },
+  { keyId: "api_key_0123456789abcdef0123456789abcdef", keyPrefix: "lsk_universe", displayName: "Agent", scope: { kind: "universe", universeId: "core-universe" }, groups: ["session"], assertActor: false, createdAtMs: 2, createdBy: { kind: "local" } },
 ];
 beforeEach(() => {
   vi.useFakeTimers();
@@ -109,7 +109,7 @@ it("rotates a key after confirmation and clears the displayed secret on close", 
     : keys.map((key) => key.keyPrefix === "lsk_universe" ? { ...key, keyPrefix: "lsk_new" } : key));
   await act(async () => button("Rotate key")!.click());
   await settle();
-  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/admin/api-keys/lsk_universe/rotate");
+  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/admin/api-keys/api_key_0123456789abcdef0123456789abcdef/rotate?universeId=core-universe");
   expect(document.querySelector<HTMLInputElement>("#api-key-secret")?.value).toBe("lsk_new_secret");
   await act(async () => button("I saved the key")!.click());
   await settle();

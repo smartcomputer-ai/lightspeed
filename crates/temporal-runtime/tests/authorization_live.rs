@@ -72,6 +72,7 @@ async fn issue(
 ) -> anyhow::Result<MintedApiKey> {
     let key = auth::mint_api_key(
         ApiKeySpec {
+            key_id: None,
             scope,
             groups: groups.map(|groups| groups.iter().copied().collect()),
             assert_actor,

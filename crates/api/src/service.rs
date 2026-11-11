@@ -325,6 +325,11 @@ pub trait AgentApiService: Send + Sync {
         params: EnvironmentRegistrationKeyCreateParams,
     ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyCreateResponse>, AgentApiError>;
 
+    async fn put_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>, AgentApiError>;
+
     async fn read_environment_registration_key(
         &self,
         params: EnvironmentRegistrationKeyReadParams,

@@ -747,6 +747,7 @@ dependencies = [
  "futures-util",
  "harness",
  "pulldown-cmark",
+ "rand 0.10.3",
  "ratatui",
  "release-info",
  "reqwest",

@@ -1,13 +1,16 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import type { MethodGroup } from "@lightspeed-ai/sdk";
+import type { AccessScope, MethodGroup } from "@lightspeed-ai/sdk";
 import { schema } from "@lightspeed-ai/platform-db";
 import type { AppContext, ApiVariables } from "../context.js";
 import { isPlatformAdmin } from "../context.js";
 import { auditIdentity } from "../identity-audit.js";
 import { parseBody } from "../http.js";
 import { deploymentClientFor, withGateway } from "./gateway.js";
+
+// Shape only: runtime universe ids need not be RFC 4122 conformant.
+const runtimeUniverseId = z.string().regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/);
 
 const createSchema = z.object({
   displayName: z.string().trim().min(1).max(120),
@@ -22,7 +25,8 @@ const createSchema = z.object({
 });
 
 /// Every core key of the deployment, for platform admins: what each reaches
-/// and may call, and whether it may assert actors. Key authority is immutable. Secrets are returned only on create or rotation.
+/// and may call, and whether it may assert actors. A key is addressed by its
+/// key id within its scope. Secrets are returned only on create or rotation.
 export function apiKeyAdminRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
@@ -63,23 +67,33 @@ export function apiKeyAdminRoutes(ctx: AppContext) {
         ...(input.groups ? { groups: input.groups as MethodGroup[] } : {}),
         assertActor: input.assertActor,
       });
-      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.create", targetId: response.result.apiKey.keyPrefix, universeId: input.scope.kind === "universe" ? input.scope.universeId : null });
+      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.create", targetId: response.result.apiKey.keyId, universeId: input.scope.kind === "universe" ? input.scope.universeId : null, details: { keyPrefix: response.result.apiKey.keyPrefix } });
       return c.json(response.result, 201);
     });
   });
 
-  app.post("/api-keys/:keyPrefix/rotate", (c) => withGateway(c, async () => {
-    const keyPrefix = c.req.param("keyPrefix");
-    const response = await deploymentClientFor(ctx).call("deployment/api-keys/rotate", { keyPrefix });
-    await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.rotate", targetId: keyPrefix, details: { newKeyPrefix: response.result.apiKey.keyPrefix } });
+  /// A key id names a key within its scope, so these name the scope too:
+  /// the runtime universe in `universeId`, or the deployment when absent.
+  const keyScope = (universeId: string | undefined): AccessScope | null => {
+    if (universeId === undefined) return { kind: "deployment" };
+    return runtimeUniverseId.safeParse(universeId).success ? { kind: "universe", universeId } : null;
+  };
+
+  app.post("/api-keys/:keyId/rotate", (c) => withGateway(c, async () => {
+    const scope = keyScope(c.req.query("universeId"));
+    if (!scope) return c.json({ error: "invalid universeId" }, 400);
+    const keyId = c.req.param("keyId");
+    const response = await deploymentClientFor(ctx).call("deployment/api-keys/rotate", { scope, keyId });
+    await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.rotate", targetId: keyId, details: { newKeyPrefix: response.result.apiKey.keyPrefix } });
     return c.json(response.result);
   }));
 
-  app.delete("/api-keys/:keyPrefix", (c) => withGateway(c, async () => {
-    const response = await deploymentClientFor(ctx).call("deployment/api-keys/revoke", {
-      keyPrefix: c.req.param("keyPrefix"),
-    });
-    await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.revoke", targetId: c.req.param("keyPrefix") });
+  app.delete("/api-keys/:keyId", (c) => withGateway(c, async () => {
+    const scope = keyScope(c.req.query("universeId"));
+    if (!scope) return c.json({ error: "invalid universeId" }, 400);
+    const keyId = c.req.param("keyId");
+    const response = await deploymentClientFor(ctx).call("deployment/api-keys/revoke", { scope, keyId });
+    await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.revoke", targetId: keyId });
     return c.json(response.result.apiKey);
   }));
 

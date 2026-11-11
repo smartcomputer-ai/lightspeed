@@ -61,6 +61,34 @@ Secret mounted is harmless. Rotate the key with
 `lightspeed environment registration-key rotate KEY_ID` when the secret
 leaks; admitted daemons keep reconnecting with their identities.
 
+### Declare the key from a secret store
+
+Minting returns a secret you then have to carry into the cluster. A
+deployment pipeline can go the other way: let the secret store hold the
+secret, mount it into the daemons, and declare the key from the same value.
+No step has to read a secret out of Lightspeed.
+
+```bash
+lightspeed generate secret registration-key > registration-key   # or generate it in the secret store
+kubectl -n lightspeed-runners create secret generic lightspeed-envd-key \
+  --from-file=registration-key=./registration-key
+
+lightspeed environment registration-key put ci-runners \
+  --name "CI runners" --mode persistent --max-active 5 \
+  --secret-file ./registration-key
+```
+
+`put` makes the key `ci-runners` exist with that policy and answer to exactly
+that secret. Running it again changes nothing, so it can be a step of every
+deployment; a changed policy is applied, and a different secret retires the
+previous one at once, as a rotation does. Declare the key before the daemons
+start: a daemon whose key the gateway does not know treats that as a permanent
+refusal and exits. Under Kubernetes the pod is restarted and registers once
+the key exists, at the cost of restarts in between. The identity mode cannot
+be changed afterwards, and a revoked key is never
+restored, so either needs a new key id. A supplied secret is `lsrk_` followed
+by 32 random bytes encoded as base64url without padding.
+
 Daemons dial `wss://<public host>/environment-gateway/connect`, the route the
 public edge publishes; see
 [Self-hosting](../deployment/self-hosting.md#configure-the-public-edge).

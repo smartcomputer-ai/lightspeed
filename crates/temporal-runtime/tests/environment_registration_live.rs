@@ -265,6 +265,7 @@ async fn ephemeral_scenario(
     let store = runtime.state_for(universe_id, false).await?.store.clone();
     let minted = api
         .create_environment_registration_key(EnvironmentRegistrationKeyCreateParams {
+            registration_key_id: None,
             display_name: "registration live pool".to_owned(),
             identity_mode: EnvironmentIdentityModeView::Ephemeral,
             max_active_environments: Some(2),
@@ -641,6 +642,7 @@ async fn persistent_scenario(
     let store = runtime.state_for(universe_id, false).await?.store.clone();
     let minted = api
         .create_environment_registration_key(EnvironmentRegistrationKeyCreateParams {
+            registration_key_id: None,
             display_name: "registration live fleet".to_owned(),
             identity_mode: EnvironmentIdentityModeView::Persistent,
             max_active_environments: Some(3),
@@ -909,6 +911,7 @@ async fn ephemeral_grace_scenario(
 ) -> anyhow::Result<()> {
     let short = api
         .create_environment_registration_key(EnvironmentRegistrationKeyCreateParams {
+            registration_key_id: None,
             display_name: "registration live short grace".to_owned(),
             identity_mode: EnvironmentIdentityModeView::Ephemeral,
             max_active_environments: None,
