@@ -48,8 +48,9 @@ export const {
   GenerateIcon, DictateIcon, DictationUnavailableIcon, ApproveIcon, RejectIcon, RemoveIcon, CancelIcon, DismissIcon,
   MoreIcon, SearchIcon, BackIcon, GoToIcon, NewTabIcon, ExpandIcon, ExpandToolsIcon, CollapseToolsIcon, CollapseIcon, DropdownCaretIcon, ShowMoreIcon,
   ShowLessIcon, RowLinkIcon, SwitcherIcon, LoadingIcon, SelectedIcon, CopiedIcon, StepDoneIcon, SuccessIcon,
-  WarningIcon, InfoIcon, FailedIcon, CancelledIcon, WaitingIcon, ApprovalIcon, LockedIcon, FileIcon, FolderIcon,
-  DocumentIcon, UnknownFileIcon, ImageUnavailableIcon, CheckedIcon, FieldCaretIcon, SelectTriggerIcon, ScrollUpIcon,
+  WarningIcon, InfoIcon, FailedIcon, CancelledIcon, WaitingIcon, ApprovalIcon, LockedIcon, FileIcon, FolderIcon, FolderOpenIcon, FolderClosedIcon,
+  DocumentIcon, UnknownFileIcon, FilePdfIcon, FileDocIcon, FileXlsIcon, FilePptIcon, FileTxtIcon, FileMdIcon, FileCsvIcon, FilePngIcon, FileJpgIcon, FileSvgIcon, FileTsIcon, FileTsxIcon, FileJsIcon, FileJsxIcon, FilePyIcon, FileRsIcon, FileCIcon, FileCppIcon, FileCSharpIcon, FileCssIcon, FileHtmlIcon, FileVueIcon, FileSqlIcon, FileIniIcon, FileZipIcon, FileCodeIcon, FileImageIcon, FileAudioIcon, FileVideoIcon, FileArchiveIcon,
+  ImageUnavailableIcon, CheckedIcon, FieldCaretIcon, SelectTriggerIcon, ScrollUpIcon,
   ScrollDownIcon, SubmenuIcon, DialogCloseIcon, ClearFieldIcon, ChipRemoveIcon, SidebarToggleIcon,
   ScrollToBottomIcon, DebugIcon, FeedbackIcon, DesignIcon, ExportCodeIcon, NotificationIcon, EmailIcon,
 } = icons;

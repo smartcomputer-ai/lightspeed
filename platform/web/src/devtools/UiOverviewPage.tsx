@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useParams } from "react-router-dom";
 import { DEFAULT_UNIVERSE_ICON, UNIVERSE_ICONS } from "@lightspeed-ai/platform-shared";
-import { AddIcon, BotIcon, CopyIcon, DarkThemeIcon, DeleteIcon, EmailIcon, InboxIcon, LightThemeIcon, NotificationIcon, SearchIcon, SelectModeIcon, SettingsIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
+import { AddIcon, BotIcon, CopyIcon, CopyLinkIcon, DarkThemeIcon, DeleteIcon, DownloadIcon, EditIcon, EmailIcon, InboxIcon, MoreIcon, NewFileIcon, NewFolderIcon, LightThemeIcon, NotificationIcon, SearchIcon, SelectModeIcon, SettingsIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -99,7 +99,7 @@ import ROLES_SOURCE from "@/icons/roles.ts?raw";
 import OWN_SOURCE from "./UiOverviewPage.tsx?raw";
 import { GROUP_ORDER, StepRow, groupStyle } from "@/components/session/tool-trace";
 import { UNIVERSE_NAV } from "@/components/universe-nav";
-import { ListGroupLabel, ListPaneBody, ListPaneHeader, ListPaneToolbar, ListRow, ListRowLine, PaneBar } from "@/components/list-pane";
+import { ListGroupLabel, ListPaneBody, ListPaneHeader, ListPaneToolbar, ListRow, ListRowLine, PaneBar, type ListRowTree } from "@/components/list-pane";
 import { LightspeedLogo, LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { Starscape } from "@/components/starscape/starscape";
 import { UniverseIcon } from "@/components/universe-icon";
@@ -130,7 +130,7 @@ const CATEGORIES = [
   { id: "menus", title: "Menus", summary: "Dropdown menus." },
   { id: "overlays", title: "Dialogs & overlays", summary: "Dialogs, sheets, popovers and tooltips." },
   { id: "navigation", title: "Navigation", summary: "Tabs and progress steps." },
-  { id: "lists", title: "Lists", summary: "List panes with nested rows, status dots and selection." },
+  { id: "lists", title: "Lists", summary: "List panes with nested rows, status dots and selection; the file list." },
   { id: "cards", title: "Cards & layout", summary: "Cards, empty states, separators and collapsibles." },
   { id: "tables", title: "Tables", summary: "Table cards and id text." },
   { id: "data", title: "Data display", summary: "Avatars, markers and skeletons." },
@@ -980,9 +980,20 @@ function NavigationSection() {
   );
 }
 
+/// Lists: the list pane with nested rows (the tree, status dots as its
+/// nodes) and the file list.
+function ListsSection() {
+  return (
+    <Category id="lists">
+      <BotListExample />
+      <FileListExample />
+    </Category>
+  );
+}
+
 /// A list pane with its header, toolbar, group label and nested rows (the
 /// tree, status dots as its nodes), beside a detail pane sharing its bar.
-function ListsSection() {
+function BotListExample() {
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(() => new Set(["deploy"]));
   const toggle = (id: string) =>
@@ -1003,61 +1014,241 @@ function ListsSection() {
     { id: "triage", title: "Issue triage", tone: "attention" as BotTone, meta: <Badge variant="secondary">3</Badge>, line: "#4 run failed · Provider error", tree: { depth: 0 } },
   ];
   return (
-    <Category id="lists">
-      <Specimen
-        title="List pane"
-        note="ListPaneHeader, ListPaneToolbar, ListPaneBody, ListGroupLabel, ListRow (nested with tree), ListRowLine; PaneBar sets the header height"
-        className="block p-0"
-      >
-        <div className="flex h-[30rem] overflow-hidden rounded-xl">
-          <div className="flex w-80 shrink-0 flex-col border-r">
-            <ListPaneHeader
-              title="Bots"
-              count={rows.length}
-              actions={<>
-                <Button variant="ghost" size="icon-sm" className={cn(selecting && "text-primary")} onClick={() => setSelecting(!selecting)} aria-label="Select">
-                  <SelectModeIcon />
-                </Button>
-                <Button variant="ghost" size="icon-sm" aria-label="New"><AddIcon /></Button>
-              </>}
-            />
-            {selecting && (
-              <ListPaneToolbar className="bg-muted/40">
-                <span className="text-muted-foreground">{picked.size} selected</span>
-              </ListPaneToolbar>
-            )}
-            <ListPaneBody>
-              <ListGroupLabel>Active</ListGroupLabel>
-              <ul>
-                {rows.map((row) => (
-                  <ListRow
-                    key={row.id}
-                    to={`#${row.id}`}
-                    active={row.id === "planner"}
-                    selection={selecting ? { checked: picked.has(row.id), onToggle: () => toggle(row.id), label: `Select ${row.title}` } : undefined}
-                    tree={row.tree}
-                    indicator={<StatusDot tone={row.tone} />}
-                    title={row.title}
-                    meta={row.meta}
-                  >
-                    <ListRowLine tone={row.tone === "attention" ? "destructive" : undefined}>{row.line}</ListRowLine>
-                  </ListRow>
-                ))}
-              </ul>
-            </ListPaneBody>
-          </div>
-          <div className="flex min-w-0 flex-1 flex-col">
-            <PaneBar as="header">
-              <span className="truncate text-sm font-semibold">Detail header</span>
-              <span className="text-xs text-muted-foreground">same PaneBar height</span>
-            </PaneBar>
-            <p className="p-4 text-sm text-muted-foreground">The detail of the selected row.</p>
-          </div>
+    <Specimen
+      title="List pane"
+      note="ListPaneHeader, ListPaneToolbar, ListPaneBody, ListGroupLabel, ListRow (nested with tree), ListRowLine; PaneBar sets the header height"
+      className="block p-0"
+    >
+      <div className="flex h-[30rem] overflow-hidden rounded-xl">
+        <div className="flex w-80 shrink-0 flex-col border-r">
+          <ListPaneHeader
+            title="Bots"
+            count={rows.length}
+            actions={<>
+              <Button variant="ghost" size="icon-sm" className={cn(selecting && "text-primary")} onClick={() => setSelecting(!selecting)} aria-label="Select">
+                <SelectModeIcon />
+              </Button>
+              <Button variant="ghost" size="icon-sm" aria-label="New"><AddIcon /></Button>
+            </>}
+          />
+          {selecting && (
+            <ListPaneToolbar className="bg-muted/40">
+              <span className="text-muted-foreground">{picked.size} selected</span>
+            </ListPaneToolbar>
+          )}
+          <ListPaneBody>
+            <ListGroupLabel>Active</ListGroupLabel>
+            <ul>
+              {rows.map((row) => (
+                <ListRow
+                  key={row.id}
+                  to={`#${row.id}`}
+                  active={row.id === "planner"}
+                  selection={selecting ? { checked: picked.has(row.id), onToggle: () => toggle(row.id), label: `Select ${row.title}` } : undefined}
+                  tree={row.tree}
+                  indicator={<StatusDot tone={row.tone} />}
+                  title={row.title}
+                  meta={row.meta}
+                >
+                  <ListRowLine tone={row.tone === "attention" ? "destructive" : undefined}>{row.line}</ListRowLine>
+                </ListRow>
+              ))}
+            </ul>
+          </ListPaneBody>
         </div>
-      </Specimen>
-    </Category>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <PaneBar as="header">
+            <span className="truncate text-sm font-semibold">Detail header</span>
+            <span className="text-xs text-muted-foreground">same PaneBar height</span>
+          </PaneBar>
+          <p className="p-4 text-sm text-muted-foreground">The detail of the selected row.</p>
+        </div>
+      </div>
+    </Specimen>
   );
 }
+
+
+/// A file or folder in the file list example.
+interface ExampleFile {
+  id: string;
+  title: string;
+  /** When it last changed. */
+  meta: string;
+  /** What a folder holds, a file's size and type. */
+  line: string;
+  /** A folder's contents; a file has none. */
+  children?: ExampleFile[];
+}
+
+const WORKSPACE_FILES: ExampleFile[] = [
+  {
+    id: "src", title: "src", meta: "2m", line: "4 items", children: [
+      {
+        id: "components", title: "components", meta: "2m", line: "3 items", children: [
+          { id: "list-pane", title: "list-pane.tsx", meta: "2m", line: "14.2 KB · TypeScript" },
+          { id: "file-icon", title: "file-icon.ts", meta: "5m", line: "3.1 KB · TypeScript" },
+          { id: "styles", title: "styles.css", meta: "1h", line: "8.7 KB · CSS" },
+        ],
+      },
+      {
+        id: "scripts", title: "scripts", meta: "1d", line: "2 items", children: [
+          { id: "deploy", title: "deploy.sh", meta: "1d", line: "1.4 KB · Shell" },
+          { id: "seed", title: "seed.py", meta: "4d", line: "2.9 KB · Python" },
+        ],
+      },
+      { id: "main", title: "main.rs", meta: "3d", line: "1.1 KB · Rust" },
+      { id: "schema", title: "schema.sql", meta: "6d", line: "4.0 KB · SQL" },
+    ],
+  },
+  {
+    id: "docs", title: "docs", meta: "1h", line: "6 items", children: [
+      { id: "design", title: "design.pdf", meta: "1h", line: "2.4 MB · PDF" },
+      { id: "brief", title: "brief.docx", meta: "2d", line: "88 KB · Word" },
+      { id: "budget", title: "budget.xlsx", meta: "2d", line: "41 KB · Excel" },
+      { id: "pitch", title: "pitch.pptx", meta: "1w", line: "6.1 MB · PowerPoint" },
+      { id: "screenshot", title: "screenshot.png", meta: "3h", line: "512 KB · PNG" },
+      { id: "walkthrough", title: "walkthrough.mp4", meta: "1w", line: "48 MB · Video" },
+    ],
+  },
+  { id: "dockerfile", title: "Dockerfile", meta: "2w", line: "0.6 KB · Docker" },
+  { id: "env", title: ".env.example", meta: "2w", line: "0.3 KB · Settings" },
+  { id: "readme", title: "README.md", meta: "5d", line: "6.4 KB · Markdown" },
+  { id: "package", title: "package.json", meta: "2w", line: "2.3 KB · JSON" },
+  { id: "exports", title: "exports.csv", meta: "3w", line: "1.2 MB · CSV" },
+  { id: "backup", title: "backup.tar.gz", meta: "1mo", line: "220 MB · Archive" },
+];
+
+/// The rows of a file tree that show: each file and folder, and the contents
+/// of the open folders, with its place in the tree (whether it is the last of
+/// its siblings, which ancestor lines run past it, whether children follow).
+function visibleFiles(files: ExampleFile[], open: Set<string>, depth = 0, lines: boolean[] = []): Array<{ file: ExampleFile; tree: ListRowTree }> {
+  return files.flatMap((file, index) => {
+    const last = index === files.length - 1;
+    const shown = file.children && open.has(file.id) ? file.children : [];
+    const tree: ListRowTree = { depth, last, lines, children: shown.length > 0 };
+    return [{ file, tree }, ...visibleFiles(shown, open, depth + 1, depth === 0 ? [] : [...lines, !last])];
+  });
+}
+
+/// A file's or folder's ⋯ menu in the file list example: what can be done
+/// to it (nothing happens yet).
+function FileActionsMenu({ name, folder }: { name: string; folder: boolean }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={`Actions for ${name}`} title="Actions" />}
+      >
+        <MoreIcon />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        {folder && (
+          <>
+            <DropdownMenuGroup>
+              <DropdownMenuItem><NewFileIcon /> New file</DropdownMenuItem>
+              <DropdownMenuItem><NewFolderIcon /> New folder</DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+          </>
+        )}
+        <DropdownMenuGroup>
+          <DropdownMenuItem><EditIcon /> Rename</DropdownMenuItem>
+          {!folder && <DropdownMenuItem><CopyIcon /> Duplicate</DropdownMenuItem>}
+          <DropdownMenuItem><CopyLinkIcon /> Copy path</DropdownMenuItem>
+          <DropdownMenuItem><DownloadIcon /> Download</DropdownMenuItem>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive"><DeleteIcon /> Delete</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/// The file list: the list pane in files mode, compressed, showing a
+/// workspace's folders and files as a tree, each with its icon.
+function FileListExample() {
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(["list-pane"]));
+  const toggle = (id: string) =>
+    setPicked((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  // Folders open and close; their rows (and tree lines) are built from
+  // what is open.
+  const [open, setOpen] = useState<Set<string>>(() => new Set(["src", "components", "docs"]));
+  const flip = (id: string) =>
+    setOpen((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const rows = visibleFiles(WORKSPACE_FILES, open);
+  return (
+    <Specimen
+      title="File list"
+      note='The list pane in files mode, compressed (ListPaneBody mode="files" compressed): folders open and close (ListRow toggle), each file shows its type (ListRow fileName) and its ⋯ menu on hover (ListRow actions)'
+      className="block p-0"
+    >
+      <div className="flex h-[30rem] overflow-hidden rounded-xl">
+        <div className="flex w-80 shrink-0 flex-col border-r">
+          <ListPaneHeader
+            title="Workspace"
+            count={rows.length}
+            actions={<>
+              <Button variant="ghost" size="icon-sm" className={cn(selecting && "text-primary")} onClick={() => setSelecting(!selecting)} aria-label="Select">
+                <SelectModeIcon />
+              </Button>
+              <Button variant="ghost" size="icon-sm" aria-label="New"><AddIcon /></Button>
+            </>}
+          />
+          {selecting && (
+            <ListPaneToolbar className="bg-muted/40">
+              <span className="text-muted-foreground">{picked.size} selected</span>
+            </ListPaneToolbar>
+          )}
+          <ListPaneBody mode="files" compressed>
+            <ListGroupLabel>Files</ListGroupLabel>
+            <ul>
+              {rows.map(({ file, tree }) => {
+                // A folder opens and closes; a file opens its detail.
+                const folder = file.children !== undefined;
+                const isOpen = open.has(file.id);
+                return (
+                  <ListRow
+                    key={file.id}
+                    to={folder ? undefined : `#${file.id}`}
+                    toggle={folder ? { open: isOpen, onToggle: () => flip(file.id) } : undefined}
+                    active={file.id === "list-pane"}
+                    selection={selecting ? { checked: picked.has(file.id), onToggle: () => toggle(file.id), label: `Select ${file.title}` } : undefined}
+                    tree={tree}
+                    fileName={file.title}
+                    actions={<FileActionsMenu name={file.title} folder={folder} />}
+                    title={file.title}
+                    meta={file.meta}
+                  >
+                    <ListRowLine>{file.line}</ListRowLine>
+                  </ListRow>
+                );
+              })}
+            </ul>
+          </ListPaneBody>
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <PaneBar as="header">
+            <span className="truncate text-sm font-semibold">list-pane.tsx</span>
+            <span className="text-xs text-muted-foreground">src/components</span>
+          </PaneBar>
+          <p className="p-4 text-sm text-muted-foreground">The selected file.</p>
+        </div>
+      </div>
+    </Specimen>
+  );
+}
+
 
 function CardsSection() {
   return (

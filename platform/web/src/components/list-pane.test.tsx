@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ListRow, type ListRowTree } from "./list-pane";
 
 let root: Root;
@@ -61,4 +61,30 @@ it("indents each level and hangs each child off its parent's line", async () => 
   expect(lines("grandchild")).toBe(4);
   expect(lines("second")).toBe(2);
   expect(row("other").querySelector("[aria-hidden]")).toBeNull();
+});
+
+it("opens and closes a toggle row's children instead of linking", async () => {
+  const onToggle = vi.fn();
+  await act(async () => root.render(
+    <MemoryRouter>
+      <ul><ListRow title="src" toggle={{ open: false, onToggle }} /></ul>
+    </MemoryRouter>,
+  ));
+  const button = container.querySelector("button")!;
+  expect(container.querySelector("a")).toBeNull();
+  expect(button.getAttribute("aria-expanded")).toBe("false");
+  await act(async () => button.click());
+  expect(onToggle).toHaveBeenCalledOnce();
+});
+
+it("puts a row's actions beside its link, not inside it", async () => {
+  await act(async () => root.render(
+    <MemoryRouter>
+      <ul><ListRow to="/file" title="report.pdf" meta="2d" actions={<button type="button">More</button>} /></ul>
+    </MemoryRouter>,
+  ));
+  const link = container.querySelector("a")!;
+  const button = [...container.querySelectorAll("button")].find((candidate) => candidate.textContent === "More")!;
+  expect(link.contains(button)).toBe(false);
+  expect(button.closest("li")).toBe(link.closest("li"));
 });

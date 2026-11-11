@@ -269,6 +269,8 @@
     /* Every row of a list pane (Sessions, Bots, Profiles) is at least this
        tall, one line or two: a fifth taller than the pane bar above it. */
     --list-row-height: calc(var(--pane-bar-height) * 1.2);
+    /* A row of a compressed list (its title alone, no second line). */
+    --list-row-height-compressed: calc(var(--pane-bar-height) * 0.75);
     /* The text of list and menu items at rest (list titles, sidebar
        navigation): a little dimmer than foreground, full strength on hover,
        focus or selection. Declared again under .dark so it re-resolves in

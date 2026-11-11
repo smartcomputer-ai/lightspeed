@@ -164,8 +164,74 @@ export interface IconSet {
   // Files and media.
   FileIcon: IconComponent;
   FolderIcon: IconComponent;
+  /** A folder whose contents are shown (an open row in a file list). */
+  FolderOpenIcon: IconComponent;
+  /** A folder whose contents are hidden (a closed row in a file list). */
+  FolderClosedIcon: IconComponent;
   DocumentIcon: IconComponent;
   UnknownFileIcon: IconComponent;
+
+  // File types, by name and extension (components/file-icon picks one).
+  /** A PDF. */
+  FilePdfIcon: IconComponent;
+  /** A word-processor document (doc, docx, odt, rtf). */
+  FileDocIcon: IconComponent;
+  /** A spreadsheet (xls, xlsx, ods). */
+  FileXlsIcon: IconComponent;
+  /** A presentation (ppt, pptx, odp). */
+  FilePptIcon: IconComponent;
+  /** Plain text (txt, log). */
+  FileTxtIcon: IconComponent;
+  /** Markdown. */
+  FileMdIcon: IconComponent;
+  /** Comma- or tab-separated values. */
+  FileCsvIcon: IconComponent;
+  /** A PNG image. */
+  FilePngIcon: IconComponent;
+  /** A JPEG image. */
+  FileJpgIcon: IconComponent;
+  /** An SVG image. */
+  FileSvgIcon: IconComponent;
+  /** TypeScript. */
+  FileTsIcon: IconComponent;
+  /** TypeScript with JSX. */
+  FileTsxIcon: IconComponent;
+  /** JavaScript. */
+  FileJsIcon: IconComponent;
+  /** JavaScript with JSX. */
+  FileJsxIcon: IconComponent;
+  /** Python. */
+  FilePyIcon: IconComponent;
+  /** Rust. */
+  FileRsIcon: IconComponent;
+  /** C. */
+  FileCIcon: IconComponent;
+  /** C++. */
+  FileCppIcon: IconComponent;
+  /** C#. */
+  FileCSharpIcon: IconComponent;
+  /** A stylesheet (css, scss, less). */
+  FileCssIcon: IconComponent;
+  /** HTML. */
+  FileHtmlIcon: IconComponent;
+  /** A Vue component. */
+  FileVueIcon: IconComponent;
+  /** SQL. */
+  FileSqlIcon: IconComponent;
+  /** Settings (ini, env, conf, dotfiles). */
+  FileIniIcon: IconComponent;
+  /** A zip archive. */
+  FileZipIcon: IconComponent;
+  /** Source code or structured data without its own icon (json, yaml, go, shell, …). */
+  FileCodeIcon: IconComponent;
+  /** An image without its own icon (gif, webp, …). */
+  FileImageIcon: IconComponent;
+  /** Audio (mp3, wav, …). */
+  FileAudioIcon: IconComponent;
+  /** Video (mp4, mov, …). */
+  FileVideoIcon: IconComponent;
+  /** An archive without its own icon (tar, gz, 7z, …). */
+  FileArchiveIcon: IconComponent;
   ImageUnavailableIcon: IconComponent;
 
   // Controls inside the shared ui components (components/ui).
