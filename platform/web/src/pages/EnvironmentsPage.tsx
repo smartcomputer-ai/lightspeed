@@ -46,6 +46,7 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -663,9 +664,9 @@ function AssignCredentialDialog({
           <div className="grid gap-4">
             <Field>
               <FieldLabel htmlFor="credential-env-name">Environment variable</FieldLabel>
-              <input
+              <Input
                 id="credential-env-name"
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 font-mono text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                className="font-mono"
                 value={envName}
                 onChange={(event) => {
                   setEnvName(event.target.value);
@@ -1098,9 +1099,9 @@ function RegistrationSecret({
           </Button>
         </div>
         <FieldLabel htmlFor="registration-key-bootstrap">Bootstrap</FieldLabel>
-        <textarea
+        <Textarea
           id="registration-key-bootstrap"
-          className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs outline-none"
+          className="min-h-20 field-sizing-fixed font-mono text-xs md:text-xs"
           value={bootstrap}
           readOnly
           onFocus={(event) => event.currentTarget.select()}
@@ -1571,9 +1572,8 @@ function CreateEnvironmentDialog({
             </Field>
             <Field>
               <FieldLabel htmlFor="environment-display-name">Display name</FieldLabel>
-              <input
+              <Input
                 id="environment-display-name"
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
                 value={displayName}
                 onChange={(event) => setDisplayName(event.target.value)}
                 placeholder={selectedTemplate?.displayName ?? "Development environment"}
@@ -1704,9 +1704,9 @@ function RegisterExternalEnvironmentDialog({
           <div className="grid gap-4">
             <Field>
               <FieldLabel htmlFor="external-endpoint">Daemon endpoint</FieldLabel>
-              <input
+              <Input
                 id="external-endpoint"
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 font-mono text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                className="font-mono"
                 value={endpoint}
                 onChange={(event) => {
                   setEndpoint(event.target.value);
@@ -1723,9 +1723,8 @@ function RegisterExternalEnvironmentDialog({
             </Field>
             <Field>
               <FieldLabel htmlFor="external-display-name">Display name</FieldLabel>
-              <input
+              <Input
                 id="external-display-name"
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
                 value={displayName}
                 onChange={(event) => setDisplayName(event.target.value)}
                 placeholder="Local daemon"

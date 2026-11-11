@@ -12,6 +12,10 @@ import {
   SHEEN_ROLES,
   SIDEBAR_LOGO_TOKENS,
   sheenToken,
+  SURFACE_COLOR_SOURCES,
+  NEUTRAL_FILTER,
+  backdropFilterValue,
+  parseBackdropFilter,
   SURFACE_ROLES,
   applyOverrides,
   exportCss,
@@ -60,11 +64,51 @@ describe("design tokens", () => {
         for (const value of values) expect(parseSurfaceColor(value), value).not.toBeNull();
       }
       const [width] = declared(surfaceToken(role.key, "border-width"));
-      expect(width).toBe("1px");
+      expect(width, `${role.key} border width`).toMatch(/^\d+(\.\d+)?px$/);
       const [radius] = declared(surfaceToken(role.key, "radius"));
       expect(RADIUS_STEPS.some((step) => sameCss(step.value, radius!)), radius).toBe(true);
       const [shadow] = declared(surfaceToken(role.key, "shadow"));
       expect(SHADOW_STEPS.some((step) => sameCss(step.value, shadow!)), shadow).toBe(true);
+      if (!role.focus) continue;
+      for (const part of ["focus-border", "focus-ring", "invalid-ring"] as const) {
+        const values = declared(surfaceToken(role.key, part));
+        expect(values, `${role.key} ${part}`).toHaveLength(2);
+        for (const value of values) expect(parseSurfaceColor(value), value).not.toBeNull();
+      }
+      expect(declared(surfaceToken(role.key, "focus-ring-width"))[0]).toMatch(/^\d+(\.\d+)?px$/);
+    }
+  });
+
+  it("draws every field's focus state with the field-focus utility", () => {
+    const css = readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
+    expect(css).toContain("@utility field-focus {");
+    expect(css).toContain("@utility field-invalid {");
+    // The components the Inputs surface lists, each focusing through the shared tokens.
+    for (const name of ["input", "textarea", "select", "input-group", "combobox"]) {
+      const source = readFileSync(path.resolve(import.meta.dirname, `../components/ui/${name}.tsx`), "utf8");
+      expect(source, name).toMatch(/:field-focus\b/);
+      expect(source, name).toMatch(/:field-invalid\b/);
+      expect(source, name).not.toMatch(/(focus(-visible|-within)?|invalid\]?):(inset-)?ring-(ring|destructive)\//);
+    }
+  });
+
+  it("draws every editable surface color from a source the editor's picker offers", () => {
+    const css = readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
+    const offered = new Set<string>(["transparent", ...SURFACE_COLOR_SOURCES]);
+    const editable = [
+      ...SURFACE_ROLES.flatMap((role) => [
+        surfaceToken(role.key, "background"),
+        surfaceToken(role.key, "border"),
+        ...(role.focus ? [surfaceToken(role.key, "focus-border"), surfaceToken(role.key, "focus-ring"), surfaceToken(role.key, "invalid-ring")] : []),
+      ]),
+      surfaceToken(BACKDROP_KEY, "background"),
+      ...SHEEN_ROLES.map((role) => sheenToken(role.key)),
+    ];
+    for (const token of editable) {
+      for (const [, value] of css.matchAll(new RegExp(`${token}: ([^;]+);`, "g"))) {
+        const source = parseSurfaceColor(value!)?.source;
+        expect(source && offered.has(source), `${token}: ${value}`).toBe(true);
+      }
     }
   });
 
@@ -73,11 +117,46 @@ describe("design tokens", () => {
     const declared = (token: string) => [...css.matchAll(new RegExp(`${token}: ([^;]+);`, "g"))].map((match) => match[1]!);
     const colors = declared(surfaceToken(BACKDROP_KEY, "background"));
     expect(colors).toHaveLength(2);
-    for (const value of colors) expect(parseSurfaceColor(value), value).toEqual({ source: "black", percent: 10 });
+    // Editable by the configurator: a known color at an opacity.
+    for (const value of colors) expect(parseSurfaceColor(value), value).not.toBeNull();
     for (const key of [BACKDROP_KEY, ...SURFACE_ROLES.filter((role) => role.effects).map((role) => role.key)]) {
-      expect(declared(surfaceToken(key, "blur"))[0], key).toMatch(/^\d+px$/);
-      expect(declared(surfaceToken(key, "saturate"))[0], key).toMatch(/^\d+%$/);
+      const filters = declared(surfaceToken(key, "filter"));
+      // Shared by both themes, in the one form the editor writes (so never a neutral non-`none`).
+      expect(filters, key).toHaveLength(1);
+      const parsed = parseBackdropFilter(filters[0]!);
+      expect(parsed, `${key}: ${filters[0]}`).not.toBeNull();
+      expect(backdropFilterValue(parsed!), key).toBe(filters[0]);
+      expect(css, key).toContain(`@utility surface-filter-${key} {`);
     }
+  });
+
+  it("applies each surface's backdrop filter on the surface itself", () => {
+    const uses: Record<string, string[]> = {
+      backdrop: ["dialog", "alert-dialog", "sheet"],
+      menu: ["dropdown-menu", "select", "combobox"],
+      popover: ["popover"],
+      dialog: ["dialog", "alert-dialog", "sheet"],
+    };
+    for (const [key, files] of Object.entries(uses)) {
+      for (const name of files) {
+        const source = readFileSync(path.resolve(import.meta.dirname, `../components/ui/${name}.tsx`), "utf8");
+        expect(source, `${name} ${key}`).toContain(`surface-filter-${key}`);
+        // A blur layer under the content would paint over the inset border.
+        expect(source, name).not.toMatch(/before:backdrop-|backdrop-(blur|saturate)-\(/);
+      }
+    }
+  });
+
+  it("writes a neutral backdrop filter as none and reads back what it writes", () => {
+    expect(backdropFilterValue({ blur: 0, saturate: 100 })).toBe("none");
+    expect(backdropFilterValue({ blur: 12, saturate: 100 })).toBe("blur(12px)");
+    expect(backdropFilterValue({ blur: 0, saturate: 45 })).toBe("saturate(45%)");
+    expect(backdropFilterValue({ blur: 40, saturate: 150 })).toBe("blur(40px) saturate(150%)");
+    for (const value of ["none", "blur(12px)", "saturate(45%)", "blur(40px) saturate(150%)"]) {
+      expect(backdropFilterValue(parseBackdropFilter(value)!)).toBe(value);
+    }
+    expect(parseBackdropFilter("blur(0px) saturate(100%)")).toEqual(NEUTRAL_FILTER);
+    expect(parseBackdropFilter("brightness(2)")).toBeNull();
   });
 
   it("declares each sheen's color and start per theme and draws it as a gradient", () => {
@@ -85,9 +164,11 @@ describe("design tokens", () => {
     for (const role of SHEEN_ROLES) {
       const values = [...css.matchAll(new RegExp(`${sheenToken(role.key)}: ([^;]+);`, "g"))].map((match) => match[1]!);
       expect(values, role.key).toHaveLength(2);
-      for (const value of values) expect(parseSurfaceColor(value), value).toEqual({ source: "white", percent: 5 });
+      for (const value of values) expect(parseSurfaceColor(value), value).not.toBeNull();
       expect(css).toContain(`@utility sheen-${role.key} {`);
-      expect([...css.matchAll(new RegExp(`${sheenToken(role.key, "start")}: 0%;`, "g"))], role.key).toHaveLength(2);
+      const starts = [...css.matchAll(new RegExp(`${sheenToken(role.key, "start")}: ([^;]+);`, "g"))].map((match) => match[1]!);
+      expect(starts, role.key).toHaveLength(2);
+      for (const start of starts) expect(start).toMatch(/^\d+(\.\d+)?%$/);
       expect(css).toContain(
         `linear-gradient(90deg, transparent var(${sheenToken(role.key, "start")}), var(${sheenToken(role.key)}) 100%)`,
       );
@@ -97,19 +178,22 @@ describe("design tokens", () => {
   it("declares the sidebar logo's color and opacity per theme and its geometry once", () => {
     const css = readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
     const declared = (token: string) => [...css.matchAll(new RegExp(`${token}: ([^;]+);`, "g"))].map((match) => match[1]!);
-    expect(declared(SIDEBAR_LOGO_TOKENS.color).map((value) => parseSurfaceColor(value)))
-      .toEqual([{ source: "--sidebar-foreground", percent: 20 }, { source: "--sidebar-foreground", percent: 20 }]);
-    expect(declared(SIDEBAR_LOGO_TOKENS.opacity)).toEqual(["0.4", "0.4"]);
-    expect(declared(SIDEBAR_LOGO_TOKENS.rotate)).toEqual(["-30deg"]);
-    expect(declared(SIDEBAR_LOGO_TOKENS.scale)).toEqual(["1.2"]);
-    expect(declared(SIDEBAR_LOGO_TOKENS.offset)).toEqual(["10%"]);
+    const colors = declared(SIDEBAR_LOGO_TOKENS.color);
+    expect(colors).toHaveLength(2);
+    for (const value of colors) expect(parseSurfaceColor(value), value).not.toBeNull();
+    const opacities = declared(SIDEBAR_LOGO_TOKENS.opacity);
+    expect(opacities).toHaveLength(2);
+    for (const value of opacities) expect(value).toMatch(/^(0|1)?(\.\d+)?$/);
+    expect(declared(SIDEBAR_LOGO_TOKENS.rotate)).toEqual([expect.stringMatching(/^-?\d+(\.\d+)?deg$/)]);
+    expect(declared(SIDEBAR_LOGO_TOKENS.scale)).toEqual([expect.stringMatching(/^\d+(\.\d+)?$/)]);
+    expect(declared(SIDEBAR_LOGO_TOKENS.offset)).toEqual([expect.stringMatching(/^-?\d+(\.\d+)?%$/)]);
     expect(css).toContain("@utility sidebar-logo {");
   });
 
   it("declares the icon scale and applies it to every icon role", () => {
     const css = readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
-    expect(css).toMatch(/--icon-scale: 1;/);
-    expect(css).toMatch(/svg:is\(\[data-icon-role\], \[data-universe-icon\]\) \{\s*zoom: var\(--icon-scale\);/);
+    expect(css).toMatch(/--icon-scale: \d+(\.\d+)?;/);
+    expect(css).toMatch(/svg\[data-icon-role\] \{\s*zoom: var\(--icon-scale\);/);
   });
 
   it("round-trips surface colors and leaves other colors custom", () => {

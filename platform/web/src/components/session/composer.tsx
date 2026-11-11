@@ -312,9 +312,9 @@ export function SessionComposer({
           {...dropHandlers}
           className={cn(
             "relative flex flex-col rounded-2xl border bg-background shadow-xs transition-[border-color,box-shadow] duration-300 dark:bg-input/30",
-            !disabled && "focus-within:border-ring/70 focus-within:ring-3 focus-within:ring-ring/20",
+            !disabled && "focus-within:field-focus",
             disabled && "bg-muted/40 shadow-none dark:bg-input/10",
-            flash && "border-ring ring-3 ring-ring/45",
+            flash && "field-focus",
           )}
         >
           {notices.map((item) => (

@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -22,7 +22,7 @@ import {
   BACKDROP_KEY,
   SHEEN_ROLES,
   SIDEBAR_LOGO_TOKENS,
-  SURFACE_COLOR_SOURCES,
+  SURFACE_COLOR_SOURCE_GROUPS,
   SURFACE_ROLES,
   TEXT_SIZE_TOKENS,
   exportCss,
@@ -30,6 +30,10 @@ import {
   loadOverrides,
   openChannel,
   parseSurfaceColor,
+  parseBackdropFilter,
+  backdropFilterValue,
+  NEUTRAL_FILTER,
+  type BackdropFilter,
   readDefaults,
   sameCss,
   saveOverrides,
@@ -194,8 +198,15 @@ export function DesignConfigurationPage() {
               borderWidth={token("shared", surfaceToken(role.key, "border-width"))}
               radius={token("shared", surfaceToken(role.key, "radius"))}
               shadow={token("shared", surfaceToken(role.key, "shadow"))}
-              blur={role.effects ? token("shared", surfaceToken(role.key, "blur")) : undefined}
-              saturate={role.effects ? token("shared", surfaceToken(role.key, "saturate")) : undefined}
+              filter={role.effects ? token("shared", surfaceToken(role.key, "filter")) : undefined}
+              focus={role.focus
+                ? {
+                    border: token(colorTheme, surfaceToken(role.key, "focus-border")),
+                    ring: token(colorTheme, surfaceToken(role.key, "focus-ring")),
+                    invalidRing: token(colorTheme, surfaceToken(role.key, "invalid-ring")),
+                    ringWidth: token("shared", surfaceToken(role.key, "focus-ring-width")),
+                  }
+                : undefined}
             />
           ))}
           {SHEEN_ROLES.map((role) => (
@@ -220,8 +231,7 @@ export function DesignConfigurationPage() {
             key={`${colorTheme}backdrop`}
             resolve={(name) => valueOf(colorTheme, name)}
             color={token(colorTheme, surfaceToken(BACKDROP_KEY, "background"))}
-            blur={token("shared", surfaceToken(BACKDROP_KEY, "blur"))}
-            saturate={token("shared", surfaceToken(BACKDROP_KEY, "saturate"))}
+            filter={token("shared", surfaceToken(BACKDROP_KEY, "filter"))}
           />
         </TabsContent>
 
@@ -530,9 +540,18 @@ function ThemeToggle({ value, onChange, children }: { value: ThemeName; onChange
 
 type TokenControl = Omit<TokenProps, "name">;
 
+/// A field's focus state: the border color and the ring around it.
+interface FocusControls {
+  border: TokenControl;
+  ring: TokenControl;
+  invalidRing: TokenControl;
+  ringWidth: TokenControl;
+}
+
 /// One family of components: its background and border color (each a theme
-/// color at an opacity, or any CSS color), border width, radius and shadow.
-function SurfaceEditor({ role, resolve, background, border, borderWidth, radius, shadow, blur, saturate }: {
+/// color at an opacity, or any CSS color), border width, radius and shadow,
+/// and for fields the focus state.
+function SurfaceEditor({ role, resolve, background, border, borderWidth, radius, shadow, filter, focus }: {
   role: SurfaceRole;
   resolve: (token: string) => string;
   background: TokenControl;
@@ -540,9 +559,29 @@ function SurfaceEditor({ role, resolve, background, border, borderWidth, radius,
   borderWidth: TokenControl;
   radius: TokenControl;
   shadow: TokenControl;
-  blur?: TokenControl;
-  saturate?: TokenControl;
+  filter?: TokenControl;
+  focus?: FocusControls;
 }) {
+  const color = (control: TokenControl) => literalColor(control.value, resolve) ?? control.value;
+  const preview = (focused: boolean) => (
+    <div
+      aria-hidden
+      title={focused ? "Focused" : undefined}
+      className="grid h-12 w-20 shrink-0 place-items-center text-xs"
+      style={{
+        background: color(background),
+        border: `${borderWidth.value} solid ${focused && focus ? color(focus.border) : color(border)}`,
+        borderRadius: radius.value,
+        boxShadow: shadow.value,
+        // The ring as the app draws it: an outline pulled in over the border.
+        ...(focused && focus
+          ? { outline: `${focus.ringWidth.value} solid ${color(focus.ring)}`, outlineOffset: `calc(-1 * ${focus.ringWidth.value})` }
+          : {}),
+      }}
+    >
+      {focused ? "Focus" : "Aa"}
+    </div>
+  );
   return (
     <section className="grid gap-3 rounded-lg border p-3">
       <div className="flex items-start justify-between gap-3">
@@ -551,17 +590,9 @@ function SurfaceEditor({ role, resolve, background, border, borderWidth, radius,
           <p className="text-xs text-muted-foreground">{role.components}</p>
           {role.note && <p className="text-xs text-muted-foreground">{role.note}</p>}
         </div>
-        <div
-          aria-hidden
-          className="grid h-12 w-20 shrink-0 place-items-center text-xs"
-          style={{
-            background: literalColor(background.value, resolve) ?? background.value,
-            border: `${borderWidth.value} solid ${literalColor(border.value, resolve) ?? border.value}`,
-            borderRadius: radius.value,
-            boxShadow: shadow.value,
-          }}
-        >
-          Aa
+        <div className="flex shrink-0 gap-3">
+          {preview(false)}
+          {focus && preview(true)}
         </div>
       </div>
       <SurfaceColorRow label="Background" name={surfaceToken(role.key, "background")} resolve={resolve} {...background} />
@@ -569,19 +600,54 @@ function SurfaceEditor({ role, resolve, background, border, borderWidth, radius,
       <RangeRow name={surfaceToken(role.key, "border-width")} min={0} max={4} step={0.5} unit="px" {...borderWidth} />
       <StepRow label="Radius" name={surfaceToken(role.key, "radius")} steps={RADIUS_STEPS} {...radius} />
       <StepRow label="Shadow" name={surfaceToken(role.key, "shadow")} steps={SHADOW_STEPS} {...shadow} />
-      {blur && saturate && <EffectRows role={role.key} blur={blur} saturate={saturate} />}
+      {filter && <EffectRows role={role.key} filter={filter} />}
+      {focus && <FocusRows role={role.key} resolve={resolve} {...focus} />}
     </section>
   );
 }
 
-/// The backdrop filter behind a translucent surface: how much the content
-/// behind it is blurred and how saturated it stays.
-function EffectRows({ role, blur, saturate }: { role: string; blur: TokenControl; saturate: TokenControl }) {
+/// A field's focus state: the color its border turns and the ring drawn
+/// over that border, and the ring an invalid field shows instead.
+function FocusRows({ role, resolve, border, ring, invalidRing, ringWidth }: FocusControls & { role: string; resolve: (token: string) => string }) {
   return (
-    <>
-      <RangeRow name={surfaceToken(role, "blur")} min={0} max={64} step={1} unit="px" {...blur} />
-      <RangeRow name={surfaceToken(role, "saturate")} min={0} max={300} step={5} unit="%" {...saturate} />
-    </>
+    <div className="grid gap-3 border-t pt-3">
+      <div className="grid gap-0.5">
+        <h3 className="text-xs font-medium">Focus</h3>
+        <p className="text-xs text-muted-foreground">
+          The border color of a focused field and the ring drawn over that border, from its outer edge inward. Colors are per theme; the ring width applies to both themes and to the invalid ring.
+        </p>
+      </div>
+      <SurfaceColorRow label="Focus border" name={surfaceToken(role, "focus-border")} resolve={resolve} {...border} />
+      <SurfaceColorRow label="Focus ring" name={surfaceToken(role, "focus-ring")} resolve={resolve} {...ring} />
+      <SurfaceColorRow label="Invalid ring" name={surfaceToken(role, "invalid-ring")} resolve={resolve} {...invalidRing} />
+      <RangeRow name={surfaceToken(role, "focus-ring-width")} min={0} max={8} step={0.5} unit="px" {...ringWidth} />
+    </div>
+  );
+}
+
+/// The backdrop filter behind a translucent surface: how much the content
+/// behind it is blurred and how saturated it stays. Both sliders write the
+/// one `-filter` token, as `none` when blur is 0 and saturation 100%, so
+/// an unfiltered surface costs the browser nothing.
+function EffectRows({ role, filter }: { role: string; filter: TokenControl }) {
+  const name = surfaceToken(role, "filter");
+  const parsed = parseBackdropFilter(filter.value);
+  const current = parsed ?? NEUTRAL_FILTER;
+  const part = (key: keyof BackdropFilter): TokenControl => ({
+    value: String(current[key]),
+    changed: filter.changed,
+    onReset: filter.onReset,
+    onChange: (value) => filter.onChange(backdropFilterValue({ ...current, [key]: Number.parseFloat(value) })),
+  });
+  return (
+    <div className="grid gap-2">
+      <RangeRow name="Backdrop blur" min={0} max={64} step={1} unit="px" {...part("blur")} />
+      <RangeRow name="Backdrop saturation" min={0} max={300} step={5} unit="%" {...part("saturate")} />
+      <p className="truncate font-mono text-[11px] text-muted-foreground" title={filter.value}>
+        {name}: {filter.value}
+        {!parsed && " (custom; the sliders replace it)"}
+      </p>
+    </div>
   );
 }
 
@@ -668,11 +734,10 @@ function SidebarLogoEditor({ resolve, color, opacity, rotate, scale, offset }: {
 }
 
 /// The overlay drawn behind dialogs, alert dialogs and sheets.
-function BackdropEditor({ resolve, color, blur, saturate }: {
+function BackdropEditor({ resolve, color, filter }: {
   resolve: (token: string) => string;
   color: TokenControl;
-  blur: TokenControl;
-  saturate: TokenControl;
+  filter: TokenControl;
 }) {
   return (
     <section className="grid gap-3 rounded-lg border p-3">
@@ -695,13 +760,13 @@ function BackdropEditor({ resolve, color, blur, saturate }: {
             className="absolute inset-0"
             style={{
               background: literalColor(color.value, resolve) ?? color.value,
-              backdropFilter: `blur(${blur.value}) saturate(${saturate.value})`,
+              backdropFilter: filter.value,
             }}
           />
         </div>
       </div>
       <SurfaceColorRow label="Color" name={surfaceToken(BACKDROP_KEY, "background")} resolve={resolve} {...color} />
-      <EffectRows role={BACKDROP_KEY} blur={blur} saturate={saturate} />
+      <EffectRows role={BACKDROP_KEY} filter={filter} />
     </section>
   );
 }
@@ -754,9 +819,16 @@ function SurfaceColorRow({ label, name, value, changed, onChange, onReset, resol
           <SelectTrigger size="sm" aria-label={`${label} color`}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="transparent">Transparent</SelectItem>
-            {SURFACE_COLOR_SOURCES.map((source) => (
-              <SelectItem key={source} value={source}>{source.replace(/^--/, "")}</SelectItem>
+            {SURFACE_COLOR_SOURCE_GROUPS.map((group) => (
+              <SelectGroup key={group.label}>
+                <SelectSeparator />
+                <SelectLabel>{group.label}</SelectLabel>
+                {group.sources.map((source) => (
+                  <SelectItem key={source} value={source}>{source.replace(/^--/, "")}</SelectItem>
+                ))}
+              </SelectGroup>
             ))}
+            <SelectSeparator />
             <SelectItem value="custom">Custom</SelectItem>
           </SelectContent>
         </Select>

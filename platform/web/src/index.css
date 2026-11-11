@@ -147,37 +147,49 @@
     --surface-menu-border: color-mix(in oklab, var(--foreground) 10%, transparent);
     --surface-field: transparent;
     --surface-field-border: var(--input);
-    /* Component surfaces: border width, corner radius and shadow. */
+    /* A focused field: the color its border turns and the ring around it
+       (the field-focus utility below). */
+    --surface-field-focus-border: var(--ring);
+    --surface-field-focus-ring: color-mix(in oklab, var(--ring) 50%, transparent);
+    --surface-field-invalid-ring: color-mix(in oklab, var(--destructive) 20%, transparent);
+    /* Component surfaces: border width, corner radius and shadow. Cards,
+       dialogs, popovers and menus draw the border inside their edge as an
+       inset ring, so it takes no space; fields use a real border. */
     --surface-card-border-width: 1px;
     --surface-card-radius: calc(var(--radius) * 1.4);
     --surface-card-shadow: var(--shadow-xs);
     --surface-dialog-border-width: 1px;
     --surface-dialog-radius: calc(var(--radius) * 1.4);
-    --surface-dialog-shadow: 0 0 #0000;
+    --surface-dialog-shadow: var(--shadow-xl);
     --surface-popover-border-width: 1px;
     --surface-popover-radius: calc(var(--radius) * 1.4);
-    --surface-popover-shadow: var(--shadow-lg);
+    --surface-popover-shadow: var(--shadow-2xl);
     --surface-menu-border-width: 1px;
     --surface-menu-radius: calc(var(--radius) * 0.8);
-    --surface-menu-shadow: var(--shadow-md);
+    --surface-menu-shadow: var(--shadow-xl);
     --surface-field-border-width: 1px;
-    --surface-field-radius: calc(var(--radius) * 0.8);
+    --surface-field-radius: calc(var(--radius) * 0.6);
     --surface-field-shadow: var(--shadow-xs);
-    /* The overlay behind dialogs, alert dialogs and sheets, and the backdrop
-       filters behind it and behind menus. */
-    --surface-backdrop: color-mix(in oklab, black 10%, transparent);
-    --surface-backdrop-blur: 4px;
-    --surface-backdrop-saturate: 100%;
-    --surface-menu-blur: 40px;
-    --surface-menu-saturate: 150%;
+    --surface-field-focus-ring-width: 1px;
+    /* The overlay behind dialogs, alert dialogs and sheets. */
+    --surface-backdrop: color-mix(in oklab, black 60%, transparent);
+    /* Backdrop filters: how the overlay, menus, popovers and dialogs blur and
+       saturate what is behind them (the surface-filter-* utilities below).
+       Exactly `none` when neither is set: any other value, even
+       blur(0px) saturate(100%), still makes a stacking context and a
+       containing block and costs an offscreen pass. */
+    --surface-backdrop-filter: saturate(45%);
+    --surface-menu-filter: blur(15px);
+    --surface-popover-filter: blur(15px);
+    --surface-dialog-filter: blur(15px);
     /* A sheen over the main sidebar and over list columns (the aside of
        Sessions, Bots, Profiles, Workspaces): a left-to-right gradient from
        transparent to this color, per theme. */
-    --surface-sidebar-gradient: color-mix(in oklab, white 5%, transparent);
-    --surface-list-gradient: color-mix(in oklab, white 5%, transparent);
+    --surface-sidebar-gradient: color-mix(in oklab, black 7%, transparent);
+    --surface-list-gradient: color-mix(in oklab, black 5%, transparent);
     /* Where across the surface each sheen starts to rise from transparent. */
-    --surface-sidebar-gradient-start: 0%;
-    --surface-list-gradient-start: 0%;
+    --surface-sidebar-gradient-start: 70%;
+    --surface-list-gradient-start: 70%;
     /* The large LS mark behind the bottom of the sidebar: color and opacity
        per theme; rotation, size (times the sidebar width) and how far it
        sinks below the bottom edge (percent of its own height) shared. */
@@ -185,7 +197,7 @@
     --sidebar-logo-opacity: 0.4;
     --sidebar-logo-rotate: -30deg;
     --sidebar-logo-scale: 1.2;
-    --sidebar-logo-offset: 10%;
+    --sidebar-logo-offset: -1%;
     /* The sidebar header (the universe button and the padding around it)
        sets the height of the pane bars beside it, the list and detail
        headers: their titles sit on the universe name's line and their
@@ -195,7 +207,7 @@
     --pane-bar-height: calc(var(--sidebar-header-button-height) + 2 * var(--sidebar-header-padding));
     /* Scales every icon (lucide, tabler and the app's own marks) from the
        size its classes give it. */
-    --icon-scale: 1;
+    --icon-scale: 0.9;
 }
 
 .dark {
@@ -234,22 +246,66 @@
        components. They are declared again under .dark so they re-resolve in
        popups that carry their own dark class. */
     --surface-card: var(--card);
-    --surface-card-border: color-mix(in oklab, var(--foreground) 10%, transparent);
-    --surface-dialog: var(--popover);
-    --surface-dialog-border: color-mix(in oklab, var(--foreground) 10%, transparent);
-    --surface-popover: var(--popover);
-    --surface-popover-border: color-mix(in oklab, var(--foreground) 10%, transparent);
-    --surface-menu: color-mix(in oklab, var(--popover) 70%, transparent);
-    --surface-menu-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --surface-card-border: color-mix(in oklab, var(--foreground) 20%, transparent);
+    --surface-dialog: color-mix(in oklab, var(--popover) 60%, transparent);
+    --surface-dialog-border: color-mix(in oklab, var(--foreground) 20%, transparent);
+    --surface-popover: color-mix(in oklab, var(--popover) 60%, transparent);
+    --surface-popover-border: color-mix(in oklab, var(--foreground) 20%, transparent);
+    --surface-menu: color-mix(in oklab, var(--popover) 60%, transparent);
+    --surface-menu-border: color-mix(in oklab, var(--foreground) 20%, transparent);
     --surface-field: color-mix(in oklab, var(--input) 30%, transparent);
     --surface-field-border: var(--input);
-    --surface-backdrop: color-mix(in oklab, black 10%, transparent);
+    --surface-field-focus-border: var(--ring);
+    --surface-field-focus-ring: color-mix(in oklab, var(--ring) 0%, transparent);
+    --surface-field-invalid-ring: var(--danger);
+    --surface-backdrop: color-mix(in oklab, black 70%, transparent);
     --surface-sidebar-gradient: color-mix(in oklab, white 5%, transparent);
     --surface-list-gradient: color-mix(in oklab, white 5%, transparent);
-    --surface-sidebar-gradient-start: 0%;
-    --surface-list-gradient-start: 0%;
+    --surface-sidebar-gradient-start: 50%;
+    --surface-list-gradient-start: 30%;
     --sidebar-logo-color: color-mix(in oklab, var(--sidebar-foreground) 20%, transparent);
     --sidebar-logo-opacity: 0.4;
+}
+
+/* A surface's backdrop filter, from its --surface-<role>-filter token. It
+   sits on the surface itself, so the surface's background and inset border
+   paint over the filtered backdrop and stay sharp, and it does not scroll
+   away with the content of a long menu. */
+@utility surface-filter-backdrop {
+    -webkit-backdrop-filter: var(--surface-backdrop-filter);
+    backdrop-filter: var(--surface-backdrop-filter);
+}
+@utility surface-filter-menu {
+    -webkit-backdrop-filter: var(--surface-menu-filter);
+    backdrop-filter: var(--surface-menu-filter);
+}
+@utility surface-filter-popover {
+    -webkit-backdrop-filter: var(--surface-popover-filter);
+    backdrop-filter: var(--surface-popover-filter);
+}
+@utility surface-filter-dialog {
+    -webkit-backdrop-filter: var(--surface-dialog-filter);
+    backdrop-filter: var(--surface-dialog-filter);
+}
+
+/* A focused field (input, textarea, select trigger, input group, combobox
+   chips, the session composer): applied under the focus variant that fits
+   the field, such as `focus-visible:field-focus`. The ring is an outline
+   pulled in over the field's own border: it starts at the outer edge and
+   covers the border, takes no space, follows the corners and is never
+   hidden by what the field holds. A field nested in another that draws the
+   ring sets the width to 0px. */
+@utility field-focus {
+    border-color: var(--surface-field-focus-border);
+    outline: var(--surface-field-focus-ring-width) solid var(--surface-field-focus-ring);
+    outline-offset: calc(-1 * var(--surface-field-focus-ring-width));
+}
+
+/* An invalid field: the same ring in its own color, under the field's invalid
+   variant, such as `aria-invalid:field-invalid`. It wins over field-focus. */
+@utility field-invalid {
+    outline: var(--surface-field-focus-ring-width) solid var(--surface-field-invalid-ring);
+    outline-offset: calc(-1 * var(--surface-field-focus-ring-width));
 }
 
 /* The sheens over the sidebar and the list columns, drawn on top of their

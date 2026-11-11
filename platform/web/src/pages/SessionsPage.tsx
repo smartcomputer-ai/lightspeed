@@ -65,6 +65,7 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   MessageScroller,
@@ -1196,8 +1197,8 @@ function InlineSetupEditor({
             This profile uses a blob-backed instruction. Editing replaces it with inline text.
           </p>
         ) : null}
-        <textarea
-          className="min-h-32 w-full resize-y rounded-lg border border-input bg-transparent p-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+        <Textarea
+          className="min-h-32 resize-y field-sizing-fixed p-3"
           value={instructions}
           onChange={(event) => change((next) => {
             if (event.target.value) next.instructions = { type: "text", text: event.target.value };

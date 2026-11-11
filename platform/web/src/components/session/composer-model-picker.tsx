@@ -71,7 +71,7 @@ export function ModelPicker({ choice, stored, runActive, canSaveDefault, onChang
       <PopoverContent ref={popup} initialFocus={popup} side="top" align="start" sideOffset={8} className="w-[min(34rem,calc(100vw-2rem))] overflow-hidden p-0">
         <div className="flex max-h-[min(22rem,calc(var(--available-height)-4rem))] min-h-0 flex-col sm:flex-row">
           <section aria-label="Model" className="flex min-h-0 min-w-0 flex-1 flex-col border-b sm:border-r sm:border-b-0">
-            <label className="m-2 mb-1 flex h-8 items-center gap-2 rounded-md bg-muted px-2 text-muted-foreground focus-within:ring-2 focus-within:ring-ring/50">
+            <label className="m-2 mb-1 flex h-8 items-center gap-2 rounded-md bg-muted px-2 text-muted-foreground focus-within:field-focus">
               <SearchIcon className="size-3.5 shrink-0" aria-hidden />
               <input value={query} onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {

@@ -88,14 +88,19 @@ export interface SurfaceRole {
   title: string;
   components: string;
   note?: string;
-  /// Also has `-blur` and `-saturate`, the backdrop filter behind it.
+  /// Also has `-filter`, the backdrop filter behind it (blur and
+  /// saturation), applied by its `surface-filter-<key>` utility.
   effects?: boolean;
+  /// Also has a focus state: `-focus-border`, `-focus-ring` and
+  /// `-invalid-ring` (colors, per theme) and `-focus-ring-width` (shared),
+  /// drawn by the `field-focus` and `field-invalid` utilities in index.css.
+  focus?: boolean;
 }
 
 export const SURFACE_ROLES: SurfaceRole[] = [
   { key: "card", title: "Cards", components: "Card" },
-  { key: "dialog", title: "Dialogs", components: "Dialog, Alert dialog, Sheet (background only)" },
-  { key: "popover", title: "Popovers", components: "Popover" },
+  { key: "dialog", title: "Dialogs", components: "Dialog, Alert dialog, Sheet (background and filter only)", effects: true },
+  { key: "popover", title: "Popovers", components: "Popover", effects: true },
   {
     key: "menu",
     title: "Menus",
@@ -103,18 +108,46 @@ export const SURFACE_ROLES: SurfaceRole[] = [
     note: "Menus always render in the dark theme, so their colors take effect under Dark.",
     effects: true,
   },
-  { key: "field", title: "Inputs", components: "Input, Textarea, Select trigger, Input group, Combobox chips" },
+  { key: "field", title: "Inputs", components: "Input, Textarea, Select trigger, Input group, Combobox chips; focus also the session composer", focus: true },
 ];
 
-export type SurfacePart = "background" | "border" | "border-width" | "radius" | "shadow" | "blur" | "saturate";
+export type SurfacePart =
+  | "background" | "border" | "border-width" | "radius" | "shadow" | "filter"
+  | "focus-border" | "focus-ring" | "focus-ring-width" | "invalid-ring";
 
 export function surfaceToken(role: string, part: SurfacePart): string {
   return part === "background" ? `--surface-${role}` : `--surface-${role}-${part}`;
 }
 
 /// The overlay behind dialogs, alert dialogs and sheets: `--surface-backdrop`
-/// (color, per theme), `-blur` and `-saturate` (shared).
+/// (color, per theme) and `-filter` (shared).
 export const BACKDROP_KEY = "backdrop";
+
+/// A backdrop filter as the editor's two controls: blur in px, saturation in %.
+export interface BackdropFilter {
+  blur: number;
+  saturate: number;
+}
+
+export const NEUTRAL_FILTER: BackdropFilter = { blur: 0, saturate: 100 };
+
+/// Reads the forms backdropFilterValue writes: `none`, or `blur(<n>px)`
+/// and/or `saturate(<n>%)`. Any other filter is custom and gives null.
+export function parseBackdropFilter(value: string): BackdropFilter | null {
+  const text = value.trim().replace(/\s+/g, " ");
+  if (text === "none") return { ...NEUTRAL_FILTER };
+  const match = /^(?:blur\(([\d.]+)px\))? ?(?:saturate\(([\d.]+)%\))?$/.exec(text);
+  if (!match || (match[1] === undefined && match[2] === undefined)) return null;
+  return { blur: match[1] === undefined ? 0 : Number(match[1]), saturate: match[2] === undefined ? 100 : Number(match[2]) };
+}
+
+/// Only what has an effect is written, and `none` when nothing does: a
+/// neutral blur(0px) saturate(100%) would still cost the browser a
+/// stacking context, a containing block and an offscreen pass.
+export function backdropFilterValue({ blur, saturate }: BackdropFilter): string {
+  const parts = [blur > 0 ? `blur(${blur}px)` : "", saturate !== 100 ? `saturate(${saturate}%)` : ""].filter(Boolean);
+  return parts.length ? parts.join(" ") : "none";
+}
 
 /// Sheens: a left-to-right gradient from transparent to `--surface-<key>-gradient`
 /// over a surface's background, rising from `-start` across the surface.
@@ -146,12 +179,22 @@ export const SIDEBAR_LOGO_TOKENS = {
   offset: "--sidebar-logo-offset",
 } as const;
 
-/// Colors a surface background or border can be drawn from: theme colors,
-/// plus black and white for backdrops.
-export const SURFACE_COLOR_SOURCES = [
-  "--background", "--card", "--popover", "--muted", "--secondary", "--accent", "--primary", "--sidebar", "--sidebar-foreground", "--input",
-  "--border", "--foreground", "--ring", "black", "white",
+/// Colors a surface background, border, ring or sheen can be drawn from, in
+/// the groups the editor's picker shows: theme colors, status colors (an
+/// invalid field's ring, say), and black and white for backdrops.
+export const SURFACE_COLOR_SOURCE_GROUPS = [
+  {
+    label: "Theme",
+    sources: [
+      "--background", "--card", "--popover", "--muted", "--secondary", "--accent", "--primary", "--sidebar",
+      "--sidebar-foreground", "--input", "--border", "--foreground", "--ring",
+    ],
+  },
+  { label: "Status", sources: ["--destructive", "--success", "--warning", "--danger", "--info"] },
+  { label: "Plain", sources: ["black", "white"] },
 ] as const;
+
+export const SURFACE_COLOR_SOURCES: readonly string[] = SURFACE_COLOR_SOURCE_GROUPS.flatMap((group) => group.sources);
 
 /// A surface color as a theme color at an opacity, or transparent.
 export interface SurfaceColor {
