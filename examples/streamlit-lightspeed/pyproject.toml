@@ -1,0 +1,24 @@
+[project]
+name = "lightspeed-streamlit-demo"
+version = "0.0.0"
+description = "Session chat and live map of a local Lightspeed deployment"
+requires-python = ">=3.12"
+dependencies = [
+  "lightspeed-ai",
+  "httpx>=0.28,<1",
+  "plotly>=6.5,<7",
+  "psycopg[binary]>=3.2,<4",
+  "python-dotenv>=1,<2",
+  "streamlit>=1.50,<2",
+  "temporalio>=1.20,<2",
+]
+
+[dependency-groups]
+dev = ["pytest>=9,<10"]
+
+[tool.uv.sources]
+lightspeed-ai = { path = "../../clients/python", editable = true }
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
