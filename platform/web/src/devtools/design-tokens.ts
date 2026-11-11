@@ -178,6 +178,23 @@ export function surfaceToken(role: string, part: SurfacePart): string {
 /// (color, per theme) and `-filter` (shared).
 export const BACKDROP_KEY = "backdrop";
 
+/// The scrollbar tokens in index.css: the width every scroll area shares,
+/// and per theme the thumb and track while the area is hovered and the
+/// thumb at rest (transparent hides it).
+export const SCROLLBAR_TOKENS = {
+  width: "--scrollbar-width",
+  thumb: "--scrollbar-thumb",
+  track: "--scrollbar-track",
+  rest: "--scrollbar-thumb-rest",
+} as const;
+
+/// The widths standard CSS offers a scrollbar.
+export const SCROLLBAR_WIDTH_STEPS = [
+  { label: "Thin", value: "thin" },
+  { label: "Standard", value: "auto" },
+  { label: "Hidden", value: "none" },
+];
+
 /// A backdrop filter as the editor's two controls: blur in px, saturation in %.
 export interface BackdropFilter {
   blur: number;

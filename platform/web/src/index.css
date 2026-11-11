@@ -225,6 +225,13 @@
        where they meet. */
     --list-tree-line: color-mix(in oklab, var(--muted-foreground) 35%, var(--background));
     --list-tree-dot: color-mix(in oklab, var(--muted-foreground) 70%, var(--background));
+    /* Scrollbars (standard scrollbar-width and scrollbar-color only): thin,
+       and nothing at rest; hovering a scroll area (or focusing it from the
+       keyboard) shows its thumb, over the track color. */
+    --scrollbar-width: thin;
+    --scrollbar-thumb: color-mix(in oklab, var(--foreground) 22%, transparent);
+    --scrollbar-track: transparent;
+    --scrollbar-thumb-rest: transparent;
     /* Font weights of list titles and sidebar menu items: at rest, and when
        selected (the open row, the current page). Each is one of the
        --font-weight-* steps; hover keeps the rest weight so text never
@@ -296,6 +303,9 @@
     --item-foreground-rest: color-mix(in oklab, var(--foreground) 70%, transparent);
     --list-tree-line: color-mix(in oklab, var(--muted-foreground) 35%, var(--background));
     --list-tree-dot: color-mix(in oklab, var(--muted-foreground) 70%, var(--background));
+    --scrollbar-thumb: color-mix(in oklab, var(--foreground) 22%, transparent);
+    --scrollbar-track: transparent;
+    --scrollbar-thumb-rest: transparent;
     --surface-card: var(--card);
     --surface-card-border: color-mix(in oklab, var(--foreground) 20%, transparent);
     --surface-dialog: var(--popover);
@@ -381,6 +391,19 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    }
+  /* One scrollbar for every scroll area (dialogs, text areas, lists, the
+     transcript): thin, its thumb hidden until the area is hovered or
+     keyboard-focused. Standard properties only, so there is no telling the
+     scrollbar itself from its area; the track shows its color with the
+     thumb. A utility on an element (no-scrollbar, scrollbar-thumb-*) wins. */
+  * {
+    scrollbar-width: var(--scrollbar-width);
+    scrollbar-color: var(--scrollbar-thumb-rest) transparent;
+    }
+  *:hover,
+  *:focus-visible {
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
     }
   svg[data-icon-role] {
     zoom: var(--icon-scale);

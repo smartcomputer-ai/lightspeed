@@ -391,7 +391,7 @@ function ProfileEditor({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === "json" ? (
           <textarea
-            className="h-full w-full resize-none bg-transparent p-4 font-mono text-xs outline-none"
+            className="block h-full w-full resize-none bg-transparent p-4 font-mono text-xs outline-none"
             readOnly={!manage}
             aria-label="Profile JSON"
             value={jsonText}

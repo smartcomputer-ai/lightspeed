@@ -24,6 +24,8 @@ import {
   SHADOW_STEPS,
   SHADOW_TOKENS,
   BACKDROP_KEY,
+  SCROLLBAR_TOKENS,
+  SCROLLBAR_WIDTH_STEPS,
   SHEEN_ROLES,
   SIDEBAR_LOGO_TOKENS,
   SURFACE_COLOR_SOURCE_GROUPS,
@@ -243,6 +245,14 @@ export function DesignConfigurationPage() {
             resolve={(name) => valueOf(colorTheme, name)}
             color={token(colorTheme, surfaceToken(BACKDROP_KEY, "background"))}
             filter={token("shared", surfaceToken(BACKDROP_KEY, "filter"))}
+          />
+          <ScrollbarEditor
+            key={`${colorTheme}scrollbar`}
+            resolve={(name) => valueOf(colorTheme, name)}
+            width={token("shared", SCROLLBAR_TOKENS.width)}
+            thumb={token(colorTheme, SCROLLBAR_TOKENS.thumb)}
+            track={token(colorTheme, SCROLLBAR_TOKENS.track)}
+            rest={token(colorTheme, SCROLLBAR_TOKENS.rest)}
           />
         </TabsContent>
 
@@ -760,6 +770,34 @@ function SidebarLogoEditor({ resolve, color, opacity, rotate, scale, offset }: {
       <RangeRow name={SIDEBAR_LOGO_TOKENS.rotate} min={-180} max={180} step={1} unit="deg" {...rotate} />
       <RangeRow name={SIDEBAR_LOGO_TOKENS.scale} min={0.5} max={3} step={0.05} unit="" describe={(value) => `${round(value * 100)}% wide`} {...scale} />
       <RangeRow name={SIDEBAR_LOGO_TOKENS.offset} min={-50} max={100} step={1} unit="%" {...offset} />
+    </section>
+  );
+}
+
+/// Every scroll area's scrollbar: its width, its thumb and track while the
+/// area is hovered, and its thumb at rest. The preview scrolls; hover it.
+function ScrollbarEditor({ resolve, width, thumb, track, rest }: {
+  resolve: (token: string) => string;
+  width: TokenControl;
+  thumb: TokenControl;
+  track: TokenControl;
+  rest: TokenControl;
+}) {
+  return (
+    <section className="grid gap-3 rounded-lg border p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="grid min-w-0 gap-0.5">
+          <h2 className="text-sm font-medium">Scrollbars</h2>
+          <p className="text-xs text-muted-foreground">Every scroll area: lists, dialogs, text areas, the transcript. Hover the preview.</p>
+        </div>
+        <div aria-hidden className="h-16 w-24 shrink-0 overflow-y-auto rounded-md border p-1.5 text-[10px] leading-tight text-muted-foreground">
+          {Array.from({ length: 12 }, (_, index) => <p key={index}>Line {index + 1}</p>)}
+        </div>
+      </div>
+      <StepRow label="Width" name={SCROLLBAR_TOKENS.width} steps={SCROLLBAR_WIDTH_STEPS} {...width} />
+      <SurfaceColorRow label="Thumb" name={SCROLLBAR_TOKENS.thumb} resolve={resolve} {...thumb} />
+      <SurfaceColorRow label="Track" name={SCROLLBAR_TOKENS.track} resolve={resolve} {...track} />
+      <SurfaceColorRow label="Thumb at rest" name={SCROLLBAR_TOKENS.rest} resolve={resolve} {...rest} />
     </section>
   );
 }

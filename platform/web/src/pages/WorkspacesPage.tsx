@@ -556,7 +556,7 @@ function FileDetail({
           <MarkdownContent className="mx-auto max-w-5xl p-4">{value}</MarkdownContent>
         ) : (
           <textarea
-            className="h-full w-full resize-none bg-transparent p-4 font-mono text-sm outline-none"
+            className="block h-full w-full resize-none bg-transparent p-4 font-mono text-sm outline-none"
             value={value}
             onChange={(e) =>
               setEditor((current) => ({ ...current, draft: e.target.value }))
