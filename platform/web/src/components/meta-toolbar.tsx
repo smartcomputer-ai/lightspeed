@@ -226,7 +226,9 @@ function ItemFace({ item, form, tint = "always" }: { item: MetaItem; form: MetaI
     tone && <span className={cn(size, "shrink-0 rounded-full", toneDot(tone, tint), item.pulse && "animate-pulse motion-reduce:animate-none")} aria-hidden />;
   if (!Icon) {
     // A status in words: its tone is a dot before them ("● Working"), and a
-    // danger also colors the words.
+    // danger also colors the words. Compact, a toned status is its dot alone;
+    // its words are its tooltip, or the tag it expands into.
+    if (form === "mark" && tone) return dot("size-2");
     const text = form === "mark" ? item.value ?? item.text ?? item.label : item.text ?? item.value ?? item.label;
     return (
       <span className="flex min-w-0 items-center gap-1.5">
