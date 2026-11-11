@@ -11,6 +11,18 @@ runs and waiting for them to finish. Its public types come from the Rust API con
 Build against this client and the public contract so runtime implementation
 changes do not become dependencies of your application.
 
+## Use the Python SDK
+
+The async Python SDK uses the same gateway contract as the TypeScript client.
+Install it from a checkout matching your Lightspeed runtime with
+`python -m pip install ./clients/python` using Python 3.12 or newer.
+
+The [Python SDK guide](https://github.com/smartcomputer-ai/lightspeed/tree/main/clients/python)
+shows how to authenticate, submit a run, and resume from a cursor. The
+[Streamlit walkthrough](https://github.com/smartcomputer-ai/lightspeed/tree/main/examples/streamlit-lightspeed)
+runs against the local development deployment and pairs a session chat with a
+map of the gateway, Temporal, PostgreSQL, VFS, and environments.
+
 ## Prepare an endpoint and a profile
 
 For this example, provide an authenticated gateway URL ending in `/rpc` and a

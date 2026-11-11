@@ -20,6 +20,7 @@ jobs:
       rust: ${{ steps.classify.outputs.rust }}
       consumers: ${{ steps.classify.outputs.consumers }}
       docs: ${{ steps.classify.outputs.docs }}
+      python: ${{ steps.classify.outputs.python }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -128,9 +129,41 @@ jobs:
       - run: npm ci --workspace @lightspeed-ai/docs --include-workspace-root
       - run: npm run check:docs
 
+  python:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install uv==0.13.7
+      - name: Check Python SDK
+        working-directory: clients/python
+        run: |
+          uv sync --locked
+          uv run --locked python scripts/generate.py --check
+          uv run --locked mypy
+          uv run --locked pytest
+      - name: Build and install the Python wheel
+        run: |
+          uv build --project clients/python --out-dir "$RUNNER_TEMP/python-dist"
+          uv venv "$RUNNER_TEMP/python-wheel"
+          uv pip install --python "$RUNNER_TEMP/python-wheel/bin/python" "$RUNNER_TEMP"/python-dist/*.whl
+          cd "$RUNNER_TEMP"
+          python_bin="$RUNNER_TEMP/python-wheel/bin/python"
+          "$python_bin" -c 'from lightspeed_ai import AsyncLightspeedClient; assert callable(AsyncLightspeedClient.start_session)'
+      - name: Test the Streamlit example
+        working-directory: examples/streamlit-lightspeed
+        run: uv run --locked pytest
+
   required:
     if: always()
-    needs: [changes, rust, consumers, docs]
+    needs: [changes, rust, consumers, docs, python]
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected check to pass
@@ -142,6 +175,8 @@ jobs:
           CONSUMERS_RESULT: ${{ needs.consumers.result }}
           DOCS_NEEDED: ${{ needs.changes.outputs.docs }}
           DOCS_RESULT: ${{ needs.docs.result }}
+          PYTHON_NEEDED: ${{ needs.changes.outputs.python }}
+          PYTHON_RESULT: ${{ needs.python.result }}
         run: |
           set -euo pipefail
           test "$CHANGES_RESULT" = success
@@ -153,4 +188,7 @@ jobs:
           fi
           if test "$DOCS_NEEDED" = true; then
             test "$DOCS_RESULT" = success
+          fi
+          if test "$PYTHON_NEEDED" = true; then
+            test "$PYTHON_RESULT" = success
           fi

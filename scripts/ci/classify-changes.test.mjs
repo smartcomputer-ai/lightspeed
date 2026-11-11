@@ -6,8 +6,8 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { classifyChanges, classifyPaths } from './classify-changes.mjs';
 
-const all = { rust: true, consumers: true, docs: true };
-const none = { rust: false, consumers: false, docs: false };
+const all = { rust: true, consumers: true, docs: true, python: true };
+const none = { rust: false, consumers: false, docs: false, python: false };
 
 test('manual, styles, assets, and included references select docs checks', () => {
   for (const path of [
@@ -17,7 +17,7 @@ test('manual, styles, assets, and included references select docs checks', () =>
   ]) {
     assert.deepEqual(classifyPaths([path]), { ...none, docs: true }, path);
   }
-  assert.deepEqual(classifyPaths(['crates/api/contract/api-reference.md']), all);
+  assert.deepEqual(classifyPaths(['crates/api/contract/api-reference.md']), { ...all, python: false });
   assert.deepEqual(classifyPaths(['crates/temporal-workflow/contract/workflow-contract.md']),
     { ...none, rust: true, docs: true });
 });
@@ -37,6 +37,18 @@ test('shared dependencies, CI, and release inputs select their consumers', () =>
   for (const path of ['.github/workflows/ci.yml', 'release/build-env.Dockerfile',
     'scripts/release/stage-static-sites.sh', 'new-build-input']) {
     assert.deepEqual(classifyPaths([path]), all, path);
+  }
+});
+
+test('the Python check follows its package, demo, and code generation inputs', () => {
+  for (const path of ['clients/python/uv.lock', 'examples/streamlit-lightspeed/app.py']) {
+    assert.deepEqual(classifyPaths([path]), { ...none, python: true }, path);
+  }
+  for (const path of ['clients/fixtures/gateway-parity.json', 'clients/typescript/scripts/helpers.mjs']) {
+    assert.deepEqual(classifyPaths([path]), { ...none, consumers: true, python: true }, path);
+  }
+  for (const path of ['crates/api/contract/api.schema.json', 'crates/api/contract/methods.json']) {
+    assert.deepEqual(classifyPaths([path]), { ...none, rust: true, consumers: true, python: true }, path);
   }
 });
 
