@@ -58,7 +58,8 @@ export interface StarscapeProps {
   center?: { x: number; y: number };
   /// Fades the starscape out with distance from the vanishing point, in CSS
   /// px: fully visible within `start`, gone beyond `end`. Only the part
-  /// within `end` is rendered.
+  /// within `end` is rendered. `inner` also clears the centre, e.g. behind
+  /// an icon: gone within `inner.start`, fully visible again by `inner.end`.
   fade?: StarscapeFade;
   /// CSS px per frame unit: how large the sky is drawn. 1 draws the site's
   /// frame at 887 by 1252 CSS px.
@@ -129,7 +130,13 @@ export function Starscape({
       });
       starscape
         .setViewport(area.viewport)
-        .setFade(fade ? { start: fade.start * ratio, end: fade.end * ratio } : null)
+        .setFade(fade
+          ? {
+              start: fade.start * ratio,
+              end: fade.end * ratio,
+              inner: fade.inner && { start: fade.inner.start * ratio, end: fade.inner.end * ratio },
+            }
+          : null)
         .render();
       return true;
     };
@@ -184,7 +191,7 @@ export function Starscape({
       reducedMotion.removeEventListener("change", sync);
       document.removeEventListener("visibilitychange", sync);
     };
-  }, [anchor, center?.x, center?.y, fade?.start, fade?.end, scale, transparentBackground, animate, seed, configKey]);
+  }, [anchor, center?.x, center?.y, fade?.start, fade?.end, fade?.inner?.start, fade?.inner?.end, scale, transparentBackground, animate, seed, configKey]);
 
   return (
     <div ref={hostRef} aria-hidden="true" data-starscape="" className={cn("pointer-events-none overflow-hidden", className)}>

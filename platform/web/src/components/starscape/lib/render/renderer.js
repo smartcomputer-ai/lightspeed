@@ -19,6 +19,7 @@
  * stars, bloom and grain are actually recomputed.
  */
 
+import { smoothstep } from '../core/noise.js';
 import { SpriteCache } from './sprites.js';
 import { Palette } from './palette.js';
 import { Atmosphere } from './atmosphere.js';
@@ -114,7 +115,14 @@ export class Renderer {
    * turn it off. Needs a renderer created with `alpha: true`.
    */
   setFade(fade) {
-    this.fade = fade && fade.end > 0 ? { start: Math.max(0, fade.start), end: fade.end } : null;
+    if (!fade || fade.end <= 0) {
+      this.fade = null;
+      return;
+    }
+    const inner = fade.inner && fade.inner.end > 0
+      ? { start: Math.max(0, fade.inner.start), end: fade.inner.end }
+      : null;
+    this.fade = { start: Math.max(0, fade.start), end: fade.end, inner };
   }
 
   /** Frame geometry derived from the frame size and the vanishing point. */
@@ -255,11 +263,25 @@ export class Renderer {
     const cx = view.cx - view.viewX;
     const cy = view.cy - view.viewY;
     const start = Math.min(fade.start, fade.end - 0.001);
-    const gradient = ctx.createRadialGradient(cx, cy, Math.max(0, start), cx, cy, fade.end);
-    // Smoothstep-shaped stops, so the edge of the fade never reads as a ring.
-    for (let i = 0; i <= 8; i++) {
-      const t = i / 8;
-      gradient.addColorStop(t, 'rgba(0,0,0,' + (1 - t * t * (3 - 2 * t)).toFixed(4) + ')');
+    let gradient;
+    if (fade.inner) {
+      // Also clear the centre: transparent within inner.start, back to full
+      // by inner.end. Still one gradient, so it costs nothing extra.
+      gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, fade.end);
+      const inner = fade.inner;
+      const steps = 32;
+      for (let i = 0; i <= steps; i++) {
+        const r = (i / steps) * fade.end;
+        const alpha = smoothstep(inner.start, Math.max(inner.end, inner.start + 0.001), r) * (1 - smoothstep(start, fade.end, r));
+        gradient.addColorStop(i / steps, 'rgba(0,0,0,' + alpha.toFixed(4) + ')');
+      }
+    } else {
+      gradient = ctx.createRadialGradient(cx, cy, Math.max(0, start), cx, cy, fade.end);
+      // Smoothstep-shaped stops, so the edge of the fade never reads as a ring.
+      for (let i = 0; i <= 8; i++) {
+        const t = i / 8;
+        gradient.addColorStop(t, 'rgba(0,0,0,' + (1 - t * t * (3 - 2 * t)).toFixed(4) + ')');
+      }
     }
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);

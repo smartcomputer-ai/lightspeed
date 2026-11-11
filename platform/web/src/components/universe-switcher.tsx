@@ -36,11 +36,17 @@ import { memberships, universeHome, useUniverses } from "@/lib/universes";
 /// The sky behind the universe icon fades out over this radius, in CSS px.
 /// It reaches past the header into the navigation, which the shell keeps
 /// stacked above it.
-export const HEADER_STARSCAPE_FADE = { start: 16, end: 80 };
+/// The centre is cleared too, so the stars thin out gradually toward the
+/// 40px icon: gone within 10px, fully back only by 44px.
+export const HEADER_STARSCAPE_FADE = { start: 16, end: 100, inner: { start: 10, end: 44 } };
+
+/// Stars and streaks only: without a sky behind it the nebula reads as a
+/// blue tint on the sidebar, and how much shows changes with every seed.
+export const HEADER_STARSCAPE_CONFIG = { nebulaAmount: 0 };
 
 /// Covers the fade circle around the icon. The stars are drawn without a sky
 /// and inverted in light mode, where they become dark streaks.
-export const HEADER_STARSCAPE_CLASS = "absolute inset-x-0 top-0 h-28 invert dark:invert-0";
+export const HEADER_STARSCAPE_CLASS = "absolute inset-x-0 top-0 h-32 invert dark:invert-0";
 
 /// Top-of-sidebar universe switcher. Lists memberships only; platform
 /// admins reach the full inventory via Admin → Universes. Creation lives
@@ -64,7 +70,7 @@ export function UniverseSwitcher({
   return (
     <>
       {/* The header's sky: centred on the universe icon, fading out around it. */}
-      <Starscape anchor={iconRef} fade={HEADER_STARSCAPE_FADE} transparentBackground className={HEADER_STARSCAPE_CLASS} />
+      <Starscape anchor={iconRef} fade={HEADER_STARSCAPE_FADE} config={HEADER_STARSCAPE_CONFIG} transparentBackground className={HEADER_STARSCAPE_CLASS} />
       <SidebarMenu className="relative">
         <SidebarMenuItem>
           <DropdownMenu>
@@ -72,11 +78,20 @@ export function UniverseSwitcher({
               render={
                 <SidebarMenuButton
                   size="lg"
-                  className="data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-accent-foreground"
+                  // Half the usual left padding, so the large icon sits near the edge.
+                  // The icon is taller than the button and reaches into the header's
+                  // padding, so the button does not clip.
+                  className="h-(--sidebar-header-button-height) overflow-visible pl-1 data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-accent-foreground"
                 />
               }
             >
-              <UniverseIcon ref={iconRef} icon={active?.icon} iconColor={active?.iconColor} />
+              <UniverseIcon
+                ref={iconRef}
+                icon={active?.icon}
+                iconColor={active?.iconColor}
+                // The collapsed sidebar's buttons are size-8.
+                className="size-10 group-data-[collapsible=icon]:size-8"
+              />
               <div className="grid flex-1 text-left leading-tight">
                 <span className="truncate text-sm font-medium">
                   {active?.name ?? "Select universe"}

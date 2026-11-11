@@ -7,7 +7,6 @@
 /// list in index.ts; the typecheck and icon tests catch any that are missed.
 
 import type { ComponentType, SVGProps } from "react";
-import type { UniverseIconName } from "@lightspeed-ai/platform-shared";
 
 /// Any icon component a library provides.
 export type IconComponent = ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
@@ -185,13 +184,9 @@ export interface IconSet {
   EmailIcon: IconComponent;
 }
 
-/// The icons a universe can wear, by the name stored on the universe.
-export type UniverseIconSet = Record<UniverseIconName, IconComponent>;
-
 /// One complete implementation of the contract.
 export interface IconLibrary {
   /// Short name shown in the UI overview, such as `lucide`.
   name: string;
   icons: IconSet;
-  universeIcons: UniverseIconSet;
 }

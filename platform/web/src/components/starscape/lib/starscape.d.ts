@@ -55,6 +55,8 @@ export interface StarscapeViewport {
 export interface StarscapeFade {
   start: number;
   end: number;
+  /** Also clears the centre: gone within `start` px, fully visible again by `end`. */
+  inner?: { start: number; end: number };
 }
 
 export interface StarscapeOptions {

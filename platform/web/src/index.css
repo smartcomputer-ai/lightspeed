@@ -186,6 +186,13 @@
     --sidebar-logo-rotate: -30deg;
     --sidebar-logo-scale: 1.2;
     --sidebar-logo-offset: 10%;
+    /* The sidebar header (the universe button and the padding around it)
+       sets the height of the pane bars beside it, the list and detail
+       headers: their titles sit on the universe name's line and their
+       bottom edges meet the header's. */
+    --sidebar-header-button-height: 2.25rem;
+    --sidebar-header-padding: calc(var(--spacing) * 2);
+    --pane-bar-height: calc(var(--sidebar-header-button-height) + 2 * var(--sidebar-header-padding));
     /* Scales every icon (lucide, tabler and the app's own marks) from the
        size its classes give it. */
     --icon-scale: 1;
@@ -267,7 +274,7 @@
   * {
     @apply border-border outline-ring/50;
     }
-  svg:is([data-icon-role], [data-universe-icon]) {
+  svg[data-icon-role] {
     zoom: var(--icon-scale);
     }
   body {

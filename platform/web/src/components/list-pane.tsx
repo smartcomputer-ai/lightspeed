@@ -68,8 +68,9 @@ export function ListPane({
   );
 }
 
-/// The header bar of a pane: one fixed height for the list's header and
-/// the detail's beside it, so their bottom borders line up.
+/// The header bar of a pane: the list's header and the detail's beside it.
+/// Its height is the sidebar header's (`--pane-bar-height` in index.css),
+/// so the titles sit on the universe name's line and the bottom edges meet.
 export function PaneBar({
   as: Tag = "div",
   className,
@@ -80,7 +81,7 @@ export function PaneBar({
   children: ReactNode;
 }) {
   return (
-    <Tag data-slot="pane-bar" className={cn("flex h-12 min-w-0 shrink-0 items-center gap-2 border-b px-4", className)}>
+    <Tag data-slot="pane-bar" className={cn("flex h-(--pane-bar-height) min-w-0 shrink-0 items-center gap-2 border-b px-4", className)}>
       {children}
     </Tag>
   );

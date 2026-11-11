@@ -2318,7 +2318,7 @@ export function seedTechnicalSupport(store: DemoStore): void {
     slug: TECHNICAL_SUPPORT_SLUG,
     name: "Technical Support",
     icon: "shield",
-    iconColor: "teal",
+    iconColor: "amber",
     lightspeedUniverseId: LIGHTSPEED_UNIVERSE_ID,
     role: "admin",
     createdAt: agoIso(49 * DAY_MS),

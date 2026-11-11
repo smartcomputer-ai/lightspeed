@@ -63,7 +63,7 @@ function ModeHeader({ title }: { title: string }) {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton size="lg" render={<Link to="/" />} tooltip="Back">
+        <SidebarMenuButton size="lg" className="h-(--sidebar-header-button-height)" render={<Link to="/" />} tooltip="Back">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border">
             <BackIcon className="size-4" />
           </div>
@@ -143,7 +143,8 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           data-sidebar-logo=""
           className="sidebar-logo pointer-events-none absolute -z-10 group-data-[collapsible=icon]:hidden"
         />
-        <SidebarHeader className="relative">
+        {/* Fixed at the pane bar height, so the collapsed sidebar keeps the line too. */}
+        <SidebarHeader className="relative h-(--pane-bar-height) shrink-0 justify-center p-(--sidebar-header-padding)">
           {mode === "universe" ? (
             <UniverseSwitcher active={active} admin={admin} />
           ) : (

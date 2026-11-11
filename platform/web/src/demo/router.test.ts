@@ -96,20 +96,17 @@ describe("demo router", () => {
     }
   });
 
-  it("starts demo universes with distinct icons and colors while new universes use defaults", async () => {
+  it("starts demo universes with their own icons in the default color, while new universes use defaults", async () => {
     const { call } = await boot();
     const response = await call("GET", "/api/v1/universes");
     expect(response.status).toBe(200);
     const universes = response.json as Universe[];
     expect(universes).toHaveLength(3);
-    expect(new Set(universes.map(universe => universe.icon)).size).toBe(universes.length);
-    expect(new Set(universes.map(universe => universe.iconColor)).size).toBe(universes.length);
-    for (const universe of universes) {
-      expect(universe.icon).toBeTruthy();
-      expect(universe.icon).not.toBe("orbit");
-      expect(universe.iconColor).toBeTruthy();
-      expect(universe.iconColor).not.toBe("default");
-    }
+    expect(Object.fromEntries(universes.map(universe => [universe.name, [universe.icon, universe.iconColor]]))).toEqual({
+      "Software Factory": ["box-in-box", "violet"],
+      "Technical Support": ["shield", "amber"],
+      "Personal Assistant": ["personal-assistant", "blue"],
+    });
     const created = await call("POST", "/api/v1/universes", { name: "New universe" });
     expect(created.status).toBe(201);
     expect(created.json).toMatchObject({ icon: "orbit", iconColor: "default" });
@@ -117,13 +114,14 @@ describe("demo router", () => {
   it("saves shared universe appearance and validates choices", async () => {
     const { call } = await boot();
     const path = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
-    expect((await call("PATCH", path, { icon: "rocket", iconColor: "violet" })).status).toBe(200);
-    expect((await call("GET", path)).json).toMatchObject({ icon: "rocket", iconColor: "violet" });
+    expect((await call("PATCH", path, { icon: "network", iconColor: "violet" })).status).toBe(200);
+    expect((await call("GET", path)).json).toMatchObject({ icon: "network", iconColor: "violet" });
     expect((await call("GET", "/api/v1/universes")).json).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: SOFTWARE_FACTORY_UNIVERSE_ID, icon: "rocket", iconColor: "violet" }),
+      expect.objectContaining({ id: SOFTWARE_FACTORY_UNIVERSE_ID, icon: "network", iconColor: "violet" }),
     ]));
-    expect((await call("PATCH", path, { icon: "star", iconColor: "invalid" })).status).toBe(400);
-    expect((await call("GET", path)).json).toMatchObject({ icon: "rocket", iconColor: "violet" });
+    expect((await call("PATCH", path, { icon: "shield", iconColor: "invalid" })).status).toBe(400);
+    expect((await call("PATCH", path, { icon: "unknown", iconColor: "blue" })).status).toBe(400);
+    expect((await call("GET", path)).json).toMatchObject({ icon: "network", iconColor: "violet" });
   });
   it("keeps model defaults universe-scoped and revision-safe while preserving existing session models", async () => {
     const { store, call } = await boot();

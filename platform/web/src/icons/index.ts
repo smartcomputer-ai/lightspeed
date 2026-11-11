@@ -4,15 +4,15 @@
 /// roles.ts; the library behind it is chosen here, at build time, so only
 /// that library ships. Switching libraries is the import below.
 ///
-/// Every icon is tagged with `data-icon-role` (and universe icons with
-/// `data-universe-icon`), which the icon scale token and tests select on
-/// regardless of the library drawing it.
+/// Every icon is tagged with `data-icon-role`, which the icon scale token and
+/// tests select on regardless of the library drawing it. Universe icons are
+/// illustrations, not part of the library (components/universe-icon.tsx).
 
 import { createElement } from "react";
-import type { IconComponent, IconSet, UniverseIconSet } from "./roles";
+import type { IconComponent, IconSet } from "./roles";
 import { phosphor as library } from "./phosphor";
 
-export type { IconComponent, IconSet, IconLibrary, UniverseIconSet } from "./roles";
+export type { IconComponent, IconSet, IconLibrary } from "./roles";
 
 /// The active library's name, such as `lucide`.
 export const ICON_LIBRARY = library.name;
@@ -30,9 +30,6 @@ function tagAll<T extends { [K in keyof T]: IconComponent }>(icons: T, attribute
 }
 
 const icons: IconSet = tagAll(library.icons, "data-icon-role");
-
-/// The icons a universe can wear, by the name stored on the universe.
-export const UNIVERSE_ICON_CHOICES: UniverseIconSet = tagAll(library.universeIcons, "data-universe-icon");
 
 // Every role in IconSet, in the order roles.ts declares them.
 export const {

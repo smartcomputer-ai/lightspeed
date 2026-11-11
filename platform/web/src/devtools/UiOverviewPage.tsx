@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
+import { DEFAULT_UNIVERSE_ICON, UNIVERSE_ICONS } from "@lightspeed-ai/platform-shared";
 import { AddIcon, BotIcon, CopyIcon, DarkThemeIcon, DeleteIcon, EmailIcon, InboxIcon, LightThemeIcon, NotificationIcon, SearchIcon, SelectModeIcon, SettingsIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -100,7 +101,7 @@ import { ListGroupLabel, ListPaneBody, ListPaneHeader, ListPaneToolbar, ListRow,
 import { LightspeedLogo, LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { Starscape } from "@/components/starscape/starscape";
 import { UniverseIcon } from "@/components/universe-icon";
-import { HEADER_STARSCAPE_CLASS, HEADER_STARSCAPE_FADE } from "@/components/universe-switcher";
+import { HEADER_STARSCAPE_CLASS, HEADER_STARSCAPE_CONFIG, HEADER_STARSCAPE_FADE } from "@/components/universe-switcher";
 import { collectRoleUsage, iconRoles, libraryGlyphs, type IconRole, type RoleGlyph } from "./icon-usage";
 
 /// Every shared UI component and its variations on one page, grouped by
@@ -280,7 +281,7 @@ function BrandingSection() {
           className="p-0"
         >
           <div className="relative h-72 w-full overflow-hidden rounded-xl bg-sidebar text-sidebar-foreground">
-            <Starscape anchor={iconRef} fade={HEADER_STARSCAPE_FADE} transparentBackground className={HEADER_STARSCAPE_CLASS} />
+            <Starscape anchor={iconRef} fade={HEADER_STARSCAPE_FADE} config={HEADER_STARSCAPE_CONFIG} transparentBackground className={HEADER_STARSCAPE_CLASS} />
             <div className="relative flex h-16 items-center gap-2 px-4">
               <UniverseIcon ref={iconRef} />
               <span className="text-sm font-medium">Universe</span>
@@ -1180,13 +1181,13 @@ function IconsSection() {
       })}
       {!needle && (
         <Specimen
-          title={`Universe icons (${Object.keys(Icons.UNIVERSE_ICON_CHOICES).length})`}
-          note="Picked by name for each universe"
+          title={`Universe icons (${UNIVERSE_ICONS.length})`}
+          note={`Illustrations, tinted by the universe's color; ${DEFAULT_UNIVERSE_ICON} is the default`}
           className="grid grid-cols-[repeat(auto-fill,minmax(6rem,1fr))] gap-2"
         >
-          {Object.entries(Icons.UNIVERSE_ICON_CHOICES).map(([name, Icon]) => (
+          {UNIVERSE_ICONS.map((name) => (
             <span key={name} className="grid justify-items-center gap-1.5 rounded-lg border px-2 py-3">
-              <Icon className="size-5" />
+              <UniverseIcon icon={name} className="size-10" />
               <span className="font-mono text-[11px]">{name}</span>
             </span>
           ))}
