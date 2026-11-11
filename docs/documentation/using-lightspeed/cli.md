@@ -129,9 +129,10 @@ Saved connections live in `$XDG_CONFIG_HOME/lightspeed` or
 the selected universe's current handle and UUID. `universe status` shows just the
 active universe. Both resolve the effective selection, including environment
 and command-line overrides or a universe bound by the server. Status reports
-when no universe is selected, or when its handle cannot be read with the current
-key. Reading a handle requires deployment authority and the `deployment/universes`
-group (or single mode); a universe key still shows its bound UUID.
+when no universe is selected. A selection carries either the UUID or the
+handle; showing the other one requires deployment authority and the
+`deployment/universes` group (or single mode), and status says so when the
+current key cannot read it. A universe key still shows its bound UUID.
 `universe list` marks the active universe with `*`; it marks none if there is no
 selection. These commands support `--json`, as does `connect list`. JSON status
 includes the handle and UUID; JSON universe lists include each row's `active`
@@ -139,7 +140,7 @@ flag and the effective `activeUniverseId`.
 
 | Authority | Universe selection |
 | --- | --- |
-| Deployment key | Select by UUID or handle. The CLI stores the selection as the UUID, so a later rename does not move it. Listing universes and selecting by handle require `deployment/universes`; an explicit UUID works without it. |
+| Deployment key | Select by UUID or handle. `universe use` saves the UUID, so a later rename does not move the saved selection; saving by handle and listing universes require `deployment/universes`. `--universe` and `LIGHTSPEED_UNIVERSE` are sent as given, so a handle works with any deployment key and follows the name if the universe is renamed. |
 | Universe key | The key selects its universe. Conflicting overrides fail; no universe header is sent. |
 | Single mode | The server selects its configured universe; no identity headers are sent. |
 

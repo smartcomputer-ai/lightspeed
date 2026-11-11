@@ -111,10 +111,17 @@ impl ConnectionDisplay {
         details.push_str(&format!(
             "\nUniverse:\n  Handle: {}\n  UUID: {}",
             universe.handle.as_deref().unwrap_or("unavailable"),
-            universe.universe_id.as_deref().unwrap_or("none selected"),
+            universe
+                .universe_id
+                .as_deref()
+                .unwrap_or(if universe.handle.is_some() {
+                    "unavailable"
+                } else {
+                    "none selected"
+                }),
         ));
-        if let Some(reason) = &universe.handle_unavailable_reason {
-            details.push_str(&format!("\n  Handle lookup: {reason}"));
+        if let Some(reason) = &universe.unavailable_reason {
+            details.push_str(&format!("\n  Lookup: {reason}"));
         }
         Self {
             footer,
@@ -147,7 +154,7 @@ mod tests {
         UniverseStatus {
             universe_id: Some(uuid::Uuid::nil().to_string()),
             handle: Some("customer-a".into()),
-            handle_unavailable_reason: None,
+            unavailable_reason: None,
         }
     }
 
@@ -195,11 +202,29 @@ mod tests {
     }
 
     #[test]
+    fn a_selection_by_handle_shows_the_handle_when_the_uuid_cannot_be_read() {
+        let mut universe = universe();
+        universe.universe_id = None;
+        universe.unavailable_reason = Some("requires deployment/universes permission".into());
+        let display = ConnectionDisplay::new(
+            &connection(Some("production"), "https://runtime.example:8443/rpc"),
+            &universe,
+        );
+        assert_eq!(display.footer.as_deref(), Some("production / customer-a"));
+        assert!(display.details.contains("Handle: customer-a"));
+        assert!(display.details.contains("UUID: unavailable"));
+        assert!(
+            display
+                .details
+                .contains("requires deployment/universes permission")
+        );
+    }
+
+    #[test]
     fn unavailable_handles_keep_identity_and_explain_the_fallback() {
         let mut universe = universe();
         universe.handle = None;
-        universe.handle_unavailable_reason =
-            Some("requires deployment/universes permission".into());
+        universe.unavailable_reason = Some("requires deployment/universes permission".into());
         let mut connection = connection(None, "https://runtime.example:8443/rpc");
         connection.caller.as_mut().unwrap().scope = api::AccessScope::Universe {
             universe_id: uuid::Uuid::nil(),

@@ -746,7 +746,7 @@ async fn binding(args: BindingArgs) -> Result<()> {
                 .request(
                     api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT,
                     api::DeploymentProviderBindingPutParams {
-                        universe: selected_universe_id("binding a provider")?,
+                        universe: selected_universe("binding a provider")?,
                         provider_id,
                         enabled,
                     },
@@ -760,7 +760,7 @@ async fn binding(args: BindingArgs) -> Result<()> {
                 .request(
                     api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE,
                     api::DeploymentProviderBindingDeleteParams {
-                        universe: selected_universe_id("deleting a binding")?,
+                        universe: selected_universe("deleting a binding")?,
                         provider_id,
                     },
                 )
@@ -886,11 +886,12 @@ struct ProviderPutArgs {
     json: bool,
 }
 
-/// The universe a deployment-scoped binding command addresses.
-fn selected_universe_id(action: &str) -> Result<String> {
+/// The universe a deployment-scoped binding command addresses, as the UUID
+/// or handle the connection selects.
+fn selected_universe(action: &str) -> Result<String> {
     crate::connection::ACTIVE
         .get()
-        .and_then(|c| c.active_universe_id())
+        .and_then(|c| c.active_universe())
         .ok_or_else(|| anyhow::anyhow!("select a universe before {action}"))
 }
 #[derive(Args, Debug, Clone)]

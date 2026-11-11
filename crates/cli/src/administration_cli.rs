@@ -61,7 +61,22 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 )
                 .await?
                 .result;
-            let active_id = active.active_universe_id();
+            // The selection may be a handle; the listing gives its UUID.
+            let selected = active.active_universe();
+            let is_active = |universe: &api::DeploymentUniverseView| {
+                selected.as_deref() == Some(universe.universe_id.as_str())
+                    || selected.as_deref() == Some(universe.handle.as_str())
+            };
+            let active_id = response
+                .universes
+                .iter()
+                .find(|universe| is_active(universe))
+                .map(|universe| universe.universe_id.clone())
+                .or_else(|| {
+                    selected
+                        .clone()
+                        .filter(|s| uuid::Uuid::parse_str(s).is_ok())
+                });
             if args.json {
                 #[derive(serde::Serialize)]
                 struct ListedUniverse {
@@ -73,7 +88,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                     .universes
                     .into_iter()
                     .map(|universe| ListedUniverse {
-                        active: active_id.as_deref() == Some(universe.universe_id.as_str()),
+                        active: is_active(&universe),
                         universe,
                     })
                     .collect();
@@ -89,11 +104,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 for u in response.universes {
                     println!(
                         "{} {}  {}",
-                        if active_id.as_deref() == Some(u.universe_id.as_str()) {
-                            "*"
-                        } else {
-                            " "
-                        },
+                        if is_active(&u) { "*" } else { " " },
                         u.universe_id,
                         u.handle
                     );
