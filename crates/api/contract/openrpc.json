@@ -8917,12 +8917,13 @@
               "null"
             ]
           },
-          "universeId": {
+          "universe": {
+            "description": "The universe's UUID or handle.",
             "type": "string"
           }
         },
         "required": [
-          "universeId"
+          "universe"
         ],
         "type": "object"
       },
@@ -9115,12 +9116,13 @@
           "providerId": {
             "type": "string"
           },
-          "universeId": {
+          "universe": {
+            "description": "The universe's UUID or handle.",
             "type": "string"
           }
         },
         "required": [
-          "universeId",
+          "universe",
           "providerId"
         ],
         "type": "object"
@@ -9146,12 +9148,13 @@
           "providerId": {
             "type": "string"
           },
-          "universeId": {
+          "universe": {
+            "description": "The universe's UUID or handle.",
             "type": "string"
           }
         },
         "required": [
-          "universeId",
+          "universe",
           "providerId",
           "enabled"
         ],
@@ -9174,12 +9177,13 @@
           "sessionId": {
             "type": "string"
           },
-          "universeId": {
+          "universe": {
+            "description": "The universe's UUID or handle.",
             "type": "string"
           }
         },
         "required": [
-          "universeId",
+          "universe",
           "sessionId"
         ],
         "type": "object"
@@ -9201,8 +9205,8 @@
       },
       "DeploymentUniverseCreateParams": {
         "properties": {
-          "slug": {
-            "description": "Optional core universe slug, set only when the universe is first created.",
+          "handle": {
+            "description": "The new universe's handle: 1-63 lowercase letters, digits and\nhyphens, starting and ending with a letter or digit, and not in the\nform of a UUID. Omit it to have one derived from the UUID. Ignored\nwhen the universe already exists.",
             "type": [
               "string",
               "null"
@@ -9235,12 +9239,13 @@
       },
       "DeploymentUniverseDeleteParams": {
         "properties": {
-          "universeId": {
+          "universe": {
+            "description": "The universe's UUID or handle.",
             "type": "string"
           }
         },
         "required": [
-          "universeId"
+          "universe"
         ],
         "type": "object"
       },
@@ -9270,6 +9275,24 @@
         ],
         "type": "object"
       },
+      "DeploymentUniverseHandlePutParams": {
+        "description": "Rename a universe. The UUID and resources remain unchanged; the previous\nhandle is released, so requests and URLs using it stop reaching this\nuniverse.",
+        "properties": {
+          "handle": {
+            "description": "The new handle: 1-63 lowercase letters, digits and hyphens, starting\nand ending with a letter or digit, and not in the form of a UUID.",
+            "type": "string"
+          },
+          "universe": {
+            "description": "The universe's UUID or current handle.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "universe",
+          "handle"
+        ],
+        "type": "object"
+      },
       "DeploymentUniverseListParams": {
         "type": "object"
       },
@@ -9287,12 +9310,13 @@
       },
       "DeploymentUniverseReadParams": {
         "properties": {
-          "universeId": {
+          "universe": {
+            "description": "The universe's UUID or handle.",
             "type": "string"
           }
         },
         "required": [
-          "universeId"
+          "universe"
         ],
         "type": "object"
       },
@@ -9304,28 +9328,6 @@
         },
         "required": [
           "universe"
-        ],
-        "type": "object"
-      },
-      "DeploymentUniverseSlugPutParams": {
-        "description": "Set or change an existing universe's deployment-unique slug. The UUID and\nresources remain unchanged; URLs using the previous slug may stop working.",
-        "properties": {
-          "onlyIfUnset": {
-            "default": false,
-            "description": "For adoption: assign only if unnamed, or succeed if already equal.\nReject a different existing slug instead of renaming it.",
-            "type": "boolean"
-          },
-          "slug": {
-            "description": "1-128 ASCII characters: an alphanumeric first character, followed by\nalphanumerics, underscores, hyphens, dots or colons.",
-            "type": "string"
-          },
-          "universeId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "universeId",
-          "slug"
         ],
         "type": "object"
       },
@@ -9341,6 +9343,10 @@
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
+          },
+          "handle": {
+            "description": "The universe's deployment-unique name. Requests may address the\nuniverse by it wherever they may by UUID.",
+            "type": "string"
           },
           "lastActivityAtMs": {
             "description": "Most recent session activity (`max(sessions.updated_at_ms)`); absent\nwhen the universe has no sessions.",
@@ -9361,12 +9367,6 @@
             "minimum": 0,
             "type": "integer"
           },
-          "slug": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "universeId": {
             "type": "string"
           },
@@ -9378,6 +9378,7 @@
         },
         "required": [
           "universeId",
+          "handle",
           "createdAtMs",
           "sessions",
           "workspaces",
@@ -23110,7 +23111,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
+      "description": "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.",
       "name": "deployment/universes/create",
       "paramStructure": "by-name",
       "params": [
@@ -23164,7 +23165,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
+      "description": "Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.",
       "name": "deployment/universes/read",
       "paramStructure": "by-name",
       "params": [
@@ -23191,15 +23192,15 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.",
-      "name": "deployment/universes/slug/put",
+      "description": "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.",
+      "name": "deployment/universes/handle/put",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/DeploymentUniverseSlugPutParams"
+            "$ref": "#/components/schemas/DeploymentUniverseHandlePutParams"
           }
         }
       ],
@@ -23209,7 +23210,7 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentUniverseReadResponse"
         }
       },
-      "summary": "Set a universe slug",
+      "summary": "Rename a universe",
       "x-lightspeed-access": {
         "kind": "deployment"
       },

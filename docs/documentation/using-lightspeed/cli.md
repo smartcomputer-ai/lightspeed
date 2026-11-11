@@ -16,9 +16,8 @@ From a source checkout, start either the runtime alone or the full product:
 Use `./dev.sh --no-envd` to include Platform. Both profiles default to
 `authenticated` mode. After migrations, the launcher creates the initial
 universe and provisions separate CLI and Platform keys as needed. The initial
-universe receives the slug `development` if it has no slug; an existing slug
-is preserved. Universe listings show `(no slug)` for unnamed universes. In another
-terminal, from the same checkout:
+universe is created with the handle `development`; if it already exists, it
+keeps the handle it has. In another terminal, from the same checkout:
 
 ```bash
 cargo build --locked -p cli
@@ -86,7 +85,7 @@ Start the server in `LIGHTSPEED_AUTH_MODE=authenticated`. On the client:
 ```bash
 lightspeed connect add production --url https://runtime.example/rpc
 lightspeed connect use production
-lightspeed universe create --slug personal
+lightspeed universe create --handle personal
 lightspeed universe use personal
 ```
 
@@ -105,7 +104,7 @@ lightspeed connect use production
 lightspeed universe list
 lightspeed universe use personal
 lightspeed universe status
-lightspeed universe set-slug personal my-personal
+lightspeed universe set-handle personal my-personal
 lightspeed --connection production --universe staging session list
 lightspeed connect remove production
 ```
@@ -127,27 +126,34 @@ for old overrides there if the effective connection is unexpected.
 Saved connections live in `$XDG_CONFIG_HOME/lightspeed` or
 `$HOME/.config/lightspeed`. `LIGHTSPEED_CONFIG_DIR` overrides that directory.
 `connect status` groups the effective connection and key authority, followed by
-the selected universe's current slug and UUID. `universe status` shows just the
+the selected universe's current handle and UUID. `universe status` shows just the
 active universe. Both resolve the effective selection, including environment
 and command-line overrides or a universe bound by the server. Status reports
-when no universe is selected, or when its slug cannot be read with the current
-key. Slug lookup requires deployment authority and the `deployment/universes`
+when no universe is selected, or when its handle cannot be read with the current
+key. Reading a handle requires deployment authority and the `deployment/universes`
 group (or single mode); a universe key still shows its bound UUID.
 `universe list` marks the active universe with `*`; it marks none if there is no
 selection. These commands support `--json`, as does `connect list`. JSON status
-includes the slug and UUID; JSON universe lists include each row's `active`
+includes the handle and UUID; JSON universe lists include each row's `active`
 flag and the effective `activeUniverseId`.
 
 | Authority | Universe selection |
 | --- | --- |
-| Deployment key | Select by core UUID or slug. Listing/slugs require `deployment/universes`; explicit UUIDs work without listing permission. |
+| Deployment key | Select by UUID or handle. The CLI stores the selection as the UUID, so a later rename does not move it. Listing universes and selecting by handle require `deployment/universes`; an explicit UUID works without it. |
 | Universe key | The key selects its universe. Conflicting overrides fail; no universe header is sent. |
 | Single mode | The server selects its configured universe; no identity headers are sent. |
 
-Runtime slugs are optional and unique within a deployment. `universe set-slug`
-assigns or changes one without changing the UUID, resources, keys or saved CLI
-selection. Renaming releases the old slug; old Platform URLs can stop working
-or refer to another universe if that slug is reused.
+Every universe has a handle: a name that is unique within the deployment and
+addresses the universe wherever its UUID does. A handle is 1 to 63 lowercase
+letters, digits and hyphens, starts and ends with a letter or digit, and cannot
+have the form of a UUID. `universe create` without `--handle` derives one from
+the UUID, such as `u-41d07ab355e1`.
+
+`universe set-handle` renames a universe without changing its UUID, resources,
+keys or saved CLI selection. Renaming releases the old handle: Platform URLs
+and API clients that use it stop reaching the universe, and reach another one
+if that handle is later reused. Automation that addresses a universe by handle
+should treat a rename as a coordinated change.
 
 Deployment operations omit the universe header even when a universe is
 selected. Keys remain constrained by their allowed groups. A direct runtime
@@ -188,12 +194,12 @@ lightspeed chat --provider my-provider --api-kind openai:completions --model MOD
 Without those flags, a new session uses its profile's model, if supplied, then
 the universe's agent-run default. Configure that default below or select a
 route explicitly. Provider identity and API kind are fixed for each session;
-`/model` can choose any other model within that route. The TUI footer shows the connection name and universe slug
+`/model` can choose any other model within that route. The TUI footer shows the connection name and universe handle
 for saved or explicit runtime connections; generated local-development
 connections omit this label. The footer also shows the current session ID,
-shortening UUIDs while preserving readable IDs. If the universe slug is
+shortening UUIDs while preserving readable IDs. If the universe handle is
 unavailable, the footer uses a short universe UUID. `/status` shows the full connection name, endpoint,
-authentication scope, universe slug/UUID and current session ID. Connection
+authentication scope, universe handle/UUID and current session ID. Connection
 details are captured when chat opens, with no background polling. Each process
 keeps its resolved connection; switching saved defaults elsewhere does not
 retarget a running chat. See [Sessions and runs](sessions-and-runs.md) for
@@ -292,19 +298,19 @@ These are integration credentials, not personal Platform login tokens.
 
 To add Platform, give it its own deployment service key with the required
 method groups and actor assertion. Use Platform's administrator adoption flow
-to link an existing runtime universe. Platform uses the runtime slug for its
-URLs and caches it for lookups. Creation sends the requested slug to runtime;
-adoption preserves an existing slug or requires one to be assigned to an unnamed
-universe before linking. Platform does not invent a different slug on collision.
+to link an existing runtime universe. Platform uses the universe's handle for
+its URLs and caches it for lookups. Creation sends the requested handle to
+runtime; adoption keeps the handle the universe already has. Platform does not
+invent a different handle on collision.
 Ordinary universe lists and reads use Platform's database without contacting
 runtime. Creation, adoption and renaming through Platform's general settings
-immediately cache the slug returned by runtime. After a CLI or direct API rename,
+immediately cache the handle returned by runtime. After a CLI or direct API rename,
 a Platform administrator must use **Sync from runtime** on the **Universes**
-page to update the cached URLs. There is no periodic or background slug refresh.
-A failed sync reports an error and preserves the cache; missing or unnamed
-runtime universes are reported as skipped for review. During runtime outages,
+page to update the cached URLs. There is no periodic or background handle refresh.
+A failed sync reports an error and preserves the cache; universes missing from
+the runtime are reported as skipped for review. During runtime outages,
 the cached universe list remains available for membership administration.
-Linked universes across different runtime deployments must have distinct slugs
+Linked universes across different runtime deployments must have distinct handles
 within one Platform.
 
 IDs, profiles and sessions stay in the runtime; Platform creates only its

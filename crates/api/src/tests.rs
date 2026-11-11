@@ -3657,7 +3657,7 @@ struct TestDeploymentService;
 fn test_deployment_universe(universe_id: &str) -> DeploymentUniverseView {
     DeploymentUniverseView {
         universe_id: universe_id.to_owned(),
-        slug: Some("acme".to_owned()),
+        handle: "acme".to_owned(),
         created_at_ms: 10,
         last_activity_at_ms: Some(20),
         sessions: 3,
@@ -3722,16 +3722,16 @@ impl DeploymentApiService for TestDeploymentService {
         params: DeploymentUniverseReadParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
-            universe: test_deployment_universe(&params.universe_id),
+            universe: test_deployment_universe(&params.universe),
         }))
     }
 
-    async fn put_universe_slug(
+    async fn put_universe_handle(
         &self,
-        params: DeploymentUniverseSlugPutParams,
+        params: DeploymentUniverseHandlePutParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
-        let mut universe = test_deployment_universe(&params.universe_id);
-        universe.slug = Some(params.slug);
+        let mut universe = test_deployment_universe(&params.universe);
+        universe.handle = params.handle;
         Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
             universe,
         }))
@@ -3742,7 +3742,7 @@ impl DeploymentApiService for TestDeploymentService {
         params: DeploymentUniverseDeleteParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseDeleteResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(DeploymentUniverseDeleteResponse {
-            universe_id: params.universe_id,
+            universe_id: params.universe,
             workflows_terminated: 2,
             blob_objects_deleted: 5,
         }))
@@ -3904,12 +3904,12 @@ async fn deployment_environment_provider_methods_dispatch() {
         ),
         (
             METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT,
-            json!({ "universeId": universe_id, "providerId": "incus-local", "enabled": true }),
+            json!({ "universe": universe_id, "providerId": "incus-local", "enabled": true }),
             "binding",
         ),
         (
             METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE,
-            json!({ "universeId": universe_id, "providerId": "incus-local" }),
+            json!({ "universe": universe_id, "providerId": "incus-local" }),
             "binding",
         ),
     ];
@@ -3992,13 +3992,26 @@ async fn dispatch_deployment_json_rpc_routes_universe_lifecycle() {
         JsonRpcRequest {
             id: RequestId::Number(3),
             method: METHOD_DEPLOYMENT_UNIVERSES_DELETE.to_owned(),
-            params: Some(json!({ "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" })),
+            params: Some(json!({ "universe": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" })),
         },
     )
     .await;
     let result = delete.result.expect("result");
     assert_eq!(result["result"]["workflowsTerminated"], json!(2));
     assert_eq!(result["result"]["blobObjectsDeleted"], json!(5));
+
+    // A rename addresses the universe by either form and names the new handle.
+    let rename = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
+        JsonRpcRequest {
+            id: RequestId::Number(4),
+            method: METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT.to_owned(),
+            params: Some(json!({ "universe": "acme", "handle": "acme-labs" })),
+        },
+    )
+    .await;
+    let result = rename.result.expect("result");
+    assert_eq!(result["result"]["universe"]["handle"], json!("acme-labs"));
 }
 
 #[tokio::test(flavor = "current_thread")]

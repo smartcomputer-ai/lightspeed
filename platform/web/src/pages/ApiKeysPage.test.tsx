@@ -8,7 +8,7 @@ import { ApiKeysPage } from "./ApiKeysPage";
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", () => ({
-  useActiveUniverse: () => ({ universe: { id: "platform-universe" }, slug: "factory", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "platform-universe" }, handle: "factory", isLoading: false }),
 }));
 vi.mock("@/lib/permissions", () => ({ useActionPermissions: () => ({ can: () => true }) }));
 

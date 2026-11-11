@@ -30,7 +30,7 @@ struct Cli {
     /// Use a saved runtime connection for this invocation.
     #[arg(long, global = true)]
     connection: Option<String>,
-    /// Universe UUID or slug for this invocation.
+    /// Universe UUID or handle for this invocation.
     #[arg(long, global = true)]
     universe: Option<String>,
     #[command(subcommand)]

@@ -47,7 +47,7 @@ npm install --save-exact "@lightspeed-ai/sdk@<release-version>"
 Replace `<release-version>` with the actual package version, or run
 `npm install @lightspeed-ai/sdk` for the latest release. Supply `LIGHTSPEED_API_URL` and `LIGHTSPEED_API_KEY` through the
 application's protected configuration. A deployment key also needs the `universe`
-client option; a universe key must leave it out. The example also reads
+client option, set to the universe's UUID or handle; a universe key must leave it out. The example also reads
 `ACORN_RELEASE_JOB_ID`, an application-defined operation ID such as
 `acorn-1.2-draft-001`. Keep it unchanged when retrying that operation.
 

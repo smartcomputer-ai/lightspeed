@@ -91,20 +91,20 @@ export function isReusableCredential(
 }
 
 export function CredentialsPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
   if (!universe || !permissions.can("configureResource")) {
-    return <UniverseNotFound slug={slug} />;
+    return <UniverseNotFound handle={handle} />;
   }
 
-  return <CredentialList universeId={universe.id} slug={universe.slug} />;
+  return <CredentialList universeId={universe.id} handle={universe.handle} />;
 }
 
-function CredentialList({ universeId, slug }: { universeId: string; slug: string }) {
+function CredentialList({ universeId, handle }: { universeId: string; handle: string }) {
   const queryClient = useQueryClient();
   const [pasteOpen, setPasteOpen] = useState(false);
   const [gitHubOpen, setGitHubOpen] = useState(false);
@@ -175,9 +175,9 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
       />
       <p className="mb-4 text-sm text-muted-foreground">
         Model keys and subscription logins are managed on{" "}
-        <Link to={`/u/${slug}/models`} className="underline underline-offset-2">Models</Link>, MCP
+        <Link to={`/u/${handle}/models`} className="underline underline-offset-2">Models</Link>, MCP
         server logins on{" "}
-        <Link to={`/u/${slug}/mcp-servers`} className="underline underline-offset-2">MCP servers</Link>.
+        <Link to={`/u/${handle}/mcp-servers`} className="underline underline-offset-2">MCP servers</Link>.
       </p>
       {inventory.isLoading && <LoadingNote />}
       {inventory.error && (

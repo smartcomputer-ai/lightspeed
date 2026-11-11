@@ -70,7 +70,7 @@ and `submissionId` so a retry finds the same session and run. See
 | --- | --- |
 | `endpoint` | The gateway's `/rpc` URL. |
 | `apiKey` | Sent as the bearer credential. |
-| `universe` | The universe UUID, for a deployment key only. A universe key must leave it out. |
+| `universe` | The universe's UUID or handle, for a deployment key only. A universe key must leave it out. |
 | `actor` | An opaque user ID to attribute requests to. The key must be created with `assertActor`. |
 | `headers` | Extra headers, or a function returning them for each request. These override the options above. |
 | `fetch` | A replacement `fetch`, for tests or custom transports. |

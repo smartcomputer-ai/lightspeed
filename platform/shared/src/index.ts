@@ -5,13 +5,20 @@ export * from "./workspace-transfers.js";
 
 /// Input shapes shared by the API (validation) and the CLI (request typing).
 
-/// Runtime slugs are deployment-unique; the UUID remains stable on rename.
-export const universeSlugSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
+/// A universe's handle is its deployment-unique name; the UUID remains stable
+/// on rename. The runtime owns the rule, mirrored here so forms can check
+/// before sending: a lowercase DNS label that is not in the form of a UUID.
+export const UNIVERSE_HANDLE_MAX_LENGTH = 63;
+const UUID_SHAPED = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/;
+export const universeHandleSchema = z
+  .string()
+  .regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/)
+  .refine((handle) => !UUID_SHAPED.test(handle));
 
 export const universeCreateSchema = z.object({
   name: z.string().min(1).max(100),
-  /// Requested runtime slug; derived from name when omitted.
-  slug: universeSlugSchema.optional(),
+  /// Requested handle; derived from the name when omitted.
+  handle: universeHandleSchema.optional(),
 });
 export type UniverseCreateInput = z.infer<typeof universeCreateSchema>;
 
@@ -79,8 +86,17 @@ export function slugify(name: string): string {
       .normalize("NFKD")
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || "universe"
+      .slice(0, 60)
+      // The cut can land on a separator.
+      .replace(/-+$/, "") || "universe"
   );
+}
+
+/// The handle suggested for a universe's display name. A name that reduces to
+/// the form of a UUID is prefixed so it stays a valid handle.
+export function universeHandleFromName(name: string): string {
+  const handle = slugify(name);
+  return UUID_SHAPED.test(handle) ? `u-${handle}`.slice(0, UNIVERSE_HANDLE_MAX_LENGTH) : handle;
 }
 
 interface FeatureDefinition<Key extends string> {

@@ -1,4 +1,4 @@
-import { syncUniverseSlugs, requireAvailableCachedSlug } from "../universe-slugs.js";
+import { syncUniverseHandles, requireAvailableCachedHandle } from "../universe-handles.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { and, eq, ne } from "drizzle-orm";
@@ -9,9 +9,9 @@ import {
   memberAddSchema,
   memberUpdateSchema,
   mergeFeatureOverrides,
-  slugify,
+  universeHandleFromName,
   universeCreateSchema,
-  universeSlugSchema,
+  universeHandleSchema,
   universeRoleSchema,
   universeUpdateSchema,
   type UniverseRole,
@@ -29,29 +29,30 @@ type UniverseRow = typeof universes.$inferSelect;
 
 /// A universe as the API shows it: its row, where features are what is on
 /// now (defaults and requirements applied), not the stored switches.
-function universeView(row: UniverseRow, slug: string | null, role: UniverseRole | string | null) {
-  return { ...row, features: effectiveFeatures(row.features), slug, role };
+function universeView(row: UniverseRow, handle: string | null, role: UniverseRole | string | null) {
+  return { ...row, features: effectiveFeatures(row.features), handle, role };
 }
 
 /// A universe the signed-in user may address, and as whom.
 export interface UniverseAccess {
   universe: UniverseRow;
-  slug: string;
+  handle: string;
   /// The member's role; a platform admin acts as `admin` in every universe.
   role: UniverseRole;
   member: Member;
 }
 
 /// Universe access for the current session: membership in the universe's
-/// organization, or platform admin. `null` reads as not found. `slug` is the
-/// cached runtime slug used in the universe URL.
+/// organization, or platform admin. `null` reads as not found. `handle` is the
+/// cached runtime handle used in the universe URL. It is kept in the
+/// organization's `slug` column, whose name the authentication library owns.
 async function universeForSession(
   ctx: AppContext,
   c: { get: (key: "session") => ApiVariables["session"] },
   universeId: string,
 ): Promise<UniverseAccess | null> {
   const [row] = await ctx.db
-    .select({ universe: universes, slug: organization.slug })
+    .select({ universe: universes, handle: organization.slug })
     .from(universes)
     .innerJoin(organization, eq(organization.id, universes.organizationId))
     .where(eq(universes.id, universeId))
@@ -69,23 +70,23 @@ async function universeForSession(
   if (!role) {
     return null;
   }
-  return { universe: row.universe, slug: row.slug ?? "", role, member: { userId: session.user.id, role } };
+  return { universe: row.universe, handle: row.handle, role, member: { userId: session.user.id, role } };
 }
 
 /// Creates the platform half of a universe: an organization caching the
-/// authoritative runtime slug, the creator as its admin, and a row linked to the
+/// authoritative runtime handle, the creator as its admin, and a row linked to the
 /// given engine universe id. Shared by create (fresh engine id) and adopt
 /// (existing engine id).
 async function createUniverseRows(
   ctx: AppContext,
   userId: string,
   name: string,
-  slug: string,
+  handle: string,
   lightspeedUniverseId: string,
 ) {
   return await ctx.db.transaction(async (tx) => {
     const orgId = crypto.randomUUID();
-    await tx.insert(organization).values({ id: orgId, name, slug, createdAt: new Date() });
+    await tx.insert(organization).values({ id: orgId, name, slug: handle, createdAt: new Date() });
     await tx.insert(member).values({
       id: crypto.randomUUID(),
       organizationId: orgId,
@@ -97,7 +98,7 @@ async function createUniverseRows(
       .insert(universes)
       .values({ organizationId: orgId, lightspeedUniverseId, name })
       .returning();
-    return universeView(universe!, slug, "admin");
+    return universeView(universe!, handle, "admin");
   });
 }
 
@@ -120,14 +121,15 @@ async function isLastAdmin(ctx: AppContext, organizationId: string, memberId: st
   return !other;
 }
 
-const adoptSchema = z.object({
+// Strict, so a request that tries to name the universe is refused instead of
+// being adopted under the handle it already has.
+const adoptSchema = z.strictObject({
   // Shape only, not RFC 4122: the id comes from the engine, which uses
   // non-conformant ids like the …0001 default universe (version nibble 0).
   lightspeedUniverseId: z
     .string()
     .regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/),
   name: z.string().trim().min(1).max(120),
-  slug: universeSlugSchema.optional(),
 });
 
 const apiKeyCreateSchema = z.object({
@@ -146,24 +148,24 @@ export function universeRoutes(ctx: AppContext) {
       // All universes; role is filled in where the admin happens to be a
       // member (the switcher shows memberships, the admin area shows all).
       const rows = await ctx.db
-        .select({ universe: universes, slug: organization.slug, role: member.role })
+        .select({ universe: universes, handle: organization.slug, role: member.role })
         .from(universes)
         .innerJoin(organization, eq(organization.id, universes.organizationId))
         .leftJoin(member, and(eq(member.organizationId, universes.organizationId), eq(member.userId, session.user.id)));
-      return c.json(rows.map((r) => universeView(r.universe, r.slug, r.role)));
+      return c.json(rows.map((r) => universeView(r.universe, r.handle, r.role)));
     }
     const rows = await ctx.db
-      .select({ universe: universes, slug: organization.slug, role: member.role })
+      .select({ universe: universes, handle: organization.slug, role: member.role })
       .from(universes)
       .innerJoin(organization, eq(organization.id, universes.organizationId))
       .innerJoin(member, eq(member.organizationId, universes.organizationId))
       .where(eq(member.userId, session.user.id));
-    return c.json(rows.map((r) => universeView(r.universe, r.slug, r.role)));
+    return c.json(rows.map((r) => universeView(r.universe, r.handle, r.role)));
   }));
 
-  app.post("/sync-slugs", (c) => {
+  app.post("/sync-handles", (c) => {
     if (!isPlatformAdmin(c.get("session"))) return c.json({ error: "platform admin required" }, 403);
-    return withGateway(c, async () => c.json(await syncUniverseSlugs(ctx)));
+    return withGateway(c, async () => c.json(await syncUniverseHandles(ctx)));
   });
 
   app.post("/", async (c) => {
@@ -176,21 +178,20 @@ export function universeRoutes(ctx: AppContext) {
       return body.response;
     }
     const input = body.data;
-    const requestedSlug = input.slug ?? slugify(input.name);
+    const requestedHandle = input.handle ?? universeHandleFromName(input.name);
     // The engine universe must exist before anything addresses it, so the
     // engine create comes first. Idempotent: if the platform transaction
     // below fails, the orphaned engine universe is empty, harmless, and
     // reaped by a deployment purge.
     const lightspeedUniverseId = crypto.randomUUID();
     return withGateway(c, async () => {
-      await requireAvailableCachedSlug(ctx, requestedSlug);
+      await requireAvailableCachedHandle(ctx, requestedHandle);
       const response = await deploymentClientFor(ctx).call("deployment/universes/create", {
         universeId: lightspeedUniverseId,
-        slug: requestedSlug,
+        handle: requestedHandle,
       });
-      const slug = response.result.universe.slug;
-      if (!slug) return c.json({ error: "runtime did not assign a universe slug" }, 502);
-      const created = await createUniverseRows(ctx, session.user.id, input.name, slug, response.result.universe.universeId);
+      const { handle, universeId } = response.result.universe;
+      const created = await createUniverseRows(ctx, session.user.id, input.name, handle, universeId);
       return c.json(created, 201);
     });
   });
@@ -227,8 +228,8 @@ export function universeRoutes(ctx: AppContext) {
 
   /// Adopts an engine universe the platform has no row for: verifies it
   /// exists engine-side (fail closed on typos), then creates the platform
-  /// half. A missing runtime slug must be assigned before linking. Existing
-  /// slugs and resources are preserved; the caller becomes its Platform admin.
+  /// half under the handle the universe already has. Its handle and resources
+  /// are preserved; the caller becomes its Platform admin.
   app.post("/adopt", async (c) => {
     const session = c.get("session");
     if (!isPlatformAdmin(session)) {
@@ -248,24 +249,11 @@ export function universeRoutes(ctx: AppContext) {
       return c.json({ error: "already linked to a universe" }, 409);
     }
     return withGateway(c, async () => {
-      const client = deploymentClientFor(ctx);
-      let { result: { universe } } = await client.call("deployment/universes/read", {
-        universeId: input.lightspeedUniverseId,
+      const { result: { universe } } = await deploymentClientFor(ctx).call("deployment/universes/read", {
+        universe: input.lightspeedUniverseId,
       });
-      if (universe.slug && input.slug && universe.slug !== input.slug) {
-        return c.json({ error: "adoption must use the existing runtime slug; rename it separately in runtime" }, 409);
-      }
-      if (!universe.slug) {
-        if (!input.slug) return c.json({ error: "a slug is required to adopt an unnamed runtime universe" }, 400);
-        await requireAvailableCachedSlug(ctx, input.slug);
-        const assigned = await client.call("deployment/universes/slug/put", {
-          universeId: universe.universeId, slug: input.slug, onlyIfUnset: true,
-        });
-        universe = assigned.result.universe;
-      }
-      if (!universe.slug) return c.json({ error: "runtime did not assign a universe slug" }, 502);
-      await requireAvailableCachedSlug(ctx, universe.slug);
-      const created = await createUniverseRows(ctx, session.user.id, input.name, universe.slug, universe.universeId);
+      await requireAvailableCachedHandle(ctx, universe.handle);
+      const created = await createUniverseRows(ctx, session.user.id, input.name, universe.handle, universe.universeId);
       return c.json(created, 201);
     });
   });
@@ -285,16 +273,11 @@ export function universeRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const created = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
         "deployment/universes/create",
-        { universeId: access.universe.lightspeedUniverseId, slug: access.slug },
+        { universeId: access.universe.lightspeedUniverseId, handle: access.handle },
       );
-      // This explicit repair can also initialize older unnamed runtime rows.
-      const universe = created.result.universe.slug ? created.result.universe : (
-        await deploymentClientFor(ctx, access.universe.gatewayUrl).call("deployment/universes/slug/put", {
-          universeId: access.universe.lightspeedUniverseId, slug: access.slug, onlyIfUnset: true,
-        })
-      ).result.universe;
-      if (!universe.slug) return c.json({ error: "runtime did not assign a universe slug" }, 502);
-      await ctx.db.update(organization).set({ slug: universe.slug }).where(eq(organization.id, access.universe.organizationId));
+      // A universe that already exists keeps the handle it has; cache that.
+      await ctx.db.update(organization).set({ slug: created.result.universe.handle })
+        .where(eq(organization.id, access.universe.organizationId));
       return c.json({ created: created.result.created });
     });
   });
@@ -399,7 +382,7 @@ export function universeRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const report = await deploymentClientFor(ctx).call("deployment/universes/delete", {
-        universeId: lightspeedUniverseId,
+        universe: lightspeedUniverseId,
       });
       return c.json({ ok: true, purge: report.result });
     });
@@ -425,7 +408,7 @@ export function universeRoutes(ctx: AppContext) {
       try {
         const report = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
           "deployment/universes/delete",
-          { universeId: access.universe.lightspeedUniverseId },
+          { universe: access.universe.lightspeedUniverseId },
         );
         purge = report.result;
       } catch (error) {
@@ -445,24 +428,23 @@ export function universeRoutes(ctx: AppContext) {
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return c.json(universeView(access.universe, access.slug, access.role));
+    return c.json(universeView(access.universe, access.handle, access.role));
   }));
 
-  app.put("/:id/slug", async (c) => {
+  app.put("/:id/handle", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
     if (access.role !== "admin") return c.json({ error: "universe admin required" }, 403);
-    const body = await parseBody(c, z.object({ slug: universeSlugSchema }));
+    const body = await parseBody(c, z.object({ handle: universeHandleSchema }));
     if (!body.ok) return body.response;
     return withGateway(c, async () => {
-      await requireAvailableCachedSlug(ctx, body.data.slug, access.universe.organizationId);
-      const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call("deployment/universes/slug/put", {
-        universeId: access.universe.lightspeedUniverseId, slug: body.data.slug, onlyIfUnset: false,
+      await requireAvailableCachedHandle(ctx, body.data.handle, access.universe.organizationId);
+      const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call("deployment/universes/handle/put", {
+        universe: access.universe.lightspeedUniverseId, handle: body.data.handle,
       });
-      const slug = response.result.universe.slug;
-      if (!slug) return c.json({ error: "runtime did not return a universe slug" }, 502);
-      await ctx.db.update(organization).set({ slug }).where(eq(organization.id, access.universe.organizationId));
-      return c.json(universeView(access.universe, slug, access.role));
+      const handle = response.result.universe.handle;
+      await ctx.db.update(organization).set({ slug: handle }).where(eq(organization.id, access.universe.organizationId));
+      return c.json(universeView(access.universe, handle, access.role));
     });
   });
 
@@ -479,7 +461,7 @@ export function universeRoutes(ctx: AppContext) {
       return body.response;
     }
     // Display name lives on both rows (the organization is the sign-in face
-    // of the universe); runtime owns the slug and this route cannot edit it. Feature
+    // of the universe); runtime owns the handle and this route cannot edit it. Feature
     // switches merge into what the universe stored.
     const { features, ...fields } = body.data;
     const updated = await ctx.db.transaction(async (tx) => {
@@ -496,7 +478,7 @@ export function universeRoutes(ctx: AppContext) {
         .returning();
       return row!;
     });
-    return c.json(universeView(updated, access.slug, access.role));
+    return c.json(universeView(updated, access.handle, access.role));
   });
 
   /// Every member sees who else is in the universe and their role; emails

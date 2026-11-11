@@ -194,12 +194,12 @@ it("puts and deletes a universe binding by provider id", async () => {
   const deleted = await request("DELETE", "/admin/universes/u1/environment-provider-bindings/alpha", undefined, "admin");
   expect(deleted.status).toBe(200);
   expect(callsOf("deployment/environment-providers/bindings/put")[0]?.params).toEqual({
-    universeId: "u1",
+    universe: "u1",
     providerId: "alpha",
     enabled: false,
   });
   expect(callsOf("deployment/environment-providers/bindings/delete")[0]?.params).toEqual({
-    universeId: "u1",
+    universe: "u1",
     providerId: "alpha",
   });
 });

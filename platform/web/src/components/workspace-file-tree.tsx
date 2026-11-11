@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 
 type TreeProps = {
   entries: Record<string, VfsTreeEntry>;
-  slug: string;
+  handle: string;
   workspaceId: string;
   activePath: string | undefined;
 };
@@ -169,7 +169,7 @@ function Entries({ entries, basePath, ...props }: EntriesProps) {
           onDragStart={(event) => drag.onDragStart(event, path)}
           data-tree-entry
           tabIndex={-1}
-          to={`/u/${props.slug}/workspaces/${props.workspaceId}/files/${path.split("/").map(encodeURIComponent).join("/")}`}
+          to={`/u/${props.handle}/workspaces/${props.workspaceId}/files/${path.split("/").map(encodeURIComponent).join("/")}`}
           title={name}
           onClick={() => props.onFocusPath(path)}
           className={cn(

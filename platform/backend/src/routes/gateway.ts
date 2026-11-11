@@ -1,4 +1,4 @@
-import { UniverseSlugCacheConflict } from "../universe-slugs.js";
+import { UniverseHandleCacheConflict } from "../universe-handles.js";
 import { deploymentClient, GatewayUnconfigured, GateRefusal, memberClient } from "../runtime-client.js";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -242,13 +242,13 @@ const registrationKeyRevokeSchema = z.object({
 
 /// Stable, id-safe request id for an external environment endpoint.
 export function externalEnvironmentRequestId(endpoint: string): string {
-  const slug = endpoint
+  const handle = endpoint
     .replace(/^wss?:\/\//, "")
     .replace(/\/+$/, "")
     .replace(/[^A-Za-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 100);
-  return `external-${slug || "envd"}`;
+  return `external-${handle || "envd"}`;
 }
 
 const modelEndpointSchema = z.object({
@@ -2574,7 +2574,7 @@ export async function withGateway(
     return await fn();
   } catch (error) {
     if (error instanceof WorkspaceTransferError) return c.json({ error: error.message }, error.status);
-    if (error instanceof UniverseSlugCacheConflict) return c.json({ error: error.message }, 409);
+    if (error instanceof UniverseHandleCacheConflict) return c.json({ error: error.message }, 409);
     if (error instanceof GatewayUnconfigured) {
       return c.json({ error: error.message }, 501);
     }

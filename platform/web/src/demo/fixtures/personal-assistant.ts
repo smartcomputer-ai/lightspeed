@@ -76,7 +76,7 @@ import {
 import { TELEGRAM_ADA_ACCOUNT_ID, WHATSAPP_ADA_ACCOUNT_ID } from "./platform";
 
 export const PERSONAL_ASSISTANT_UNIVERSE_ID = "33333333-3333-4333-8333-333333333333";
-export const PERSONAL_ASSISTANT_SLUG = "personal-assistant";
+export const PERSONAL_ASSISTANT_HANDLE = "personal-assistant";
 const LIGHTSPEED_UNIVERSE_ID = "0000c0c0-0000-4000-8000-0000000c0c0c";
 
 const PROFILE = {
@@ -2672,7 +2672,7 @@ function seedChannels(universe: UniverseState): void {
 export function seedPersonalAssistant(store: DemoStore): void {
   const universe = store.addUniverse({
     id: PERSONAL_ASSISTANT_UNIVERSE_ID,
-    slug: PERSONAL_ASSISTANT_SLUG,
+    handle: PERSONAL_ASSISTANT_HANDLE,
     name: "Personal Assistant",
     icon: "sparkles",
     iconColor: "violet",

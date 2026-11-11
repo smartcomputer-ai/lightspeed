@@ -54,12 +54,12 @@ universe
 
 universe
   .command("create <name>")
-  .option("--slug <slug>")
-  .action(async (name: string, opts: { slug?: string }) =>
+  .option("--handle <handle>")
+  .action(async (name: string, opts: { handle?: string }) =>
     printJson(
       await api("POST", "/api/v1/universes", {
         name,
-        slug: opts.slug,
+        handle: opts.handle,
       }),
     ),
   );
@@ -157,7 +157,7 @@ channelAccount
   .command("add")
   .requiredOption("--universe <id>")
   .requiredOption("--account-id <id>", "authored account id")
-  .requiredOption("--provider <provider>", "channel provider slug (telegram, whatsapp, ...)")
+  .requiredOption("--provider <provider>", "channel provider handle (telegram, whatsapp, ...)")
   .requiredOption(
     "--provider-account-id <id>",
     "provider-native identity (bot username, phone number)",

@@ -7,7 +7,7 @@ import { sessionAdminRoutes } from "./session-admin.js";
 const auth = vi.hoisted(() => ({ role: "admin", platformAdmin: false }));
 vi.mock("./universes.js", () => ({ universeForSession: vi.fn(async () => ({
   universe: { id: "universe", lightspeedUniverseId: "runtime-universe", gatewayUrl: null },
-  slug: "test", role: auth.role, member: { userId: "member", role: auth.role },
+  handle: "test", role: auth.role, member: { userId: "member", role: auth.role },
 })) }));
 beforeEach(() => { auth.role = "admin"; auth.platformAdmin = false; });
 afterEach(() => vi.unstubAllGlobals());

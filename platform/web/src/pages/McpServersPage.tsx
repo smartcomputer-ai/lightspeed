@@ -55,14 +55,14 @@ const MCP_CREATE_STEPS = [
 /// server picker links against. Full-document saves mirror the engine's
 /// put-with-revision catalog semantics.
 export function McpServersPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
   if (!universe || !permissions.can("read")) {
-    return <UniverseNotFound slug={slug} />;
+    return <UniverseNotFound handle={handle} />;
   }
 
   return <ServerList key={universe.id} universeId={universe.id} />;

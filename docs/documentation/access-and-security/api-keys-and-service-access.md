@@ -28,9 +28,16 @@ In authenticated mode, scope determines how the request selects its target:
 
 | Key and operation | `x-lightspeed-universe` |
 | --- | --- |
-| Universe key, universe operation | Omit it. Even the key's own universe UUID is rejected as a header. |
-| Deployment key, universe operation | Required; selects the target universe UUID. |
+| Universe key, universe operation | Omit it. Even the key's own universe is rejected as a header. |
+| Deployment key, universe operation | Required; names the target universe by its UUID or its handle. |
 | Deployment key, deployment operation | Omit it; the operation addresses the deployment. |
+
+A handle is the universe's readable name, unique within the deployment. It is
+resolved when the request arrives, so a renamed universe is no longer reached
+by its previous handle, and a handle that names no universe is reported as not
+found. The UUID never changes. Use the handle where the same automation runs
+against several deployments, and the UUID where a rename must not redirect a
+client.
 
 `initialize` accepts either key scope before universe selection and requires
 that the universe header be omitted. It reports key scope and groups without
@@ -106,7 +113,7 @@ then create a universe and add members as described in
 [People and roles](people-and-roles.md).
 
 If provisioning a universe directly through the server host, use
-`lightspeed-runtime universe create --slug acorn` and retain its
+`lightspeed-runtime universe create --handle acorn` and retain its
 printed UUID. Platform-created universes are provisioned through its deployment
 key. See [People and roles](people-and-roles.md) for account administration.
 

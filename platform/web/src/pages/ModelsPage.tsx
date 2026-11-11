@@ -19,10 +19,10 @@ import type { ModelDefaults } from "@/api";
 import { useActiveUniverse } from "@/lib/universes";
 
 export function ModelsPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
   if (isLoading) return <LoadingNote />;
-  if (!universe || !permissions.can("read")) return <UniverseNotFound slug={slug} />;
+  if (!universe || !permissions.can("read")) return <UniverseNotFound handle={handle} />;
   return <Models key={universe.id} universeId={universe.id} />;
 }
 

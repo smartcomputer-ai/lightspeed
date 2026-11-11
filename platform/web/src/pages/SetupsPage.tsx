@@ -33,14 +33,14 @@ type KeyChoice =
 const CONFIGURATION_GROUPS = UNIVERSE_KEY_PRESETS.find((preset) => preset.id === "configuration")?.groups ?? [];
 
 export function SetupsPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
   if (!universe || !permissions.can("configureResource")) {
-    return <UniverseNotFound slug={slug} />;
+    return <UniverseNotFound handle={handle} />;
   }
 
   return <SetupList universeId={universe.id} installable={permissions.can("manageAccess")} />;

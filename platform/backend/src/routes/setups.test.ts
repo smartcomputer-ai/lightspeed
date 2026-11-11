@@ -14,7 +14,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 function routes(role: UniverseRole) {
   const universe = { id: "platform-universe", lightspeedUniverseId: "33333333-3333-4333-8333-333333333333", gatewayUrl: null };
   vi.mocked(universeForSession).mockResolvedValue({
-    universe, slug: "test", role, member: { userId: "platform-user", role },
+    universe, handle: "test", role, member: { userId: "platform-user", role },
   } as unknown as Awaited<ReturnType<typeof universeForSession>>);
   const runtime = vi.fn();
   vi.stubGlobal("fetch", runtime);

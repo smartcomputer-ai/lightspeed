@@ -372,7 +372,7 @@ export function member(
     id: store.nextId("member"),
     userId,
     role,
-    email: user?.email ?? `${userId}@${universe.universe.slug}.example`,
+    email: user?.email ?? `${userId}@${universe.universe.handle}.example`,
     name: user?.name ?? userId,
     createdAt: atIso(joinedAtMs),
   };

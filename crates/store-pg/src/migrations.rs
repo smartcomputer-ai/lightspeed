@@ -135,9 +135,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "mcp_headers_and_static_tokens",
         sql: include_str!("../migrations/015_mcp_headers_and_static_tokens.sql"),
     },
+    EmbeddedMigration {
+        version: 16,
+        name: "universe_handles",
+        sql: include_str!("../migrations/016_universe_handles.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 15;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

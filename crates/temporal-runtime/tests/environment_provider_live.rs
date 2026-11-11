@@ -78,7 +78,7 @@ async fn provider_universe(
     calling(
         deployment_caller(),
         operator.create_universe(DeploymentUniverseCreateParams {
-            slug: None,
+            handle: None,
             universe_id: universe_id.to_string(),
         }),
     )
@@ -98,7 +98,7 @@ async fn provider_universe(
     calling(
         deployment_caller(),
         operator.put_environment_provider_binding(DeploymentProviderBindingPutParams {
-            universe_id: universe_id.to_string(),
+            universe: universe_id.to_string(),
             provider_id: provider_id.to_owned(),
             enabled: true,
         }),
@@ -118,7 +118,7 @@ async fn cleanup(
     let _ = calling(
         deployment_caller(),
         operator.delete_environment_provider_binding(DeploymentProviderBindingDeleteParams {
-            universe_id: universe_id.to_string(),
+            universe: universe_id.to_string(),
             provider_id: provider_id.to_owned(),
         }),
     )

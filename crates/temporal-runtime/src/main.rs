@@ -70,8 +70,10 @@ enum UniverseCommand {
     Create {
         #[arg(long)]
         universe_id: Option<uuid::Uuid>,
+        /// The new universe's handle; derived from the id when omitted. An
+        /// existing universe keeps the handle it has.
         #[arg(long)]
-        slug: Option<String>,
+        handle: Option<String>,
     },
     #[command(about = "List universes")]
     List,
@@ -323,27 +325,33 @@ async fn run_cas_sweep(dry_run: bool) -> anyhow::Result<()> {
 async fn run_universe_command(command: UniverseCommand) -> anyhow::Result<()> {
     let stores = DeploymentStores::from_env().await?;
     match command {
-        UniverseCommand::Create { universe_id, slug } => {
+        UniverseCommand::Create {
+            universe_id,
+            handle,
+        } => {
             let universe_id = universe_id.unwrap_or_else(uuid::Uuid::new_v4);
+            if let Some(handle) = &handle
+                && !store_pg::is_valid_universe_handle(handle)
+            {
+                anyhow::bail!(
+                    "invalid handle {handle}: use 1-63 lowercase letters, digits and hyphens, starting and ending with a letter or digit, and not a UUID"
+                );
+            }
             stores
-                .store_for_with_slug(universe_id, slug)
+                .store_for_with_handle(universe_id, handle)
                 .ensure_universe()
                 .await?;
             println!("universe_id: {universe_id}");
             if let Some(universe) =
                 store_pg::read_universe_stats(stores.pool(), universe_id).await?
-                && let Some(slug) = universe.slug
             {
-                println!("slug: {slug}");
+                println!("handle: {}", universe.handle);
             }
             Ok(())
         }
         UniverseCommand::List => {
-            for (universe_id, slug) in store_pg::list_universes(stores.pool()).await? {
-                match slug {
-                    Some(slug) => println!("{universe_id}  {slug}"),
-                    None => println!("{universe_id}"),
-                }
+            for (universe_id, handle) in store_pg::list_universes(stores.pool()).await? {
+                println!("{universe_id}  {handle}");
             }
             Ok(())
         }

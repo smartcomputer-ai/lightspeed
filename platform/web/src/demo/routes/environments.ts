@@ -210,13 +210,13 @@ export function closeEnvironment(
 /// Stable, id-safe request id for an external endpoint so re-registering
 /// the same daemon converges on one environment.
 function externalRequestId(endpoint: string): string {
-  const slug = endpoint
+  const handle = endpoint
     .replace(/^wss?:\/\//, "")
     .replace(/\/+$/, "")
     .replace(/[^A-Za-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 100);
-  return `external-${slug || "envd"}`;
+  return `external-${handle || "envd"}`;
 }
 
 /// Claude Code prefers `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` over

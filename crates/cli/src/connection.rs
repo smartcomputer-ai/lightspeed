@@ -77,7 +77,7 @@ impl ResolvedConnection {
             }
             if self.universe.is_none() {
                 bail!(
-                    "select a universe with `lightspeed universe use <uuid-or-slug>` or --universe"
+                    "select a universe with `lightspeed universe use <uuid-or-handle>` or --universe"
                 );
             }
         }
@@ -92,20 +92,24 @@ impl ResolvedConnection {
 #[serde(rename_all = "camelCase")]
 pub struct UniverseStatus {
     pub universe_id: Option<String>,
-    pub slug: Option<String>,
+    /// Absent only when it could not be read; see the reason.
+    pub handle: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub slug_unavailable_reason: Option<String>,
+    pub handle_unavailable_reason: Option<String>,
 }
 
 impl UniverseStatus {
     pub fn print(&self, heading: &str) {
         println!("{heading}:");
         match &self.universe_id {
-            None => println!("  None selected. Use `lightspeed universe use <slug-or-uuid>`."),
+            None => println!("  None selected. Use `lightspeed universe use <handle-or-uuid>`."),
             Some(id) => {
-                match &self.slug_unavailable_reason {
-                    Some(reason) => println!("  Slug: unavailable ({reason})"),
-                    None => println!("  Slug: {}", self.slug.as_deref().unwrap_or("(no slug)")),
+                match (&self.handle, &self.handle_unavailable_reason) {
+                    (Some(handle), _) => println!("  Handle: {handle}"),
+                    (None, reason) => println!(
+                        "  Handle: unavailable ({})",
+                        reason.as_deref().unwrap_or("not read")
+                    ),
                 }
                 println!("  UUID: {id}");
             }
@@ -114,7 +118,7 @@ impl UniverseStatus {
 }
 
 /// Status must remain useful for restricted keys and stale selections. Fetch
-/// the slug only when permitted, and distinguish unnamed from unavailable.
+/// the handle only when permitted, and say why when it could not be read.
 pub async fn universe_status(connection: &ResolvedConnection) -> Result<UniverseStatus> {
     let caller = connection
         .caller
@@ -122,8 +126,8 @@ pub async fn universe_status(connection: &ResolvedConnection) -> Result<Universe
         .context("connection has not been verified")?;
     let mut status = UniverseStatus {
         universe_id: connection.active_universe_id(),
-        slug: None,
-        slug_unavailable_reason: None,
+        handle: None,
+        handle_unavailable_reason: None,
     };
     let Some(id) = &status.universe_id else {
         return Ok(status);
@@ -134,7 +138,7 @@ pub async fn universe_status(connection: &ResolvedConnection) -> Result<Universe
                 .groups
                 .contains(&api::MethodGroup::DeploymentUniverses))
     {
-        status.slug_unavailable_reason =
+        status.handle_unavailable_reason =
             Some("requires a deployment key with deployment/universes permission".into());
         return Ok(status);
     }
@@ -142,13 +146,13 @@ pub async fn universe_status(connection: &ResolvedConnection) -> Result<Universe
         .request::<_, api::DeploymentUniverseReadResponse>(
             api::METHOD_DEPLOYMENT_UNIVERSES_READ,
             api::DeploymentUniverseReadParams {
-                universe_id: id.clone(),
+                universe: id.clone(),
             },
         )
         .await;
     match response {
-        Ok(response) => status.slug = response.result.universe.slug,
-        Err(error) => status.slug_unavailable_reason = Some(error.to_string()),
+        Ok(response) => status.handle = Some(response.result.universe.handle),
+        Err(error) => status.handle_unavailable_reason = Some(error.to_string()),
     }
     Ok(status)
 }
@@ -320,26 +324,25 @@ pub async fn resolve_universe(connection: &ResolvedConnection, selected: &str) -
     if let Ok(id) = Uuid::parse_str(selected) {
         return Ok(id.to_string());
     }
-    let client = HttpAgentApi::with_connection(connection.clone());
-    let response: api::DeploymentUniverseListResponse = client
-        .request(
-            api::METHOD_DEPLOYMENT_UNIVERSES_LIST,
-            api::DeploymentUniverseListParams {},
+    // The selection is stored as the UUID, so a later rename cannot move it
+    // to another universe.
+    let response: api::DeploymentUniverseReadResponse = HttpAgentApi::with_connection(
+        connection.clone(),
+    )
+    .request(
+        api::METHOD_DEPLOYMENT_UNIVERSES_READ,
+        api::DeploymentUniverseReadParams {
+            universe: selected.to_owned(),
+        },
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "cannot resolve universe {selected}; use its UUID if this key cannot read universes"
         )
-        .await?
-        .result;
-    let matches: Vec<_> = response
-        .universes
-        .iter()
-        .filter(|u| u.slug.as_deref() == Some(selected))
-        .collect();
-    match matches.as_slice() {
-        [universe] => Ok(universe.universe_id.clone()),
-        [] => bail!(
-            "unknown universe {selected}; use an explicit UUID if this key cannot list universes"
-        ),
-        _ => bail!("ambiguous universe slug {selected}; use its UUID"),
-    }
+    })?
+    .result;
+    Ok(response.universe.universe_id)
 }
 
 /// Explicit connection selection is an atomic choice of endpoint and credential.

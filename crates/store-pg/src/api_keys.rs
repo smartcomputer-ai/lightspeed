@@ -25,6 +25,16 @@ impl PgApiKeyStore {
         Self { pool }
     }
 
+    /// The universe a deployment key's request names by handle. Part of this
+    /// store because the lookup happens while the request is authenticated,
+    /// before any universe is resolved.
+    pub async fn resolve_universe_handle(
+        &self,
+        handle: &str,
+    ) -> Result<Option<Uuid>, crate::PgStoreError> {
+        crate::deployment::resolve_universe_reference(&self.pool, handle).await
+    }
+
     /// Persist a minted key. A prefix already in use is `AlreadyExists`, so
     /// the caller mints again.
     pub async fn create_api_key(

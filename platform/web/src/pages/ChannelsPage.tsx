@@ -67,14 +67,14 @@ import { EmptyState, LoadingNote, PageHeader, UniverseNotFound } from "@/compone
 import { useActiveUniverse } from "@/lib/universes";
 
 export function ChannelsPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
   if (isLoading) return <LoadingNote />;
-  if (!universe || !permissions.can("configureResource")) return <UniverseNotFound slug={slug} />;
-  return <Channels universeId={universe.id} slug={universe.slug} />;
+  if (!universe || !permissions.can("configureResource")) return <UniverseNotFound handle={handle} />;
+  return <Channels universeId={universe.id} handle={universe.handle} />;
 }
 
-function Channels({ universeId, slug }: { universeId: string; slug: string }) {
+function Channels({ universeId, handle }: { universeId: string; handle: string }) {
   const queryClient = useQueryClient();
   const [connectOpen, setConnectOpen] = useState(false);
   const accounts = useQuery({
@@ -229,7 +229,7 @@ function Channels({ universeId, slug }: { universeId: string; slug: string }) {
               <Button
                 variant="outline"
                 size="sm"
-                nativeButton={false} render={<Link to={`/u/${slug}/bots`} />}
+                nativeButton={false} render={<Link to={`/u/${handle}/bots`} />}
               >
                 View bots
               </Button>

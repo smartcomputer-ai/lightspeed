@@ -1,5 +1,5 @@
 /// Blob pages: one address per stored blob in a universe,
-/// `/u/<slug>/blobs/<hex digest>`. A digest is a capability within its
+/// `/u/<handle>/blobs/<hex digest>`. A digest is a capability within its
 /// universe, so the page needs no other scope. Name, type, and the source a
 /// link came from ride in the query as display hints; the store keeps bytes
 /// only.
@@ -22,7 +22,7 @@ export function blobDigest(blobRef: string): string | null {
   return HEX.test(hex) ? hex : null;
 }
 
-export function blobHref(slug: string, blobRef: string, hints: BlobHints = {}): string | null {
+export function blobHref(handle: string, blobRef: string, hints: BlobHints = {}): string | null {
   const digest = blobDigest(blobRef);
   if (!digest) return null;
   const query = new URLSearchParams();
@@ -34,7 +34,7 @@ export function blobHref(slug: string, blobRef: string, hints: BlobHints = {}): 
     if (hints.path) query.set("path", hints.path);
   }
   const search = query.toString();
-  return `/u/${slug}/blobs/${digest}${search ? `?${search}` : ""}`;
+  return `/u/${handle}/blobs/${digest}${search ? `?${search}` : ""}`;
 }
 
 /// A browser address for an app route. Router links add the app's base path

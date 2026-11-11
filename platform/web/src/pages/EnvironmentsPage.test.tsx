@@ -10,7 +10,7 @@ import { EnvironmentsPage } from "./EnvironmentsPage";
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", () => ({
-  useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, slug: "test", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, handle: "test", isLoading: false }),
 }));
 
 function environment(

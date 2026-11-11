@@ -746,7 +746,7 @@ async fn binding(args: BindingArgs) -> Result<()> {
                 .request(
                     api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT,
                     api::DeploymentProviderBindingPutParams {
-                        universe_id: selected_universe_id("binding a provider")?,
+                        universe: selected_universe_id("binding a provider")?,
                         provider_id,
                         enabled,
                     },
@@ -760,7 +760,7 @@ async fn binding(args: BindingArgs) -> Result<()> {
                 .request(
                     api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE,
                     api::DeploymentProviderBindingDeleteParams {
-                        universe_id: selected_universe_id("deleting a binding")?,
+                        universe: selected_universe_id("deleting a binding")?,
                         provider_id,
                     },
                 )

@@ -288,7 +288,7 @@ where
         support::live::local_request_context_for(api::AccessScope::Deployment).await?,
         GatewayDeploymentApi::new(runtime.clone()).create_universe(
             api::DeploymentUniverseCreateParams {
-                slug: None,
+                handle: None,
                 universe_id: universe.to_string(),
             },
         ),

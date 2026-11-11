@@ -81,7 +81,7 @@ for the permission matrix.
 
 For runtime errors, verify the endpoint, key status, key scope, and allowed
 method groups. The Platform needs a deployment key allowed to assert actors.
-It sends the runtime universe UUID, which differs from the browser slug.
+It sends the runtime universe UUID, not the handle shown in the browser URL.
 A direct universe key must omit `x-lightspeed-universe`; a deployment key must
 send it for universe methods and omit it for deployment methods. See
 [API keys and service access](../access-and-security/api-keys-and-service-access.md)

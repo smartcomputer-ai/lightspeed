@@ -162,7 +162,7 @@ export interface UniverseState {
 
 export interface UniverseInit {
   id?: string;
-  slug: string;
+  handle: string;
   name: string;
   icon?: UniverseIconName;
   iconColor?: UniverseIconColor;
@@ -230,9 +230,9 @@ export class DemoStore {
     return id ? (this.universes.get(id) ?? null) : null;
   }
 
-  universeBySlug(slug: string): UniverseState | null {
+  universeByHandle(handle: string): UniverseState | null {
     for (const state of this.universes.values()) {
-      if (state.universe.slug === slug) return state;
+      if (state.universe.handle === handle) return state;
     }
     return null;
   }
@@ -248,7 +248,7 @@ export class DemoStore {
         name: init.name,
         icon: init.icon ?? "orbit",
         iconColor: init.iconColor ?? "default",
-        slug: init.slug,
+        handle: init.handle,
         gatewayUrl: null,
         status: "active",
         createdAt,
@@ -303,7 +303,7 @@ export class DemoStore {
     for (const workspace of state.workspaces.values()) blobBytes += workspace.row.bytes;
     return {
       universeId: state.universe.lightspeedUniverseId,
-      slug: state.universe.slug,
+      handle: state.universe.handle,
       sessions: state.sessions.size,
       workspaces: state.workspaces.size,
       profiles: state.profiles.size,

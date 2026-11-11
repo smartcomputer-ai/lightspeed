@@ -186,28 +186,28 @@ describe("demo router", () => {
     expect(universe.bots.has("no-model")).toBe(false);
   });
 
-  it("carries runtime slugs through creation and adoption without local suffixes", async () => {
+  it("carries runtime handles through creation and adoption without local suffixes", async () => {
     const { store, call } = await boot();
-    const created = await call("POST", "/api/v1/universes", { name: "Display", slug: "chosen" });
+    const created = await call("POST", "/api/v1/universes", { name: "Display", handle: "chosen" });
     expect(created.status).toBe(201);
-    expect(created.json).toMatchObject({ slug: "chosen" });
-    expect((await call("POST", "/api/v1/universes", { name: "Another", slug: "chosen" })).status).toBe(409);
-    const named = { universeId: "11111111-1111-4111-8111-111111111111", slug: "from-runtime", sessions: 0, workspaces: 0, profiles: 0, blobBytes: 0, createdAtMs: 0 };
-    const unnamed = { ...named, universeId: "22222222-2222-4222-8222-222222222222", slug: undefined };
-    store.orphanEngineUniverses.push(named, unnamed);
+    expect(created.json).toMatchObject({ handle: "chosen" });
+    expect((await call("POST", "/api/v1/universes", { name: "Another", handle: "chosen" })).status).toBe(409);
+    const named = { universeId: "11111111-1111-4111-8111-111111111111", handle: "from-runtime", sessions: 0, workspaces: 0, profiles: 0, blobBytes: 0, createdAtMs: 0 };
+    store.orphanEngineUniverses.push(named);
     const adopted = await call("POST", "/api/v1/universes/adopt", { name: "Unrelated name", lightspeedUniverseId: named.universeId });
     expect(adopted.status).toBe(201);
-    expect(adopted.json).toMatchObject({ slug: "from-runtime", lightspeedUniverseId: named.universeId });
-    expect((await call("POST", "/api/v1/universes/adopt", { name: "Unnamed", lightspeedUniverseId: unnamed.universeId })).status).toBe(400);
-    expect(store.orphanEngineUniverses.some(u => u.universeId === unnamed.universeId)).toBe(true);
-    expect((await call("POST", "/api/v1/universes/adopt", { name: "Unnamed", lightspeedUniverseId: unnamed.universeId, slug: "now-named" })).status).toBe(201);
+    expect(adopted.json).toMatchObject({ handle: "from-runtime", lightspeedUniverseId: named.universeId });
+    const other = { ...named, universeId: "22222222-2222-4222-8222-222222222222", handle: "kept" };
+    store.orphanEngineUniverses.push(other);
+    expect((await call("POST", "/api/v1/universes/adopt", { name: "Other", lightspeedUniverseId: other.universeId, handle: "renamed-on-adopt" })).status).toBe(400);
+    expect(store.orphanEngineUniverses.some(u => u.universeId === other.universeId)).toBe(true);
     const universe = created.json as Universe;
-    expect((await call("PUT", `/api/v1/universes/${universe.id}/slug`, { slug: "from-runtime" })).status).toBe(409);
-    const renamed = await call("PUT", `/api/v1/universes/${universe.id}/slug`, { slug: "renamed" });
+    expect((await call("PUT", `/api/v1/universes/${universe.id}/handle`, { handle: "from-runtime" })).status).toBe(409);
+    const renamed = await call("PUT", `/api/v1/universes/${universe.id}/handle`, { handle: "renamed" });
     expect(renamed.status).toBe(200);
-    expect(renamed.json).toMatchObject({ id: universe.id, lightspeedUniverseId: universe.lightspeedUniverseId, slug: "renamed" });
-    expect((await call("GET", "/api/v1/universes")).json).toEqual(expect.arrayContaining([expect.objectContaining({ id: universe.id, slug: "renamed" })]));
-    expect((await call("POST", "/api/v1/universes/sync-slugs", {})).json).toEqual({ updated: 0, skipped: 0 });
+    expect(renamed.json).toMatchObject({ id: universe.id, lightspeedUniverseId: universe.lightspeedUniverseId, handle: "renamed" });
+    expect((await call("GET", "/api/v1/universes")).json).toEqual(expect.arrayContaining([expect.objectContaining({ id: universe.id, handle: "renamed" })]));
+    expect((await call("POST", "/api/v1/universes/sync-handles", {})).json).toEqual({ updated: 0, skipped: 0 });
   });
 
   it("keeps seeded final replies outside each run's collapsible activity", async () => {
@@ -220,7 +220,7 @@ describe("demo router", () => {
         for (const run of session.runs.values()) {
           if (run.status !== "completed" || !run.outputText) continue;
           const section = sections.find((section) => section.runId === run.id);
-          expect(section?.reply, `${universe.universe.slug}/${session.view.id}/${run.id}`).toMatchObject({
+          expect(section?.reply, `${universe.universe.handle}/${session.view.id}/${run.id}`).toMatchObject({
             role: "assistant",
             runId: run.id,
             contentRef: run.output?.blobRef,
@@ -319,22 +319,22 @@ describe("demo router", () => {
     for (const universe of list) {
       for (const path of universeReads) {
         const result = await call("GET", `/api/v1/universes/${universe.id}/${path}`);
-        expect(result.status, `${universe.slug}: ${path}`).toBe(200);
+        expect(result.status, `${universe.handle}: ${path}`).toBe(200);
       }
       const bots = ((await call("GET", `/api/v1/universes/${universe.id}/bots`)).json as { bots: BotListItem[] }).bots;
-      expect(bots.length, `${universe.slug}: bots`).toBeGreaterThan(0);
+      expect(bots.length, `${universe.handle}: bots`).toBeGreaterThan(0);
       for (const bot of bots) {
         for (const path of ["", "/triggers", "/events", "/state"]) {
           const result = await call("GET", `/api/v1/universes/${universe.id}/bots/${bot.botId}${path}`);
-          expect(result.status, `${universe.slug}: bots/${bot.botId}${path}`).toBe(200);
+          expect(result.status, `${universe.handle}: bots/${bot.botId}${path}`).toBe(200);
         }
       }
       const sessions = (await call("GET", `/api/v1/universes/${universe.id}/sessions`)).json as SessionListPage;
-      expect(sessions.sessions.length, `${universe.slug}: sessions`).toBeGreaterThan(0);
+      expect(sessions.sessions.length, `${universe.handle}: sessions`).toBeGreaterThan(0);
       for (const session of sessions.sessions) {
         for (const path of ["", "/events?limit=200", "/events?direction=backward&limit=200", "/instructions"]) {
           const result = await call("GET", `/api/v1/universes/${universe.id}/sessions/${session.id}${path}`);
-          expect(result.status, `${universe.slug}: sessions/${session.id}${path}`).toBe(200);
+          expect(result.status, `${universe.handle}: sessions/${session.id}${path}`).toBe(200);
         }
       }
     }

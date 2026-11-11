@@ -14,7 +14,7 @@ use crate::PgStoreError;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UniverseStats {
     pub universe_id: Uuid,
-    pub slug: Option<String>,
+    pub handle: String,
     pub created_at_ms: i64,
     /// `max(sessions.updated_at_ms)`; `None` when the universe has no
     /// sessions.
@@ -28,7 +28,7 @@ pub struct UniverseStats {
 const UNIVERSE_STATS_SELECT: &str = r#"
     SELECT
         u.universe_id,
-        u.slug,
+        u.handle,
         u.created_at_ms,
         (SELECT max(s.updated_at_ms) FROM sessions s
             WHERE s.universe_id = u.universe_id AND s.deleted_at_ms IS NULL) AS last_activity_at_ms,
@@ -43,47 +43,90 @@ const UNIVERSE_STATS_SELECT: &str = r#"
     FROM universes u
 "#;
 
-/// Create the universe row; `false` when it already existed.
-pub async fn create_universe(pool: &PgPool, universe_id: Uuid) -> Result<bool, PgStoreError> {
-    create_universe_with_slug(pool, universe_id, None).await
+/// Longest universe handle: one DNS label.
+pub const UNIVERSE_HANDLE_MAX_LEN: usize = 63;
+
+/// Whether `handle` may name a universe: a lowercase DNS label that does not
+/// read as a UUID, so a universe reference is always one or the other. The
+/// `universes_handle_format` constraint enforces the same rule.
+pub fn is_valid_universe_handle(handle: &str) -> bool {
+    let bytes = handle.as_bytes();
+    let edge = |byte: &u8| byte.is_ascii_lowercase() || byte.is_ascii_digit();
+    !bytes.is_empty()
+        && bytes.len() <= UNIVERSE_HANDLE_MAX_LEN
+        && bytes.first().is_some_and(edge)
+        && bytes.last().is_some_and(edge)
+        && bytes.iter().all(|byte| edge(byte) || *byte == b'-')
+        && Uuid::parse_str(handle).is_err()
 }
 
-pub async fn create_universe_with_slug(
+/// The handle of a universe created without one. Derived from the UUID so a
+/// repeated create names the universe the same way, and taken from its tail,
+/// which is random in every UUID version that carries randomness.
+pub fn default_universe_handle(universe_id: Uuid) -> String {
+    let hex = universe_id.simple().to_string();
+    format!("u-{}", &hex[hex.len() - 12..])
+}
+
+/// Create the universe row under its default handle; `false` when it already
+/// existed.
+pub async fn create_universe(pool: &PgPool, universe_id: Uuid) -> Result<bool, PgStoreError> {
+    create_universe_with_handle(pool, universe_id, None).await
+}
+
+/// Create the universe row; `false` when it already existed, in which case
+/// its handle is left as it was. `None` takes the default handle.
+pub async fn create_universe_with_handle(
     pool: &PgPool,
     universe_id: Uuid,
-    slug: Option<&str>,
+    handle: Option<&str>,
 ) -> Result<bool, PgStoreError> {
     let result = sqlx::query(
         r#"
-        INSERT INTO universes (universe_id, slug)
+        INSERT INTO universes (universe_id, handle)
         VALUES ($1, $2)
         ON CONFLICT (universe_id) DO NOTHING
         "#,
     )
     .bind(universe_id)
-    .bind(slug)
+    .bind(handle.map_or_else(|| default_universe_handle(universe_id), str::to_owned))
     .execute(pool)
     .await?;
     Ok(result.rows_affected() > 0)
 }
 
-/// Set a slug without changing the universe identity. With only_if_unset,
-/// preserve a concurrent assignment; callers reject a different returned slug.
-/// None means the universe does not exist.
-pub async fn put_universe_slug(
+/// Rename a universe without changing its identity; the previous handle is
+/// released. `false` when the universe does not exist.
+pub async fn put_universe_handle(
     pool: &PgPool,
     universe_id: Uuid,
-    slug: &str,
-    only_if_unset: bool,
-) -> Result<Option<String>, PgStoreError> {
-    Ok(sqlx::query_scalar(
-        "UPDATE universes SET slug = CASE WHEN $3 THEN COALESCE(slug, $2) ELSE $2 END WHERE universe_id = $1 RETURNING slug",
-    )
-    .bind(universe_id)
-    .bind(slug)
-    .bind(only_if_unset)
-    .fetch_optional(pool)
-    .await?)
+    handle: &str,
+) -> Result<bool, PgStoreError> {
+    let result = sqlx::query("UPDATE universes SET handle = $2 WHERE universe_id = $1")
+        .bind(universe_id)
+        .bind(handle)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// The existing universe a reference names, by its UUID or by its handle.
+pub async fn resolve_universe_reference(
+    pool: &PgPool,
+    reference: &str,
+) -> Result<Option<Uuid>, PgStoreError> {
+    let query = match Uuid::parse_str(reference) {
+        Ok(universe_id) => {
+            sqlx::query_scalar("SELECT universe_id FROM universes WHERE universe_id = $1")
+                .bind(universe_id)
+        }
+        Err(_) if is_valid_universe_handle(reference) => {
+            sqlx::query_scalar("SELECT universe_id FROM universes WHERE handle = $1")
+                .bind(reference)
+        }
+        Err(_) => return Ok(None),
+    };
+    Ok(query.fetch_optional(pool).await?)
 }
 
 pub async fn read_universe_stats(
@@ -170,7 +213,7 @@ pub async fn delete_universe(pool: &PgPool, universe_id: Uuid) -> Result<bool, P
 fn universe_stats_from_row(row: &sqlx::postgres::PgRow) -> Result<UniverseStats, PgStoreError> {
     Ok(UniverseStats {
         universe_id: row.try_get("universe_id")?,
-        slug: row.try_get("slug")?,
+        handle: row.try_get("handle")?,
         created_at_ms: row.try_get("created_at_ms")?,
         last_activity_at_ms: row.try_get("last_activity_at_ms")?,
         sessions: count_to_u64(row.try_get("sessions")?),
@@ -183,4 +226,54 @@ fn universe_stats_from_row(row: &sqlx::postgres::PgRow) -> Result<UniverseStats,
 /// Counts and sums are non-negative by construction; clamp rather than fail.
 fn count_to_u64(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handles_are_lowercase_dns_labels() {
+        for handle in ["research", "a", "0", "team-2", "2026-research", "a--b"] {
+            assert!(is_valid_universe_handle(handle), "{handle}");
+        }
+        for handle in [
+            "",
+            "-research",
+            "research-",
+            "Research",
+            "my.universe",
+            "my_universe",
+            "my:universe",
+            "with space",
+            "a/b",
+            "ümlaut",
+        ] {
+            assert!(!is_valid_universe_handle(handle), "{handle}");
+        }
+        assert!(is_valid_universe_handle(
+            &"a".repeat(UNIVERSE_HANDLE_MAX_LEN)
+        ));
+        assert!(!is_valid_universe_handle(
+            &"a".repeat(UNIVERSE_HANDLE_MAX_LEN + 1)
+        ));
+    }
+
+    #[test]
+    fn a_handle_never_reads_as_a_uuid() {
+        let id = Uuid::from_u128(0x0190_7f3e_8a4c_7b21_9f2c_41d0_7ab3_55e1);
+        assert!(!is_valid_universe_handle(&id.hyphenated().to_string()));
+        assert!(!is_valid_universe_handle(&id.simple().to_string()));
+        // One character short of the bare form is an ordinary name again.
+        assert!(is_valid_universe_handle(&id.simple().to_string()[1..]));
+    }
+
+    #[test]
+    fn the_default_handle_is_the_uuid_tail_and_valid() {
+        let id = Uuid::from_u128(0x0190_7f3e_8a4c_7b21_9f2c_41d0_7ab3_55e1);
+        let handle = default_universe_handle(id);
+        assert_eq!(handle, "u-41d07ab355e1");
+        assert!(is_valid_universe_handle(&handle));
+        assert_eq!(default_universe_handle(id), handle);
+    }
 }

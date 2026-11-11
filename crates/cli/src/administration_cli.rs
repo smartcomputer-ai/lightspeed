@@ -13,7 +13,7 @@ pub struct UniverseArgs {
 enum UniverseCommand {
     /// List universes; * marks the active universe for this invocation.
     List,
-    /// Show the active universe's UUID and current runtime slug.
+    /// Show the active universe's UUID and current handle.
     Status,
     /// Persist this connection's universe selection.
     Use { target: String },
@@ -21,13 +21,16 @@ enum UniverseCommand {
     Create {
         #[arg(long)]
         id: Option<uuid::Uuid>,
+        /// The universe's deployment-unique name; derived from the UUID when
+        /// omitted.
         #[arg(long)]
-        slug: Option<String>,
+        handle: Option<String>,
     },
     /// Read a universe and its resource counts.
     Read { target: String },
-    /// Assign or change a runtime slug. Existing URLs may stop working.
-    SetSlug { target: String, slug: String },
+    /// Rename a universe. Requests and URLs that use the previous handle
+    /// stop reaching it.
+    SetHandle { target: String, handle: String },
 }
 pub async fn universe(args: UniverseArgs) -> Result<()> {
     let active = connection::ACTIVE.get().context("no connection")?;
@@ -81,7 +84,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 if response.universes.is_empty() {
                     println!("No universes found.");
                 } else {
-                    println!("  UUID                                  SLUG");
+                    println!("  UUID                                  HANDLE");
                 }
                 for u in response.universes {
                     println!(
@@ -92,18 +95,18 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                             " "
                         },
                         u.universe_id,
-                        u.slug.as_deref().unwrap_or("(no slug)")
+                        u.handle
                     );
                 }
             }
         }
-        UniverseCommand::Create { id, slug } => {
+        UniverseCommand::Create { id, handle } => {
             let response: api::DeploymentUniverseCreateResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_UNIVERSES_CREATE,
                     api::DeploymentUniverseCreateParams {
                         universe_id: id.unwrap_or_else(uuid::Uuid::new_v4).to_string(),
-                        slug,
+                        handle,
                     },
                 )
                 .await?
@@ -113,20 +116,17 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
             } else {
                 println!(
                     "{}  {}",
-                    response.universe.universe_id,
-                    response.universe.slug.as_deref().unwrap_or("(no slug)")
+                    response.universe.universe_id, response.universe.handle
                 );
             }
         }
-        UniverseCommand::SetSlug { target, slug } => {
-            let id = connection::resolve_universe(active, &target).await?;
+        UniverseCommand::SetHandle { target, handle } => {
             let response: api::DeploymentUniverseReadResponse = client
                 .request(
-                    api::METHOD_DEPLOYMENT_UNIVERSES_SLUG_PUT,
-                    api::DeploymentUniverseSlugPutParams {
-                        universe_id: id,
-                        slug,
-                        only_if_unset: false,
+                    api::METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT,
+                    api::DeploymentUniverseHandlePutParams {
+                        universe: target,
+                        handle,
                     },
                 )
                 .await?
@@ -136,17 +136,15 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
             } else {
                 println!(
                     "{}  {}",
-                    response.universe.universe_id,
-                    response.universe.slug.as_deref().unwrap_or("(no slug)")
+                    response.universe.universe_id, response.universe.handle
                 );
             }
         }
         UniverseCommand::Read { target } => {
-            let id = connection::resolve_universe(active, &target).await?;
             let response: api::DeploymentUniverseReadResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_UNIVERSES_READ,
-                    api::DeploymentUniverseReadParams { universe_id: id },
+                    api::DeploymentUniverseReadParams { universe: target },
                 )
                 .await?
                 .result;

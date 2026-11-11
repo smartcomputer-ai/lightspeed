@@ -8,7 +8,7 @@ import { AdminApiKeysPage } from "./AdminApiKeysPage";
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", () => ({
-  useUniverses: () => ({ data: [{ id: "platform-universe", lightspeedUniverseId: "core-universe", name: "Factory", slug: "factory" }] }),
+  useUniverses: () => ({ data: [{ id: "platform-universe", lightspeedUniverseId: "core-universe", name: "Factory", handle: "factory" }] }),
 }));
 // JSDOM has no popup layout; a native select stands in for the scope picker.
 vi.mock("@/components/ui/select", async () => {

@@ -3761,13 +3761,17 @@ export interface DeploymentUniverseView {
   blobBytes: number;
   createdAtMs: number;
   /**
+   * The universe's deployment-unique name. Requests may address the
+   * universe by it wherever they may by UUID.
+   */
+  handle: string;
+  /**
    * Most recent session activity (`max(sessions.updated_at_ms)`); absent
    * when the universe has no sessions.
    */
   lastActivityAtMs?: number | null;
   profiles: number;
   sessions: number;
-  slug?: string | null;
   universeId: string;
   workspaces: number;
 }
@@ -5472,7 +5476,10 @@ export interface DeploymentDeletedSessionsListParams {
    * Exclusive session ID cursor; each page contains at most 100 entries.
    */
   after?: string | null;
-  universeId: string;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
 }
 export interface DeploymentEnvironmentProviderDeleteParams {
   providerId: string;
@@ -5512,7 +5519,10 @@ export interface DeploymentEnvironmentProviderReadParams {
 }
 export interface DeploymentProviderBindingDeleteParams {
   providerId: string;
-  universeId: string;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
 }
 /**
  * Create or replace a universe's binding to a deployment provider.
@@ -5523,42 +5533,56 @@ export interface DeploymentProviderBindingPutParams {
    */
   enabled: boolean;
   providerId: string;
-  universeId: string;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
 }
 export interface DeploymentSessionPurgeParams {
   sessionId: string;
-  universeId: string;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
 }
 export interface DeploymentUniverseCreateParams {
   /**
-   * Optional core universe slug, set only when the universe is first created.
+   * The new universe's handle: 1-63 lowercase letters, digits and
+   * hyphens, starting and ending with a letter or digit, and not in the
+   * form of a UUID. Omit it to have one derived from the UUID. Ignored
+   * when the universe already exists.
    */
-  slug?: string | null;
+  handle?: string | null;
   universeId: string;
 }
 export interface DeploymentUniverseDeleteParams {
-  universeId: string;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
+}
+/**
+ * Rename a universe. The UUID and resources remain unchanged; the previous
+ * handle is released, so requests and URLs using it stop reaching this
+ * universe.
+ */
+export interface DeploymentUniverseHandlePutParams {
+  /**
+   * The new handle: 1-63 lowercase letters, digits and hyphens, starting
+   * and ending with a letter or digit, and not in the form of a UUID.
+   */
+  handle: string;
+  /**
+   * The universe's UUID or current handle.
+   */
+  universe: string;
 }
 export interface DeploymentUniverseListParams {}
 export interface DeploymentUniverseReadParams {
-  universeId: string;
-}
-/**
- * Set or change an existing universe's deployment-unique slug. The UUID and
- * resources remain unchanged; URLs using the previous slug may stop working.
- */
-export interface DeploymentUniverseSlugPutParams {
   /**
-   * For adoption: assign only if unnamed, or succeed if already equal.
-   * Reject a different existing slug instead of renaming it.
+   * The universe's UUID or handle.
    */
-  onlyIfUnset?: boolean;
-  /**
-   * 1-128 ASCII characters: an alphanumeric first character, followed by
-   * alphanumerics, underscores, hyphens, dots or colons.
-   */
-  slug: string;
-  universeId: string;
+  universe: string;
 }
 export interface EnvironmentCloseParams {
   environmentId: string;

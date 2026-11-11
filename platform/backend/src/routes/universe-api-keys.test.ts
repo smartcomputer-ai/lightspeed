@@ -17,7 +17,7 @@ function setup(role: string, keys = [{ keyPrefix: "lsk_abcdefgh", assertActor: f
     const apiKey = { keyPrefix: "lsk_abcdefgh", groups: rpc.params.groups };
     return Response.json({ id: rpc.id, result: { result: rpc.method === "deployment/api-keys/list" ? { apiKeys: keys } : { apiKey, secret: "lsk_secret" }, notifications: [] } });
   }));
-  const queue: unknown[][] = [[{ universe, slug: "test" }], [{ role }]];
+  const queue: unknown[][] = [[{ universe, handle: "test" }], [{ role }]];
   const chain: Record<string, unknown> = {};
   for (const step of ["from", "innerJoin", "where"]) chain[step] = () => chain;
   chain.limit = async () => queue.shift() ?? [];

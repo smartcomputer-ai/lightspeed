@@ -31,19 +31,19 @@ import {
   UniverseNotFound,
 } from "@/components/page";
 import { Switch } from "@/components/ui/switch";
-import { universeSlugSchema, FEATURES, FEATURE_KEYS, type FeatureKey } from "@lightspeed-ai/platform-shared";
+import { universeHandleSchema, UNIVERSE_HANDLE_MAX_LENGTH, FEATURES, FEATURE_KEYS, type FeatureKey } from "@lightspeed-ai/platform-shared";
 import { useActiveUniverse } from "@/lib/universes";
 import { UniverseAppearanceCard } from "@/components/universe-appearance-card";
 
 export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
   if (!universe || !permissions.can("manageAccess")) {
-    return <UniverseNotFound slug={slug} />;
+    return <UniverseNotFound handle={handle} />;
   }
 
   return (
@@ -51,7 +51,7 @@ export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
       <PageHeader title="General" description="Universe name, features, appearance, identifiers, and lifecycle." />
       <div className="grid gap-6">
         <RenameCard universe={universe} />
-        <SlugCard key={`${universe.id}/${universe.slug}`} universe={universe} />
+        <HandleCard key={`${universe.id}/${universe.handle}`} universe={universe} />
         <FeaturesCard universe={universe} />
         <UniverseAppearanceCard key={`${universe.id}/${universe.icon}/${universe.iconColor}`} universe={universe} />
         <IdentifiersCard universe={universe} />
@@ -108,34 +108,37 @@ function FeaturesCard({ universe }: { universe: Universe }) {
   );
 }
 
-export function SlugCard({ universe }: { universe: Universe }) {
+export function HandleCard({ universe }: { universe: Universe }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [slug, setSlug] = useState(universe.slug);
+  const [handle, setHandle] = useState(universe.handle);
   const rename = useMutation({
-    mutationFn: () => api<Universe>("PUT", `/api/v1/universes/${universe.id}/slug`, { slug: slug.trim() }),
+    mutationFn: () => api<Universe>("PUT", `/api/v1/universes/${universe.id}/handle`, { handle: handle.trim() }),
     onSuccess: (updated) => {
       queryClient.setQueryData<Universe[]>(["universes"], rows => rows?.map(row => row.id === updated.id ? updated : row));
-      setSlug(updated.slug);
-      navigate(`/u/${updated.slug}/settings/general`, { replace: true });
+      setHandle(updated.handle);
+      navigate(`/u/${updated.handle}/settings/general`, { replace: true });
       void queryClient.invalidateQueries({ queryKey: ["universes"] });
     },
   });
-  const valid = universeSlugSchema.safeParse(slug.trim()).success;
+  const valid = universeHandleSchema.safeParse(handle.trim()).success;
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Slug</CardTitle>
-        <CardDescription>Changes the runtime slug and this universe's URL. Existing links may stop working.</CardDescription>
+        <CardTitle>Handle</CardTitle>
+        <CardDescription>
+          The universe's unique name in this deployment, used in its URL and by API clients that address it by handle.
+          Lowercase letters, digits and hyphens. After a rename, links and clients using the previous handle stop reaching it.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <form className="flex max-w-md items-end gap-3" onSubmit={event => { event.preventDefault(); if (valid) rename.mutate(); }}>
           <Field className="flex-1">
-            <FieldLabel htmlFor="universe-slug">Runtime slug</FieldLabel>
-            <Input id="universe-slug" value={slug} onChange={event => setSlug(event.target.value)} required maxLength={128} />
+            <FieldLabel htmlFor="universe-handle">Handle</FieldLabel>
+            <Input id="universe-handle" value={handle} onChange={event => setHandle(event.target.value)} required maxLength={UNIVERSE_HANDLE_MAX_LENGTH} />
           </Field>
-          <Button type="submit" disabled={rename.isPending || !valid || slug.trim() === universe.slug}>
-            {rename.isPending ? "Saving…" : "Save slug"}
+          <Button type="submit" disabled={rename.isPending || !valid || handle.trim() === universe.handle}>
+            {rename.isPending ? "Saving…" : "Save handle"}
           </Button>
         </form>
         {rename.error && <p role="alert" className="mt-2 text-sm text-destructive">{rename.error.message}</p>}
@@ -164,7 +167,7 @@ function RenameCard({ universe }: { universe: Universe }) {
       <CardHeader>
         <CardTitle>Name</CardTitle>
         <CardDescription>
-          The display name shown in the switcher. Changing it does not change the URL slug.
+          The display name shown in the switcher. Changing it does not change the handle.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -204,9 +207,9 @@ function IdentifiersCard({ universe }: { universe: Universe }) {
       </CardHeader>
       <CardContent className="grid gap-3 text-sm">
         <div className="grid gap-1">
-          <span className="text-muted-foreground">URL slug</span>
+          <span className="text-muted-foreground">Handle</span>
           <code className="w-fit rounded-md bg-muted px-2 py-0.5 font-mono text-xs">
-            {universe.slug}
+            {universe.handle}
           </code>
         </div>
         <div className="grid gap-1">

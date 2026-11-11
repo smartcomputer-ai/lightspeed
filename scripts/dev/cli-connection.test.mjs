@@ -28,7 +28,7 @@ test("runtime and full profiles share a persistent CLI key and separate Platform
   const f = fixture(t);
   const first = await prepareCliConnection({ ...f, full: false });
   const universeCall = f.calls.find(c => c.args.includes("universe"));
-  assert.deepEqual(universeCall.args.slice(-4), ["--universe-id", f.env.LIGHTSPEED_PG_UNIVERSE_ID, "--slug", "development"]);
+  assert.deepEqual(universeCall.args.slice(-4), ["--universe-id", f.env.LIGHTSPEED_PG_UNIVERSE_ID, "--handle", "development"]);
   const handoff = JSON.parse(readFileSync(first.handoff));
   const secret = readFileSync(handoff.credentialFile, "utf8");
   assert.equal(statSync(handoff.credentialFile).mode & 0o777, 0o600);

@@ -78,7 +78,7 @@ settings.
 The universe sidebar groups the work (Bots, Sessions), the **Setup** agents are
 made from (Profiles, Workspaces, Models, Environments, MCP servers), **Access**
 (Credentials, API keys, Members) and the universe's **Settings** (General,
-Channels, Templates) at flat `/u/:slug/...` routes; bare `/u/:slug/settings`
+Channels, Templates) at flat `/u/:handle/...` routes; bare `/u/:handle/settings`
 opens the first settings page the caller may see. Models holds model provider keys,
 compatible endpoints and coding-agent subscriptions. Credentials lists reusable
 tokens, environment secrets, GitHub App installations and custom OAuth grants;

@@ -1682,7 +1682,7 @@ Deployment configuration inventory of one universe's provider bindings.
 
 **Create a universe**
 
-Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.
+Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
@@ -1708,7 +1708,7 @@ Returns deployment-wide universe summaries with approximate live aggregate count
 
 **Read a universe**
 
-Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.
+Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
@@ -1717,17 +1717,17 @@ Returns one deployment tenant summary with aggregate session, workspace, profile
 - Params: `DeploymentUniverseReadParams`
 - Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
 
-### `deployment/universes/slug/put`
+### `deployment/universes/handle/put`
 
-**Set a universe slug**
+**Rename a universe**
 
-Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.
+Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
 - Role: `none`
 - Target: `none`
-- Params: `DeploymentUniverseSlugPutParams`
+- Params: `DeploymentUniverseHandlePutParams`
 - Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
 
 ### `deployment/universes/delete`

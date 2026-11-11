@@ -47,14 +47,14 @@ import { useActionPermissions } from "@/lib/permissions";
 import { DEFAULT_UNIVERSE_KEY_GROUPS, groupSummary, groupsFor } from "@/lib/method-groups";
 
 export function ApiKeysPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
   if (!universe || !permissions.can("manageAccess")) {
-    return <UniverseNotFound slug={slug} />;
+    return <UniverseNotFound handle={handle} />;
   }
 
   return <ApiKeyList universeId={universe.id} />;

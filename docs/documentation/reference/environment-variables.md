@@ -69,8 +69,9 @@ create`.
 
 In authenticated mode, the gateway checks the key's status, scope, and allowed
 method groups on each request. A universe key selects its own universe and
-must omit `x-lightspeed-universe`. A deployment key sends that header for
-universe/service methods and omits it for deployment methods and `initialize`.
+must omit `x-lightspeed-universe`. A deployment key sends that header, with
+the universe's UUID or handle, for universe/service methods and omits it for
+deployment methods and `initialize`.
 `x-lightspeed-actor` requires the key's `assertActor` flag and supplies attribution,
 not a person's permissions. The removed `x-lightspeed-principal` header is
 rejected. Single mode rejects all credential, universe, and actor headers.
@@ -212,7 +213,7 @@ are given together.
 | --- | --- | --- |
 | `LIGHTSPEED_API_URL` | Required unless a saved connection or `--api-url` supplies it | Lightspeed JSON-RPC endpoint, normally ending in `/rpc`. Also used as the Platform backend's fallback gateway URL. |
 | `LIGHTSPEED_API_KEY` | Unset | Bearer key sent to an authenticated gateway. |
-| `LIGHTSPEED_UNIVERSE` | Unset | Universe UUID or core slug overriding saved selection. Only deployment keys may switch universes; slugs require universe-list permission. |
+| `LIGHTSPEED_UNIVERSE` | Unset | Universe UUID or handle overriding saved selection. Only deployment keys may switch universes; selecting by handle requires the `deployment/universes` group. |
 | `LIGHTSPEED_CONFIG_DIR` | `$XDG_CONFIG_HOME/lightspeed`, otherwise `$HOME/.config/lightspeed` | Saved CLI connection metadata and protected owned credential files. |
 | `LIGHTSPEED_CHAT_REASONING_EFFORT` | `high` | Default effort: `low`, `medium`, `high`, or `none`. Invalid values fall back to `high`. |
 | `LIGHTSPEED_CHAT_MAX_TOKENS` | Unset | Optional positive integer maximum output-token setting for new sessions. |

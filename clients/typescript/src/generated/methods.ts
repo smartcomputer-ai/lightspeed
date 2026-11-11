@@ -135,7 +135,7 @@ export const METHODS = [
   "deployment/universes/create",
   "deployment/universes/list",
   "deployment/universes/read",
-  "deployment/universes/slug/put",
+  "deployment/universes/handle/put",
   "deployment/universes/delete",
   "deployment/api-keys/create",
   "deployment/api-keys/list",
@@ -917,7 +917,7 @@ export const METHOD_INFO = {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Create a universe",
-    description: "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
+    description: "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.",
   },
   "deployment/universes/list": {
     scope: "deployment",
@@ -929,13 +929,13 @@ export const METHOD_INFO = {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Read a universe",
-    description: "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
+    description: "Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.",
   },
-  "deployment/universes/slug/put": {
+  "deployment/universes/handle/put": {
     scope: "deployment",
     access: {"kind":"deployment"},
-    summary: "Set a universe slug",
-    description: "Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.",
+    summary: "Rename a universe",
+    description: "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.",
   },
   "deployment/universes/delete": {
     scope: "deployment",
@@ -2169,7 +2169,7 @@ export interface MethodMap {
   /**
    * Create a universe
    *
-   * Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.
+   * Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.
    */
   "deployment/universes/create": {
     params: Api.DeploymentUniverseCreateParams;
@@ -2187,19 +2187,19 @@ export interface MethodMap {
   /**
    * Read a universe
    *
-   * Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.
+   * Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.
    */
   "deployment/universes/read": {
     params: Api.DeploymentUniverseReadParams;
     result: Api.AgentApiOutcomeOfDeploymentUniverseReadResponse;
   };
   /**
-   * Set a universe slug
+   * Rename a universe
    *
-   * Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.
+   * Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.
    */
-  "deployment/universes/slug/put": {
-    params: Api.DeploymentUniverseSlugPutParams;
+  "deployment/universes/handle/put": {
+    params: Api.DeploymentUniverseHandlePutParams;
     result: Api.AgentApiOutcomeOfDeploymentUniverseReadResponse;
   };
   /**

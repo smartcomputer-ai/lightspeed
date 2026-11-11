@@ -176,9 +176,48 @@ async fn exercise(pool: &sqlx::PgPool) {
     )
     .await;
 
+    // It may name the universe by handle instead. The handle resolves when
+    // the request arrives, so a rename takes effect at once; one that names
+    // nothing is reported as such, and a universe key may not use one.
+    let by_handle = |key: &MintedApiKey, handle: &str| {
+        let mut named = headers(key, None, None);
+        named.insert(UNIVERSE_HEADER, handle.parse().unwrap());
+        named
+    };
+    let handle = store_pg::default_universe_handle(other);
+    let context = allowed(by_handle(&deployment_key, &handle), "session/read").await;
+    assert_eq!(context.scope, AccessScope::Universe { universe_id: other });
+    assert!(
+        store_pg::put_universe_handle(pool, other, "renamed-by-test")
+            .await
+            .unwrap()
+    );
+    let context = allowed(
+        by_handle(&deployment_key, "renamed-by-test"),
+        "session/read",
+    )
+    .await;
+    assert_eq!(context.scope, AccessScope::Universe { universe_id: other });
+    for unknown in [handle.as_str(), "Not A Handle"] {
+        let refusal = refused(by_handle(&deployment_key, unknown), "session/read").await;
+        assert_eq!(refusal.kind, AgentApiErrorKind::NotFound, "{unknown}");
+    }
+    let refusal = refused(
+        by_handle(&deployment_key, "renamed-by-test"),
+        "deployment/universes/list",
+    )
+    .await;
+    assert_eq!(refusal.kind, AgentApiErrorKind::Forbidden);
+    let refusal = refused(
+        by_handle(&universe_key, &store_pg::default_universe_handle(universe)),
+        "session/read",
+    )
+    .await;
+    assert_eq!(refusal.kind, AgentApiErrorKind::Forbidden);
+
     allowed(
         headers(&deployment_key, None, None),
-        api::METHOD_DEPLOYMENT_UNIVERSES_SLUG_PUT,
+        api::METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT,
     )
     .await;
     for denied in [
@@ -187,7 +226,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         headers(&deployment_key, Some(other), None),
     ] {
         assert_eq!(
-            refused(denied, api::METHOD_DEPLOYMENT_UNIVERSES_SLUG_PUT)
+            refused(denied, api::METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT)
                 .await
                 .kind,
             AgentApiErrorKind::Forbidden

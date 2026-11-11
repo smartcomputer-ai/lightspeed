@@ -37,8 +37,8 @@ impl Runtime {
         let done = stop.clone();
         let worker = thread::spawn(move || {
             let mut universes = json!([
-                {"universeId":"00000000-0000-0000-0000-000000000001","slug":"one","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0},
-                {"universeId":"00000000-0000-0000-0000-000000000002","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0}
+                {"universeId":"00000000-0000-0000-0000-000000000001","handle":"one","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0},
+                {"universeId":"00000000-0000-0000-0000-000000000002","handle":"u-000000000002","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0}
             ]);
             while !done.load(Ordering::Relaxed) {
                 let (mut stream, _) = match listener.accept() {
@@ -88,17 +88,20 @@ impl Runtime {
                     "deployment/universes/list" => {
                         json!({"universes":universes})
                     }
+                    // As the runtime does, address a universe by UUID or handle.
                     "deployment/universes/read" => {
-                        json!({"universe":universes.as_array().unwrap().iter().find(|u| u["universeId"] == body["params"]["universeId"])})
+                        let named = &body["params"]["universe"];
+                        json!({"universe":universes.as_array().unwrap().iter().find(|u| u["universeId"] == *named || u["handle"] == *named)})
                     }
-                    "deployment/universes/slug/put" => {
+                    "deployment/universes/handle/put" => {
+                        let named = &body["params"]["universe"];
                         let universe = universes
                             .as_array_mut()
                             .unwrap()
                             .iter_mut()
-                            .find(|u| u["universeId"] == body["params"]["universeId"])
+                            .find(|u| u["universeId"] == *named || u["handle"] == *named)
                             .unwrap();
-                        universe["slug"] = body["params"]["slug"].clone();
+                        universe["handle"] = body["params"]["handle"].clone();
                         json!({"universe":universe})
                     }
                     "models/list" => json!({"models":[],"providers":[]}),
@@ -301,7 +304,7 @@ fn named_connections_universe_selection_and_per_command_override() {
     ));
     let universes = success(cli(dir, &["universe", "list"], None));
     assert!(universes.contains("* 00000000-0000-0000-0000-000000000001  one"));
-    assert!(universes.contains("00000000-0000-0000-0000-000000000002  (no slug)"));
+    assert!(universes.contains("00000000-0000-0000-0000-000000000002  u-000000000002"));
     let overridden = success(cli(
         dir,
         &[
@@ -320,7 +323,7 @@ fn named_connections_universe_selection_and_per_command_override() {
         overridden["activeUniverseId"],
         "00000000-0000-0000-0000-000000000002"
     );
-    let unnamed = success(cli(
+    let derived = success(cli(
         dir,
         &[
             "--universe",
@@ -330,8 +333,12 @@ fn named_connections_universe_selection_and_per_command_override() {
         ],
         None,
     ));
-    assert!(unnamed.contains("Slug: (no slug)"));
-    let renamed = success(cli(dir, &["universe", "set-slug", "one", "renamed"], None));
+    assert!(derived.contains("Handle: u-000000000002"));
+    let renamed = success(cli(
+        dir,
+        &["universe", "set-handle", "one", "renamed"],
+        None,
+    ));
     assert!(renamed.contains("00000000-0000-0000-0000-000000000001  renamed"));
     let status = success(cli(dir, &["connect", "status", "--json"], None));
     assert_eq!(
@@ -339,18 +346,18 @@ fn named_connections_universe_selection_and_per_command_override() {
         "00000000-0000-0000-0000-000000000001"
     );
     assert_eq!(
-        serde_json::from_str::<Value>(&status).unwrap()["activeUniverse"]["slug"],
+        serde_json::from_str::<Value>(&status).unwrap()["activeUniverse"]["handle"],
         "renamed"
     );
     let status = success(cli(dir, &["connect", "status"], None));
     assert!(status.contains("\n\nAPI key:\n"));
     assert!(status.ends_with(
-        "\n\nSelected universe:\n  Slug: renamed\n  UUID: 00000000-0000-0000-0000-000000000001\n"
+        "\n\nSelected universe:\n  Handle: renamed\n  UUID: 00000000-0000-0000-0000-000000000001\n"
     ));
     let universe_status = success(cli(dir, &["universe", "status", "--json"], None));
     assert_eq!(
         serde_json::from_str::<Value>(&universe_status).unwrap(),
-        json!({"universeId":"00000000-0000-0000-0000-000000000001", "slug":"renamed"})
+        json!({"universeId":"00000000-0000-0000-0000-000000000001", "handle":"renamed"})
     );
     let requests = runtime.requests.lock().unwrap();
     let models: Vec<_> = requests
@@ -408,12 +415,12 @@ fn universe_key_and_explicit_single_mode_send_no_selection_header() {
         let status: Value = serde_json::from_str(&status).unwrap();
         assert_eq!(status["universeId"], "00000000-0000-0000-0000-000000000001");
         if single {
-            assert_eq!(status["slug"], "one");
+            assert_eq!(status["handle"], "one");
             let listed = success(cli(dir, &["universe", "list"], None));
             assert!(listed.contains("* 00000000-0000-0000-0000-000000000001  one"));
         } else {
             assert!(
-                status["slugUnavailableReason"]
+                status["handleUnavailableReason"]
                     .as_str()
                     .unwrap()
                     .contains("requires a deployment key")
@@ -477,8 +484,8 @@ fn universe_status_distinguishes_restricted_metadata_and_missing_universes() {
         ));
         let status: Value = serde_json::from_str(&output).unwrap();
         assert_eq!(status["universeId"], overrides[2].1);
-        assert!(status["slug"].is_null());
-        let reason = status["slugUnavailableReason"].as_str().unwrap();
+        assert!(status["handle"].is_null());
+        let reason = status["handleUnavailableReason"].as_str().unwrap();
         if restricted {
             assert!(reason.contains("requires a deployment key"));
         } else {

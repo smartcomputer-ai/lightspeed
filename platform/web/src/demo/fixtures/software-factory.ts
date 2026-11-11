@@ -67,7 +67,7 @@ import {
 } from "./builders";
 
 export const SOFTWARE_FACTORY_UNIVERSE_ID = "11111111-1111-4111-8111-111111111111";
-export const SOFTWARE_FACTORY_SLUG = "software-factory";
+export const SOFTWARE_FACTORY_HANDLE = "software-factory";
 const ENGINE_UNIVERSE_ID = "0000a11e-0000-4000-8000-00000000a11e";
 
 const PROFILE = {
@@ -4386,7 +4386,7 @@ const responder: DemoResponder = (input, context) => {
 export function seedSoftwareFactory(store: DemoStore): void {
   const universe = store.addUniverse({
     id: SOFTWARE_FACTORY_UNIVERSE_ID,
-    slug: SOFTWARE_FACTORY_SLUG,
+    handle: SOFTWARE_FACTORY_HANDLE,
     name: "Software Factory",
     icon: "code",
     iconColor: "blue",

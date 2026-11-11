@@ -47,7 +47,7 @@ client-chosen identifiers:
 
 | Resource | Method | Stable key |
 | --- | --- | --- |
-| Universe | `deployment/universes/create` (idempotent) | slug |
+| Universe | `deployment/universes/create` (idempotent) | handle |
 | Token credential | `auth/grants/import`, `auth/grants/replace` | `grantId` |
 | Model or GitHub provider | `auth/providers/create`, `auth/providers/replace` | `providerId` |
 | Model defaults | `models/defaults/put` | purpose slot |
@@ -63,14 +63,18 @@ accepts one.
 
 ### Identity
 
-A universe is declared by its **handle** (the runtime slug) and a display
-name. The runtime UUID never appears in a document.
+A universe is declared by its **handle** and a display name. The handle is
+the universe's deployment-unique name: every universe has one, the runtime
+resolves it wherever it accepts a UUID, and it is the same in every deployment
+a document is applied to. The runtime UUID differs between deployments and
+never appears in a document.
 
-- `apply` resolves the handle through `deployment/universes/list`. If no
+- `apply` resolves the handle through `deployment/universes/read`. If no
   universe has it, `apply` generates a UUID and creates the universe with that
-  slug.
+  handle.
 - A changed handle is never treated as a rename. Renames stay an explicit
-  `universe set-slug` followed by a document update.
+  `universe set-handle` followed by a document update. A rename releases the
+  previous handle, so a document still naming it would create a new universe.
 - Secret encryption and workflow identities depend on the UUID, so a document
   cannot rebuild a lost universe. Recovery still restores the database;
   `apply` then finds the universe by handle again.

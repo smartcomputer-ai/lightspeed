@@ -20,13 +20,13 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
   universe = {
-    id: "platform-id", lightspeedUniverseId: "core-id", name: "Factory", slug: "factory", gatewayUrl: null,
+    id: "platform-id", lightspeedUniverseId: "core-id", name: "Factory", handle: "factory", gatewayUrl: null,
     status: "active", createdAt: "2026-01-01T00:00:00Z", role: "admin", features: { bots: true, channels: true },
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: Record<string, unknown>) => {
     if (method === "GET" && path === "/api/v1/universes") return [universe];
     if (method === "PATCH" && path === "/api/v1/universes/platform-id") return { ...universe, ...body };
-    if (method === "PUT" && path === "/api/v1/universes/platform-id/slug") return { ...universe, ...body };
+    if (method === "PUT" && path === "/api/v1/universes/platform-id/handle") return { ...universe, ...body };
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -48,7 +48,7 @@ async function show(path = "/u/factory/settings/general") {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/u/:slug/settings/general" element={<><GeneralSettingsPage admin={false} /><Location /></>} />
+        <Route path="/u/:handle/settings/general" element={<><GeneralSettingsPage admin={false} /><Location /></>} />
         <Route path="*" element={<Location />} />
       </Routes>
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
@@ -92,26 +92,26 @@ it("renames with a trimmed display name once it changes", async () => {
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/v1/universes/platform-id", { name: "Plant" }));
 });
 
-it("holds an invalid slug and follows a saved slug to its new URL", async () => {
+it("holds an invalid handle and follows a saved handle to its new URL", async () => {
   await show();
-  await type("universe-slug", "-bad slug");
-  expect(button("Save slug")!.disabled).toBe(true);
-  await type("universe-slug", " plant ");
-  expect(button("Save slug")!.disabled).toBe(false);
-  await act(async () => input("universe-slug").closest("form")!.requestSubmit());
+  await type("universe-handle", "-bad handle");
+  expect(button("Save handle")!.disabled).toBe(true);
+  await type("universe-handle", " plant ");
+  expect(button("Save handle")!.disabled).toBe(false);
+  await act(async () => input("universe-handle").closest("form")!.requestSubmit());
   await waitForUi(() => expect(location()).toBe("/u/plant/settings/general"));
-  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/v1/universes/platform-id/slug", { slug: "plant" });
+  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/v1/universes/platform-id/handle", { handle: "plant" });
 });
 
-it("shows a refused slug change and stays put", async () => {
+it("shows a refused handle change and stays put", async () => {
   mocks.api.mockImplementation(async (method: string) => {
-    if (method === "PUT") throw new Error("slug already in use");
+    if (method === "PUT") throw new Error("handle already in use");
     return [universe];
   });
   await show();
-  await type("universe-slug", "taken");
-  await act(async () => input("universe-slug").closest("form")!.requestSubmit());
-  await waitForUi(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe("slug already in use"));
+  await type("universe-handle", "taken");
+  await act(async () => input("universe-handle").closest("form")!.requestSubmit());
+  await waitForUi(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe("handle already in use"));
   expect(location()).toBe("/u/factory/settings/general");
 });
 
