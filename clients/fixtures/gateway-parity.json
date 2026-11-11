@@ -1,0 +1,59 @@
+{
+  "calls": [
+    {
+      "method": "initialize",
+      "params": {},
+      "headers": {"authorization": "Bearer call-key"},
+      "expectHeaders": {"authorization": "Bearer call-key", "x-lightspeed-universe": null, "x-lightspeed-actor": "actor"},
+      "response": {"result": {"result": {"protocolVersion": "fixture"}, "notifications": []}}
+    },
+    {
+      "method": "deployment/universes/list",
+      "params": {},
+      "expectHeaders": {"authorization": "Bearer configured", "x-lightspeed-universe": null},
+      "response": {"result": {"result": {"universes": []}, "notifications": []}}
+    },
+    {
+      "method": "session/start",
+      "params": {"sessionId": "fixture", "deleteAfterCloseMs": null},
+      "expectHeaders": {"authorization": "Bearer configured", "x-lightspeed-universe": "default-universe"},
+      "response": {"result": {"result": {"session": {"id": "fixture"}}, "notifications": [{"method": "fixture/notification", "params": {"seq": 1}}]}}
+    },
+    {
+      "method": "session/read",
+      "params": {"sessionId": "missing"},
+      "expectHeaders": {"x-lightspeed-universe": "default-universe"},
+      "response": {"error": {"code": -32014, "message": "Choose a model", "data": {"kind": "modelDefaultUnset", "modelDefaultSlot": "agentRun"}}}
+    }
+  ],
+  "wait": {
+    "sessionId": "fixture",
+    "runId": "1",
+    "after": {"seq": 4},
+    "requests": [
+      {
+        "method": "session/events/read",
+        "params": {"sessionId": "fixture", "after": {"seq": 4}, "waitMs": 0},
+        "result": {"complete": false, "nextCursor": {"seq": 6}, "headCursor": {"seq": 20}, "events": [
+          {"sessionId": "fixture", "observedAtMs": 100, "cursor": {"seq": 5}, "joins": {"runId": "2"}, "kind": {"type": "runStarted", "runId": "2"}},
+          {"sessionId": "fixture", "observedAtMs": 101, "cursor": {"seq": 6}, "joins": {"runId": "1"}, "kind": {"type": "runStarted", "runId": "1"}}
+        ]}
+      },
+      {
+        "method": "session/events/read",
+        "params": {"sessionId": "fixture", "after": {"seq": 6}, "waitMs": 1000},
+        "result": {"complete": true, "nextCursor": {"seq": 9}, "headCursor": {"seq": 20}, "events": [
+          {"sessionId": "fixture", "observedAtMs": 105, "cursor": {"seq": 8}, "joins": {"runId": "1"}, "kind": {"type": "runCompleted", "runId": "1"}},
+          {"sessionId": "fixture", "observedAtMs": 106, "cursor": {"seq": 9}, "joins": {"runId": "2"}, "kind": {"type": "runCompleted", "runId": "2"}}
+        ]}
+      },
+      {
+        "method": "session/runs/read",
+        "params": {"sessionId": "fixture", "runId": "1"},
+        "result": {"run": {"id": "1", "status": "completed", "outputText": "done", "source": {"type": "input", "items": []}}}
+      }
+    ],
+    "observedSequences": [6, 8],
+    "finalCursor": {"seq": 8}
+  }
+}
