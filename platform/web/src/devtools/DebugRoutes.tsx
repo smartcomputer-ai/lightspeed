@@ -12,6 +12,7 @@ export default function DebugRoutes() {
   return (
     <Routes>
       {import.meta.env.DEV && <Route path="debug/ui-overview" element={<UiOverviewPage />} />}
+      {import.meta.env.DEV && <Route path="debug/ui-overview/:section" element={<UiOverviewPage />} />}
       {debugModeEnabled && <Route path="debug/design-configuration" element={<DesignConfigurationPage />} />}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

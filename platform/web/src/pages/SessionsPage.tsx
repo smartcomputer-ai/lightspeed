@@ -893,7 +893,7 @@ function SessionListItem({
         ? { checked: isSelected, onToggle: () => onToggle(session.id), label: `Select ${session.displayName ?? session.id}` }
         : undefined}
       tree={tree}
-      indicator={<ActivityDot activity={session.activity} quiet />}
+      indicator={<ActivityDot activity={session.activity} closed={session.lifecycleStatus === "closed"} />}
       title={displayName || session.id}
       // A sub-agent row is marked by its indent and ↳; its lineage is the
       // title's tooltip.

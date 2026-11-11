@@ -102,7 +102,7 @@ export function ListPaneHeader({
   actions?: ReactNode;
 }) {
   return (
-    <PaneBar>
+    <PaneBar className="pl-6">
       <h1 className="min-w-0 truncate text-sm font-semibold">{title}</h1>
       {count !== undefined && <span className="shrink-0 text-xs text-muted-foreground">{count}</span>}
       {actions && <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div>}
@@ -113,7 +113,7 @@ export function ListPaneHeader({
 /// A strip under the header: a picker, a selection bar, a notice.
 export function ListPaneToolbar({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={cn("flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 text-xs", className)}>
+    <div className={cn("flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-b py-2 pr-4 pl-6 text-xs", className)}>
       {children}
     </div>
   );
@@ -154,7 +154,7 @@ export function ListPaneState({
 /// The heading over a group of rows (Active, Paused, …).
 export function ListGroupLabel({ children }: { children: ReactNode }) {
   return (
-    <div className="px-4 pt-3 pb-1 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+    <div className="pt-3 pr-4 pb-1 pl-6 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
       {children}
     </div>
   );
@@ -176,47 +176,52 @@ export interface ListRowTree {
   children?: boolean;
 }
 
-/// Where lines run. A root starts its line at a dot on its bottom edge (where
-/// a separator would be), centred on the margin its title and subtitle start
-/// at; a nested parent drops its line from its own branch dot,
-/// just left of its content, where each child's branch also ends. Each level
-/// indents so every branch is TREE_BRANCH_REM long: the first level from the
-/// root's line, deeper ones from their parent's dot.
-const TREE_ANCHOR_REM = 0;
-const TREE_DOT_REM = -0.375;
+/// The list's left inset (pl-6): room for a row's dot before its content.
+/// The header, toolbar and group labels share it.
+const LIST_INSET_REM = 1.5;
+
+/// Where a row's dot sits, from its content start (a root's in the middle
+/// of the list's inset): its status dot (the
+/// indicator), else a plain dot in a tree. It is the row's node in a tree:
+/// every parent, a root as any other, drops its line to its children from
+/// it, and each child's branch ends at it. Lines stop at its edge, so a
+/// translucent or hollow status dot shows no line through it. Each level
+/// indents by TREE_BRANCH_REM, so every branch is that long.
+const ROW_DOT_REM = -LIST_INSET_REM / 2;
+const ROW_DOT_RADIUS_PX = 4;
 const TREE_BRANCH_REM = 0.875;
-const TREE_FIRST_INDENT_REM = TREE_ANCHOR_REM - TREE_DOT_REM + TREE_BRANCH_REM;
-const TREE_INDENT_REM = TREE_BRANCH_REM;
-/// What a selection checkbox (size-4) and the row's gap after it add before the content.
-const TREE_SELECTION_REM = 1.625;
+/// What a selection checkbox (size-4), its margin and the row's gap after
+/// it add before the content: the dot sits between it and the content.
+const TREE_SELECTION_REM = 2.375;
 
 /// How far a row at this depth is indented.
-const treeIndent = (depth: number) => (depth > 0 ? TREE_FIRST_INDENT_REM + (depth - 1) * TREE_INDENT_REM : 0);
-/// Where a row at this depth drops its line, from its content start.
-const treeAnchor = (depth: number) => (depth === 0 ? TREE_ANCHOR_REM : TREE_DOT_REM);
+const treeIndent = (depth: number) => depth * TREE_BRANCH_REM;
+
+/// Where the line of the parent at `level` - 1 runs, from the content start of a row at `depth`.
+const treeTrunk = (level: number, depth: number) => ROW_DOT_REM + treeIndent(level - 1) - treeIndent(depth);
 
 const TREE_VERTICAL = "absolute w-px -translate-x-1/2 bg-(--list-tree-line)";
-const TREE_DOT = "absolute size-[5px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-(--list-tree-dot)";
 
-/// The lines of a nested row, laid over the row (out of its flow, so nothing
-/// shifts) from its top edge to its bottom one, with its branch and dot at
-/// its vertical centre: the line from its parent (curving off when it is the
-/// last child, else running on), the lines of ancestors that run past it,
-/// and, when it has children, the line it drops to them from its dot.
-/// `contentLeft` is where the row's content starts. Lines and dots are
-/// solid colors, so where they meet nothing shows through darker.
-function TreeLines({ tree, contentLeft }: { tree: ListRowTree; contentLeft: string }) {
+/// The lines of a tree row, laid over the row (out of its flow, so nothing
+/// shifts) from its top edge to its bottom one, meeting its dot at its
+/// vertical centre: the line from its parent (curving off when it is the
+/// last child, else running on) and its branch to the dot, the lines of
+/// ancestors that run past it, and, when it has children, the line it drops
+/// to them from the dot. A root has no parent: only the line down. Without
+/// a status dot it draws a plain one. `contentLeft` is where the row's
+/// content starts. Lines and dots are solid colors, so where they meet
+/// nothing shows through darker.
+function TreeLines({ tree, plainDot, contentLeft }: { tree: ListRowTree; plainDot: boolean; contentLeft: string }) {
   const { depth, last = false, lines = [], children = false } = tree;
-  // Where the line of the parent at level - 1 runs, from this row's content start.
-  const trunk = (level: number) => treeAnchor(level - 1) + treeIndent(level - 1) - treeIndent(depth);
+  const trunk = (level: number) => treeTrunk(level, depth);
   const own = trunk(depth);
-  const branch = `${TREE_DOT_REM - own}rem`;
+  const branch = `calc(${ROW_DOT_REM - own}rem - ${ROW_DOT_RADIUS_PX}px)`;
   return (
     <span aria-hidden className="pointer-events-none absolute inset-y-0" style={{ left: contentLeft }}>
       {lines.map((runs, index) => runs && (
         <span key={index} className={TREE_VERTICAL} style={{ left: `${trunk(index + 1)}rem`, top: 0, bottom: 0 }} />
       ))}
-      {last ? (
+      {depth > 0 && (last ? (
         <span
           className="absolute top-0 h-[calc(50%+0.5px)] rounded-bl-[7px] border-b border-l border-(--list-tree-line)"
           style={{ left: `calc(${own}rem - 0.5px)`, width: branch }}
@@ -226,41 +231,52 @@ function TreeLines({ tree, contentLeft }: { tree: ListRowTree; contentLeft: stri
           <span className={TREE_VERTICAL} style={{ left: `${own}rem`, top: 0, bottom: 0 }} />
           <span className="absolute top-[calc(50%-0.5px)] h-px bg-(--list-tree-line)" style={{ left: `${own}rem`, width: branch }} />
         </>
+      ))}
+      {children && (
+        <span className={TREE_VERTICAL} style={{ left: `${ROW_DOT_REM}rem`, top: `calc(50% + ${ROW_DOT_RADIUS_PX}px)`, bottom: 0 }} />
       )}
-      {children && <span className={TREE_VERTICAL} style={{ left: `${TREE_DOT_REM}rem`, top: "50%", bottom: 0 }} />}
-      <span className={cn(TREE_DOT, "top-1/2")} style={{ left: `${TREE_DOT_REM}rem` }} />
+      {plainDot && (
+        <span
+          className="absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-(--list-tree-dot)"
+          style={{ left: `${ROW_DOT_REM}rem` }}
+        />
+      )}
     </span>
   );
 }
 
-/// Where a root's line starts: a dot on the row's bottom edge, where a
-/// separator would be, a little into its content, and a dotted line from it
-/// to the right, ending as far from the right edge as the dot is from the
-/// left. The line down begins in the first child row. Drawn above the next
-/// row, whose background would otherwise cover the dot's lower half.
+/// Where the dotted separator on a tree row's bottom edge starts, from its
+/// content start: at the branch line the next row hangs from, the rightmost
+/// line running across that edge, so it never crosses one. A parent's own
+/// line to its children; else its own parent's line when that runs on; else
+/// the nearest ancestor's that does. Null when no line runs on: the tree
+/// ends there, and the row keeps its separator.
+function treeSeparatorStart(tree: ListRowTree | undefined): number | null {
+  if (!tree) return null;
+  const { depth, last = false, lines = [], children = false } = tree;
+  if (children) return ROW_DOT_REM;
+  if (depth === 0) return null;
+  if (!last) return treeTrunk(depth, depth);
+  const level = lines.lastIndexOf(true);
+  return level < 0 ? null : treeTrunk(level + 1, depth);
+}
+
+/// The dotted separator on a tree row's bottom edge, in place of the solid
+/// one: from `start` (see treeSeparatorStart) to the right, ending as far
+/// from the right edge as a root's line is from the left without a
+/// selection checkbox, so every boundary's ends at the same place. Drawn
+/// above the next row, whose background would otherwise cover it.
 /// `contentLeft` is where the row's content starts.
-function TreeStart({ contentLeft }: { contentLeft: string }) {
-  const inset = `calc(${contentLeft} + ${TREE_ANCHOR_REM}rem)`;
+function TreeSeparator({ start, contentLeft }: { start: number; contentLeft: string }) {
   return (
     <span aria-hidden className="pointer-events-none absolute inset-0 z-10">
       {/* Dashes of 2px every 5px: a drawn pattern, longer and sparser than a dotted border. */}
       <span
         className="absolute top-[calc(100%-0.5px)] h-px bg-[linear-gradient(to_right,var(--list-tree-line)_2px,transparent_2px)] bg-size-[5px_1px] bg-repeat-x"
-        style={{ left: inset, right: inset }}
+        style={{ left: `calc(${contentLeft} + ${start}rem)`, right: `${LIST_INSET_REM + ROW_DOT_REM}rem` }}
       />
-      <span className={cn(TREE_DOT, "top-full")} style={{ left: inset }} />
     </span>
   );
-}
-
-/// Whether a tree row's next row belongs to the same tree, so no separator
-/// is drawn between them: it has children, or it is a child that is not the
-/// last row of its root's tree.
-function joinedBelow(tree: ListRowTree | undefined): boolean {
-  if (!tree) return false;
-  if (tree.children) return true;
-  if (tree.depth === 0) return false;
-  return !tree.last || (tree.lines ?? []).some(Boolean);
 }
 
 export interface ListRowSelection {
@@ -310,36 +326,55 @@ export function ListRow({
   children?: ReactNode;
 }) {
   const highlighted = active || selection?.checked;
+  // Inside a tree, the next row belongs to the same tree: a dotted separator
+  // from the branch line replaces the solid one, and the lines run on unbroken.
+  const separatorStart = treeSeparatorStart(tree);
   const className = cn(
-    "group/row flex min-h-(--list-row-height) min-w-0 items-center gap-2.5 border-b px-4 py-1.5 text-sm transition-colors duration-(--list-transition-duration) hover:bg-muted/50",
+    "group/row flex min-h-(--list-row-height) min-w-0 items-center gap-2.5 border-b py-1.5 pr-4 pl-6 text-sm transition-colors duration-(--list-transition-duration) hover:bg-muted/50",
     highlighted && "bg-muted",
     selection && "cursor-action",
-    // Tree lines are laid over the row. Inside a tree there is no separator
-    // (min-height counts the border, so the row keeps its height) and the
-    // lines run on into the next row unbroken.
-    tree && "relative",
-    joinedBelow(tree) && "border-b-0",
+    // Tree lines are laid over the row. Inside a tree there is no solid
+    // separator (min-height counts the border, so the row keeps its height).
+    // The dot and tree lines are laid over the row.
+    (tree || indicator) && "relative",
+    separatorStart !== null && "border-b-0",
   );
   const depth = tree?.depth ?? 0;
-  const style = depth > 0 ? { paddingLeft: `${1 + treeIndent(depth)}rem` } : undefined;
+  // Nested rows indent their content; while selecting, after the checkbox,
+  // so the checkboxes keep one column.
+  const indent = treeIndent(depth);
+  const style = depth > 0 && !selection ? { paddingLeft: `${LIST_INSET_REM + indent}rem` } : undefined;
   // Where the content starts: the padding, and a selection checkbox. (A
   // leading avatar is not counted: lists that nest have none.)
-  const contentLeft = `${1 + treeIndent(depth) + (selection ? TREE_SELECTION_REM : 0)}rem`;
+  const contentLeft = `${LIST_INSET_REM + treeIndent(depth) + (selection ? TREE_SELECTION_REM : 0)}rem`;
   const content = (
     <>
-      {tree && depth > 0 && <TreeLines tree={tree} contentLeft={contentLeft} />}
-      {tree?.children && depth === 0 && <TreeStart contentLeft={contentLeft} />}
+      {tree && (depth > 0 || tree.children) && <TreeLines tree={tree} plainDot={!indicator} contentLeft={contentLeft} />}
+      {separatorStart !== null && (
+        <TreeSeparator start={separatorStart} contentLeft={contentLeft} />
+      )}
+      {/* The status dot, in the inset left of the content at the row's centre: its node when in a tree. */}
+      {indicator && (
+        <span
+          className="absolute top-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center"
+          style={{ left: `calc(${contentLeft} + ${ROW_DOT_REM}rem)` }}
+        >
+          {indicator}
+        </span>
+      )}
       {selection && (
         <Checkbox
           checked={selection.checked}
           onCheckedChange={selection.onToggle}
           aria-label={selection.label}
+          // Room for the dot (and a nested row's indent) between it and the content.
+          className="mr-3"
+          style={indent > 0 ? { marginRight: `${0.75 + indent}rem` } : undefined}
         />
       )}
       {leading && <span className="flex shrink-0 items-center">{leading}</span>}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-center gap-2">
-          {indicator}
           {/* Slightly dimmer at rest; full strength on hover, focus or selection. */}
           <span
             className="min-w-0 flex-1 truncate font-(--list-title-font-weight) text-(--item-foreground-rest) group-data-highlighted/row:font-(--list-title-font-weight-selected) transition-[color,font-weight] duration-(--list-transition-duration) group-hover/row:text-foreground group-focus-visible/row:text-foreground group-data-highlighted/row:text-foreground"

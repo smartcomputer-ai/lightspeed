@@ -47,15 +47,18 @@ it("draws no separator inside a tree, only after its last row", async () => {
 it("indents each level and hangs each child off its parent's line", async () => {
   await render();
   expect(row("root").style.paddingLeft).toBe("");
-  expect(row("first").style.paddingLeft).toBe("2.25rem");
-  expect(row("grandchild").style.paddingLeft).toBe("3.125rem");
-  // A root's line starts at a dot on its bottom edge (a dotted line and the dot); a
-  // middle child has a running line, a branch, the drop from its dot to its
-  // children and the dot; the last grandchild an ancestor line, a curve and
-  // a dot; the last child a curve and a dot; a lone root nothing.
-  expect(lines("root")).toBe(2);
-  expect(lines("first")).toBe(4);
-  expect(lines("grandchild")).toBe(3);
+  expect(row("first").style.paddingLeft).toBe("2.375rem");
+  expect(row("grandchild").style.paddingLeft).toBe("3.25rem");
+  // Every parent drops its line from its dot at its centre (a plain dot here,
+  // with no status dot): the root has the drop, its dot and the dotted
+  // separator on its bottom edge; a middle child a running line, a branch,
+  // the drop, the dot and the separator; the last grandchild an ancestor
+  // line, a curve, a dot and a separator (its grandparent's line runs on);
+  // the last child a curve and a dot, ending the tree on a solid separator;
+  // a lone root nothing.
+  expect(lines("root")).toBe(3);
+  expect(lines("first")).toBe(5);
+  expect(lines("grandchild")).toBe(4);
   expect(lines("second")).toBe(2);
   expect(row("other").querySelector("[aria-hidden]")).toBeNull();
 });

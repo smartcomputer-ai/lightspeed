@@ -4,6 +4,7 @@ import { CollapseToolsIcon, ExpandToolsIcon, type IconComponent } from "@/icons"
 import { useUserPreferences } from "@/lib/user-preferences";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { StatusDotRings, type BotTone } from "@/components/bot/status";
 import { cn } from "@/lib/utils";
 
 /// A meta toolbar: the small facts about a session or a bot (sub-agents,
@@ -175,12 +176,13 @@ const TONE_TEXT: Record<MetaTone, string> = {
   info: "text-info",
   muted: "text-muted-foreground/60",
 };
+// A dot is drawn in its text color (a .status-dot, with its rings).
 const TONE_DOT: Record<MetaTone, string> = {
-  success: "bg-success",
-  warning: "bg-warning",
-  danger: "bg-danger",
-  info: "bg-info",
-  muted: "bg-muted-foreground/50",
+  success: "text-success",
+  warning: "text-warning",
+  danger: "text-danger",
+  info: "text-info",
+  muted: "text-muted-foreground/50",
 };
 
 // The same colors, applied only while the row is hovered, focused or
@@ -194,14 +196,18 @@ const TONE_TEXT_ROW: Record<MetaTone, string> = {
   muted: "text-muted-foreground/60",
 };
 const TONE_DOT_ROW: Record<MetaTone, string> = {
-  success: "bg-muted-foreground/50 group-hover/row:bg-success group-focus-visible/row:bg-success group-data-highlighted/row:bg-success",
-  warning: "bg-muted-foreground/50 group-hover/row:bg-warning group-focus-visible/row:bg-warning group-data-highlighted/row:bg-warning",
-  danger: "bg-muted-foreground/50 group-hover/row:bg-danger group-focus-visible/row:bg-danger group-data-highlighted/row:bg-danger",
-  info: "bg-muted-foreground/50 group-hover/row:bg-info group-focus-visible/row:bg-info group-data-highlighted/row:bg-info",
-  muted: "bg-muted-foreground/50",
+  success: "text-muted-foreground/50 group-hover/row:text-success group-focus-visible/row:text-success group-data-highlighted/row:text-success",
+  warning: "text-muted-foreground/50 group-hover/row:text-warning group-focus-visible/row:text-warning group-data-highlighted/row:text-warning",
+  danger: "text-muted-foreground/50 group-hover/row:text-danger group-focus-visible/row:text-danger group-data-highlighted/row:text-danger",
+  info: "text-muted-foreground/50 group-hover/row:text-info group-focus-visible/row:text-info group-data-highlighted/row:text-info",
+  muted: "text-muted-foreground/50",
 };
 const toneText = (tone: MetaTone, tint: MetaTint) => (tint === "always" ? TONE_TEXT[tone] : cn(ROW_EASE, TONE_TEXT_ROW[tone]));
 const toneDot = (tone: MetaTone, tint: MetaTint) => (tint === "always" ? TONE_DOT[tone] : cn(ROW_EASE, TONE_DOT_ROW[tone]));
+/// How a dot moves, as a status dot's data-tone: a pulsing one is live (its
+/// pulse and rings), a warning waits and a danger needs attention (a ring).
+const dotMotion = (tone: MetaTone, pulse: boolean | undefined): BotTone | undefined =>
+  pulse ? "live" : tone === "warning" ? "waiting" : tone === "danger" ? "attention" : undefined;
 
 const GAP: Record<MetaToolbarMode, number> = { compact: 6, full: 4 };
 const GAP_CLASS: Record<MetaToolbarMode, string> = { compact: "gap-1.5", full: "gap-1" };
@@ -223,7 +229,11 @@ function ItemFace({ item, form, tint = "always" }: { item: MetaItem; form: MetaI
   const Icon = item.icon;
   const tone = item.tone;
   const dot = (size: string) =>
-    tone && <span className={cn(size, "shrink-0 rounded-full", toneDot(tone, tint), item.pulse && "animate-pulse motion-reduce:animate-none")} aria-hidden />;
+    tone && (
+      <span data-tone={dotMotion(tone, item.pulse)} className={cn("status-dot shrink-0 rounded-full", size, toneDot(tone, tint))} aria-hidden>
+        <StatusDotRings />
+      </span>
+    );
   if (!Icon) {
     // A status in words: its tone is a dot before them ("● Working"), and a
     // danger also colors the words. Compact, a toned status is its dot alone;

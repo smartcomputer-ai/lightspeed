@@ -111,7 +111,7 @@ it.each([false, true])("keeps the lineage mounted during delayed run refreshes (
     await respond(revision, [child("child", revision === 2 ? "closed" : "open")]);
     expect(container.querySelector('a[href$="/sessions/child"]')).toBe(link);
   }
-  expect(link.querySelector('span.rounded-full[aria-hidden="true"]')?.className).toContain("bg-muted-foreground/50");
+  expect(link.querySelector('span.rounded-full[aria-hidden="true"]')?.className).toContain("text-muted-foreground/50");
 });
 
 it("retains the header on a refresh error and applies a later successful empty result", async () => {

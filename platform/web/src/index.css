@@ -26,6 +26,60 @@
     }
 }
 
+/* Status dots (StatusDot): all in CSS. The dot is its tone's text color
+   (currentColor); live pulses, fading its fill (not its opacity, which would
+   fade its rings too). Its three ring children (.status-dot-ring) send rings
+   out from the dot that grow and fade, each a 1px line grown by its inset so
+   the line stays thin, every one at the same speed (the pulse interval, 2s):
+   waiting and attention one, live all three, a third apart, so three are
+   out at once. Paused is a hollow dot. Nothing moves under reduced motion. In
+   the components layer, so a utility on the dot (its size, say) still wins. */
+@keyframes status-dot-pulse {
+    50% { background-color: color-mix(in oklab, currentColor 50%, transparent); }
+}
+
+@keyframes status-dot-ring {
+    from { inset: 0; opacity: 0.9; }
+    to { inset: -0.5rem; opacity: 0; }
+}
+
+@layer components {
+    .status-dot {
+        position: relative;
+        background-color: currentColor;
+    }
+
+    .status-dot[data-tone="paused"] {
+        background-color: transparent;
+        border: 1px solid currentColor;
+    }
+
+    .status-dot-ring {
+        display: none;
+        position: absolute;
+        inset: 0;
+        border-radius: 9999px;
+        border: 1px solid currentColor;
+        pointer-events: none;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+        .status-dot[data-tone="live"] {
+            animation: status-dot-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        .status-dot:is([data-tone="waiting"], [data-tone="attention"]) > .status-dot-ring:first-child,
+        .status-dot[data-tone="live"] > .status-dot-ring {
+            display: block;
+            animation: status-dot-ring 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+
+        /* Live's rings a third of the interval apart. */
+        .status-dot[data-tone="live"] > .status-dot-ring:nth-child(2) { animation-delay: calc(-2s / 3); }
+        .status-dot[data-tone="live"] > .status-dot-ring:nth-child(3) { animation-delay: calc(-4s / 3); }
+    }
+}
+
 /* Fonts and shadows resolve through the variables in :root, like the colors,
    so they can be changed at runtime (the debug design-token editor does).
    Tailwind would otherwise compile their values into each utility. */

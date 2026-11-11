@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Link, NavLink, useParams } from "react-router-dom";
 import { DEFAULT_UNIVERSE_ICON, UNIVERSE_ICONS } from "@lightspeed-ai/platform-shared";
 import { AddIcon, BotIcon, CopyIcon, DarkThemeIcon, DeleteIcon, EmailIcon, InboxIcon, LightThemeIcon, NotificationIcon, SearchIcon, SelectModeIcon, SettingsIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
@@ -106,49 +107,88 @@ import { HEADER_STARSCAPE_CLASS, HEADER_STARSCAPE_CONFIG, HEADER_STARSCAPE_FADE 
 import { collectRoleUsage, iconRoles, libraryGlyphs, type IconRole, type RoleGlyph } from "./icon-usage";
 import { MetaBotExample, MetaModesExample, MetaSessionListExample, MetaSessionPageExample } from "./meta-toolbar-examples";
 
-/// Every shared UI component and its variations on one page, grouped by
-/// category, for reviewing the design system in both themes. Development
-/// builds only: the route is not compiled into production.
+/// Every shared UI component and its variations, one page per category,
+/// for reviewing the design system in both themes: the overview's tiles
+/// lead to them, the sidebar between them. Development builds only: the
+/// routes are not compiled into production.
+
+const BASE = "/debug/ui-overview";
 
 const CATEGORIES = [
-  { id: "branding", title: "Branding" },
-  { id: "typography", title: "Typography" },
-  { id: "colors", title: "Colors" },
-  { id: "icons", title: "Icons" },
-  { id: "entities", title: "Entities" },
-  { id: "buttons", title: "Buttons" },
-  { id: "badges", title: "Badges & status" },
-  { id: "meta", title: "Meta toolbar" },
-  { id: "inputs", title: "Inputs" },
-  { id: "selects", title: "Selects & comboboxes" },
-  { id: "toggles", title: "Checkboxes & switches" },
-  { id: "forms", title: "Forms" },
-  { id: "menus", title: "Menus" },
-  { id: "overlays", title: "Dialogs & overlays" },
-  { id: "navigation", title: "Navigation" },
-  { id: "cards", title: "Cards & layout" },
-  { id: "tables", title: "Tables" },
-  { id: "data", title: "Data display" },
-  { id: "messages", title: "Messages" },
+  { id: "branding", title: "Branding", summary: "The logo, the mark and the starscape." },
+  { id: "typography", title: "Typography", summary: "Headers, sizes, weights and text styles." },
+  { id: "colors", title: "Colors", summary: "Surfaces, status colors, radius and shadows." },
+  { id: "icons", title: "Icons", summary: "Every icon role and where it is used." },
+  { id: "entities", title: "Entities", summary: "Run steps and tool families, by icon and color." },
+  { id: "buttons", title: "Buttons", summary: "Variants, sizes, icons and states." },
+  { id: "badges", title: "Badges & status", summary: "Badges, info boxes and status dots." },
+  { id: "meta", title: "Meta toolbar", summary: "An entity's facts in rows, headers and strips." },
+  { id: "inputs", title: "Inputs", summary: "Text inputs, text areas, input groups and labels." },
+  { id: "selects", title: "Selects & comboboxes", summary: "Selects and comboboxes." },
+  { id: "toggles", title: "Checkboxes & switches", summary: "Checkboxes and switches." },
+  { id: "forms", title: "Forms", summary: "Field layouts, field sets and settings disclosures." },
+  { id: "menus", title: "Menus", summary: "Dropdown menus." },
+  { id: "overlays", title: "Dialogs & overlays", summary: "Dialogs, sheets, popovers and tooltips." },
+  { id: "navigation", title: "Navigation", summary: "Tabs and progress steps." },
+  { id: "lists", title: "Lists", summary: "List panes with nested rows, status dots and selection." },
+  { id: "cards", title: "Cards & layout", summary: "Cards, empty states, separators and collapsibles." },
+  { id: "tables", title: "Tables", summary: "Table cards and id text." },
+  { id: "data", title: "Data display", summary: "Avatars, markers and skeletons." },
+  { id: "messages", title: "Messages", summary: "Conversations and chat bubbles." },
 ] as const;
 
 type CategoryId = (typeof CATEGORIES)[number]["id"];
 
+/// Each category's page.
+const SECTIONS: Record<CategoryId, () => ReactNode> = {
+  branding: BrandingSection,
+  typography: TypographySection,
+  colors: ColorsSection,
+  icons: IconsSection,
+  entities: EntitiesSection,
+  buttons: ButtonsSection,
+  badges: BadgesSection,
+  meta: MetaToolbarSection,
+  inputs: InputsSection,
+  selects: SelectsSection,
+  toggles: TogglesSection,
+  forms: FormsSection,
+  menus: MenusSection,
+  overlays: OverlaysSection,
+  navigation: NavigationSection,
+  lists: ListsSection,
+  cards: CardsSection,
+  tables: TablesSection,
+  data: DataSection,
+  messages: MessagesSection,
+};
+
+const isCategory = (id: string | undefined): id is CategoryId => CATEGORIES.some((category) => category.id === id);
+
 export function UiOverviewPage() {
+  const { section } = useParams();
+  // A new page starts at its top.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [section]);
+  const Section = isCategory(section) ? SECTIONS[section] : undefined;
   return (
     <div className="flex min-h-svh bg-background text-foreground">
       <nav className="sticky top-0 hidden h-svh w-56 shrink-0 overflow-y-auto border-r bg-sidebar p-4 md:block" aria-label="Categories">
-        <p className="mb-1 text-sm font-semibold">UI overview</p>
+        <Link to={BASE} className="mb-1 block text-sm font-semibold hover:underline">UI overview</Link>
         <p className="mb-4 text-xs text-muted-foreground">Development only</p>
         <ul className="grid gap-0.5">
           {CATEGORIES.map((category) => (
             <li key={category.id}>
-              <a
-                href={`#${category.id}`}
-                className="block rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              <NavLink
+                to={`${BASE}/${category.id}`}
+                className={({ isActive }) => cn(
+                  "block rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  isActive && "bg-sidebar-accent font-medium text-sidebar-accent-foreground",
+                )}
               >
                 {category.title}
-              </a>
+              </NavLink>
             </li>
           ))}
         </ul>
@@ -159,34 +199,45 @@ export function UiOverviewPage() {
           <ThemeSwitch />
         </div>
         <div className="mx-auto grid max-w-5xl gap-14">
-          <div className="grid gap-1 pt-12 sm:pt-0 sm:pr-64">
-            <h1 className="text-2xl font-semibold tracking-tight">UI overview</h1>
-            <p className="text-sm text-muted-foreground">
-              The shared components in <code className="font-mono text-xs">src/components/ui</code> and their variations.
-            </p>
-          </div>
-          <BrandingSection />
-          <TypographySection />
-          <ColorsSection />
-          <IconsSection />
-          <EntitiesSection />
-          <ButtonsSection />
-          <BadgesSection />
-          <MetaToolbarSection />
-          <InputsSection />
-          <SelectsSection />
-          <TogglesSection />
-          <FormsSection />
-          <MenusSection />
-          <OverlaysSection />
-          <NavigationSection />
-          <CardsSection />
-          <TablesSection />
-          <DataSection />
-          <MessagesSection />
+          {Section ? (
+            <>
+              <Link to={BASE} className="w-fit pt-12 text-sm text-muted-foreground hover:text-foreground sm:pt-0">← UI overview</Link>
+              <Section />
+            </>
+          ) : (
+            <>
+              <div className="grid gap-1 pt-12 sm:pt-0 sm:pr-64">
+                <h1 className="text-2xl font-semibold tracking-tight">UI overview</h1>
+                <p className="text-sm text-muted-foreground">
+                  The shared components in <code className="font-mono text-xs">src/components/ui</code> and their variations, one page per category.
+                </p>
+              </div>
+              <CategoryTiles />
+            </>
+          )}
         </div>
       </main>
     </div>
+  );
+}
+
+/// The overview: a tile per category, leading to its page.
+function CategoryTiles() {
+  return (
+    <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label="Categories">
+      {CATEGORIES.map((category) => (
+        <li key={category.id} className="grid">
+          <Link to={`${BASE}/${category.id}`} className="block outline-none">
+            <Card size="sm" className="h-full transition-colors hover:bg-muted/50">
+              <CardHeader>
+                <CardTitle>{category.title}</CardTitle>
+                <CardDescription>{category.summary}</CardDescription>
+              </CardHeader>
+            </Card>
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -219,9 +270,9 @@ function ThemeSwitch() {
 function Category({ id, description, children }: { id: CategoryId; description?: string; children: ReactNode }) {
   const title = CATEGORIES.find((category) => category.id === id)?.title ?? id;
   return (
-    <section id={id} className="grid scroll-mt-6 gap-5" aria-labelledby={`${id}-title`}>
+    <section id={id} className="grid gap-5" aria-labelledby={`${id}-title`}>
       <div className="grid gap-1 border-b pb-3">
-        <h2 id={`${id}-title`} className="text-lg font-semibold">{title}</h2>
+        <h1 id={`${id}-title`} className="text-2xl font-semibold tracking-tight">{title}</h1>
         {description && <p className="text-sm text-muted-foreground">{description}</p>}
       </div>
       {children}
@@ -929,7 +980,9 @@ function NavigationSection() {
   );
 }
 
-function CardsSection() {
+/// A list pane with its header, toolbar, group label and nested rows (the
+/// tree, status dots as its nodes), beside a detail pane sharing its bar.
+function ListsSection() {
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(() => new Set(["deploy"]));
   const toggle = (id: string) =>
@@ -950,7 +1003,7 @@ function CardsSection() {
     { id: "triage", title: "Issue triage", tone: "attention" as BotTone, meta: <Badge variant="secondary">3</Badge>, line: "#4 run failed · Provider error", tree: { depth: 0 } },
   ];
   return (
-    <Category id="cards">
+    <Category id="lists">
       <Specimen
         title="List pane"
         note="ListPaneHeader, ListPaneToolbar, ListPaneBody, ListGroupLabel, ListRow (nested with tree), ListRowLine; PaneBar sets the header height"
@@ -1002,6 +1055,13 @@ function CardsSection() {
           </div>
         </div>
       </Specimen>
+    </Category>
+  );
+}
+
+function CardsSection() {
+  return (
+    <Category id="cards">
       <Specimen title="Card" note="default and sm" className="grid items-start gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader>
