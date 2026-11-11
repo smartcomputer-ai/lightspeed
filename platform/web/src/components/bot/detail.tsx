@@ -35,7 +35,6 @@ import { BotActivity } from "./activity";
 import { BotActionsMenu } from "./bot-actions-menu";
 import { BotChat } from "./chat";
 import { BotEditorDialog } from "./editor-dialog";
-import { BotAvatar } from "./face";
 import { botInputOf } from "./identity";
 import { BotSetup } from "./setup";
 import { StatusDot, botStatus, relativeTime } from "./status";
@@ -183,7 +182,6 @@ export function BotDetail({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <DetailHeader
         back={{ to: `/u/${slug}/bots`, label: "Back to bots" }}
-        leading={<BotAvatar botId={bot.botId} size={26} />}
         title={botLabel(bot)}
         tags={
           <MetaToolbar

@@ -1682,7 +1682,7 @@ export function SessionDetail({
   const meta = session.data ? sessionMetaItems({
     session: session.data,
     controller: owningBotHref
-      ? { bot: true, label: owningBot ? botLabel(owningBot) : "a bot", href: owningBotHref }
+      ? { bot: true, botId: owningBotId ?? undefined, label: owningBot ? botLabel(owningBot) : owningBotId ?? "a bot", href: owningBotHref }
       : { bot: false, label: managerLabel },
     lineage,
     lineageHref: sessionHref ?? ((target: string) => `/u/${slug}/sessions/${target}`),

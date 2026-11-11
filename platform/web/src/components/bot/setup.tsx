@@ -279,7 +279,7 @@ function IdentitySection({ universeId, bot, manage }: { universeId: string; bot:
       summary={`${botLabel(bot)} · ${bot.botId}${bot.description ? ` · ${bot.description}` : ""}`}
     >
       <div className="grid gap-4 sm:grid-cols-[auto_minmax(0,1fr)]">
-        <BotAvatar botId={bot.botId} size={56} className="rounded-xl" />
+        <BotAvatar botId={bot.botId} size={48} />
         <div className="grid gap-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field>

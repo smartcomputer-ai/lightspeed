@@ -205,7 +205,7 @@ function BotsPane({
                         requestRowMenu("bot", bot.botId, event);
                       },
                     }}
-                    leading={<BotAvatar botId={bot.botId} size={28} />}
+                    leading={<BotAvatar botId={bot.botId} size={30} />}
                     indicator={<ListMark label={TONE_LABEL[line.tone]} tip={TONE_LABEL[line.tone]}><StatusDot tone={line.tone} /></ListMark>}
                     title={botLabel(bot)}
                     marks={botMetaItems({ status: { label: line.text, tone: line.tone }, pending: bot.pendingCount, closed: bot.closedAtMs != null })}

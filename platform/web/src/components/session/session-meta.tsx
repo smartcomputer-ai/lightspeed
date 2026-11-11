@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { api, type SessionListPage, type SessionOrigin, type SessionSummary, type SessionView } from "@/api";
+import { botColor } from "@/components/bot/face";
 import { BotIcon, ManagedIcon, PrivateIcon, SessionCloseIcon, SessionIcon, SharedIcon, SubAgentIcon } from "@/icons";
 import type { MetaItem, MetaPlace, MetaTone } from "@/components/meta-toolbar";
 
@@ -31,8 +32,8 @@ export interface SessionMetaInput {
   subAgents?: { count: number; more?: boolean };
   /// Who drives a controlled session, when known. Without it, a session id
   /// minted by a bot names "a bot", any other "an integration".
-  /// `href` opens the conversation in its bot.
-  controller?: { bot: boolean; label?: string; href?: string };
+  /// `href` opens the conversation in its bot; `botId` colours its icon.
+  controller?: { bot: boolean; botId?: string; label?: string; href?: string };
   /// Its lineage, on its page: the parent, and each sub-agent by name.
   lineage?: SessionLineage;
   lineageHref?: (sessionId: string) => string;
@@ -106,14 +107,19 @@ export function sessionMetaItems({ session, subAgents, controller, lineage, line
     const driver = controller ?? { bot: session.id.startsWith("bot:v1:") };
     if (driver.bot) {
       const href = driver.href;
+      // The bot's own colour, as in its list and header: the page names it,
+      // else a session id a bot minted (bot:v1:<bot id>…) does.
+      const botId = driver.botId ?? (session.id.startsWith("bot:v1:") ? session.id.slice("bot:v1:".length).split(":")[0] : undefined);
       items.push({
         key: SESSION_META.controller,
         label: driver.label ? `Run by ${driver.label}` : "Bot session",
         icon: BotIcon,
+        iconColor: botId ? botColor(botId) : undefined,
         text: driver.label ? `via ${driver.label}` : "Bot",
-        tooltip: href
-          ? "Run by a bot: open this conversation in its bot"
-          : "Run by a bot: the bot controls this session's lifecycle and chat input",
+        // Which bot: its name where the page knows it, else its id.
+        tooltip: `Run by ${driver.label ?? botId ?? "a bot"}: ${href
+          ? "open this conversation in its bot"
+          : "the bot controls this session's lifecycle and chat input"}`,
         href,
         priority: 8,
       });

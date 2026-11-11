@@ -1,4 +1,4 @@
-import { cloneElement, useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type PointerEvent, type ReactNode } from "react";
+import { cloneElement, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FocusEvent, type PointerEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { CollapseToolsIcon, ExpandToolsIcon, type IconComponent } from "@/icons";
 import { useUserPreferences } from "@/lib/user-preferences";
@@ -44,6 +44,8 @@ export interface MetaItem {
   /** Explains the item on hover and focus. Defaults to the text where only the icon shows. */
   tooltip?: ReactNode;
   tone?: MetaTone;
+  /** The icon's own colour (e.g. a bot's), for an item without a tone; tinted like a tone (in a list, only on hover or selection). */
+  iconColor?: string;
   /** The tone's dot pulses: something is under way. */
   pulse?: boolean;
   /** Stands for an absence ("No environment"): drawn dashed and muted. */
@@ -204,6 +206,11 @@ const TONE_DOT_ROW: Record<MetaTone, string> = {
 };
 const toneText = (tone: MetaTone, tint: MetaTint) => (tint === "always" ? TONE_TEXT[tone] : cn(ROW_EASE, TONE_TEXT_ROW[tone]));
 const toneDot = (tone: MetaTone, tint: MetaTint) => (tint === "always" ? TONE_DOT[tone] : cn(ROW_EASE, TONE_DOT_ROW[tone]));
+/// An icon in its own colour (--meta-icon-color), tinted as a tone is.
+const ownColor = (tint: MetaTint) =>
+  tint === "always"
+    ? "text-(--meta-icon-color)"
+    : cn(ROW_EASE, "group-hover/row:text-(--meta-icon-color) group-focus-visible/row:text-(--meta-icon-color) group-data-highlighted/row:text-(--meta-icon-color)");
 /// How a dot moves, as a status dot's data-tone: a pulsing one is live (its
 /// pulse and rings), a warning waits and a danger needs attention (a ring).
 const dotMotion = (tone: MetaTone, pulse: boolean | undefined): BotTone | undefined =>
@@ -228,6 +235,7 @@ const present = (node: ReactNode) => node !== undefined && node !== null && node
 function ItemFace({ item, form, tint = "always" }: { item: MetaItem; form: MetaItemForm; tint?: MetaTint }) {
   const Icon = item.icon;
   const tone = item.tone;
+  const own = !tone && item.iconColor ? { className: ownColor(tint), style: { "--meta-icon-color": item.iconColor } as CSSProperties } : undefined;
   const dot = (size: string) =>
     tone && (
       <span data-tone={dotMotion(tone, item.pulse)} className={cn("status-dot shrink-0 rounded-full", size, toneDot(tone, tint))} aria-hidden>
@@ -250,7 +258,7 @@ function ItemFace({ item, form, tint = "always" }: { item: MetaItem; form: MetaI
   if (form === "mark") {
     return (
       <>
-        <Icon className={cn("size-3.5 shrink-0", tone && toneText(tone, tint))} aria-hidden />
+        <Icon className={cn("size-3.5 shrink-0", tone && toneText(tone, tint), own?.className)} style={own?.style} aria-hidden />
         {present(item.value) && <span className={cn(tone && toneText(tone, tint))}>{item.value}</span>}
       </>
     );
@@ -258,7 +266,7 @@ function ItemFace({ item, form, tint = "always" }: { item: MetaItem; form: MetaI
   const text = form === "condensed" ? item.value : item.text ?? item.value ?? item.label;
   return (
     <>
-      <Icon className={cn("size-3 shrink-0", tone ? toneText(tone, tint) : "text-muted-foreground")} aria-hidden />
+      <Icon className={cn("size-3 shrink-0", tone ? toneText(tone, tint) : own ? own.className : "text-muted-foreground")} style={own?.style} aria-hidden />
       {present(text) && <span className={cn("truncate", form === "condensed" && "tabular-nums")}>{text}</span>}
       {dot("size-1.5")}
     </>

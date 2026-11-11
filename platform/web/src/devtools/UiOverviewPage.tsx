@@ -98,6 +98,7 @@ import type { IconComponent } from "@/icons";
 import ROLES_SOURCE from "@/icons/roles.ts?raw";
 import OWN_SOURCE from "./UiOverviewPage.tsx?raw";
 import { GROUP_ORDER, StepRow, groupStyle } from "@/components/session/tool-trace";
+import { BotAvatar, botHue } from "@/components/bot/face";
 import { UNIVERSE_NAV } from "@/components/universe-nav";
 import { ListGroupLabel, ListPaneBody, ListPaneHeader, ListPaneToolbar, ListRow, ListRowLine, PaneBar, type ListRowTree } from "@/components/list-pane";
 import { LightspeedLogo, LightspeedMark } from "@/components/brand/lightspeed-logo";
@@ -1617,6 +1618,10 @@ const NAV_ENTITIES: PlainEntity[] = UNIVERSE_NAV.flatMap((group) =>
   group.items.map((item) => ({ entity: item.label, icon: item.icon as IconComponent, source: "universe-nav.tsx" })),
 );
 
+/// Bot ids for the bot colours specimen: the demo's bots and a few more,
+/// spread around the hue wheel.
+const SAMPLE_BOTS = ["implementer", "planner", "pr-reviewer", "ci-watch", "intake", "release-scribe", "triage", "digest", "support", "scheduler", "researcher", "notifier"];
+
 function EntitiesSection() {
   const Brain = Icons.ThinkingIcon;
   return (
@@ -1648,6 +1653,21 @@ function EntitiesSection() {
             );
           })}
         </EntityTable>
+      </Specimen>
+      <Specimen
+        title="Bot colours"
+        note="BotAvatar (components/bot/face): each bot's hue from its id, saturated like the steps (--bot-color-lightness, --bot-color-chroma)"
+        className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4"
+      >
+        {SAMPLE_BOTS.map((botId) => (
+          <div key={botId} className="flex min-w-0 items-center gap-2.5">
+            <BotAvatar botId={botId} size={28} />
+            <div className="grid min-w-0">
+              <span className="truncate text-sm">{botId}</span>
+              <span className="font-mono text-[11px] text-muted-foreground">hue {botHue(botId)}</span>
+            </div>
+          </div>
+        ))}
       </Specimen>
       <Specimen title="Tool families" note={`Folded run strips list them in this order (${GROUP_ORDER.length})`}>
         {GROUP_ORDER.map((group) => {
