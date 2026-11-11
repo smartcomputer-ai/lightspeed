@@ -46,11 +46,11 @@ install -m 600 .env.bootstrap.example .env.bootstrap
 ```
 
 Set `LIGHTSPEED_DEMO_MODEL_API_KEY` in that file and run
-`./init-env.sh --universe test`. The initializer registers the key in
-Lightspeed for the provider selected by the demo profile or the universe's
-**Agent runs** default. Use a credential for that provider. You can also put
-`LIGHTSPEED_DEMO_ADMIN_API_KEY` here when provisioning a different gateway.
-Exported variables override the file.
+`./init-env.sh --universe test`. For an OpenRouter key, setup configures
+DeepSeek V4 Flash through OpenRouter when the demo profile needs a model.
+Other keys use the provider selected by the demo profile or the universe's
+**Agent runs** default. You can also put `LIGHTSPEED_DEMO_ADMIN_API_KEY` here
+when provisioning a different gateway. Exported variables override the file.
 
 To give the demo profile its own model route, pass all three model options:
 

@@ -20,13 +20,19 @@ from uuid import UUID
 from dotenv import dotenv_values
 
 from lightspeed_ai import AsyncLightspeedClient, LightspeedRpcError, LightspeedTransportError
-from lightspeed_ai.types import AgentProfile, AgentProfileInput, CallerAccess, ModelConfig, SessionConfig
+from lightspeed_ai.types import (
+    AgentProfile, AgentProfileInput, AuthProviderCreateParams, CallerAccess, ModelConfig, SessionConfig,
+)
 
 EXAMPLE = Path(__file__).resolve().parent
 ROOT = EXAMPLE.parents[1]
 HANDOFF = ROOT / ".lightspeed/cli/connection.json"
 DEFAULT_GATEWAY = "http://127.0.0.1:18080/rpc"
 DEFAULT_DAEMON = "ws://127.0.0.1:19091/"
+OPENROUTER_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_DEMO_MODEL: ModelConfig = {
+    "providerId": "openrouter", "apiKind": "openai:completions", "model": "deepseek/deepseek-v4-flash",
+}
 WORKSPACE = "demo-workspace"
 NOTE = "This file lives in the Lightspeed demo VFS workspace.\n"
 APP_GROUPS = {"session", "vfs", "environments"}
@@ -143,13 +149,20 @@ def model_override(args: argparse.Namespace) -> ModelConfig | None:
 async def ensure_model_provider(
     client: AsyncLightspeedClient, model: ModelConfig, credential: str,
 ) -> None:
-    if not credential:
+    provider_id = model["providerId"]
+    if credential.startswith("sk-or-") and provider_id != "openrouter":
+        raise SetupError("This is an OpenRouter key. Use --model-provider openrouter with the model route options.")
+    provider = f"model:{provider_id}"
+    if await optional(client.call("auth/providers/read", {"providerId": provider})) is not None:
         return
-    provider = f"model:{model['providerId']}"
-    if await optional(client.call("auth/providers/read", {"providerId": provider})) is None:
-        await client.call("auth/providers/create", {
-            "providerId": provider, "config": {"type": "modelApiKey"}, "credential": credential,
-        })
+    params: AuthProviderCreateParams = {
+        "providerId": provider, "config": {"type": "modelApiKey"}, "credential": credential,
+    }
+    if provider_id == "openrouter":
+        params["config"] = {"type": "modelApiKey", "endpoint": {
+            "baseUrl": OPENROUTER_URL, "apiKinds": [model["apiKind"]],
+        }}
+    await client.call("auth/providers/create", params)
 
 
 async def ensure_workspace(client: AsyncLightspeedClient) -> None:
@@ -172,12 +185,12 @@ async def ensure_workspace(client: AsyncLightspeedClient) -> None:
 
 
 async def ensure_profile(
-    client: AsyncLightspeedClient, profile: str, args: argparse.Namespace, launcher: bool,
-    model: ModelConfig | None,
-) -> ModelConfig | None:
-    response = await optional(client.read_profile(profile))
-    if response is not None:
-        return await update_profile_model(client, response["profile"], args, model)
+    client: AsyncLightspeedClient, profile: str, existing: AgentProfile | None,
+    args: argparse.Namespace, launcher: bool, model: ModelConfig | None,
+) -> None:
+    if existing is not None:
+        await update_profile_model(client, existing, args, model)
+        return
 
     environment = args.environment_id
     if environment:
@@ -199,12 +212,11 @@ async def ensure_profile(
     if model:
         config["model"] = model
     await client.create_profile(profile={"profileId": profile, "displayName": "Streamlit internals", "config": config})
-    return model
 
 
 async def update_profile_model(
     client: AsyncLightspeedClient, profile: AgentProfile, args: argparse.Namespace, model: ModelConfig | None,
-) -> ModelConfig | None:
+) -> None:
     config = profile.get("config") or {}
     features = config.get("features") or {}
     workspaces = (features.get("vfs") or {}).get("workspaces", [])
@@ -236,8 +248,6 @@ async def update_profile_model(
             "metadata": profile.get("metadata", {}),
         }
         await client.put_profile(expected_revision=profile["revision"], profile=replacement)
-        return model
-    return current
 
 
 async def initialize(args: argparse.Namespace) -> None:
@@ -283,15 +293,19 @@ async def initialize(args: argparse.Namespace) -> None:
             raise SetupError("Initialization requires a deployment API key.")
         universe = await resolve_universe(admin, selector)
         async with AsyncLightspeedClient(endpoint, api_key=admin_key, universe=universe) as client:
-            if model:
-                await ensure_model_provider(client, model, model_credential)
-            effective_model = await ensure_profile(client, profile, args, launcher, model)
+            response = await optional(client.read_profile(profile))
+            existing = response["profile"] if response else None
+            configured_model = ((existing or {}).get("config") or {}).get("model")
+            if model is None and configured_model is None and model_credential.startswith("sk-or-"):
+                model = OPENROUTER_DEMO_MODEL
+            effective_model = model or configured_model
             if effective_model is None:
                 effective_model = (await client.read_model_defaults())["defaults"].get("agentRun")
-            if model_credential and model is None:
+            if model_credential:
                 if effective_model is None:
                     raise SetupError("Choose an agent-run model or pass the model route options before registering its key.")
                 await ensure_model_provider(client, effective_model, model_credential)
+            await ensure_profile(client, profile, existing, args, launcher, model)
         key_message = await ensure_app_key(admin, endpoint, universe, access)
 
     print(f"Configured Lightspeed universe {universe} on {endpoint}.")

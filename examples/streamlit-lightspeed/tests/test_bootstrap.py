@@ -29,7 +29,7 @@ def test_explicit_remote_target_does_not_use_local_handoff_key(monkeypatch, tmp_
         asyncio.run(bootstrap.initialize(args))
 
 
-@pytest.mark.parametrize("provider_credential", ["", "fixture-provider-key"])
+@pytest.mark.parametrize("provider_credential", ["", "fixture-provider-key", "sk-or-v1-fixture"])
 def test_local_setup_targets_platform_test_universe_and_leaves_app_config(monkeypatch, tmp_path, provider_credential):
     calls = []
     env_file = tmp_path / ".env"
@@ -129,7 +129,17 @@ def test_local_setup_targets_platform_test_universe_and_leaves_app_config(monkey
     assert key_calls[0]["scope"] == {"kind": "universe", "universeId": TEST_UNIVERSE}
     assert env_file.read_text() == original
     provider_calls = [(universe, params) for universe, method, params in calls if method == "auth/providers/create"]
-    if provider_credential:
+    if provider_credential.startswith("sk-or-"):
+        assert profile["config"]["model"] == {
+            "providerId": "openrouter", "apiKind": "openai:completions", "model": "deepseek/deepseek-v4-flash",
+        }
+        assert provider_calls == [(TEST_UNIVERSE, {
+            "providerId": "model:openrouter", "credential": provider_credential,
+            "config": {"type": "modelApiKey", "endpoint": {
+                "baseUrl": "https://openrouter.ai/api/v1", "apiKinds": ["openai:completions"],
+            }},
+        })]
+    elif provider_credential:
         assert provider_calls == [(TEST_UNIVERSE, {
             "providerId": "model:openai", "config": {"type": "modelApiKey"}, "credential": provider_credential,
         })]
@@ -169,4 +179,10 @@ def test_explicit_model_updates_only_the_profile_route(tmp_path):
             assert profile["config"] == {"features": features, "model": model}
             assert profile["metadata"] == {"keep": "value"}
 
-    assert asyncio.run(bootstrap.update_profile_model(Client(), profile, arguments(tmp_path / ".env"), model)) == model
+    asyncio.run(bootstrap.update_profile_model(Client(), profile, arguments(tmp_path / ".env"), model))
+
+
+def test_openrouter_key_is_rejected_for_an_openai_route():
+    model = {"providerId": "openai", "apiKind": "openai:responses", "model": "some-model"}
+    with pytest.raises(SetupError, match="This is an OpenRouter key"):
+        asyncio.run(bootstrap.ensure_model_provider(object(), model, "sk-or-v1-fixture"))
