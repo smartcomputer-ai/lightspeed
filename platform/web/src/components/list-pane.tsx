@@ -7,6 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { MetaToolbar, type MetaItem } from "@/components/meta-toolbar";
 
 /// The parts of a list-and-detail page (sessions, bots, profiles,
 /// workspaces):
@@ -168,7 +169,8 @@ export interface ListRowSelection {
 
 /// One row of a list pane: a link to its detail, or, while selecting, a
 /// checkbox label. The first line is the indicator (a status dot), the
-/// title, badges and the meta (a time, a count) on the right; children are
+/// title, its marks (the entity's meta items, compact), badges and the
+/// meta (a time, a count) on the right; children are
 /// further lines, usually ListRowLines. Every row is at least
 /// --list-row-height tall with its content centred, so one-line and
 /// two-line lists share one rhythm with the pane bar above them.
@@ -180,6 +182,7 @@ export function ListRow({
   indicator,
   title,
   titleHint,
+  marks,
   badges,
   meta,
   depth = 0,
@@ -195,6 +198,8 @@ export function ListRow({
   title: ReactNode;
   /** Tooltip on the title, e.g. the full id behind a display name. */
   titleHint?: string;
+  /** The entity's meta items, drawn compact. They take at most half the line and give way by priority, so the title keeps its room; inside the row link they only explain themselves, and show their status colors only while the row is hovered, focused or selected. */
+  marks?: MetaItem[];
   badges?: ReactNode;
   meta?: ReactNode;
   /** Nesting under a parent row: indents and marks the row. */
@@ -229,6 +234,9 @@ export function ListRow({
           >
             {title}
           </span>
+          {marks && marks.length > 0 && (
+            <MetaToolbar items={marks} place="list" className="max-w-1/2" />
+          )}
           {badges}
           {meta !== undefined && meta !== null && meta !== false && (
             <span className="ml-auto shrink-0 text-xs text-muted-foreground">{meta}</span>

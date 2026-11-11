@@ -136,6 +136,10 @@ export interface IconSet {
   GoToIcon: IconComponent;
   NewTabIcon: IconComponent;
   ExpandIcon: IconComponent;
+  /** A meta toolbar drawn as icons, offering to expand into tags (or to keep them expanded). */
+  ExpandToolsIcon: IconComponent;
+  /** A meta toolbar expanded into tags, offering to collapse back to icons. */
+  CollapseToolsIcon: IconComponent;
   CollapseIcon: IconComponent;
   DropdownCaretIcon: IconComponent;
   ShowMoreIcon: IconComponent;

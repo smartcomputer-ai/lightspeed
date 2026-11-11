@@ -30,6 +30,7 @@ import {
   ListRow,
   ListRowLine,
 } from "@/components/list-pane";
+import { botMetaItems } from "@/components/bot/bot-meta";
 
 const ROSTER_REFRESH_MS = 5_000;
 
@@ -196,18 +197,8 @@ function BotsPane({
                     leading={<BotAvatar botId={bot.botId} size={28} />}
                     indicator={<ListMark label={TONE_LABEL[line.tone]} tip={TONE_LABEL[line.tone]}><StatusDot tone={line.tone} /></ListMark>}
                     title={botLabel(bot)}
-                    meta={bot.pendingCount > 0 && bot.closedAtMs == null ? (
-                      <ListMark
-                        label={`${bot.pendingCount} waiting`}
-                        tip={`${bot.pendingCount} event${bot.pendingCount === 1 ? "" : "s"} waiting to be handled`}
-                      >
-                        <span className="inline-block min-w-4 rounded-full bg-primary px-1.5 text-center text-[11px] font-semibold text-primary-foreground">
-                          {bot.pendingCount}
-                        </span>
-                      </ListMark>
-                    ) : (
-                      bot.lastEvent && relativeTime(bot.lastEvent.receivedAtMs)
-                    )}
+                    marks={botMetaItems({ status: { label: line.text, tone: line.tone }, pending: bot.pendingCount, closed: bot.closedAtMs != null })}
+                    meta={bot.lastEvent && relativeTime(bot.lastEvent.receivedAtMs)}
                   >
                     <ListRowLine tone={line.tone === "attention" ? "destructive" : undefined} title={line.text}>
                       {line.text}

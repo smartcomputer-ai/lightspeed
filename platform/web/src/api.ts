@@ -449,6 +449,10 @@ export interface SessionSummary {
   /// Only the demo backend sends it so far; the core session list does not
   /// carry message text yet, so lists must work without it.
   lastMessagePreview?: string | null;
+  /// The environment the session runs its commands in, for the list's
+  /// environment mark. Only the demo backend sends it so far; the core
+  /// session list does not, so lists must work without it.
+  activeEnvironmentId?: string | null;
 }
 
 export interface SessionRetention {

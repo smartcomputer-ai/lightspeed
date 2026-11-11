@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIcon, DropdownCaretIcon, GoToIcon, ResetIcon } from "@/icons";
 import { NavLink, useNavigate, useSearchParams } from "react-router-dom";
 import { DetailHeader } from "@/components/detail-header";
+import { MetaToolbar } from "@/components/meta-toolbar";
+import { botMetaItems } from "./bot-meta";
 import { api, botLabel, type BotControllerSnapshot, type BotStateView, type BotView, type SessionView } from "@/api";
 import {
   AlertDialog,
@@ -184,16 +186,19 @@ export function BotDetail({
         leading={<BotAvatar botId={bot.botId} size={26} />}
         title={botLabel(bot)}
         tags={
-          <span
-            className={cn(
-              "flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground",
-              status.tone === "attention" && "text-destructive",
-            )}
-            title={stateError ?? controller?.lastError ?? undefined}
-          >
-            <StatusDot tone={status.tone} />
-            <span className="truncate">{status.label}</span>
-          </span>
+          <MetaToolbar
+            items={botMetaItems({
+              status,
+              error: stateError ?? controller?.lastError,
+              pending,
+              closed: bot.closedAtMs != null,
+              activityHref: `${base}/activity`,
+            })}
+            place="header"
+            expandOnHover
+            label="Bot details"
+            className="grow"
+          />
         }
         actions={[{
           kind: "custom",

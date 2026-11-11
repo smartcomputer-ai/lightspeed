@@ -246,6 +246,19 @@ describe("demo router", () => {
     expect((await call("POST", `${path}/share`)).status).toBe(409);
   });
 
+  it("lists each session with its active environment", async () => {
+    const { store, call } = await boot();
+    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const listed = (await call("GET", `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as {
+      sessions: { id: string; activeEnvironmentId?: string }[];
+    };
+    expect(listed.sessions.length).toBeGreaterThan(0);
+    for (const entry of listed.sessions) {
+      expect(entry.activeEnvironmentId ?? null).toBe(universe.sessions.get(entry.id)!.view.activeEnvironmentId ?? null);
+    }
+    expect(listed.sessions.some((entry) => entry.activeEnvironmentId)).toBe(true);
+  });
+
   it("lists each session with its latest message as one plain, bounded line", async () => {
     const { store, call } = await boot();
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;

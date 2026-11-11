@@ -46,7 +46,7 @@ export const {
   NewFolderIcon, ShareIcon, CompactIcon, ConfigureIcon, FilterIcon, SelectModeIcon, SendIcon, SubmitIcon, QueueIcon,
   SteerIcon, StopIcon, PauseIcon, ResumeIcon, RetryIcon, RotateSecretIcon, ResetIcon, ReplayIcon, RefreshIcon,
   GenerateIcon, DictateIcon, DictationUnavailableIcon, ApproveIcon, RejectIcon, RemoveIcon, CancelIcon, DismissIcon,
-  MoreIcon, SearchIcon, BackIcon, GoToIcon, NewTabIcon, ExpandIcon, CollapseIcon, DropdownCaretIcon, ShowMoreIcon,
+  MoreIcon, SearchIcon, BackIcon, GoToIcon, NewTabIcon, ExpandIcon, ExpandToolsIcon, CollapseToolsIcon, CollapseIcon, DropdownCaretIcon, ShowMoreIcon,
   ShowLessIcon, RowLinkIcon, SwitcherIcon, LoadingIcon, SelectedIcon, CopiedIcon, StepDoneIcon, SuccessIcon,
   WarningIcon, InfoIcon, FailedIcon, CancelledIcon, WaitingIcon, ApprovalIcon, LockedIcon, FileIcon, FolderIcon,
   DocumentIcon, UnknownFileIcon, ImageUnavailableIcon, CheckedIcon, FieldCaretIcon, SelectTriggerIcon, ScrollUpIcon,

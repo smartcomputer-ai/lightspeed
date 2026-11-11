@@ -350,6 +350,7 @@ export function sessionSummary(record: SessionRecord): SessionSummary {
     access: view.access,
     activity: view.activity,
     ...(lastMessagePreview ? { lastMessagePreview } : {}),
+    ...(view.activeEnvironmentId ? { activeEnvironmentId: view.activeEnvironmentId } : {}),
   };
 }
 

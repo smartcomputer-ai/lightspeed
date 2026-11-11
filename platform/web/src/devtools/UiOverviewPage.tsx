@@ -103,6 +103,7 @@ import { Starscape } from "@/components/starscape/starscape";
 import { UniverseIcon } from "@/components/universe-icon";
 import { HEADER_STARSCAPE_CLASS, HEADER_STARSCAPE_CONFIG, HEADER_STARSCAPE_FADE } from "@/components/universe-switcher";
 import { collectRoleUsage, iconRoles, libraryGlyphs, type IconRole, type RoleGlyph } from "./icon-usage";
+import { MetaBotExample, MetaModesExample, MetaSessionListExample, MetaSessionPageExample } from "./meta-toolbar-examples";
 
 /// Every shared UI component and its variations on one page, grouped by
 /// category, for reviewing the design system in both themes. Development
@@ -116,6 +117,7 @@ const CATEGORIES = [
   { id: "entities", title: "Entities" },
   { id: "buttons", title: "Buttons" },
   { id: "badges", title: "Badges & status" },
+  { id: "meta", title: "Meta toolbar" },
   { id: "inputs", title: "Inputs" },
   { id: "selects", title: "Selects & comboboxes" },
   { id: "toggles", title: "Checkboxes & switches" },
@@ -169,6 +171,7 @@ export function UiOverviewPage() {
           <EntitiesSection />
           <ButtonsSection />
           <BadgesSection />
+          <MetaToolbarSection />
           <InputsSection />
           <SelectsSection />
           <TogglesSection />
@@ -497,6 +500,28 @@ function BadgesSection() {
             {tone}
           </span>
         ))}
+      </Specimen>
+    </Category>
+  );
+}
+
+function MetaToolbarSection() {
+  return (
+    <Category
+      id="meta"
+      description="components/meta-toolbar: an entity's facts given once as items (icon, value, text, tone, tooltip, priority, side, places, click) and drawn by place: a list row and a page header as icon and value, the strip under the header as tags. Short of width, the least important give way: tags shrink to icon and value, then move into +N."
+    >
+      <Specimen title="Places" note="One session's items in each place, wrapped so all show" className="block">
+        <MetaModesExample />
+      </Specimen>
+      <Specimen title="Session list rows" note="ListRow marks: place list, interactive off inside the row link, colors on highlight, at most half the line" className="block">
+        <MetaSessionListExample />
+      </Specimen>
+      <Specimen title="Session page" note="place header beside the title (model at the end), place strip under it" className="block">
+        <MetaSessionPageExample />
+      </Specimen>
+      <Specimen title="Bot" note="row, header and strip from one list of items" className="block">
+        <MetaBotExample />
       </Specimen>
     </Category>
   );

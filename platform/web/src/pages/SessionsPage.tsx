@@ -1,10 +1,10 @@
 import { DeleteSessionDialog } from "@/components/session/delete-session-dialog";
 import { useSessionCompaction } from "@/lib/sessions/compaction";
 import { useDictationAvailability } from "@/lib/use-dictation";
-import { ShareSessionDialog, SharingMark, useCanShareSession, useSessionOwner } from "@/components/session/sharing";
-import { ActivityDot, activityLabel } from "@/components/activity-dot";
+import { ShareSessionDialog, useCanShareSession, useSessionOwner } from "@/components/session/sharing";
+import { ActivityDot } from "@/components/activity-dot";
 import { SessionActionsMenu } from "@/components/session/session-actions-menu";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   type InfiniteData,
   useInfiniteQuery,
@@ -12,8 +12,8 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { NavLink, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { AddIcon, BotIcon, DeleteIcon, FilterIcon, LoadingIcon, ManagedIcon, RemoveIcon, SelectModeIcon, SessionCloseIcon, SessionIcon, SubAgentIcon } from "@/icons";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { AddIcon, BotIcon, DeleteIcon, FilterIcon, LoadingIcon, RemoveIcon, SelectModeIcon, SessionCloseIcon, SessionIcon } from "@/icons";
 import {
   api,
   botLabel,
@@ -23,12 +23,12 @@ import {
   type ProfileSource,
   type ProfileSummary,
   type SessionListPage,
-  type SessionOrigin,
   type SessionRunAccepted,
   type SessionRunApprovalsDecided,
   SessionRunCancelled,
   SessionRunSteered,
   SessionRunView,
+  type Environment,
   type SessionSummary,
   type SessionView,
 } from "@/api";
@@ -36,7 +36,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -86,7 +85,10 @@ import {
 } from "@/components/ui/select";
 import { sessionDraftKey } from "@/lib/sessions/draft";
 import { SessionComposer, type ComposerMessage, type ComposerMode } from "@/components/session/composer";
-import { SessionResourceChips, useSessionResources } from "@/components/session/session-resources";
+import { activeEnvironmentItems, sessionResourceItems, useSessionResources } from "@/components/session/session-resources";
+import { openEnvironmentsQuery } from "@/lib/environments";
+import { hasLineage, SESSION_META, sessionMetaItems, useSessionLineage } from "@/components/session/session-meta";
+import { MetaToolbar } from "@/components/meta-toolbar";
 import { hasResources } from "@/lib/sessions/session-resources";
 import { findFileReference, filesByHandle } from "@/lib/file-references";
 import { appHref, blobHref } from "@/lib/blob-view";
@@ -149,7 +151,6 @@ import {
   ListPaneState,
   ListPaneToolbar,
   ListRow,
-  ListMark,
   ListRowLine,
 } from "@/components/list-pane";
 
@@ -159,9 +160,12 @@ import {
 const SESSION_LIST_REFRESH_MS = 5_000;
 /// A dead workflow emits nothing, so a working session is re-read to notice it.
 const SESSION_LIVENESS_REFRESH_MS = 15_000;
+/// The strip of tags under a session header (the meta toolbar in full). Off
+/// for now: the header beside the title shows the same items, expanding to
+/// tags on hover.
+const SHOW_META_STRIP = false;
 const sessionMayBeRunning = (session?: Pick<SessionView, "lifecycleStatus" | "activity" | "executionFailure">) =>
   session?.lifecycleStatus !== "closed" && session?.activity !== undefined && session.activity !== "idle" && !session.executionFailure;
-const INLINE_SUBAGENT_LIMIT = 5;
 const EXECUTION_FAILURE_TEXT: Record<NonNullable<SessionView["executionFailure"]>, string> = {
   failed: "This session's workflow failed.",
   terminated: "This session's workflow was stopped.",
@@ -233,6 +237,8 @@ function SessionList({
   const filterEntries = Object.entries(metadataFilter);
   const [preferences, setPreferences] = useState(() => readSessionListPreferences(universeId));
   const { showClosed, showSubagents, showControlledSessions, showSessionIds, metadataKeys } = preferences;
+  // One read for the whole list: each row's environment by name and status.
+  const environments = useQuery({ ...openEnvironmentsQuery(universeId), refetchInterval: 30_000 });
   const listQuery = new URLSearchParams({ limit: "50" });
   if (!showClosed) listQuery.set("closed", "false");
   if (!showControlledSessions) listQuery.set("lifecycleControlled", "false");
@@ -672,6 +678,7 @@ function SessionList({
               showSessionIds={showSessionIds}
               metadataKeys={metadataKeys}
               search={listSearch}
+              environments={environments.data}
             />
           ))}
         </ul>
@@ -773,23 +780,6 @@ function BulkActionDialog({
 
 type SessionNode = { session: SessionSummary; children: SessionNode[] };
 
-/// A date and time in the viewer's locale, for tooltips.
-function whenLabel(ms: number): string {
-  return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
-
-/// What the closed mark of a session row says: when it closed, and when
-/// retention deletes it.
-function closedTip(session: SessionSummary): ReactNode {
-  const deleteAt = session.retention.deleteAtMs;
-  return (
-    <>
-      {session.closedAtMs != null ? `Closed ${whenLabel(session.closedAtMs)}` : "Closed"}
-      {deleteAt != null && <><br />{`Deleted after ${whenLabel(deleteAt)}`}</>}
-    </>
-  );
-}
-
 /// Group sub-agent sessions under their parent when the parent is in the
 /// loaded page set; the parent row counts them. Children whose parent is not
 /// loaded stay at the top level, their lineage in the title's tooltip; list
@@ -813,6 +803,8 @@ interface SessionRowControls {
   showSessionIds: boolean;
   metadataKeys: string[];
   search: string;
+  /// The universe's open environments, naming and coloring each row's.
+  environments: readonly Environment[] | undefined;
 }
 
 function SessionTreeItem({
@@ -863,6 +855,7 @@ function SessionListItem({
   showSessionIds,
   metadataKeys,
   search,
+  environments,
 }: {
   session: SessionSummary;
   slug: string;
@@ -871,7 +864,6 @@ function SessionListItem({
   /// Sub-agent sessions listed directly under this row.
   subAgentCount?: number;
 } & SessionRowControls) {
-  const botControlled = session.lifecycleControlled && session.id.startsWith("bot:v1:");
   const origin = session.origin ?? null;
   const isSelected = selected.has(session.id);
   const displayName = session.displayName?.trim();
@@ -895,37 +887,11 @@ function SessionListItem({
       titleHint={origin
         ? `Sub-agent of ${origin.parentSessionId} (depth ${origin.depth}, profile ${origin.agent.profileId} rev ${origin.agent.revision})`
         : displayName ? undefined : session.id}
-      badges={<>
-        {subAgentCount > 0 && (
-          <ListMark
-            label={`${subAgentCount} sub-agent${subAgentCount === 1 ? "" : "s"}`}
-            tip={`${subAgentCount} sub-agent${subAgentCount === 1 ? "" : "s"} delegated by this session, listed below`}
-          >
-            <SubAgentIcon className="size-3.5" aria-hidden />
-            {subAgentCount}
-          </ListMark>
-        )}
-        {/* Sub-agents follow their root; the root row carries the mark. */}
-        {!origin && <SharingMark access={session.access} quiet />}
-        {session.lifecycleControlled && (
-          <ListMark
-            label={botControlled ? "Bot session" : "Managed session"}
-            tip={botControlled
-              ? "Run by a bot: the bot controls this session's lifecycle and chat input"
-              : "Managed: an integration controls this session's lifecycle and chat input"}
-          >
-            <Badge className="shrink-0" variant="secondary">
-              {botControlled && <BotIcon />}
-              {botControlled ? "Bot" : "Managed"}
-            </Badge>
-          </ListMark>
-        )}
-        {session.lifecycleStatus === "closed" && (
-          <ListMark label="Closed" tip={closedTip(session)}>
-            <SessionCloseIcon className="size-3.5" aria-hidden />
-          </ListMark>
-        )}
-      </>}
+      marks={sessionMetaItems({
+        session,
+        subAgents: { count: subAgentCount },
+        resources: activeEnvironmentItems(session.activeEnvironmentId, environments),
+      })}
       meta={relativeTime(session.updatedAtMs)}
     >
       {session.lastMessagePreview && (
@@ -1642,6 +1608,23 @@ export function SessionDetail({
   });
   const botRoster = botDirectory.data?.bots;
   const owningBot = owningBotId ? botRoster?.find((bot) => bot.botId === owningBotId) : undefined;
+  // The session's meta items, drawn compact beside the title and full in
+  // the strip under the header. The strip shows while there are resources
+  // (when wanted) or a lineage to show.
+  const lineage = useSessionLineage({ universeId, sessionId, origin: session.data?.origin, runRevision });
+  const resourcesShown = showSessionResources && Boolean(session.data) && hasResources(resources);
+  const meta = session.data ? sessionMetaItems({
+    session: session.data,
+    controller: owningBotHref
+      ? { bot: true, label: owningBot ? botLabel(owningBot) : "a bot", href: owningBotHref }
+      : { bot: false, label: managerLabel },
+    lineage,
+    lineageHref: sessionHref ?? ((target: string) => `/u/${slug}/sessions/${target}`),
+    resources: resourcesShown
+      ? sessionResourceItems({ resources, slug, onConfigure: !embedded && canConfigure ? () => setSettingsOpen(true) : undefined })
+      : [],
+  }) : [];
+  const showStrip = SHOW_META_STRIP && meta.length > 0 && (resourcesShown || hasLineage(lineage));
   const loadMedia = useCallback(
     async (blobRef: string, mime: string) => {
       const result = await api<{ bytesBase64: string }>(
@@ -2085,45 +2068,7 @@ export function SessionDetail({
         <DetailHeader
           back={{ to: backTo, label: "Back to sessions" }}
           title={session.data?.displayName ?? sessionId.slice(0, 24)}
-          tags={<>
-            <SharingMark access={session.data?.access} />
-            {controlled && (owningBotHref ? (
-              <NavLink
-                to={owningBotHref}
-                className="hidden shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground sm:flex"
-                title="Open this conversation in its bot"
-              >
-                <BotIcon className="size-3.5" />
-                via {owningBot ? botLabel(owningBot) : "a bot"}
-              </NavLink>
-            ) : (
-              <Tooltip>
-                <TooltipTrigger render={<span className="shrink-0" />}>
-                  <Badge variant="secondary" className="gap-1">
-                    <ManagedIcon />
-                    <span className="hidden xl:inline">Managed by {managerLabel}</span>
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {`Lifecycle and chat input are controlled by ${managerLabel}.`}
-                </TooltipContent>
-              </Tooltip>
-            ))}
-            {closed ? (
-              <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                Closed
-              </span>
-            ) : session.data?.executionFailure ? (
-              <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-xs text-destructive">
-                Stopped
-              </span>
-            ) : activityLabel(session.data?.activity) && (
-              <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                <ActivityDot activity={session.data?.activity} />
-                <span className="hidden sm:inline">{activityLabel(session.data?.activity)}</span>
-              </span>
-            )}
-          </>}
+          tags={meta.length > 0 && <MetaToolbar items={meta} place="header" expandOnHover label="Session details" className="grow" />}
           actions={[{
             kind: "custom",
             key: "session",
@@ -2220,18 +2165,18 @@ export function SessionDetail({
         />}
         </>
       )}
-      <SessionLineage
-        universeId={universeId}
-        slug={slug}
-        sessionId={sessionId}
-        origin={session.data?.origin ?? null}
-        runRevision={runRevision}
-        sessionHref={sessionHref}
-        resources={showSessionResources && session.data && hasResources(resources) ? (
-          <SessionResourceChips resources={resources} slug={slug}
-            onConfigure={!embedded && canConfigure ? () => setSettingsOpen(true) : undefined} />
-        ) : undefined}
-      />
+      {showStrip && (
+        <div className="shrink-0 border-b bg-muted/30">
+          <div className="mx-auto w-full max-w-5xl px-4 py-1.5 md:px-8">
+            {/* Embedded in its bot's page, a session need not name the bot. */}
+            <MetaToolbar
+              items={embedded ? meta.filter((item) => item.key !== SESSION_META.controller) : meta}
+              place="strip"
+              label="Session details"
+            />
+          </div>
+        </div>
+      )}
       <TranscriptLinksContext.Provider value={transcriptLinks}>
       <MessageScrollerProvider key={`${universeId}/${sessionId}`} autoScroll defaultScrollPosition="end">
         <TranscriptMotionProvider sections={displaySections} pendingKeys={visiblePendingSteers.map((steer) => steer.id)} ready={tail.phase === "live"} historyRevision={tail.historyRevision}>
@@ -2523,181 +2468,6 @@ function SessionScrollFollower({
 /// Sub-agent lineage strip: where this session came from and the
 /// children it delegated to. Children are re-read whenever the run revision
 /// moves, since delegations appear and close mid-run.
-export function SessionLineage({
-  universeId,
-  slug,
-  sessionId,
-  origin,
-  runRevision,
-  sessionHref,
-  resources,
-}: {
-  universeId: string;
-  slug: string;
-  sessionId: string;
-  origin: SessionOrigin | null;
-  runRevision: number;
-  sessionHref?: (sessionId: string) => string;
-  /// What the session can reach, shown first in the strip.
-  resources?: ReactNode;
-}) {
-  const href = sessionHref ?? ((id: string) => `/u/${slug}/sessions/${id}`);
-  const parentId = origin?.parentSessionId;
-  const parent = useQuery({
-    queryKey: ["session", universeId, parentId],
-    queryFn: () =>
-      api<SessionView>(
-        "GET",
-        `/api/v1/universes/${universeId}/sessions/${encodeURIComponent(parentId!)}`,
-      ),
-    enabled: Boolean(parentId),
-  });
-  const children = useInfiniteQuery({
-    queryKey: ["session-children", universeId, sessionId],
-    queryFn: ({ pageParam }) => {
-      const params = new URLSearchParams({ limit: "50", parent: sessionId });
-      if (pageParam) params.set("cursor", pageParam);
-      return api<SessionListPage>(
-        "GET",
-        `/api/v1/universes/${universeId}/sessions?${params.toString()}`,
-      );
-    },
-    initialPageParam: "",
-    getNextPageParam: (last) => last.nextCursor ?? undefined,
-  });
-  const refetchChildren = children.refetch;
-  useEffect(() => {
-    // Run activity refreshes the same lineage. Keep its data mounted while
-    // fetching so the header does not collapse and resize the transcript.
-    if (runRevision > 0) {
-      void refetchChildren();
-    }
-  }, [runRevision, refetchChildren]);
-  const list = children.data?.pages.flatMap((page) => page.sessions) ?? [];
-  const inlineChildren = list.slice(0, INLINE_SUBAGENT_LIMIT);
-  const overflowChildren = list.slice(INLINE_SUBAGENT_LIMIT);
-  const hiddenCount = overflowChildren.length;
-  const parentName = parent.data?.displayName?.trim();
-  const parentLabel = parentName || (parentId ? compactSessionId(parentId) : "");
-  const tagClass = "inline-flex min-w-0 max-w-64 items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium text-foreground transition-colors hover:bg-muted";
-  if (!origin && list.length === 0 && !resources) return null;
-  return (
-    <div className="shrink-0 border-b bg-muted/30">
-      <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 text-xs text-muted-foreground md:px-8">
-      {resources}
-      {resources && (origin || list.length > 0) && <span className="hidden h-4 w-px bg-border sm:block" aria-hidden />}
-      {origin && (
-        <span className="flex min-w-0 flex-wrap items-center gap-1">
-          <span>Parent:</span>
-          <NavLink to={href(origin.parentSessionId)} className={tagClass}>
-            <span className={cn("truncate", !parentName && "font-mono font-normal")}>
-              {parentLabel}
-            </span>
-            {parent.data?.lifecycleStatus && (
-              <span
-                className={cn(
-                  "size-1.5 shrink-0 rounded-full",
-                  parent.data.lifecycleStatus === "closed" ? "bg-muted-foreground/50" : "bg-foreground",
-                )}
-                aria-hidden="true"
-              />
-            )}
-          </NavLink>
-        </span>
-      )}
-      {list.length > 0 && (
-        <span className="flex min-w-0 flex-wrap items-center gap-1">
-          <span>Sub-agents ({list.length}{children.hasNextPage ? "+" : ""}):</span>
-          {inlineChildren.map((child) => (
-            <SubagentLineageLink
-              key={child.id}
-              child={child}
-              to={href(child.id)}
-              className={tagClass}
-            />
-          ))}
-          {(hiddenCount > 0 || children.hasNextPage) && (
-            <Popover>
-              <PopoverTrigger
-                render={
-                  <button
-                    type="button"
-                    className={tagClass}
-                    aria-label={`Show ${hiddenCount}${children.hasNextPage ? " or more" : ""} additional sub-agents`}
-                  />
-                }
-              >
-                +{hiddenCount}{children.hasNextPage ? "+" : ""}
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-80 p-2">
-                <div className="mb-1 px-2 py-1 text-xs font-medium text-muted-foreground">
-                  Additional sub-agents
-                </div>
-                <div className="max-h-72 overflow-y-auto">
-                  {overflowChildren.map((child) => (
-                    <SubagentLineageLink
-                      key={child.id}
-                      child={child}
-                      to={href(child.id)}
-                      className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-muted"
-                    />
-                  ))}
-                  {hiddenCount === 0 && children.isFetchingNextPage && (
-                    <p className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</p>
-                  )}
-                </div>
-                {children.hasNextPage && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="mt-1 w-full"
-                    disabled={children.isFetchingNextPage}
-                    onClick={() => void children.fetchNextPage()}
-                  >
-                    {children.isFetchingNextPage ? "Loading…" : "Load more sub-agents"}
-                  </Button>
-                )}
-              </PopoverContent>
-            </Popover>
-          )}
-        </span>
-      )}
-      </div>
-    </div>
-  );
-}
-
-function SubagentLineageLink({
-  child,
-  to,
-  className,
-}: {
-  child: SessionSummary;
-  to: string;
-  className: string;
-}) {
-  const childName = child.displayName?.trim();
-  return (
-    <NavLink to={to} className={className}>
-      <span className={cn("min-w-0 flex-1 truncate", !childName && "font-mono font-normal")}>
-        {childName || compactSessionId(child.id)}
-      </span>
-      <span
-        className={cn(
-          "size-1.5 shrink-0 rounded-full",
-          child.lifecycleStatus === "closed" ? "bg-muted-foreground/50" : "bg-foreground",
-        )}
-        aria-hidden="true"
-      />
-    </NavLink>
-  );
-}
-
-function compactSessionId(id: string, length = 18): string {
-  return `${id.slice(0, length)}${id.length > length ? "…" : ""}`;
-}
-
 function relativeTime(ms: number): string {
   const delta = Date.now() - ms;
   if (delta < 60_000) return "now";
