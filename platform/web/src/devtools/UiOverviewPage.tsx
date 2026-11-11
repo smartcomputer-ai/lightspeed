@@ -920,19 +920,24 @@ function CardsSection() {
       else next.add(id);
       return next;
     });
+  // A tree two levels deep: each row says whether it is the last of its
+  // siblings, which ancestor lines run past it, and whether it has children.
   const rows = [
-    { id: "planner", title: "Release planner", tone: "live" as BotTone, meta: "2m", line: "Working on #12 · message", depth: 0 },
-    { id: "deploy", title: "Deploy checks", tone: "idle" as BotTone, meta: "1h", line: "#9 handled · All green", depth: 1 },
-    { id: "triage", title: "Issue triage", tone: "attention" as BotTone, meta: <Badge variant="secondary">3</Badge>, line: "#4 run failed · Provider error", depth: 0 },
+    { id: "planner", title: "Release planner", tone: "live" as BotTone, meta: "2m", line: "Working on #12 · message", tree: { depth: 0, children: true } },
+    { id: "deploy", title: "Deploy checks", tone: "idle" as BotTone, meta: "1h", line: "#9 handled · All green", tree: { depth: 1, last: false, lines: [], children: true } },
+    { id: "smoke", title: "Smoke test", tone: "idle" as BotTone, meta: "1h", line: "Passed in 42s", tree: { depth: 2, last: false, lines: [true] } },
+    { id: "canary", title: "Canary watch", tone: "live" as BotTone, meta: "4m", line: "Watching error rates", tree: { depth: 2, last: true, lines: [true] } },
+    { id: "notes", title: "Release notes", tone: "idle" as BotTone, meta: "2h", line: "Drafted 6 entries", tree: { depth: 1, last: true, lines: [] } },
+    { id: "triage", title: "Issue triage", tone: "attention" as BotTone, meta: <Badge variant="secondary">3</Badge>, line: "#4 run failed · Provider error", tree: { depth: 0 } },
   ];
   return (
     <Category id="cards">
       <Specimen
         title="List pane"
-        note="ListPaneHeader, ListPaneToolbar, ListPaneBody, ListGroupLabel, ListRow, ListRowLine; PaneBar sets the header height"
+        note="ListPaneHeader, ListPaneToolbar, ListPaneBody, ListGroupLabel, ListRow (nested with tree), ListRowLine; PaneBar sets the header height"
         className="block p-0"
       >
-        <div className="flex h-80 overflow-hidden rounded-xl">
+        <div className="flex h-[30rem] overflow-hidden rounded-xl">
           <div className="flex w-80 shrink-0 flex-col border-r">
             <ListPaneHeader
               title="Bots"
@@ -958,11 +963,9 @@ function CardsSection() {
                     to={`#${row.id}`}
                     active={row.id === "planner"}
                     selection={selecting ? { checked: picked.has(row.id), onToggle: () => toggle(row.id), label: `Select ${row.title}` } : undefined}
-                    depth={row.depth}
-                    leading={row.depth === 0 ? <Avatar className="size-7"><AvatarFallback>{row.title[0]}</AvatarFallback></Avatar> : undefined}
+                    tree={row.tree}
                     indicator={<StatusDot tone={row.tone} />}
                     title={row.title}
-                    badges={row.depth > 0 ? <Badge variant="outline">sub-agent</Badge> : undefined}
                     meta={row.meta}
                   >
                     <ListRowLine tone={row.tone === "attention" ? "destructive" : undefined}>{row.line}</ListRowLine>

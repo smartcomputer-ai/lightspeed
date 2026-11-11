@@ -152,6 +152,7 @@ import {
   ListPaneToolbar,
   ListRow,
   ListRowLine,
+  type ListRowTree,
 } from "@/components/list-pane";
 
 /// U4a+U4d: master-detail session chat. Pane = paged session list plus
@@ -812,30 +813,40 @@ function SessionTreeItem({
   slug,
   activeId,
   depth,
+  last = true,
+  lines = [],
   ...controls
 }: {
   node: SessionNode;
   slug: string;
   activeId: string | undefined;
   depth: number;
+  /// The last of its siblings.
+  last?: boolean;
+  /// Per ancestor level below the root: whether that ancestor has a later sibling.
+  lines?: boolean[];
 } & SessionRowControls) {
+  // What its children pass on: below the root, whether this row's own line runs on.
+  const childLines = depth > 0 ? [...lines, !last] : [];
   return (
     <>
       <SessionListItem
         session={node.session}
         slug={slug}
         active={node.session.id === activeId}
-        depth={depth}
+        tree={{ depth, last, lines, children: node.children.length > 0 }}
         subAgentCount={node.children.length}
         {...controls}
       />
-      {node.children.map((child) => (
+      {node.children.map((child, index) => (
         <SessionTreeItem
           key={child.session.id}
           node={child}
           slug={slug}
           activeId={activeId}
           depth={depth + 1}
+          last={index === node.children.length - 1}
+          lines={childLines}
           {...controls}
         />
       ))}
@@ -847,7 +858,7 @@ function SessionListItem({
   session,
   slug,
   active,
-  depth = 0,
+  tree,
   subAgentCount = 0,
   selecting,
   selected,
@@ -860,7 +871,8 @@ function SessionListItem({
   session: SessionSummary;
   slug: string;
   active: boolean;
-  depth?: number;
+  /// Its place in the tree of sessions and their sub-agents.
+  tree: ListRowTree;
   /// Sub-agent sessions listed directly under this row.
   subAgentCount?: number;
 } & SessionRowControls) {
@@ -879,7 +891,7 @@ function SessionListItem({
       selection={selecting
         ? { checked: isSelected, onToggle: () => onToggle(session.id), label: `Select ${session.displayName ?? session.id}` }
         : undefined}
-      depth={depth}
+      tree={tree}
       indicator={<ActivityDot activity={session.activity} quiet />}
       title={displayName || session.id}
       // A sub-agent row is marked by its indent and ↳; its lineage is the
