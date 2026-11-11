@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { DropdownCaretIcon, ModelIcon, SearchIcon, SelectedIcon } from "@/icons";
 import {
   effortLabel,
@@ -22,6 +22,9 @@ export function ModelPicker({ choice, stored, runActive, canSaveDefault, onChang
   onSaveDefault: () => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  // Opening focuses the popup itself, not the search field, so the list
+  // shows in full without a caret (or, on touch, a keyboard) taking over.
+  const popup = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
@@ -65,12 +68,12 @@ export function ModelPicker({ choice, stored, runActive, canSaveDefault, onChang
         <DropdownCaretIcon className="size-3 text-muted-foreground" aria-hidden />
         {overridden && <span className="absolute top-1 right-1 size-1.5 rounded-full bg-primary" aria-hidden />}
       </PopoverTrigger>
-      <PopoverContent side="top" align="start" sideOffset={8} className="w-[min(34rem,calc(100vw-2rem))] overflow-hidden p-0">
+      <PopoverContent ref={popup} initialFocus={popup} side="top" align="start" sideOffset={8} className="w-[min(34rem,calc(100vw-2rem))] overflow-hidden p-0">
         <div className="flex max-h-[min(22rem,calc(var(--available-height)-4rem))] min-h-0 flex-col sm:flex-row">
           <section aria-label="Model" className="flex min-h-0 min-w-0 flex-1 flex-col border-b sm:border-r sm:border-b-0">
             <label className="m-2 mb-1 flex h-8 items-center gap-2 rounded-md bg-muted px-2 text-muted-foreground focus-within:ring-2 focus-within:ring-ring/50">
               <SearchIcon className="size-3.5 shrink-0" aria-hidden />
-              <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)}
+              <input value={query} onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && query.trim()) {
                     event.preventDefault();
