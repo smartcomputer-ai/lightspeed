@@ -22,7 +22,7 @@
 
 @media (prefers-reduced-motion: no-preference) {
     .transcript-enter {
-        animation: transcript-enter 200ms ease-out;
+        animation: transcript-enter var(--content-transition-duration) ease-out;
     }
 }
 
@@ -30,6 +30,10 @@
    so they can be changed at runtime (the debug design-token editor does).
    Tailwind would otherwise compile their values into each utility. */
 @theme inline {
+    /* Every transition that names no duration of its own (buttons, fields,
+       checkboxes, switches, tabs, badges, table rows, toggles) runs on the
+       control time. */
+    --default-transition-duration: var(--control-transition-duration);
     --font-heading: var(--font-heading);
     --font-sans: var(--font-sans);
     --font-mono: var(--font-mono);
@@ -209,8 +213,41 @@
     --sidebar-header-padding: calc(var(--spacing) * 2);
     --pane-bar-height: calc(var(--sidebar-header-button-height) + 2 * var(--sidebar-header-padding));
     /* Every row of a list pane (Sessions, Bots, Profiles) is at least this
-       tall, one line or two: the pane bar's height unless set apart. */
-    --list-row-height: var(--pane-bar-height);
+       tall, one line or two: a fifth taller than the pane bar above it. */
+    --list-row-height: calc(var(--pane-bar-height) * 1.2);
+    /* The text of list and menu items at rest (list titles, sidebar
+       navigation): a little dimmer than foreground, full strength on hover,
+       focus or selection. Declared again under .dark so it re-resolves in
+       popups that carry their own dark class. */
+    --item-foreground-rest: color-mix(in oklab, var(--foreground) 70%, transparent);
+    /* Font weights of list titles and sidebar menu items: at rest, and when
+       selected (the open row, the current page). Each is one of the
+       --font-weight-* steps; hover keeps the rest weight so text never
+       shifts under the pointer. */
+    --list-title-font-weight: var(--font-weight-normal);
+    --list-title-font-weight-selected: var(--font-weight-semibold);
+    --menu-item-font-weight: var(--font-weight-normal);
+    --menu-item-font-weight-selected: var(--font-weight-semibold);
+    /* Tailwind's normal weight (font-normal and the weights above), lighter
+       than 400: IBM Plex Sans is variable, so any weight renders. */
+    --font-weight-normal: 310;
+    /* The standard transition times, one per family of components. Everything
+       a time covers shares it and the standard easing, so it moves together.
+       Controls: buttons, badges, fields (the composer too), checkboxes,
+       switches, tabs, table rows, toggles: every transition without its own
+       duration. Lists: a list row's background, title and second line.
+       Menu: a sidebar item's background, text, weight and icon. Popovers:
+       popovers, dropdown menus, Select and Combobox lists, tooltips.
+       Dialogs: dialogs, alert dialogs, sheets and their backdrop. Layout:
+       the sidebar collapsing and expanding. Content: transcript entries,
+       composer chips and the scroll-to-bottom button arriving. */
+    --control-transition-duration: 150ms;
+    --list-transition-duration: 150ms;
+    --menu-transition-duration: 150ms;
+    --popover-transition-duration: 100ms;
+    --dialog-transition-duration: 150ms;
+    --layout-transition-duration: 200ms;
+    --content-transition-duration: 200ms;
     /* Scales every icon (lucide, tabler and the app's own marks) from the
        size its classes give it. */
     --icon-scale: 0.9;
@@ -251,6 +288,7 @@
     /* Component surfaces: the background and border color of each family of
        components. They are declared again under .dark so they re-resolve in
        popups that carry their own dark class. */
+    --item-foreground-rest: color-mix(in oklab, var(--foreground) 70%, transparent);
     --surface-card: var(--card);
     --surface-card-border: color-mix(in oklab, var(--foreground) 20%, transparent);
     --surface-dialog: var(--popover);

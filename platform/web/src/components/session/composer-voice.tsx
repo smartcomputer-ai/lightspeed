@@ -104,7 +104,7 @@ function Pill({ tone, label, children }: { tone: "muted" | "recording" | "error"
   return (
     <div role="group" aria-label={label}
       className={cn(
-        "flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-0.5 pl-2 sm:gap-2 sm:pl-2.5 text-xs font-medium animate-in fade-in zoom-in-95 duration-150",
+        "flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-0.5 pl-2 sm:gap-2 sm:pl-2.5 text-xs font-medium animate-in fade-in zoom-in-95 duration-(--content-transition-duration)",
         tone === "muted" && "bg-muted text-muted-foreground",
         tone === "recording" && "bg-destructive/10 text-destructive ring-1 ring-destructive/25 ring-inset",
         tone === "error" && "bg-destructive/10 text-destructive",

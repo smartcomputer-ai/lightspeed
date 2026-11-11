@@ -1,4 +1,4 @@
-# Missing server implementation
+# U100: Missing Server Implementations
 
 Features the web UI already draws, and the in-browser demo backend
 (`platform/web/src/demo`) already serves, but the core server does not

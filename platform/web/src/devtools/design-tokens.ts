@@ -43,6 +43,7 @@ export const COLOR_GROUPS: ColorGroup[] = [
   },
   { title: "Status", tokens: ["--destructive", "--success", "--warning", "--danger", "--info"] },
   { title: "Borders and focus", tokens: ["--border", "--input", "--ring"] },
+  { title: "Lists and menus", tokens: ["--item-foreground-rest"] },
   {
     title: "Sidebar",
     tokens: [
@@ -78,6 +79,60 @@ export const FONT_CHOICES: Record<string, Array<{ label: string; value: string }
 /// Tailwind's type scale. Line heights are ratios of the size, so they follow.
 export const TEXT_SIZE_TOKENS = ["--text-xs", "--text-sm", "--text-base", "--text-lg", "--text-xl", "--text-2xl"] as const;
 export const FONT_WEIGHT_TOKENS = ["--font-weight-normal", "--font-weight-medium", "--font-weight-semibold", "--font-weight-bold"] as const;
+
+/// The weight steps a list title or menu item can take, each a weight token.
+export const FONT_WEIGHT_STEPS = FONT_WEIGHT_TOKENS.map((token) => {
+  const name = token.slice("--font-weight-".length);
+  return { label: name[0]!.toUpperCase() + name.slice(1), value: `var(${token})` };
+});
+
+/// The standard transition times in index.css, in the order the editor's
+/// Transitions tab lists them, with what each one times.
+export const TRANSITION_TOKENS = [
+  {
+    token: "--control-transition-duration",
+    label: "Controls",
+    components: "Buttons, badges, fields (the composer too), checkboxes, switches, tabs, table rows and toggles: every transition without its own time",
+  },
+  {
+    token: "--list-transition-duration",
+    label: "Lists",
+    components: "List rows (Sessions, Bots, Profiles): background, title color and weight, second line",
+  },
+  {
+    token: "--menu-transition-duration",
+    label: "Menu",
+    components: "Sidebar menu items: background, text color and weight, icon",
+  },
+  {
+    token: "--popover-transition-duration",
+    label: "Popovers",
+    components: "Popovers, dropdown menus, Select and Combobox lists, tooltips: opening and closing",
+  },
+  {
+    token: "--dialog-transition-duration",
+    label: "Dialogs",
+    components: "Dialogs, alert dialogs and sheets, with their backdrop: opening and closing",
+  },
+  {
+    token: "--layout-transition-duration",
+    label: "Layout",
+    components: "The sidebar collapsing and expanding",
+  },
+  {
+    token: "--content-transition-duration",
+    label: "Content",
+    components: "Transcript entries, composer chips and the scroll-to-bottom button arriving (it leaves in twice the time)",
+  },
+] as const;
+
+/// Font weights of list titles and sidebar menu items, at rest and selected.
+export const ITEM_WEIGHT_TOKENS = [
+  { token: "--list-title-font-weight", label: "List title" },
+  { token: "--list-title-font-weight-selected", label: "List title, selected" },
+  { token: "--menu-item-font-weight", label: "Menu item" },
+  { token: "--menu-item-font-weight-selected", label: "Menu item, selected" },
+] as const;
 export const SHADOW_TOKENS = ["--shadow-2xs", "--shadow-xs", "--shadow-sm", "--shadow-md", "--shadow-lg", "--shadow-xl", "--shadow-2xl"] as const;
 
 /// Families of components that share a surface. Each has its own tokens in

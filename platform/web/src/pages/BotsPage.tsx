@@ -26,6 +26,7 @@ import {
   ListPaneBody,
   ListPaneHeader,
   ListPaneState,
+  ListMark,
   ListRow,
   ListRowLine,
 } from "@/components/list-pane";
@@ -93,6 +94,16 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
 
 /// One line of "what it is doing", from the event log alone: the newest
 /// event and whether anything is still unresolved.
+/// What a bot's status dot means, for its tooltip.
+const TONE_LABEL: Record<BotTone, string> = {
+  live: "Working",
+  waiting: "Waiting for approval",
+  idle: "Idle",
+  paused: "Paused",
+  attention: "Needs attention: its last event failed",
+  closed: "Closed",
+};
+
 export function rosterLine(bot: BotListItem): { text: string; tone: BotTone } {
   if (bot.closedAtMs != null) return { text: "Closed", tone: "closed" };
   if (bot.enabled === false) {
@@ -183,12 +194,17 @@ function BotsPane({
                     to={`/u/${slug}/bots/${bot.botId}`}
                     active={bot.botId === activeId}
                     leading={<BotAvatar botId={bot.botId} size={28} />}
-                    indicator={<StatusDot tone={line.tone} />}
+                    indicator={<ListMark label={TONE_LABEL[line.tone]} tip={TONE_LABEL[line.tone]}><StatusDot tone={line.tone} /></ListMark>}
                     title={botLabel(bot)}
                     meta={bot.pendingCount > 0 && bot.closedAtMs == null ? (
-                      <span className="inline-block min-w-4 rounded-full bg-primary px-1.5 text-center text-[11px] font-semibold text-primary-foreground">
-                        {bot.pendingCount}
-                      </span>
+                      <ListMark
+                        label={`${bot.pendingCount} waiting`}
+                        tip={`${bot.pendingCount} event${bot.pendingCount === 1 ? "" : "s"} waiting to be handled`}
+                      >
+                        <span className="inline-block min-w-4 rounded-full bg-primary px-1.5 text-center text-[11px] font-semibold text-primary-foreground">
+                          {bot.pendingCount}
+                        </span>
+                      </ListMark>
                     ) : (
                       bot.lastEvent && relativeTime(bot.lastEvent.receivedAtMs)
                     )}

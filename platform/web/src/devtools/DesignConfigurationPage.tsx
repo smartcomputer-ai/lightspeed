@@ -16,7 +16,10 @@ import {
   EMPTY_OVERRIDES,
   FONT_CHOICES,
   FONT_TOKENS,
+  FONT_WEIGHT_STEPS,
   FONT_WEIGHT_TOKENS,
+  ITEM_WEIGHT_TOKENS,
+  TRANSITION_TOKENS,
   RADIUS_STEPS,
   SHADOW_STEPS,
   SHADOW_TOKENS,
@@ -126,6 +129,7 @@ export function DesignConfigurationPage() {
           <TabsTrigger value="surfaces">Surfaces</TabsTrigger>
           <TabsTrigger value="shape">Shape</TabsTrigger>
           <TabsTrigger value="shadows">Shadows</TabsTrigger>
+          <TabsTrigger value="transitions">Transitions</TabsTrigger>
         </TabsList>
 
         <TabsContent value="colors" className="grid content-start gap-6 pt-3">
@@ -180,6 +184,11 @@ export function DesignConfigurationPage() {
                 sample={(value) => <span style={{ fontWeight: value }}>Aa</span>}
                 {...token("shared", name)}
               />
+            ))}
+          </Group>
+          <Group title="List and menu weights" note="List titles and sidebar menu items, at rest and when selected (the open row, the current page).">
+            {ITEM_WEIGHT_TOKENS.map(({ token: name, label }) => (
+              <StepRow key={name} label={label} name={name} steps={FONT_WEIGHT_STEPS} {...token("shared", name)} />
             ))}
           </Group>
         </TabsContent>
@@ -300,6 +309,17 @@ export function DesignConfigurationPage() {
               (dividers, table rows, sidebar edges) are 1px in the component classes and take their color from Colors › Borders
               and focus.
             </p>
+          </Group>
+        </TabsContent>
+
+        <TabsContent value="transitions" className="grid content-start gap-6 pt-3">
+          <Group title="Standard transition times" note="How long each family of components takes to change state. Everything a token times shares its duration and easing, so it moves together.">
+            {TRANSITION_TOKENS.map(({ token: name, label, components }) => (
+              <div key={name} className="grid gap-1">
+                <RangeRow name={name} min={0} max={600} step={10} unit="ms" {...token("shared", name)} />
+                <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">{label}.</span> {components}</p>
+              </div>
+            ))}
           </Group>
         </TabsContent>
 
@@ -489,7 +509,7 @@ function RangeRow({ name, value, changed, onChange, onReset, min, max, step, uni
   min: number;
   max: number;
   step: number;
-  unit: "rem" | "px" | "%" | "deg" | "";
+  unit: "rem" | "px" | "%" | "deg" | "ms" | "";
   describe?: (value: number) => string;
   sample?: (value: string) => ReactNode;
 }) {

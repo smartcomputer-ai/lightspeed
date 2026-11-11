@@ -36,7 +36,7 @@ function AttachmentChip({ item, disabled, onRemove, onRetry }: {
   return (
     <li
       className={cn(
-        "group/chip flex h-11 max-w-60 min-w-0 items-center gap-2 rounded-lg border bg-muted/40 py-1 pr-1 pl-1 animate-in fade-in zoom-in-95 duration-150",
+        "group/chip flex h-11 max-w-60 min-w-0 items-center gap-2 rounded-lg border bg-muted/40 py-1 pr-1 pl-1 animate-in fade-in zoom-in-95 duration-(--content-transition-duration)",
         failed && "border-destructive/40 bg-destructive/5",
       )}
       title={failed ? item.error : item.name}

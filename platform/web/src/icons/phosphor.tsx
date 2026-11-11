@@ -219,6 +219,7 @@ export const phosphor = {
     EditFilesIcon: duotone(NotePencilIcon),
     DeleteIcon: duotone(TrashIcon),
     ArchiveIcon: duotone(ArchiveIcon),
+    SessionCloseIcon: duotone(ArchiveIcon),
     CopyIcon: duotone(CopyIcon),
     CopyLinkIcon: duotone(LinkIcon),
     DownloadIcon: regular(DownloadSimpleIcon),

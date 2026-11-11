@@ -6,6 +6,7 @@ import { ReadError } from "@/components/read-error";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /// The parts of a list-and-detail page (sessions, bots, profiles,
 /// workspaces):
@@ -202,7 +203,7 @@ export function ListRow({
 }) {
   const highlighted = active || selection?.checked;
   const className = cn(
-    "flex min-h-(--list-row-height) min-w-0 items-center gap-2.5 border-b px-4 py-1.5 text-sm hover:bg-muted/50",
+    "group/row flex min-h-(--list-row-height) min-w-0 items-center gap-2.5 border-b px-4 py-1.5 text-sm transition-colors duration-(--list-transition-duration) hover:bg-muted/50",
     highlighted && "bg-muted",
     selection && "cursor-pointer",
   );
@@ -221,7 +222,13 @@ export function ListRow({
         <span className="flex min-w-0 items-center gap-2">
           {depth > 0 && <span className="shrink-0 text-muted-foreground">↳</span>}
           {indicator}
-          <span className="min-w-0 flex-1 truncate font-medium" title={titleHint}>{title}</span>
+          {/* Slightly dimmer at rest; full strength on hover, focus or selection. */}
+          <span
+            className="min-w-0 flex-1 truncate font-(--list-title-font-weight) text-(--item-foreground-rest) group-data-highlighted/row:font-(--list-title-font-weight-selected) transition-[color,font-weight] duration-(--list-transition-duration) group-hover/row:text-foreground group-focus-visible/row:text-foreground group-data-highlighted/row:text-foreground"
+            title={titleHint}
+          >
+            {title}
+          </span>
           {badges}
           {meta !== undefined && meta !== null && meta !== false && (
             <span className="ml-auto shrink-0 text-xs text-muted-foreground">{meta}</span>
@@ -234,15 +241,32 @@ export function ListRow({
   return (
     <li>
       {selection ? (
-        <label className={className} style={style}>{content}</label>
+        <label className={className} style={style} data-highlighted={highlighted || undefined}>{content}</label>
       ) : (
-        <NavLink to={to} className={className} style={style}>{content}</NavLink>
+        <NavLink to={to} className={className} style={style} data-highlighted={highlighted || undefined}>{content}</NavLink>
       )}
     </li>
   );
 }
 
-/// A secondary line of a ListRow: muted, one line, truncated.
+/// A small mark in a list row (an icon, perhaps with a count) with a
+/// tooltip that says what it means. `label` names it for assistive tech.
+export function ListMark({ label, tip, children }: { label: string; tip: ReactNode; children: ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span className="flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground tabular-nums" aria-label={label} />}
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent>{tip}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/// A secondary line of a ListRow: one line, truncated, and dimmer than
+/// muted text until its row is hovered, focused or selected, so the titles
+/// lead while scanning.
 export function ListRowLine({
   mono = false,
   tone,
@@ -260,9 +284,12 @@ export function ListRowLine({
     <span
       title={title}
       className={cn(
-        "min-w-0 truncate text-xs text-muted-foreground",
+        "min-w-0 truncate text-xs",
+        // A toned line keeps its color; others brighten with their row.
+        tone === "destructive"
+          ? "text-destructive"
+          : "text-muted-foreground/40 transition-colors duration-(--list-transition-duration) group-hover/row:text-muted-foreground group-focus-visible/row:text-muted-foreground group-data-highlighted/row:text-muted-foreground",
         mono && "font-mono",
-        tone === "destructive" && "text-destructive",
         className,
       )}
     >

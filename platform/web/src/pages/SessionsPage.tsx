@@ -13,7 +13,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { NavLink, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { AddIcon, ArchiveIcon, BotIcon, DeleteIcon, FilterIcon, LoadingIcon, ManagedIcon, RemoveIcon, SelectModeIcon, SessionIcon } from "@/icons";
+import { AddIcon, BotIcon, DeleteIcon, FilterIcon, LoadingIcon, ManagedIcon, RemoveIcon, SelectModeIcon, SessionCloseIcon, SessionIcon, SubAgentIcon } from "@/icons";
 import {
   api,
   botLabel,
@@ -149,6 +149,7 @@ import {
   ListPaneState,
   ListPaneToolbar,
   ListRow,
+  ListMark,
   ListRowLine,
 } from "@/components/list-pane";
 
@@ -739,7 +740,7 @@ function BulkActionDialog({
           />
         }
       >
-        {action === "close" ? <ArchiveIcon /> : <DeleteIcon />}
+        {action === "close" ? <SessionCloseIcon /> : <DeleteIcon />}
         {verb} {count}
       </AlertDialogTrigger>
       <AlertDialogContent>
@@ -772,10 +773,27 @@ function BulkActionDialog({
 
 type SessionNode = { session: SessionSummary; children: SessionNode[] };
 
+/// A date and time in the viewer's locale, for tooltips.
+function whenLabel(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+/// What the closed mark of a session row says: when it closed, and when
+/// retention deletes it.
+function closedTip(session: SessionSummary): ReactNode {
+  const deleteAt = session.retention.deleteAtMs;
+  return (
+    <>
+      {session.closedAtMs != null ? `Closed ${whenLabel(session.closedAtMs)}` : "Closed"}
+      {deleteAt != null && <><br />{`Deleted after ${whenLabel(deleteAt)}`}</>}
+    </>
+  );
+}
+
 /// Group sub-agent sessions under their parent when the parent is in the
-/// loaded page set. Children whose parent is not loaded stay
-/// at the top level and still carry their sub-agent badge; list order (most
-/// recently updated first) is preserved at every level.
+/// loaded page set; the parent row counts them. Children whose parent is not
+/// loaded stay at the top level, their lineage in the title's tooltip; list
+/// order (most recently updated first) is preserved at every level.
 function buildSessionTree(sessions: SessionSummary[]): SessionNode[] {
   const byId = new Map(sessions.map((session) => [session.id, { session, children: [] as SessionNode[] }]));
   const roots: SessionNode[] = [];
@@ -816,6 +834,7 @@ function SessionTreeItem({
         slug={slug}
         active={node.session.id === activeId}
         depth={depth}
+        subAgentCount={node.children.length}
         {...controls}
       />
       {node.children.map((child) => (
@@ -837,6 +856,7 @@ function SessionListItem({
   slug,
   active,
   depth = 0,
+  subAgentCount = 0,
   selecting,
   selected,
   onToggle,
@@ -848,6 +868,8 @@ function SessionListItem({
   slug: string;
   active: boolean;
   depth?: number;
+  /// Sub-agent sessions listed directly under this row.
+  subAgentCount?: number;
 } & SessionRowControls) {
   const botControlled = session.lifecycleControlled && session.id.startsWith("bot:v1:");
   const origin = session.origin ?? null;
@@ -868,28 +890,40 @@ function SessionListItem({
       depth={depth}
       indicator={<ActivityDot activity={session.activity} quiet />}
       title={displayName || session.id}
-      titleHint={displayName ? undefined : session.id}
+      // A sub-agent row is marked by its indent and ↳; its lineage is the
+      // title's tooltip.
+      titleHint={origin
+        ? `Sub-agent of ${origin.parentSessionId} (depth ${origin.depth}, profile ${origin.agent.profileId} rev ${origin.agent.revision})`
+        : displayName ? undefined : session.id}
       badges={<>
+        {subAgentCount > 0 && (
+          <ListMark
+            label={`${subAgentCount} sub-agent${subAgentCount === 1 ? "" : "s"}`}
+            tip={`${subAgentCount} sub-agent${subAgentCount === 1 ? "" : "s"} delegated by this session, listed below`}
+          >
+            <SubAgentIcon className="size-3.5" aria-hidden />
+            {subAgentCount}
+          </ListMark>
+        )}
         {/* Sub-agents follow their root; the root row carries the mark. */}
         {!origin && <SharingMark access={session.access} quiet />}
-        {origin && (
-          <Badge
-            variant="outline"
-            title={`Sub-agent of ${origin.parentSessionId} (depth ${origin.depth}, profile ${origin.agent.profileId} rev ${origin.agent.revision})`}
-          >
-            sub-agent
-          </Badge>
-        )}
         {session.lifecycleControlled && (
-          <Badge className="shrink-0" variant="secondary" title={botControlled ? "Bot-managed session" : undefined}>
-            {botControlled && <BotIcon />}
-            {botControlled ? "Bot" : "Managed"}
-          </Badge>
+          <ListMark
+            label={botControlled ? "Bot session" : "Managed session"}
+            tip={botControlled
+              ? "Run by a bot: the bot controls this session's lifecycle and chat input"
+              : "Managed: an integration controls this session's lifecycle and chat input"}
+          >
+            <Badge className="shrink-0" variant="secondary">
+              {botControlled && <BotIcon />}
+              {botControlled ? "Bot" : "Managed"}
+            </Badge>
+          </ListMark>
         )}
         {session.lifecycleStatus === "closed" && (
-          <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-            closed
-          </span>
+          <ListMark label="Closed" tip={closedTip(session)}>
+            <SessionCloseIcon className="size-3.5" aria-hidden />
+          </ListMark>
         )}
       </>}
       meta={relativeTime(session.updatedAtMs)}
@@ -2118,7 +2152,7 @@ export function SessionDetail({
                       setCloseOpen(true);
                     }}
                   >
-                    <ArchiveIcon /> {runActive ? "Force close session…" : "Close session…"}
+                    <SessionCloseIcon /> {runActive ? "Force close session…" : "Close session…"}
                   </DropdownMenuItem>
                 )
               ) : undefined}

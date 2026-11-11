@@ -48,7 +48,14 @@ function NavItem({
   const isActive = location.pathname === to || location.pathname.startsWith(`${to}/`);
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton isActive={isActive} render={<NavLink to={to} />} tooltip={label}>
+      <SidebarMenuButton
+        isActive={isActive}
+        render={<NavLink to={to} />}
+        tooltip={label}
+        // Dimmer at rest like list titles; hover, press and the active link
+        // brighten through the button's own accent styles.
+        className="text-(--item-foreground-rest) focus-visible:text-sidebar-accent-foreground"
+      >
         <Icon />
         <span>{label}</span>
       </SidebarMenuButton>

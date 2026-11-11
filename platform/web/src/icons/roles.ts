@@ -94,6 +94,8 @@ export interface IconSet {
   EditFilesIcon: IconComponent;
   DeleteIcon: IconComponent;
   ArchiveIcon: IconComponent;
+  /** Closing a session, and the mark of a closed one. */
+  SessionCloseIcon: IconComponent;
   CopyIcon: IconComponent;
   CopyLinkIcon: IconComponent;
   DownloadIcon: IconComponent;

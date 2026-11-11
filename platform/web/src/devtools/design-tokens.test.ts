@@ -13,6 +13,9 @@ import {
   SIDEBAR_LOGO_TOKENS,
   sheenToken,
   SURFACE_COLOR_SOURCES,
+  FONT_WEIGHT_STEPS,
+  ITEM_WEIGHT_TOKENS,
+  TRANSITION_TOKENS,
   NEUTRAL_FILTER,
   backdropFilterValue,
   parseBackdropFilter,
@@ -109,6 +112,24 @@ describe("design tokens", () => {
         const source = parseSurfaceColor(value!)?.source;
         expect(source && offered.has(source), `${token}: ${value}`).toBe(true);
       }
+    }
+  });
+
+  it("declares every standard transition time in milliseconds", () => {
+    const css = readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
+    for (const { token } of TRANSITION_TOKENS) {
+      const values = [...css.matchAll(new RegExp(`${token}: ([^;]+);`, "g"))].map((match) => match[1]!);
+      expect(values, token).toHaveLength(1);
+      expect(values[0], token).toMatch(/^\d+ms$/);
+    }
+  });
+
+  it("declares list and menu weights as weight steps the editor offers", () => {
+    const css = readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
+    for (const { token } of ITEM_WEIGHT_TOKENS) {
+      const values = [...css.matchAll(new RegExp(`${token}: ([^;]+);`, "g"))].map((match) => match[1]!);
+      expect(values, token).toHaveLength(1);
+      expect(FONT_WEIGHT_STEPS.some((step) => sameCss(step.value, values[0]!)), `${token}: ${values[0]}`).toBe(true);
     }
   });
 

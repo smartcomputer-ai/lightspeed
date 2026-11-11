@@ -42,7 +42,7 @@ export const {
   ExploreToolIcon, EditToolIcon, ExecuteToolIcon, CodeToolIcon, McpToolIcon, DelegateToolIcon, AwaitToolIcon,
   EmitToSelfIcon, MessageToolIcon, OtherToolIcon, ToolGroupIcon, BotEventIcon, ScheduleIcon, WebhookIcon,
   ChatTriggerIcon, InboxIcon, PollIcon, CommandIcon, ActivityIcon, AddIcon, AttachIcon, EditIcon, EditFilesIcon,
-  DeleteIcon, ArchiveIcon, CopyIcon, CopyLinkIcon, DownloadIcon, UploadIcon, UploadFolderIcon, NewFileIcon,
+  DeleteIcon, ArchiveIcon, SessionCloseIcon, CopyIcon, CopyLinkIcon, DownloadIcon, UploadIcon, UploadFolderIcon, NewFileIcon,
   NewFolderIcon, ShareIcon, CompactIcon, ConfigureIcon, FilterIcon, SelectModeIcon, SendIcon, SubmitIcon, QueueIcon,
   SteerIcon, StopIcon, PauseIcon, ResumeIcon, RetryIcon, RotateSecretIcon, ResetIcon, ReplayIcon, RefreshIcon,
   GenerateIcon, DictateIcon, DictationUnavailableIcon, ApproveIcon, RejectIcon, RemoveIcon, CancelIcon, DismissIcon,

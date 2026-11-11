@@ -202,6 +202,7 @@ export const lucide = {
     EditFilesIcon: SquarePen,
     DeleteIcon: Trash2,
     ArchiveIcon: Archive,
+    SessionCloseIcon: Archive,
     CopyIcon: Copy,
     CopyLinkIcon: Link2,
     DownloadIcon: Download,
