@@ -1,5 +1,6 @@
 /// In-memory state behind the browser demo. Fixtures fill it at boot, the
 /// stub routes read and mutate it, and nothing survives a reload.
+import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
 import { effectiveFeatures, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor } from "@lightspeed-ai/platform-shared";
 import type {
   BlobContent,
@@ -334,6 +335,7 @@ export function universeApiKey(
 
 export function sessionSummary(record: SessionRecord): SessionSummary {
   const view = record.view;
+  const lastMessagePreview = lastMessagePreviewOf(record.events);
   return {
     id: view.id,
     displayName: view.displayName ?? null,
@@ -347,7 +349,37 @@ export function sessionSummary(record: SessionRecord): SessionSummary {
     origin: view.origin ?? null,
     access: view.access,
     activity: view.activity,
+    ...(lastMessagePreview ? { lastMessagePreview } : {}),
   };
+}
+
+const PREVIEW_LIMIT = 200;
+
+/// The latest user or agent message of a session as one line of plain text:
+/// what the session list shows under each title. Read from the same
+/// transcript the session page draws, so it matches the last bubble.
+export function lastMessagePreviewOf(events: SessionRecord["events"]): string | undefined {
+  const entries = applyEvents(emptyTranscript(), events).entries;
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index]!;
+    if (entry.kind !== "message") continue;
+    const text = plainLine(entry.text);
+    if (text) return text.length > PREVIEW_LIMIT ? `${text.slice(0, PREVIEW_LIMIT - 1).trimEnd()}…` : text;
+  }
+  return undefined;
+}
+
+/// Markdown reduced to the words: code blocks dropped, links to their text,
+/// emphasis, headings, quotes and list markers removed, lines joined.
+/// Underscores stay, so snake_case names survive.
+function plainLine(markdown: string): string {
+  return markdown
+    .replace(/```[\s\S]*?(```|$)/g, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/gm, "")
+    .replace(/(\*\*|~~|\*|`)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export function bytesToBase64(bytes: Uint8Array): string {

@@ -894,6 +894,9 @@ function SessionListItem({
       </>}
       meta={relativeTime(session.updatedAtMs)}
     >
+      {session.lastMessagePreview && (
+        <ListRowLine title={session.lastMessagePreview}>{session.lastMessagePreview}</ListRowLine>
+      )}
       {showSecondaryId && <ListRowLine mono title={session.id}>{session.id}</ListRowLine>}
       {visibleMetadata.map(({ key, value }) => (
         <ListRowLine key={key} mono className="text-[11px]" title={`${key}=${value}`}>

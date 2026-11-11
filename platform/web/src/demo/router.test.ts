@@ -246,6 +246,36 @@ describe("demo router", () => {
     expect((await call("POST", `${path}/share`)).status).toBe(409);
   });
 
+  it("lists each session with its latest message as one plain, bounded line", async () => {
+    const { store, call } = await boot();
+    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const session = universe.sessions.get("session-flaky-scheduler")!;
+    const list = async () => {
+      const listed = (await call("GET", `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as {
+        sessions: { id: string; lastMessagePreview?: string }[];
+      };
+      return new Map(listed.sessions.map((entry) => [entry.id, entry.lastMessagePreview]));
+    };
+
+    appendScriptedRun(store, session, {
+      at: Date.now(),
+      user: "Is the scheduler fixed?",
+      steps: [{ text: "## Done\n\nThe **scheduler** suite passes:\n\n```ts\nawait run();\n```\n\nSee [PR #487](https://example.test/487) for `retry_policy`." }],
+    });
+    // The agent's reply is the latest message: Markdown reduced to its words, code dropped.
+    expect((await list()).get(session.view.id)).toBe("Done The scheduler suite passes: See PR #487 for retry_policy.");
+
+    appendScriptedRun(store, session, { at: Date.now(), user: "Thanks!", steps: [{ text: "x".repeat(500) }] });
+    const long = (await list()).get(session.view.id)!;
+    expect(long).toHaveLength(200);
+    expect(long.endsWith("…")).toBe(true);
+
+    // Every seeded session with messages has one; none spans lines.
+    for (const preview of (await list()).values()) {
+      if (preview !== undefined) expect(preview).not.toMatch(/\n|```/);
+    }
+  });
+
   it("uploads an attachment and runs it through the transcript as input media", async () => {
     const { store, call } = await boot();
     const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;

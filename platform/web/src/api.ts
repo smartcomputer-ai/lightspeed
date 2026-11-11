@@ -445,6 +445,10 @@ export interface SessionSummary {
   retention: SessionRetention;
   lifecycleControlled: boolean;
   origin?: SessionOrigin | null;
+  /// The latest user or agent message as one line of plain text, bounded.
+  /// Only the demo backend sends it so far; the core session list does not
+  /// carry message text yet, so lists must work without it.
+  lastMessagePreview?: string | null;
 }
 
 export interface SessionRetention {
