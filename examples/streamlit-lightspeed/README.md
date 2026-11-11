@@ -5,20 +5,69 @@ Temporal, worker, model provider, and stores. Click a component to inspect its
 evidence. Turn off **Follow latest** to select an earlier run and step through
 its timeline.
 
-## Run against the local dev stack
+## Configure Lightspeed
 
 Start `./dev.sh` from the repository root and wait for the gateway, Platform,
-and daemon to become ready. Then run the following from this example's
-directory with Python 3.12+ and a current [uv](https://docs.astral.sh/uv/):
+and daemon to become ready. From this example's directory, run:
 
 ```sh
-./init-env.sh
+./init-env.sh --universe test
+```
+
+The initializer connects to the running Lightspeed gateway and provisions the
+demo resources in the selected universe. It uses the local launcher’s
+deployment key when the gateway matches the launcher handoff. For another
+deployment, supply `LIGHTSPEED_DEMO_ADMIN_API_KEY` in your shell.
+
+| Lightspeed resource | What setup does |
+| --- | --- |
+| Universe | Uses an existing universe. `--universe` accepts a UUID or slug. Without it, setup uses the app connection's universe or defaults to the local Platform **Test** universe. |
+| Model | Uses the profile model or the universe's **Agent runs** default. The model options below configure a route specifically for the demo profile. |
+| Workspace | Creates `demo-workspace` with a `notes.txt` fixture when the workspace is missing. |
+| Environment | Attaches the launcher daemon at `ws://127.0.0.1:19091/`. For another gateway, pass `--environment-id` for an existing environment or `--envd-endpoint` for a reachable daemon. |
+| Profile | Creates `internals-demo` with a read-only workspace mounted at `/workspace` and a default command-capable environment. Use `--profile` to choose another profile ID. |
+| API key | Reuses a usable universe key from the example configuration or provisions a scoped key with `session`, `vfs`, and `environments` access. A new key is saved to the owner-only file printed by the command. |
+
+For a different deployment, specify its gateway and target universe:
+
+```sh
+./init-env.sh --gateway https://runtime.example.com/rpc \
+  --universe "$DEMO_UNIVERSE_ID" \
+  --environment-id "$DEMO_ENVIRONMENT_ID"
+```
+
+Connect a real model in **Models** in Lightspeed and choose **Models → Defaults
+→ Agent runs**, or give the demo profile its own route:
+
+```sh
+./init-env.sh --universe test --model-provider openai \
+  --model-api-kind openai:responses --model "$DEMO_MODEL"
+```
+
+If that provider is missing, set `LIGHTSPEED_DEMO_MODEL_API_KEY` in the setup
+shell to register its credential on the selected Lightspeed universe. Setup
+preserves existing credentials and universe model defaults. Repeating setup
+reuses the workspace, profile, and key. The initializer reads connection
+settings from `.env` and leaves that file available for you to configure separately.
+
+## Connect Streamlit
+
+With Python 3.12+ and a current [uv](https://docs.astral.sh/uv/), copy
+`.env.example` to `.env` for a fresh app configuration. Set `LIGHTSPEED_API_URL`
+to the gateway, `LIGHTSPEED_API_KEY` to the scoped key, and `LIGHTSPEED_PROFILE_ID`
+to the profile from setup. A universe key selects its universe, so leave
+`LIGHTSPEED_UNIVERSE` blank. Use `LIGHTSPEED_DEMO_PLATFORM_URL` for the
+**Open Lightspeed** link.
+
+The example file includes the local Temporal address, namespace, and UI.
+Set `LIGHTSPEED_DEMO_POSTGRES_DSN` using the [read-only grants below](#enable-read-only-postgresql-evidence)
+to include PostgreSQL evidence. Then start Streamlit:
+
+```sh
 uv run --locked streamlit run app.py
 ```
 
-Open the [Streamlit demo](http://127.0.0.1:8501). Choose **Open Lightspeed**
-in the sidebar to visit the Platform. To follow a turn through storage and
-compute, send this prompt:
+Open the [Streamlit demo](http://127.0.0.1:8501) and send this prompt:
 
 > Read `/workspace/notes.txt` and run `pwd` in the active environment.
 
@@ -26,39 +75,6 @@ Click **VFS** to preview the file, **Daemon / machine** to inspect the command,
 **Temporal** for workflow activity, and **PostgreSQL** to compare durable event
 sequence numbers. The workspace file lives in a snapshot. The directory printed
 by `pwd` belongs to the daemon machine.
-
-## What the initializer configures
-
-| Component | Local setup | Existing deployment |
-| --- | --- | --- |
-| Gateway and key | Uses the launcher handoff to create an isolated runtime universe and writes a scoped app key to `.env`. | Set `LIGHTSPEED_DEMO_ADMIN_API_KEY` in the setup shell. Pass the gateway URL and universe ID. The app key needs `session`, `vfs`, and `environments` access. |
-| Model | Starts a deterministic loopback provider with scripted chat and tool calls. | Use a profile with a working model or select one under **Models → Defaults → Agent runs**. |
-| VFS and profile | Seeds `notes.txt` in `demo-workspace` and attaches it read-only at `/workspace` in `internals-demo`. | Reuses an existing profile with both attachments. If the profile is absent, creates it using `demo-workspace` and the chosen environment. Put `notes.txt` in the workspace if you reuse one. |
-| Environment | Attaches the launcher daemon at `ws://127.0.0.1:19091/` and makes it the default environment for the demo profile. | Pass `--environment-id` for an existing machine or `--envd-endpoint` for a direct endpoint the gateway can reach. The profile needs a default environment with **Run commands** access. |
-| Platform | Links to `http://127.0.0.1:5173/app/`. | Pass `--platform-url` or set `LIGHTSPEED_DEMO_PLATFORM_URL` to the web app address. |
-| Temporal | Uses the launcher's local frontend, namespace, and UI. | Set `LIGHTSPEED_DEMO_TEMPORAL_ADDRESS`, `LIGHTSPEED_DEMO_TEMPORAL_NAMESPACE`, and `LIGHTSPEED_DEMO_TEMPORAL_UI` if you want workflow evidence. |
-| PostgreSQL | Grants a dedicated read-only login access to the metadata columns used by the demo. | Supply `LIGHTSPEED_DEMO_POSTGRES_DSN` with a read-only login. See [the grants below](#enable-read-only-postgresql-evidence). |
-
-Rerun `./init-env.sh` to reuse the same resources and restart its fixture if
-needed. The deployment key is used during setup. The protected app environment
-file holds the scoped key and reader settings. The initializer leaves existing
-model defaults, profiles, and workspace contents in place.
-
-To point at an existing deployment, supply its deployment key as
-`LIGHTSPEED_DEMO_ADMIN_API_KEY` in the shell and run:
-
-```sh
-./init-env.sh --gateway https://runtime.example.com/rpc \
-  --universe "$DEMO_UNIVERSE_ID" \
-  --environment-id "$DEMO_ENVIRONMENT_ID" \
-  --platform-url https://lightspeed.example.com/app/
-```
-
-Choose a universe already managed in Platform if you want to find the same
-sessions and resources there. The default local initializer creates a separate
-runtime universe. Use `--env-file` to keep a second configuration, then pass
-the same file to `uv run --locked --env-file <file> streamlit run app.py`.
-Use `--no-local-postgres` to skip provisioning the local reader.
 
 ## Read the map
 

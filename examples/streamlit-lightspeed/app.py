@@ -287,7 +287,7 @@ st.title("Lightspeed internals")
 if settings.platform_url:
     st.sidebar.link_button("Open Lightspeed", settings.platform_url, width="stretch")
 if not settings.api_key:
-    st.info("Run ./init-env.sh or set LIGHTSPEED_API_KEY in this example's .env file.")
+    st.info("Run ./init-env.sh to prepare Lightspeed, then set LIGHTSPEED_API_KEY in this example's .env file.")
     st.stop()
 
 if "universe" not in st.session_state:
