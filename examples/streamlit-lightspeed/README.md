@@ -7,50 +7,60 @@ its timeline.
 
 ## Run against the local dev stack
 
-1. From the repository root, run `./dev.sh` and leave it running. In the
-   [local Platform](http://127.0.0.1:5173/app/), choose the **Test** universe.
-   Connect a model provider and set **Models → Defaults → Agent runs**.
-   See the [local setup guide](../../docs/documentation/development/local-development.md).
-2. In the universe's **API keys** page, create a key with **session**,
-   **vfs**, and **environments** access. The app uses the gateway key from
-   its server-side environment. Leave `LIGHTSPEED_UNIVERSE` blank with a
-   universe key.
-3. Use Python 3.12 or newer and a current [uv](https://docs.astral.sh/uv/).
-   From this directory, copy the example environment file, set
-   `LIGHTSPEED_API_KEY`, and start Streamlit.
+Start `./dev.sh` from the repository root and wait for the gateway, Platform,
+and daemon to become ready. Then run the following from this example's
+directory with Python 3.12+ and a current [uv](https://docs.astral.sh/uv/):
 
-   ```sh
-   cp .env.example .env
-   uv run --locked streamlit run app.py
-   ```
+```sh
+./init-env.sh
+uv run --locked streamlit run app.py
+```
 
-Open [the local demo](http://127.0.0.1:8501). Send a prompt, then a follow-up
-in the same session. The current session ID in the sidebar can reopen that
-conversation after a browser refresh. Chat works with just the gateway and a
-working model.
+Open the [Streamlit demo](http://127.0.0.1:8501). Choose **Open Lightspeed**
+in the sidebar to visit the Platform. To follow a turn through storage and
+compute, send this prompt:
 
-## Follow a turn across storage and compute
+> Read `/workspace/notes.txt` and run `pwd` in the active environment.
 
-1. Create a workspace in the Test universe and add `notes.txt` with a line
-   of sample text. Create a profile that uses the universe model default.
-   Enable VFS and mount the workspace at `/workspace` with **Read only**
-   access. The [workspace walkthrough](../../docs/documentation/getting-started/first-agent.md)
-   shows the profile and attachment controls.
-2. In **Environments → Attach local daemon**, register the launcher’s
-   loopback daemon at `ws://127.0.0.1:19091/`. Attach it in the same profile
-   with **Run commands** access and make it the default environment.
-   The [direct attachment guide](../../docs/documentation/environments/bring-your-own-compute.md#direct-attachment-for-local-development)
-   explains the permissions of the local daemon.
-3. Set `LIGHTSPEED_PROFILE_ID` in the example’s `.env`, restart Streamlit,
-   and choose **New session**. Ask the agent to read `/workspace/notes.txt`
-   with the VFS tools and run `pwd` in the active environment. Inspect the
-   **VFS** and **Daemon / machine** nodes. The workspace file is stored in a
-   snapshot. The directory printed by `pwd` belongs to the daemon machine.
-4. Click **Temporal** to see session workflow activities. The sample
-   environment file points to the launcher’s default address and namespace.
-   Copy the displayed workflow ID into Temporal UI for the complete history.
-   Select **PostgreSQL** to compare recent durable event sequence numbers with
-   the worker events after enabling database evidence below.
+Click **VFS** to preview the file, **Daemon / machine** to inspect the command,
+**Temporal** for workflow activity, and **PostgreSQL** to compare durable event
+sequence numbers. The workspace file lives in a snapshot. The directory printed
+by `pwd` belongs to the daemon machine.
+
+## What the initializer configures
+
+| Component | Local setup | Existing deployment |
+| --- | --- | --- |
+| Gateway and key | Uses the launcher handoff to create an isolated runtime universe and writes a scoped app key to `.env`. | Set `LIGHTSPEED_DEMO_ADMIN_API_KEY` in the setup shell. Pass the gateway URL and universe ID. The app key needs `session`, `vfs`, and `environments` access. |
+| Model | Starts a deterministic loopback provider with scripted chat and tool calls. | Use a profile with a working model or select one under **Models → Defaults → Agent runs**. |
+| VFS and profile | Seeds `notes.txt` in `demo-workspace` and attaches it read-only at `/workspace` in `internals-demo`. | Reuses an existing profile with both attachments. If the profile is absent, creates it using `demo-workspace` and the chosen environment. Put `notes.txt` in the workspace if you reuse one. |
+| Environment | Attaches the launcher daemon at `ws://127.0.0.1:19091/` and makes it the default environment for the demo profile. | Pass `--environment-id` for an existing machine or `--envd-endpoint` for a direct endpoint the gateway can reach. The profile needs a default environment with **Run commands** access. |
+| Platform | Links to `http://127.0.0.1:5173/app/`. | Pass `--platform-url` or set `LIGHTSPEED_DEMO_PLATFORM_URL` to the web app address. |
+| Temporal | Uses the launcher's local frontend, namespace, and UI. | Set `LIGHTSPEED_DEMO_TEMPORAL_ADDRESS`, `LIGHTSPEED_DEMO_TEMPORAL_NAMESPACE`, and `LIGHTSPEED_DEMO_TEMPORAL_UI` if you want workflow evidence. |
+| PostgreSQL | Grants a dedicated read-only login access to the metadata columns used by the demo. | Supply `LIGHTSPEED_DEMO_POSTGRES_DSN` with a read-only login. See [the grants below](#enable-read-only-postgresql-evidence). |
+
+Rerun `./init-env.sh` to reuse the same resources and restart its fixture if
+needed. The deployment key is used during setup. The protected app environment
+file holds the scoped key and reader settings. The initializer leaves existing
+model defaults, profiles, and workspace contents in place.
+
+To point at an existing deployment, supply its deployment key as
+`LIGHTSPEED_DEMO_ADMIN_API_KEY` in the shell and run:
+
+```sh
+./init-env.sh --gateway https://runtime.example.com/rpc \
+  --universe "$DEMO_UNIVERSE_ID" \
+  --environment-id "$DEMO_ENVIRONMENT_ID" \
+  --platform-url https://lightspeed.example.com/app/
+```
+
+Choose a universe already managed in Platform if you want to find the same
+sessions and resources there. The default local initializer creates a separate
+runtime universe. Use `--env-file` to keep a second configuration, then pass
+the same file to `uv run --locked --env-file <file> streamlit run app.py`.
+Use `--no-local-postgres` to skip provisioning the local reader.
+
+## Read the map
 
 Teal arrows mark observed HTTP requests and replies. Dashed amber arrows mark
 routes inferred from the selected run’s recorded events or the gateway
