@@ -544,6 +544,9 @@ function FileDetail({
                 onSelect: saveCurrent,
               }]
             : []),
+          // The file's actions (rename, download, delete, …), as its row's
+          // right-click menu in the list has them.
+          { kind: "custom" as const, key: "file-actions", node: <WorkspaceActionsMenu path={filePath} kind="file" /> },
         ]}
       />
       {editor.error && (

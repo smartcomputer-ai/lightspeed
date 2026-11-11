@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { SessionMenuIdentity, SessionMenuMetadata } from "@/components/session/session-menu-details";
 import { SessionMenuPreferences } from "@/components/session/session-menu-preferences";
+import { useRowMenu } from "@/lib/row-menu";
 
 /**
  * One menu for a session, on the Sessions page (behind ⋯) and on a bot's
@@ -19,7 +20,8 @@ import { SessionMenuPreferences } from "@/components/session/session-menu-prefer
  * (settings, sharing, where else it opens), then view preferences and session
  * details. Within the action group, bot compaction follows reset and session
  * compaction precedes close/delete. Pages pass lifecycle items
- * (close and delete, or reset) and own every confirmation.
+ * (close and delete, or reset) and own every confirmation. The page's ⋯
+ * menu is also its list row's right-click menu, opened at the pointer.
  */
 export function SessionActionsMenu({
   sessionId,
@@ -44,6 +46,7 @@ export function SessionActionsMenu({
   lifecycle?: ReactNode;
 }) {
   const navigate = useNavigate();
+  const rowMenu = useRowMenu(variant === "more" ? "session" : null, sessionId);
   const compactItem = onCompact && (
     <DropdownMenuItem onClick={onCompact} disabled={Boolean(compactionLabel)}>
       {compactionLabel ? <LoadingIcon className="animate-spin" /> : <CompactIcon />}
@@ -51,7 +54,7 @@ export function SessionActionsMenu({
     </DropdownMenuItem>
   );
   return (
-    <DropdownMenu>
+    <DropdownMenu open={rowMenu.open} onOpenChange={rowMenu.onOpenChange}>
       <DropdownMenuTrigger
         render={
           variant === "more" ? (
@@ -79,7 +82,8 @@ export function SessionActionsMenu({
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent
-        align={variant === "more" ? "end" : "start"}
+        anchor={rowMenu.anchor}
+        align={variant === "more" && !rowMenu.anchor ? "end" : "start"}
         className="max-h-[min(28rem,calc(100vh-1rem))] w-80 max-w-[calc(100vw-1rem)]"
       >
         {(onSettings || onShare || open || lifecycle || onCompact) && (

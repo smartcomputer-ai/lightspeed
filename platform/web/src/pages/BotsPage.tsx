@@ -1,7 +1,7 @@
 import type { BotReadResponse } from "@lightspeed-ai/sdk";
 import { useQuery } from "@tanstack/react-query";
 import { AddIcon, BotAvatarIcon } from "@/icons";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   api,
   botLabel,
@@ -30,6 +30,7 @@ import {
   ListRow,
   ListRowLine,
 } from "@/components/list-pane";
+import { requestRowMenu } from "@/lib/row-menu";
 import { botMetaItems } from "@/components/bot/bot-meta";
 
 const ROSTER_REFRESH_MS = 5_000;
@@ -164,6 +165,7 @@ function BotsPane({
   });
   const roster = bots.data?.bots ?? [];
   const groups = rosterGroups(roster);
+  const navigate = useNavigate();
 
   return (
     <>
@@ -194,6 +196,15 @@ function BotsPane({
                     key={bot.botId}
                     to={`/u/${slug}/bots/${bot.botId}`}
                     active={bot.botId === activeId}
+                    // Right-click: the bot (opened if it is not) and its
+                    // page's ⋯ menu, at the pointer.
+                    entryProps={{
+                      onContextMenu: (event) => {
+                        event.preventDefault();
+                        if (bot.botId !== activeId) navigate(`/u/${slug}/bots/${bot.botId}`);
+                        requestRowMenu("bot", bot.botId, event);
+                      },
+                    }}
                     leading={<BotAvatar botId={bot.botId} size={28} />}
                     indicator={<ListMark label={TONE_LABEL[line.tone]} tip={TONE_LABEL[line.tone]}><StatusDot tone={line.tone} /></ListMark>}
                     title={botLabel(bot)}

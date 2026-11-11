@@ -4,6 +4,7 @@ import { useDictationAvailability } from "@/lib/use-dictation";
 import { ShareSessionDialog, useCanShareSession, useSessionOwner } from "@/components/session/sharing";
 import { ActivityDot } from "@/components/activity-dot";
 import { SessionActionsMenu } from "@/components/session/session-actions-menu";
+import { requestRowMenu } from "@/lib/row-menu";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   type InfiniteData,
@@ -885,9 +886,20 @@ function SessionListItem({
     const value = session.metadata?.[key];
     return value === undefined ? [] : [{ key, value }];
   });
+  const navigate = useNavigate();
+  const to = `/u/${slug}/sessions/${session.id}${search ? `?${search}` : ""}`;
   return (
     <ListRow
-      to={`/u/${slug}/sessions/${session.id}${search ? `?${search}` : ""}`}
+      to={to}
+      // Right-click: the session (opened if it is not) and its page's ⋯
+      // menu, at the pointer. While selecting, the browser's own.
+      entryProps={selecting ? undefined : {
+        onContextMenu: (event) => {
+          event.preventDefault();
+          if (!active) navigate(to);
+          requestRowMenu("session", session.id, event);
+        },
+      }}
       active={active}
       selection={selecting
         ? { checked: isSelected, onToggle: () => onToggle(session.id), label: `Select ${session.displayName ?? session.id}` }

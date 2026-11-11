@@ -5,7 +5,7 @@ import type { MetaItem } from "@/components/meta-toolbar";
 import { ExecuteToolIcon } from "@/icons";
 import { formatBytes } from "@/lib/composer-attachments";
 import {
-  WorkspaceActionsMenu,
+  WorkspaceContextMenu,
   useWorkspaceDropTarget,
   useWorkspaceEntryDrag,
 } from "@/components/workspace-transfers";
@@ -22,8 +22,10 @@ type TreeProps = {
 /// and folder, folders opening and closing in place (their rows hang off
 /// tree lines), each with its type's icon and its actions menu. A keyboard
 /// tree: the items are a flat list with their level, position and set, one
-/// of them focusable at a time; arrows move, open and close, Enter opens,
-/// Shift+F10 opens the focused item's menu.
+/// of them focusable at a time; arrows move, open and close, Enter opens.
+/// Right-click (or a long press) opens an item's actions at the pointer, and
+/// on empty space the workspace's; Shift+F10 or the context-menu key opens
+/// the focused item's at it.
 export function WorkspaceFileTree(props: TreeProps) {
   const tree = useRef<HTMLUListElement>(null);
   const [focusedPath, setFocusedPath] = useState<string | null>(
@@ -44,6 +46,20 @@ export function WorkspaceFileTree(props: TreeProps) {
         : new Set([...current, ...holding]),
     );
   }, [props.activePath]);
+  // The item the context menu was opened on (none: the workspace), lit
+  // while the menu is open, and focused again when it closes.
+  const [menuFor, setMenuFor] = useState<{ path: string; kind: "workspace" | "folder" | "file" }>({ path: "", kind: "workspace" });
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuItem = useRef<HTMLElement | null>(null);
+  const aim = (target: EventTarget) => {
+    const item = (target as Element).closest<HTMLElement>('[role="treeitem"]');
+    menuItem.current = item;
+    setMenuFor(
+      item?.dataset.treePath
+        ? { path: item.dataset.treePath, kind: item.hasAttribute("aria-expanded") ? "folder" : "file" }
+        : { path: "", kind: "workspace" },
+    );
+  };
   const flip = (path: string) =>
     setOpen((current) => {
       const next = new Set(current);
@@ -71,7 +87,6 @@ export function WorkspaceFileTree(props: TreeProps) {
     // Menu popups use a portal but still bubble through the React tree.
     if (
       !event.currentTarget.contains(target) ||
-      target.closest("[data-workspace-actions]") ||
       event.altKey ||
       event.ctrlKey ||
       event.metaKey
@@ -119,9 +134,22 @@ export function WorkspaceFileTree(props: TreeProps) {
         toggle();
         break;
       case "F10":
-        if (!event.shiftKey) return;
-        current.querySelector<HTMLElement>("[data-workspace-actions]")?.click();
+      case "ContextMenu": {
+        if (event.key === "F10" && !event.shiftKey) return;
+        // The item's context menu, opened at its row as a right-click there
+        // would.
+        const row = current.getBoundingClientRect();
+        current.dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            button: 2,
+            clientX: row.left + 24,
+            clientY: row.bottom,
+          }),
+        );
         break;
+      }
       default:
         return;
     }
@@ -133,12 +161,16 @@ export function WorkspaceFileTree(props: TreeProps) {
   const rows = withNextOpen(visibleEntries(props.entries, open));
   return (
     <ListLayout mode="files" compressed>
+      <WorkspaceContextMenu target={menuFor} onOpenChange={setMenuOpen} returnFocus={menuItem}>
       <ul
         ref={tree}
         role="tree"
         aria-label="Workspace files"
         className="min-w-0"
         onKeyDown={key}
+        // What a right-click (or the long press before it) lands on.
+        onPointerDownCapture={(event) => aim(event.target)}
+        onContextMenuCapture={(event) => aim(event.target)}
         onFocus={(event) => {
           if (event.currentTarget.contains(event.target)) {
             const path = (event.target as HTMLElement).closest<HTMLElement>(
@@ -159,9 +191,11 @@ export function WorkspaceFileTree(props: TreeProps) {
             open={open.has(row.path)}
             onFlip={() => flip(row.path)}
             onFocusPath={setFocusedPath}
+            menuOpen={menuOpen && menuFor.path === row.path}
           />
         ))}
       </ul>
+      </WorkspaceContextMenu>
     </ListLayout>
   );
 }
@@ -294,6 +328,7 @@ function EntryRow({
   open,
   onFlip,
   onFocusPath,
+  menuOpen,
 }: VisibleEntry & {
   slug: string;
   workspaceId: string;
@@ -302,6 +337,8 @@ function EntryRow({
   open: boolean;
   onFlip: () => void;
   onFocusPath: (path: string) => void;
+  /** Its context menu is open: the row stays lit. */
+  menuOpen: boolean;
 }) {
   const drag = useWorkspaceEntryDrag();
   const dropTarget = useWorkspaceDropTarget() === path && directory;
@@ -319,13 +356,6 @@ function EntryRow({
           : `/u/${slug}/workspaces/${workspaceId}/files/${path.split("/").map(encodeURIComponent).join("/")}`
       }
       toggle={directory ? { open, onToggle: onFlip } : undefined}
-      actions={
-        <WorkspaceActionsMenu
-          path={path}
-          kind={directory ? "folder" : "file"}
-          tabIndex={focused ? 0 : -1}
-        />
-      }
       // The item is the tree item: focused by the keyboard, labelled, with
       // its level, position and set (the list is flat), and the folder a
       // drop on it lands in: a folder itself, a file its folder (the rows are
@@ -355,7 +385,9 @@ function EntryRow({
         draggable: drag.draggable,
         onDragStart: (event) => drag.onDragStart(event, path),
         onClick: () => onFocusPath(path),
+        "data-menu-open": menuOpen || undefined,
         className: cn(
+          menuOpen && "bg-muted/50",
           dropTarget && "bg-primary/10! ring-2 ring-inset ring-primary/60",
         ),
       }}

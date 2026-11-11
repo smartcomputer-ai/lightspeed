@@ -9,11 +9,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MenuIdentity } from "@/components/session/session-menu-details";
+import { useRowMenu } from "@/lib/row-menu";
 
 /**
  * A bot's ⋯ menu, shaped like a session's: what can be done to the bot
  * (settings, pausing), then its id. Closing and deleting stay in settings,
- * beside what they end.
+ * beside what they end. It is also its list row's right-click menu, opened
+ * at the pointer.
  */
 export function BotActionsMenu({
   botId,
@@ -25,8 +27,9 @@ export function BotActionsMenu({
   /** Offered to managers of an open bot; `enabled` is whether it runs now. */
   pause?: { enabled: boolean; pending: boolean; onToggle: () => void };
 }) {
+  const rowMenu = useRowMenu("bot", botId);
   return (
-    <DropdownMenu>
+    <DropdownMenu open={rowMenu.open} onOpenChange={rowMenu.onOpenChange}>
       <DropdownMenuTrigger
         render={
           <Button
@@ -40,7 +43,7 @@ export function BotActionsMenu({
       >
         {pause?.pending ? <LoadingIcon className="size-3.5 animate-spin" /> : <MoreIcon />}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-80 max-w-[calc(100vw-1rem)]">
+      <DropdownMenuContent anchor={rowMenu.anchor} align={rowMenu.anchor ? "start" : "end"} className="w-80 max-w-[calc(100vw-1rem)]">
         <DropdownMenuGroup>
           <DropdownMenuItem onClick={onSettings}>
             <ConfigureIcon /> Bot settings
