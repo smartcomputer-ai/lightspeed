@@ -7,15 +7,18 @@
     <title>Lightspeed</title>
     <script>
       // Apply the stored theme before first paint to avoid a light flash.
+      // No stored choice means dark (DEFAULT_THEME in src/lib/theme.tsx).
       (function () {
         try {
           var theme = localStorage.getItem("lightspeed:theme");
           var dark =
-            theme === "dark" ||
-            (theme !== "light" &&
-              window.matchMedia("(prefers-color-scheme: dark)").matches);
+            theme === "system"
+              ? window.matchMedia("(prefers-color-scheme: dark)").matches
+              : theme !== "light";
           document.documentElement.classList.toggle("dark", dark);
-        } catch (error) {}
+        } catch (error) {
+          document.documentElement.classList.add("dark");
+        }
       })();
     </script>
   </head>
