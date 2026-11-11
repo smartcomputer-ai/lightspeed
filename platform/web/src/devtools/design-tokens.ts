@@ -178,6 +178,21 @@ export function surfaceToken(role: string, part: SurfacePart): string {
 /// (color, per theme) and `-filter` (shared).
 export const BACKDROP_KEY = "backdrop";
 
+/// The tones of InfoBox notes, each with its background, border and title
+/// color tokens in index.css (per theme).
+export const NOTE_TONES = [
+  { tone: "info", label: "Info" },
+  { tone: "success", label: "Success" },
+  { tone: "warning", label: "Warning" },
+  { tone: "error", label: "Error" },
+] as const;
+
+export type NotePart = "background" | "border" | "title";
+
+export function noteToken(tone: (typeof NOTE_TONES)[number]["tone"], part: NotePart): string {
+  return `--note-${tone}-${part}`;
+}
+
 /// The cursor tokens in index.css, one per role, with what each is for.
 export const CURSOR_TOKENS = [
   { token: "--cursor-action", label: "Action", use: "Anything clickable: buttons, links, menu items, tabs, clickable tags, checkboxes" },

@@ -26,6 +26,8 @@ import {
   BACKDROP_KEY,
   SCROLLBAR_TOKENS,
   CURSOR_STEPS,
+  NOTE_TONES,
+  noteToken,
   CURSOR_TOKENS,
   SCROLLBAR_WIDTH_STEPS,
   SHEEN_ROLES,
@@ -57,6 +59,7 @@ import {
   type ThemeName,
 } from "./design-tokens";
 import { LightspeedMark } from "@/components/brand/lightspeed-logo";
+import { InfoBox } from "@/components/ui/info-box";
 
 type Scope = "shared" | ThemeName;
 
@@ -249,6 +252,17 @@ export function DesignConfigurationPage() {
             color={token(colorTheme, surfaceToken(BACKDROP_KEY, "background"))}
             filter={token("shared", surfaceToken(BACKDROP_KEY, "filter"))}
           />
+          {NOTE_TONES.map(({ tone, label }) => (
+            <NoteEditor
+              key={`${colorTheme}note-${tone}`}
+              tone={tone}
+              label={label}
+              resolve={(name) => valueOf(colorTheme, name)}
+              background={token(colorTheme, noteToken(tone, "background"))}
+              border={token(colorTheme, noteToken(tone, "border"))}
+              title={token(colorTheme, noteToken(tone, "title"))}
+            />
+          ))}
           <ScrollbarEditor
             key={`${colorTheme}scrollbar`}
             resolve={(name) => valueOf(colorTheme, name)}
@@ -787,6 +801,30 @@ function SidebarLogoEditor({ resolve, color, opacity, rotate, scale, offset }: {
       <RangeRow name={SIDEBAR_LOGO_TOKENS.rotate} min={-180} max={180} step={1} unit="deg" {...rotate} />
       <RangeRow name={SIDEBAR_LOGO_TOKENS.scale} min={0.5} max={3} step={0.05} unit="" describe={(value) => `${round(value * 100)}% wide`} {...scale} />
       <RangeRow name={SIDEBAR_LOGO_TOKENS.offset} min={-50} max={100} step={1} unit="%" {...offset} />
+    </section>
+  );
+}
+
+/// One tone of the InfoBox notes: its background, border and title (and
+/// icon) color, with the note itself as the preview.
+function NoteEditor({ tone, label, resolve, background, border, title }: {
+  tone: (typeof NOTE_TONES)[number]["tone"];
+  label: string;
+  resolve: (token: string) => string;
+  background: TokenControl;
+  border: TokenControl;
+  title: TokenControl;
+}) {
+  return (
+    <section className="grid gap-3 rounded-lg border p-3">
+      <div className="grid min-w-0 gap-0.5">
+        <h2 className="text-sm font-medium">{label} note</h2>
+        <p className="text-xs text-muted-foreground">InfoBox tone="{tone}"</p>
+      </div>
+      <InfoBox tone={tone} title={`${label} title`}>The note's text, under its title.</InfoBox>
+      <SurfaceColorRow label="Background" name={noteToken(tone, "background")} resolve={resolve} {...background} />
+      <SurfaceColorRow label="Border" name={noteToken(tone, "border")} resolve={resolve} {...border} />
+      <SurfaceColorRow label="Title and icon" name={noteToken(tone, "title")} resolve={resolve} {...title} />
     </section>
   );
 }

@@ -240,6 +240,20 @@
     --scrollbar-thumb: color-mix(in oklab, var(--foreground) 22%, transparent);
     --scrollbar-track: transparent;
     --scrollbar-thumb-rest: transparent;
+    /* Notes (InfoBox): per tone a tinted background, a border, and the
+       title and icon color, deeper on light backgrounds. */
+    --note-info-background: color-mix(in oklab, var(--info) 10%, transparent);
+    --note-info-border: color-mix(in oklab, var(--info) 40%, transparent);
+    --note-info-title: #1d4ed8;
+    --note-success-background: color-mix(in oklab, var(--success) 10%, transparent);
+    --note-success-border: color-mix(in oklab, var(--success) 40%, transparent);
+    --note-success-title: #15803d;
+    --note-warning-background: color-mix(in oklab, var(--warning) 10%, transparent);
+    --note-warning-border: color-mix(in oklab, var(--warning) 40%, transparent);
+    --note-warning-title: #b45309;
+    --note-error-background: color-mix(in oklab, var(--danger) 10%, transparent);
+    --note-error-border: color-mix(in oklab, var(--danger) 40%, transparent);
+    --note-error-title: #b91c1c;
     /* Font weights of list titles and sidebar menu items: at rest, and when
        selected (the open row, the current page). Each is one of the
        --font-weight-* steps; hover keeps the rest weight so text never
@@ -314,6 +328,18 @@
     --scrollbar-thumb: color-mix(in oklab, var(--foreground) 22%, transparent);
     --scrollbar-track: transparent;
     --scrollbar-thumb-rest: transparent;
+    --note-info-background: color-mix(in oklab, var(--info) 10%, transparent);
+    --note-info-border: color-mix(in oklab, var(--info) 40%, transparent);
+    --note-info-title: var(--info);
+    --note-success-background: color-mix(in oklab, var(--success) 10%, transparent);
+    --note-success-border: color-mix(in oklab, var(--success) 40%, transparent);
+    --note-success-title: var(--success);
+    --note-warning-background: color-mix(in oklab, var(--warning) 10%, transparent);
+    --note-warning-border: color-mix(in oklab, var(--warning) 40%, transparent);
+    --note-warning-title: var(--warning);
+    --note-error-background: color-mix(in oklab, var(--danger) 10%, transparent);
+    --note-error-border: color-mix(in oklab, var(--danger) 40%, transparent);
+    --note-error-title: var(--danger);
     --surface-card: var(--card);
     --surface-card-border: color-mix(in oklab, var(--foreground) 20%, transparent);
     --surface-dialog: var(--popover);

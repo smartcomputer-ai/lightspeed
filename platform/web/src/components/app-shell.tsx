@@ -25,6 +25,7 @@ import { ResizeHandle, useResizableWidth } from "@/components/resize-handle";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { cn } from "@/lib/utils";
 import { isMobileDetailRoute } from "@/lib/shell-navigation";
+import { WelcomeDialog } from "@/components/onboarding/welcome-dialog";
 import type { SessionUser } from "@/auth";
 import { rememberUniverse, useUniverses } from "@/lib/universes";
 
@@ -254,6 +255,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           </main>
         )}
       </SidebarInset>
+      <WelcomeDialog />
     </SidebarProvider>
   );
 }

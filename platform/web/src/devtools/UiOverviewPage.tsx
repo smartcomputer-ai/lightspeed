@@ -86,6 +86,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { InfoBox } from "@/components/ui/info-box";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { EmptyState, PageHeader, SectionHeader } from "@/components/page";
 import { StatusDot, type BotTone } from "@/components/bot/status";
@@ -492,6 +493,24 @@ function BadgesSection() {
           <Badge key={variant} variant={variant}>{variant}</Badge>
         ))}
         <Badge variant="secondary"><BotIcon data-icon="inline-start" />with icon</Badge>
+      </Specimen>
+      <Specimen title="Info box" note="ui/info-box: info, success, warning, error; with and without a title" className="grid gap-3 sm:grid-cols-2">
+        <InfoBox tone="info" title="Heads up">Sessions keep running when you close this tab.</InfoBox>
+        <InfoBox tone="success" title="Connected">The environment answered and is ready for commands.</InfoBox>
+        <InfoBox tone="warning" title="Demo Mode">Everything here runs in your browser on example data.</InfoBox>
+        <InfoBox tone="error" title="Could not save">The provider rejected the key. Check it and try again.</InfoBox>
+        <InfoBox tone="info">A note without a title keeps its icon beside the text.</InfoBox>
+        <InfoBox tone="error">An error without a title is announced like one with.</InfoBox>
+      </Specimen>
+      <Specimen title="Info box on a dialog" note="the same notes on the dialog surface (--surface-dialog), as the welcome dialog's Demo Mode info">
+        <div className="grid w-full gap-3 rounded-(--surface-dialog-radius) bg-(--surface-dialog) surface-filter-dialog p-6 text-sm text-popover-foreground shadow-(--surface-dialog-shadow) inset-ring-(length:--surface-dialog-border-width) inset-ring-(color:--surface-dialog-border) sm:grid-cols-2">
+          <InfoBox tone="info" title="Heads up">Sessions keep running when you close this tab.</InfoBox>
+          <InfoBox tone="success" title="Connected">The environment answered and is ready for commands.</InfoBox>
+          <InfoBox tone="warning" title="Demo Mode">Everything here runs in your browser on example data.</InfoBox>
+          <InfoBox tone="error" title="Could not save">The provider rejected the key. Check it and try again.</InfoBox>
+          <InfoBox tone="info">A note without a title keeps its icon beside the text.</InfoBox>
+          <InfoBox tone="error">An error without a title is announced like one with.</InfoBox>
+        </div>
       </Specimen>
       <Specimen title="Status dots" note="components/bot/status">
         {TONES.map((tone) => (

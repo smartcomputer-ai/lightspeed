@@ -17,6 +17,8 @@ import {
   ITEM_WEIGHT_TOKENS,
   TRANSITION_TOKENS,
   CURSOR_STEPS,
+  NOTE_TONES,
+  noteToken,
   CURSOR_TOKENS,
   NEUTRAL_FILTER,
   backdropFilterValue,
@@ -113,6 +115,16 @@ describe("design tokens", () => {
       for (const [, value] of css.matchAll(new RegExp(`${token}: ([^;]+);`, "g"))) {
         const source = parseSurfaceColor(value!)?.source;
         expect(source && offered.has(source), `${token}: ${value}`).toBe(true);
+      }
+    }
+  });
+
+  it("declares every note tone's colors in both themes", () => {
+    const css = readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
+    for (const { tone } of NOTE_TONES) {
+      for (const part of ["background", "border", "title"] as const) {
+        const name = noteToken(tone, part);
+        expect([...css.matchAll(new RegExp(`${name}: ([^;]+);`, "g"))], name).toHaveLength(2);
       }
     }
   });
