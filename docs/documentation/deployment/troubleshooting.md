@@ -172,7 +172,11 @@ does not grant every session permission to use it. Also distinguish a tool
 waiting for approval from one that was never exposed.
 
 For private MCP endpoints, runtime discovery and execution require both the
-server's private-network opt-in and the runtime's host/CIDR allowlist. OAuth
+server's private-network opt-in and the runtime's host/CIDR allowlist. An
+"outbound hostname resolved to a forbidden address" failure means neither the
+server's hostname nor an address it resolves to is covered by
+`LIGHTSPEED_MCP_PRIVATE_NETWORKS`; every resolved address must fall inside a
+listed range unless the hostname itself is listed. OAuth
 network permission is separate. Provider-hosted execution requires the model
 provider to reach the MCP endpoint, which is a different network path from
 the runtime reaching it. [Tools and MCP](../using-lightspeed/tools-and-mcp.md)
