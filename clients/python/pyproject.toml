@@ -23,6 +23,7 @@ dev = [
   "mypy>=1.19,<2",
   "pytest>=9,<10",
   "pytest-asyncio>=1.3,<2",
+  "temporalio>=1.36,<2",
 ]
 
 [tool.hatch.build.targets.wheel]

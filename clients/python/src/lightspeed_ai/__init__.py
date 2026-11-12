@@ -2,6 +2,7 @@
 
 `AsyncLightspeedClient` is the entry point. Wire types live in
 `lightspeed_ai.types` and are generated from the Lightspeed API contract.
+`lightspeed_ai.workflow` has helpers for Temporal workflow code.
 """
 
 from . import types

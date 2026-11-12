@@ -15,7 +15,7 @@ before choosing an exporter or changing a version.
 | Boundary | Authored source | Outputs to keep aligned |
 | --- | --- | --- |
 | Public JSON-RPC API | DTOs, method metadata, and service interfaces in `crates/api/src/` | Rust-exported schema, method manifest, OpenRPC, and API reference; TypeScript and Python clients, Configurator tools, Platform method-role map, and profile-editor reference. |
-| Workflow integration | Harness emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript types, and known-answer vectors used by client helpers. |
+| Workflow integration | Harness emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript and Python types, and known-answer vectors used by client helpers. |
 | Environment protocol | Wire types and the method manifest in `crates/environment-protocol` | Per-plane JSON Schema bundles and OpenRPC documents, per-method fixtures, the daemon, client, and provider implementations, both exact-match protocol versions, and the [protocol reference](../reference/environment-protocol.md). |
 | Runtime database | SQL migrations and their embedded registry in `crates/store-pg` | Migration ledger, required schema revision, table ownership list, and release metadata. |
 | Platform database | Schema modules and Drizzle configuration in `platform/db` | SQL migrations, snapshots, journal, and the separate Platform release revision and upgrade baseline. |
@@ -145,7 +145,8 @@ helper. Add one only for what most applications need, and list it in the client 
 which a test checks.
 
 The Python generator needs [uv](https://docs.astral.sh/uv/) and Node.js. It reads the
-API export and the same helper table, and writes `types.py` and `_generated.py` under
+API and workflow exports and the same helper table, and writes `types.py`,
+`_generated.py`, `workflow_types.py`, and `_workflow_manifest.py` under
 `clients/python/src/lightspeed_ai/`. A new helper belongs in the Python client's
 README too, which its tests check.
 
@@ -193,22 +194,24 @@ that boundary with:
 ```bash
 cargo run -p temporal-workflow --bin export-workflow-contract
 npm run generate --workspace @lightspeed-ai/sdk
+(cd clients/python && uv run python scripts/generate.py)
 ```
 
 This writes `workflow.schema.json`, `workflow.json`, and
 `workflow-contract.md` under `crates/temporal-workflow/contract/`, then updates
-the TypeScript workflow types and copied artifacts. If a change affects both
+the TypeScript and Python workflow types and copied artifacts. If a change affects both
 public and workflow types, run both Rust exporters before generating the
 client.
 
 The workflow manifest also contains known-answer vectors for identity
-derivations. A schema can describe a string without establishing that Rust
-and TypeScript hash the same bytes in the same order. The client's authored
+derivations. A schema can describe a string without establishing that Rust,
+TypeScript, and Python hash the same bytes in the same order. Each client's authored
 workflow helpers are therefore tested against the generated vectors:
 
 ```bash
 cargo test -p temporal-workflow --test workflow_contract
 npm run test --workspace @lightspeed-ai/sdk -- test/workflow.test.ts
+(cd clients/python && uv run pytest tests/test_workflow.py)
 ```
 
 `WORKFLOW_CONTRACT_VERSION` versions the manifest layout. It does not

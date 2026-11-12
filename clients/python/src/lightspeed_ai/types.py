@@ -4,9 +4,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 
-type LightspeedAgentApi = Any
+LightspeedAgentApi: TypeAlias = Any
 """
 All JSON-RPC wire types of the Lightspeed agent API.
 """
@@ -31,28 +31,25 @@ class AccessScopeUniverse(TypedDict):
     universeId: str
 
 
-type AccessScope = AccessScopeDeployment | AccessScopeUniverse
+AccessScope: TypeAlias = AccessScopeDeployment | AccessScopeUniverse
 """
 What a key reaches or a request addresses: one universe, or the
 deployment.
 """
 
 
-type AgentApiErrorKind = Literal[
-    'invalidRequest', 'notFound', 'conflict', 'audioBlobTooLarge', 'internal'
-] | Literal['rejected'] | Literal['unauthenticated'] | Literal['forbidden'] | Literal[
-    'modelDefaultUnset'
-] | Literal[
-    'sessionBootstrapFailed'
-] | Literal[
-    'sessionExecutionStopped'
-] | Literal[
-    'environmentNotReady'
-] | Literal[
-    'responseTooLarge'
-] | Literal[
-    'operationPending'
-]
+AgentApiErrorKind: TypeAlias = (
+    Literal['invalidRequest', 'notFound', 'conflict', 'audioBlobTooLarge', 'internal']
+    | Literal['rejected']
+    | Literal['unauthenticated']
+    | Literal['forbidden']
+    | Literal['modelDefaultUnset']
+    | Literal['sessionBootstrapFailed']
+    | Literal['sessionExecutionStopped']
+    | Literal['environmentNotReady']
+    | Literal['responseTooLarge']
+    | Literal['operationPending']
+)
 
 
 class Params4(TypedDict):
@@ -65,22 +62,25 @@ class AgentNotificationError(TypedDict):
     params: Params4
 
 
-type ApprovalDecisionFailureKind = Literal[
-    'invalidId',
-    'unknown',
-    'foreignRun',
-    'alreadyDecided',
-    'cancelled',
-    'duplicate',
-    'invalidNote',
-    'rejected',
-] | Literal['internal']
+ApprovalDecisionFailureKind: TypeAlias = (
+    Literal[
+        'invalidId',
+        'unknown',
+        'foreignRun',
+        'alreadyDecided',
+        'cancelled',
+        'duplicate',
+        'invalidNote',
+        'rejected',
+    ]
+    | Literal['internal']
+)
 
 
-type ApprovalDecisionKind = Literal['approve', 'reject']
+ApprovalDecisionKind: TypeAlias = Literal['approve', 'reject']
 
 
-type ApprovalDecisionStatus = Literal['decided', 'failed'] | Literal['pending']
+ApprovalDecisionStatus: TypeAlias = Literal['decided', 'failed'] | Literal['pending']
 
 
 class ApprovalSubjectView1(TypedDict):
@@ -92,7 +92,7 @@ class ApprovalSubjectView1(TypedDict):
     toolName: str
 
 
-type ApprovalSubjectView = ApprovalSubjectView1
+ApprovalSubjectView: TypeAlias = ApprovalSubjectView1
 
 
 class AttachmentSourceView(TypedDict):
@@ -142,7 +142,9 @@ class AttributionInternal(TypedDict):
     kind: Literal['internal']
 
 
-type Attribution = AttributionActor | AttributionKey | AttributionLocal | AttributionInternal
+Attribution: TypeAlias = (
+    AttributionActor | AttributionKey | AttributionLocal | AttributionInternal
+)
 """
 Who created a resource or authored bytes. An actor is whatever a key
 allowed to assert one said; core compares it and never resolves it.
@@ -171,7 +173,7 @@ class AuthFlowStartResponse(TypedDict):
     flowId: str
 
 
-type AuthFlowStatus = Literal['pending', 'completed', 'failed', 'expired']
+AuthFlowStatus: TypeAlias = Literal['pending', 'completed', 'failed', 'expired']
 
 
 class AuthFlowStatusParams(TypedDict):
@@ -194,7 +196,7 @@ class AuthGitHubInstallationListParams(TypedDict):
     providerId: str
 
 
-type AuthGrantExposure = Literal['brokered', 'retrievable']
+AuthGrantExposure: TypeAlias = Literal['brokered', 'retrievable']
 
 
 class AuthGrantImportParams(TypedDict):
@@ -287,7 +289,7 @@ class AuthGrantRevokeParams(TypedDict):
     grantId: str
 
 
-type AuthGrantStatus = Literal['active', 'needsReauth', 'revoked', 'failed']
+AuthGrantStatus: TypeAlias = Literal['active', 'needsReauth', 'revoked', 'failed']
 
 
 class AuthProviderConfigInputGithubApp(TypedDict):
@@ -311,7 +313,7 @@ class AuthProviderDeleteParams(TypedDict):
     providerId: str
 
 
-type AuthProviderKind = Literal[
+AuthProviderKind: TypeAlias = Literal[
     'staticToken',
     'mcpOAuth',
     'gitHubApp',
@@ -338,7 +340,7 @@ class AuthProviderReadParams(TypedDict):
     providerId: str
 
 
-type AuthProviderStatus = Literal['active', 'needsConfiguration', 'disabled']
+AuthProviderStatus: TypeAlias = Literal['active', 'needsConfiguration', 'disabled']
 
 
 class BlobHasItem(TypedDict):
@@ -420,7 +422,7 @@ class BotCoalescePolicy(TypedDict):
     maxWaitMs: int
 
 
-type BotControllerStatus = Literal[
+BotControllerStatus: TypeAlias = Literal[
     'initializing',
     'degraded',
     'idle',
@@ -450,10 +452,10 @@ class BotEventInput(TypedDict):
     summary: str
 
 
-type BotEventMediaKind = Literal['image', 'audio', 'document']
+BotEventMediaKind: TypeAlias = Literal['image', 'audio', 'document']
 
 
-type BotEventOutcome = Literal[
+BotEventOutcome: TypeAlias = Literal[
     'handled',
     'deferred',
     'ignored',
@@ -477,7 +479,7 @@ class BotFilterTestResult(TypedDict):
     seq: NotRequired[int | None]
 
 
-type BotId = str
+BotId: TypeAlias = str
 
 
 class BotListParams(TypedDict):
@@ -500,7 +502,7 @@ class BotRoutedSessionView(TypedDict):
     sessionId: str
 
 
-type BotSessionKind = Literal['main', 'perKey', 'perEvent']
+BotSessionKind: TypeAlias = Literal['main', 'perKey', 'perEvent']
 
 
 class BotSessionRotateParams(TypedDict):
@@ -528,19 +530,19 @@ class BotSessionSnapshot(TypedDict):
     sessionId: str
 
 
-type BotSetupStatus = Literal['initializing', 'degraded', 'ready']
+BotSetupStatus: TypeAlias = Literal['initializing', 'degraded', 'ready']
 
 
 class BotStateReadParams(TypedDict):
     botId: BotId
 
 
-type BotTriggerDisabledReason = Literal[
+BotTriggerDisabledReason: TypeAlias = Literal[
     'breaker', 'pollFailed', 'oneShot', 'operator', 'botClosed'
 ]
 
 
-type BotTriggerId = str
+BotTriggerId: TypeAlias = str
 
 
 class BotTriggerListParams(TypedDict):
@@ -579,23 +581,25 @@ class BotTriggerRoutePerEvent(TypedDict):
     policy: Literal['perEvent']
 
 
-type BotTriggerRoute = BotTriggerRouteBot | BotTriggerRoutePerKey | BotTriggerRoutePerEvent
+BotTriggerRoute: TypeAlias = (
+    BotTriggerRouteBot | BotTriggerRoutePerKey | BotTriggerRoutePerEvent
+)
 """
 Which session a trigger's events are delivered to; absent means the
 bot's main session.
 """
 
 
-type BotWhenBusy = Literal['queue', 'steer', 'append']
+BotWhenBusy: TypeAlias = Literal['queue', 'steer', 'append']
 
 
-type BoundWorkflowToolDispatchInput = Literal['pull', 'push']
+BoundWorkflowToolDispatchInput: TypeAlias = Literal['pull', 'push']
 """
 How an invocation of a bound workflow tool reaches its receiver.
 """
 
 
-type ChannelAccountId = str
+ChannelAccountId: TypeAlias = str
 
 
 class ChannelAccountReadParams(TypedDict):
@@ -635,7 +639,7 @@ class ChannelConversationSnapshot(TypedDict):
     typing: bool
 
 
-type ChannelInboundDecision = Literal[
+ChannelInboundDecision: TypeAlias = Literal[
     'bound', 'paired', 'pairingRequired', 'pairingPending', 'unbound'
 ]
 """
@@ -644,10 +648,10 @@ connector's to send, in the provider's own voice.
 """
 
 
-type ChannelMediaKind = Literal['image', 'audio', 'document']
+ChannelMediaKind: TypeAlias = Literal['image', 'audio', 'document']
 
 
-type ChannelPairedVia = Literal['open', 'code']
+ChannelPairedVia: TypeAlias = Literal['open', 'code']
 """
 How a chat got its route: claimed by an open trigger's first contact,
 or paired by code.
@@ -678,22 +682,22 @@ class ChannelPairingView(TypedDict):
     triggerId: BotTriggerId
 
 
-type ChannelProvider = str
+ChannelProvider: TypeAlias = str
 
 
-type ChatGroupActivation = Literal['mention', 'always']
+ChatGroupActivation: TypeAlias = Literal['mention', 'always']
 
 
-type ChatPairing = Literal['code', 'open']
+ChatPairing: TypeAlias = Literal['code', 'open']
 """
 Whether a conversation must present a pairing code before it connects.
 """
 
 
-type ChatScope = Literal['direct', 'group']
+ChatScope: TypeAlias = Literal['direct', 'group']
 
 
-type ChatTurnAccess = Literal['anyone', 'listed']
+ChatTurnAccess: TypeAlias = Literal['anyone', 'listed']
 
 
 class CitationView(TypedDict):
@@ -773,7 +777,7 @@ class CodeModeFeature(TypedDict):
     version: NotRequired[int]
 
 
-type CodeToolProgressPhase = Literal[
+CodeToolProgressPhase: TypeAlias = Literal[
     'scopeOpened', 'callAdmitted', 'callDeferred', 'callCompleted', 'scopeClosed'
 ]
 """
@@ -802,7 +806,11 @@ class CompactionPolicyProviderStandalone(TypedDict):
     targetTokens: NotRequired[int | None]
 
 
-type CompactionPolicy = CompactionPolicyDisabled | CompactionPolicyProviderTriggered | CompactionPolicyProviderStandalone
+CompactionPolicy: TypeAlias = (
+    CompactionPolicyDisabled
+    | CompactionPolicyProviderTriggered
+    | CompactionPolicyProviderStandalone
+)
 
 
 class ContentRefView(TypedDict):
@@ -824,37 +832,39 @@ class ContentRefView(TypedDict):
     providerKind: NotRequired[str | None]
 
 
-type ContextAppendStatus = Literal['applied', 'unchanged', 'failed']
+ContextAppendStatus: TypeAlias = Literal['applied', 'unchanged', 'failed']
 
 
 class ContextCompactParams(TypedDict):
     sessionId: str
 
 
-type ContextCompactionMode = Literal[
+ContextCompactionMode: TypeAlias = Literal[
     'disabled', 'providerTriggered', 'providerStandalone'
 ]
 
 
-type ContextCompactionStatus = Literal['succeeded', 'failed']
+ContextCompactionStatus: TypeAlias = Literal['succeeded', 'failed']
 
 
-type ContextCompactionStrategy = Literal[
+ContextCompactionStrategy: TypeAlias = Literal[
     'disabled', 'providerTriggered', 'modelSummary', 'nativePreferred'
 ]
 
 
-type ContextCompactionThresholdSource = Literal['disabled'] | Literal[
-    'override'
-] | Literal['providerDefault'] | Literal['inputCapacity'] | Literal[
-    'contextLengthError'
-]
+ContextCompactionThresholdSource: TypeAlias = (
+    Literal['disabled']
+    | Literal['override']
+    | Literal['providerDefault']
+    | Literal['inputCapacity']
+    | Literal['contextLengthError']
+)
 """
 Where `compactThresholdTokens` came from.
 """
 
 
-type ContextCompactionTrigger = Literal['manual', 'highWatermark', 'contextLimit']
+ContextCompactionTrigger: TypeAlias = Literal['manual', 'highWatermark', 'contextLimit']
 """
 What asked for a compaction.
 """
@@ -985,13 +995,22 @@ class ContextEntrySourceViewRuntime(TypedDict):
     type: Literal['runtime']
 
 
-type ContextEntrySourceView = ContextEntrySourceViewContextEdit | ContextEntrySourceViewRunInput | ContextEntrySourceViewSteering | ContextEntrySourceViewAssistantOutput | ContextEntrySourceViewApprovalDecision | ContextEntrySourceViewTool | ContextEntrySourceViewReasoning | ContextEntrySourceViewRuntime
+ContextEntrySourceView: TypeAlias = (
+    ContextEntrySourceViewContextEdit
+    | ContextEntrySourceViewRunInput
+    | ContextEntrySourceViewSteering
+    | ContextEntrySourceViewAssistantOutput
+    | ContextEntrySourceViewApprovalDecision
+    | ContextEntrySourceViewTool
+    | ContextEntrySourceViewReasoning
+    | ContextEntrySourceViewRuntime
+)
 
 
-type ContextMessageRoleView = Literal['user', 'assistant']
+ContextMessageRoleView: TypeAlias = Literal['user', 'assistant']
 
 
-type ContextRemovalReason = Literal['providerCompacted']
+ContextRemovalReason: TypeAlias = Literal['providerCompacted']
 """
 Why entries left the active context.
 """
@@ -1008,12 +1027,12 @@ class ContextRemoveParams(TypedDict):
     sessionId: str
 
 
-type ContextRemoveStatus = Literal['removed', 'absent', 'failed']
+ContextRemoveStatus: TypeAlias = Literal['removed', 'absent', 'failed']
 
 
-type ContextReplaceStatus = Literal['replaced', 'failed'] | Literal[
-    'unchanged'
-] | Literal['absent']
+ContextReplaceStatus: TypeAlias = (
+    Literal['replaced', 'failed'] | Literal['unchanged'] | Literal['absent']
+)
 
 
 class DeletedSessionView(TypedDict):
@@ -1297,7 +1316,7 @@ class DeploymentUniverseView(TypedDict):
     workspaces: int
 
 
-type EnvironmentAccess = Literal['read', 'edit', 'exec', 'jobs']
+EnvironmentAccess: TypeAlias = Literal['read', 'edit', 'exec', 'jobs']
 """
 Per-attachment environment access, an ordered ladder: `edit` adds file
 editing to `read`, `exec` adds processes, `jobs` adds durable jobs.
@@ -1338,7 +1357,7 @@ class EnvironmentCloseParams(TypedDict):
     environmentId: str
 
 
-type EnvironmentCloseReasonView = Literal[
+EnvironmentCloseReasonView: TypeAlias = Literal[
     'requested',
     'keyRevoked',
     'ephemeralGrace',
@@ -1370,7 +1389,11 @@ class EnvironmentCredentialSourceViewDirectSecret(TypedDict):
     type: Literal['directSecret']
 
 
-type EnvironmentCredentialSourceView = EnvironmentCredentialSourceViewAuthGrant | EnvironmentCredentialSourceViewAuthProviderCredential | EnvironmentCredentialSourceViewDirectSecret
+EnvironmentCredentialSourceView: TypeAlias = (
+    EnvironmentCredentialSourceViewAuthGrant
+    | EnvironmentCredentialSourceViewAuthProviderCredential
+    | EnvironmentCredentialSourceViewDirectSecret
+)
 
 
 class EnvironmentCredentialUnbindParams(TypedDict):
@@ -1437,7 +1460,7 @@ class EnvironmentExternalCreateParams(TypedDict):
     """
 
 
-type EnvironmentIdentityModeView = Literal['persistent', 'ephemeral']
+EnvironmentIdentityModeView: TypeAlias = Literal['persistent', 'ephemeral']
 """
 What happens to a registered environment while its daemon is
 disconnected. Policy of the registration key that admitted it.
@@ -1467,9 +1490,9 @@ class EnvironmentIngressPutParams(TypedDict):
     environmentId: str
 
 
-type EnvironmentPowerStateView = Literal['running'] | Literal['paused'] | Literal[
-    'suspended'
-] | Literal['stopped']
+EnvironmentPowerStateView: TypeAlias = (
+    Literal['running'] | Literal['paused'] | Literal['suspended'] | Literal['stopped']
+)
 """
 Power state of a provisioned environment's target.
 """
@@ -1604,7 +1627,9 @@ class EnvironmentRegistrationKeyRotateParams(TypedDict):
     registrationKeyId: str
 
 
-type EnvironmentRegistrationKeyStatusView = Literal['active', 'revoked', 'expired']
+EnvironmentRegistrationKeyStatusView: TypeAlias = Literal[
+    'active', 'revoked', 'expired'
+]
 
 
 class EnvironmentRegistrationKeyUpdateParams(TypedDict):
@@ -1681,7 +1706,7 @@ class EnvironmentRegistrationKeyView(TypedDict):
     updatedAtMs: int
 
 
-type EnvironmentRegistrationSecretView = str
+EnvironmentRegistrationSecretView: TypeAlias = str
 """
 A freshly minted registration secret. `Debug` output is redacted so the
 plaintext cannot leak through derived logging; it is shown once.
@@ -1749,22 +1774,26 @@ class EnvironmentSourceViewRegistered(TypedDict):
     type: Literal['registered']
 
 
-type EnvironmentStateView = Literal['open', 'closed'] | Literal[
-    'provisioning'
-] | Literal['closing'] | Literal['failed']
+EnvironmentStateView: TypeAlias = (
+    Literal['open', 'closed']
+    | Literal['provisioning']
+    | Literal['closing']
+    | Literal['failed']
+)
 """
 The lifecycle Lightspeed owns. External and registered environments are
 only ever `open` or `closed`.
 """
 
 
-type EnvironmentStatusView = Literal[
-    'provisioning', 'ready', 'closing', 'closed', 'failed'
-] | Literal['paused'] | Literal['suspended'] | Literal['stopped'] | Literal[
-    'unknown'
-] | Literal[
-    'away'
-]
+EnvironmentStatusView: TypeAlias = (
+    Literal['provisioning', 'ready', 'closing', 'closed', 'failed']
+    | Literal['paused']
+    | Literal['suspended']
+    | Literal['stopped']
+    | Literal['unknown']
+    | Literal['away']
+)
 """
 Display status derived from `state` and the latest observation; never
 stored. Tools that use a paused, suspended or stopped environment wake
@@ -1772,7 +1801,7 @@ it.
 """
 
 
-type EnvironmentTargetPhaseView = Literal[
+EnvironmentTargetPhaseView: TypeAlias = Literal[
     'provisioning', 'active', 'closing', 'closed', 'failed', 'unknown'
 ]
 """
@@ -1908,7 +1937,7 @@ class InitializeParams(TypedDict):
     clientInfo: NotRequired[ClientInfo | None]
 
 
-type InputAdmissionFailureKind = Literal[
+InputAdmissionFailureKind: TypeAlias = Literal[
     'unsupportedMedia', 'blobMissing', 'admissionRejected'
 ]
 
@@ -2082,7 +2111,13 @@ class McpServerAuthPolicyRequiredOAuth(TypedDict):
     type: Literal['requiredOAuth']
 
 
-type McpServerAuthPolicy = McpServerAuthPolicyNone | McpServerAuthPolicyOptionalBearer | McpServerAuthPolicyRequiredBearer | McpServerAuthPolicyOptionalOAuth | McpServerAuthPolicyRequiredOAuth
+McpServerAuthPolicy: TypeAlias = (
+    McpServerAuthPolicyNone
+    | McpServerAuthPolicyOptionalBearer
+    | McpServerAuthPolicyRequiredBearer
+    | McpServerAuthPolicyOptionalOAuth
+    | McpServerAuthPolicyRequiredOAuth
+)
 
 
 class McpServerCredential1(TypedDict):
@@ -2095,7 +2130,7 @@ class McpServerCredential1(TypedDict):
     type: Literal['authGrant']
 
 
-type McpServerCredential = McpServerCredential1
+McpServerCredential: TypeAlias = McpServerCredential1
 """
 Non-secret universe credential selected by this configured MCP server.
 Token material remains in the auth subsystem and is never returned.
@@ -2125,7 +2160,7 @@ class McpServerHeaderCredential(TypedDict):
     type: Literal['credential']
 
 
-type McpServerHeader = McpServerHeaderLiteral | McpServerHeaderCredential
+McpServerHeader: TypeAlias = McpServerHeaderLiteral | McpServerHeaderCredential
 """
 Value of one extra MCP request header.
 """
@@ -2135,7 +2170,9 @@ class McpServerReadParams(TypedDict):
     serverId: str
 
 
-type McpServerStatus = Literal['active', 'needsAuthConfig', 'unverified', 'disabled']
+McpServerStatus: TypeAlias = Literal[
+    'active', 'needsAuthConfig', 'unverified', 'disabled'
+]
 
 
 class McpServerToolsDiscoverParams(TypedDict):
@@ -2158,7 +2195,7 @@ class McpToolAnnotationsView(TypedDict):
     readOnlyHint: NotRequired[bool | None]
 
 
-type McpToolDiscoveryFailureCode = Literal[
+McpToolDiscoveryFailureCode: TypeAlias = Literal[
     'credentialAbsent',
     'grantNeedsReauth',
     'grantAudienceMismatch',
@@ -2175,7 +2212,7 @@ type McpToolDiscoveryFailureCode = Literal[
 ]
 
 
-type MediaKind = Literal['image', 'audio', 'document']
+MediaKind: TypeAlias = Literal['image', 'audio', 'document']
 
 
 class MethodAccessConnection(TypedDict):
@@ -2204,31 +2241,29 @@ class MethodAccessDeployment(TypedDict):
     kind: Literal['deployment']
 
 
-type MethodGroup = Literal[
-    'vfs',
-    'profiles',
-    'transcriptions',
-    'models',
-    'mcp',
-    'bots',
-    'deployment/universes',
-    'deployment/api-keys',
-    'deployment/sessions',
-] | Literal['session'] | Literal['session/delete'] | Literal['blobs/put'] | Literal[
-    'environments'
-] | Literal[
-    'channels'
-] | Literal[
-    'channels/inbound'
-] | Literal[
-    'auth'
-] | Literal[
-    'auth/lease'
-] | Literal[
-    'deployment/environment-providers'
-] | Literal[
-    'deployment/channels'
-]
+MethodGroup: TypeAlias = (
+    Literal[
+        'vfs',
+        'profiles',
+        'transcriptions',
+        'models',
+        'mcp',
+        'bots',
+        'deployment/universes',
+        'deployment/api-keys',
+        'deployment/sessions',
+    ]
+    | Literal['session']
+    | Literal['session/delete']
+    | Literal['blobs/put']
+    | Literal['environments']
+    | Literal['channels']
+    | Literal['channels/inbound']
+    | Literal['auth']
+    | Literal['auth/lease']
+    | Literal['deployment/environment-providers']
+    | Literal['deployment/channels']
+)
 """
 The methods a key may call, by group. Every public method but
 `initialize` belongs to exactly one group, derived from its name, so a
@@ -2236,7 +2271,7 @@ new method never changes what an existing key reaches beyond its group.
 """
 
 
-type MethodTarget = Literal['sessionId']
+MethodTarget: TypeAlias = Literal['sessionId']
 """
 Where a method names the session it acts on, so a gate can decide per
 session without a hand-written table. A creation method may name one that
@@ -2265,7 +2300,7 @@ class ModelConfig(TypedDict):
     providerId: str
 
 
-type ModelDefaultSlot = Literal['agentRun', 'speechToText']
+ModelDefaultSlot: TypeAlias = Literal['agentRun', 'speechToText']
 """
 A universe's model selection for a particular use. Protocol and purpose
 are separate: several purposes may use the same provider API.
@@ -2328,18 +2363,18 @@ class ModelListParams(TypedDict):
     """
 
 
-type ModelProcessingTier = Literal['standard', 'fast', 'flex']
+ModelProcessingTier: TypeAlias = Literal['standard', 'fast', 'flex']
 """
 Provider processing class used by session defaults and per-run overrides.
 """
 
 
-type ModelProviderCredentialSource = Literal['none'] | Literal['universe'] | Literal[
-    'deployment'
-]
+ModelProviderCredentialSource: TypeAlias = (
+    Literal['none'] | Literal['universe'] | Literal['deployment']
+)
 
 
-type ModelProviderCredentialStatus = Literal[
+ModelProviderCredentialStatus: TypeAlias = Literal[
     'configured', 'missing', 'invalid', 'notRequired'
 ]
 
@@ -2369,7 +2404,7 @@ class ModelProviderDiscoveryView(TypedDict):
     providerId: str
 
 
-type ModelSource = Literal['provider']
+ModelSource: TypeAlias = Literal['provider']
 
 
 class ModelView(TypedDict):
@@ -2421,7 +2456,7 @@ class PollCursorSpecWatermark(TypedDict):
     kind: Literal['watermark']
 
 
-type PollCursorSpec = PollCursorSpecIdSet | PollCursorSpecWatermark
+PollCursorSpec: TypeAlias = PollCursorSpecIdSet | PollCursorSpecWatermark
 """
 Dedupe discipline of a poll: an id set for unordered feeds, a watermark
 for ordered ones.
@@ -2459,7 +2494,7 @@ class PollHttpAuth(TypedDict):
     """
 
 
-type PollHttpMethod = Literal['GET', 'POST']
+PollHttpMethod: TypeAlias = Literal['GET', 'POST']
 
 
 class PollSourceHttp(TypedDict):
@@ -2498,7 +2533,7 @@ class PollSourceExec(TypedDict):
     """
 
 
-type PollSource = PollSourceHttp | PollSourceExec
+PollSource: TypeAlias = PollSourceHttp | PollSourceExec
 """
 Where a poll trigger reads from.
 """
@@ -2510,7 +2545,7 @@ class ProfileApplySummary(TypedDict):
     instructionsChanged: bool
 
 
-type ProfileId = str
+ProfileId: TypeAlias = str
 
 
 class ProfileInstructionsText(TypedDict):
@@ -2528,7 +2563,7 @@ class ProfileInstructionsTextRef(TypedDict):
     type: Literal['textRef']
 
 
-type ProfileInstructions = ProfileInstructionsText | ProfileInstructionsTextRef
+ProfileInstructions: TypeAlias = ProfileInstructionsText | ProfileInstructionsTextRef
 
 
 class ProfileListParams(TypedDict):
@@ -2555,26 +2590,26 @@ class ProfileSourceNamed(TypedDict):
     profileId: ProfileId
 
 
-type PromiseSourceKind = Literal['timer', 'workflow']
+PromiseSourceKind: TypeAlias = Literal['timer', 'workflow']
 """
 Where a promise's answer comes from.
 """
 
 
-type ProviderNativeToolExecutionView = Literal['providerHosted', 'clientEffect']
+ProviderNativeToolExecutionView: TypeAlias = Literal['providerHosted', 'clientEffect']
 
 
-type RecommendedRole = Literal['viewer', 'contributor', 'operator', 'admin']
+RecommendedRole: TypeAlias = Literal['viewer', 'contributor', 'operator', 'admin']
 """
 Universe roles as gates built on this contract name them. Core holds no
 roles; this is metadata only.
 """
 
 
-type RemoteMcpApprovalPolicy = Literal['never', 'always']
+RemoteMcpApprovalPolicy: TypeAlias = Literal['never', 'always']
 
 
-type RemoteMcpExecution = Literal['provider', 'runtime']
+RemoteMcpExecution: TypeAlias = Literal['provider', 'runtime']
 """
 Who connects to the server and runs its tools. `runtime`, the default, means
 Lightspeed does: each call runs once, under the approval policy, and is recorded.
@@ -2584,7 +2619,7 @@ can run again with its side effects, and the transcript shows at most one run.
 """
 
 
-type RemoteMcpExposure = Literal['inject', 'search']
+RemoteMcpExposure: TypeAlias = Literal['inject', 'search']
 
 
 class RunCancelParams(TypedDict):
@@ -2592,7 +2627,7 @@ class RunCancelParams(TypedDict):
     sessionId: str
 
 
-type RunFailureKindView = Literal[
+RunFailureKindView: TypeAlias = Literal[
     'contextFailure',
     'modelFailure',
     'requestRejected',
@@ -2638,7 +2673,7 @@ class RunReadParams(TypedDict):
     sessionId: str
 
 
-type RunStatus = Literal[
+RunStatus: TypeAlias = Literal[
     'queued', 'running', 'parked', 'cancelling', 'completed', 'failed', 'cancelled'
 ]
 
@@ -2650,7 +2685,7 @@ class RunSummarySourceView1(TypedDict):
     type: Literal['input']
 
 
-type RunSummarySourceView = RunSummarySourceView1
+RunSummarySourceView: TypeAlias = RunSummarySourceView1
 
 
 class RunSummaryView(TypedDict):
@@ -2709,7 +2744,7 @@ class ServerInfo(TypedDict):
     """
 
 
-type SessionActivity = Literal['idle'] | Literal['working'] | Literal['waiting']
+SessionActivity: TypeAlias = Literal['idle'] | Literal['working'] | Literal['waiting']
 """
 What a session is doing now. A queued run counts as idle until it starts;
 a closed session is idle.
@@ -2756,7 +2791,7 @@ class SessionEnvironmentDeactivateParams(TypedDict):
     sessionId: str
 
 
-type SessionEventDirection = Literal['forward', 'backward']
+SessionEventDirection: TypeAlias = Literal['forward', 'backward']
 
 
 class SessionEventKindViewSessionOpened(TypedDict):
@@ -3114,7 +3149,7 @@ class SessionEventsReadParams(TypedDict):
     """
 
 
-type SessionExecutionFailureView = Literal[
+SessionExecutionFailureView: TypeAlias = Literal[
     'failed', 'terminated', 'timedOut', 'missing'
 ]
 """
@@ -3123,7 +3158,7 @@ normally never reports one.
 """
 
 
-type SessionJobCancelScopeView = Literal['job', 'dependents']
+SessionJobCancelScopeView: TypeAlias = Literal['job', 'dependents']
 
 
 class SessionJobDependencyInput(TypedDict):
@@ -3131,7 +3166,7 @@ class SessionJobDependencyInput(TypedDict):
     name: NotRequired[str | None]
 
 
-type SessionJobDependencyPolicyView = Literal['allSucceeded', 'allTerminal']
+SessionJobDependencyPolicyView: TypeAlias = Literal['allSucceeded', 'allTerminal']
 
 
 class SessionJobExitViewCode(TypedDict):
@@ -3153,7 +3188,7 @@ class SessionJobExitViewSignal(TypedDict):
     type: Literal['signal']
 
 
-type SessionJobExitView = SessionJobExitViewCode | SessionJobExitViewSignal
+SessionJobExitView: TypeAlias = SessionJobExitViewCode | SessionJobExitViewSignal
 """
 How a job's root process ended.
 """
@@ -3169,7 +3204,7 @@ class SessionJobHandleView(TypedDict):
     jobId: str
 
 
-type SessionJobOutputGapReasonView = Literal['overflow', 'expired']
+SessionJobOutputGapReasonView: TypeAlias = Literal['overflow', 'expired']
 
 
 class SessionJobOutputGapView(TypedDict):
@@ -3183,7 +3218,7 @@ class SessionJobOutputGapView(TypedDict):
     reason: SessionJobOutputGapReasonView
 
 
-type SessionJobOutputStreamView = Literal['stdout', 'stderr']
+SessionJobOutputStreamView: TypeAlias = Literal['stdout', 'stderr']
 
 
 class SessionJobStartSpecInput(TypedDict):
@@ -3199,19 +3234,22 @@ class SessionJobStartSpecInput(TypedDict):
     timeoutMs: NotRequired[int | None]
 
 
-type SessionJobStatusView = Literal['running'] | Literal['queued'] | Literal[
-    'succeeded'
-] | Literal['failed'] | Literal['timedOut'] | Literal['cancelled'] | Literal[
-    'dependencyFailed'
-] | Literal[
-    'interrupted'
-]
+SessionJobStatusView: TypeAlias = (
+    Literal['running']
+    | Literal['queued']
+    | Literal['succeeded']
+    | Literal['failed']
+    | Literal['timedOut']
+    | Literal['cancelled']
+    | Literal['dependencyFailed']
+    | Literal['interrupted']
+)
 """
 Job lifecycle. `queued` and `running` are live; the rest are terminal.
 """
 
 
-type SessionJobStoppedByView = Literal['timeout', 'terminate', 'kill']
+SessionJobStoppedByView: TypeAlias = Literal['timeout', 'terminate', 'kill']
 """
 Why Lightspeed stopped a running job.
 """
@@ -3261,7 +3299,7 @@ class SessionJobSummaryView(TypedDict):
     """
 
 
-type SessionLifecycleStatus = Literal['new', 'open', 'closed']
+SessionLifecycleStatus: TypeAlias = Literal['new', 'open', 'closed']
 
 
 class SessionListParams(TypedDict):
@@ -3340,7 +3378,7 @@ class SessionMutationView(TypedDict):
     lifecycleStatus: SessionLifecycleStatus
 
 
-type SessionOriginKind = Literal['subagent']
+SessionOriginKind: TypeAlias = Literal['subagent']
 
 
 class SessionReadParams(TypedDict):
@@ -3399,7 +3437,7 @@ class SessionStartResponse(TypedDict):
     session: SessionMutationView
 
 
-type SkillCatalogAvailability = Literal['available', 'stale', 'unavailable']
+SkillCatalogAvailability: TypeAlias = Literal['available', 'stale', 'unavailable']
 
 
 class SkillCatalogSourceVfs(TypedDict):
@@ -3411,7 +3449,7 @@ class SkillCatalogSourceEnvironment(TypedDict):
     type: Literal['environment']
 
 
-type SkillCatalogSource = SkillCatalogSourceVfs | SkillCatalogSourceEnvironment
+SkillCatalogSource: TypeAlias = SkillCatalogSourceVfs | SkillCatalogSourceEnvironment
 
 
 class SkillListParams(TypedDict):
@@ -3487,10 +3525,12 @@ class TimersFeature(TypedDict):
     version: NotRequired[int]
 
 
-type TokenEndpointAuthMethod = Literal['clientSecretBasic', 'clientSecretPost', 'none']
+TokenEndpointAuthMethod: TypeAlias = Literal[
+    'clientSecretBasic', 'clientSecretPost', 'none'
+]
 
 
-type TokenEstimateQualityView = Literal['exact', 'providerCounted', 'estimated']
+TokenEstimateQualityView: TypeAlias = Literal['exact', 'providerCounted', 'estimated']
 
 
 class TokenEstimateView(TypedDict):
@@ -3517,13 +3557,17 @@ class ToolAttachmentView(TypedDict):
     source: NotRequired[AttachmentSourceView | None]
 
 
-type ToolCallDisplayGroup = Literal['other'] | Literal['explore'] | Literal[
-    'edit'
-] | Literal['execute'] | Literal['code'] | Literal['mcp'] | Literal['agent'] | Literal[
-    'bot'
-] | Literal[
-    'message'
-]
+ToolCallDisplayGroup: TypeAlias = (
+    Literal['other']
+    | Literal['explore']
+    | Literal['edit']
+    | Literal['execute']
+    | Literal['code']
+    | Literal['mcp']
+    | Literal['agent']
+    | Literal['bot']
+    | Literal['message']
+)
 """
 Coarse activity family of a tool call, chosen by the projection from the
 tool name. Clients key icons and colours on it; the verb and target carry
@@ -3583,7 +3627,9 @@ class ToolChoiceSpecific(TypedDict):
     type: Literal['specific']
 
 
-type ToolChoice = ToolChoiceAuto | ToolChoiceNone | ToolChoiceRequiredAny | ToolChoiceSpecific
+ToolChoice: TypeAlias = (
+    ToolChoiceAuto | ToolChoiceNone | ToolChoiceRequiredAny | ToolChoiceSpecific
+)
 
 
 class ToolEffectView(TypedDict):
@@ -3591,7 +3637,7 @@ class ToolEffectView(TypedDict):
     kind: str
 
 
-type ToolItemStatus = Literal[
+ToolItemStatus: TypeAlias = Literal[
     'requested', 'running', 'succeeded', 'failed', 'cancelled', 'unavailable'
 ]
 
@@ -3631,10 +3677,15 @@ class ToolKindViewRemoteMcp(TypedDict):
     type: Literal['remoteMcp']
 
 
-type ToolKindView = ToolKindViewBuiltin | ToolKindViewFunction | ToolKindViewProviderNative | ToolKindViewRemoteMcp
+ToolKindView: TypeAlias = (
+    ToolKindViewBuiltin
+    | ToolKindViewFunction
+    | ToolKindViewProviderNative
+    | ToolKindViewRemoteMcp
+)
 
 
-type ToolParallelismView = Literal['exclusive', 'parallelSafe']
+ToolParallelismView: TypeAlias = Literal['exclusive', 'parallelSafe']
 
 
 class ToolView(TypedDict):
@@ -3657,7 +3708,7 @@ class TranscriptionCancelParams(TypedDict):
     transcriptionId: str
 
 
-type TranscriptionFailureKind = Literal[
+TranscriptionFailureKind: TypeAlias = Literal[
     'invalidAudio', 'configuration', 'provider', 'timeout', 'internal'
 ]
 
@@ -3679,35 +3730,40 @@ class TranscriptionStartParams(TypedDict):
     prompt: NotRequired[str | None]
 
 
-type TranscriptionStatus = Literal[
+TranscriptionStatus: TypeAlias = Literal[
     'pending', 'running', 'succeeded', 'failed', 'cancelled', 'expired'
 ]
 
 
-type TurnGenerationStatus = Literal['succeeded', 'failed', 'cancelled'] | Literal[
-    'rejected'
-]
+TurnGenerationStatus: TypeAlias = (
+    Literal['succeeded', 'failed', 'cancelled'] | Literal['rejected']
+)
 """
 How a generation ended.
 """
 
 
-type UniverseAction = Literal[
-    'read',
-    'createSession',
-    'controlSession',
-    'configureSession',
-    'stopSession',
-    'closeSession',
-    'deleteSession',
-    'setSessionRetention',
-    'createProfile',
-    'manageProfile',
-    'createBot',
-    'manageBot',
-    'invokeBot',
-    'createWorkspace',
-] | Literal['shareSession'] | Literal['useResource'] | Literal['configureResource']
+UniverseAction: TypeAlias = (
+    Literal[
+        'read',
+        'createSession',
+        'controlSession',
+        'configureSession',
+        'stopSession',
+        'closeSession',
+        'deleteSession',
+        'setSessionRetention',
+        'createProfile',
+        'manageProfile',
+        'createBot',
+        'manageBot',
+        'invokeBot',
+        'createWorkspace',
+    ]
+    | Literal['shareSession']
+    | Literal['useResource']
+    | Literal['configureResource']
+)
 """
 What a public method does, independent of its RPC spelling. Requests are
 gated by their key's groups; this classifies what the runtime's own work
@@ -3810,7 +3866,7 @@ class VfsWorkspaceView(TypedDict):
     workspaceId: str
 
 
-type Visibility = Literal['universe', 'restricted']
+Visibility: TypeAlias = Literal['universe', 'restricted']
 """
 Who sees a root's tree. Sessions start unshared (`restricted`) and are
 shared with the universe once, one way; everything else is shared.
@@ -3829,7 +3885,7 @@ class WebSearchFeature(TypedDict):
     blockedDomains: NotRequired[list[str]]
 
 
-type WebhookPreset = Literal['github']
+WebhookPreset: TypeAlias = Literal['github']
 
 
 class WebhookVerificationToken(TypedDict):
@@ -3856,7 +3912,9 @@ class WebhookVerificationHmacSha256(TypedDict):
     scheme: Literal['hmac-sha256']
 
 
-type WebhookVerification = WebhookVerificationToken | WebhookVerificationHmacSha256
+WebhookVerification: TypeAlias = (
+    WebhookVerificationToken | WebhookVerificationHmacSha256
+)
 """
 How an inbound webhook proves it comes from the sender: possession of
 the URL token, or additionally an HMAC-SHA256 over the raw body with a
@@ -3950,7 +4008,12 @@ class WorkflowToolCompletionKeySourceInputArrayIndices(TypedDict):
     type: Literal['arrayIndices']
 
 
-type WorkflowToolCompletionKeySourceInput = WorkflowToolCompletionKeySourceInputReply | WorkflowToolCompletionKeySourceInputStringArray | WorkflowToolCompletionKeySourceInputArrayItemField | WorkflowToolCompletionKeySourceInputArrayIndices
+WorkflowToolCompletionKeySourceInput: TypeAlias = (
+    WorkflowToolCompletionKeySourceInputReply
+    | WorkflowToolCompletionKeySourceInputStringArray
+    | WorkflowToolCompletionKeySourceInputArrayItemField
+    | WorkflowToolCompletionKeySourceInputArrayIndices
+)
 """
 Declarative promise-key derivation over schema-validated tool arguments.
 """
@@ -3965,7 +4028,7 @@ class WorkflowToolKindInput1(TypedDict):
     type: Literal['function']
 
 
-type WorkflowToolKindInput = WorkflowToolKindInput1
+WorkflowToolKindInput: TypeAlias = WorkflowToolKindInput1
 
 
 class WorkflowToolSpecInput(TypedDict):
@@ -4000,7 +4063,9 @@ class WorkflowToolTargetInputStart(TypedDict):
     type: Literal['start']
 
 
-type WorkflowToolTargetInput = WorkflowToolTargetInputBound | WorkflowToolTargetInputStart
+WorkflowToolTargetInput: TypeAlias = (
+    WorkflowToolTargetInputBound | WorkflowToolTargetInputStart
+)
 """
 Lifecycle target of a workflow-backed tool. Bound tools deliver to an
 existing execution; start tools create an execution from an immutable,
@@ -4008,7 +4073,7 @@ CAS-backed recipe for every invocation.
 """
 
 
-type WorkspaceAccess = Literal['read', 'edit']
+WorkspaceAccess: TypeAlias = Literal['read', 'edit']
 """
 Per-attachment VFS access; `edit` implies `read`.
 """
@@ -4199,7 +4264,12 @@ class AuthProviderConfigInputModelEndpoint(TypedDict):
     type: Literal['modelEndpoint']
 
 
-type AuthProviderConfigInput = AuthProviderConfigInputGithubApp | AuthProviderConfigInputModelApiKey | AuthProviderConfigInputModelOAuth | AuthProviderConfigInputModelEndpoint
+AuthProviderConfigInput: TypeAlias = (
+    AuthProviderConfigInputGithubApp
+    | AuthProviderConfigInputModelApiKey
+    | AuthProviderConfigInputModelOAuth
+    | AuthProviderConfigInputModelEndpoint
+)
 
 
 class AuthProviderConfigViewModelApiKey(TypedDict):
@@ -4233,7 +4303,12 @@ class AuthProviderConfigViewModelEndpoint(TypedDict):
     type: Literal['modelEndpoint']
 
 
-type AuthProviderConfigView = AuthProviderConfigViewGithubApp | AuthProviderConfigViewModelApiKey | AuthProviderConfigViewModelOAuth | AuthProviderConfigViewModelEndpoint
+AuthProviderConfigView: TypeAlias = (
+    AuthProviderConfigViewGithubApp
+    | AuthProviderConfigViewModelApiKey
+    | AuthProviderConfigViewModelOAuth
+    | AuthProviderConfigViewModelEndpoint
+)
 """
 Non-secret, provider-specific configuration. New providers add a
 variant, not a table.
@@ -5123,7 +5198,16 @@ class ContextEntryKindViewMessage(TypedDict):
     type: Literal['message']
 
 
-type ContextEntryKindView = ContextEntryKindViewMessage | ContextEntryKindViewInstructions | ContextEntryKindViewCatalog | ContextEntryKindViewToolCall | ContextEntryKindViewToolResult | ContextEntryKindViewReasoningState | ContextEntryKindViewProviderOpaque | ContextEntryKindViewMcpApprovalResponse
+ContextEntryKindView: TypeAlias = (
+    ContextEntryKindViewMessage
+    | ContextEntryKindViewInstructions
+    | ContextEntryKindViewCatalog
+    | ContextEntryKindViewToolCall
+    | ContextEntryKindViewToolResult
+    | ContextEntryKindViewReasoningState
+    | ContextEntryKindViewProviderOpaque
+    | ContextEntryKindViewMcpApprovalResponse
+)
 
 
 class ContextRemoveResult(TypedDict):
@@ -5537,7 +5621,11 @@ class EnvironmentSourceViewProvisioned(TypedDict):
     type: Literal['provisioned']
 
 
-type EnvironmentSourceView = EnvironmentSourceViewProvisioned | EnvironmentSourceViewExternal | EnvironmentSourceViewRegistered
+EnvironmentSourceView: TypeAlias = (
+    EnvironmentSourceViewProvisioned
+    | EnvironmentSourceViewExternal
+    | EnvironmentSourceViewRegistered
+)
 
 
 class EnvironmentTemplateListResponse(TypedDict):
@@ -5635,7 +5723,9 @@ class InputItemMedia(TypedDict):
     type: Literal['media']
 
 
-type InputItem = InputItemText | InputItemTextRef | InputItemMedia | InputItemCatalog
+InputItem: TypeAlias = (
+    InputItemText | InputItemTextRef | InputItemMedia | InputItemCatalog
+)
 
 
 class JsonRpcError(TypedDict):
@@ -5733,7 +5823,9 @@ class McpServerToolsDiscoverResponseFailure(TypedDict):
     status: Literal['failure']
 
 
-type McpServerToolsDiscoverResponse = McpServerToolsDiscoverResponseSuccess | McpServerToolsDiscoverResponseFailure
+McpServerToolsDiscoverResponse: TypeAlias = (
+    McpServerToolsDiscoverResponseSuccess | McpServerToolsDiscoverResponseFailure
+)
 """
 The result of one live MCP `tools/list` exchange. Operational connection
 failures are data so management clients can render stable remediation;
@@ -5776,7 +5868,12 @@ class MethodAccessUniverse(TypedDict):
     kind: Literal['universe']
 
 
-type MethodAccess = MethodAccessConnection | MethodAccessUniverse | MethodAccessService | MethodAccessDeployment
+MethodAccess: TypeAlias = (
+    MethodAccessConnection
+    | MethodAccessUniverse
+    | MethodAccessService
+    | MethodAccessDeployment
+)
 
 
 class ModelListResponse(TypedDict):
@@ -5876,7 +5973,7 @@ class RunStartSource1(TypedDict):
     type: Literal['input']
 
 
-type RunStartSource = RunStartSource1
+RunStartSource: TypeAlias = RunStartSource1
 
 
 class RunSteerParams(TypedDict):
@@ -5916,7 +6013,7 @@ class RunViewSource1(TypedDict):
     type: Literal['input']
 
 
-type RunViewSource = RunViewSource1
+RunViewSource: TypeAlias = RunViewSource1
 
 
 class SessionCloseResponse(TypedDict):
@@ -6273,7 +6370,11 @@ class WorkflowToolCompletionInputPromises(TypedDict):
     type: Literal['promises']
 
 
-type WorkflowToolCompletionInput = WorkflowToolCompletionInputAccepted | WorkflowToolCompletionInputJoined | WorkflowToolCompletionInputPromises
+WorkflowToolCompletionInput: TypeAlias = (
+    WorkflowToolCompletionInputAccepted
+    | WorkflowToolCompletionInputJoined
+    | WorkflowToolCompletionInputPromises
+)
 """
 Completion contract for one workflow-tool invocation. Joined tools park
 the original call on one runtime-owned reply; Promises exposes handles for
@@ -6615,7 +6716,13 @@ class BotTriggerInputChat(TypedDict):
     """
 
 
-type BotTriggerInput = BotTriggerInputSchedule | BotTriggerInputWebhook | BotTriggerInputPoll | BotTriggerInputBot | BotTriggerInputChat
+BotTriggerInput: TypeAlias = (
+    BotTriggerInputSchedule
+    | BotTriggerInputWebhook
+    | BotTriggerInputPoll
+    | BotTriggerInputBot
+    | BotTriggerInputChat
+)
 """
 The whole configuration of one trigger, replaced with an expected
 revision.
@@ -6697,7 +6804,13 @@ class BotTriggerViewChat(TypedDict):
     """
 
 
-type BotTriggerView = BotTriggerViewSchedule | BotTriggerViewWebhook | BotTriggerViewPoll | BotTriggerViewBot | BotTriggerViewChat
+BotTriggerView: TypeAlias = (
+    BotTriggerViewSchedule
+    | BotTriggerViewWebhook
+    | BotTriggerViewPoll
+    | BotTriggerViewBot
+    | BotTriggerViewChat
+)
 """
 The whole configuration of one trigger, replaced with an expected
 revision.
@@ -7021,7 +7134,7 @@ class RunAcceptedSourceView1(TypedDict):
     type: Literal['input']
 
 
-type RunAcceptedSourceView = RunAcceptedSourceView1
+RunAcceptedSourceView: TypeAlias = RunAcceptedSourceView1
 
 
 class RunStartParams(TypedDict):
@@ -7147,7 +7260,59 @@ class SessionEventKindViewContextKeyPrefixReplaced(TypedDict):
     type: Literal['contextKeyPrefixReplaced']
 
 
-type SessionEventKindView = SessionEventKindViewSessionOpened | SessionEventKindViewSessionConfigChanged | SessionEventKindViewWorkflowToolsConfigured | SessionEventKindViewSystemWorkflowToolConfigured | SessionEventKindViewWorkflowToolInvoked | SessionEventKindViewWorkflowToolDeliveryFailed | SessionEventKindViewWorkflowToolStartRequested | SessionEventKindViewWorkflowToolStartFailed | SessionEventKindViewSessionClosed | SessionEventKindViewRunAccepted | SessionEventKindViewRunStarted | SessionEventKindViewRunSteeringAccepted | SessionEventKindViewRunCancellationRequested | SessionEventKindViewApprovalRequested | SessionEventKindViewApprovalRunParked | SessionEventKindViewApprovalRunUnparked | SessionEventKindViewApprovalDecided | SessionEventKindViewApprovalCancelled | SessionEventKindViewRunCompleted | SessionEventKindViewRunFailed | SessionEventKindViewRunCancelled | SessionEventKindViewPromiseCreated | SessionEventKindViewPromiseResolved | SessionEventKindViewPromiseFailed | SessionEventKindViewPromiseCancelled | SessionEventKindViewPromiseDetached | SessionEventKindViewTurnStarted | SessionEventKindViewTurnPlanned | SessionEventKindViewTurnGenerationRequested | SessionEventKindViewTurnGenerationCompleted | SessionEventKindViewTurnCompleted | SessionEventKindViewTurnCancelled | SessionEventKindViewContextEntriesApplied | SessionEventKindViewContextEntriesRemoved | SessionEventKindViewContextEntriesReplaced | SessionEventKindViewContextKeysRemoved | SessionEventKindViewContextKeyPrefixReplaced | SessionEventKindViewContextCompactionQueued | SessionEventKindViewContextCompactionRequested | SessionEventKindViewContextCompactionFinished | SessionEventKindViewSkillCatalogSet | SessionEventKindViewToolsReplaced | SessionEventKindViewToolsPatched | SessionEventKindViewActiveEnvironmentChanged | SessionEventKindViewToolBatchStarted | SessionEventKindViewToolCallStarted | SessionEventKindViewToolCallCompleted | SessionEventKindViewToolBatchParked | SessionEventKindViewToolBatchUnparked | SessionEventKindViewToolBatchCompleted | SessionEventKindViewCodeToolProgress
+SessionEventKindView: TypeAlias = (
+    SessionEventKindViewSessionOpened
+    | SessionEventKindViewSessionConfigChanged
+    | SessionEventKindViewWorkflowToolsConfigured
+    | SessionEventKindViewSystemWorkflowToolConfigured
+    | SessionEventKindViewWorkflowToolInvoked
+    | SessionEventKindViewWorkflowToolDeliveryFailed
+    | SessionEventKindViewWorkflowToolStartRequested
+    | SessionEventKindViewWorkflowToolStartFailed
+    | SessionEventKindViewSessionClosed
+    | SessionEventKindViewRunAccepted
+    | SessionEventKindViewRunStarted
+    | SessionEventKindViewRunSteeringAccepted
+    | SessionEventKindViewRunCancellationRequested
+    | SessionEventKindViewApprovalRequested
+    | SessionEventKindViewApprovalRunParked
+    | SessionEventKindViewApprovalRunUnparked
+    | SessionEventKindViewApprovalDecided
+    | SessionEventKindViewApprovalCancelled
+    | SessionEventKindViewRunCompleted
+    | SessionEventKindViewRunFailed
+    | SessionEventKindViewRunCancelled
+    | SessionEventKindViewPromiseCreated
+    | SessionEventKindViewPromiseResolved
+    | SessionEventKindViewPromiseFailed
+    | SessionEventKindViewPromiseCancelled
+    | SessionEventKindViewPromiseDetached
+    | SessionEventKindViewTurnStarted
+    | SessionEventKindViewTurnPlanned
+    | SessionEventKindViewTurnGenerationRequested
+    | SessionEventKindViewTurnGenerationCompleted
+    | SessionEventKindViewTurnCompleted
+    | SessionEventKindViewTurnCancelled
+    | SessionEventKindViewContextEntriesApplied
+    | SessionEventKindViewContextEntriesRemoved
+    | SessionEventKindViewContextEntriesReplaced
+    | SessionEventKindViewContextKeysRemoved
+    | SessionEventKindViewContextKeyPrefixReplaced
+    | SessionEventKindViewContextCompactionQueued
+    | SessionEventKindViewContextCompactionRequested
+    | SessionEventKindViewContextCompactionFinished
+    | SessionEventKindViewSkillCatalogSet
+    | SessionEventKindViewToolsReplaced
+    | SessionEventKindViewToolsPatched
+    | SessionEventKindViewActiveEnvironmentChanged
+    | SessionEventKindViewToolBatchStarted
+    | SessionEventKindViewToolCallStarted
+    | SessionEventKindViewToolCallCompleted
+    | SessionEventKindViewToolBatchParked
+    | SessionEventKindViewToolBatchUnparked
+    | SessionEventKindViewToolBatchCompleted
+    | SessionEventKindViewCodeToolProgress
+)
 
 
 class SessionEventView(TypedDict):
@@ -7383,7 +7548,7 @@ class ProfileSourceInline(TypedDict):
     profile: InlineAgentProfile
 
 
-type ProfileSource = ProfileSourceNamed | ProfileSourceInline
+ProfileSource: TypeAlias = ProfileSourceNamed | ProfileSourceInline
 
 
 class RunView(TypedDict):
@@ -7568,7 +7733,13 @@ class AgentNotificationSessionRunsCompleted(TypedDict):
     params: Params2
 
 
-type AgentNotification = AgentNotificationSessionStarted | AgentNotificationSessionEvent | AgentNotificationSessionRunsStarted | AgentNotificationSessionRunsCompleted | AgentNotificationError
+AgentNotification: TypeAlias = (
+    AgentNotificationSessionStarted
+    | AgentNotificationSessionEvent
+    | AgentNotificationSessionRunsStarted
+    | AgentNotificationSessionRunsCompleted
+    | AgentNotificationError
+)
 
 
 class ContextAppendResponse(TypedDict):

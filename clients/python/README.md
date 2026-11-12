@@ -2,7 +2,8 @@
 
 Start and inspect Lightspeed agent sessions from Python. The SDK is a typed, async
 JSON-RPC client generated from the Lightspeed API contract, with helpers for starting
-runs, waiting for them to finish, and inspecting what they did.
+runs, waiting for them to finish, and inspecting what they did. A separate module has
+helpers for Temporal workflow code.
 
 It sends the same requests as the
 [TypeScript SDK](https://github.com/smartcomputer-ai/lightspeed/tree/main/clients/typescript),
@@ -269,17 +270,107 @@ Only `await_run` retries, and only its own reads. After a transport failure on a
 mutation, the request may still have landed, so repeat it with the same IDs rather than
 new ones.
 
+## Write workflow code
+
+Temporal workflows that receive tool calls from an integrated session import
+`lightspeed_ai.workflow`. It has the contract's signal, query and activity names, and
+helpers for parsing envelopes, deriving IDs, fingerprinting recipes, and building
+replies. `lightspeed_ai.workflow_types` has the generated types, which work as the type
+hints Temporal decodes workflow arguments and signals from, such as
+`WorkflowToolStartArgs` and `EmissionEnvelope`. The module depends on no Temporal
+package and is deterministic. Its functions raise `ValueError` for a value the contract
+does not allow.
+
+Temporal's Python SDK runs workflow code in a sandbox, so import both modules as
+pass-throughs. This is the started workflow from
+[Workflow tools](https://ls.bot/docs/integrating-and-extending/workflow-tools/#implement-the-started-workflow),
+which describes the integration, in Python. Its `review_release` activity is application
+code that reads the argument blob, performs the review, uploads a result, and returns
+its blob reference:
+
+```python
+from datetime import timedelta
+
+from temporalio import workflow
+from temporalio.exceptions import ApplicationError
+
+with workflow.unsafe.imports_passed_through():
+    from lightspeed_ai.workflow import (
+        DELIVER_EMISSION_SIGNAL,
+        REPLY_COMPLETION_KEY,
+        WORKFLOW_TOOL_RECOVERY_QUERY,
+        reply_promise_id,
+        source_resolution_envelope,
+    )
+    from lightspeed_ai.workflow_types import (
+        PromiseResolution,
+        WorkflowToolRecoveryResult,
+        WorkflowToolStartArgs,
+    )
+
+
+@workflow.defn
+class ReleaseReviewWorkflow:
+    def __init__(self) -> None:
+        self.resolutions: dict[str, PromiseResolution] = {}
+
+    @workflow.query(name=WORKFLOW_TOOL_RECOVERY_QUERY)
+    def recovery(self) -> WorkflowToolRecoveryResult:
+        return {"resolutions": self.resolutions}
+
+    @workflow.run
+    async def run(self, args: WorkflowToolStartArgs) -> WorkflowToolRecoveryResult:
+        invocation = args["invocation"]
+        if (
+            workflow.info().workflow_id != args["execution_id"]
+            or args["universe_id"] != invocation["session_universe_id"]
+            or invocation["workflow_tool_id"] != "request-review"
+            or invocation["semantic_type"] != "release.review.v1"
+            or invocation["schema_revision"] != 1
+        ):
+            raise ApplicationError("Unexpected review invocation", non_retryable=True)
+        promise_id = reply_promise_id(invocation)
+
+        result_ref: str = await workflow.execute_activity(
+            "review_release",
+            {
+                "universe_id": args["universe_id"],
+                "arguments_ref": invocation["arguments_ref"],
+                "invocation_id": invocation["invocation_id"],
+            },
+            start_to_close_timeout=timedelta(minutes=2),
+        )
+        resolution: PromiseResolution = {"kind": "resolved", "payload_ref": result_ref}
+        self.resolutions[REPLY_COMPLETION_KEY] = resolution
+
+        reply = source_resolution_envelope(
+            universe_id=args["universe_id"],
+            producer_workflow_id=args["execution_id"],
+            holder_workflow_id=args["holder_workflow_id"],
+            promise_id=promise_id,
+            resolution=resolution,
+        )
+        holder = workflow.get_external_workflow_handle(args["holder_workflow_id"])
+        await holder.signal(DELIVER_EMISSION_SIGNAL, reply)
+        return {"resolutions": self.resolutions}
+```
+
+Store each final resolution under its completion key before sending it, because the
+recovery query answers from those keys. A bound receiver takes `EmissionEnvelope` in its
+`DELIVER_EMISSION_SIGNAL` handler and checks it with `parse_emission_envelope`.
+
 ## Not in this package
 
 The TypeScript SDK also ships a request handler for serving a browser UI without
-exposing the key, and helpers for Temporal workflow code that receives tool calls.
-Neither has a Python equivalent yet.
+exposing the key. It has no Python equivalent: a Python application that renders its UI
+on the server calls this client there.
 
 ## Develop this package
 
-The types, method tables, and most helpers are generated from the committed contract in
-`crates/api/contract/`, so don't edit `src/lightspeed_ai/types.py` or
-`src/lightspeed_ai/_generated.py` by hand. Helpers come from the TypeScript SDK's
+The types, method tables, and most helpers are generated from the committed contracts in
+`crates/api/contract/` and `crates/temporal-workflow/contract/`, so don't edit
+`types.py`, `_generated.py`, `workflow_types.py`, or `_workflow_manifest.py` under
+`src/lightspeed_ai/` by hand. Helpers come from the TypeScript SDK's
 inventory, [`clients/typescript/scripts/helpers.mjs`](../typescript/scripts/helpers.mjs),
 which the generator reads with Node.js; add a new one there and to the table above. A
 helper that needs behavior of its own goes in `src/lightspeed_ai/client.py`.
@@ -288,7 +379,7 @@ With [uv](https://docs.astral.sh/uv/) and Node.js installed, from `clients/pytho
 
 ```bash
 uv sync --locked
-uv run python scripts/generate.py           # after the contract changes
+uv run python scripts/generate.py           # after a contract changes
 uv run python scripts/generate.py --check   # fails if the committed output is stale
 uv run mypy
 uv run pytest

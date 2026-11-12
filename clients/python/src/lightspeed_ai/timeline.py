@@ -1,4 +1,4 @@
-from typing import Literal, TypedDict
+from typing import Literal, TypeAlias, TypedDict
 
 from .types import ContextEntryView, ContextMessageRoleView, RunView, ToolCallView
 
@@ -32,7 +32,8 @@ class ToolItem(TypedDict):
     resultEntry: ContextEntryView | None
 
 
-type RunTimelineItem = MessageItem | ContextItem | ToolItem
+# An assignment, not a `type` statement, so libraries that decode from type hints resolve it.
+RunTimelineItem: TypeAlias = MessageItem | ContextItem | ToolItem
 
 
 def run_timeline(run: RunView) -> list[RunTimelineItem]:
