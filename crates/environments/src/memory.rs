@@ -40,10 +40,60 @@ impl RegistryState {
 
     fn by_daemon_public_key(&self, daemon_public_key: &str) -> Option<&EnvironmentRecord> {
         self.environments.values().find(|record| {
-            record
-                .registered()
-                .is_some_and(|source| source.daemon_public_key == daemon_public_key)
+            record.registered().is_some_and(|source| {
+                source.daemon_public_key.as_deref() == Some(daemon_public_key)
+            })
         })
+    }
+
+    /// The open environment declared under `key` with `name`.
+    fn declared(
+        &self,
+        key: &EnvironmentRegistrationKeyId,
+        name: &str,
+    ) -> Option<&EnvironmentRecord> {
+        self.environments.values().find(|record| {
+            record.state != EnvironmentState::Closed
+                && record.registered().is_some_and(|source| {
+                    source.registration_key_id == *key
+                        && source.registration_name.as_deref() == Some(name)
+                })
+        })
+    }
+
+    /// The key's live secret is the one presented.
+    fn secret_is_live(&self, key: &EnvironmentRegistrationKeyId, secret_hash: &str) -> bool {
+        self.registration_keys.get(key).is_some_and(|stored| {
+            stored
+                .secrets
+                .iter()
+                .any(|secret| secret.retired_at_ms.is_none() && secret.secret_hash == secret_hash)
+        })
+    }
+
+    /// Refuse another open environment under a key at its active limit.
+    fn check_capacity(
+        &self,
+        key: &EnvironmentRegistrationKeyRecord,
+    ) -> Result<(), EnvironmentRegistryError> {
+        let Some(limit) = key.max_active_environments else {
+            return Ok(());
+        };
+        let active = self
+            .environments
+            .values()
+            .filter(|record| {
+                record.registration_key_id() == Some(&key.registration_key_id)
+                    && record.state != EnvironmentState::Closed
+            })
+            .count();
+        if active >= limit as usize {
+            return Err(EnvironmentRegistryError::RegistrationCapacityExhausted {
+                registration_key_id: key.registration_key_id.to_string(),
+                limit,
+            });
+        }
+        Ok(())
     }
 
     fn insert_new(
@@ -359,35 +409,103 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
             .registration_key(&request.registration_key_id)?
             .clone();
         key.check_admits(request.created_at_ms)?;
-        let live = state
-            .registration_keys
-            .get(&request.registration_key_id)
-            .is_some_and(|stored| {
-                stored.secrets.iter().any(|secret| {
-                    secret.retired_at_ms.is_none() && secret.secret_hash == request.secret_hash
-                })
-            });
-        if !live {
+        if !state.secret_is_live(&request.registration_key_id, &request.secret_hash) {
             return Err(request.secret_retired());
         }
-        if let Some(limit) = key.max_active_environments {
-            let active = state
-                .environments
-                .values()
-                .filter(|record| {
-                    record.registration_key_id() == Some(&key.registration_key_id)
-                        && record.state != EnvironmentState::Closed
-                })
-                .count();
-            if active >= limit as usize {
-                return Err(EnvironmentRegistryError::RegistrationCapacityExhausted {
-                    registration_key_id: key.registration_key_id.to_string(),
-                    limit,
-                });
-            }
-        }
+        state.check_capacity(&key)?;
         let record = request.record(&key)?;
         state.insert_new(record)
+    }
+
+    async fn declare_registered_environment(
+        &self,
+        request: DeclareRegisteredEnvironment,
+    ) -> Result<(EnvironmentRecord, DeclaredOutcome), EnvironmentRegistryError> {
+        validate_nonnegative_i64(request.declared_at_ms, "declared_at_ms")?;
+        let mut state = self.write_state()?;
+        if let Some(existing) = state.environments.get_mut(&request.environment_id) {
+            let mut next = existing.clone();
+            let outcome = if request.apply(&mut next)? {
+                DeclaredOutcome::Updated
+            } else {
+                DeclaredOutcome::Unchanged
+            };
+            *existing = next.clone();
+            return Ok((next, outcome));
+        }
+        let key = state
+            .registration_key(&request.registration_key_id)?
+            .clone();
+        let record = request.record(&key)?;
+        if state
+            .declared(&request.registration_key_id, &request.name)
+            .is_some()
+        {
+            return Err(EnvironmentRegistryError::AlreadyExists {
+                kind: "registration_name",
+                id: request.name.clone(),
+            });
+        }
+        state.check_capacity(&key)?;
+        Ok((state.insert_new(record)?, DeclaredOutcome::Created))
+    }
+
+    async fn bind_registered_environment(
+        &self,
+        request: BindRegisteredEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        validate_secret_hash(&request.secret_hash)?;
+        let mut state = self.write_state()?;
+        if state
+            .by_daemon_public_key(&request.daemon_public_key)
+            .is_some_and(|bound| bound.environment_id != request.environment_id)
+        {
+            return Err(EnvironmentRegistryError::AlreadyExists {
+                kind: "daemon_identity",
+                id: request.daemon_public_key.clone(),
+            });
+        }
+        let key = state
+            .registration_key(&request.registration_key_id)?
+            .clone();
+        key.check_admits(request.bound_at_ms)?;
+        if !state.secret_is_live(&request.registration_key_id, &request.secret_hash) {
+            return Err(request.secret_retired());
+        }
+        let record = state
+            .environments
+            .get_mut(&request.environment_id)
+            .ok_or_else(|| not_found("environment", &request.environment_id))?;
+        let mut next = record.clone();
+        request.apply(&mut next)?;
+        *record = next.clone();
+        Ok(next)
+    }
+
+    async fn release_registered_environment(
+        &self,
+        request: ReleaseRegisteredEnvironment,
+    ) -> Result<(EnvironmentRecord, bool), EnvironmentRegistryError> {
+        let mut state = self.write_state()?;
+        let record = state
+            .environments
+            .get_mut(&request.environment_id)
+            .ok_or_else(|| not_found("environment", &request.environment_id))?;
+        let mut next = record.clone();
+        let released = request.apply(&mut next)?;
+        *record = next.clone();
+        Ok((next, released))
+    }
+
+    async fn read_declared_environment(
+        &self,
+        registration_key_id: &EnvironmentRegistrationKeyId,
+        name: &str,
+    ) -> Result<Option<EnvironmentRecord>, EnvironmentRegistryError> {
+        Ok(self
+            .read_state()?
+            .declared(registration_key_id, name)
+            .cloned())
     }
 
     async fn read_environment(

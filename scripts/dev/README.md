@@ -350,9 +350,11 @@ network. From the host machine, use `localhost:15432` instead:
 postgres://lightspeed:lightspeed@localhost:15432/lightspeed
 ```
 
-Development uses `server api-key provision` for CLI and Platform keys. Keys
-are stored normally and remain revocable; ordinary restarts reuse their
-protected local files. CLI keys have all method groups and no actor assertion;
+Development uses `server api-key provision` for CLI and Platform keys, each
+declared under a key id derived from its kind and this checkout. Keys are
+stored normally and remain revocable; ordinary restarts declare the same
+secret from their protected local files, which also applies newly introduced
+method groups. CLI keys have all method groups and no actor assertion;
 Platform keys additionally assert actors. The Platform receives its key as
 `LIGHTSPEED_PLATFORM_API_KEY`. See the
 [terminal guide](../../docs/documentation/using-lightspeed/cli.md) for connection

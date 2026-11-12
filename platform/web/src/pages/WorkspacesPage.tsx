@@ -56,7 +56,7 @@ import { WorkspaceTransfers, WorkspaceActionsMenu, WorkspaceDropArea } from "@/c
 /// server-side (blob → manifest → snapshot → head advance) guarded by the
 /// workspace revision the tree was loaded at.
 export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const navigate = useNavigate();
   const permissions = useActionPermissions(universe?.id);
   const params = useParams<{ workspaceId: string; "*": string }>();
@@ -87,7 +87,7 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
   if (!universe || !permissions.can("read")) {
     return (
       <div className="p-6">
-        <UniverseNotFound slug={slug} />
+        <UniverseNotFound handle={handle} />
       </div>
     );
   }
@@ -95,22 +95,22 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
   return (
     <WorkspaceTransfers key={`${universe.id}:${workspaceId}`} universeId={universe.id} workspaceId={workspaceId}
       onNewFile={(parent, revision) => setNewFile({ parent, revision })}
-      onWorkspaceRemoved={() => navigate(`/u/${slug}/workspaces`, { replace: true })}
+      onWorkspaceRemoved={() => navigate(`/u/${handle}/workspaces`, { replace: true })}
       onRenamed={(from, to) => {
         if (filePath && (filePath === from || filePath.startsWith(`${from}/`))) {
           const path = to + filePath.slice(from.length);
           setPendingRename({ from: filePath, to: path });
-          navigate(`/u/${slug}/workspaces/${workspaceId}/files/${path.split("/").map(encodeURIComponent).join("/")}`, { replace: true });
+          navigate(`/u/${handle}/workspaces/${workspaceId}/files/${path.split("/").map(encodeURIComponent).join("/")}`, { replace: true });
         }
       }}
       onRemoved={(path) => {
-        if (filePath === path || filePath?.startsWith(`${path}/`)) navigate(`/u/${slug}/workspaces/${workspaceId}`);
+        if (filePath === path || filePath?.startsWith(`${path}/`)) navigate(`/u/${handle}/workspaces/${workspaceId}`);
       }}>
     <div className="flex min-h-0 flex-1">
       <ListPane detailOpen={Boolean(filePath)}>
         <WorkspacePane
           universeId={universe.id}
-          slug={slug!}
+          handle={handle!}
           workspaceId={workspaceId}
           filePath={filePath}
         />
@@ -121,7 +121,7 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
         {workspaceId && filePath ? (
           <FileDetail
             universeId={universe.id}
-            slug={slug!}
+            handle={handle!}
             workspaceId={workspaceId}
             filePath={filePath}
             fileIdentity={editor.identity}
@@ -148,7 +148,7 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
       <NewFileDialog
         key={`${workspaceId}:${newFile.parent}`}
         universeId={universe.id}
-        slug={slug!}
+        handle={handle!}
         workspaceId={workspaceId}
         revision={newFile.revision}
         parent={newFile.parent}
@@ -162,12 +162,12 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
 
 function WorkspacePane({
   universeId,
-  slug,
+  handle,
   workspaceId,
   filePath,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   workspaceId: string | undefined;
   filePath: string | undefined;
 }) {
@@ -193,11 +193,11 @@ function WorkspacePane({
   // Auto-select the first workspace when landing on bare /workspaces.
   useEffect(() => {
     if (!workspaceId && workspaces.data?.[0]) {
-      navigate(`/u/${slug}/workspaces/${workspaces.data[0].workspaceId}`, {
+      navigate(`/u/${handle}/workspaces/${workspaces.data[0].workspaceId}`, {
         replace: true,
       });
     }
-  }, [workspaceId, workspaces.data, navigate, slug]);
+  }, [workspaceId, workspaces.data, navigate, handle]);
 
   return (
     <>
@@ -220,7 +220,7 @@ function WorkspacePane({
         {workspaces.data && workspaces.data.length > 0 ? (
           <Select
             value={workspaceId ?? ""}
-            onValueChange={(value) => navigate(`/u/${slug}/workspaces/${value}`)}
+            onValueChange={(value) => navigate(`/u/${handle}/workspaces/${value}`)}
           >
             <SelectTrigger className="w-full" aria-label="Workspace">
               <FolderGit2 className="size-4 shrink-0 text-muted-foreground" />
@@ -260,7 +260,7 @@ function WorkspacePane({
         {tree.data && (
           <WorkspaceFileTree
             entries={tree.data.manifest.root.entries}
-            slug={slug}
+            handle={handle}
             workspaceId={workspaceId!}
             activePath={filePath}
           />
@@ -269,7 +269,7 @@ function WorkspacePane({
       {canCreate && (
         <NewWorkspaceDialog
           universeId={universeId}
-          slug={slug}
+          handle={handle}
           open={createOpen}
           onOpenChange={setCreateOpen}
         />
@@ -302,7 +302,7 @@ function findFile(
 
 function FileDetail({
   universeId,
-  slug,
+  handle,
   workspaceId,
   filePath,
   fileIdentity,
@@ -310,7 +310,7 @@ function FileDetail({
   onPreviewChange,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   workspaceId: string;
   filePath: string;
   fileIdentity: number;
@@ -469,7 +469,7 @@ function FileDetail({
   const value = editor.draft ?? text ?? "";
   const dirty =
     editor.draft !== null && editor.draft !== (editor.saved?.text ?? text);
-  const blobLink = file ? blobHref(slug, file.blob_ref, {
+  const blobLink = file ? blobHref(handle, file.blob_ref, {
     name: filePath.split("/").at(-1),
     type: file.media_type ?? mediaTypeFor(filePath),
     workspace: workspaceId,
@@ -504,7 +504,7 @@ function FileDetail({
     >
       <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b px-4 py-2">
         <NavLink
-          to={`/u/${slug}/workspaces/${workspaceId}`}
+          to={`/u/${handle}/workspaces/${workspaceId}`}
           className="md:hidden"
         >
           <ChevronRight className="size-4 rotate-180" />
@@ -596,12 +596,12 @@ function FileDetail({
 
 function NewWorkspaceDialog({
   universeId,
-  slug,
+  handle,
   open,
   onOpenChange,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -624,7 +624,7 @@ function NewWorkspaceDialog({
       setWorkspaceId("");
       setIdTouched(false);
       setError(null);
-      navigate(`/u/${slug}/workspaces/${created.workspaceId}`);
+      navigate(`/u/${handle}/workspaces/${created.workspaceId}`);
     },
     onError: (err) => setError(err.message),
   });
@@ -716,7 +716,7 @@ function NewWorkspaceDialog({
 
 function NewFileDialog({
   universeId,
-  slug,
+  handle,
   workspaceId,
   revision,
   parent,
@@ -724,7 +724,7 @@ function NewFileDialog({
   onOpenChange,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   workspaceId: string;
   revision: number;
   parent: string;
@@ -758,7 +758,7 @@ function NewFileDialog({
       onOpenChange(false);
       setPath("");
       setError(null);
-      navigate(`/u/${slug}/workspaces/${workspaceId}/files/${target.split("/").map(encodeURIComponent).join("/")}`);
+      navigate(`/u/${handle}/workspaces/${workspaceId}/files/${target.split("/").map(encodeURIComponent).join("/")}`);
     },
     onError: (err) => setError(err.message),
   });

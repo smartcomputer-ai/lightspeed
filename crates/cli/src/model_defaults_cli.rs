@@ -119,22 +119,19 @@ async fn put(
     model: Option<api::ModelConfig>,
     revision: Option<u64>,
 ) -> Result<api::ModelDefaults> {
-    let expected_revision = match revision {
-        Some(revision) => revision,
-        None => read(client).await?.revision,
-    };
     let response: api::AgentApiOutcome<api::ModelDefaultsResponse> = client
         .request(
             api::METHOD_MODELS_DEFAULTS_PUT,
             api::ModelDefaultsPutParams {
                 slot,
                 model,
-                expected_revision,
+                expected_revision: revision,
             },
         )
         .await?;
-    // A concurrent change is returned to the caller; never retry a write
-    // against a newer revision without the caller reviewing that state.
+    // With a revision, a concurrent change is returned to the caller; never
+    // retry a write against a newer revision without the caller reviewing
+    // that state. Without one the write is unconditional.
     Ok(response.result.defaults)
 }
 

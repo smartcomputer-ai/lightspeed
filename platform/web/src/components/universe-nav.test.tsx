@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", async (original) => ({
   ...await original<typeof import("@/lib/universes")>(),
-  useActiveUniverse: () => ({ universe: { id: "universe", slug: "test", name: "Test", role: mocks.role }, slug: "test", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "universe", handle: "test", name: "Test", role: mocks.role }, handle: "test", isLoading: false }),
 }));
 
 const ROLE_ACTIONS: Record<string, PermissionAction[]> = {
@@ -28,15 +28,15 @@ const DESTINATIONS: [string, string][] = [
 ];
 
 it.each(DESTINATIONS)("resolves bare settings for a %s to %s", (role, path) => {
-  expect(settingsIndexPath({ slug: "test" }, (action) => ROLE_ACTIONS[role]!.includes(action))).toBe(path);
+  expect(settingsIndexPath({ handle: "test" }, (action) => ROLE_ACTIONS[role]!.includes(action))).toBe(path);
 });
 
 it("skips a switched-off settings page, and lands on sessions when bots are off", () => {
   const operator = (action: PermissionAction) => ROLE_ACTIONS.operator!.includes(action);
-  expect(settingsIndexPath({ slug: "test", features: { bots: true, channels: false } }, operator))
+  expect(settingsIndexPath({ handle: "test", features: { bots: true, channels: false } }, operator))
     .toBe("/u/test/settings/templates");
   const viewer = (action: PermissionAction) => ROLE_ACTIONS.viewer!.includes(action);
-  expect(settingsIndexPath({ slug: "test", features: { bots: false, channels: false } }, viewer))
+  expect(settingsIndexPath({ handle: "test", features: { bots: false, channels: false } }, viewer))
     .toBe("/u/test/sessions");
 });
 
@@ -69,7 +69,7 @@ it.each(DESTINATIONS)("redirects a %s from /settings to %s", async (role, path) 
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}>
       <MemoryRouter initialEntries={["/u/test/settings"]}>
         <Routes>
-          <Route path="u/:slug/settings" element={<SettingsIndexRedirect />} />
+          <Route path="u/:handle/settings" element={<SettingsIndexRedirect />} />
           <Route path="*" element={<Location />} />
         </Routes>
       </MemoryRouter>

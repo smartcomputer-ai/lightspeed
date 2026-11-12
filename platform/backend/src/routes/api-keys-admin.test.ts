@@ -9,14 +9,19 @@ afterEach(() => vi.unstubAllGlobals());
 const universe = { id: "11111111-1111-4111-8111-111111111111", lightspeedUniverseId: "22222222-2222-4222-8222-222222222222" };
 
 /// Admin key routes over a core that records each call and a database that
-/// knows one universe.
+/// knows one universe. The core holds the key `connector` in every scope and
+/// refuses a create that chooses its id.
 function setup(platformRole: string | undefined) {
   const calls: { method: string; params: Record<string, unknown>; headers: Headers }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
     const rpc = JSON.parse(String(init.body));
     calls.push({ method: rpc.method, params: rpc.params, headers: new Headers(init.headers) });
-    const apiKey = { keyPrefix: "lsk_abcdefgh" };
-    const result = ["deployment/api-keys/create", "deployment/api-keys/rotate"].includes(rpc.method) ? { apiKey, secret: "lsk_secret" }
+    const apiKey = { keyId: "connector", keyPrefix: "lsk_abcdefgh" };
+    if (rpc.method === "deployment/api-keys/create" && rpc.params.keyId === apiKey.keyId) {
+      return Response.json({ id: rpc.id, error: { code: -32603, message: "api key id is already in use: connector", data: { kind: "conflict" } } });
+    }
+    const result = rpc.method === "deployment/api-keys/create" ? { apiKey: { ...apiKey, keyId: rpc.params.keyId ?? apiKey.keyId }, secret: "lsk_secret" }
+      : rpc.method === "deployment/api-keys/rotate" ? { apiKey, secret: "lsk_secret" }
       : rpc.method === "deployment/api-keys/list" ? { apiKeys: [apiKey] } : { apiKey };
     return Response.json({ id: rpc.id, result: { result, notifications: [] } });
   }));
@@ -42,8 +47,9 @@ it("is for platform admins only", async () => {
   const { request, calls } = setup(undefined);
   expect((await request("GET", "/api-keys")).status).toBe(403);
   expect((await request("POST", "/api-keys", { displayName: "x", scope: { kind: "deployment" } })).status).toBe(403);
-  expect((await request("DELETE", "/api-keys/lsk_abcdefgh")).status).toBe(403);
-  expect((await request("POST", "/api-keys/lsk_abcdefgh/rotate")).status).toBe(403);
+  expect((await request("POST", "/api-keys", { displayName: "x", scope: { kind: "deployment" }, keyId: "gate" })).status).toBe(403);
+  expect((await request("DELETE", "/api-keys/connector")).status).toBe(403);
+  expect((await request("POST", "/api-keys/connector/rotate")).status).toBe(403);
   expect(calls).toEqual([]);
 });
 
@@ -69,16 +75,55 @@ it("mints a deployment key that may assert actors, and lists and revokes keys", 
   const { request, calls } = setup("admin");
   expect((await request("POST", "/api-keys", { displayName: "Gate", scope: { kind: "deployment" }, assertActor: true })).status).toBe(201);
   expect(calls[0]!.params).toEqual({ scope: { kind: "deployment" }, displayName: "Gate", assertActor: true });
-  expect(await (await request("GET", "/api-keys")).json()).toEqual([{ keyPrefix: "lsk_abcdefgh" }]);
-  expect((await request("DELETE", "/api-keys/lsk_abcdefgh")).status).toBe(200);
+  expect(await (await request("GET", "/api-keys")).json()).toEqual([{ keyId: "connector", keyPrefix: "lsk_abcdefgh" }]);
+  expect((await request("DELETE", "/api-keys/connector")).status).toBe(200);
   expect(calls.map((call) => call.method)).toEqual(["deployment/api-keys/create", "deployment/api-keys/list", "deployment/api-keys/revoke"]);
+  expect(calls[2]!.params).toEqual({ scope: { kind: "deployment" }, keyId: "connector" });
+});
+
+it("mints a key under the id its creator chose, in the chosen scope", async () => {
+  const { request, calls, audit } = setup("admin");
+  const response = await request("POST", "/api-keys", { displayName: "Gate", scope: { kind: "deployment" }, keyId: " gate " });
+  expect(response.status).toBe(201);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.params).toEqual({ scope: { kind: "deployment" }, displayName: "Gate", assertActor: false, keyId: "gate" });
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "key.create", targetId: "gate" }));
+});
+
+it("refuses a chosen id that a key of the scope already holds", async () => {
+  const { request, calls, audit } = setup("admin");
+  const response = await request("POST", "/api-keys", {
+    displayName: "Connector", scope: { kind: "universe", universeId: universe.id }, keyId: "connector",
+  });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({
+    error: 'key ID "connector" is already in use; leave it blank to generate a new ID or choose another',
+  });
+  // The holder is looked up among the keys of the same scope only.
+  expect(calls.map((call) => call.method)).toEqual(["deployment/api-keys/create", "deployment/api-keys/list"]);
+  expect(calls[1]!.params).toEqual({ scope: { kind: "universe", universeId: universe.lightspeedUniverseId } });
+  expect(audit).not.toHaveBeenCalled();
+  expect((await request("POST", "/api-keys", { displayName: "x", scope: { kind: "deployment" }, keyId: "k".repeat(129) })).status).toBe(400);
+  expect(calls).toHaveLength(2);
 });
 
 it("rotates an admin key and audits only its identifiers", async () => {
   const { request, calls, audit } = setup("admin");
-  const response = await request("POST", "/api-keys/lsk_previous/rotate");
+  const response = await request("POST", "/api-keys/connector/rotate");
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ apiKey: { keyPrefix: "lsk_abcdefgh" }, secret: "lsk_secret" });
-  expect(calls).toEqual([expect.objectContaining({ method: "deployment/api-keys/rotate", params: { keyPrefix: "lsk_previous" } })]);
-  expect(audit).toHaveBeenCalledWith({ actorId: "admin", action: "key.rotate", targetId: "lsk_previous", details: { newKeyPrefix: "lsk_abcdefgh" }, outcome: "success" });
+  expect(calls).toEqual([expect.objectContaining({ method: "deployment/api-keys/rotate", params: { scope: { kind: "deployment" }, keyId: "connector" } })]);
+  expect(audit).toHaveBeenCalledWith({ actorId: "admin", action: "key.rotate", targetId: "connector", details: { newKeyPrefix: "lsk_abcdefgh" }, outcome: "success" });
+});
+
+it("addresses a universe's key by its id within that universe", async () => {
+  const { request, calls } = setup("admin");
+  const scoped = `?universeId=${universe.lightspeedUniverseId}`;
+  expect((await request("POST", `/api-keys/ci/rotate${scoped}`)).status).toBe(200);
+  expect((await request("DELETE", `/api-keys/ci${scoped}`)).status).toBe(200);
+  const scope = { kind: "universe", universeId: universe.lightspeedUniverseId };
+  expect(calls.map((call) => call.params)).toEqual([{ scope, keyId: "ci" }, { scope, keyId: "ci" }]);
+  // A malformed scope is refused before the runtime is asked anything.
+  expect((await request("DELETE", "/api-keys/ci?universeId=nope")).status).toBe(400);
+  expect(calls).toHaveLength(2);
 });

@@ -20,11 +20,11 @@ vi.mock("@/lib/permissions", async (original) => ({
 }));
 vi.mock("@/lib/universes", async (original) => {
   const universe = () => ({
-    id: "universe", slug: "test", name: "Test", status: "active", lightspeedUniverseId: "engine", role: "admin", features: mocks.features,
+    id: "universe", handle: "test", name: "Test", status: "active", lightspeedUniverseId: "engine", role: "admin", features: mocks.features,
   });
   return {
     ...await original<typeof import("@/lib/universes")>(),
-    useActiveUniverse: () => ({ universe: universe(), slug: "test", isLoading: false }),
+    useActiveUniverse: () => ({ universe: universe(), handle: "test", isLoading: false }),
     useFeature: (feature: string) => mocks.features[feature],
   };
 });

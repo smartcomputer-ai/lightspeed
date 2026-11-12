@@ -78,7 +78,7 @@ settings.
 The universe sidebar groups the work (Bots, Sessions), the **Setup** agents are
 made from (Profiles, Workspaces, Models, Environments, MCP servers), **Access**
 (Credentials, API keys, Members) and the universe's **Settings** (General,
-Channels, Templates) at flat `/u/:slug/...` routes; bare `/u/:slug/settings`
+Channels, Templates) at flat `/u/:handle/...` routes; bare `/u/:handle/settings`
 opens the first settings page the caller may see. Models holds model provider keys,
 compatible endpoints and coding-agent subscriptions. Credentials lists reusable
 tokens, environment secrets, GitHub App installations and custom OAuth grants;
@@ -196,7 +196,8 @@ actors, and credential leasing and channel delivery are opt-in. Platform admins 
 mint every key under **Platform admin → API keys**, choosing what a key reaches (the
 deployment or one universe), the method groups it may call, and whether it
 speaks for people. A secret is shown once. Rotate it to replace it immediately
-while preserving authority; revoke and mint a replacement to change permissions.
+while preserving authority. Keys are addressed by their key id within their scope;
+the page shows the id when its creator chose one, and the secret's prefix.
 The Configurator template asks which key its MCP server acts with:
 the current one, a new key with chosen groups (starting from the configuration
 groups), or an existing universe key whose secret the Admin pastes; it revokes

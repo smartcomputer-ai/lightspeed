@@ -11,22 +11,6 @@ pub(crate) struct McpArgs {
     command: McpServerCommand,
 }
 
-#[derive(Args, Debug, Clone)]
-pub(crate) struct SessionMcpArgs {
-    #[command(subcommand)]
-    command: SessionMcpCommand,
-}
-
-#[derive(Subcommand, Debug, Clone)]
-enum SessionMcpCommand {
-    /// Attach a registered server, optionally narrowing its tools.
-    Attach(McpLinkArgs),
-    /// Detach a server from the session configuration.
-    Detach(McpUnlinkArgs),
-    /// List declared server attachments, including their tool restrictions.
-    List(McpListArgs),
-}
-
 #[derive(Subcommand, Debug, Clone)]
 enum McpServerCommand {
     /// Discover the live tools advertised by a registered MCP server.
@@ -112,7 +96,6 @@ struct McpServerPutArgs {
     #[arg(long = "expected-revision")]
     expected_revision: Option<u64>,
     /// Stable universe-scoped server id.
-    #[arg(long = "id")]
     server_id: String,
     /// Default provider-facing MCP server label.
     #[arg(long = "label")]
@@ -179,6 +162,7 @@ struct McpServerPutArgs {
     #[arg(long = "header-credential", value_name = "NAME=GRANT_ID")]
     header_credentials: Vec<String>,
     /// Remote MCP endpoint URL.
+    #[arg(long = "url")]
     server_url: String,
 }
 
@@ -291,53 +275,6 @@ struct McpServerDeleteArgs {
     server_id: String,
 }
 
-#[derive(Args, Debug, Clone)]
-struct McpLinkArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
-    /// Emit the link response as JSON.
-    #[arg(long)]
-    json: bool,
-    /// Session id to change.
-    #[arg(short = 's', long)]
-    session: String,
-    /// Registered MCP server id to link.
-    server_id: String,
-    /// Comma-separated subset of the server's allowed tools to expose;
-    /// omitted exposes the record's full allowlist.
-    #[arg(long, value_delimiter = ',')]
-    tools: Vec<String>,
-}
-
-#[derive(Args, Debug, Clone)]
-struct McpUnlinkArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
-    /// Emit the unlink response as JSON.
-    #[arg(long)]
-    json: bool,
-    /// Session id to change.
-    #[arg(short = 's', long)]
-    session: String,
-    /// Declared MCP server id to remove from the session config.
-    server_id: String,
-}
-
-#[derive(Args, Debug, Clone)]
-struct McpListArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
-    /// Emit links as JSON.
-    #[arg(long)]
-    json: bool,
-    /// Session id to inspect.
-    #[arg(short = 's', long)]
-    session: String,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum RemoteMcpApprovalArg {
     Always,
@@ -439,14 +376,6 @@ impl From<McpServerStatusArg> for api::McpServerStatus {
             McpServerStatusArg::Unverified => Self::Unverified,
             McpServerStatusArg::Disabled => Self::Disabled,
         }
-    }
-}
-
-pub(crate) async fn session(args: SessionMcpArgs) -> Result<()> {
-    match args.command {
-        SessionMcpCommand::Attach(args) => link(args).await,
-        SessionMcpCommand::Detach(args) => unlink(args).await,
-        SessionMcpCommand::List(args) => list(args).await,
     }
 }
 
@@ -754,136 +683,6 @@ async fn server_delete(args: McpServerDeleteArgs) -> Result<()> {
     Ok(())
 }
 
-/// MCP links are declarative session config: link/unlink are sugar that
-/// read-modify-put the config document's `features.mcp` block.
-async fn link(args: McpLinkArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
-    let session = api
-        .read_session(api::SessionReadParams {
-            session_id: args.session.clone(),
-            run_limit: None,
-        })
-        .await
-        .map_err(crate::api_client::api_error)?
-        .result
-        .session;
-    let mut config = session
-        .config
-        .ok_or_else(|| anyhow::anyhow!("session has no configuration"))?;
-    let mut features = config.features.take().unwrap_or_default();
-    let mut mcp = features.mcp.take().unwrap_or(api::McpFeature {
-        version: api::CURRENT_FEATURE_VERSION,
-        servers: Vec::new(),
-    });
-    mcp.servers.retain(|link| link.server_id != args.server_id);
-    mcp.servers.push(api::McpServerAttachment {
-        server_id: args.server_id.clone(),
-        tools: (!args.tools.is_empty()).then_some(args.tools.clone()),
-    });
-    features.mcp = Some(mcp);
-    config.features = Some(features);
-    let response = api
-        .put_session_config(api::SessionConfigPutParams {
-            session_id: args.session.clone(),
-            expected_config_revision: Some(session.config_revision),
-            config,
-        })
-        .await
-        .map_err(crate::api_client::api_error)?
-        .result;
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
-        return Ok(());
-    }
-    println!("Attached MCP server {}.", args.server_id);
-    print_session_links(&api, &args.session).await
-}
-
-async fn unlink(args: McpUnlinkArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
-    let session = api
-        .read_session(api::SessionReadParams {
-            session_id: args.session.clone(),
-            run_limit: None,
-        })
-        .await
-        .map_err(crate::api_client::api_error)?
-        .result
-        .session;
-    let mut config = session
-        .config
-        .ok_or_else(|| anyhow::anyhow!("session has no configuration"))?;
-    let mut features = config.features.take().unwrap_or_default();
-    if let Some(mut mcp) = features.mcp.take() {
-        if !mcp
-            .servers
-            .iter()
-            .any(|link| link.server_id == args.server_id)
-        {
-            anyhow::bail!("MCP server {} is not attached", args.server_id);
-        }
-        mcp.servers.retain(|link| link.server_id != args.server_id);
-        if !mcp.servers.is_empty() {
-            features.mcp = Some(mcp);
-        }
-    } else {
-        anyhow::bail!("No MCP servers attached");
-    }
-    config.features = Some(features);
-    let response = api
-        .put_session_config(api::SessionConfigPutParams {
-            session_id: args.session.clone(),
-            expected_config_revision: Some(session.config_revision),
-            config,
-        })
-        .await
-        .map_err(crate::api_client::api_error)?
-        .result;
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
-        return Ok(());
-    }
-    println!("Detached MCP server {}.", args.server_id);
-    print_session_links(&api, &args.session).await
-}
-
-/// Attachments are declared configuration, regardless of current tool materialization.
-async fn session_mcp_attachments(
-    api: &HttpAgentApi,
-    session_id: &str,
-) -> Result<Vec<api::McpServerAttachment>> {
-    let session = api
-        .read_session(api::SessionReadParams {
-            session_id: session_id.into(),
-            run_limit: Some(1),
-        })
-        .await?
-        .result
-        .session;
-    Ok(session
-        .config
-        .and_then(|c| c.features)
-        .and_then(|f| f.mcp)
-        .map(|mcp| mcp.servers)
-        .unwrap_or_default())
-}
-async fn print_session_links(api: &HttpAgentApi, session_id: &str) -> Result<()> {
-    let attachments = session_mcp_attachments(api, session_id).await?;
-    crate::output::table(
-        &attachments,
-        &[("serverId", "SERVER"), ("tools", "TOOL RESTRICTION")],
-        "No MCP servers attached.",
-    )
-}
-async fn list(args: McpListArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
-    if args.json {
-        crate::output::show(true, &session_mcp_attachments(&api, &args.session).await?)
-    } else {
-        print_session_links(&api, &args.session).await
-    }
-}
-
 fn nonempty_vec(values: Vec<String>) -> Option<Vec<String>> {
     if values.is_empty() {
         None
@@ -949,10 +748,10 @@ mod tests {
     fn a_new_server_runs_on_the_runtime_unless_told_otherwise() {
         let required = [
             "put",
-            "--id",
             "docs",
             "--label",
             "docs",
+            "--url",
             "https://docs.example.com/mcp",
         ];
         let put = PutCommand::try_parse_from(required).expect("parse").put;
@@ -967,7 +766,6 @@ mod tests {
     fn header_flags_build_literal_and_credential_headers() {
         let put = PutCommand::try_parse_from([
             "put",
-            "--id",
             "gateway",
             "--label",
             "gateway",
@@ -975,6 +773,7 @@ mod tests {
             "X-Upstream-Url=https://tracker.example.com/?a=b",
             "--header-credential",
             "X-Upstream-Token=authgrant_upstream",
+            "--url",
             "https://gateway.example.com/mcp",
         ])
         .expect("parse")

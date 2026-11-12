@@ -44,6 +44,6 @@ export function useProviderReadiness(universeId: string, model?: ModelConfig | n
   };
 }
 
-export function addModelProviderHref(slug: string, kind: string): string {
-  return `/u/${slug}/models?add=${encodeURIComponent(kind)}`;
+export function addModelProviderHref(handle: string, kind: string): string {
+  return `/u/${handle}/models?add=${encodeURIComponent(kind)}`;
 }

@@ -9,7 +9,7 @@ const universe = { id: "platform-universe", organizationId: "org", lightspeedUni
 /// Universe routes over a database that answers each read, in order, with
 /// the next of `reads`: first the universe, then the caller's membership.
 function setup(role: string | null, reads: unknown[][] = [], platformRole?: string) {
-  const queue: unknown[][] = [[{ universe, slug: "test" }], role ? [{ role }] : [], ...reads];
+  const queue: unknown[][] = [[{ universe, handle: "test" }], role ? [{ role }] : [], ...reads];
   const next = async () => {
     const rows = queue.shift();
     if (!rows) throw new Error("unexpected database read");

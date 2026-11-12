@@ -9,7 +9,7 @@ import { ProfilesPage } from "./ProfilesPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "operator" }, slug: "universe", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "operator" }, handle: "universe", isLoading: false }) }));
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
 vi.mock("@/components/session/session-config-editor", () => ({ SessionConfigEditor: () => null }));
 // Every select becomes a native control named by its trigger; jsdom cannot lay out the popup.
@@ -92,7 +92,7 @@ async function type(selector: string, value: string) {
 it("keeps the display name open and summarizes the id and starting point", async () => {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={["/u/universe/profiles/own"]}>
-      <Routes><Route path="/u/:slug/profiles/:profileId" element={<ProfilesPage admin />} /></Routes>
+      <Routes><Route path="/u/:handle/profiles/:profileId" element={<ProfilesPage admin />} /></Routes>
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();
@@ -131,7 +131,7 @@ it("keeps the display name open and summarizes the id and starting point", async
 it("opens the id on its own when neither a name nor an id is given", async () => {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={["/u/universe/profiles/own"]}>
-      <Routes><Route path="/u/:slug/profiles/:profileId" element={<ProfilesPage admin />} /></Routes>
+      <Routes><Route path="/u/:handle/profiles/:profileId" element={<ProfilesPage admin />} /></Routes>
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();

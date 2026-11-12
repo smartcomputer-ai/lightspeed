@@ -20,7 +20,7 @@ vi.mock("@/lib/permissions", () => ({
 vi.mock("@/lib/universes", () => ({
   useActiveUniverse: () => ({
     universe: { id: "u" },
-    slug: "test",
+    handle: "test",
     isLoading: false,
   }),
 }));
@@ -99,7 +99,7 @@ async function render() {
         >
           <Routes>
             <Route
-              path="/u/:slug/workspaces/:workspaceId/files/*"
+              path="/u/:handle/workspaces/:workspaceId/files/*"
               element={<WorkspacesPage admin={false} />}
             />
           </Routes>

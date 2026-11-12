@@ -9,7 +9,7 @@ import { McpServersPage, mcpConnectionSummary } from "./McpServersPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, slug: "test", name: "Test" }, slug: "test", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, handle: "test", name: "Test" }, handle: "test", isLoading: false }) }));
 // Every select becomes a native control named by its trigger; jsdom cannot lay out the popup.
 vi.mock("@/components/ui/select", async () => {
   const React = await import("react");

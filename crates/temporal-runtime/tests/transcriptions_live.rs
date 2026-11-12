@@ -444,7 +444,7 @@ async fn transcribe(
         .put_model_defaults(api::ModelDefaultsPutParams {
             slot: api::ModelDefaultSlot::SpeechToText,
             model: Some(model.clone()),
-            expected_revision: before.revision,
+            expected_revision: Some(before.revision),
         })
         .await?
         .result
@@ -468,7 +468,7 @@ async fn transcribe(
     api.put_model_defaults(api::ModelDefaultsPutParams {
         slot: api::ModelDefaultSlot::SpeechToText,
         model: before.speech_to_text,
-        expected_revision: updated.revision,
+        expected_revision: Some(updated.revision),
     })
     .await?;
     let terminal = loop {

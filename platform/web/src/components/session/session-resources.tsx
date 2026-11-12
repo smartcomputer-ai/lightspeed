@@ -68,9 +68,9 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
 /// its environment, attached workspaces, MCP servers, sub-agent profiles, and
 /// web, code-mode, and timer tools. Each chip opens the details and where to
 /// change them.
-export function SessionResourceChips({ resources, slug, onConfigure }: {
+export function SessionResourceChips({ resources, handle, onConfigure }: {
   resources: SessionResources;
-  slug: string;
+  handle: string;
   /// Opens the session's settings; absent when the viewer cannot change them.
   onConfigure?: () => void;
 }) {
@@ -102,7 +102,7 @@ export function SessionResourceChips({ resources, slug, onConfigure }: {
           {(environments.instructions || environments.skills) && (
             <Note>{sources(environments.instructions, environments.skills)} load from the active environment.</Note>
           )}
-          {footer({ to: `/u/${slug}/environments`, label: "Environments" })}
+          {footer({ to: `/u/${handle}/environments`, label: "Environments" })}
         </Chip>
       )}
       {files && (
@@ -119,7 +119,7 @@ export function SessionResourceChips({ resources, slug, onConfigure }: {
             : files.workspaces.map((workspace) => (
               <Row key={workspace.path} tone={workspace.missing ? "problem" : undefined}
                 primary={workspace.workspaceId && !workspace.missing
-                  ? <Link to={`/u/${slug}/workspaces/${encodeURIComponent(workspace.workspaceId)}`} className="hover:underline">{workspace.label}</Link>
+                  ? <Link to={`/u/${handle}/workspaces/${encodeURIComponent(workspace.workspaceId)}`} className="hover:underline">{workspace.label}</Link>
                   : workspace.label}
                 secondary={[<span key="path" className="font-mono">{workspace.path}</span>, `${workspace.access === "edit" ? "read and edit" : "read only"}`, workspace.pinned && "pinned snapshot", workspace.missing && "not found"]}
               />
@@ -127,7 +127,7 @@ export function SessionResourceChips({ resources, slug, onConfigure }: {
           {(files.instructions || files.skills) && (
             <Note>{sources(files.instructions, files.skills)} load from these workspaces.</Note>
           )}
-          {footer({ to: `/u/${slug}/workspaces`, label: "Workspaces" })}
+          {footer({ to: `/u/${handle}/workspaces`, label: "Workspaces" })}
         </Chip>
       )}
       {mcp && (
@@ -151,7 +151,7 @@ export function SessionResourceChips({ resources, slug, onConfigure }: {
                 ]}
                 badges={[server.approval && "Asks approval"]} />
             ))}
-          {footer({ to: `/u/${slug}/mcp-servers`, label: "MCP servers" })}
+          {footer({ to: `/u/${handle}/mcp-servers`, label: "MCP servers" })}
         </Chip>
       )}
       {agents && (
@@ -161,7 +161,7 @@ export function SessionResourceChips({ resources, slug, onConfigure }: {
             ? <Empty>No profiles are listed.</Empty>
             : agents.profiles.map((profile) => (
               <Row key={profile}
-                primary={<Link to={`/u/${slug}/profiles/${encodeURIComponent(profile)}`} className="font-mono hover:underline">{profile}</Link>} />
+                primary={<Link to={`/u/${handle}/profiles/${encodeURIComponent(profile)}`} className="font-mono hover:underline">{profile}</Link>} />
             ))}
           {(agents.maxDepth !== undefined || agents.maxConcurrent !== undefined) && (
             <Note>{[agents.maxDepth !== undefined && `Up to ${agents.maxDepth} levels deep`, agents.maxConcurrent !== undefined && `${agents.maxConcurrent} open at once`].filter(Boolean).join(" · ")}.</Note>

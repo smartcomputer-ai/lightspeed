@@ -102,6 +102,8 @@ pub const METHOD_ENVIRONMENTS_UPDATE: &str = "environments/update";
 pub const METHOD_ENVIRONMENTS_LIST: &str = "environments/list";
 pub const METHOD_ENVIRONMENTS_CLOSE: &str = "environments/close";
 pub const METHOD_ENVIRONMENTS_EXTERNAL_CREATE: &str = "environments/external/create";
+pub const METHOD_ENVIRONMENTS_REGISTERED_PUT: &str = "environments/registered/put";
+pub const METHOD_ENVIRONMENTS_REGISTERED_RELEASE: &str = "environments/registered/release";
 pub const METHOD_ENVIRONMENTS_INGRESS_PUT: &str = "environments/ingress/put";
 pub const METHOD_ENVIRONMENTS_POWER_PUT: &str = "environments/power/put";
 pub const METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST: &str = "environments/provider-bindings/list";
@@ -113,6 +115,7 @@ pub const METHOD_ENVIRONMENTS_JOBS_READ: &str = "environments/jobs/read";
 pub const METHOD_ENVIRONMENTS_JOBS_CANCEL: &str = "environments/jobs/cancel";
 pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_CREATE: &str =
     "environments/registration-keys/create";
+pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_PUT: &str = "environments/registration-keys/put";
 pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_READ: &str = "environments/registration-keys/read";
 pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_LIST: &str = "environments/registration-keys/list";
 pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_UPDATE: &str =
@@ -128,7 +131,7 @@ pub const METHOD_AUTH_GRANTS_IMPORT: &str = "auth/grants/import";
 pub const METHOD_AUTH_GRANTS_LEASE: &str = "auth/grants/lease";
 pub const METHOD_AUTH_GRANTS_READ: &str = "auth/grants/read";
 pub const METHOD_AUTH_GRANTS_LIST: &str = "auth/grants/list";
-pub const METHOD_AUTH_GRANTS_REPLACE: &str = "auth/grants/replace";
+pub const METHOD_AUTH_GRANTS_PUT: &str = "auth/grants/put";
 pub const METHOD_AUTH_GRANTS_REVOKE: &str = "auth/grants/revoke";
 pub const METHOD_AUTH_CLIENTS_CREATE: &str = "auth/clients/create";
 pub const METHOD_AUTH_CLIENTS_READ: &str = "auth/clients/read";
@@ -137,7 +140,7 @@ pub const METHOD_AUTH_CLIENTS_DELETE: &str = "auth/clients/delete";
 pub const METHOD_AUTH_FLOWS_START: &str = "auth/flows/start";
 pub const METHOD_AUTH_FLOWS_READ: &str = "auth/flows/read";
 pub const METHOD_AUTH_PROVIDERS_CREATE: &str = "auth/providers/create";
-pub const METHOD_AUTH_PROVIDERS_REPLACE: &str = "auth/providers/replace";
+pub const METHOD_AUTH_PROVIDERS_PUT: &str = "auth/providers/put";
 pub const METHOD_AUTH_PROVIDERS_READ: &str = "auth/providers/read";
 pub const METHOD_AUTH_PROVIDERS_LIST: &str = "auth/providers/list";
 pub const METHOD_AUTH_PROVIDERS_DELETE: &str = "auth/providers/delete";
@@ -189,3 +192,12 @@ pub const NOTIFY_ERROR: &str = "error";
 pub const METHOD_TRANSCRIPTIONS_START: &str = "transcriptions/start";
 pub const METHOD_TRANSCRIPTIONS_READ: &str = "transcriptions/read";
 pub const METHOD_TRANSCRIPTIONS_CANCEL: &str = "transcriptions/cancel";
+
+/// Prefix of every API key secret.
+pub const API_KEY_SECRET_PREFIX: &str = "lsk_";
+/// Prefix of every environment registration key secret.
+pub const REGISTRATION_KEY_SECRET_PREFIX: &str = "lsrk_";
+/// Random bytes in a key secret. After its prefix a secret is these bytes
+/// encoded as base64url without padding, whether the runtime generated it or
+/// a caller supplied it.
+pub const KEY_SECRET_RANDOM_BYTES: usize = 32;

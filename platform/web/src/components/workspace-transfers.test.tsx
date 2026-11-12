@@ -36,7 +36,7 @@ vi.mock("@/lib/permissions", () => ({
 vi.mock("@/lib/universes", () => ({
   useActiveUniverse: () => ({
     universe: { id: "u" },
-    slug: "test",
+    handle: "test",
     isLoading: false,
   }),
 }));
@@ -171,7 +171,7 @@ async function render(withTree = false) {
               <WorkspaceDropArea>
                 <WorkspaceFileTree
                   entries={entries}
-                  slug="test"
+                  handle="test"
                   workspaceId="ws"
                   activePath={undefined}
                 />
@@ -436,7 +436,7 @@ it("renames a workspace in the picker while keeping the open file and unsaved ed
           <WorkspaceLocation />
           <Routes>
             <Route
-              path="/u/:slug/workspaces/:workspaceId/files/*"
+              path="/u/:handle/workspaces/:workspaceId/files/*"
               element={<WorkspacesPage admin={false} />}
             />
           </Routes>
@@ -553,11 +553,11 @@ it.each([true, false])(
             <WorkspaceLocation />
             <Routes>
               <Route
-                path="/u/:slug/workspaces/:workspaceId/files/*"
+                path="/u/:handle/workspaces/:workspaceId/files/*"
                 element={<WorkspacesPage admin={false} />}
               />
               <Route
-                path="/u/:slug/workspaces/:workspaceId?"
+                path="/u/:handle/workspaces/:workspaceId?"
                 element={<WorkspacesPage admin={false} />}
               />
             </Routes>
@@ -988,7 +988,7 @@ it("places the open file’s actions in the tree, not its detail header", async 
         >
           <Routes>
             <Route
-              path="/u/:slug/workspaces/:workspaceId/files/*"
+              path="/u/:handle/workspaces/:workspaceId/files/*"
               element={<WorkspacesPage admin={false} />}
             />
           </Routes>
@@ -1087,7 +1087,7 @@ it.each(["", "docs"])(
           >
             <Routes>
               <Route
-                path="/u/:slug/workspaces/:workspaceId/files/*"
+                path="/u/:handle/workspaces/:workspaceId/files/*"
                 element={<WorkspacesPage admin={false} />}
               />
             </Routes>
@@ -1189,7 +1189,7 @@ it.each(["file", "folder", "move-file", "move-folder"])(
           >
             <Routes>
               <Route
-                path="/u/:slug/workspaces/:workspaceId/files/*"
+                path="/u/:handle/workspaces/:workspaceId/files/*"
                 element={<WorkspacesPage admin={false} />}
               />
             </Routes>
@@ -1277,7 +1277,7 @@ it.each(["metaKey", "ctrlKey"] as const)(
           >
             <Routes>
               <Route
-                path="/u/:slug/workspaces/:workspaceId/files/*"
+                path="/u/:handle/workspaces/:workspaceId/files/*"
                 element={<WorkspacesPage admin={false} />}
               />
             </Routes>
@@ -1354,7 +1354,7 @@ it.each([
           >
             <Routes>
               <Route
-                path="/u/:slug/workspaces/:workspaceId/files/*"
+                path="/u/:handle/workspaces/:workspaceId/files/*"
                 element={<WorkspacesPage admin={false} />}
               />
             </Routes>
@@ -1421,7 +1421,7 @@ it.each([
           >
             <Routes>
               <Route
-                path="/u/:slug/workspaces/:workspaceId/files/*"
+                path="/u/:handle/workspaces/:workspaceId/files/*"
                 element={<WorkspacesPage admin={false} />}
               />
             </Routes>

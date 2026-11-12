@@ -78,15 +78,41 @@ describe("environment secrets", () => {
 });
 
 describe("credential replacement", () => {
+  const grant = (overrides: Record<string, unknown>) => ({
+    grantId: "px-dev-ssh-key", providerId: "static", providerKind: "staticToken", exposure: "brokered",
+    createdBy: { kind: "local" }, hasAccessToken: true, hasRefreshToken: false, status: "active",
+    leaseCount: 0, createdAtMs: 1, updatedAtMs: 1, ...overrides,
+  }) as Parameters<typeof credentialReplaceParams>[0];
+
   it("forwards the new value exactly and only a given expiry", () => {
-    expect(credentialReplaceParams("px-dev-ssh-key", {
+    expect(credentialReplaceParams(grant({}), {
       value: "-----BEGIN KEY-----\nline\n-----END KEY-----\n",
     })).toEqual({
       grantId: "px-dev-ssh-key",
+      providerId: "static",
+      exposure: "brokered",
       token: "-----BEGIN KEY-----\nline\n-----END KEY-----\n",
     });
-    expect(credentialReplaceParams("authgrant_1", { value: "t", expiresAtMs: 5 }))
-      .toEqual({ grantId: "authgrant_1", token: "t", expiresAtMs: 5 });
+    expect(credentialReplaceParams(grant({ grantId: "authgrant_1", expiresAtMs: 1 }), { value: "t", expiresAtMs: 5 }))
+      .toMatchObject({ grantId: "authgrant_1", token: "t", expiresAtMs: 5 });
+  });
+
+  it("declares the credential again with the settings it has, dropping the old expiry", () => {
+    const current = grant({
+      exposure: "retrievable", displayName: "Deploy key", subjectHint: "ci", scopes: ["repo"],
+      audience: "https://git.example.com", metadata: { product: "ssh" }, expiresAtMs: 99,
+    });
+    expect(credentialReplaceParams(current, { value: "new" })).toEqual({
+      grantId: "px-dev-ssh-key",
+      providerId: "static",
+      exposure: "retrievable",
+      token: "new",
+      displayName: "Deploy key",
+      subjectHint: "ci",
+      scopes: ["repo"],
+      audience: "https://git.example.com",
+      metadata: { product: "ssh" },
+    });
   });
 });
 

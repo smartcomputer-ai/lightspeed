@@ -184,7 +184,8 @@ requirements, and retry behavior.
 
 Only the configured subset of ordinary universe methods is exposed. Deployment
 and service methods are excluded. The default filter also omits the `integration`
-param of `session/start`, environment-job methods, environment-registration-key methods, and
+param of `session/start`, environment-job methods, environment-registration-key methods,
+the methods that declare and release registered environments, and
 the redundant runtime handshake. Configurator is therefore not a deployment
 administration interface or a replacement for the workflow integration client.
 

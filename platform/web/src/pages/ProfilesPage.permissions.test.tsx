@@ -9,7 +9,7 @@ import { ProfilesPage } from "./ProfilesPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, slug: "universe", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, handle: "universe", isLoading: false }) }));
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
 let root: Root;
 let container: HTMLDivElement;
@@ -43,7 +43,7 @@ async function settle() {
 }
 async function show(id = "other") {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[`/u/universe/profiles/${id}`]}><Routes><Route path="/u/:slug/profiles/:profileId" element={<ProfilesPage admin={true} />} /></Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[`/u/universe/profiles/${id}`]}><Routes><Route path="/u/:handle/profiles/:profileId" element={<ProfilesPage admin={true} />} /></Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();
 }

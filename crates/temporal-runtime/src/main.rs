@@ -70,8 +70,10 @@ enum UniverseCommand {
     Create {
         #[arg(long)]
         universe_id: Option<uuid::Uuid>,
+        /// The new universe's handle; derived from the id when omitted. An
+        /// existing universe keeps the handle it has.
         #[arg(long)]
-        slug: Option<String>,
+        handle: Option<String>,
     },
     #[command(about = "List universes")]
     List,
@@ -79,20 +81,29 @@ enum UniverseCommand {
 
 #[derive(Debug, Subcommand)]
 enum ApiKeyCommand {
-    /// Provision a deployment administrator key; reuse validates authority by default.
-    /// Reads LIGHTSPEED_BOOTSTRAP_API_KEY when set, otherwise generates a key.
-    /// Prints the credential as JSON; store it securely.
+    /// Declare a deployment key from the host, where no key is needed to
+    /// authenticate: the way the first key of a deployment comes to exist.
+    /// Reads the secret from LIGHTSPEED_BOOTSTRAP_API_KEY, so that afterwards
+    /// the key of this id answers to it with these groups; repeating the
+    /// command changes nothing, and a different secret replaces the previous
+    /// one at once. Without the variable a new key is generated, which fails
+    /// if the id is taken. Prints the credential as JSON; store it securely.
     Provision {
+        /// The key's id among deployment keys.
+        #[arg(long, default_value = "bootstrap")]
+        key_id: String,
         #[arg(long, default_value = "Deployment bootstrap")]
         name: String,
+        /// A method group the key may call (repeatable); omitted grants
+        /// every group a deployment key may hold.
+        #[arg(long = "group")]
+        groups: Vec<String>,
         #[arg(long)]
         assert_actor: bool,
-        /// Require the supplied key to already exist in the store.
+        /// Check that the supplied key exists exactly as described, without
+        /// creating or changing anything.
         #[arg(long)]
         require_existing: bool,
-        /// Refresh an active key's method groups; scope and actor authority must match.
-        #[arg(long)]
-        refresh_groups: bool,
     },
     #[command(about = "Mint an API key; the secret prints exactly once")]
     Create {
@@ -106,6 +117,9 @@ enum ApiKeyCommand {
         /// A deployment key, which names a universe per request by header.
         #[arg(long)]
         deployment: bool,
+        /// The key's id within its scope; allocated when omitted.
+        #[arg(long)]
+        key_id: Option<String>,
         #[arg(long)]
         name: Option<String>,
         /// A method group the key may call (repeatable); omitted grants
@@ -126,12 +140,23 @@ enum ApiKeyCommand {
         #[arg(long, default_value = "Local development launcher")]
         name: String,
     },
-    #[command(about = "List API keys (prefixes only; secrets are never stored)")]
+    #[command(about = "List API keys (secrets are never stored)")]
     List,
-    /// Replace an active key secret immediately; prints the new secret once.
-    Rotate { key_prefix: String },
-    #[command(about = "Revoke an API key by its display prefix")]
-    Revoke { key_prefix: String },
+    /// Replace an active key's secret with a generated one immediately;
+    /// prints the new secret once.
+    Rotate {
+        key_id: String,
+        /// The universe the key belongs to; omit for a deployment key.
+        #[arg(long)]
+        universe_id: Option<uuid::Uuid>,
+    },
+    #[command(about = "Revoke an API key")]
+    Revoke {
+        key_id: String,
+        /// The universe the key belongs to; omit for a deployment key.
+        #[arg(long)]
+        universe_id: Option<uuid::Uuid>,
+    },
 }
 
 #[derive(Clone, Debug, Args)]
@@ -323,27 +348,33 @@ async fn run_cas_sweep(dry_run: bool) -> anyhow::Result<()> {
 async fn run_universe_command(command: UniverseCommand) -> anyhow::Result<()> {
     let stores = DeploymentStores::from_env().await?;
     match command {
-        UniverseCommand::Create { universe_id, slug } => {
+        UniverseCommand::Create {
+            universe_id,
+            handle,
+        } => {
             let universe_id = universe_id.unwrap_or_else(uuid::Uuid::new_v4);
+            if let Some(handle) = &handle
+                && !store_pg::is_valid_universe_handle(handle)
+            {
+                anyhow::bail!(
+                    "invalid handle {handle}: use 1-63 lowercase letters, digits and hyphens, starting and ending with a letter or digit, and not a UUID"
+                );
+            }
             stores
-                .store_for_with_slug(universe_id, slug)
+                .store_for_with_handle(universe_id, handle)
                 .ensure_universe()
                 .await?;
             println!("universe_id: {universe_id}");
             if let Some(universe) =
                 store_pg::read_universe_stats(stores.pool(), universe_id).await?
-                && let Some(slug) = universe.slug
             {
-                println!("slug: {slug}");
+                println!("handle: {}", universe.handle);
             }
             Ok(())
         }
         UniverseCommand::List => {
-            for (universe_id, slug) in store_pg::list_universes(stores.pool()).await? {
-                match slug {
-                    Some(slug) => println!("{universe_id}  {slug}"),
-                    None => println!("{universe_id}"),
-                }
+            for (universe_id, handle) in store_pg::list_universes(stores.pool()).await? {
+                println!("{universe_id}  {handle}");
             }
             Ok(())
         }
@@ -362,14 +393,18 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
     };
     match command {
         ApiKeyCommand::Provision {
+            key_id,
             name,
+            groups,
             assert_actor,
             require_existing,
-            refresh_groups,
         } => {
             let spec = auth::ApiKeySpec {
+                key_id: Some(key_id),
                 scope: api::AccessScope::Deployment,
-                groups: None,
+                groups: (!groups.is_empty())
+                    .then(|| parse_groups(&groups))
+                    .transpose()?,
                 assert_actor,
                 created_by: host("api-key provision"),
                 display_name: Some(name),
@@ -378,21 +413,44 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
             if require_existing && supplied.is_none() {
                 anyhow::bail!("--require-existing needs LIGHTSPEED_BOOTSTRAP_API_KEY");
             }
-            let key = match supplied {
-                Some(secret) => auth::import_api_key(spec, now_ms, secret.trim())?,
-                None => auth::mint_api_key(spec, now_ms)?,
+            let (key, record, created, secret_replaced) = match supplied {
+                Some(secret) => {
+                    let key = auth::import_api_key(spec, now_ms, secret.trim())?;
+                    if require_existing {
+                        let record = api_keys.verify_api_key(&key).await?;
+                        (key, record, false, false)
+                    } else {
+                        let put = api_keys.put_api_key(&key).await?;
+                        (key, put.record, put.created, put.secret_replaced)
+                    }
+                }
+                // A generated secret makes a new key and never replaces the
+                // secret of one that exists.
+                None => {
+                    let key = mint(&api_keys, spec, now_ms).await.map_err(|error| {
+                        anyhow::anyhow!(
+                            "{error}; set LIGHTSPEED_BOOTSTRAP_API_KEY to declare an existing key, or rotate it"
+                        )
+                    })?;
+                    let record = key.record.clone();
+                    (key, record, true, false)
+                }
             };
-            let record = api_keys
-                .provision_api_key(&key, require_existing, refresh_groups)
-                .await?;
             println!(
                 "{}",
-                serde_json::json!({ "keyPrefix": record.key_prefix, "secret": key.secret.expose() })
+                serde_json::json!({
+                    "keyId": record.key_id,
+                    "keyPrefix": record.key_prefix,
+                    "secret": key.secret.expose(),
+                    "created": created,
+                    "secretReplaced": secret_replaced,
+                })
             );
             Ok(())
         }
         ApiKeyCommand::Create {
             universe_id,
+            key_id,
             name,
             groups,
             assert_actor,
@@ -415,6 +473,7 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
             let minted = mint(
                 &api_keys,
                 auth::ApiKeySpec {
+                    key_id,
                     scope,
                     groups,
                     assert_actor,
@@ -424,6 +483,7 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                 now_ms,
             )
             .await?;
+            println!("key_id: {}", minted.record.key_id);
             println!("key_prefix: {}", minted.record.key_prefix);
             println!("scope: {}", serde_json::to_string(&scope)?);
             // The one and only time the secret leaves the process.
@@ -442,13 +502,14 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                     && previous.revoked_at_ms.is_none()
                 {
                     api_keys
-                        .revoke_api_key(&previous.key_prefix, now_ms)
+                        .revoke_api_key(previous.scope, &previous.key_id, now_ms)
                         .await?;
                 }
             }
             let minted = mint(
                 &api_keys,
                 auth::ApiKeySpec {
+                    key_id: None,
                     scope: api::AccessScope::Deployment,
                     groups: None,
                     assert_actor: true,
@@ -462,6 +523,7 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                 "{}",
                 serde_json::json!({
                     "universeId": universe_id,
+                    "keyId": minted.record.key_id,
                     "keyPrefix": minted.record.key_prefix,
                     "secret": minted.secret.expose(),
                 })
@@ -482,7 +544,8 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                     .collect::<Vec<_>>()
                     .join(",");
                 println!(
-                    "{}  {}  {}  {}{}  {}",
+                    "{}  {}  {}  {}  {}{}  {}",
+                    record.key_id,
                     record.key_prefix,
                     serde_json::to_string(&record.scope)?,
                     status,
@@ -493,30 +556,48 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        ApiKeyCommand::Rotate { key_prefix } => {
+        ApiKeyCommand::Rotate {
+            key_id,
+            universe_id,
+        } => {
             let key = api_keys
-                .rotate_api_key(&key_prefix)
+                .rotate_api_key(key_scope(universe_id), &key_id)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("no active api key with prefix {key_prefix}"))?;
+                .ok_or_else(|| anyhow::anyhow!("no active api key {key_id} in that scope"))?;
             println!(
                 "{}",
-                serde_json::json!({ "keyPrefix": key.record.key_prefix, "secret": key.secret.expose() })
+                serde_json::json!({
+                    "keyId": key.record.key_id,
+                    "keyPrefix": key.record.key_prefix,
+                    "secret": key.secret.expose(),
+                })
             );
             Ok(())
         }
-        ApiKeyCommand::Revoke { key_prefix } => {
+        ApiKeyCommand::Revoke {
+            key_id,
+            universe_id,
+        } => {
             if api_keys
-                .revoke_api_key(&key_prefix, now_ms)
+                .revoke_api_key(key_scope(universe_id), &key_id, now_ms)
                 .await?
                 .is_some()
             {
-                println!("revoked: {key_prefix}");
+                println!("revoked: {key_id}");
                 Ok(())
             } else {
-                anyhow::bail!("no api key with prefix {key_prefix}")
+                anyhow::bail!("no api key {key_id} in that scope")
             }
         }
     }
+}
+
+/// The scope a host command addresses a key in: a universe, or the
+/// deployment when none is named.
+fn key_scope(universe_id: Option<uuid::Uuid>) -> api::AccessScope {
+    universe_id.map_or(api::AccessScope::Deployment, |universe_id| {
+        api::AccessScope::Universe { universe_id }
+    })
 }
 
 fn parse_groups(names: &[String]) -> anyhow::Result<std::collections::BTreeSet<api::MethodGroup>> {

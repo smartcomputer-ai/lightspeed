@@ -121,28 +121,28 @@ export function templateHighlights(template: BotTemplate): string[] {
 
 export function BotCreateDialog({
   universeId,
-  slug,
+  handle,
   open,
   onOpenChange,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const permissions = useActionPermissions(universeId);
   if (!permissions.can("createBot")) return null;
-  return <Wizard universeId={universeId} slug={slug} open={open} onOpenChange={onOpenChange} />;
+  return <Wizard universeId={universeId} handle={handle} open={open} onOpenChange={onOpenChange} />;
 }
 
 function Wizard({
   universeId,
-  slug,
+  handle,
   open,
   onOpenChange,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -358,7 +358,7 @@ function Wizard({
         queryClient.invalidateQueries({ queryKey: ["bots", universeId] }),
         queryClient.invalidateQueries({ queryKey: ["profiles", universeId] }),
       ]);
-      navigate(`/u/${slug}/bots/${bot.botId}`, { state: { introduce: true } });
+      navigate(`/u/${handle}/bots/${bot.botId}`, { state: { introduce: true } });
     },
   });
 
@@ -625,7 +625,7 @@ function Wizard({
                     conversations are kept until someone deletes them.
                   </p>
                 </header>
-                <ProviderReadinessBanner universeId={universeId} slug={slug}
+                <ProviderReadinessBanner universeId={universeId} handle={handle}
                   model={modelFromConfig(setupMode === "own" ? config : sharedProfile.data?.config) ?? undefined}
                   enabled={setupMode === "own" || Boolean(sharedProfile.data)} />
                 <div className="grid gap-2 sm:grid-cols-2">

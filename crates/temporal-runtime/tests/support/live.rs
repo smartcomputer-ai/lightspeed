@@ -664,7 +664,7 @@ pub async fn seed_agent_default(
                 .into(),
                 model: model.model.clone(),
             }),
-            expected_revision: current.revision,
+            expected_revision: Some(current.revision),
         })
         .await?;
     Ok(())

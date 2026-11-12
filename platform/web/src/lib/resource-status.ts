@@ -64,10 +64,17 @@ export function environmentStatus(
   const status = ENVIRONMENT_STATUS[environment.status] ?? { label: sentenceCase(environment.status), tone: "neutral" };
   const description = lifecycleMessage(environment)
     ?? (environment.state !== "open" ? undefined
-      : source.type === "registered" && !source.connected ? `Last seen ${relativeResourceTime(source.lastSeenAtMs)}`
+      : source.type === "registered" && !source.daemonId ? waitingForDaemon(source.name)
+        : source.type === "registered" && !source.connected ? `Last seen ${relativeResourceTime(source.lastSeenAtMs)}`
         : source.type === "provisioned" ? source.observed?.message ?? undefined
           : undefined);
   return description ? { ...status, description } : { ...status };
+}
+
+/// A declared environment has no daemon until a machine registers under its
+/// name, and again after its daemon was released.
+function waitingForDaemon(name: string | null | undefined): string {
+  return name ? `Waiting for its daemon to register as ${name}` : "Waiting for its daemon to register";
 }
 
 function sentenceCase(value: string) {

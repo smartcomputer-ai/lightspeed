@@ -684,7 +684,7 @@ async fn channels_live_voice_preparation_preserves_provenance_and_redelivery_ide
                     api_kind: "openai:audio-transcriptions".into(),
                     model: "channel-speech".into(),
                 }),
-                expected_revision: current.revision,
+                expected_revision: Some(current.revision),
             })
             .await?;
         let mut message = inbound("voice-chat", "voice-1", "");

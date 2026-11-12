@@ -7,7 +7,7 @@ import { SessionResourceChips } from "./session-resources";
 it("shows a Code mode resource chip only when code mode is enabled", () => {
   const render = (features: unknown) => renderToString(createElement(SessionResourceChips, {
     resources: sessionResources({ features }, null),
-    slug: "demo",
+    handle: "demo",
   }));
 
   const enabled = render({ codeMode: {} });

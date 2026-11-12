@@ -67,7 +67,7 @@ Session logs can include `universe_id`, `session_id`, `workflow_id`,
 `temporal_run_id`, `lightspeed_run_id`, and `session_head_seq`. A session's
 Temporal workflow ID is `<universe-uuid>/<session-id>`. Use the runtime UUID,
 which is visible in **Settings → General → Identifiers**, rather than the
-Platform URL slug.
+handle in the Platform URL.
 
 The Temporal execution ID and Lightspeed run ID identify different things.
 Temporal continue-as-new starts another execution of the same logical session

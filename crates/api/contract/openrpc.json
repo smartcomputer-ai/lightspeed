@@ -353,6 +353,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfAuthGrantPutResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AuthGrantPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfAuthGrantReadResponse": {
         "properties": {
           "notifications": {
@@ -363,23 +380,6 @@
           },
           "result": {
             "$ref": "#/components/schemas/AuthGrantReadResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfAuthGrantReplaceResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/AuthGrantReplaceResponse"
           }
         },
         "required": [
@@ -455,6 +455,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfAuthProviderPutResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AuthProviderPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfAuthProviderReadResponse": {
         "properties": {
           "notifications": {
@@ -465,23 +482,6 @@
           },
           "result": {
             "$ref": "#/components/schemas/AuthProviderReadResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfAuthProviderReplaceResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/AuthProviderReplaceResponse"
           }
         },
         "required": [
@@ -1084,6 +1084,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfDeploymentApiKeyPutResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentApiKeyPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfDeploymentApiKeyRevokeResponse": {
         "properties": {
           "notifications": {
@@ -1577,6 +1594,40 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfEnvironmentRegisteredPutResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/EnvironmentRegisteredPutResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/EnvironmentRegisteredReleaseResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse": {
         "properties": {
           "notifications": {
@@ -1604,6 +1655,23 @@
           },
           "result": {
             "$ref": "#/components/schemas/EnvironmentRegistrationKeyListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/EnvironmentRegistrationKeyPutResponse"
           }
         },
         "required": [
@@ -3393,7 +3461,7 @@
         "type": "string"
       },
       "AuthGrantImportParams": {
-        "description": "Import a token credential as an auth grant. Together with\n[`AuthGrantReplaceParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
+        "description": "Import a new token credential as an auth grant, under the given id or an\nallocated one; an id already in use is a conflict. Together with\n[`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
         "properties": {
           "audience": {
             "type": [
@@ -3540,6 +3608,103 @@
         },
         "type": "object"
       },
+      "AuthGrantPutParams": {
+        "description": "Declare a token credential (`staticToken`): its id, its settings and the\ntoken it holds. A credential that is missing is created. One that exists\nhas its settings replaced by these (an absent field is unset) and, when it\nholds a different token, that token replaced, so MCP servers, headers,\nbot polls and environment variables referencing the id use the new value\nfrom their next request or process. Declaring it again changes nothing.\n\n`token` is encrypted on receipt and never returned; `Debug` output redacts\nit and request logging must never echo these params.",
+        "properties": {
+          "audience": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dryRun": {
+            "description": "Report what the declaration would do without doing it.",
+            "type": "boolean"
+          },
+          "expiresAtMs": {
+            "description": "When the token expires. Absent means it does not expire.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "exposure": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthGrantExposure"
+              }
+            ],
+            "default": "brokered",
+            "description": "Whether the token may be leased in plaintext. It cannot be changed\nafterwards."
+          },
+          "grantId": {
+            "type": "string"
+          },
+          "metadata": {
+            "description": "Non-secret, caller-defined metadata. Must be a JSON object; never put\nsecret material here."
+          },
+          "providerId": {
+            "description": "Label recorded on the credential; `static` when absent. It cannot be\nchanged afterwards.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "subjectHint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "grantId",
+          "token"
+        ],
+        "type": "object"
+      },
+      "AuthGrantPutResponse": {
+        "properties": {
+          "created": {
+            "description": "False when the credential already existed.",
+            "type": "boolean"
+          },
+          "grant": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthGrantView"
+              }
+            ],
+            "description": "The credential as declared: as it is now, or as it would be for a\ndry run."
+          },
+          "tokenReplaced": {
+            "description": "True when an existing credential held a different token.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "grant",
+          "created",
+          "tokenReplaced"
+        ],
+        "type": "object"
+      },
       "AuthGrantReadParams": {
         "properties": {
           "grantId": {
@@ -3552,41 +3717,6 @@
         "type": "object"
       },
       "AuthGrantReadResponse": {
-        "properties": {
-          "grant": {
-            "$ref": "#/components/schemas/AuthGrantView"
-          }
-        },
-        "required": [
-          "grant"
-        ],
-        "type": "object"
-      },
-      "AuthGrantReplaceParams": {
-        "description": "Replace the token of an active token credential (`staticToken`). The\ncredential keeps its id, display name, audience, exposure and everything\nthat references it, so MCP servers, headers, bot polls and environment\nvariables use the new value from their next request or process. `token` is\nencrypted on receipt and never returned; `Debug` output redacts it.",
-        "properties": {
-          "expiresAtMs": {
-            "description": "When the new token expires. Absent means it does not expire; the old\ntoken's expiry is not carried over.",
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "grantId": {
-            "type": "string"
-          },
-          "token": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "grantId",
-          "token"
-        ],
-        "type": "object"
-      },
-      "AuthGrantReplaceResponse": {
         "properties": {
           "grant": {
             "$ref": "#/components/schemas/AuthGrantView"
@@ -4017,6 +4147,65 @@
         },
         "type": "object"
       },
+      "AuthProviderPutParams": {
+        "description": "Declare a provider: its id, its configuration and its credential. A\nprovider that is missing is created. One that exists is rewritten in place\nas if it were created again under the same id, where it differs: the new\nsettings are validated before anything changes, so a rejected declaration\nleaves the provider as it was, and sessions and environment variables\nreferencing the id keep working throughout. Declaring it again changes\nnothing. `credential` is encrypted on receipt and never returned; `Debug`\noutput redacts it.",
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/AuthProviderConfigInput"
+          },
+          "credential": {
+            "description": "The provider's credential, for the kinds that take one. Absent leaves\nthe provider without a credential.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dryRun": {
+            "description": "Report what the declaration would do without doing it.",
+            "type": "boolean"
+          },
+          "providerId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId",
+          "config"
+        ],
+        "type": "object"
+      },
+      "AuthProviderPutResponse": {
+        "properties": {
+          "created": {
+            "description": "False when the provider already existed.",
+            "type": "boolean"
+          },
+          "credentialReplaced": {
+            "description": "True when an existing provider held a different credential, or gained\nor lost one.",
+            "type": "boolean"
+          },
+          "provider": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthProviderView"
+              }
+            ],
+            "description": "The provider as declared: as it is now, or as it would be for a dry\nrun."
+          }
+        },
+        "required": [
+          "provider",
+          "created",
+          "credentialReplaced"
+        ],
+        "type": "object"
+      },
       "AuthProviderReadParams": {
         "properties": {
           "providerId": {
@@ -4029,45 +4218,6 @@
         "type": "object"
       },
       "AuthProviderReadResponse": {
-        "properties": {
-          "provider": {
-            "$ref": "#/components/schemas/AuthProviderView"
-          }
-        },
-        "required": [
-          "provider"
-        ],
-        "type": "object"
-      },
-      "AuthProviderReplaceParams": {
-        "description": "Replace an existing provider's configuration and credential in place, as\nif it were created again under the same id. The new settings are validated\nbefore anything changes, so a rejected replacement leaves the provider as\nit was; sessions and environment variables referencing the id keep working\nthroughout. `credential` is encrypted on receipt and never returned;\n`Debug` output redacts it.",
-        "properties": {
-          "config": {
-            "$ref": "#/components/schemas/AuthProviderConfigInput"
-          },
-          "credential": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "displayName": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "providerId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "providerId",
-          "config"
-        ],
-        "type": "object"
-      },
-      "AuthProviderReplaceResponse": {
         "properties": {
           "provider": {
             "$ref": "#/components/schemas/AuthProviderView"
@@ -8639,7 +8789,7 @@
         "properties": {
           "assertActor": {
             "default": false,
-            "description": "Whether the key may name the actor a request acts for with the\n`x-lightspeed-actor` header. Give it only to a gate that authenticates\npeople, such as the Platform.",
+            "description": "Whether the key may name the actor a request acts for with the\n`x-lightspeed-actor` header. Give it only to a gate that authenticates\npeople, such as the Platform. It cannot be changed afterwards.",
             "type": "boolean"
           },
           "displayName": {
@@ -8647,12 +8797,19 @@
             "type": "string"
           },
           "groups": {
-            "description": "The method groups the key may call; absent grants every group its\nscope allows. To change what a key may do, revoke\nit and mint another.",
+            "description": "The method groups the key may call; absent grants every group its\nscope allows.",
             "items": {
               "$ref": "#/components/schemas/MethodGroup"
             },
             "type": [
               "array",
+              "null"
+            ]
+          },
+          "keyId": {
+            "description": "The key's id: 1-128 ASCII letters, digits, underscores, hyphens, dots\nor colons, starting with a letter or digit, and not yet used by a key\nof this scope. Omit it to have one allocated.",
+            "type": [
+              "string",
               "null"
             ]
           },
@@ -8716,15 +8873,93 @@
         },
         "type": "object"
       },
-      "DeploymentApiKeyRevokeParams": {
+      "DeploymentApiKeyPutParams": {
         "additionalProperties": false,
+        "description": "Declare a key whose secret the caller supplies. `Debug` redacts the\nsecret; the serialized request remains sensitive and must not be logged.",
         "properties": {
-          "keyPrefix": {
+          "assertActor": {
+            "default": false,
+            "description": "Whether the key may name the actor a request acts for. It cannot be\nchanged afterwards.",
+            "type": "boolean"
+          },
+          "displayName": {
+            "description": "Human-readable purpose shown in key-management interfaces.",
+            "type": "string"
+          },
+          "groups": {
+            "description": "The method groups the key may call; absent grants every group its\nscope allows. An existing key's groups are replaced by these.",
+            "items": {
+              "$ref": "#/components/schemas/MethodGroup"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "keyId": {
+            "description": "The key's id within its scope: 1-128 ASCII letters, digits,\nunderscores, hyphens, dots or colons, starting with a letter or digit.",
+            "type": "string"
+          },
+          "scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AccessScope"
+              }
+            ],
+            "description": "A universe, or the deployment. It cannot be changed afterwards."
+          },
+          "secret": {
+            "description": "The secret the key answers to: `lsk_` followed by 32 random bytes\nencoded as base64url without padding. Generate it with a\ncryptographic random source.",
             "type": "string"
           }
         },
         "required": [
-          "keyPrefix"
+          "scope",
+          "keyId",
+          "displayName",
+          "secret"
+        ],
+        "type": "object"
+      },
+      "DeploymentApiKeyPutResponse": {
+        "properties": {
+          "apiKey": {
+            "$ref": "#/components/schemas/DeploymentApiKeyView"
+          },
+          "created": {
+            "description": "False when the key already existed.",
+            "type": "boolean"
+          },
+          "secretReplaced": {
+            "description": "True when an existing key held a different secret, which no longer\nworks.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "apiKey",
+          "created",
+          "secretReplaced"
+        ],
+        "type": "object"
+      },
+      "DeploymentApiKeyRevokeParams": {
+        "additionalProperties": false,
+        "properties": {
+          "keyId": {
+            "type": "string"
+          },
+          "scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AccessScope"
+              }
+            ],
+            "description": "The scope the key belongs to."
+          }
+        },
+        "required": [
+          "scope",
+          "keyId"
         ],
         "type": "object"
       },
@@ -8742,17 +8977,26 @@
       "DeploymentApiKeyRotateParams": {
         "additionalProperties": false,
         "properties": {
-          "keyPrefix": {
+          "keyId": {
             "type": "string"
+          },
+          "scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AccessScope"
+              }
+            ],
+            "description": "The scope the key belongs to."
           }
         },
         "required": [
-          "keyPrefix"
+          "scope",
+          "keyId"
         ],
         "type": "object"
       },
       "DeploymentApiKeyView": {
-        "description": "Non-secret key metadata: what the key reaches and may call, and who\nminted it.",
+        "description": "Non-secret key metadata: what the key is called, reaches and may call,\nand who minted it.",
         "properties": {
           "assertActor": {
             "type": "boolean"
@@ -8777,7 +9021,12 @@
             },
             "type": "array"
           },
+          "keyId": {
+            "description": "The key's name among the keys of its scope. Together with the scope\nit addresses the key, and it is kept when the secret is replaced.",
+            "type": "string"
+          },
           "keyPrefix": {
+            "description": "The first characters of the key's current secret: enough to tell\nwhich secret the key holds without revealing it. It changes when the\nsecret does.",
             "type": "string"
           },
           "lastUsedAtMs": {
@@ -8801,6 +9050,7 @@
           }
         },
         "required": [
+          "keyId",
           "keyPrefix",
           "scope",
           "groups",
@@ -8917,12 +9167,13 @@
               "null"
             ]
           },
-          "universeId": {
+          "universe": {
+            "description": "The universe's UUID or handle.",
             "type": "string"
           }
         },
         "required": [
-          "universeId"
+          "universe"
         ],
         "type": "object"
       },
@@ -9115,12 +9366,13 @@
           "providerId": {
             "type": "string"
           },
-          "universeId": {
+          "universe": {
+            "description": "The universe's UUID or handle.",
             "type": "string"
           }
         },
         "required": [
-          "universeId",
+          "universe",
           "providerId"
         ],
         "type": "object"
@@ -9146,12 +9398,13 @@
           "providerId": {
             "type": "string"
           },
-          "universeId": {
+          "universe": {
+            "description": "The universe's UUID or handle.",
             "type": "string"
           }
         },
         "required": [
-          "universeId",
+          "universe",
           "providerId",
           "enabled"
         ],
@@ -9174,12 +9427,13 @@
           "sessionId": {
             "type": "string"
           },
-          "universeId": {
+          "universe": {
+            "description": "The universe's UUID or handle.",
             "type": "string"
           }
         },
         "required": [
-          "universeId",
+          "universe",
           "sessionId"
         ],
         "type": "object"
@@ -9201,8 +9455,8 @@
       },
       "DeploymentUniverseCreateParams": {
         "properties": {
-          "slug": {
-            "description": "Optional core universe slug, set only when the universe is first created.",
+          "handle": {
+            "description": "The new universe's handle: 1-63 lowercase letters, digits and\nhyphens, starting and ending with a letter or digit, and not in the\nform of a UUID. Omit it to have one derived from the UUID. Ignored\nwhen the universe already exists.",
             "type": [
               "string",
               "null"
@@ -9235,12 +9489,13 @@
       },
       "DeploymentUniverseDeleteParams": {
         "properties": {
-          "universeId": {
+          "universe": {
+            "description": "The universe's UUID or handle.",
             "type": "string"
           }
         },
         "required": [
-          "universeId"
+          "universe"
         ],
         "type": "object"
       },
@@ -9270,6 +9525,24 @@
         ],
         "type": "object"
       },
+      "DeploymentUniverseHandlePutParams": {
+        "description": "Rename a universe. The UUID and resources remain unchanged; the previous\nhandle is released, so requests and URLs using it stop reaching this\nuniverse.",
+        "properties": {
+          "handle": {
+            "description": "The new handle: 1-63 lowercase letters, digits and hyphens, starting\nand ending with a letter or digit, and not in the form of a UUID.",
+            "type": "string"
+          },
+          "universe": {
+            "description": "The universe's UUID or current handle.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "universe",
+          "handle"
+        ],
+        "type": "object"
+      },
       "DeploymentUniverseListParams": {
         "type": "object"
       },
@@ -9287,12 +9560,13 @@
       },
       "DeploymentUniverseReadParams": {
         "properties": {
-          "universeId": {
+          "universe": {
+            "description": "The universe's UUID or handle.",
             "type": "string"
           }
         },
         "required": [
-          "universeId"
+          "universe"
         ],
         "type": "object"
       },
@@ -9304,28 +9578,6 @@
         },
         "required": [
           "universe"
-        ],
-        "type": "object"
-      },
-      "DeploymentUniverseSlugPutParams": {
-        "description": "Set or change an existing universe's deployment-unique slug. The UUID and\nresources remain unchanged; URLs using the previous slug may stop working.",
-        "properties": {
-          "onlyIfUnset": {
-            "default": false,
-            "description": "For adoption: assign only if unnamed, or succeed if already equal.\nReject a different existing slug instead of renaming it.",
-            "type": "boolean"
-          },
-          "slug": {
-            "description": "1-128 ASCII characters: an alphanumeric first character, followed by\nalphanumerics, underscores, hyphens, dots or colons.",
-            "type": "string"
-          },
-          "universeId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "universeId",
-          "slug"
         ],
         "type": "object"
       },
@@ -9341,6 +9593,10 @@
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
+          },
+          "handle": {
+            "description": "The universe's deployment-unique name. Requests may address the\nuniverse by it wherever they may by UUID.",
+            "type": "string"
           },
           "lastActivityAtMs": {
             "description": "Most recent session activity (`max(sessions.updated_at_ms)`); absent\nwhen the universe has no sessions.",
@@ -9361,12 +9617,6 @@
             "minimum": 0,
             "type": "integer"
           },
-          "slug": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "universeId": {
             "type": "string"
           },
@@ -9378,6 +9628,7 @@
         },
         "required": [
           "universeId",
+          "handle",
           "createdAtMs",
           "sessions",
           "workspaces",
@@ -9489,6 +9740,13 @@
       "EnvironmentCreateParams": {
         "properties": {
           "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environmentId": {
+            "description": "The id profiles and bindings use for the environment. Omit it to have\none allocated. An id already in use is a conflict.",
             "type": [
               "string",
               "null"
@@ -9770,6 +10028,13 @@
           "endpoint": {
             "description": "`ws://`, `wss://` or `unix://` URL of an envd instance reachable from\nLightspeed.",
             "type": "string"
+          },
+          "environmentId": {
+            "description": "The id profiles and bindings use for the environment. Omit it to have\none allocated. An id already in use is a conflict.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "metadata": {
             "additionalProperties": {
@@ -10289,8 +10554,91 @@
         ],
         "type": "object"
       },
+      "EnvironmentRegisteredPutParams": {
+        "description": "Declare a fixed machine as an environment before its daemon registers.\nThe first daemon the key admits under `name` becomes this environment and\nkeeps its id; from then on only that daemon's identity reconnects to it.",
+        "properties": {
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environmentId": {
+            "description": "The id profiles and bindings use for the environment.",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "name": {
+            "description": "The name the daemon registers under: 1 to 128 bytes without control\ncharacters, unique among the open environments of the key. It cannot\nbe changed afterwards.",
+            "type": "string"
+          },
+          "registrationKeyId": {
+            "description": "The persistent registration key whose daemons may fill it. It cannot\nbe changed afterwards.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environmentId",
+          "registrationKeyId",
+          "name"
+        ],
+        "type": "object"
+      },
+      "EnvironmentRegisteredPutResponse": {
+        "properties": {
+          "created": {
+            "description": "False when the environment was already declared.",
+            "type": "boolean"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentView"
+          }
+        },
+        "required": [
+          "environment",
+          "created"
+        ],
+        "type": "object"
+      },
+      "EnvironmentRegisteredReleaseParams": {
+        "description": "Forget the daemon bound to a declared environment so that another\nidentity may bind to it.",
+        "properties": {
+          "environmentId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "environmentId"
+        ],
+        "type": "object"
+      },
+      "EnvironmentRegisteredReleaseResponse": {
+        "properties": {
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentView"
+          },
+          "released": {
+            "description": "False when no daemon was bound.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "environment",
+          "released"
+        ],
+        "type": "object"
+      },
       "EnvironmentRegistrationKeyCreateParams": {
         "properties": {
+          "declaredOnly": {
+            "description": "Persistent keys only: admit only daemons whose registration name\nmatches an environment declared under this key.",
+            "type": "boolean"
+          },
           "displayName": {
             "description": "Group name for the environments this key admits.",
             "type": "string"
@@ -10336,6 +10684,13 @@
               "integer",
               "null"
             ]
+          },
+          "registrationKeyId": {
+            "description": "The key's id within the universe: 1-128 ASCII letters, digits,\nunderscores, hyphens, dots or colons, starting with a letter or digit.\nOmit it to have one allocated.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -10377,6 +10732,100 @@
             "type": "array"
           }
         },
+        "type": "object"
+      },
+      "EnvironmentRegistrationKeyPutParams": {
+        "description": "Declare a registration key whose secret the caller supplies: its id, its\ncomplete policy and the secret it answers to. An absent policy field is\nunset.",
+        "properties": {
+          "declaredOnly": {
+            "description": "Persistent keys only: admit only daemons whose registration name\nmatches an environment declared under this key.",
+            "type": "boolean"
+          },
+          "displayName": {
+            "description": "Group name for the environments this key admits.",
+            "type": "string"
+          },
+          "ephemeralDisconnectGraceMs": {
+            "description": "Disconnect grace for ephemeral environments; omit for the default.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "expiresAtMs": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "identityMode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnvironmentIdentityModeView"
+              }
+            ],
+            "description": "Immutable once the key exists."
+          },
+          "maxActiveEnvironments": {
+            "description": "Non-closed environments the key may have at once; omit for unlimited.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offlineCloseAfterMs": {
+            "description": "Persistent keys only: close environments whose daemon has been away\nlonger than this; omit to keep them open.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "registrationKeyId": {
+            "type": "string"
+          },
+          "secret": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnvironmentRegistrationSecretView"
+              }
+            ],
+            "description": "The secret daemons register with: `lsrk_` followed by 32 random bytes\nencoded as base64url without padding. Generate it with a\ncryptographic random source."
+          }
+        },
+        "required": [
+          "registrationKeyId",
+          "displayName",
+          "identityMode",
+          "secret"
+        ],
+        "type": "object"
+      },
+      "EnvironmentRegistrationKeyPutResponse": {
+        "properties": {
+          "created": {
+            "description": "False when the key already existed.",
+            "type": "boolean"
+          },
+          "registrationKey": {
+            "$ref": "#/components/schemas/EnvironmentRegistrationKeyView"
+          },
+          "secretReplaced": {
+            "description": "True when an existing key answered to a different secret, which is\nnow retired.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "registrationKey",
+          "created",
+          "secretReplaced"
+        ],
         "type": "object"
       },
       "EnvironmentRegistrationKeyReadParams": {
@@ -10477,6 +10926,10 @@
       "EnvironmentRegistrationKeyUpdateParams": {
         "description": "The complete editable policy of a registration key; an absent field is\nunset. The identity mode is immutable.",
         "properties": {
+          "declaredOnly": {
+            "description": "Persistent keys only: admit only daemons whose registration name\nmatches an environment declared under this key.",
+            "type": "boolean"
+          },
           "displayName": {
             "description": "Group name for the environments this key admits.",
             "type": "string"
@@ -10547,6 +11000,10 @@
           "createdAtMs": {
             "format": "int64",
             "type": "integer"
+          },
+          "declaredOnly": {
+            "description": "The key admits only daemons whose registration name matches one of\nits declared environments.",
+            "type": "boolean"
           },
           "displayName": {
             "description": "The group name shown wherever registered environments are listed.",
@@ -10733,7 +11190,7 @@
             "type": "object"
           },
           {
-            "description": "An envd that dialed the gateway outbound and was admitted by a\nregistration key. The key is the environment's group; the daemon id\nis derived from the daemon's public key and is its identity.",
+            "description": "An envd that dials the gateway outbound and is admitted by a\nregistration key. The key is the environment's group; the daemon id\nis derived from the daemon's public key and is its identity.",
             "properties": {
               "connected": {
                 "description": "The daemon's control connection is up.",
@@ -10745,7 +11202,11 @@
                 "type": "integer"
               },
               "daemonId": {
-                "type": "string"
+                "description": "Absent while a declared environment has no daemon bound: it is\nwaiting for its machine, or its machine was released.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "identityMode": {
                 "allOf": [
@@ -10760,6 +11221,13 @@
                 "format": "int64",
                 "type": "integer"
               },
+              "name": {
+                "description": "Set on a declared environment: the name its daemon registers\nunder.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "registrationKeyId": {
                 "type": "string"
               },
@@ -10771,7 +11239,6 @@
             "required": [
               "type",
               "registrationKeyId",
-              "daemonId",
               "identityMode",
               "connected",
               "connectionChangedAtMs",
@@ -12730,10 +13197,13 @@
         "additionalProperties": false,
         "properties": {
           "expectedRevision": {
-            "description": "Revision returned by read/put; zero for a universe with no updates.",
+            "description": "Write only if the defaults are still at this revision, as returned by\nread or put; zero for a universe with no updates. Omit it to write\nwhatever the current revision is.",
             "format": "uint64",
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "model": {
             "anyOf": [
@@ -12752,8 +13222,7 @@
         },
         "required": [
           "slot",
-          "model",
-          "expectedRevision"
+          "model"
         ],
         "type": "object"
       },
@@ -20595,6 +21064,62 @@
       "x-lightspeed-target": null
     },
     {
+      "description": "Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.",
+      "name": "environments/registered/put",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/EnvironmentRegisteredPutParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentRegisteredPutResponse"
+        }
+      },
+      "summary": "Declare a registered environment",
+      "x-lightspeed-access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
+    },
+    {
+      "description": "Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.",
+      "name": "environments/registered/release",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/EnvironmentRegisteredReleaseParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse"
+        }
+      },
+      "summary": "Release a declared environment's daemon",
+      "x-lightspeed-access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
+    },
+    {
       "description": "Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.",
       "name": "environments/ingress/put",
       "paramStructure": "by-name",
@@ -20875,6 +21400,34 @@
       "x-lightspeed-target": null
     },
     {
+      "description": "Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's.",
+      "name": "environments/registration-keys/put",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/EnvironmentRegistrationKeyPutParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse"
+        }
+      },
+      "summary": "Declare an environment registration key",
+      "x-lightspeed-access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
+    },
+    {
       "description": "Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.",
       "name": "environments/registration-keys/read",
       "paramStructure": "by-name",
@@ -21127,7 +21680,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
+      "description": "Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
       "name": "models/defaults/put",
       "paramStructure": "by-name",
       "params": [
@@ -21882,25 +22435,25 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.",
-      "name": "auth/grants/replace",
+      "description": "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.",
+      "name": "auth/grants/put",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/AuthGrantReplaceParams"
+            "$ref": "#/components/schemas/AuthGrantPutParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantReplaceResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantPutResponse"
         }
       },
-      "summary": "Replace a token credential's value",
+      "summary": "Declare a token credential",
       "x-lightspeed-access": {
         "action": "configureResource",
         "kind": "universe"
@@ -22134,25 +22687,25 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
-      "name": "auth/providers/replace",
+      "description": "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.",
+      "name": "auth/providers/put",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/AuthProviderReplaceParams"
+            "$ref": "#/components/schemas/AuthProviderPutParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderReplaceResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderPutResponse"
         }
       },
-      "summary": "Replace an authentication provider",
+      "summary": "Declare an authentication provider",
       "x-lightspeed-access": {
         "action": "configureResource",
         "kind": "universe"
@@ -23110,7 +23663,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
+      "description": "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.",
       "name": "deployment/universes/create",
       "paramStructure": "by-name",
       "params": [
@@ -23164,7 +23717,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
+      "description": "Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.",
       "name": "deployment/universes/read",
       "paramStructure": "by-name",
       "params": [
@@ -23191,15 +23744,15 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.",
-      "name": "deployment/universes/slug/put",
+      "description": "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.",
+      "name": "deployment/universes/handle/put",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/DeploymentUniverseSlugPutParams"
+            "$ref": "#/components/schemas/DeploymentUniverseHandlePutParams"
           }
         }
       ],
@@ -23209,7 +23762,7 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentUniverseReadResponse"
         }
       },
-      "summary": "Set a universe slug",
+      "summary": "Rename a universe",
       "x-lightspeed-access": {
         "kind": "deployment"
       },
@@ -23245,7 +23798,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.",
+      "description": "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.",
       "name": "deployment/api-keys/create",
       "paramStructure": "by-name",
       "params": [
@@ -23264,6 +23817,33 @@
         }
       },
       "summary": "Create a scoped API key",
+      "x-lightspeed-access": {
+        "kind": "deployment"
+      },
+      "x-lightspeed-group": "deployment/api-keys",
+      "x-lightspeed-role": null,
+      "x-lightspeed-target": null
+    },
+    {
+      "description": "Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.",
+      "name": "deployment/api-keys/put",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/DeploymentApiKeyPutParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentApiKeyPutResponse"
+        }
+      },
+      "summary": "Declare a scoped API key",
       "x-lightspeed-access": {
         "kind": "deployment"
       },
@@ -23299,7 +23879,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.",
+      "description": "Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.",
       "name": "deployment/api-keys/rotate",
       "paramStructure": "by-name",
       "params": [
@@ -23326,7 +23906,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.",
+      "description": "Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.",
       "name": "deployment/api-keys/revoke",
       "paramStructure": "by-name",
       "params": [

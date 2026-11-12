@@ -10,7 +10,7 @@ import { CredentialsPage, isReplaceable, isReusableCredential } from "./Credenti
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "operator", slug: "test", name: "Test" }, slug: "test", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "operator", handle: "test", name: "Test" }, handle: "test", isLoading: false }) }));
 
 function grant(grantId: string, providerKind: string, extra: Partial<SecretGrant> = {}): SecretGrant {
   return {

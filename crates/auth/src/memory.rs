@@ -9,6 +9,7 @@ use crate::{
     AuthRegistryError, CreateAuthFlowRecord, CreateAuthGrantRecord, CreateAuthProviderRecord,
     CreateOAuthClientRecord, FinishAuthFlow, ListAuthGrants, OAuthClientId, OAuthClientRecord,
     OAuthClientStore, PutSecretRecord, SecretId, SecretRecordMeta, SecretStore, SecretValue,
+    TokenCredentialUpdate,
 };
 
 #[derive(Clone, Default)]
@@ -110,11 +111,11 @@ impl AuthGrantStore for InMemoryAuthGrantStore {
         Ok(record.clone())
     }
 
-    async fn replace_grant_token(
+    async fn update_token_credential(
         &self,
         grant_id: &AuthGrantId,
         expected: &SecretId,
-        replacement: AuthGrantTokenRefresh,
+        update: TokenCredentialUpdate,
     ) -> Result<Option<AuthGrantRecord>, AuthRegistryError> {
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
         let record = inner
@@ -125,10 +126,7 @@ impl AuthGrantStore for InMemoryAuthGrantStore {
         if record.access_token_secret.as_ref() != Some(expected) {
             return Ok(None);
         }
-        let mut next = record.clone();
-        next.access_token_secret = Some(replacement.access_token_secret);
-        next.expires_at_ms = replacement.expires_at_ms;
-        next.updated_at_ms = replacement.updated_at_ms;
+        let next = update.apply(record);
         next.validate()?;
         *record = next.clone();
         Ok(Some(next))
@@ -581,44 +579,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn in_memory_grant_token_replacement_swaps_only_from_the_expected_value() {
+    async fn in_memory_token_credential_update_writes_only_over_the_expected_value() {
         let store = InMemoryAuthGrantStore::new();
         let grant_id = AuthGrantId::new("authgrant_1");
         store
             .create_grant(grant_request("authgrant_1"))
             .await
             .expect("create grant");
-        let replacement = |secret: &str| AuthGrantTokenRefresh {
+        let replacement = |secret: &str| TokenCredentialUpdate {
             access_token_secret: SecretId::new(secret),
-            refresh_token_secret: None,
+            display_name: Some("Renamed".into()),
+            subject_hint: None,
+            scopes: vec!["read".into()],
+            audience: Some("https://api.example.com".into()),
+            metadata: serde_json::json!({"owner": "ops"}),
             expires_at_ms: Some(50),
             updated_at_ms: 20,
         };
 
         let swapped = store
-            .replace_grant_token(
+            .update_token_credential(
                 &grant_id,
                 &SecretId::new("authsec_1"),
                 replacement("authsec_2"),
             )
             .await
-            .expect("replace")
+            .expect("update")
             .expect("expected value matched");
         assert_eq!(
             swapped.access_token_secret,
             Some(SecretId::new("authsec_2"))
         );
         assert_eq!(swapped.expires_at_ms, Some(50));
+        assert_eq!(swapped.display_name.as_deref(), Some("Renamed"));
+        assert_eq!(swapped.scopes, ["read"]);
+        assert_eq!(swapped.metadata, serde_json::json!({"owner": "ops"}));
+
+        // Settings alone change under the value the credential already holds.
+        let mut settings_only = replacement("authsec_2");
+        settings_only.display_name = None;
+        let kept = store
+            .update_token_credential(&grant_id, &SecretId::new("authsec_2"), settings_only)
+            .await
+            .expect("update")
+            .expect("expected value matched");
+        assert_eq!(kept.access_token_secret, Some(SecretId::new("authsec_2")));
+        assert_eq!(kept.display_name, None);
 
         // A writer that read the old value loses and changes nothing.
         let stale = store
-            .replace_grant_token(
+            .update_token_credential(
                 &grant_id,
                 &SecretId::new("authsec_1"),
                 replacement("authsec_3"),
             )
             .await
-            .expect("replace");
+            .expect("update");
         assert!(stale.is_none());
         assert_eq!(
             store
@@ -631,7 +647,7 @@ mod tests {
 
         assert!(matches!(
             store
-                .replace_grant_token(
+                .update_token_credential(
                     &AuthGrantId::new("authgrant_missing"),
                     &SecretId::new("authsec_1"),
                     replacement("authsec_4"),

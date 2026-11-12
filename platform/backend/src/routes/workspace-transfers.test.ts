@@ -17,7 +17,7 @@ vi.mock("./universes.js", () => ({
       lightspeedUniverseId: "universe",
       gatewayUrl: "https://engine.example/rpc",
     },
-    slug: "test",
+    handle: "test",
     role: identity.role,
     member: { userId: "member", role: identity.role },
   })),

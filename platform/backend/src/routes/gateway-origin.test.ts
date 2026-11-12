@@ -6,7 +6,7 @@ import { gatewayRoutes } from "./gateway.js";
 vi.mock("./universes.js", () => ({
   universeForSession: vi.fn(async () => ({
     universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/rpc" },
-    slug: "test",
+    handle: "test",
     role: "operator",
     member: { userId: "operator", role: "operator" },
   })),

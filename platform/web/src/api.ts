@@ -84,8 +84,8 @@ export interface Universe {
   id: string;
   lightspeedUniverseId: string;
   name: string;
-  /// Cached runtime slug used as the Platform URL segment.
-  slug: string;
+  /// Cached runtime handle used as the Platform URL segment.
+  handle: string;
   gatewayUrl: string | null;
   status: "active" | "archived";
   createdAt: string;
@@ -98,7 +98,7 @@ export interface Universe {
 
 /// Engine-side universe inventory entry (deployment/universes/list view).
 export interface EngineUniverse {
-  slug?: string | null;
+  handle: string;
   universeId: string;
   sessions: number;
   workspaces: number;
@@ -108,7 +108,7 @@ export interface EngineUniverse {
   lastActivityAtMs?: number | null;
 }
 
-export interface UniverseSlugSyncResult {
+export interface UniverseHandleSyncResult {
   updated: number;
   skipped: number;
 }
