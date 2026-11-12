@@ -1,6 +1,11 @@
 # PNNN — Declarative universe configuration
 
-**Status:** Proposed, 2026-11-10. Nothing implemented.
+**Status:** Proposed, 2026-11-10. The API prerequisites are implemented as
+of 2026-11-11: universe handles, declared API and registration keys,
+declared credentials and providers, optional `expectedRevision`, and
+[declared registered environments](../p198-declared-registered-environments.md)
+with chosen environment ids. The document format, `export`, `diff` and
+`apply` are not started, nor are the Platform step and the CLI image.
 
 ## Goal
 
