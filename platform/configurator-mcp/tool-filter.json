@@ -11,6 +11,9 @@
     "environments/registration-keys/list",
     "environments/registration-keys/revoke",
     "environments/registration-keys/update",
-    "environments/registration-keys/rotate"
+    "environments/registration-keys/rotate",
+    "environments/registration-keys/put",
+    "environments/registered/put",
+    "environments/registered/release"
   ]
 }

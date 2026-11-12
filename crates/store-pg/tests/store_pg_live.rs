@@ -2481,7 +2481,7 @@ async fn pg_live_token_sealed_under_the_pre_rename_kind_still_resolves() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
-async fn pg_live_grant_token_replacement_swaps_only_from_the_expected_value() {
+async fn pg_live_token_credential_update_writes_only_over_the_expected_value() {
     let store = live_store("grant-replace", 1024).await;
     for (secret, value) in [
         ("authsec_replace_old", "old-token"),
@@ -2520,15 +2520,19 @@ async fn pg_live_grant_token_replacement_swaps_only_from_the_expected_value() {
         })
         .await
         .expect("create grant");
-    let replacement = |secret: &str| auth::AuthGrantTokenRefresh {
+    let replacement = |secret: &str| auth::TokenCredentialUpdate {
         access_token_secret: SecretId::new(secret),
-        refresh_token_secret: None,
+        display_name: Some("Replaced".to_owned()),
+        subject_hint: Some("ops".to_owned()),
+        scopes: vec!["read".to_owned(), "write".to_owned()],
+        audience: Some("https://api.example.com".to_owned()),
+        metadata: serde_json::json!({"owner": "ops"}),
         expires_at_ms: Some(500),
         updated_at_ms: 20,
     };
 
     let swapped = store
-        .replace_grant_token(
+        .update_token_credential(
             &grant_id,
             &SecretId::new("authsec_replace_old"),
             replacement("authsec_replace_new"),
@@ -2542,6 +2546,33 @@ async fn pg_live_grant_token_replacement_swaps_only_from_the_expected_value() {
     );
     assert_eq!(swapped.expires_at_ms, Some(500));
     assert_eq!(swapped.display_name.as_deref(), Some("Replaced"));
+    assert_eq!(swapped.subject_hint.as_deref(), Some("ops"));
+    assert_eq!(swapped.scopes, ["read", "write"]);
+    assert_eq!(swapped.audience.as_deref(), Some("https://api.example.com"));
+    assert_eq!(swapped.metadata, serde_json::json!({"owner": "ops"}));
+    assert_eq!((swapped.created_at_ms, swapped.updated_at_ms), (10, 20));
+
+    // Settings alone change under the value the credential already holds,
+    // and unset ones are cleared.
+    let mut settings_only = replacement("authsec_replace_new");
+    settings_only.display_name = None;
+    settings_only.scopes = Vec::new();
+    settings_only.metadata = serde_json::Value::Object(Default::default());
+    let kept = store
+        .update_token_credential(
+            &grant_id,
+            &SecretId::new("authsec_replace_new"),
+            settings_only,
+        )
+        .await
+        .expect("update settings")
+        .expect("expected value matched");
+    assert_eq!(
+        kept.access_token_secret,
+        Some(SecretId::new("authsec_replace_new"))
+    );
+    assert_eq!(kept.display_name, None);
+    assert!(kept.scopes.is_empty());
 
     // The old value is unreferenced and can go; a stale writer changes nothing.
     store
@@ -2550,7 +2581,7 @@ async fn pg_live_grant_token_replacement_swaps_only_from_the_expected_value() {
         .expect("delete replaced value");
     assert!(
         store
-            .replace_grant_token(
+            .update_token_credential(
                 &grant_id,
                 &SecretId::new("authsec_replace_old"),
                 replacement("authsec_replace_late"),
@@ -2575,7 +2606,7 @@ async fn pg_live_grant_token_replacement_swaps_only_from_the_expected_value() {
     );
     assert!(matches!(
         store
-            .replace_grant_token(
+            .update_token_credential(
                 &AuthGrantId::new("authgrant_replace_missing"),
                 &SecretId::new("authsec_replace_new"),
                 replacement("authsec_replace_late"),
@@ -3406,6 +3437,7 @@ async fn pg_live_universe_delete_removes_registered_environments_and_credential_
             max_active_environments: None,
             ephemeral_disconnect_grace_ms: None,
             offline_close_after_ms: None,
+            declared_only: false,
             expires_at_ms: None,
         },
         1,
@@ -5135,6 +5167,7 @@ async fn pg_live_environment_checks_refuse_null_positive_disjuncts() {
             max_active_environments: None,
             ephemeral_disconnect_grace_ms: None,
             offline_close_after_ms: None,
+            declared_only: false,
             expires_at_ms: None,
         },
         1,
@@ -5221,6 +5254,7 @@ async fn pg_live_registered_environments_track_connections_and_sweep() {
                 max_active_environments: Some(2),
                 ephemeral_disconnect_grace_ms: grace,
                 offline_close_after_ms: offline_close,
+                declared_only: false,
                 expires_at_ms: None,
             },
             1,
@@ -5527,6 +5561,453 @@ async fn pg_live_registered_environments_track_connections_and_sweep() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_declared_environments_wait_bind_release_and_keep_names_unique() {
+    use environments::{
+        BindRegisteredEnvironment, CreateEnvironmentRegistrationKey, CreateRegisteredEnvironment,
+        DeclareRegisteredEnvironment, DeclaredOutcome, EnvironmentRegistrationKeyId,
+        EnvironmentRegistrationKeyStore, MarkRegisteredConnected, MarkRegisteredDisconnected,
+        RegisteredIdentityMode, RegistrationKeyPolicy, ReleaseRegisteredEnvironment,
+        mint_registration_key,
+    };
+
+    let store = live_store("environment-declared", 1024).await;
+    let universe_id = store.config().universe_id;
+    let mint = |id: &str, identity_mode, max_active, declared_only| {
+        mint_registration_key(
+            EnvironmentRegistrationKeyId::new(id),
+            RegistrationKeyPolicy {
+                display_name: id.to_owned(),
+                identity_mode,
+                max_active_environments: max_active,
+                ephemeral_disconnect_grace_ms: None,
+                offline_close_after_ms: (identity_mode == RegisteredIdentityMode::Persistent)
+                    .then_some(600_000),
+                declared_only,
+                expires_at_ms: None,
+            },
+            1,
+        )
+    };
+    // The setting is a persistent key's only, in the domain and in the
+    // schema.
+    assert!(
+        mint(
+            "scratch-only",
+            RegisteredIdentityMode::Ephemeral,
+            None,
+            true
+        )
+        .is_err()
+    );
+    let mut secrets = std::collections::BTreeMap::new();
+    for minted in [
+        mint("runners", RegisteredIdentityMode::Persistent, Some(3), true).expect("mint runners"),
+        mint("scratch", RegisteredIdentityMode::Ephemeral, None, false).expect("mint scratch"),
+    ] {
+        let created = store
+            .create_registration_key(CreateEnvironmentRegistrationKey {
+                secret_hash: minted.secret.secret_hash.clone(),
+                record: minted.record.clone(),
+            })
+            .await
+            .expect("create key");
+        assert_eq!(created.declared_only, minted.record.declared_only);
+        secrets.insert(
+            minted.record.registration_key_id.to_string(),
+            minted.secret.secret_hash,
+        );
+    }
+    assert!(
+        store
+            .read_registration_key(&EnvironmentRegistrationKeyId::new("runners"))
+            .await
+            .expect("read key")
+            .declared_only
+    );
+    let ephemeral_declared_only = sqlx::query(
+        "UPDATE environment_registration_keys SET declared_only = true WHERE universe_id = $1 AND registration_key_id = 'scratch'",
+    )
+    .bind(universe_id)
+    .execute(store.pool())
+    .await;
+    assert_eq!(
+        violated_constraint(ephemeral_declared_only).as_deref(),
+        Some("environment_registration_keys_declared_only_persistent")
+    );
+
+    let declare =
+        |key: &str, environment_id: &str, name: &str, at: i64| DeclareRegisteredEnvironment {
+            environment_id: EnvironmentId::new(environment_id),
+            registration_key_id: EnvironmentRegistrationKeyId::new(key),
+            name: name.to_owned(),
+            display_name: None,
+            metadata: Default::default(),
+            declared_at_ms: at,
+        };
+    let bind = |environment_id: &str, public_key: &str, at: i64| BindRegisteredEnvironment {
+        environment_id: EnvironmentId::new(environment_id),
+        registration_key_id: EnvironmentRegistrationKeyId::new("runners"),
+        secret_hash: secrets["runners"].clone(),
+        daemon_public_key: public_key.to_owned(),
+        daemon_build: test_build("1.0.0"),
+        bound_at_ms: at,
+    };
+    let already_exists = |result: Result<_, EnvironmentRegistryError>| match result {
+        Err(EnvironmentRegistryError::AlreadyExists { kind, .. }) => kind,
+        other => panic!("expected AlreadyExists, got {:?}", other.map(|_: ()| ())),
+    };
+    let runners = EnvironmentRegistrationKeyId::new("runners");
+    let build_box = EnvironmentId::new("build-box");
+
+    // Declared: open, with its name and no daemon, and readable by name.
+    let (declared, outcome) = store
+        .declare_registered_environment(declare("runners", "build-box", "runner-0", 100))
+        .await
+        .expect("declare");
+    assert_eq!(outcome, DeclaredOutcome::Created);
+    assert_eq!(declared.state, EnvironmentState::Open);
+    assert_eq!(declared.request_id, None);
+    assert_eq!(declared.daemon_build, None);
+    let source = declared.registered().expect("registered");
+    assert!(source.awaits_daemon() && !source.connected);
+    assert_eq!(source.registration_name.as_deref(), Some("runner-0"));
+    assert_eq!(source.identity_mode, RegisteredIdentityMode::Persistent);
+    assert_eq!(
+        store
+            .read_environment(&build_box)
+            .await
+            .expect("read declared"),
+        declared
+    );
+    assert_eq!(
+        store
+            .read_declared_environment(&runners, "runner-0")
+            .await
+            .expect("read by name"),
+        Some(declared.clone())
+    );
+    assert_eq!(
+        store
+            .read_declared_environment(&runners, "runner-9")
+            .await
+            .expect("read unknown name"),
+        None
+    );
+
+    // Declaring again converges; the key and the name are fixed.
+    let (_, outcome) = store
+        .declare_registered_environment(declare("runners", "build-box", "runner-0", 110))
+        .await
+        .expect("redeclare");
+    assert_eq!(outcome, DeclaredOutcome::Unchanged);
+    let (renamed, outcome) = store
+        .declare_registered_environment(DeclareRegisteredEnvironment {
+            display_name: Some("Build box".to_owned()),
+            metadata: [("team".to_owned(), "build".to_owned())].into(),
+            ..declare("runners", "build-box", "runner-0", 120)
+        })
+        .await
+        .expect("converge");
+    assert_eq!(outcome, DeclaredOutcome::Updated);
+    assert_eq!(renamed.display_name.as_deref(), Some("Build box"));
+    assert_eq!(
+        renamed.metadata.get("team").map(String::as_str),
+        Some("build")
+    );
+    assert_eq!(
+        already_exists(
+            store
+                .declare_registered_environment(declare("runners", "build-box", "runner-1", 130))
+                .await
+                .map(|_| ())
+        ),
+        "environment"
+    );
+    assert_eq!(
+        already_exists(
+            store
+                .declare_registered_environment(declare("runners", "other-box", "runner-0", 130))
+                .await
+                .map(|_| ())
+        ),
+        "registration_name"
+    );
+    assert!(matches!(
+        store
+            .declare_registered_environment(declare("scratch", "scratch-box", "runner-0", 130))
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    assert!(matches!(
+        store
+            .declare_registered_environment(declare("missing-key", "lost-box", "runner-0", 130))
+            .await,
+        Err(EnvironmentRegistryError::NotFound { .. })
+    ));
+
+    // The schema itself refuses a registered row with neither a daemon nor
+    // a name, a connected row without a daemon, and a second open row of
+    // the key under one name.
+    for (case, name, connected) in [
+        ("nameless", None, false),
+        ("connected", Some("runner-5"), true),
+        ("duplicate", Some("runner-0"), false),
+    ] {
+        let inserted = sqlx::query(
+            "INSERT INTO environments (universe_id, environment_id, source_kind, state, state_changed_at_ms, registration_key_id, registration_name, connected, connection_changed_at_ms, last_seen_at_ms, created_at_ms, updated_at_ms) VALUES ($1, $2, 'registered', 'open', 1, 'runners', $3, $4, 1, 1, 1, 1)",
+        )
+        .bind(universe_id)
+        .bind(format!("check-{case}"))
+        .bind(name)
+        .bind(connected)
+        .execute(store.pool())
+        .await;
+        assert_eq!(
+            violated_constraint(inserted).as_deref(),
+            Some(if case == "duplicate" {
+                "environments_registration_name_idx"
+            } else {
+                "environments_source_fields"
+            }),
+            "{case}"
+        );
+    }
+
+    // A waiting environment has no connection to record, and its routes
+    // are not live.
+    assert!(
+        store
+            .mark_registered_connected(MarkRegisteredConnected {
+                environment_id: build_box.clone(),
+                daemon_build: test_build("1.0.0"),
+                at_ms: 140,
+            })
+            .await
+            .is_err()
+    );
+    let route = vec![(universe_id, "build-box".to_owned())];
+    assert_eq!(
+        store_pg::list_revoked_environment_routes(store.pool(), &route)
+            .await
+            .expect("routes of a waiting environment"),
+        route
+    );
+
+    // The first identity binds and keeps the declared id; a second never
+    // displaces it, and a secret that is not the key's live one binds
+    // nothing.
+    let (first, second) = (test_daemon_public_key(), test_daemon_public_key());
+    assert!(matches!(
+        store
+            .bind_registered_environment(BindRegisteredEnvironment {
+                secret_hash: environments::registration_key_hash("lsrk_not-this-key"),
+                ..bind("build-box", &first, 200)
+            })
+            .await,
+        Err(EnvironmentRegistryError::RegistrationKeyUnavailable { .. })
+    ));
+    let bound = store
+        .bind_registered_environment(bind("build-box", &first, 200))
+        .await
+        .expect("bind");
+    assert_eq!(bound.environment_id, build_box);
+    let source = bound.registered().expect("registered");
+    assert!(source.connected);
+    assert_eq!(source.daemon_public_key.as_deref(), Some(first.as_str()));
+    assert_eq!(source.registration_name.as_deref(), Some("runner-0"));
+    assert_eq!(bound.display_name.as_deref(), Some("Build box"));
+    assert_eq!(bound.daemon_build, Some(test_build("1.0.0")));
+    assert_eq!(
+        store
+            .read_environment_by_daemon_public_key(&first)
+            .await
+            .expect("by daemon key"),
+        Some(bound.clone())
+    );
+    assert_eq!(
+        store_pg::list_revoked_environment_routes(store.pool(), &route)
+            .await
+            .expect("routes of a bound environment"),
+        vec![]
+    );
+    assert_eq!(
+        already_exists(
+            store
+                .bind_registered_environment(bind("build-box", &second, 210))
+                .await
+                .map(|_| ())
+        ),
+        "daemon_identity"
+    );
+    // Declaring again does not disturb the bound daemon.
+    let (still_bound, outcome) = store
+        .declare_registered_environment(DeclareRegisteredEnvironment {
+            display_name: Some("Build box".to_owned()),
+            metadata: [("team".to_owned(), "build".to_owned())].into(),
+            ..declare("runners", "build-box", "runner-0", 220)
+        })
+        .await
+        .expect("redeclare while bound");
+    assert_eq!(outcome, DeclaredOutcome::Unchanged);
+    assert_eq!(still_bound, bound);
+
+    // An identity bound to one environment cannot also fill another.
+    store
+        .declare_registered_environment(declare("runners", "test-box", "runner-1", 230))
+        .await
+        .expect("declare a second");
+    assert_eq!(
+        already_exists(
+            store
+                .bind_registered_environment(bind("test-box", &first, 240))
+                .await
+                .map(|_| ())
+        ),
+        "daemon_identity"
+    );
+
+    // Declared environments count against the key, bound or not.
+    store
+        .declare_registered_environment(declare("runners", "spare-box", "runner-2", 250))
+        .await
+        .expect("declare a third");
+    assert!(matches!(
+        store
+            .declare_registered_environment(declare("runners", "fourth-box", "runner-3", 260))
+            .await,
+        Err(EnvironmentRegistryError::RegistrationCapacityExhausted { limit: 3, .. })
+    ));
+    assert!(matches!(
+        store
+            .create_registered_environment(CreateRegisteredEnvironment {
+                registration_key_id: runners.clone(),
+                secret_hash: secrets["runners"].clone(),
+                environment_id: EnvironmentId::new("self-registered"),
+                daemon_public_key: test_daemon_public_key(),
+                display_name: None,
+                metadata: Default::default(),
+                daemon_build: test_build("1.0.0"),
+                created_at_ms: 260,
+            })
+            .await,
+        Err(EnvironmentRegistryError::RegistrationCapacityExhausted { limit: 3, .. })
+    ));
+
+    // Release forgets the identity and keeps everything else.
+    let (released, was_bound) = store
+        .release_registered_environment(ReleaseRegisteredEnvironment {
+            environment_id: build_box.clone(),
+            released_at_ms: 300,
+        })
+        .await
+        .expect("release");
+    assert!(was_bound);
+    assert_eq!(released.state, EnvironmentState::Open);
+    let source = released.registered().expect("registered");
+    assert!(source.awaits_daemon() && !source.connected);
+    assert_eq!(source.registration_name.as_deref(), Some("runner-0"));
+    assert_eq!(released.display_name.as_deref(), Some("Build box"));
+    assert_eq!(released.daemon_build, None);
+    assert_eq!(
+        store
+            .read_environment_by_daemon_public_key(&first)
+            .await
+            .expect("released identity"),
+        None
+    );
+    let (_, was_bound) = store
+        .release_registered_environment(ReleaseRegisteredEnvironment {
+            environment_id: build_box.clone(),
+            released_at_ms: 310,
+        })
+        .await
+        .expect("release again");
+    assert!(!was_bound);
+    assert_eq!(
+        store_pg::list_revoked_environment_routes(store.pool(), &route)
+            .await
+            .expect("routes of a released environment"),
+        route
+    );
+    let rebound = store
+        .bind_registered_environment(bind("build-box", &second, 320))
+        .await
+        .expect("rebind");
+    assert_eq!(
+        rebound
+            .registered()
+            .and_then(|source| source.daemon_public_key.clone()),
+        Some(second.clone())
+    );
+
+    // The offline limit closes the machine that went away. The ones that
+    // never arrived keep waiting, however long.
+    store
+        .mark_registered_disconnected(MarkRegisteredDisconnected {
+            environment_id: build_box.clone(),
+            at_ms: 400,
+        })
+        .await
+        .expect("disconnect");
+    let sweep = store
+        .sweep_registered_environments(400 + 10 * 600_000)
+        .await
+        .expect("sweep");
+    assert_eq!(
+        sweep.closed,
+        [(build_box.clone(), EnvironmentCloseReason::OfflineTimeout)]
+    );
+    for waiting in ["test-box", "spare-box"] {
+        assert_eq!(
+            store
+                .read_environment(&EnvironmentId::new(waiting))
+                .await
+                .expect("read waiting")
+                .state,
+            EnvironmentState::Open,
+            "{waiting}"
+        );
+    }
+
+    // A closed environment gives its name back and keeps its id.
+    assert_eq!(
+        already_exists(
+            store
+                .declare_registered_environment(declare("runners", "build-box", "runner-0", 500))
+                .await
+                .map(|_| ())
+        ),
+        "environment"
+    );
+    let (replacement, outcome) = store
+        .declare_registered_environment(declare("runners", "build-box-2", "runner-0", 500))
+        .await
+        .expect("declare under the freed name");
+    assert_eq!(outcome, DeclaredOutcome::Created);
+    assert_eq!(
+        store
+            .read_declared_environment(&runners, "runner-0")
+            .await
+            .expect("the name selects the open environment"),
+        Some(replacement)
+    );
+    assert!(matches!(
+        store
+            .release_registered_environment(ReleaseRegisteredEnvironment {
+                environment_id: build_box.clone(),
+                released_at_ms: 510,
+            })
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+
+    store_pg::delete_universe(store.pool(), universe_id)
+        .await
+        .expect("delete test universe");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_registration_keys_rotate_update_and_resolve_live_secrets() {
     use environments::{
         CreateEnvironmentRegistrationKey, CreateRegisteredEnvironment,
@@ -5545,6 +6026,7 @@ async fn pg_live_registration_keys_rotate_update_and_resolve_live_secrets() {
         max_active_environments: None,
         ephemeral_disconnect_grace_ms: None,
         offline_close_after_ms: None,
+        declared_only: false,
         expires_at_ms: None,
     };
     let minted = mint_registration_key(
@@ -5681,6 +6163,7 @@ async fn pg_live_registration_keys_rotate_update_and_resolve_live_secrets() {
                 max_active_environments: Some(5),
                 ephemeral_disconnect_grace_ms: None,
                 offline_close_after_ms: Some(60_000),
+                declared_only: false,
                 expires_at_ms: Some(1_000_000),
             },
             updated_at_ms: 20,
@@ -5720,6 +6203,7 @@ async fn pg_live_registration_keys_rotate_update_and_resolve_live_secrets() {
                     max_active_environments: None,
                     ephemeral_disconnect_grace_ms: None,
                     offline_close_after_ms: Some(60_000),
+                    declared_only: false,
                     expires_at_ms: None,
                 },
                 updated_at_ms: 21,

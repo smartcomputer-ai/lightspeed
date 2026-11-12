@@ -144,9 +144,10 @@ polls compare against that cursor. For example, a URL returning
 `id` for unseen-item detection. Add a new ID in the source to verify that the
 next poll produces an event.
 
-A URL poll reaches public addresses over HTTPS and does not follow redirects;
-hosts on the deployment's private-network list (`LIGHTSPEED_MCP_PRIVATE_NETWORKS`)
-may also use HTTP. For an authenticated endpoint, enter the ID of a credential
+A URL poll reaches public addresses over HTTPS and does not follow redirects.
+A destination on the deployment's private-network list
+(`LIGHTSPEED_MCP_PRIVATE_NETWORKS`), listed by hostname or by the address range
+it resolves into, is also reachable and may use HTTP. For an authenticated endpoint, enter the ID of a credential
 with **Retrievable by trusted services** enabled. If that credential is bound to
 an audience, the audience must cover the poll URL.
 

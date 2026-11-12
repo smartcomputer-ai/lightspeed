@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
 import { environmentDeploymentRoutes } from "./environment-deployment.js";
 import { gatewayRoutes } from "./gateway.js";
+import { universeForSession } from "./universes.js";
 
 vi.mock("./universes.js", () => ({
   universeForSession: vi.fn(async () => ({
@@ -16,6 +17,9 @@ type Call = { method: string; params: Record<string, unknown> };
 let calls: Call[];
 /// Providers whose `environments/templates/list` call the engine refuses.
 let failingProviders: Set<string>;
+/// Registration keys the engine already holds, by id; a create that chooses
+/// one of these ids is a conflict.
+let heldRegistrationKeys: Map<string, "active" | "revoked">;
 
 function template(providerId: string) {
   return { providerId, templateId: `${providerId}-small`, displayName: `${providerId} small` };
@@ -37,6 +41,14 @@ function engineResult(method: string, params: Record<string, unknown>): unknown 
       return { environments: [{ environmentId: "env_1" }], nextAfter: "env_1" };
     case "environments/update":
       return { environment: { environmentId: params.environmentId } };
+    case "environments/registered/put":
+      return { environment: { environmentId: params.environmentId }, created: params.environmentId !== "declared" };
+    case "environments/registered/release":
+      return { environment: { environmentId: params.environmentId }, released: true };
+    case "environments/registration-keys/create":
+      return { registrationKey: { registrationKeyId: params.registrationKeyId ?? "rk_new" }, secret: "lsr_secret" };
+    case "environments/registration-keys/read":
+      return { registrationKey: { registrationKeyId: params.registrationKeyId, status: heldRegistrationKeys.get(String(params.registrationKeyId)) } };
     case "environments/registration-keys/update":
       return { registrationKey: { registrationKeyId: params.registrationKeyId } };
     case "environments/registration-keys/rotate":
@@ -54,6 +66,7 @@ function engineResult(method: string, params: Record<string, unknown>): unknown 
 beforeEach(() => {
   calls = [];
   failingProviders = new Set();
+  heldRegistrationKeys = new Map();
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
     const rpc = JSON.parse(String(init.body));
     const params = (rpc.params ?? {}) as Record<string, unknown>;
@@ -62,6 +75,12 @@ beforeEach(() => {
       return Response.json({
         id: rpc.id,
         error: { code: -32603, message: "provider unreachable", data: { kind: "internal" } },
+      });
+    }
+    if (rpc.method === "environments/registration-keys/create" && heldRegistrationKeys.has(String(params.registrationKeyId))) {
+      return Response.json({
+        id: rpc.id,
+        error: { code: -32603, message: "environment registry environment_registration_key already exists", data: { kind: "conflict" } },
       });
     }
     return Response.json({ id: rpc.id, result: { result: engineResult(rpc.method, params), notifications: [] } });
@@ -175,6 +194,114 @@ it("passes a registration key update through as the complete policy", async () =
   });
 });
 
+it("carries declaredOnly through a registration key create and update", async () => {
+  const created = await request("POST", "/universes/u/environment-registration-keys", {
+    identityMode: "persistent",
+    displayName: "Build machines",
+    declaredOnly: true,
+  });
+  expect(created.status).toBe(201);
+  expect(callsOf("environments/registration-keys/create")[0]?.params).toEqual({
+    identityMode: "persistent",
+    displayName: "Build machines",
+    declaredOnly: true,
+  });
+  await request("PUT", "/universes/u/environment-registration-keys/rk_1", {
+    displayName: "Build machines",
+    declaredOnly: true,
+  });
+  expect(callsOf("environments/registration-keys/update")[0]?.params).toEqual({
+    registrationKeyId: "rk_1",
+    displayName: "Build machines",
+    declaredOnly: true,
+  });
+});
+
+it("declares a registered environment and answers 201 only when it is new", async () => {
+  const body = { registrationKeyId: "rk_1", name: " build-01 ", displayName: "Build 01" };
+  const first = await request("POST", "/universes/u/environments/registered", { environmentId: "build-01", ...body });
+  expect(first.status).toBe(201);
+  expect(await first.json()).toEqual({ environmentId: "build-01" });
+  expect(callsOf("environments/registered/put")[0]?.params).toEqual({
+    environmentId: "build-01",
+    registrationKeyId: "rk_1",
+    name: "build-01",
+    displayName: "Build 01",
+  });
+  const again = await request("POST", "/universes/u/environments/registered", { environmentId: "declared", ...body });
+  expect(again.status).toBe(200);
+});
+
+it.each([
+  [{ registrationKeyId: "rk_1", name: "build-01" }],
+  [{ environmentId: "build-01", name: "build-01" }],
+  [{ environmentId: "build-01", registrationKeyId: "rk_1", name: " " }],
+])("rejects an incomplete declaration before calling the engine", async (body) => {
+  const response = await request("POST", "/universes/u/environments/registered", body);
+  expect(response.status).toBe(400);
+  expect(callsOf("environments/registered/put")).toEqual([]);
+});
+
+it("releases a declared environment's daemon", async () => {
+  const response = await request("POST", "/universes/u/environments/build-01/release");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ environmentId: "build-01" });
+  expect(callsOf("environments/registered/release")[0]?.params).toEqual({ environmentId: "build-01" });
+});
+
+it.each([
+  ["POST", "/universes/u/environments/registered", { environmentId: "build-01", registrationKeyId: "rk_1", name: "build-01" }],
+  ["POST", "/universes/u/environments/build-01/release", undefined],
+  ["POST", "/universes/u/environment-registration-keys", { identityMode: "persistent", displayName: "CI runners", registrationKeyId: "ci" }],
+] as const)("keeps %s %s with operators", async (method, path, body) => {
+  const access = (await universeForSession(ctx, undefined as never, "u"))!;
+  vi.mocked(universeForSession).mockResolvedValueOnce({
+    ...access,
+    role: "contributor",
+    member: { ...access.member, role: "contributor" },
+  });
+  const response = await request(method, path, body);
+  expect(response.status).toBe(403);
+  expect(calls).toEqual([]);
+});
+
+it("mints a registration key under the id its creator chose", async () => {
+  const created = await request("POST", "/universes/u/environment-registration-keys", {
+    identityMode: "ephemeral", displayName: "Sandboxes", registrationKeyId: " sandboxes ",
+  });
+  expect(created.status).toBe(201);
+  expect(await created.json()).toMatchObject({ registrationKey: { registrationKeyId: "sandboxes" } });
+  expect(calls.map((call) => call.params)).toEqual([
+    { identityMode: "ephemeral", displayName: "Sandboxes", registrationKeyId: "sandboxes" },
+  ]);
+  const overlong = await request("POST", "/universes/u/environment-registration-keys", {
+    identityMode: "ephemeral", displayName: "Sandboxes", registrationKeyId: "k".repeat(129),
+  });
+  expect(overlong.status).toBe(400);
+  expect(calls).toHaveLength(1);
+});
+
+it.each([
+  ["active", 'key ID "ci" is already in use; leave it blank to generate a new ID or choose another'],
+  ["revoked", 'key ID "ci" belongs to a revoked key and cannot be reused; leave it blank to generate a new ID or choose another'],
+] as const)("refuses a chosen registration key id held by an %s key", async (status, message) => {
+  heldRegistrationKeys.set("ci", status);
+  const response = await request("POST", "/universes/u/environment-registration-keys", {
+    identityMode: "persistent", displayName: "CI runners", registrationKeyId: "ci",
+  });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: message });
+  expect(calls.map((call) => call.method)).toEqual([
+    "environments/registration-keys/create", "environments/registration-keys/read",
+  ]);
+  expect(calls[1]!.params).toEqual({ registrationKeyId: "ci" });
+});
+
+it("never takes a registration key's id from an update", async () => {
+  await request("PUT", "/universes/u/environment-registration-keys/rk_1", { displayName: "CI runners", registrationKeyId: "other" });
+  expect(callsOf("environments/registration-keys/update")[0]?.params).toEqual({ registrationKeyId: "rk_1", displayName: "CI runners" });
+});
+
 it("rejects a registration key update without a name", async () => {
   const response = await request("PUT", "/universes/u/environment-registration-keys/rk_1", {});
   expect(response.status).toBe(400);
@@ -194,12 +321,12 @@ it("puts and deletes a universe binding by provider id", async () => {
   const deleted = await request("DELETE", "/admin/universes/u1/environment-provider-bindings/alpha", undefined, "admin");
   expect(deleted.status).toBe(200);
   expect(callsOf("deployment/environment-providers/bindings/put")[0]?.params).toEqual({
-    universeId: "u1",
+    universe: "u1",
     providerId: "alpha",
     enabled: false,
   });
   expect(callsOf("deployment/environment-providers/bindings/delete")[0]?.params).toEqual({
-    universeId: "u1",
+    universe: "u1",
     providerId: "alpha",
   });
 });

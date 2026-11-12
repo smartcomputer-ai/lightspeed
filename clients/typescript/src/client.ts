@@ -34,7 +34,10 @@ export interface LightspeedClientOptions {
   endpoint: string | URL;
   /** Sent as the bearer credential. Omit it only for a gateway in single mode. */
   apiKey?: string;
-  /** The universe a deployment key addresses. A universe key must leave this out. */
+  /**
+   * The universe a deployment key addresses, as its UUID or its handle. A
+   * universe key must leave this out.
+   */
   universe?: string;
   /**
    * Attributes requests to this opaque ID, which the key must be allowed to

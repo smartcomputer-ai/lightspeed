@@ -129,7 +129,7 @@ export function conversationTabs(
  */
 export function BotDetail({
   universeId,
-  slug,
+  handle,
   bot,
   state,
   stateError,
@@ -137,7 +137,7 @@ export function BotDetail({
   sessionId,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   bot: BotView;
   state?: BotStateView;
   stateError?: string;
@@ -149,7 +149,7 @@ export function BotDetail({
   const invoke = permissions.can("invokeBot");
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const base = `/u/${slug}/bots/${bot.botId}`;
+  const base = `/u/${handle}/bots/${bot.botId}`;
   const controller = state?.controller ?? undefined;
   const status = botStatus(bot, controller, stateError, foldActivity((state?.sessions ?? []).map((session) => session.activity)));
   const selected = view === "chat" ? (sessionId ?? controller?.mainSessionId) : undefined;
@@ -185,7 +185,7 @@ export function BotDetail({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex h-12 shrink-0 items-center gap-2.5 border-b px-4">
-        <NavLink to={`/u/${slug}/bots`} className="md:hidden" aria-label="Back to bots">
+        <NavLink to={`/u/${handle}/bots`} className="md:hidden" aria-label="Back to bots">
           <ChevronRight className="size-4 rotate-180" />
         </NavLink>
         <BotAvatar botId={bot.botId} size={26} />
@@ -247,7 +247,7 @@ export function BotDetail({
                 {active && (
                   <ConversationMenu
                     universeId={universeId}
-                    slug={slug}
+                    handle={handle}
                     bot={bot}
                     controller={controller}
                     sessionId={tab.id}
@@ -274,9 +274,9 @@ export function BotDetail({
         </TabLink>
       </nav>
       {view === "chat" ? (
-        <BotChat universeId={universeId} slug={slug} bot={bot} state={state} stateError={stateError} sessionId={sessionId} />
+        <BotChat universeId={universeId} handle={handle} bot={bot} state={state} stateError={stateError} sessionId={sessionId} />
       ) : (
-        <BotActivity universeId={universeId} slug={slug} bot={bot} state={state} stateError={stateError} manage={manage} invoke={invoke} />
+        <BotActivity universeId={universeId} handle={handle} bot={bot} state={state} stateError={stateError} manage={manage} invoke={invoke} />
       )}
       <BotEditorDialog
         open={settingsOpen}
@@ -285,7 +285,7 @@ export function BotDetail({
         description="Identity, job, triggers, session profile, collaborators, guardrails, and lifecycle."
         contentClassName="sm:max-w-4xl"
       >
-        <BotSetup universeId={universeId} slug={slug} bot={bot} state={state} manage={manage} />
+        <BotSetup universeId={universeId} handle={handle} bot={bot} state={state} manage={manage} />
       </BotEditorDialog>
     </div>
   );
@@ -384,7 +384,7 @@ function OverflowItem({ tab, onSelect }: { tab: ConversationTab; onSelect: () =>
  */
 function ConversationMenu({
   universeId,
-  slug,
+  handle,
   bot,
   controller,
   sessionId,
@@ -392,7 +392,7 @@ function ConversationMenu({
   manage,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   bot: BotView;
   controller: BotControllerSnapshot;
   sessionId: string;
@@ -434,7 +434,7 @@ function ConversationMenu({
         compactionLabel={compaction.label}
         open={{
           label: "Open on the Sessions page",
-          href: `/u/${slug}/sessions/${encodeURIComponent(sessionId)}`,
+          href: `/u/${handle}/sessions/${encodeURIComponent(sessionId)}`,
           icon: <ArrowUpRight />,
         }}
         lifecycle={manage && managedHere && bot.closedAtMs == null ? (

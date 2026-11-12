@@ -28,18 +28,6 @@ enum SessionCommand {
     Read(crate::session_resources::ReadArgs),
     /// Read or replace session configuration.
     Config(crate::session_resources::ConfigArgs),
-    /// Attach, detach and list VFS workspaces or snapshots.
-    #[command(visible_alias = "workspaces")]
-    Workspace(crate::vfs_cli::MountArgs),
-    /// Attach, detach and list registered MCP servers.
-    #[command(visible_alias = "mcps")]
-    Mcp(crate::mcp_cli::SessionMcpArgs),
-    /// Manage environment attachments and the active environment.
-    #[command(visible_aliases = ["environments", "env"])]
-    Environment(crate::session_resources::EnvironmentArgs),
-    /// Discover skills or ask the agent to use one through ordinary input.
-    #[command(visible_alias = "skills")]
-    Skill(crate::skills_cli::SkillsArgs),
     /// Start a session, optionally from a named profile and with metadata.
     Start(StartArgs),
     /// List sessions, newest activity first, optionally filtered by metadata.
@@ -97,7 +85,7 @@ struct StartArgs {
     #[command(flatten)]
     common: CommonArgs,
     /// Client-chosen session id; the server mints one when omitted.
-    #[arg(long = "session-id")]
+    #[arg(long = "id")]
     session_id: Option<String>,
     #[arg(long = "display-name")]
     display_name: Option<String>,
@@ -251,10 +239,6 @@ pub(crate) async fn handle(args: SessionArgs) -> Result<()> {
         SessionCommand::Profile(args) => crate::profile_cli::session_profile(args).await,
         SessionCommand::Read(args) => crate::session_resources::read(args).await,
         SessionCommand::Config(args) => crate::session_resources::config(args).await,
-        SessionCommand::Workspace(args) => crate::vfs_cli::mount(args).await,
-        SessionCommand::Mcp(args) => crate::mcp_cli::session(args).await,
-        SessionCommand::Environment(args) => crate::session_resources::environment(args).await,
-        SessionCommand::Skill(args) => crate::skills_cli::handle(args).await,
         SessionCommand::Start(args) => start(args).await,
         SessionCommand::List(args) => list(args).await,
         SessionCommand::Metadata(args) => match args.command {
@@ -597,7 +581,7 @@ async fn delete(args: DeleteArgs) -> Result<()> {
     report(args.common.json, "deleted", &done, targets.skipped, failed)
 }
 
-fn parse_duration_ms(raw: &str) -> Result<u64, String> {
+pub(crate) fn parse_duration_ms(raw: &str) -> Result<u64, String> {
     let split = raw
         .find(|character: char| !character.is_ascii_digit())
         .unwrap_or(raw.len());

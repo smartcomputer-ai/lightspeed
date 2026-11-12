@@ -42,6 +42,8 @@ export const METHODS = [
   "environments/list",
   "environments/close",
   "environments/external/create",
+  "environments/registered/put",
+  "environments/registered/release",
   "environments/ingress/put",
   "environments/power/put",
   "environments/provider-bindings/list",
@@ -52,6 +54,7 @@ export const METHODS = [
   "environments/jobs/read",
   "environments/jobs/cancel",
   "environments/registration-keys/create",
+  "environments/registration-keys/put",
   "environments/registration-keys/read",
   "environments/registration-keys/list",
   "environments/registration-keys/update",
@@ -88,7 +91,7 @@ export const METHODS = [
   "auth/grants/lease",
   "auth/grants/read",
   "auth/grants/list",
-  "auth/grants/replace",
+  "auth/grants/put",
   "auth/grants/revoke",
   "auth/clients/create",
   "auth/clients/read",
@@ -97,7 +100,7 @@ export const METHODS = [
   "auth/flows/start",
   "auth/flows/read",
   "auth/providers/create",
-  "auth/providers/replace",
+  "auth/providers/put",
   "auth/providers/read",
   "auth/providers/list",
   "auth/providers/delete",
@@ -135,9 +138,10 @@ export const METHODS = [
   "deployment/universes/create",
   "deployment/universes/list",
   "deployment/universes/read",
-  "deployment/universes/slug/put",
+  "deployment/universes/handle/put",
   "deployment/universes/delete",
   "deployment/api-keys/create",
+  "deployment/api-keys/put",
   "deployment/api-keys/list",
   "deployment/api-keys/rotate",
   "deployment/api-keys/revoke",
@@ -373,6 +377,18 @@ export const METHOD_INFO = {
     summary: "Register an external environment",
     description: "Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use.",
   },
+  "environments/registered/put": {
+    scope: "universe",
+    access: {"action":"configureResource","kind":"universe"},
+    summary: "Declare a registered environment",
+    description: "Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.",
+  },
+  "environments/registered/release": {
+    scope: "universe",
+    access: {"action":"configureResource","kind":"universe"},
+    summary: "Release a declared environment's daemon",
+    description: "Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.",
+  },
   "environments/ingress/put": {
     scope: "universe",
     access: {"action":"configureResource","kind":"universe"},
@@ -433,6 +449,12 @@ export const METHOD_INFO = {
     summary: "Mint an environment registration key",
     description: "Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode (immutable), active limit, disconnect grace, offline close-after, and expiry are the key's policy. Treat the secret like a cluster-join credential.",
   },
+  "environments/registration-keys/put": {
+    scope: "universe",
+    access: {"action":"configureResource","kind":"universe"},
+    summary: "Declare an environment registration key",
+    description: "Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's.",
+  },
   "environments/registration-keys/read": {
     scope: "universe",
     access: {"action":"configureResource","kind":"universe"},
@@ -491,7 +513,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"configureResource","kind":"universe"},
     summary: "Set a universe model default",
-    description: "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
+    description: "Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
   },
   "models/list": {
     scope: "universe",
@@ -649,11 +671,11 @@ export const METHOD_INFO = {
     summary: "List authentication grants",
     description: "Lists non-secret grant metadata for the universe, optionally filtered by status.",
   },
-  "auth/grants/replace": {
+  "auth/grants/put": {
     scope: "universe",
     access: {"action":"configureResource","kind":"universe"},
-    summary: "Replace a token credential's value",
-    description: "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.",
+    summary: "Declare a token credential",
+    description: "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.",
   },
   "auth/grants/revoke": {
     scope: "universe",
@@ -703,11 +725,11 @@ export const METHOD_INFO = {
     summary: "Register an authentication provider",
     description: "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
   },
-  "auth/providers/replace": {
+  "auth/providers/put": {
     scope: "universe",
     access: {"action":"configureResource","kind":"universe"},
-    summary: "Replace an authentication provider",
-    description: "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
+    summary: "Declare an authentication provider",
+    description: "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.",
   },
   "auth/providers/read": {
     scope: "universe",
@@ -917,7 +939,7 @@ export const METHOD_INFO = {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Create a universe",
-    description: "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
+    description: "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.",
   },
   "deployment/universes/list": {
     scope: "deployment",
@@ -929,13 +951,13 @@ export const METHOD_INFO = {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Read a universe",
-    description: "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
+    description: "Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.",
   },
-  "deployment/universes/slug/put": {
+  "deployment/universes/handle/put": {
     scope: "deployment",
     access: {"kind":"deployment"},
-    summary: "Set a universe slug",
-    description: "Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.",
+    summary: "Rename a universe",
+    description: "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.",
   },
   "deployment/universes/delete": {
     scope: "deployment",
@@ -947,7 +969,13 @@ export const METHOD_INFO = {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Create a scoped API key",
-    description: "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.",
+    description: "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.",
+  },
+  "deployment/api-keys/put": {
+    scope: "deployment",
+    access: {"kind":"deployment"},
+    summary: "Declare a scoped API key",
+    description: "Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.",
   },
   "deployment/api-keys/list": {
     scope: "deployment",
@@ -959,13 +987,13 @@ export const METHOD_INFO = {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Rotate a scoped API key",
-    description: "Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.",
+    description: "Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.",
   },
   "deployment/api-keys/revoke": {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Revoke a scoped API key",
-    description: "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.",
+    description: "Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.",
   },
   "deployment/environment-providers/put": {
     scope: "deployment",
@@ -1357,6 +1385,24 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfEnvironmentExternalCreateResponse;
   };
   /**
+   * Declare a registered environment
+   *
+   * Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.
+   */
+  "environments/registered/put": {
+    params: Api.EnvironmentRegisteredPutParams;
+    result: Api.AgentApiOutcomeOfEnvironmentRegisteredPutResponse;
+  };
+  /**
+   * Release a declared environment's daemon
+   *
+   * Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.
+   */
+  "environments/registered/release": {
+    params: Api.EnvironmentRegisteredReleaseParams;
+    result: Api.AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse;
+  };
+  /**
    * Configure environment public ingress
    *
    * Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.
@@ -1447,6 +1493,15 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse;
   };
   /**
+   * Declare an environment registration key
+   *
+   * Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's.
+   */
+  "environments/registration-keys/put": {
+    params: Api.EnvironmentRegistrationKeyPutParams;
+    result: Api.AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse;
+  };
+  /**
    * Read an environment registration key
    *
    * Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.
@@ -1530,7 +1585,7 @@ export interface MethodMap {
   /**
    * Set a universe model default
    *
-   * Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
+   * Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
    */
   "models/defaults/put": {
     params: Api.ModelDefaultsPutParams;
@@ -1771,13 +1826,13 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfAuthGrantListResponse;
   };
   /**
-   * Replace a token credential's value
+   * Declare a token credential
    *
-   * Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.
+   * Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.
    */
-  "auth/grants/replace": {
-    params: Api.AuthGrantReplaceParams;
-    result: Api.AgentApiOutcomeOfAuthGrantReplaceResponse;
+  "auth/grants/put": {
+    params: Api.AuthGrantPutParams;
+    result: Api.AgentApiOutcomeOfAuthGrantPutResponse;
   };
   /**
    * Revoke an authentication grant
@@ -1852,13 +1907,13 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfAuthProviderCreateResponse;
   };
   /**
-   * Replace an authentication provider
+   * Declare an authentication provider
    *
-   * Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.
+   * Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.
    */
-  "auth/providers/replace": {
-    params: Api.AuthProviderReplaceParams;
-    result: Api.AgentApiOutcomeOfAuthProviderReplaceResponse;
+  "auth/providers/put": {
+    params: Api.AuthProviderPutParams;
+    result: Api.AgentApiOutcomeOfAuthProviderPutResponse;
   };
   /**
    * Read authentication provider metadata
@@ -2169,7 +2224,7 @@ export interface MethodMap {
   /**
    * Create a universe
    *
-   * Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.
+   * Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.
    */
   "deployment/universes/create": {
     params: Api.DeploymentUniverseCreateParams;
@@ -2187,19 +2242,19 @@ export interface MethodMap {
   /**
    * Read a universe
    *
-   * Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.
+   * Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.
    */
   "deployment/universes/read": {
     params: Api.DeploymentUniverseReadParams;
     result: Api.AgentApiOutcomeOfDeploymentUniverseReadResponse;
   };
   /**
-   * Set a universe slug
+   * Rename a universe
    *
-   * Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.
+   * Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.
    */
-  "deployment/universes/slug/put": {
-    params: Api.DeploymentUniverseSlugPutParams;
+  "deployment/universes/handle/put": {
+    params: Api.DeploymentUniverseHandlePutParams;
     result: Api.AgentApiOutcomeOfDeploymentUniverseReadResponse;
   };
   /**
@@ -2214,11 +2269,20 @@ export interface MethodMap {
   /**
    * Create a scoped API key
    *
-   * Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.
+   * Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.
    */
   "deployment/api-keys/create": {
     params: Api.DeploymentApiKeyCreateParams;
     result: Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse;
+  };
+  /**
+   * Declare a scoped API key
+   *
+   * Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.
+   */
+  "deployment/api-keys/put": {
+    params: Api.DeploymentApiKeyPutParams;
+    result: Api.AgentApiOutcomeOfDeploymentApiKeyPutResponse;
   };
   /**
    * List scoped API keys
@@ -2232,7 +2296,7 @@ export interface MethodMap {
   /**
    * Rotate a scoped API key
    *
-   * Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.
+   * Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.
    */
   "deployment/api-keys/rotate": {
     params: Api.DeploymentApiKeyRotateParams;
@@ -2241,7 +2305,7 @@ export interface MethodMap {
   /**
    * Revoke a scoped API key
    *
-   * Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.
+   * Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.
    */
   "deployment/api-keys/revoke": {
     params: Api.DeploymentApiKeyRevokeParams;

@@ -8,7 +8,8 @@ use ::environments::{
     EnvironmentRegistrationKeyStatus, EnvironmentRegistrationKeyStore, EnvironmentState,
     EnvironmentStore, ListEnvironments, RegistrationKeyPolicy, RegistrationKeySettings,
     RevokeEnvironmentRegistrationKey, RotateEnvironmentRegistrationKey,
-    UpdateEnvironmentRegistrationKey, mint_registration_key, mint_registration_secret,
+    UpdateEnvironmentRegistrationKey, import_registration_secret, mint_registration_key,
+    mint_registration_secret, registration_key_with_secret,
 };
 
 use super::*;
@@ -23,14 +24,19 @@ impl EnvironmentService {
         params: EnvironmentRegistrationKeyCreateParams,
     ) -> Result<EnvironmentRegistrationKeyCreateResponse, AgentApiError> {
         let now = now_ms()?;
+        let registration_key_id = match params.registration_key_id {
+            Some(id) => parse_registration_key_id(id)?,
+            None => allocate_registration_key_id(),
+        };
         let minted = mint_registration_key(
-            allocate_registration_key_id(),
+            registration_key_id,
             RegistrationKeyPolicy {
                 display_name: params.display_name,
                 identity_mode: registry_identity_mode(params.identity_mode),
                 max_active_environments: params.max_active_environments,
                 ephemeral_disconnect_grace_ms: params.ephemeral_disconnect_grace_ms,
                 offline_close_after_ms: params.offline_close_after_ms,
+                declared_only: params.declared_only,
                 expires_at_ms: params.expires_at_ms,
             },
             now,
@@ -55,6 +61,160 @@ impl EnvironmentService {
         Ok(EnvironmentRegistrationKeyCreateResponse {
             registration_key: self.registration_key_view(&record, now).await?,
             secret: EnvironmentRegistrationSecretView(minted.secret.secret.expose().to_owned()),
+        })
+    }
+
+    /// `environments/registration-keys/put`: declare a key with a supplied
+    /// secret, so that afterwards the key of this id exists with this policy
+    /// and answers to exactly this secret.
+    ///
+    /// Each step is one the key already supports and is safe to repeat:
+    /// create when missing, replace the editable policy when it differs,
+    /// rotate to the supplied secret when the key answers to another. The
+    /// identity mode never changes and a revoked key is never restored.
+    pub(crate) async fn put_environment_registration_key_record(
+        &self,
+        params: EnvironmentRegistrationKeyPutParams,
+    ) -> Result<EnvironmentRegistrationKeyPutResponse, AgentApiError> {
+        let registration_key_id = parse_registration_key_id(params.registration_key_id)?;
+        let now = now_ms()?;
+        let secret =
+            import_registration_secret(&params.secret.0).map_err(map_environments_error)?;
+        let identity_mode = registry_identity_mode(params.identity_mode);
+        let settings = RegistrationKeySettings {
+            display_name: params.display_name,
+            max_active_environments: params.max_active_environments,
+            ephemeral_disconnect_grace_ms: params.ephemeral_disconnect_grace_ms,
+            offline_close_after_ms: params.offline_close_after_ms,
+            declared_only: params.declared_only,
+            expires_at_ms: params.expires_at_ms,
+        };
+        // The secret may already be another key's; the store keeps every
+        // secret a key ever had, so a retired one is refused there too.
+        let secret_in_use = |error| match error {
+            ::environments::EnvironmentRegistryError::AlreadyExists {
+                kind: "environment_registration_key_secret",
+                ..
+            } => AgentApiError::conflict(
+                "the supplied secret already belongs to a registration key; supply a secret of its own",
+            ),
+            other => map_environments_error(other),
+        };
+        let existing = match EnvironmentRegistrationKeyStore::read_registration_key(
+            self.store.as_ref(),
+            &registration_key_id,
+        )
+        .await
+        {
+            Ok(record) => Some(record),
+            Err(::environments::EnvironmentRegistryError::NotFound { .. }) => None,
+            Err(error) => return Err(map_environments_error(error)),
+        };
+        let Some(existing) = existing else {
+            let key = registration_key_with_secret(
+                registration_key_id,
+                RegistrationKeyPolicy {
+                    display_name: settings.display_name,
+                    identity_mode,
+                    max_active_environments: settings.max_active_environments,
+                    ephemeral_disconnect_grace_ms: settings.ephemeral_disconnect_grace_ms,
+                    offline_close_after_ms: settings.offline_close_after_ms,
+                    declared_only: settings.declared_only,
+                    expires_at_ms: settings.expires_at_ms,
+                },
+                secret,
+                now,
+            )
+            .map_err(map_environments_error)?;
+            let record = EnvironmentRegistrationKeyStore::create_registration_key(
+                self.store.as_ref(),
+                CreateEnvironmentRegistrationKey {
+                    secret_hash: key.secret.secret_hash,
+                    record: key.record,
+                },
+            )
+            .await
+            .map_err(secret_in_use)?;
+            tracing::info!(
+                target: "temporal_runtime",
+                registration_key_id = %record.registration_key_id,
+                identity_mode = record.identity_mode.as_str(),
+                "environment registration key declared"
+            );
+            return Ok(EnvironmentRegistrationKeyPutResponse {
+                registration_key: self.registration_key_view(&record, now).await?,
+                created: true,
+                secret_replaced: false,
+            });
+        };
+        if existing.revoked_at_ms.is_some() {
+            return Err(AgentApiError::conflict(format!(
+                "registration key {} was revoked; declare the key under another id with a new secret",
+                existing.registration_key_id
+            )));
+        }
+        if existing.identity_mode != identity_mode {
+            return Err(AgentApiError::conflict(format!(
+                "registration key {} already exists and its identity mode cannot change; declare a new key",
+                existing.registration_key_id
+            )));
+        }
+        let mut record = existing.clone();
+        let unchanged = existing.display_name == settings.display_name
+            && existing.max_active_environments == settings.max_active_environments
+            && existing.ephemeral_disconnect_grace_ms == settings.ephemeral_disconnect_grace_ms
+            && existing.offline_close_after_ms == settings.offline_close_after_ms
+            && existing.declared_only == settings.declared_only
+            && existing.expires_at_ms == settings.expires_at_ms;
+        if !unchanged {
+            record = EnvironmentRegistrationKeyStore::update_registration_key(
+                self.store.as_ref(),
+                UpdateEnvironmentRegistrationKey {
+                    registration_key_id: registration_key_id.clone(),
+                    settings,
+                    updated_at_ms: now,
+                },
+            )
+            .await
+            .map_err(map_environments_error)?;
+        }
+        let holder = EnvironmentRegistrationKeyStore::resolve_registration_key(
+            self.store.as_ref(),
+            &secret.secret_hash,
+        )
+        .await
+        .map_err(map_environments_error)?;
+        let secret_replaced = match holder {
+            Some(holder) if holder.registration_key_id == registration_key_id => false,
+            Some(_) => {
+                return Err(AgentApiError::conflict(
+                    "the supplied secret already belongs to a registration key; supply a secret of its own",
+                ));
+            }
+            None => {
+                record = EnvironmentRegistrationKeyStore::rotate_registration_key(
+                    self.store.as_ref(),
+                    RotateEnvironmentRegistrationKey {
+                        registration_key_id,
+                        secret_hash: secret.secret_hash,
+                        key_prefix: secret.key_prefix,
+                        rotated_at_ms: now,
+                    },
+                )
+                .await
+                .map_err(secret_in_use)?;
+                tracing::info!(
+                    target: "temporal_runtime",
+                    registration_key_id = %record.registration_key_id,
+                    "environment registration key secret replaced by declaration"
+                );
+                true
+            }
+        };
+        Ok(EnvironmentRegistrationKeyPutResponse {
+            registration_key: self.registration_key_view(&record, now).await?,
+            created: false,
+            secret_replaced,
         })
     }
 
@@ -106,6 +266,7 @@ impl EnvironmentService {
                     max_active_environments: params.max_active_environments,
                     ephemeral_disconnect_grace_ms: params.ephemeral_disconnect_grace_ms,
                     offline_close_after_ms: params.offline_close_after_ms,
+                    declared_only: params.declared_only,
                     expires_at_ms: params.expires_at_ms,
                 },
                 updated_at_ms: now,
@@ -242,6 +403,7 @@ pub(crate) fn registration_key_view(
         max_active_environments: record.max_active_environments,
         ephemeral_disconnect_grace_ms: record.ephemeral_disconnect_grace_ms(),
         offline_close_after_ms: record.offline_close_after_ms,
+        declared_only: record.declared_only,
         expires_at_ms: record.expires_at_ms,
         status: match record.status(now_ms) {
             EnvironmentRegistrationKeyStatus::Active => {
@@ -279,6 +441,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_published_secret_prefix_is_the_one_registration_accepts() {
+        assert_eq!(
+            api::REGISTRATION_KEY_SECRET_PREFIX,
+            ::environments::REGISTRATION_KEY_SECRET_PREFIX
+        );
+    }
+
+    #[test]
     fn the_key_view_carries_the_editable_policy_and_its_update_time() {
         let mut minted = mint_registration_key(
             EnvironmentRegistrationKeyId::new("rk"),
@@ -288,6 +458,7 @@ mod tests {
                 max_active_environments: Some(3),
                 ephemeral_disconnect_grace_ms: None,
                 offline_close_after_ms: Some(86_400_000),
+                declared_only: false,
                 expires_at_ms: None,
             },
             5,

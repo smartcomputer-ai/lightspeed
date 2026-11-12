@@ -1811,7 +1811,7 @@ async fn run_openai_live_client(
     api.put_model_defaults(api::ModelDefaultsPutParams {
         slot: api::ModelDefaultSlot::AgentRun,
         model: None,
-        expected_revision: defaults.revision,
+        expected_revision: Some(defaults.revision),
     })
     .await?;
     let missing = api

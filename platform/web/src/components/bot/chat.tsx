@@ -20,20 +20,20 @@ const introduced = new Set<string>();
  */
 export function BotChat({
   universeId,
-  slug,
+  handle,
   bot,
   state,
   stateError,
   sessionId,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   bot: BotView;
   state?: BotStateView;
   stateError?: string;
   sessionId: string | undefined;
 }) {
-  const base = `/u/${slug}/bots/${bot.botId}`;
+  const base = `/u/${handle}/bots/${bot.botId}`;
   const controller = state?.controller ?? undefined;
   const main = controller?.mainSessionId;
   const selected = sessionId ?? main;
@@ -77,7 +77,7 @@ export function BotChat({
     <SessionDetail
       key={sessionDraftKey(universeId, selected)}
       universeId={universeId}
-      slug={slug}
+      handle={handle}
       sessionId={selected}
       backTo={base}
       embedded

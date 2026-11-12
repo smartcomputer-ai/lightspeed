@@ -1,4 +1,4 @@
-import { UniverseSlugCacheConflict } from "../universe-slugs.js";
+import { UniverseHandleCacheConflict } from "../universe-handles.js";
 import { deploymentClient, GatewayUnconfigured, GateRefusal, memberClient } from "../runtime-client.js";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -9,14 +9,18 @@ import {
   type AgentProfileInput,
   type AuthFlowStatusResponse,
   type AuthGrantImportParams,
-  type AuthGrantReplaceParams,
+  type AuthGrantPutParams,
+  type AuthGrantView,
   type AuthGitHubInstallationGrantParams,
   type AuthGitHubInstallationListParams,
   type AuthGrantListParams,
   type AuthProviderCreateParams,
+  type DeploymentApiKeyCreateParams,
+  type DeploymentApiKeyCreateResponse,
   type EnvironmentCreateParams,
   type EnvironmentExternalCreateParams,
   type EnvironmentListParams,
+  type EnvironmentRegisteredPutParams,
   type EnvironmentRegistrationKeyCreateParams,
   type EnvironmentRegistrationKeyUpdateParams,
   type McpServerInput,
@@ -32,6 +36,8 @@ import {
   MAX_ATTACHMENT_BYTES,
   MAX_DICTATION_AUDIO_BYTES,
   attachmentUploadSchema,
+  chosenKeyIdSchema,
+  keyIdConflictMessage,
   messageInputItems,
   messageRunConfig,
   modelDefaultsPutSchema,
@@ -223,10 +229,21 @@ const externalEnvironmentCreateSchema = z.object({
   displayName: z.string().trim().min(1).max(200).optional(),
 });
 
+/// A fixed machine declared as an environment before its daemon registers.
+/// The id, the key and the registration name cannot change afterwards.
+const registeredEnvironmentPutSchema = z.object({
+  environmentId: z.string().trim().min(1).max(200),
+  registrationKeyId: z.string().trim().min(1).max(200),
+  name: z.string().trim().min(1).max(128),
+  displayName: z.string().trim().min(1).max(200).optional(),
+  metadata: z.record(z.string(), z.string()).optional(),
+});
+
 /// Registration-key policy as the Environments page submits it. Identity
 /// mode is the key's policy; daemons never choose it.
 const registrationKeySettingsSchema = z.object({
   displayName: z.string().trim().min(1).max(128),
+  declaredOnly: z.boolean().optional(),
   maxActiveEnvironments: z.number().int().min(1).optional(),
   ephemeralDisconnectGraceMs: z.number().int().min(1).optional(),
   offlineCloseAfterMs: z.number().int().min(1).optional(),
@@ -234,6 +251,8 @@ const registrationKeySettingsSchema = z.object({
 });
 const registrationKeyCreateSchema = registrationKeySettingsSchema.extend({
   identityMode: z.enum(["persistent", "ephemeral"]),
+  /// Absent has the runtime allocate one. Create only: an id never changes.
+  registrationKeyId: chosenKeyIdSchema.optional(),
 });
 
 const registrationKeyRevokeSchema = z.object({
@@ -242,13 +261,13 @@ const registrationKeyRevokeSchema = z.object({
 
 /// Stable, id-safe request id for an external environment endpoint.
 export function externalEnvironmentRequestId(endpoint: string): string {
-  const slug = endpoint
+  const handle = endpoint
     .replace(/^wss?:\/\//, "")
     .replace(/\/+$/, "")
     .replace(/[^A-Za-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 100);
-  return `external-${slug || "envd"}`;
+  return `external-${handle || "envd"}`;
 }
 
 const modelEndpointSchema = z.object({
@@ -345,13 +364,23 @@ const credentialReplaceSchema = z.object({
   expiresAtMs: z.number().int().nonnegative().optional(),
 });
 
+/// Replacing a credential's value declares the credential again as it is,
+/// with the new token: its settings are carried over, the old token's expiry
+/// is not.
 export function credentialReplaceParams(
-  grantId: string,
+  current: AuthGrantView,
   input: z.infer<typeof credentialReplaceSchema>,
-): AuthGrantReplaceParams {
+): AuthGrantPutParams {
   return {
-    grantId,
+    grantId: current.grantId,
+    providerId: current.providerId,
+    exposure: current.exposure,
     token: input.value,
+    ...(current.displayName == null ? {} : { displayName: current.displayName }),
+    ...(current.subjectHint == null ? {} : { subjectHint: current.subjectHint }),
+    ...(current.scopes?.length ? { scopes: current.scopes } : {}),
+    ...(current.audience == null ? {} : { audience: current.audience }),
+    ...(current.metadata == null ? {} : { metadata: current.metadata }),
     ...(input.expiresAtMs === undefined ? {} : { expiresAtMs: input.expiresAtMs }),
   };
 }
@@ -1223,10 +1252,10 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   /// Model provider API keys for Lightspeed sessions (`model:<provider>` rows).
-  /// `replace` swaps an existing row in place through `auth/providers/replace`:
-  /// the engine validates first, so a rejected replacement keeps the old key,
-  /// and sessions or environment variables using the provider never see it
-  /// missing.
+  /// `replace` declares the row through `auth/providers/put`, which swaps an
+  /// existing one in place: the engine validates first, so a rejected
+  /// replacement keeps the old key, and sessions or environment variables
+  /// using the provider never see it missing.
   app.post("/:id/integrations/model-keys", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
@@ -1251,15 +1280,9 @@ export function gatewayRoutes(ctx: AppContext) {
         credential: body.data.credential,
       };
       if (body.data.replace) {
-        try {
-          const replaced = await client.call("auth/providers/replace", { ...params, providerId });
-          return c.json(modelProviderCredentialView(replaced.result.provider));
-        } catch (error) {
-          // Nothing to replace yet: fall through and create it.
-          if (!(error instanceof LightspeedRpcError && error.kind === "notFound")) {
-            throw error;
-          }
-        }
+        // Creates the row when there is nothing to replace yet.
+        const put = await client.call("auth/providers/put", { ...params, providerId });
+        return c.json(modelProviderCredentialView(put.result.provider), put.result.created ? 201 : 200);
       }
       const response = await client.call("auth/providers/create", params);
       return c.json(modelProviderCredentialView(response.result.provider), 201);
@@ -1541,10 +1564,8 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const response = await client.call(
-        "auth/grants/replace",
-        credentialReplaceParams(c.req.param("grantId"), body.data),
-      );
+      const current = await client.call("auth/grants/read", { grantId: c.req.param("grantId") });
+      const response = await client.call("auth/grants/put", credentialReplaceParams(current.result.grant, body.data));
       return c.json(response.result.grant);
     });
   });
@@ -1805,11 +1826,23 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const response = await client.call(
-        "environments/registration-keys/create",
-        body.data as EnvironmentRegistrationKeyCreateParams,
-      );
-      return c.json(response.result, 201);
+      const { registrationKeyId } = body.data;
+      try {
+        const response = await client.call(
+          "environments/registration-keys/create",
+          body.data as EnvironmentRegistrationKeyCreateParams,
+        );
+        return c.json(response.result, 201);
+      } catch (error) {
+        if (registrationKeyId && isConflict(error)) {
+          const holder = await client
+            .call("environments/registration-keys/read", { registrationKeyId })
+            .catch(() => null);
+          const revoked = holder?.result.registrationKey.status === "revoked";
+          return c.json({ error: keyIdConflictMessage(registrationKeyId, revoked) }, 409);
+        }
+        throw error;
+      }
     });
   });
 
@@ -1968,6 +2001,42 @@ export function gatewayRoutes(ctx: AppContext) {
       };
       const response = await client.call("environments/external/create", params);
       return c.json(response.result.environment, 201);
+    });
+  });
+
+  /// Declare a fixed machine as an environment under a persistent
+  /// registration key. Repeating the declaration converges on the same
+  /// environment, so only a first declaration answers 201.
+  app.post("/:id/environments/registered", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) {
+      return c.json({ error: "not found" }, 404);
+    }
+    const body = await parseBody(c, registeredEnvironmentPutSchema);
+    if (!body.ok) {
+      return body.response;
+    }
+    return withGateway(c, async () => {
+      const client = engineClientFor(ctx, access);
+      const params: EnvironmentRegisteredPutParams = body.data;
+      const response = await client.call("environments/registered/put", params);
+      return c.json(response.result.environment, response.result.created ? 201 : 200);
+    });
+  });
+
+  /// Forget the daemon bound to a declared environment so that a machine
+  /// with another identity may bind to it.
+  app.post("/:id/environments/:environmentId/release", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) {
+      return c.json({ error: "not found" }, 404);
+    }
+    return withGateway(c, async () => {
+      const client = engineClientFor(ctx, access);
+      const response = await client.call("environments/registered/release", {
+        environmentId: c.req.param("environmentId"),
+      });
+      return c.json(response.result.environment);
     });
   });
 
@@ -2526,6 +2595,29 @@ export function credentialIdConflictMessage(grantId: string, status?: string): s
   return `credential ID "${grantId}" already belongs to ${state}; leave it blank to generate a new ID or choose another`;
 }
 
+function isConflict(error: unknown): boolean {
+  return error instanceof LightspeedRpcError && error.kind === "conflict";
+}
+
+/// `deployment/api-keys/create` for a key of `scope`. A chosen id the
+/// runtime refuses as taken becomes a 409 that says whether its holder,
+/// looked up among the scope's keys, is revoked.
+export async function createApiKey(
+  c: { json: (body: unknown, status?: 409) => Response },
+  client: LightspeedClient,
+  params: DeploymentApiKeyCreateParams,
+): Promise<DeploymentApiKeyCreateResponse | Response> {
+  try {
+    return (await client.call("deployment/api-keys/create", params)).result;
+  } catch (error) {
+    const { keyId, scope } = params;
+    if (!keyId || !isConflict(error)) throw error;
+    const keys = await client.call("deployment/api-keys/list", { scope }).catch(() => null);
+    const holder = keys?.result.apiKeys?.find((key) => key.keyId === keyId);
+    return c.json({ error: keyIdConflictMessage(keyId, holder?.revokedAtMs != null) }, 409);
+  }
+}
+
 /// The engine deliberately namespaces model credentials as
 /// `model:<ModelSelection.providerId>`. Keep that storage detail out of the UI
 /// while retaining the full row id for unambiguous removal and legacy cleanup.
@@ -2574,7 +2666,7 @@ export async function withGateway(
     return await fn();
   } catch (error) {
     if (error instanceof WorkspaceTransferError) return c.json({ error: error.message }, error.status);
-    if (error instanceof UniverseSlugCacheConflict) return c.json({ error: error.message }, 409);
+    if (error instanceof UniverseHandleCacheConflict) return c.json({ error: error.message }, 409);
     if (error instanceof GatewayUnconfigured) {
       return c.json({ error: error.message }, 501);
     }

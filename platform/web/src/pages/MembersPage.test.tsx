@@ -10,7 +10,7 @@ import { MembersPage } from "./MembersPage";
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", () => ({
-  useActiveUniverse: () => ({ universe: { id: "universe", slug: "test", name: "Test", role: mocks.role }, slug: "test", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "universe", handle: "test", name: "Test", role: mocks.role }, handle: "test", isLoading: false }),
 }));
 // JSDOM has no popup layout; keep the real options and exercise changes with a native select.
 vi.mock("@/components/ui/select", async () => {

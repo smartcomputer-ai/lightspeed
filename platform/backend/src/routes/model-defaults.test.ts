@@ -8,7 +8,7 @@ import { LightspeedRpcError } from "@lightspeed-ai/sdk";
 const auth = vi.hoisted(() => ({ role: "operator" }));
 vi.mock("./universes.js", () => ({ universeForSession: vi.fn(async (_ctx, _c, id: string) => ({
   universe: { lightspeedUniverseId: id, gatewayUrl: "https://engine.example/rpc" },
-  slug: "test", role: auth.role, member: { userId: "member", role: auth.role },
+  handle: "test", role: auth.role, member: { userId: "member", role: auth.role },
 })) }));
 beforeEach(() => { auth.role = "operator"; });
 afterEach(() => vi.unstubAllGlobals());

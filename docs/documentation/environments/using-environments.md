@@ -164,6 +164,13 @@ borrowed machine. An ephemeral registration closes when its daemon stops or
 stays away past its disconnect grace period; once closed, that identity
 cannot return and the profile's saved selection becomes unavailable.
 
+A profile can also name a machine that has not connected yet. Declare the
+environment with an ID you choose, attach that ID in the profile, and start
+the machine whenever it is ready; see
+[Declare fixed machines before their daemons register](registered-daemons.md#declare-fixed-machines-before-their-daemons-register).
+Until its daemon connects, the environment shows as disconnected and tools
+that use it wait up to two minutes, then fail.
+
 ## Create an independent machine
 
 Use **Environments → New environment**. Select a **Template**, enter a
@@ -248,14 +255,21 @@ with `session/start` can name an attached environment or `none` to suppress
 the default.
 
 With the [CLI connection settings](../using-lightspeed/sessions-and-runs.md#continue-from-the-cli)
-configured, the equivalent controls are:
+configured, inspect the machines and the session's selection, and replace the
+session's configuration:
 
 ```bash
 target/debug/lightspeed environment list
 target/debug/lightspeed environment read "<environment-id>"
-target/debug/lightspeed session environment activate --session "<session-id>" "<environment-id>"
-target/debug/lightspeed session environment deactivate --session "<session-id>"
+target/debug/lightspeed session read "<session-id>"
+target/debug/lightspeed session config read "<session-id>" --json > session-config.json
+target/debug/lightspeed session config put "<session-id>" --file session-config.json
 ```
+
+`session read` shows the active environment. `session config put` replaces
+the configuration, with the effect on the selection described above. The CLI
+has no command that activates or deactivates an environment directly; use the
+session's settings or the API for that.
 
 The public methods are `environments/list`, `environments/read`,
 `session/environments/activate`, and `session/environments/deactivate` in the

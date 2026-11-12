@@ -14,7 +14,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 function routes(role: UniverseRole) {
   const universe = { id: "platform-universe", lightspeedUniverseId: "33333333-3333-4333-8333-333333333333", gatewayUrl: null };
   vi.mocked(universeForSession).mockResolvedValue({
-    universe, slug: "test", role, member: { userId: "platform-user", role },
+    universe, handle: "test", role, member: { userId: "platform-user", role },
   } as unknown as Awaited<ReturnType<typeof universeForSession>>);
   const runtime = vi.fn();
   vi.stubGlobal("fetch", runtime);
@@ -79,12 +79,12 @@ function credential(keyGroups: string[], keySource?: "minted" | "existing") {
       deploymentCalls.push({ method, params });
       if (method === "deployment/api-keys/list") {
         return { result: { apiKeys: [
-          { keyPrefix: "lsk_old", displayName: "Lightspeed Configurator service credential", groups: keyGroups, revokedAtMs: null },
-          { keyPrefix: "lsk_admin", displayName: "Admin's key", groups: ["session", "profiles"], revokedAtMs: null },
+          { keyId: "api_key_old", keyPrefix: "lsk_old", displayName: "Lightspeed Configurator service credential", groups: keyGroups, revokedAtMs: null },
+          { keyId: "admin", keyPrefix: "lsk_admin", displayName: "Admin's key", groups: ["session", "profiles"], revokedAtMs: null },
         ] } };
       }
       if (method === "deployment/api-keys/create") {
-        return { result: { apiKey: { keyPrefix: "lsk_new" }, secret: "lsk_new_secret" } };
+        return { result: { apiKey: { keyId: "api_key_new", keyPrefix: "lsk_new" }, secret: "lsk_new_secret" } };
       }
       return { result: {} };
     }),
@@ -147,7 +147,7 @@ it("switches to an admin's existing key after checking its secret, revoking only
   const state = await run({ kind: "existing", keyPrefix: "lsk_admin", secret: "lsk_admin_secret" });
   expect(state).toMatchObject({ keyPrefix: "lsk_admin", keyGroups: ["session", "profiles"], keySource: "existing" });
   expect(deploymentCalls.filter((call) => call.method === "deployment/api-keys/revoke").map((call) => call.params))
-    .toEqual([{ keyPrefix: "lsk_old" }]);
+    .toEqual([{ scope: expect.objectContaining({ kind: "universe" }), keyId: "api_key_old" }]);
   expect(clientCalls.slice(-2)).toEqual(["auth/grants/revoke", "auth/grants/import"]);
 });
 

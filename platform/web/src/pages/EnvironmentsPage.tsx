@@ -6,7 +6,7 @@ import { environmentStatus, resourceTimestamp } from "@/lib/resource-status";
 import { ReadError } from "@/components/read-error";
 import { useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, Check, ChevronDown, Copy, KeyRound, Pencil, Plus, RotateCw, Trash2 } from "lucide-react";
+import { Boxes, Check, ChevronDown, Copy, KeyRound, Pencil, Plus, RotateCw, Trash2, Unplug } from "lucide-react";
 import {
   api,
   type Environment,
@@ -44,7 +44,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -56,6 +56,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { EmptyState, LoadingNote, PageHeader, SectionHeader, ShowHiddenToggle, UniverseNotFound } from "@/components/page";
 import type { EnvironmentIdlePolicyView } from "@lightspeed-ai/sdk";
+import { isKeyIdConflict, KeyIdField } from "@/components/api-keys/key-id-field";
 import { EnvironmentPowerControls } from "@/components/environment/power-controls";
 import { IdlePolicyFields, idlePolicyProblem, idleStagesFor } from "@/components/environment/idle-policy-fields";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";
@@ -81,14 +82,14 @@ import { useActiveUniverse } from "@/lib/universes";
 /// Universe environments are provisioned from the templates offered by the
 /// universe's enabled providers. Physical provider registration stays admin-only.
 export function EnvironmentsPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
   if (!universe || !permissions.can("read")) {
-    return <UniverseNotFound slug={slug} />;
+    return <UniverseNotFound handle={handle} />;
   }
 
   return <EnvironmentList key={universe.id} universeId={universe.id} />;
@@ -362,18 +363,25 @@ function EnvironmentDetails({
         {source.type === "registered" && (
           <>
             <Detail label="Registration key" value={registrationKey?.displayName ?? source.registrationKeyId} />
-            <Detail label="Daemon" value={source.daemonId} mono />
+            {source.name && <Detail label="Registration name" value={source.name} mono />}
+            {source.daemonId
+              ? <Detail label="Daemon" value={source.daemonId} mono />
+              : <Detail label="Daemon" value="None bound" />}
             <Detail
               label="Identity"
               value={source.identityMode === "ephemeral"
                 ? "Ephemeral · closes after its key's disconnect grace"
                 : "Persistent · waits for its daemon to reconnect"}
             />
-            <Detail
-              label="Connection"
-              value={`${source.connected ? "Connected" : "Disconnected"} since ${relativeTime(source.connectionChangedAtMs)}`}
-            />
-            <Detail label="Last seen" value={relativeTime(source.lastSeenAtMs)} />
+            {source.daemonId && (
+              <>
+                <Detail
+                  label="Connection"
+                  value={`${source.connected ? "Connected" : "Disconnected"} since ${relativeTime(source.connectionChangedAtMs)}`}
+                />
+                <Detail label="Last seen" value={relativeTime(source.lastSeenAtMs)} />
+              </>
+            )}
           </>
         )}
         {source.type === "provisioned" && (
@@ -420,6 +428,9 @@ function EnvironmentDetails({
               <Pencil data-icon="inline-start" />
               Rename…
             </Button>
+            {source.type === "registered" && source.name && source.daemonId && (
+              <ReleaseDaemonButton universeId={universeId} environment={environment} />
+            )}
             {source.type === "provisioned" && (
               <EnvironmentPowerControls
                 universeId={universeId}
@@ -652,7 +663,7 @@ function AssignCredentialDialog({
           if (!nextOpen) setError(null);
         }}
       >
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Assign secret</DialogTitle>
             <DialogDescription>
@@ -738,6 +749,7 @@ function RegistrationKeys({
   const [open, setOpen] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
   const [editing, setEditing] = useState<EnvironmentRegistrationKey | null>(null);
+  const [declaring, setDeclaring] = useState<EnvironmentRegistrationKey | null>(null);
   const inactiveCount = keys.filter((key) => key.status !== "active").length;
   const rows = showInactive ? keys : keys.filter((key) => key.status === "active");
   return (
@@ -771,6 +783,7 @@ function RegistrationKeys({
                     : key.offlineCloseAfterMs
                       ? ` · closes offline after ${formatDuration(key.offlineCloseAfterMs)}`
                       : ""}
+                  {key.declaredOnly ? " · declared environments only" : ""}
                   {key.expiresAtMs ? ` · expires ${relativeTime(key.expiresAtMs).replace(" ago", "")}` : ""}
                 </span>
                 {key.status === "active" ? (
@@ -782,6 +795,12 @@ function RegistrationKeys({
                   <Button variant="outline" size="xs" onClick={() => setEditing(key)}>
                     <Pencil data-icon="inline-start" />
                     Edit
+                  </Button>
+                )}
+                {key.status === "active" && key.identityMode === "persistent" && (
+                  <Button variant="outline" size="xs" onClick={() => setDeclaring(key)}>
+                    <Plus data-icon="inline-start" />
+                    Declare environment
                   </Button>
                 )}
                 {key.status === "active" && (
@@ -812,7 +831,117 @@ function RegistrationKeys({
         registrationKey={editing}
         onOpenChange={(next) => { if (!next) setEditing(null); }}
       />
+      <DeclareEnvironmentDialog
+        key={`declare:${declaring?.registrationKeyId ?? "closed"}`}
+        universeId={universeId}
+        registrationKey={declaring}
+        onOpenChange={(next) => { if (!next) setDeclaring(null); }}
+      />
     </Collapsible>
+  );
+}
+
+/// Declare a fixed machine as an environment before its daemon registers
+/// (`environments/registered/put`). The id, the key and the registration
+/// name are fixed from then on.
+function DeclareEnvironmentDialog({
+  universeId,
+  registrationKey,
+  onOpenChange,
+}: {
+  universeId: string;
+  registrationKey: EnvironmentRegistrationKey | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [environmentId, setEnvironmentId] = useState("");
+  const [name, setName] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const declare = useMutation({
+    mutationFn: (key: EnvironmentRegistrationKey) =>
+      api<Environment>("POST", `/api/v1/universes/${universeId}/environments/registered`, {
+        environmentId: environmentId.trim(),
+        registrationKeyId: key.registrationKeyId,
+        name: name.trim(),
+        ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["environments", universeId] }),
+        queryClient.invalidateQueries({ queryKey: ["environment-registration-keys", universeId] }),
+      ]);
+      onOpenChange(false);
+    },
+  });
+  return (
+    <Dialog open={registrationKey !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Declare an environment under “{registrationKey?.displayName}”</DialogTitle>
+          <DialogDescription>
+            Reserve an environment for a fixed machine before its daemon registers. The first daemon
+            this key admits under the registration name becomes this environment; until then it is
+            disconnected.
+          </DialogDescription>
+        </DialogHeader>
+        {registrationKey && (
+          <div className="grid gap-4">
+            <Field>
+              <FieldLabel htmlFor="declared-environment-id">Environment ID</FieldLabel>
+              <Input
+                id="declared-environment-id"
+                className="font-mono"
+                value={environmentId}
+                onChange={(event) => setEnvironmentId(event.target.value)}
+                placeholder="build-box-01"
+                maxLength={200}
+                spellCheck={false}
+                autoFocus
+              />
+              <FieldDescription>The id profiles and bots use for the environment. It cannot be changed later.</FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="declared-environment-name">Registration name</FieldLabel>
+              <Input
+                id="declared-environment-name"
+                className="font-mono"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="build-box-01"
+                maxLength={128}
+                spellCheck={false}
+              />
+              <FieldDescription>
+                The machine's daemon must register under this name: start it
+                with <span className="font-mono">LIGHTSPEED_ENVD_REGISTRATION_NAME</span> set to it.
+                It cannot be changed later.
+              </FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="declared-environment-display-name">Display name</FieldLabel>
+              <Input
+                id="declared-environment-display-name"
+                value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)}
+                placeholder={environmentId.trim() || "Build box"}
+                maxLength={200}
+              />
+            </Field>
+            {declare.error && <p className="text-sm text-destructive">{declare.error.message}</p>}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button
+                type="button"
+                disabled={declare.isPending || !environmentId.trim() || !name.trim()}
+                onClick={() => declare.mutate(registrationKey)}
+              >
+                {declare.isPending ? "Declaring…" : "Declare"}
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -921,7 +1050,7 @@ function RotateRegistrationKeyButton({
         </AlertDialogContent>
       </AlertDialog>
       <Dialog open={rotate.data !== undefined} onOpenChange={(next) => { if (!next) rotate.reset(); }}>
-        <DialogContent showCloseButton={false}>
+        <DialogContent showCloseButton={false} className="max-h-[90vh] overflow-y-auto">
           {rotate.data && <RegistrationSecret created={rotate.data} onDone={() => rotate.reset()} />}
         </DialogContent>
       </Dialog>
@@ -940,6 +1069,7 @@ type RegistrationKeyForm = {
   maxActive: string;
   graceMinutes: string;
   offlineCloseMinutes: string;
+  declaredOnly: boolean;
 };
 
 function registrationKeyForm(key: EnvironmentRegistrationKey | null): RegistrationKeyForm {
@@ -951,6 +1081,7 @@ function registrationKeyForm(key: EnvironmentRegistrationKey | null): Registrati
         ? String(key.ephemeralDisconnectGraceMs / 60_000)
         : "",
     offlineCloseMinutes: key?.offlineCloseAfterMs ? String(key.offlineCloseAfterMs / 60_000) : "",
+    declaredOnly: key?.declaredOnly ?? false,
   };
 }
 
@@ -971,6 +1102,7 @@ function registrationKeySettings(
     ...(identityMode === "persistent" && form.offlineCloseMinutes.trim()
       ? { offlineCloseAfterMs: minutes(form.offlineCloseMinutes) }
       : {}),
+    ...(identityMode === "persistent" && form.declaredOnly ? { declaredOnly: true } : {}),
     ...(expiresAtMs ? { expiresAtMs } : {}),
   };
 }
@@ -1047,6 +1179,21 @@ function RegistrationKeyFields({
         />
         <FieldDescription>Bounds what a leaked key can add to this universe.</FieldDescription>
       </Field>
+      {identityMode === "persistent" && (
+        <Field orientation="horizontal">
+          <Switch
+            id="registration-key-declared-only"
+            checked={form.declaredOnly}
+            onCheckedChange={(checked) => onChange({ ...form, declaredOnly: checked })}
+          />
+          <FieldContent>
+            <FieldLabel htmlFor="registration-key-declared-only">Only admit declared environments</FieldLabel>
+            <FieldDescription>
+              A daemon is refused unless its registration name matches an environment declared under this key.
+            </FieldDescription>
+          </FieldContent>
+        </Field>
+      )}
     </>
   );
 }
@@ -1119,13 +1266,18 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(() => registrationKeyForm(null));
   const [identityMode, setIdentityMode] = useState<"persistent" | "ephemeral">("persistent");
+  const [keyId, setKeyId] = useState("");
   const [created, setCreated] = useState<EnvironmentRegistrationKeyCreated | null>(null);
   const create = useMutation({
     mutationFn: () =>
       api<EnvironmentRegistrationKeyCreated>(
         "POST",
         `/api/v1/universes/${universeId}/environment-registration-keys`,
-        { identityMode, ...registrationKeySettings(form, identityMode, null) },
+        {
+          identityMode,
+          ...registrationKeySettings(form, identityMode, null),
+          ...(keyId.trim() ? { registrationKeyId: keyId.trim() } : {}),
+        },
       ),
     onSuccess: async (result) => {
       setCreated(result);
@@ -1136,6 +1288,7 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
     setOpen(false);
     setForm(registrationKeyForm(null));
     setIdentityMode("persistent");
+    setKeyId("");
     setCreated(null);
     create.reset();
   };
@@ -1148,7 +1301,7 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
         Registration key
       </Button>
       <Dialog open={open} onOpenChange={(next) => { if (!next) reset(); }}>
-        <DialogContent showCloseButton={!created}>
+        <DialogContent showCloseButton={!created} className="max-h-[90vh] overflow-y-auto">
           {created ? (
             <RegistrationSecret created={created} onDone={reset} />
           ) : (
@@ -1182,6 +1335,12 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
                   </FieldDescription>
                 </Field>
                 <RegistrationKeyFields form={form} identityMode={identityMode} onChange={setForm} />
+                <KeyIdField
+                  id="registration-key-id"
+                  value={keyId}
+                  onChange={(value) => { setKeyId(value); create.reset(); }}
+                  conflict={isKeyIdConflict(create.error, keyId)}
+                />
                 {create.error && <p className="text-sm text-destructive">{create.error.message}</p>}
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={reset}>Cancel</Button>
@@ -1230,7 +1389,7 @@ function EditRegistrationKeyDialog({
   const formError = registrationKeyFormError(form);
   return (
     <Dialog open={registrationKey !== null} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit “{registrationKey?.displayName}”</DialogTitle>
           <DialogDescription>
@@ -1339,6 +1498,57 @@ function EnvironmentIngressButton({
   );
 }
 
+/// Forget the daemon bound to a declared environment
+/// (`environments/registered/release`) so that another machine can bind to it.
+function ReleaseDaemonButton({
+  universeId,
+  environment,
+}: {
+  universeId: string;
+  environment: Environment;
+}) {
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const release = useMutation({
+    mutationFn: () => api<Environment>(
+      "POST",
+      `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/release`,
+    ),
+    onSuccess: async () => {
+      setConfirming(false);
+      await queryClient.invalidateQueries({ queryKey: ["environments", universeId] });
+    },
+  });
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={() => { release.reset(); setConfirming(true); }}>
+        <Unplug data-icon="inline-start" />
+        Release daemon
+      </Button>
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Release the daemon of {environmentName(environment)}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The machine now bound to this environment is disconnected and its identity is forgotten.
+              The next daemon that registers under the same key and name binds to it, so a machine
+              that lost its state directory can take over. The environment keeps its id, name, and
+              credentials.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {release.error && <p className="text-sm text-destructive">{release.error.message}</p>}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep</AlertDialogCancel>
+            <AlertDialogAction onClick={() => release.mutate()} disabled={release.isPending}>
+              {release.isPending ? "Releasing…" : "Release daemon"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
 function CloseEnvironmentButton({
   universeId,
   environment,
@@ -1372,6 +1582,11 @@ function CloseEnvironmentButton({
                 ? <> <span className="font-mono text-xs">{source.targetId}</span></>
                 : null}
               {" "}and everything stored on it, and its public endpoint stops working.
+            </>
+          ) : source.type === "registered" && !source.daemonId ? (
+            <>
+              No daemon is bound to it. Its registration name becomes free for a new
+              declaration; the id stays with the closed environment.
             </>
           ) : source.type === "registered" ? (
             <>
@@ -1429,7 +1644,7 @@ function EditEnvironmentDialog({
   });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Rename {environmentName(environment)}</DialogTitle>
           <DialogDescription>
@@ -1531,7 +1746,7 @@ function CreateEnvironmentDialog({
         New environment
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>New universe environment</DialogTitle>
             <DialogDescription>
@@ -1693,7 +1908,7 @@ function RegisterExternalEnvironmentDialog({
         {suggestedEndpoint && !alreadyRegistered ? "Attach local daemon" : "Register external"}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Register external environment</DialogTitle>
             <DialogDescription>

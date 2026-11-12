@@ -51,7 +51,7 @@ They do not configure the TypeScript Platform backend.
 | `LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES` | `67108864` | Maximum gateway request body size in bytes. |
 | `LIGHTSPEED_PUBLIC_BASE_URL` | `http://{LIGHTSPEED_GATEWAY_BIND}`; an `environment-gateway` process on a non-loopback bind needs it or `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS` | Externally reachable gateway base URL used for OAuth callbacks, bot webhook ingest URLs (`/hooks/bots/…`), and as the environment route base when the process runs the `gateway` role. Its origin is also one registered daemons may sign: daemons dial the registration routes on this host or on a host named in `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`, and a daemon that dials another hostname is refused. A process running `environment-gateway` on a non-loopback bind refuses to start with neither. Hosted deployments should set it explicitly. |
 | `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS` | Unset | Comma-separated further gateway URLs registered daemons may dial and sign (also `--environment-registration-urls`), for example a cluster-internal Service address such as `ws://lightspeed-environment-gateway.lightspeed.svc:18080/environment-gateway/connect`. Only each URL's origin counts; an entry without a WebSocket origin is a startup error. Read only by a process running `environment-gateway`. |
-| `LIGHTSPEED_MCP_PRIVATE_NETWORKS` | Empty (`localhost,127.0.0.1,::1` in `dev.sh` profiles and `scripts/dev/env.sh`) | Comma-separated exact hosts and CIDRs that outbound requests may reach on private networks: runtime MCP discovery and execution (where the MCP server record must also opt in with `allowPrivateNetwork`) and bot URL polls. All other targets retain public-only HTTPS/SSRF policy. |
+| `LIGHTSPEED_MCP_PRIVATE_NETWORKS` | Empty (`localhost,127.0.0.1,::1` in `dev.sh` profiles and `scripts/dev/env.sh`) | Comma-separated exact hostnames and CIDR ranges that outbound requests may reach on private networks: runtime MCP discovery and execution (where the MCP server record must also opt in with `allowPrivateNetwork`) and bot URL polls. A listed hostname is allowed wherever it resolves. A range admits any server, named by hostname or by IP, whose resolved address falls inside it; for example `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` covers the usual internal networks while leaving loopback and link-local addresses blocked. Plain HTTP is accepted only for a listed hostname or an address inside a listed range. All other targets retain public-only HTTPS/SSRF policy. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL` | Unset | Retired; a nonempty value fails startup. Use a scoped API key. |
 | `LIGHTSPEED_MCP_OAUTH_ALLOW_PRIVATE_NETWORKS` | `false` (`true` in `dev.sh` profiles) | Allows MCP OAuth metadata, registration, exchange, and refresh to use HTTP or private endpoints. This does not authorize discovery or tool execution; those use `LIGHTSPEED_MCP_PRIVATE_NETWORKS` plus the record opt-in. |
 | `LIGHTSPEED_AUTH_MODE` | **Required** | `single` (no credential check, ordinary methods use one configured universe; local development only) or `authenticated` (bearer keys with a scope and allowed method groups). There is no default: the process refuses to start without it. Configurator uses the same mode. |
@@ -69,8 +69,9 @@ create`.
 
 In authenticated mode, the gateway checks the key's status, scope, and allowed
 method groups on each request. A universe key selects its own universe and
-must omit `x-lightspeed-universe`. A deployment key sends that header for
-universe/service methods and omits it for deployment methods and `initialize`.
+must omit `x-lightspeed-universe`. A deployment key sends that header, with
+the universe's UUID or handle, for universe/service methods and omits it for
+deployment methods and `initialize`.
 `x-lightspeed-actor` requires the key's `assertActor` flag and supplies attribution,
 not a person's permissions. The removed `x-lightspeed-principal` header is
 rejected. Single mode rejects all credential, universe, and actor headers.
@@ -80,7 +81,7 @@ See [API keys and service access](../access-and-security/api-keys-and-service-ac
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_BOOTSTRAP_API_KEY` | Unset (generate a key) | Secret input to `lightspeed-runtime api-key provision`, also accepted on first development setup. Must be `lsk_` plus 32 random bytes in unpadded base64url. Stores the hash in the normal key store; does not bypass revocation or enable provisioning on ordinary production startup. |
+| `LIGHTSPEED_BOOTSTRAP_API_KEY` | Unset (generate a key) | Secret input to `lightspeed-runtime api-key provision`, also accepted on first development setup. Must be `lsk_` plus 32 random bytes in unpadded base64url, as `lightspeed api-key generate-secret` prints. The command declares the key of its `--key-id`: the hash is stored in the normal key store, a changed secret replaces the previous one at once, and changed groups are applied. It does not bypass revocation or enable provisioning on ordinary production startup. |
 
 The development opt-out is the launcher option `--no-api-key-bootstrap`, not
 an environment variable. It skips API-key provisioning without disabling
@@ -212,7 +213,7 @@ are given together.
 | --- | --- | --- |
 | `LIGHTSPEED_API_URL` | Required unless a saved connection or `--api-url` supplies it | Lightspeed JSON-RPC endpoint, normally ending in `/rpc`. Also used as the Platform backend's fallback gateway URL. |
 | `LIGHTSPEED_API_KEY` | Unset | Bearer key sent to an authenticated gateway. |
-| `LIGHTSPEED_UNIVERSE` | Unset | Universe UUID or core slug overriding saved selection. Only deployment keys may switch universes; slugs require universe-list permission. |
+| `LIGHTSPEED_UNIVERSE` | Unset | Universe UUID or handle overriding saved selection, sent to the runtime as given. Only deployment keys may switch universes. |
 | `LIGHTSPEED_CONFIG_DIR` | `$XDG_CONFIG_HOME/lightspeed`, otherwise `$HOME/.config/lightspeed` | Saved CLI connection metadata and protected owned credential files. |
 | `LIGHTSPEED_CHAT_REASONING_EFFORT` | `high` | Default effort: `low`, `medium`, `high`, or `none`. Invalid values fall back to `high`. |
 | `LIGHTSPEED_CHAT_MAX_TOKENS` | Unset | Optional positive integer maximum output-token setting for new sessions. |
@@ -246,7 +247,7 @@ from the environment of each process and job the daemon starts.
 | `LIGHTSPEED_ENVD_AUTO_UPGRADE` | `false` | Opt a registered outbound daemon into installing and re-executing the build in the deployment discovery document when the gateway challenges it with a different protocol number. Accepts boolean values including `1`/`0`; automatic upgrade is attempted once for each protocol version the gateway names. It replaces the executable in place, so leave it off on a read-only root filesystem and in containers, and roll out a new image instead. |
 | `LIGHTSPEED_ENVD_REGISTRATION_KEY` | Unset | Registration key admitting a first-seen daemon identity. Read once and dropped from the process environment, and sent to the gateway only until the first admission; on Linux the initial environment stays readable through `/proc`, so use the file form for untrusted workloads. |
 | `LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE` | Unset | File holding the registration key; mutually exclusive with the direct form. The daemon sends it only until its first admission, so the file can be deleted once the receipt appears, or stay mounted as a Kubernetes Secret. |
-| `LIGHTSPEED_ENVD_REGISTRATION_NAME` | Unset | Display-name hint recorded on the environment at first registration; ignored on later connections, so rename the environment in Lightspeed instead. An out-of-bounds value refuses admission. |
+| `LIGHTSPEED_ENVD_REGISTRATION_NAME` | Unset | Display-name hint recorded on the environment at first registration; ignored on later connections, so rename the environment in Lightspeed instead. At first registration it also selects an environment declared under the key with this name, which the daemon then becomes. An out-of-bounds value refuses admission. |
 | `LIGHTSPEED_ENVD_REGISTRATION_METADATA` | Unset | JSON object of string correlation metadata (at most 32 entries; keys up to 64 bytes, values up to 256; the `lightspeed.` prefix is reserved), recorded at first registration only. Descriptive only. |
 | `LIGHTSPEED_ENVD_REGISTRATION_RECEIPT` | Unset | Path the daemon writes `{environmentId, daemonId, controlConnectionId, identityMode, admission}` to once admitted; `identityMode` is `persistent` or `ephemeral`, and `admission` is `created` or `reconnected`. The daemon refuses to start when the path is not writable and exits when writing it fails. |
 | `LIGHTSPEED_ENVD_CA_FILE` | Unset | PEM bundle of additional TLS trust anchors for a gateway behind a private CA. |

@@ -2,7 +2,7 @@
 /// universe API keys. The demo user is a platform admin, so every gate the
 /// real server applies passes.
 import { Hono } from "hono";
-import { effectiveFeatures, featureOverridesSchema, memberUpdateSchema, mergeFeatureOverrides, slugify, universeRoleSchema, universeSlugSchema, universeUpdateSchema } from "@lightspeed-ai/platform-shared";
+import { effectiveFeatures, featureOverridesSchema, keyIdConflictMessage, memberUpdateSchema, mergeFeatureOverrides, universeHandleFromName, universeRoleSchema, universeHandleSchema, universeUpdateSchema } from "@lightspeed-ai/platform-shared";
 import type { MethodGroup } from "@lightspeed-ai/sdk";
 import type { EngineUniverse, Member, Universe } from "@/api";
 import { universeApiKey, type DemoStore, type UniverseState } from "../store";
@@ -20,13 +20,13 @@ export function platformRoutes(store: DemoStore): Hono {
   app.get("/universes", (c) => c.json([...store.universes.values()].map((state) => state.universe)));
 
   app.post("/universes", async (c) => {
-    const body = await readBody<{ name?: string; slug?: string }>(c);
+    const body = await readBody<{ name?: string; handle?: string }>(c);
     const name = body.name?.trim();
     if (!name) return badRequest(c, "validation failed — name: required");
-    const slug = body.slug?.trim() || slugify(name);
-    if (!universeSlugSchema.safeParse(slug).success) return badRequest(c, "invalid universe slug");
-    if (store.universeBySlug(slug) || store.orphanEngineUniverses.some(o => o.slug === slug)) return conflict(c, "universe slug is already in use");
-    const state = store.addUniverse({ slug, name, role: "admin" });
+    const handle = body.handle?.trim() || universeHandleFromName(name);
+    if (!universeHandleSchema.safeParse(handle).success) return badRequest(c, "invalid universe handle");
+    if (store.universeByHandle(handle) || store.orphanEngineUniverses.some(o => o.handle === handle)) return conflict(c, "universe handle is already in use");
+    const state = store.addUniverse({ handle, name, role: "admin" });
     return c.json(state.universe, 201);
   });
 
@@ -45,10 +45,12 @@ export function platformRoutes(store: DemoStore): Hono {
 
   // Demo runtime and Platform share one in-memory inventory, so its cache
   // is already current; the explicit action still mirrors the real API.
-  app.post("/universes/sync-slugs", c => c.json({ updated: 0, skipped: 0 }));
+  app.post("/universes/sync-handles", c => c.json({ updated: 0, skipped: 0 }));
 
   app.post("/universes/adopt", async (c) => {
-    const body = await readBody<{ lightspeedUniverseId?: string; name?: string; slug?: string }>(c);
+    const body = await readBody<{ lightspeedUniverseId?: string; name?: string; handle?: string }>(c);
+    // As in the real API, adoption keeps the universe's handle and never names it.
+    if (body.handle !== undefined) return badRequest(c, "validation failed — handle: not accepted");
     const engineId = body.lightspeedUniverseId?.trim();
     const name = body.name?.trim();
     if (!engineId || !name) return badRequest(c, "validation failed — lightspeedUniverseId and name are required");
@@ -58,14 +60,11 @@ export function platformRoutes(store: DemoStore): Hono {
     const orphanIndex = store.orphanEngineUniverses.findIndex((o) => o.universeId === engineId);
     if (orphanIndex < 0) return notFound(c, "engine universe not found");
     const orphan = store.orphanEngineUniverses[orphanIndex] as EngineUniverse;
-    if (orphan.slug && body.slug && body.slug !== orphan.slug) return conflict(c, "adoption must use the existing runtime slug; rename it separately in runtime");
-    const slug = orphan.slug ?? body.slug?.trim();
-    if (!slug || !universeSlugSchema.safeParse(slug).success) return badRequest(c, "a valid slug is required to adopt an unnamed runtime universe");
-    if (store.universeBySlug(slug) || store.orphanEngineUniverses.some(o => o.universeId !== engineId && o.slug === slug)) return conflict(c, "universe slug is already in use");
-    orphan.slug = slug;
+    const handle = orphan.handle;
+    if (store.universeByHandle(handle)) return conflict(c, "universe handle is already in use");
     store.orphanEngineUniverses.splice(orphanIndex, 1);
     const state = store.addUniverse({
-      slug,
+      handle,
       name,
       lightspeedUniverseId: engineId,
       role: "admin",
@@ -99,16 +98,16 @@ export function platformRoutes(store: DemoStore): Hono {
     return state ? c.json(state.universe) : notFound(c);
   });
 
-  app.put("/universes/:id/slug", async c => {
+  app.put("/universes/:id/handle", async c => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
-    const body = await readBody<{ slug?: string }>(c);
-    const parsed = universeSlugSchema.safeParse(body.slug);
-    if (!parsed.success) return badRequest(c, "invalid universe slug");
-    const slug = parsed.data;
-    const existing = store.universeBySlug(slug);
-    if ((existing && existing !== state) || store.orphanEngineUniverses.some(orphan => orphan.slug === slug)) return conflict(c, "universe slug is already in use");
-    state.universe.slug = slug;
+    const body = await readBody<{ handle?: string }>(c);
+    const parsed = universeHandleSchema.safeParse(body.handle);
+    if (!parsed.success) return badRequest(c, "invalid universe handle");
+    const handle = parsed.data;
+    const existing = store.universeByHandle(handle);
+    if ((existing && existing !== state) || store.orphanEngineUniverses.some(orphan => orphan.handle === handle)) return conflict(c, "universe handle is already in use");
+    state.universe.handle = handle;
     return c.json(state.universe);
   });
 
@@ -212,12 +211,17 @@ export function platformRoutes(store: DemoStore): Hono {
   app.post("/universes/:id/api-keys", async (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
-    const body = await readBody<{ displayName?: string; groups?: MethodGroup[] }>(c);
+    const body = await readBody<{ displayName?: string; groups?: MethodGroup[]; keyId?: string }>(c);
     const displayName = body.displayName?.trim();
     if (!displayName) return badRequest(c, "validation failed — displayName: required");
     if (!body.groups?.length) return badRequest(c, "validation failed — groups: required");
+    // A chosen id is taken while any key of the universe holds it, revoked or not.
+    const keyId = body.keyId?.trim() || undefined;
+    const holder = state.apiKeys.find((key) => key.keyId === keyId);
+    if (keyId && holder) return conflict(c, keyIdConflictMessage(keyId, holder.revokedAtMs != null));
     const secret = `lsk_${randomHex(24)}`;
     const apiKey = universeApiKey(state, {
+      keyId,
       keyPrefix: secret.slice(0, 12),
       displayName,
       groups: body.groups,
@@ -228,10 +232,10 @@ export function platformRoutes(store: DemoStore): Hono {
     return c.json({ apiKey, secret }, 201);
   });
 
-  app.post("/universes/:id/api-keys/:keyPrefix/rotate", (c) => {
+  app.post("/universes/:id/api-keys/:keyId/rotate", (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
-    const apiKey = state.apiKeys.find((key) => key.keyPrefix === c.req.param("keyPrefix") && key.revokedAtMs == null);
+    const apiKey = state.apiKeys.find((key) => key.keyId === c.req.param("keyId") && key.revokedAtMs == null);
     if (!apiKey) return notFound(c);
     if (apiKey.assertActor) return c.json({ error: "Rotate this key from Platform admin" }, 403);
     const secret = `lsk_${randomHex(24)}`;
@@ -240,10 +244,10 @@ export function platformRoutes(store: DemoStore): Hono {
     return c.json({ apiKey, secret });
   });
 
-  app.delete("/universes/:id/api-keys/:keyPrefix", (c) => {
+  app.delete("/universes/:id/api-keys/:keyId", (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
-    const apiKey = state.apiKeys.find((k) => k.keyPrefix === c.req.param("keyPrefix"));
+    const apiKey = state.apiKeys.find((k) => k.keyId === c.req.param("keyId"));
     if (!apiKey) return notFound(c);
     apiKey.revokedAtMs ??= Date.now();
     return c.json(apiKey);

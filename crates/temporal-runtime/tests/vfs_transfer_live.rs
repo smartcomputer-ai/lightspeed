@@ -86,7 +86,7 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
         support::live::local_request_context_for(api::AccessScope::Deployment).await?,
         GatewayDeploymentApi::new(runtime.clone()).create_universe(
             api::DeploymentUniverseCreateParams {
-                slug: None,
+                handle: None,
                 universe_id: universe_id.to_string(),
             },
         ),
@@ -126,11 +126,13 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
             let key = state
                 .api
                 .create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
+                    registration_key_id: None,
                     display_name: "VFS transfer live".into(),
                     identity_mode: api::EnvironmentIdentityModeView::Ephemeral,
                     max_active_environments: Some(1),
                     ephemeral_disconnect_grace_ms: None,
                     offline_close_after_ms: None,
+                    declared_only: false,
                     expires_at_ms: None,
                 })
                 .await?

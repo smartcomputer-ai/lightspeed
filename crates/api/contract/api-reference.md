@@ -493,6 +493,32 @@ Creates an open environment backed by a Lightspeed-reachable envd endpoint, attr
 - Params: `EnvironmentExternalCreateParams`
 - Result: `AgentApiOutcome<EnvironmentExternalCreateResponse>`
 
+### `environments/registered/put`
+
+**Declare a registered environment**
+
+Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.
+
+- Access: `{"kind":"universe","action":"configureResource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
+- Params: `EnvironmentRegisteredPutParams`
+- Result: `AgentApiOutcome<EnvironmentRegisteredPutResponse>`
+
+### `environments/registered/release`
+
+**Release a declared environment's daemon**
+
+Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.
+
+- Access: `{"kind":"universe","action":"configureResource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
+- Params: `EnvironmentRegisteredReleaseParams`
+- Result: `AgentApiOutcome<EnvironmentRegisteredReleaseResponse>`
+
 ### `environments/ingress/put`
 
 **Configure environment public ingress**
@@ -623,6 +649,19 @@ Creates a reusable universe-scoped key that lets outbound envd daemons register 
 - Params: `EnvironmentRegistrationKeyCreateParams`
 - Result: `AgentApiOutcome<EnvironmentRegistrationKeyCreateResponse>`
 
+### `environments/registration-keys/put`
+
+**Declare an environment registration key**
+
+Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's.
+
+- Access: `{"kind":"universe","action":"configureResource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
+- Params: `EnvironmentRegistrationKeyPutParams`
+- Result: `AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>`
+
 ### `environments/registration-keys/read`
 
 **Read an environment registration key**
@@ -744,7 +783,7 @@ Returns the revision and independent agentRun and speechToText selections. Revis
 
 **Set a universe model default**
 
-Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
+Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `models`
@@ -1097,18 +1136,18 @@ Lists non-secret grant metadata for the universe, optionally filtered by status.
 - Params: `AuthGrantListParams`
 - Result: `AgentApiOutcome<AuthGrantListResponse>`
 
-### `auth/grants/replace`
+### `auth/grants/put`
 
-**Replace a token credential's value**
+**Declare a token credential**
 
-Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.
+Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthGrantReplaceParams`
-- Result: `AgentApiOutcome<AuthGrantReplaceResponse>`
+- Params: `AuthGrantPutParams`
+- Result: `AgentApiOutcome<AuthGrantPutResponse>`
 
 ### `auth/grants/revoke`
 
@@ -1214,18 +1253,18 @@ Creates a model or GitHub credential source. Plaintext API keys/private keys are
 - Params: `AuthProviderCreateParams`
 - Result: `AgentApiOutcome<AuthProviderCreateResponse>`
 
-### `auth/providers/replace`
+### `auth/providers/put`
 
-**Replace an authentication provider**
+**Declare an authentication provider**
 
-Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.
+Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthProviderReplaceParams`
-- Result: `AgentApiOutcome<AuthProviderReplaceResponse>`
+- Params: `AuthProviderPutParams`
+- Result: `AgentApiOutcome<AuthProviderPutResponse>`
 
 ### `auth/providers/read`
 
@@ -1682,7 +1721,7 @@ Deployment configuration inventory of one universe's provider bindings.
 
 **Create a universe**
 
-Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.
+Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
@@ -1708,7 +1747,7 @@ Returns deployment-wide universe summaries with approximate live aggregate count
 
 **Read a universe**
 
-Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.
+Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
@@ -1717,17 +1756,17 @@ Returns one deployment tenant summary with aggregate session, workspace, profile
 - Params: `DeploymentUniverseReadParams`
 - Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
 
-### `deployment/universes/slug/put`
+### `deployment/universes/handle/put`
 
-**Set a universe slug**
+**Rename a universe**
 
-Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.
+Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
 - Role: `none`
 - Target: `none`
-- Params: `DeploymentUniverseSlugPutParams`
+- Params: `DeploymentUniverseHandlePutParams`
 - Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
 
 ### `deployment/universes/delete`
@@ -1747,7 +1786,7 @@ Permanently terminates live session workflows, deletes external blob objects, an
 
 **Create a scoped API key**
 
-Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.
+Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/api-keys`
@@ -1755,6 +1794,19 @@ Mints a key for a universe or the deployment with the method groups it may call 
 - Target: `none`
 - Params: `DeploymentApiKeyCreateParams`
 - Result: `AgentApiOutcome<DeploymentApiKeyCreateResponse>`
+
+### `deployment/api-keys/put`
+
+**Declare a scoped API key**
+
+Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.
+
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/api-keys`
+- Role: `none`
+- Target: `none`
+- Params: `DeploymentApiKeyPutParams`
+- Result: `AgentApiOutcome<DeploymentApiKeyPutResponse>`
 
 ### `deployment/api-keys/list`
 
@@ -1773,7 +1825,7 @@ Returns non-secret key metadata, all keys or those of one scope, including group
 
 **Rotate a scoped API key**
 
-Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.
+Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/api-keys`
@@ -1786,7 +1838,7 @@ Atomically replaces an active key secret and display prefix, immediately rejecti
 
 **Revoke a scoped API key**
 
-Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.
+Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/api-keys`

@@ -929,6 +929,56 @@
         "action": "configureResource",
         "kind": "universe"
       },
+      "description": "Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.",
+      "group": "environments",
+      "method": "environments/registered/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentRegisteredPutParams"
+        },
+        "type": "EnvironmentRegisteredPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentRegisteredPutResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentRegisteredPutResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Declare a registered environment",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "description": "Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.",
+      "group": "environments",
+      "method": "environments/registered/release",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentRegisteredReleaseParams"
+        },
+        "type": "EnvironmentRegisteredReleaseParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentRegisteredReleaseResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Release a declared environment's daemon",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
       "description": "Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.",
       "group": "environments",
       "method": "environments/ingress/put",
@@ -1179,6 +1229,31 @@
         "action": "configureResource",
         "kind": "universe"
       },
+      "description": "Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's.",
+      "group": "environments",
+      "method": "environments/registration-keys/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentRegistrationKeyPutParams"
+        },
+        "type": "EnvironmentRegistrationKeyPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Declare an environment registration key",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
       "description": "Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.",
       "group": "environments",
       "method": "environments/registration-keys/read",
@@ -1404,7 +1479,7 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
+      "description": "Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
       "group": "models",
       "method": "models/defaults/put",
       "params": {
@@ -2078,24 +2153,24 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.",
+      "description": "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.",
       "group": "auth",
-      "method": "auth/grants/replace",
+      "method": "auth/grants/put",
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthGrantReplaceParams"
+          "$ref": "#/definitions/AuthGrantPutParams"
         },
-        "type": "AuthGrantReplaceParams"
+        "type": "AuthGrantPutParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantReplaceResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantPutResponse"
         },
-        "type": "AgentApiOutcome<AuthGrantReplaceResponse>"
+        "type": "AgentApiOutcome<AuthGrantPutResponse>"
       },
       "role": "operator",
       "scope": "universe",
-      "summary": "Replace a token credential's value",
+      "summary": "Declare a token credential",
       "target": null
     },
     {
@@ -2303,24 +2378,24 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
+      "description": "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.",
       "group": "auth",
-      "method": "auth/providers/replace",
+      "method": "auth/providers/put",
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthProviderReplaceParams"
+          "$ref": "#/definitions/AuthProviderPutParams"
         },
-        "type": "AuthProviderReplaceParams"
+        "type": "AuthProviderPutParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderReplaceResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderPutResponse"
         },
-        "type": "AgentApiOutcome<AuthProviderReplaceResponse>"
+        "type": "AgentApiOutcome<AuthProviderPutResponse>"
       },
       "role": "operator",
       "scope": "universe",
-      "summary": "Replace an authentication provider",
+      "summary": "Declare an authentication provider",
       "target": null
     },
     {
@@ -3173,7 +3248,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
+      "description": "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.",
       "group": "deployment/universes",
       "method": "deployment/universes/create",
       "params": {
@@ -3221,7 +3296,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
+      "description": "Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.",
       "group": "deployment/universes",
       "method": "deployment/universes/read",
       "params": {
@@ -3245,14 +3320,14 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.",
+      "description": "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.",
       "group": "deployment/universes",
-      "method": "deployment/universes/slug/put",
+      "method": "deployment/universes/handle/put",
       "params": {
         "schema": {
-          "$ref": "#/definitions/DeploymentUniverseSlugPutParams"
+          "$ref": "#/definitions/DeploymentUniverseHandlePutParams"
         },
-        "type": "DeploymentUniverseSlugPutParams"
+        "type": "DeploymentUniverseHandlePutParams"
       },
       "result": {
         "schema": {
@@ -3262,7 +3337,7 @@
       },
       "role": null,
       "scope": "deployment",
-      "summary": "Set a universe slug",
+      "summary": "Rename a universe",
       "target": null
     },
     {
@@ -3293,7 +3368,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.",
+      "description": "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.",
       "group": "deployment/api-keys",
       "method": "deployment/api-keys/create",
       "params": {
@@ -3311,6 +3386,30 @@
       "role": null,
       "scope": "deployment",
       "summary": "Create a scoped API key",
+      "target": null
+    },
+    {
+      "access": {
+        "kind": "deployment"
+      },
+      "description": "Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.",
+      "group": "deployment/api-keys",
+      "method": "deployment/api-keys/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/DeploymentApiKeyPutParams"
+        },
+        "type": "DeploymentApiKeyPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentApiKeyPutResponse"
+        },
+        "type": "AgentApiOutcome<DeploymentApiKeyPutResponse>"
+      },
+      "role": null,
+      "scope": "deployment",
+      "summary": "Declare a scoped API key",
       "target": null
     },
     {
@@ -3341,7 +3440,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.",
+      "description": "Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.",
       "group": "deployment/api-keys",
       "method": "deployment/api-keys/rotate",
       "params": {
@@ -3365,7 +3464,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.",
+      "description": "Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.",
       "group": "deployment/api-keys",
       "method": "deployment/api-keys/revoke",
       "params": {

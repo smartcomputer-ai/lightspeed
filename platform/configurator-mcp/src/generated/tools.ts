@@ -5071,6 +5071,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "null"
           ]
         },
+        "environmentId": {
+          "description": "The id profiles and bindings use for the environment. Omit it to have\none allocated. An id already in use is a conflict.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "idle": {
           "anyOf": [
             {
@@ -5347,6 +5354,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "endpoint": {
           "description": "`ws://`, `wss://` or `unix://` URL of an envd instance reachable from\nLightspeed.",
           "type": "string"
+        },
+        "environmentId": {
+          "description": "The id profiles and bindings use for the environment. Omit it to have\none allocated. An id already in use is a conflict.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "metadata": {
           "additionalProperties": {
@@ -5695,7 +5709,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "models/defaults/put",
     "group": "models",
     "summary": "Set a universe model default",
-    "description": "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
+    "description": "Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
     "paramsType": "ModelDefaultsPutParams",
     "resultType": "AgentApiOutcome<ModelDefaultsResponse>",
     "inputSchema": {
@@ -5705,10 +5719,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       },
       "properties": {
         "expectedRevision": {
-          "description": "Revision returned by read/put; zero for a universe with no updates.",
+          "description": "Write only if the defaults are still at this revision, as returned by\nread or put; zero for a universe with no updates. Omit it to write\nwhatever the current revision is.",
           "format": "uint64",
           "minimum": 0,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "model": {
           "anyOf": [
@@ -5727,8 +5744,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       },
       "required": [
         "slot",
-        "model",
-        "expectedRevision"
+        "model"
       ],
       "type": "object",
       "definitions": {
@@ -8734,7 +8750,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "resultType": "AgentApiOutcome<AuthGrantImportResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "description": "Import a token credential as an auth grant. Together with\n[`AuthGrantReplaceParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
+      "description": "Import a new token credential as an auth grant, under the given id or an\nallocated one; an id already in use is a conflict. Together with\n[`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
       "properties": {
         "audience": {
           "type": [
@@ -8867,27 +8883,74 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_grants_replace",
-    "method": "auth/grants/replace",
+    "name": "lightspeed_auth_grants_put",
+    "method": "auth/grants/put",
     "group": "auth",
-    "summary": "Replace a token credential's value",
-    "description": "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.",
-    "paramsType": "AuthGrantReplaceParams",
-    "resultType": "AgentApiOutcome<AuthGrantReplaceResponse>",
+    "summary": "Declare a token credential",
+    "description": "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.",
+    "paramsType": "AuthGrantPutParams",
+    "resultType": "AgentApiOutcome<AuthGrantPutResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "description": "Replace the token of an active token credential (`staticToken`). The\ncredential keeps its id, display name, audience, exposure and everything\nthat references it, so MCP servers, headers, bot polls and environment\nvariables use the new value from their next request or process. `token` is\nencrypted on receipt and never returned; `Debug` output redacts it.",
+      "description": "Declare a token credential (`staticToken`): its id, its settings and the\ntoken it holds. A credential that is missing is created. One that exists\nhas its settings replaced by these (an absent field is unset) and, when it\nholds a different token, that token replaced, so MCP servers, headers,\nbot polls and environment variables referencing the id use the new value\nfrom their next request or process. Declaring it again changes nothing.\n\n`token` is encrypted on receipt and never returned; `Debug` output redacts\nit and request logging must never echo these params.",
       "properties": {
+        "audience": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dryRun": {
+          "description": "Report what the declaration would do without doing it.",
+          "type": "boolean"
+        },
         "expiresAtMs": {
-          "description": "When the new token expires. Absent means it does not expire; the old\ntoken's expiry is not carried over.",
+          "description": "When the token expires. Absent means it does not expire.",
           "format": "int64",
           "type": [
             "integer",
             "null"
           ]
         },
+        "exposure": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AuthGrantExposure"
+            }
+          ],
+          "default": "brokered",
+          "description": "Whether the token may be leased in plaintext. It cannot be changed\nafterwards."
+        },
         "grantId": {
           "type": "string"
+        },
+        "metadata": {
+          "description": "Non-secret, caller-defined metadata. Must be a JSON object; never put\nsecret material here."
+        },
+        "providerId": {
+          "description": "Label recorded on the credential; `static` when absent. It cannot be\nchanged afterwards.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subjectHint": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "token": {
           "type": "string"
@@ -8897,7 +8960,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "grantId",
         "token"
       ],
-      "type": "object"
+      "type": "object",
+      "definitions": {
+        "AuthGrantExposure": {
+          "enum": [
+            "brokered",
+            "retrievable"
+          ],
+          "type": "string"
+        }
+      }
     }
   },
   {
@@ -9335,21 +9407,22 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_providers_replace",
-    "method": "auth/providers/replace",
+    "name": "lightspeed_auth_providers_put",
+    "method": "auth/providers/put",
     "group": "auth",
-    "summary": "Replace an authentication provider",
-    "description": "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
-    "paramsType": "AuthProviderReplaceParams",
-    "resultType": "AgentApiOutcome<AuthProviderReplaceResponse>",
+    "summary": "Declare an authentication provider",
+    "description": "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.",
+    "paramsType": "AuthProviderPutParams",
+    "resultType": "AgentApiOutcome<AuthProviderPutResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "description": "Replace an existing provider's configuration and credential in place, as\nif it were created again under the same id. The new settings are validated\nbefore anything changes, so a rejected replacement leaves the provider as\nit was; sessions and environment variables referencing the id keep working\nthroughout. `credential` is encrypted on receipt and never returned;\n`Debug` output redacts it.",
+      "description": "Declare a provider: its id, its configuration and its credential. A\nprovider that is missing is created. One that exists is rewritten in place\nas if it were created again under the same id, where it differs: the new\nsettings are validated before anything changes, so a rejected declaration\nleaves the provider as it was, and sessions and environment variables\nreferencing the id keep working throughout. Declaring it again changes\nnothing. `credential` is encrypted on receipt and never returned; `Debug`\noutput redacts it.",
       "properties": {
         "config": {
           "$ref": "#/definitions/AuthProviderConfigInput"
         },
         "credential": {
+          "description": "The provider's credential, for the kinds that take one. Absent leaves\nthe provider without a credential.",
           "type": [
             "string",
             "null"
@@ -9360,6 +9433,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "string",
             "null"
           ]
+        },
+        "dryRun": {
+          "description": "Report what the declaration would do without doing it.",
+          "type": "boolean"
         },
         "providerId": {
           "type": "string"

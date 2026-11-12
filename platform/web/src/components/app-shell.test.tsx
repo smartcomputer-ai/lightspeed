@@ -45,7 +45,7 @@ afterEach(async () => {
 async function sidebarFor(role: string, features = { bots: true, channels: true }, platformAdmin = false): Promise<Record<string, string[]>> {
   mocks.role = role;
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path === "/api/v1/universes") return [{ id: "universe", slug: "test", name: "Test", status: "active", role: mocks.role, features }];
+    if (path === "/api/v1/universes") return [{ id: "universe", handle: "test", name: "Test", status: "active", role: mocks.role, features }];
     throw new Error(`Unexpected request: ${path}`);
   });
   await act(async () => root.render(
@@ -121,7 +121,7 @@ it("keeps the menu folded to icons from the account's preference, and ⌘B unfol
   const key = "lightspeed:user-preferences:user";
   localStorage.setItem(key, JSON.stringify({ sidebarCollapsed: true }));
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path === "/api/v1/universes") return [{ id: "universe", slug: "test", name: "Test", status: "active", role: "viewer" }];
+    if (path === "/api/v1/universes") return [{ id: "universe", handle: "test", name: "Test", status: "active", role: "viewer" }];
     throw new Error(`Unexpected request: ${path}`);
   });
   await act(async () => root.render(

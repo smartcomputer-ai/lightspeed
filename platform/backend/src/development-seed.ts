@@ -21,12 +21,9 @@ export async function seedDevelopment(db: Db, env: ServerEnv): Promise<void> {
 
   // Core creation is idempotent, including after a partial seed.
   const client = deploymentClient(env);
-  const created = await client.call("deployment/universes/create", { universeId: testUniverseId, slug: "test" });
-  const universe = created.result.universe.slug ? created.result.universe : (
-    await client.call("deployment/universes/slug/put", { universeId: testUniverseId, slug: "test", onlyIfUnset: true })
-  ).result.universe;
-  const slug = universe.slug;
-  if (!slug) throw new Error("development Test universe needs a runtime slug");
+  const created = await client.call("deployment/universes/create", { universeId: testUniverseId, handle: "test" });
+  // An existing Test universe keeps whatever handle it was renamed to.
+  const handle = created.result.universe.handle;
   const [existing] = await db.select().from(schema.universes)
     .where(eq(schema.universes.lightspeedUniverseId, testUniverseId)).limit(1);
   if (existing?.gatewayUrl && existing.gatewayUrl !== env.lightspeedApiUrl) {
@@ -36,12 +33,12 @@ export async function seedDevelopment(db: Db, env: ServerEnv): Promise<void> {
   if (!organizationId) {
     organizationId = crypto.randomUUID();
     await db.transaction(async (tx) => {
-      await tx.insert(schema.organization).values({ id: organizationId!, name: "Test", slug, createdAt: new Date() });
+      await tx.insert(schema.organization).values({ id: organizationId!, name: "Test", slug: handle, createdAt: new Date() });
       await tx.insert(schema.universes).values({ organizationId: organizationId!, name: "Test", lightspeedUniverseId: testUniverseId });
     });
   }
-  // The organization keeps a lookup cache of the runtime-owned slug.
-  await db.update(schema.organization).set({ slug }).where(eq(schema.organization.id, organizationId));
+  // The organization keeps a lookup cache of the runtime-owned handle.
+  await db.update(schema.organization).set({ slug: handle }).where(eq(schema.organization.id, organizationId));
   await ensureMember(db, organizationId, admin.id, "admin");
 
   for (const fixture of testUsers) {

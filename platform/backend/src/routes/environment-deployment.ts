@@ -72,7 +72,7 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
       try {
         const response = await deploymentClientFor(ctx).call(
           "deployment/environment-provider-bindings/list",
-          { universeId: row.lightspeedUniverseId },
+          { universe: row.lightspeedUniverseId },
         );
         return { ...base, bindings: response.result.bindings ?? [], error: null };
       } catch (error) {
@@ -115,7 +115,7 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
     if (!body.ok) return body.response;
     return withGateway(c, async () => {
       const params: DeploymentProviderBindingPutParams = {
-        universeId: c.req.param("universeId"),
+        universe: c.req.param("universeId"),
         providerId: c.req.param("providerId"),
         enabled: body.data.enabled,
       };
@@ -132,7 +132,7 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
       const response = await deploymentClientFor(ctx).call(
         "deployment/environment-providers/bindings/delete",
         {
-          universeId: c.req.param("universeId"),
+          universe: c.req.param("universeId"),
           providerId: c.req.param("providerId"),
         },
       );

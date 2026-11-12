@@ -1,0 +1,2276 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "AccessScope": {
+      "description": "What a key reaches or a request addresses: one universe, or the\ndeployment.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "deployment",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "universe",
+              "type": "string"
+            },
+            "universeId": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "universeId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ApiKeysEntry": {
+      "additionalProperties": false,
+      "description": "Declare a key whose secret the caller supplies. `Debug` redacts the\nsecret; the serialized request remains sensitive and must not be logged.",
+      "properties": {
+        "assertActor": {
+          "default": false,
+          "description": "Whether the key may name the actor a request acts for. It cannot be\nchanged afterwards.",
+          "type": "boolean"
+        },
+        "displayName": {
+          "description": "Human-readable purpose shown in key-management interfaces.",
+          "type": "string"
+        },
+        "groups": {
+          "description": "The method groups the key may call; absent grants every group its\nscope allows. An existing key's groups are replaced by these.",
+          "items": {
+            "$ref": "#/definitions/MethodGroup"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "keyId": {
+          "description": "The key's id within its scope: 1-128 ASCII letters, digits,\nunderscores, hyphens, dots or colons, starting with a letter or digit.",
+          "type": "string"
+        },
+        "secretFrom": {
+          "$ref": "#/definitions/SecretSource",
+          "description": "Where `secret` comes from. The value itself is never written in a document."
+        }
+      },
+      "required": [
+        "keyId",
+        "displayName",
+        "secretFrom"
+      ],
+      "type": "object"
+    },
+    "AuthGrantExposure": {
+      "enum": [
+        "brokered",
+        "retrievable"
+      ],
+      "type": "string"
+    },
+    "AuthProviderConfigInput": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "apiBaseUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "appId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "githubApp",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "appId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Stored model provider API key; the key arrives via `credential` and is\nencrypted on receipt.",
+          "properties": {
+            "endpoint": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelEndpointConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "const": "modelApiKey",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Bind an existing auth grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
+          "properties": {
+            "audience": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "endpoint": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelEndpointConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "grantId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "modelOAuth",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "grantId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Register an endpoint that requires no provider credential.",
+          "properties": {
+            "endpoint": {
+              "$ref": "#/definitions/ModelEndpointConfig"
+            },
+            "type": {
+              "const": "modelEndpoint",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "endpoint"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CodeModeFeature": {
+      "additionalProperties": false,
+      "description": "Grants JavaScript composition through `code_execute`. Available script tools\nare the session's ordinary callable tools, optionally narrowed by allowedTools.\nTypeScript, ambient filesystem/network access, and recursive code execution\nare unavailable. An empty allowedTools list grants pure computation only.",
+      "properties": {
+        "allowedTools": {
+          "description": "Logical tool ids (for example vfs.read_file), not provider wire names.\nAbsent permits every currently callable grant; an empty list permits none.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "maxCatalogBytes": {
+          "default": 1048576,
+          "description": "Pinned callable catalog bytes, at most 8 MiB.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxMemoryBytes": {
+          "default": 67108864,
+          "description": "Interpreter heap, at most 512 MiB.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxOutputBytes": {
+          "default": 1048576,
+          "description": "Combined text() output and return value, at most 8 MiB.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxOutstandingToolCalls": {
+          "default": 16,
+          "description": "Concurrent pending calls, at most 64 and no greater than maxToolCalls.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxRequestBytes": {
+          "default": 1048576,
+          "description": "Serialized arguments per tool request, at most 8 MiB.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxResultBytes": {
+          "default": 1048576,
+          "description": "Serialized completion per tool request, at most 8 MiB.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxSourceBytes": {
+          "default": 262144,
+          "description": "UTF-8 source bytes, at most 1 MiB.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxStackBytes": {
+          "default": 1048576,
+          "description": "Interpreter native stack, at most 8 MiB.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxToolCalls": {
+          "default": 128,
+          "description": "Calls per script, at most 1,024.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timeoutMs": {
+          "default": 60000,
+          "description": "Total attempt time including input loading, interpreter capacity waits,\nJavaScript evaluation, and tool waits; at most 600,000 milliseconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "CompactionPolicy": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The engine never compacts on its own, and `session/context/compact` still works.\nOnce active context reaches 2,000 entries each run fails at its next turn\nboundary, until a compaction brings the count down or the policy changes.",
+          "properties": {
+            "mode": {
+              "const": "disabled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "compactThresholdTokens": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "mode": {
+              "const": "providerTriggered",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "compactThresholdTokens": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "mode": {
+              "const": "providerStandalone",
+              "type": "string"
+            },
+            "targetTokens": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ContextConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "compaction": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CompactionPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+        },
+        "inputLimitTokens": {
+          "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors. Where a limit is known, a run start or steering holding one text entry over it is refused with `invalidRequest`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "CredentialsEntry": {
+      "additionalProperties": false,
+      "description": "Declare a token credential (`staticToken`): its id, its settings and the\ntoken it holds. A credential that is missing is created. One that exists\nhas its settings replaced by these (an absent field is unset) and, when it\nholds a different token, that token replaced, so MCP servers, headers,\nbot polls and environment variables referencing the id use the new value\nfrom their next request or process. Declaring it again changes nothing.\n\n`token` is encrypted on receipt and never returned; `Debug` output redacts\nit and request logging must never echo these params.",
+      "properties": {
+        "audience": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expiresAtMs": {
+          "description": "When the token expires. Absent means it does not expire.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "exposure": {
+          "$ref": "#/definitions/AuthGrantExposure",
+          "default": "brokered",
+          "description": "Whether the token may be leased in plaintext. It cannot be changed\nafterwards."
+        },
+        "grantId": {
+          "type": "string"
+        },
+        "metadata": {
+          "description": "Non-secret, caller-defined metadata. Must be a JSON object; never put\nsecret material here."
+        },
+        "providerId": {
+          "description": "Label recorded on the credential; `static` when absent. It cannot be\nchanged afterwards.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subjectHint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokenFrom": {
+          "$ref": "#/definitions/SecretSource",
+          "description": "Where `token` comes from. The value itself is never written in a document."
+        }
+      },
+      "required": [
+        "grantId",
+        "tokenFrom"
+      ],
+      "type": "object"
+    },
+    "DeploymentDocument": {
+      "additionalProperties": false,
+      "description": "Resources that belong to the deployment and not to one universe.",
+      "properties": {
+        "apiKeys": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ApiKeysEntry"
+              },
+              {
+                "$ref": "#/definitions/Include"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "kind": {
+          "const": "deployment"
+        },
+        "schemaVersion": {
+          "const": 1,
+          "description": "The layout of this file. It is not a revision of the configuration."
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "EnvironmentAccess": {
+      "description": "Per-attachment environment access, an ordered ladder: `edit` adds file\nediting to `read`, `exec` adds processes, `jobs` adds durable jobs.\nProcesses can write files regardless of the file-tool level, so\nread-only files with commands is deliberately not expressible.",
+      "enum": [
+        "read",
+        "edit",
+        "exec",
+        "jobs"
+      ],
+      "type": "string"
+    },
+    "EnvironmentAttachment": {
+      "additionalProperties": false,
+      "description": "One environment the session may use. Exactly one of `environmentId` and\n`inherit` identifies the machine. `inherit` is valid only in a profile\ndocument applied to a sub-agent: it resolves to the delegating parent's\nactive environment at spawn and is stored on the child as a concrete id.\nIf the parent's environment is also listed explicitly, the explicit\nattachment wins; if the parent has none, the inherit attachment is dropped.",
+      "properties": {
+        "access": {
+          "$ref": "#/definitions/EnvironmentAccess"
+        },
+        "default": {
+          "description": "Activated when a profile is applied while the session has no active\nenvironment; creation is the trivial case. A `session/config/put` that\nchanges the default activates it when the put leaves nothing active, and\nrefuses a default that cannot be selected. Never overrides a live selection,\nand an unchanged default never undoes a deliberate deactivation.",
+          "type": "boolean"
+        },
+        "environmentId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inherit": {
+          "type": "boolean"
+        },
+        "workingDirectory": {
+          "description": "Absolute machine working directory for file tools, commands, jobs,\nand sources; absent uses the machine's advertised default.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "access"
+      ],
+      "type": "object"
+    },
+    "EnvironmentCredentialSourceView": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "grantId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "authGrant",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "grantId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "providerId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "authProviderCredential",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "providerId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "secretId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "directSecret",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "secretId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "EnvironmentIdentityModeView": {
+      "description": "What happens to a registered environment while its daemon is\ndisconnected. Policy of the registration key that admitted it.",
+      "oneOf": [
+        {
+          "const": "persistent",
+          "description": "Stays open: tools wait up to two minutes for the daemon to reconnect.\nClosed explicitly, or after the key's `offlineCloseAfterMs`.",
+          "type": "string"
+        },
+        {
+          "const": "ephemeral",
+          "description": "Unusable while disconnected; closed once the daemon has been away\nlonger than the key's disconnect grace, or at once when it says\ngoodbye.",
+          "type": "string"
+        }
+      ]
+    },
+    "EnvironmentIdlePolicyView": {
+      "additionalProperties": false,
+      "description": "Staged idle policy the provider applies. Thresholds are milliseconds of\nenvd-reported idle time (running processes, jobs and leftover process\ngroups hold it at zero) and must be non-decreasing in the order pause,\nsuspend, stop, close. Stages whose power state the template does not\nsupport are skipped.",
+      "properties": {
+        "closeAfterMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pauseAfterMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stopAfterMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "suspendAfterMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "EnvironmentPromptsConfig": {
+      "additionalProperties": false,
+      "description": "Prompt loading scope resolved on the selected machine, never on the worker.",
+      "properties": {
+        "roots": {
+          "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/prompts and\n.lightspeed/prompts under working directory and execution home.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "EnvironmentProvidersEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "EnvironmentRegistrationSecretView": {
+      "description": "A freshly minted registration secret. `Debug` output is redacted so the\nplaintext cannot leak through derived logging; it is shown once.",
+      "type": "string"
+    },
+    "EnvironmentSkillsConfig": {
+      "additionalProperties": false,
+      "description": "Skill discovery scope resolved on the selected machine, never on the worker.",
+      "properties": {
+        "roots": {
+          "description": "Optional source directories, absolute or relative to the environment\nworking directory. Explicit nonempty lists replace all defaults,\nincluding home roots. Defaults are .agents/skills and\n.lightspeed/skills under working directory and execution home.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "EnvironmentSourceEntry": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A fixed machine whose daemon registers under `name`.",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "registrationKeyId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "registered",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "registrationKeyId",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "idle": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentIdlePolicyView"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "providerId": {
+              "type": "string"
+            },
+            "templateId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "provisioned",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "providerId",
+            "templateId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "type": {
+              "const": "external",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "endpoint"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "EnvironmentsCredentialsEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "envName": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/definitions/EnvironmentCredentialSourceView"
+        }
+      },
+      "required": [
+        "envName",
+        "source"
+      ],
+      "type": "object"
+    },
+    "EnvironmentsEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "credentials": {
+          "description": "The environment's credential bindings. When present, a binding that is not listed is unbound.",
+          "items": {
+            "$ref": "#/definitions/EnvironmentsCredentialsEntry"
+          },
+          "type": "array"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "environmentId": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "source": {
+          "$ref": "#/definitions/EnvironmentSourceEntry"
+        }
+      },
+      "required": [
+        "environmentId",
+        "source"
+      ],
+      "type": "object"
+    },
+    "EnvironmentsFeature": {
+      "additionalProperties": false,
+      "description": "Grants session environments. The `environments` list is the allowed set:\nthe session can select, read, and run work only on a listed machine, each\nwith its own access grant and working directory. The installed tool\nsurface is the union of every attachment's grant; a call the active\nmachine's grant does not cover fails at execution, so switching machines\nnever changes the toolset. `{}` grants the feature with no reachable\nmachine.",
+      "properties": {
+        "environments": {
+          "description": "The environments this session may use; unique ids, at most one\ndefault, at most one `inherit` (profiles only).",
+          "items": {
+            "$ref": "#/definitions/EnvironmentAttachment"
+          },
+          "type": "array"
+        },
+        "prompts": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentPromptsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Independent environment prompt loading; absent disables sourced instructions."
+        },
+        "selection": {
+          "default": false,
+          "description": "Exposes `environment_list`, `environment_activate`, and\n`environment_deactivate` over the attached environments.\n`environment_read` is available whenever environments are enabled, and\nexternal API/profile activation remains available when this is false.",
+          "type": "boolean"
+        },
+        "skills": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentSkillsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Independent environment skill discovery. Absent disables discovery."
+        },
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "FeaturesConfig": {
+      "additionalProperties": false,
+      "description": "Capability grants. An absent feature is not granted; `{}` grants it with\ndefaults. Every block carries a behavior `version` that pins semantics.",
+      "properties": {
+        "codeMode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CodeModeFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "environments": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentsFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mcp": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/McpFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subagents": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SubagentsFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timers": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TimersFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "vfs": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VfsFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "web": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WebFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "GenerationConfig": {
+      "additionalProperties": false,
+      "description": "Turn-shaping defaults applied to every LLM generation. Per-run overrides\nride `session/runs/start`.",
+      "properties": {
+        "maxOutputTokens": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "parallelToolUse": {
+          "description": "Whether the model may call several tools in one turn; absent leaves\nthe provider default.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "processingTier": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ModelProcessingTier"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Provider processing class. In session/profile config this becomes the\ndefault for every run; in run config it overrides that run. Currently\nsupported only by the built-in OpenAI provider."
+        },
+        "reasoningEffort": {
+          "description": "Reasoning effort tier as a provider-native string (e.g. \"none\",\n\"high\", \"xhigh\", \"max\"); validated against the session's provider.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toolChoice": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ToolChoice"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Include": {
+      "additionalProperties": false,
+      "description": "An entry kept in a file of its own, in JSON or YAML. The path is relative to this document.",
+      "properties": {
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "type": "object"
+    },
+    "LimitsConfig": {
+      "additionalProperties": false,
+      "description": "Limits applied to every run of the session unless the run sets its own.",
+      "properties": {
+        "maxTurns": {
+          "description": "Model turns a run may start, at least 1. A run that needs another turn past this fails with `limitExceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "McpFeature": {
+      "additionalProperties": false,
+      "description": "Grants remote MCP tools by declaring attached servers from the universe MCP\ncatalog. Server ids must be unique; an empty list grants no MCP tools.",
+      "properties": {
+        "servers": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/McpServerAttachment"
+          },
+          "type": "array"
+        },
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "McpServerAttachment": {
+      "additionalProperties": false,
+      "description": "A selected universe MCP server. Its catalog record owns connection,\nexecution, exposure, approval, and auth; the attachment may only narrow the\nrecord's tool allowlist for this session. A request that newly names a\nserver it cannot resolve is refused. Once attached, or when brought in by a\nprofile, a server that is disabled, deleted, or otherwise unusable is left out\nof later runs and the model is told, so a catalog action never stops the\nsession.",
+      "properties": {
+        "serverId": {
+          "type": "string"
+        },
+        "tools": {
+          "description": "Non-empty subset of the record's allowed tools exposed to this\nsession, under both injection and search; absent exposes the record's\nfull allowlist.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "serverId"
+      ],
+      "type": "object"
+    },
+    "McpServerAuthPolicy": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "none",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "optionalBearer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "requiredBearer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "authorization_server": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "protected_resource_metadata_url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "resource": {
+              "type": "string"
+            },
+            "scopes_default": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "optionalOAuth",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "resource"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "authorization_server": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "protected_resource_metadata_url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "resource": {
+              "type": "string"
+            },
+            "scopes_default": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "requiredOAuth",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "resource"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "McpServerCredential": {
+      "description": "Non-secret universe credential selected by this configured MCP server.\nToken material remains in the auth subsystem and is never returned.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "grantId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "authGrant",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "grantId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "McpServerHeader": {
+      "description": "Value of one extra MCP request header.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Sent as written. Not secret: reads return the value.",
+          "properties": {
+            "type": {
+              "const": "literal",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The token of a static-token credential in this universe, resolved at\neach request and sent raw, without a scheme prefix.",
+          "properties": {
+            "grantId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "credential",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "grantId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "McpServerStatus": {
+      "enum": [
+        "active",
+        "needsAuthConfig",
+        "unverified",
+        "disabled"
+      ],
+      "type": "string"
+    },
+    "McpServersEntry": {
+      "additionalProperties": false,
+      "description": "Full MCP server document as submitted by clients.",
+      "properties": {
+        "allowPrivateNetwork": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allowedTools": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "approval": {
+          "$ref": "#/definitions/RemoteMcpApprovalPolicy",
+          "default": "never",
+          "description": "Approval policy for every session linking this server."
+        },
+        "authPolicy": {
+          "$ref": "#/definitions/McpServerAuthPolicy",
+          "default": {
+            "type": "none"
+          }
+        },
+        "credential": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/McpServerCredential"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defaultServerLabel": {
+          "type": "string"
+        },
+        "deferLoading": {
+          "description": "Provider-side deferred loading of tool definitions where supported.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "execution": {
+          "$ref": "#/definitions/RemoteMcpExecution",
+          "default": "runtime"
+        },
+        "exposure": {
+          "$ref": "#/definitions/RemoteMcpExposure",
+          "default": "inject"
+        },
+        "headers": {
+          "additionalProperties": {
+            "$ref": "#/definitions/McpServerHeader"
+          },
+          "description": "Extra request headers sent on every request to the server, alongside\nany `Authorization` the auth policy produces. Names are\ncase-insensitive and stored lowercased; transport headers,\n`authorization` and `x-lightspeed-*` are reserved. Requires `runtime`\nexecution.",
+          "type": "object"
+        },
+        "serverId": {
+          "type": "string"
+        },
+        "serverUrl": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/McpServerStatus",
+          "default": "active"
+        }
+      },
+      "required": [
+        "serverId",
+        "serverUrl",
+        "defaultServerLabel"
+      ],
+      "type": "object"
+    },
+    "MethodGroup": {
+      "description": "The methods a key may call, by group. Every public method but\n`initialize` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
+      "oneOf": [
+        {
+          "enum": [
+            "vfs",
+            "profiles",
+            "transcriptions",
+            "models",
+            "mcp",
+            "bots",
+            "deployment/universes",
+            "deployment/api-keys",
+            "deployment/sessions"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "session",
+          "description": "`session/*`, `blobs/read` and `blobs/has`.",
+          "type": "string"
+        },
+        {
+          "const": "session/delete",
+          "description": "Destructive session operations and deletion retention.",
+          "type": "string"
+        },
+        {
+          "const": "blobs/put",
+          "description": "`blobs/put` alone, so connectors can upload attachments without\nreading sessions.",
+          "type": "string"
+        },
+        {
+          "const": "environments",
+          "description": "`environments/*`, including jobs and registration keys.",
+          "type": "string"
+        },
+        {
+          "const": "channels",
+          "description": "Channel accounts, pairings and conversations.",
+          "type": "string"
+        },
+        {
+          "const": "channels/inbound",
+          "description": "`channels/inbound/admit`: what a connector delivers.",
+          "type": "string"
+        },
+        {
+          "const": "auth",
+          "description": "`auth/*` except leasing.",
+          "type": "string"
+        },
+        {
+          "const": "auth/lease",
+          "description": "`auth/grants/lease`: resolving a brokered credential for delivery.",
+          "type": "string"
+        },
+        {
+          "const": "deployment/environment-providers",
+          "description": "Environment providers and their universe bindings.",
+          "type": "string"
+        },
+        {
+          "const": "deployment/channels",
+          "description": "`deployment/channels/accounts/list`: a connector host's discovery.",
+          "type": "string"
+        }
+      ]
+    },
+    "ModelConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "apiKind": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "apiKind",
+        "model"
+      ],
+      "type": "object"
+    },
+    "ModelDefault": {
+      "additionalProperties": false,
+      "properties": {
+        "apiKind": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "apiKind",
+        "model"
+      ],
+      "type": "object"
+    },
+    "ModelEndpointConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "apiKinds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "baseUrl",
+        "apiKinds"
+      ],
+      "type": "object"
+    },
+    "ModelProcessingTier": {
+      "description": "Provider processing class used by session defaults and per-run overrides.",
+      "enum": [
+        "standard",
+        "fast",
+        "flex"
+      ],
+      "type": "string"
+    },
+    "ProfileId": {
+      "type": "string"
+    },
+    "ProfileInstructions": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Borrowed CAS content: saving a profile does not retain the blob. Use\ninline text, or keep this ref retained by another durable resource.",
+          "properties": {
+            "blobRef": {
+              "type": "string"
+            },
+            "type": {
+              "const": "textRef",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "blobRef"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ProfileSessionRetention": {
+      "additionalProperties": false,
+      "description": "Root-session retention policy supplied by a profile at session creation.",
+      "properties": {
+        "deleteAfterCloseMs": {
+          "description": "Positive close-relative automatic-deletion duration.",
+          "format": "uint64",
+          "maximum": 3153600000000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "deleteAfterCloseMs"
+      ],
+      "type": "object"
+    },
+    "ProfilesEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SessionConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "instructions": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProfileInstructions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Descriptive metadata defaults copied to a session when it is created\nfrom this profile. Explicit `session/start` metadata wins key by key.\nApplying the profile to an existing session does not change metadata.",
+          "type": "object"
+        },
+        "profileId": {
+          "$ref": "#/definitions/ProfileId"
+        },
+        "retention": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProfileSessionRetention"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Creation-time session retention default. Absence keeps the tree until\nmanual deletion. Applying a profile to an existing session does not\nchange retention."
+        }
+      },
+      "required": [
+        "profileId"
+      ],
+      "type": "object"
+    },
+    "ProvidersEntry": {
+      "additionalProperties": false,
+      "description": "Declare a provider: its id, its configuration and its credential. A\nprovider that is missing is created. One that exists is rewritten in place\nas if it were created again under the same id, where it differs: the new\nsettings are validated before anything changes, so a rejected declaration\nleaves the provider as it was, and sessions and environment variables\nreferencing the id keep working throughout. Declaring it again changes\nnothing. `credential` is encrypted on receipt and never returned; `Debug`\noutput redacts it.",
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/AuthProviderConfigInput"
+        },
+        "credentialFrom": {
+          "$ref": "#/definitions/SecretSource",
+          "description": "Where `credential` comes from. The value itself is never written in a document."
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "config"
+      ],
+      "type": "object"
+    },
+    "RegistrationKeysEntry": {
+      "additionalProperties": false,
+      "description": "Declare a registration key whose secret the caller supplies: its id, its\ncomplete policy and the secret it answers to. An absent policy field is\nunset.",
+      "properties": {
+        "declaredOnly": {
+          "description": "Persistent keys only: admit only daemons whose registration name\nmatches an environment declared under this key.",
+          "type": "boolean"
+        },
+        "displayName": {
+          "description": "Group name for the environments this key admits.",
+          "type": "string"
+        },
+        "ephemeralDisconnectGraceMs": {
+          "description": "Disconnect grace for ephemeral environments; omit for the default.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "expiresAtMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "identityMode": {
+          "$ref": "#/definitions/EnvironmentIdentityModeView",
+          "description": "Immutable once the key exists."
+        },
+        "maxActiveEnvironments": {
+          "description": "Non-closed environments the key may have at once; omit for unlimited.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "offlineCloseAfterMs": {
+          "description": "Persistent keys only: close environments whose daemon has been away\nlonger than this; omit to keep them open.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "registrationKeyId": {
+          "type": "string"
+        },
+        "secretFrom": {
+          "$ref": "#/definitions/SecretSource",
+          "description": "Where `secret` comes from. The value itself is never written in a document."
+        }
+      },
+      "required": [
+        "registrationKeyId",
+        "displayName",
+        "identityMode",
+        "secretFrom"
+      ],
+      "type": "object"
+    },
+    "RemoteMcpApprovalPolicy": {
+      "enum": [
+        "never",
+        "always"
+      ],
+      "type": "string"
+    },
+    "RemoteMcpExecution": {
+      "description": "Who connects to the server and runs its tools. `runtime`, the default, means\nLightspeed does: each call runs once, under the approval policy, and is recorded.\nWith `provider` the model provider does, so the endpoint must be publicly reachable\nand tools run at least once: a retried generation re-sends the request, so a tool\ncan run again with its side effects, and the transcript shows at most one run.",
+      "enum": [
+        "provider",
+        "runtime"
+      ],
+      "type": "string"
+    },
+    "RemoteMcpExposure": {
+      "enum": [
+        "inject",
+        "search"
+      ],
+      "type": "string"
+    },
+    "SecretSource": {
+      "description": "Where a secret comes from. A document never holds the value.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "An environment variable of the process running the command.",
+          "properties": {
+            "env": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "env"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A file, relative to the document. One trailing line break is dropped.",
+          "properties": {
+            "file": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "file"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SessionConfig": {
+      "additionalProperties": false,
+      "description": "Session configuration document.\n\nSparse and capability-oriented: an omitted section means defaults, an\nabsent feature is not granted (no tools, no access). The document is\nreplaced whole via `session/config/put`; reads return exactly the stored\ndocument, so read-modify-write round-trips.",
+      "properties": {
+        "context": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "features": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FeaturesConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "generation": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/GenerationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limits": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LimitsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ModelConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime. The model name may change at\nany time: retained reasoning and compaction state goes to the new model\nunchanged, and the provider keeps or drops it. A combination the provider\nrefuses fails that run as `requestRejected`, and the session stays open."
+        }
+      },
+      "type": "object"
+    },
+    "SubagentAgentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "profileId": {
+          "$ref": "#/definitions/ProfileId"
+        }
+      },
+      "required": [
+        "profileId"
+      ],
+      "type": "object"
+    },
+    "SubagentsFeature": {
+      "additionalProperties": false,
+      "description": "Grants sub-agent delegation: `agent_run` (joined, result inline) and\n`agent_spawn` (promise, joined with `await`) over the listed agent\nprofiles. Limits are root-scoped and attenuating: every descendant of a\nroot session counts against the root, and a nested grant can narrow but\nnever widen the limits pinned on its origin.",
+      "properties": {
+        "agents": {
+          "description": "The agent menu. Every id must name an existing profile; the model\npicks by id and reads descriptions from the sub-agent catalog.",
+          "items": {
+            "$ref": "#/definitions/SubagentAgentRef"
+          },
+          "type": "array"
+        },
+        "maxConcurrent": {
+          "default": 8,
+          "description": "Open sessions under the root at any time, excluding the root.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxDepth": {
+          "default": 2,
+          "description": "A child at depth `d` may spawn only while `d + 1 <= maxDepth`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runTimeoutMs": {
+          "description": "Per-child run deadline in milliseconds. Omit it for no time limit.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "agents"
+      ],
+      "type": "object"
+    },
+    "TimersFeature": {
+      "additionalProperties": false,
+      "description": "Grants timer promises through the sleep tool plus the base concurrency\ntools (await/cancel/detach).",
+      "properties": {
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "ToolChoice": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "auto",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "none",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "requiredAny",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "toolId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "specific",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "toolId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UniverseDocument": {
+      "additionalProperties": false,
+      "description": "The configuration of one universe. A section left out is not managed by the document.",
+      "properties": {
+        "apiKeys": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ApiKeysEntry"
+              },
+              {
+                "$ref": "#/definitions/Include"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "credentials": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/CredentialsEntry"
+              },
+              {
+                "$ref": "#/definitions/Include"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "environmentProviders": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/EnvironmentProvidersEntry"
+              },
+              {
+                "$ref": "#/definitions/Include"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "environments": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/EnvironmentsEntry"
+              },
+              {
+                "$ref": "#/definitions/Include"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "handle": {
+          "description": "The universe's deployment-unique name. apply finds the universe by it and creates the universe when no universe has it.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "const": "universe"
+        },
+        "mcpServers": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/McpServersEntry"
+              },
+              {
+                "$ref": "#/definitions/Include"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "modelDefaults": {
+          "additionalProperties": false,
+          "description": "The model of each slot. `null` clears a slot; a slot left out is not managed.",
+          "properties": {
+            "agentRun": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelDefault"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "speechToText": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelDefault"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "profiles": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ProfilesEntry"
+              },
+              {
+                "$ref": "#/definitions/Include"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "providers": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ProvidersEntry"
+              },
+              {
+                "$ref": "#/definitions/Include"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "registrationKeys": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/RegistrationKeysEntry"
+              },
+              {
+                "$ref": "#/definitions/Include"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "schemaVersion": {
+          "const": 1,
+          "description": "The layout of this file. It is not a revision of the configuration."
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "handle"
+      ],
+      "type": "object"
+    },
+    "VfsFeature": {
+      "additionalProperties": false,
+      "description": "Grants the session virtual filesystem. Workspace attachments declare the\nsession-visible namespace and the VFS catalog is surfaced. The file tool\nsurface is derived from the attachments: any attachment installs the read\ntools, any `edit` attachment adds the write tools, and with the\nenvironments feature granted the matching transfer tools appear. `{}`\ngrants a VFS with no attachments, no tools, and no sourcing.",
+      "properties": {
+        "prompts": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VfsPromptsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Prompt-instruction sourcing from the VFS. Absent disables loading;\nan empty block discovers conventional attached roots."
+        },
+        "skills": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VfsSkillsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Independent VFS skill discovery. Absent disables discovery and removes\nits runtime catalog; an empty block discovers conventional attached roots."
+        },
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "workingDirectory": {
+          "description": "Absolute VFS tool working directory; absent uses /.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspaces": {
+          "description": "Catalog resources exposed in the session's workspace namespace at\ndisjoint absolute paths.",
+          "items": {
+            "$ref": "#/definitions/WorkspaceAttachment"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "VfsPromptsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "roots": {
+          "description": "Absent searches .agents/prompts and .lightspeed/prompts beneath each\nworkspace attachment. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace attachments.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "VfsSkillsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "roots": {
+          "description": "Absent searches .agents/skills and .lightspeed/skills beneath each\nworkspace attachment. Explicit roots replace these defaults and must be\nnon-empty absolute paths contained in workspace attachments.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "WebFeature": {
+      "additionalProperties": false,
+      "description": "Grants network access through the web toolset; `fetch` and `search` are\nindependently granted, and a web block granting neither is rejected.",
+      "properties": {
+        "fetch": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WebFetchFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "search": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WebSearchFeature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "WebFetchFeature": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "WebSearchFeature": {
+      "additionalProperties": false,
+      "properties": {
+        "allowedDomains": {
+          "description": "Absent means all domains; an explicit list must be non-empty.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "blockedDomains": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "WorkspaceAccess": {
+      "description": "Per-attachment VFS access; `edit` implies `read`.",
+      "enum": [
+        "read",
+        "edit"
+      ],
+      "type": "string"
+    },
+    "WorkspaceAttachment": {
+      "additionalProperties": false,
+      "description": "One catalog resource mounted into the session namespace. Exactly one of\n`workspaceId` and `snapshotRef` names the resource; snapshots are\nimmutable and must be attached with `read` access.",
+      "properties": {
+        "access": {
+          "$ref": "#/definitions/WorkspaceAccess"
+        },
+        "path": {
+          "type": "string"
+        },
+        "snapshotRef": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspaceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "access"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "A document that `lightspeed config apply` makes a universe, or the deployment, match. Generated from the API's input types; do not edit.",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/UniverseDocument"
+    },
+    {
+      "$ref": "#/definitions/DeploymentDocument"
+    }
+  ],
+  "title": "Lightspeed configuration document"
+}

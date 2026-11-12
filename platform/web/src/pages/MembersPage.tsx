@@ -51,14 +51,14 @@ import {
 import { useActiveUniverse } from "@/lib/universes";
 
 export function MembersPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
   if (!universe || !permissions.can("read")) {
-    return <UniverseNotFound slug={slug} />;
+    return <UniverseNotFound handle={handle} />;
   }
 
   return <MemberList universeId={universe.id} writable={permissions.can("manageAccess")} />;

@@ -10,8 +10,8 @@ import { waitForUi } from "@/test/wait-for-ui";
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 
-const universe = (slug: string, overrides: Record<string, unknown> = {}) => ({
-  id: `id-${slug}`, lightspeedUniverseId: `core-${slug}`, name: slug, slug, gatewayUrl: null, status: "active",
+const universe = (handle: string, overrides: Record<string, unknown> = {}) => ({
+  id: `id-${handle}`, lightspeedUniverseId: `core-${handle}`, name: handle, handle, gatewayUrl: null, status: "active",
   createdAt: "2026-01-01T00:00:00Z", role: "viewer", features: { bots: true, channels: true }, ...overrides,
 });
 
