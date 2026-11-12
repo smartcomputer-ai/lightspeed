@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { DarkThemeIcon, LightThemeIcon, SystemThemeIcon } from "@/icons";
 import { authClient, useLoginConfig, type SessionUser } from "@/auth";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,17 +12,15 @@ import {
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page";
-import { useTheme, type Theme } from "@/lib/theme";
 
 export function AccountPage({ user }: { user: SessionUser }) {
   const config = useLoginConfig();
   return (
     <>
-      <PageHeader title="Account" description="Your profile, password, and appearance." />
+      <PageHeader title="Account" description="Your profile and password." />
       <div className="grid gap-6">
         <ProfileCard user={user} />
         {user.identitySource === "company" ? <p className="text-sm text-muted-foreground">Your profile and sign-in are managed by your company.</p> : config.data?.password !== "off" && (!config.data?.sso || user.emergencyAdmin) && <PasswordCard />}
-        <ThemeCard />
       </div>
     </>
   );
@@ -175,35 +172,6 @@ function PasswordCard() {
             </Button>
           </div>
         </form>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ThemeCard() {
-  const { theme, setTheme } = useTheme();
-  const options: { value: Theme; label: string; icon: typeof LightThemeIcon }[] = [
-    { value: "light", label: "Light", icon: LightThemeIcon },
-    { value: "dark", label: "Dark", icon: DarkThemeIcon },
-    { value: "system", label: "System", icon: SystemThemeIcon },
-  ];
-
-  return (
-    <Card id="appearance" className="scroll-mt-6">
-      <CardHeader>
-        <CardTitle>Appearance</CardTitle>
-      </CardHeader>
-      <CardContent className="flex gap-2">
-        {options.map(({ value, label, icon: Icon }) => (
-          <Button
-            key={value}
-            variant={theme === value ? "secondary" : "outline"}
-            onClick={() => setTheme(value)}
-          >
-            <Icon data-icon="inline-start" />
-            {label}
-          </Button>
-        ))}
       </CardContent>
     </Card>
   );

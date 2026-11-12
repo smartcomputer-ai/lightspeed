@@ -3,7 +3,7 @@ import { LightspeedLogo } from "@/components/brand/lightspeed-logo";
 import { Starscape } from "@/components/starscape/starscape";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { InfoBox } from "@/components/ui/info-box";
+import { DemoModeNote } from "@/components/onboarding/demo-mode-note";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { demoMode } from "@/lib/demo-mode";
 import { dismissWelcome, welcomeDismissed } from "@/lib/welcome";
@@ -36,13 +36,7 @@ export function WelcomeDialog() {
               environments provide its resources.
             </DialogDescription>
           </div>
-          {demo && (
-            <InfoBox tone="info" title="Demo Mode">
-              Everything here runs right in your browser on example data, so feel free to explore and play around.
-              The dummy agents follow scripted commands instead of calling a real model and performing real thinking
-              and tasks. Want a fresh start? Reset the demo data any time in the settings.
-            </InfoBox>
-          )}
+          {demo && <DemoModeNote resetHint />}
           <div className="flex items-center justify-between gap-4 pt-1">
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <Checkbox checked={never} onCheckedChange={(checked) => setNever(checked === true)} />

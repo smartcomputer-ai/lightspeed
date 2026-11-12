@@ -34,7 +34,6 @@ import { Switch } from "@/components/ui/switch";
 import { universeSlugSchema, FEATURES, FEATURE_KEYS, type FeatureKey } from "@lightspeed-ai/platform-shared";
 import { useActiveUniverse } from "@/lib/universes";
 import { UniverseAppearanceCard } from "@/components/universe-appearance-card";
-import { demoMode } from "@/lib/demo-mode";
 
 export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
@@ -51,7 +50,6 @@ export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
     <>
       <PageHeader title="General" description="Universe name, features, appearance, identifiers, and lifecycle." />
       <div className="grid gap-6">
-        <DemoDataCard />
         <RenameCard universe={universe} />
         <SlugCard key={`${universe.id}/${universe.slug}`} universe={universe} />
         <FeaturesCard universe={universe} />
@@ -60,27 +58,6 @@ export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
         <DangerZone universe={universe} />
       </div>
     </>
-  );
-}
-
-/// In the demo: starts its scripted data over. Nothing else in the demo is
-/// stored, so this is the only way back to the start short of reloading.
-function DemoDataCard() {
-  const demo = demoMode();
-  if (!demo) return null;
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Demo data</CardTitle>
-        <CardDescription>
-          This demo runs completely in your browser on scripted data. Resetting starts every universe, session and
-          bot over from the beginning.
-        </CardDescription>
-      </CardHeader>
-      <CardFooter>
-        <Button variant="outline" onClick={demo.reset}>Reset demo data</Button>
-      </CardFooter>
-    </Card>
   );
 }
 

@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { AdminIcon, DarkThemeIcon, LightThemeIcon, SignOutIcon, SwitcherIcon, SystemThemeIcon, UserIcon } from "@/icons";
+import { AdminIcon, DarkThemeIcon, LightThemeIcon, SettingsIcon, SignOutIcon, SwitcherIcon, SystemThemeIcon, UserIcon } from "@/icons";
 import type { SessionUser } from "@/auth";
 import { authClient } from "@/auth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -70,6 +70,10 @@ export function UserMenu({ user, admin }: { user: SessionUser; admin: boolean })
             <DropdownMenuItem onClick={() => navigate("/account")}>
               <UserIcon />
               Account
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/preferences")}>
+              <SettingsIcon />
+              Preferences
             </DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>

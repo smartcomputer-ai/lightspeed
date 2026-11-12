@@ -89,6 +89,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { InfoBox } from "@/components/ui/info-box";
+import { Todo } from "@/components/todo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { EmptyState, PageHeader, SectionHeader } from "@/components/page";
 import { StatusDot, type BotTone } from "@/components/bot/status";
@@ -583,6 +584,15 @@ function BadgesSection() {
         <InfoBox tone="error" title="Could not save">The provider rejected the key. Check it and try again.</InfoBox>
         <InfoBox tone="info">A note without a title keeps its icon beside the text.</InfoBox>
         <InfoBox tone="error">An error without a title is announced like one with.</InfoBox>
+      </Specimen>
+      <Specimen
+        title="To-do"
+        note="components/todo: a warning box for unfinished work; the production build fails while one is in the app and names each to-do"
+        className="grid gap-3 sm:grid-cols-2"
+      >
+        <Todo />
+        <Todo description="Choose which notifications reach you, and how." />
+        <Todo title="Not built yet" description="A custom title replaces To Do." />
       </Specimen>
       <Specimen title="Info box on a dialog" note="the same notes on the dialog surface (--surface-dialog), as the welcome dialog's Demo Mode info">
         <div className="grid w-full gap-3 rounded-(--surface-dialog-radius) bg-(--surface-dialog) surface-filter-dialog p-6 text-sm text-popover-foreground shadow-(--surface-dialog-shadow) inset-ring-(length:--surface-dialog-border-width) inset-ring-(color:--surface-dialog-border) sm:grid-cols-2">

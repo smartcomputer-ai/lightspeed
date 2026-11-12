@@ -2,7 +2,7 @@ import { useActionPermissions } from "@/lib/permissions";
 import { LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { useEffect, type ComponentType, type CSSProperties } from "react";
 import { Link, matchPath, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
-import { ApiKeyIcon, AppearanceIcon, AuditLogIcon, BackIcon, ChannelIcon, EnvironmentProviderIcon, SecurityIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
+import { ApiKeyIcon, AppearanceIcon, AuditLogIcon, BackIcon, ResetIcon, ChannelIcon, EnvironmentProviderIcon, SecurityIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
 import {
   Sidebar,
   SidebarContent,
@@ -22,6 +22,7 @@ import { UniverseSwitcher } from "@/components/universe-switcher";
 import { UserMenu } from "@/components/user-menu";
 import { UNIVERSE_NAV, navItemVisible, universeSectionTrail } from "@/components/universe-nav";
 import { DocumentTitleProvider } from "@/lib/document-title";
+import { demoMode } from "@/lib/demo-mode";
 import { ResizeHandle, useResizableWidth } from "@/components/resize-handle";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { cn } from "@/lib/utils";
@@ -31,14 +32,29 @@ import { PageNebula } from "@/components/starscape/page-nebula";
 import type { SessionUser } from "@/auth";
 import { rememberUniverse, useUniverses } from "@/lib/universes";
 
-/// The sidebar has three modes. Universe mode is the app's top level:
-/// switcher + universe nav. Admin and account are modes *above* the
-/// universe structure — the header becomes a deliberately generic "Back"
-/// (naming no universe) and the content is the mode's own menu.
-type ShellMode = "universe" | "admin" | "account";
+/// The sidebar has four modes. Universe mode is the app's top level:
+/// switcher + universe nav. Admin, account and preferences are modes
+/// *above* the universe structure — the header becomes a deliberately
+/// generic "Back" (naming no universe) and the content is the mode's own
+/// menu, if it has one.
+type ShellMode = "universe" | "admin" | "account" | "preferences";
 
 const ADMIN_TITLE = "Platform admin";
 const ACCOUNT_TITLE = "Your account";
+const PREFERENCES_TITLE = "Preferences";
+
+const MODE_TITLE: Record<Exclude<ShellMode, "universe">, string> = {
+  admin: ADMIN_TITLE,
+  account: ACCOUNT_TITLE,
+  preferences: PREFERENCES_TITLE,
+};
+
+/// The mode a path belongs to: its first segment, for the modes above the
+/// universes.
+function shellMode(pathname: string): ShellMode {
+  const first = pathname.split("/")[1];
+  return first === "admin" || first === "account" || first === "preferences" ? first : "universe";
+}
 
 const ADMIN_NAV: Array<{ to: string; icon: ComponentType; label: string }> = [
   { to: "/admin/users", icon: UserAdminIcon, label: "Users" },
@@ -53,11 +69,12 @@ const ADMIN_NAV: Array<{ to: string; icon: ComponentType; label: string }> = [
 /// first: the sidebar's name for the page and the universe or mode holding
 /// it. Pages add what they have open through `useDocumentTitle`.
 export function shellTitleTrail(pathname: string, universeName: string | undefined): string[] {
-  if (pathname === "/admin" || pathname.startsWith("/admin/")) {
+  const mode = shellMode(pathname);
+  if (mode === "admin") {
     const item = ADMIN_NAV.find(({ to }) => pathname === to || pathname.startsWith(`${to}/`));
     return item ? [item.label, ADMIN_TITLE] : [ADMIN_TITLE];
   }
-  if (pathname === "/account" || pathname.startsWith("/account/")) return [ACCOUNT_TITLE];
+  if (mode !== "universe") return [MODE_TITLE[mode]];
   const universe = matchPath("/u/:slug/*", pathname);
   if (!universe) return [];
   const section = universeSectionTrail(universe.params["*"] ?? "");
@@ -114,6 +131,19 @@ function ModeHeader({ title }: { title: string }) {
   );
 }
 
+/// The account and preferences pages' cards, by element id, as the
+/// sidebar's links to them; `shown` leaves out a card the page leaves out.
+const PAGE_SECTIONS: Record<"account" | "preferences", Array<{ id: string; label: string; icon: ComponentType; shown?: () => boolean }>> = {
+  account: [
+    { id: "profile", label: "Profile", icon: UserIcon },
+    { id: "security", label: "Security", icon: SecurityIcon },
+  ],
+  preferences: [
+    { id: "appearance", label: "Appearance", icon: AppearanceIcon },
+    { id: "demo-data", label: "Demo data", icon: ResetIcon, shown: () => demoMode() !== null },
+  ],
+};
+
 function scrollToSection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -127,11 +157,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
     : undefined;
   const permissions = useActionPermissions(active?.id);
   const location = useLocation();
-  const mode: ShellMode = location.pathname.startsWith("/admin")
-    ? "admin"
-    : location.pathname.startsWith("/account")
-      ? "account"
-      : "universe";
+  const mode = shellMode(location.pathname);
 
   useEffect(() => {
     if (active) {
@@ -157,11 +183,11 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
   });
 
   const mobileTitle =
-    mode === "admin"
-      ? ADMIN_TITLE
+    mode === "universe"
+      ? (active?.name ?? "Lightspeed")
       : mode === "account"
         ? "Account"
-        : (active?.name ?? "Lightspeed");
+        : MODE_TITLE[mode];
 
   return (
     <SidebarProvider
@@ -185,7 +211,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           {mode === "universe" ? (
             <UniverseSwitcher active={active} admin={admin} />
           ) : (
-            <ModeHeader title={mode === "admin" ? ADMIN_TITLE : ACCOUNT_TITLE} />
+            <ModeHeader title={MODE_TITLE[mode]} />
           )}
         </SidebarHeader>
         <SidebarContent className="relative">
@@ -222,29 +248,19 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
               </SidebarGroupContent>
             </SidebarGroup>
           )}
-          {mode === "account" && (
+          {(mode === "account" || mode === "preferences") && (
             <SidebarGroup>
-              <SidebarGroupLabel>{ACCOUNT_TITLE}</SidebarGroupLabel>
+              <SidebarGroupLabel>{MODE_TITLE[mode]}</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton onClick={() => scrollToSection("profile")} tooltip="Profile">
-                      <UserIcon />
-                      <span>Profile</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton onClick={() => scrollToSection("security")} tooltip="Security">
-                      <SecurityIcon />
-                      <span>Security</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton onClick={() => scrollToSection("appearance")} tooltip="Appearance">
-                      <AppearanceIcon />
-                      <span>Appearance</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
+                  {PAGE_SECTIONS[mode].filter((section) => section.shown?.() ?? true).map((section) => (
+                    <SidebarMenuItem key={section.id}>
+                      <SidebarMenuButton onClick={() => scrollToSection(section.id)} tooltip={section.label}>
+                        <section.icon />
+                        <span>{section.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>

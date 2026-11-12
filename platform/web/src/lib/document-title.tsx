@@ -2,12 +2,15 @@ import { createContext, useCallback, useContext, useEffect, useId, useMemo, useS
 
 /// The browser tab's title is the navigation path read backwards: what is
 /// open, then the section and universe that hold it, then the app, e.g.
-/// "Explain the auth middleware \ Sessions \ Software Factory \ Lightspeed".
+/// "Explain the auth middleware / Sessions / Software Factory – Lightspeed".
 
-/// Between two segments of the title.
-export const TITLE_SEPARATOR = " \\ ";
+/// Between two segments of the path.
+export const TITLE_SEPARATOR = " / ";
 
-/// The last segment of every title.
+/// Between the path and the app name.
+export const TITLE_APP_SEPARATOR = " – ";
+
+/// The end of every title, after the path.
 export const TITLE_APP_NAME = "Lightspeed";
 
 /// A longer segment (a session named after its first prompt) is cut to this
@@ -22,13 +25,14 @@ function shorten(segment: string): string {
 }
 
 /// The title for a trail, most specific segment first. Empty segments are
-/// dropped and the app name is appended.
+/// dropped and the app name is appended; an empty trail is the app alone.
 export function documentTitle(trail: readonly TitleSegment[]): string {
-  return [...trail, TITLE_APP_NAME]
+  const path = trail
     .map((segment) => (typeof segment === "string" ? segment.replace(/\s+/g, " ").trim() : ""))
     .filter((segment) => segment.length > 0)
     .map(shorten)
     .join(TITLE_SEPARATOR);
+  return path ? `${path}${TITLE_APP_SEPARATOR}${TITLE_APP_NAME}` : TITLE_APP_NAME;
 }
 
 interface TitleRegistry {

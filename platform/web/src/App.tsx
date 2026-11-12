@@ -26,6 +26,7 @@ import { LoginPage } from "@/pages/LoginPage";
 import { McpServersPage } from "@/pages/McpServersPage";
 import { MembersPage } from "@/pages/MembersPage";
 import { ModelsPage } from "@/pages/ModelsPage";
+import { PreferencesPage } from "@/pages/PreferencesPage";
 import { ProfilesPage } from "@/pages/ProfilesPage";
 import { SessionsPage } from "@/pages/SessionsPage";
 import { SetupsPage } from "@/pages/SetupsPage";
@@ -172,6 +173,7 @@ export function App() {
           </>
         )}
         <Route path="account" element={<AccountPage user={user} />} />
+        <Route path="preferences" element={<PreferencesPage />} />
         <Route path="login" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

@@ -8,7 +8,7 @@ import type { SessionUser } from "@/auth";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
 import { AppShell, shellTitleTrail } from "./app-shell";
-import { TITLE_APP_NAME, TITLE_SEPARATOR } from "@/lib/document-title";
+import { documentTitle } from "@/lib/document-title";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -110,7 +110,7 @@ it("leaves bots, and the channels they need, out of the menu", async () => {
 
 it("titles the tab with the page and its universe, read backwards", async () => {
   await sidebarFor("admin");
-  expect(document.title).toBe(["Bots", "Test", TITLE_APP_NAME].join(TITLE_SEPARATOR));
+  expect(document.title).toBe(documentTitle(["Bots", "Test"]));
 });
 
 it.each([
@@ -123,6 +123,8 @@ it.each([
   ["/admin/audit", ["Audit log", "Platform admin"]],
   ["/admin/environment-providers", ["Environment providers", "Platform admin"]],
   ["/account", ["Your account"]],
+  ["/preferences", ["Preferences"]],
+  ["/accounts-elsewhere", []],
   ["/", []],
 ])("names %s from the menu", (path, trail) => {
   expect(shellTitleTrail(path, "Test")).toEqual(trail);
