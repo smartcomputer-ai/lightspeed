@@ -83,6 +83,12 @@ export function sessionRoutes(store: DemoStore): Hono {
     const lifecycleControlled = booleanQuery(c.req.query("lifecycleControlled"));
     const subagent = booleanQuery(c.req.query("subagent"));
     const parent = c.req.query("parent") || null;
+    // The Sessions page's list (not a lineage lookup) counts as a look.
+    if (!parent && universe.onSessionsViewed) {
+      const viewed = universe.onSessionsViewed;
+      universe.onSessionsViewed = undefined;
+      viewed();
+    }
     const metadata = metadataQueryFilter(c.req.queries("metadata"));
     const all = [...universe.sessions.values()]
       .filter((record) => !parent || record.view.origin?.parentSessionId === parent)
@@ -161,6 +167,7 @@ export function sessionRoutes(store: DemoStore): Hono {
 
   app.get("/:id/sessions/:sessionId", (c) => {
     const found = lookup(c);
+    found?.session.onOpen?.();
     return found ? c.json(found.session.view) : notFound(c, "not found in engine");
   });
 

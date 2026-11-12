@@ -133,6 +133,14 @@ export interface SessionRecord {
   responder?: DemoResponder;
   /// Runs parked on an approval, each with what deciding it resumes.
   parked?: Map<string, (approved: boolean) => void>;
+  /// The active run's next timed step: when it lands and how to move it
+  /// sooner (see hurryRun).
+  pendingStep?: { timer: ReturnType<typeof setTimeout>; dueAtMs: number; rearm: (delayMs: number) => void };
+  /// Every step of the active run lands by then (see hurryRun).
+  hurryUntilMs?: number;
+  /// Called when someone opens the session (reads it); scripted sessions
+  /// use it to react to being looked at.
+  onOpen?: () => void;
 }
 
 export interface WorkspaceRecord {
@@ -163,6 +171,8 @@ export interface UniverseState {
   apiKeys: DeploymentApiKeyView[];
   profiles: Map<string, ProfileDocument>;
   sessions: Map<string, SessionRecord>;
+  /// Called once, the first time someone lists the universe's sessions.
+  onSessionsViewed?: () => void;
   workspaces: Map<string, WorkspaceRecord>;
   environments: Map<string, Environment>;
   /// Registration keys (core wire shape) with the secret the demo minted,

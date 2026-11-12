@@ -399,6 +399,9 @@ export interface RunInput {
   source?: RunView["source"];
   /// Called once the run reaches a terminal state.
   onFinished?: (run: RunView) => void;
+  /// Plays the first turn at once, without timers: for seeding a run that
+  /// is already under way (or parked) when the demo opens.
+  instant?: boolean;
 }
 
 type DemoRun = RunView & RunSummaryView;
@@ -462,7 +465,7 @@ export function startRun(
       input.turn
       ?? store.debug?.(input.text, { ...context, run })
       ?? respond(responderText(input.text, input.media ?? []), context);
-    playTurn(store, universe, session, run, turn, 1, input.onFinished);
+    playTurn(store, universe, session, run, turn, 1, input.onFinished, input.instant);
   };
   if (activeRun(session)) {
     session.queue.push({ runId: run.id, begin });
@@ -514,12 +517,13 @@ function playTurn(
   turn: DemoTurn,
   turnIndex: number,
   onFinished?: (run: RunView) => void,
+  instant = false,
 ): void {
   const finished = (done: RunView) => {
     onFinished?.(done);
     turn.finished?.(done);
   };
-  schedule(session, run, turnSteps(store, session, run, turn, turnIndex), () => {
+  (instant ? playNow : schedule)(session, run, turnSteps(store, session, run, turn, turnIndex), () => {
     if (turn.fail) {
       finishRun(session, run, "failed", Date.now(), turn.fail);
       finished(run);
@@ -601,6 +605,8 @@ export function finishRun(
 ): void {
   for (const timer of session.timers) clearTimeout(timer);
   session.timers.clear();
+  session.pendingStep = undefined;
+  session.hurryUntilMs = undefined;
   run.status = status;
   run.finishedAtMs = at;
   run.pendingApprovals = [];
@@ -647,6 +653,8 @@ export function cancelRun(session: SessionRecord, runId: string): RunView | null
   if (run.status !== "running") return run;
   for (const timer of session.timers) clearTimeout(timer);
   session.timers.clear();
+  session.pendingStep = undefined;
+  session.hurryUntilMs = undefined;
   run.status = "cancelling";
   pushEvent(session, { type: "runCancellationRequested", runId }, { runId });
   const timer = setTimeout(() => {
@@ -861,15 +869,48 @@ function schedule(session: SessionRecord, run: RunView, steps: Step[], done: () 
       done();
       return;
     }
-    const timer = setTimeout(() => {
-      session.timers.delete(timer);
-      if (run.status !== "running") return;
-      step.apply(Date.now());
-      next();
-    }, step.delayMs);
-    session.timers.add(timer);
+    const arm = (requestedMs: number) => {
+      const delayMs = session.hurryUntilMs === undefined
+        ? requestedMs
+        : Math.min(requestedMs, Math.max(0, session.hurryUntilMs - Date.now()));
+      const timer = setTimeout(() => {
+        session.timers.delete(timer);
+        if (session.pendingStep?.timer === timer) session.pendingStep = undefined;
+        if (run.status !== "running") return;
+        step.apply(Date.now());
+        next();
+      }, delayMs);
+      session.timers.add(timer);
+      session.pendingStep = { timer, dueAtMs: Date.now() + delayMs, rearm: arm };
+    };
+    arm(step.delayMs);
   };
   next();
+}
+
+/// Applies every step at once, then what follows them.
+function playNow(_session: SessionRecord, run: RunView, steps: Step[], done: () => void): void {
+  const at = Date.now();
+  for (const step of steps) {
+    if (run.status !== "running") return;
+    step.apply(at);
+  }
+  done();
+}
+
+/// Makes the active run land within `withinMs`, as a model answering
+/// sooner would: its pending step and every one after it are due by then.
+/// Steps due sooner keep their time; an earlier deadline is kept.
+export function hurryRun(session: SessionRecord, withinMs: number): void {
+  if (!activeRun(session)) return;
+  const deadline = Date.now() + withinMs;
+  if (session.hurryUntilMs !== undefined && session.hurryUntilMs <= deadline) return;
+  session.hurryUntilMs = deadline;
+  const pending = session.pendingStep;
+  if (!pending || pending.dueAtMs <= deadline) return;
+  clearTimeout(pending.timer);
+  session.timers.delete(pending.timer);
+  pending.rearm(withinMs);
 }
 
 // ---------------------------------------------------------------------------
