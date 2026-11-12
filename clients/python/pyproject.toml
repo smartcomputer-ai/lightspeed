@@ -9,9 +9,11 @@ description = "Async Python SDK for the Lightspeed JSON-RPC gateway"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 dependencies = ["httpx>=0.28,<1"]
 
 [project.urls]
+Documentation = "https://ls.bot/docs/"
 Repository = "https://github.com/smartcomputer-ai/lightspeed"
 Issues = "https://github.com/smartcomputer-ai/lightspeed/issues"
 

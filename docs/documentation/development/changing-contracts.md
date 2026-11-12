@@ -14,7 +14,7 @@ before choosing an exporter or changing a version.
 
 | Boundary | Authored source | Outputs to keep aligned |
 | --- | --- | --- |
-| Public JSON-RPC API | DTOs, method metadata, and service interfaces in `crates/api/src/` | Rust-exported schema, method manifest, OpenRPC, and API reference; TypeScript client, Configurator tools, Platform method-role map, and profile-editor reference. |
+| Public JSON-RPC API | DTOs, method metadata, and service interfaces in `crates/api/src/` | Rust-exported schema, method manifest, OpenRPC, and API reference; TypeScript and Python clients, Configurator tools, Platform method-role map, and profile-editor reference. |
 | Workflow integration | Harness emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript types, and known-answer vectors used by client helpers. |
 | Environment protocol | Wire types and the method manifest in `crates/environment-protocol` | Per-plane JSON Schema bundles and OpenRPC documents, per-method fixtures, the daemon, client, and provider implementations, both exact-match protocol versions, and the [protocol reference](../reference/environment-protocol.md). |
 | Runtime database | SQL migrations and their embedded registry in `crates/store-pg` | Migration ledger, required schema revision, table ownership list, and release metadata. |
@@ -116,6 +116,7 @@ npm run generate --workspace @lightspeed-ai/sdk
 npm run generate --workspace @lightspeed-ai/configurator-mcp
 node platform/scripts/generate-config-reference.mjs
 node platform/scripts/generate-method-roles.mjs
+(cd clients/python && uv sync --locked && uv run python scripts/generate.py)
 ```
 
 The API exporter writes four files under `crates/api/contract/`:
@@ -143,6 +144,11 @@ target ID no longer exists. A new method is reachable through `client.call` with
 helper. Add one only for what most applications need, and list it in the client README,
 which a test checks.
 
+The Python generator needs [uv](https://docs.astral.sh/uv/) and Node.js. It reads the
+API export and the same helper table, and writes `types.py` and `_generated.py` under
+`clients/python/src/lightspeed_ai/`. A new helper belongs in the Python client's
+README too, which its tests check.
+
 The method-role generator updates `platform/backend/src/routes/method-roles.ts`:
 minimum member roles, session-target checks, and methods unavailable to member
 calls. Keep this generated policy map with the API change.
@@ -155,7 +161,17 @@ cargo test -p api --test schema_artifacts
 npm run check
 ```
 
+The Python client has its own checks, which `npm run check` does not run:
+
+```bash
+cd clients/python
+uv run python scripts/generate.py --check
+uv run mypy
+uv run pytest
+```
+
 The Rust freshness test compares the files directly with an in-memory export.
+The Python `--check` compares its committed output with a fresh generation.
 The npm generated checks run generators and then `git diff --exit-code` on
 their output paths. They can report an intentional local diff as a failure.
 Inspect whether that diff follows from your source change, and include the

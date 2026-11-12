@@ -5,6 +5,8 @@ from lightspeed_ai.types import (
     AgentApiOutcomeOfAuthGrantPutResponse,
     AgentApiOutcomeOfMcpServerPutResponse,
     AgentApiOutcomeOfRunReadResponse,
+    SessionEventKindViewRunFailed,
+    SessionEventView,
     SessionStartResponse,
 )
 
@@ -33,3 +35,11 @@ async def configure_mcp_server(client: AsyncLightspeedClient) -> None:
         await client.call("auth/grants/put", {"grantId": "grant", "token": "fixture-token"}),
         AgentApiOutcomeOfAuthGrantPutResponse,
     )
+
+
+def failure_message(event: SessionEventView) -> str | None:
+    kind = event["kind"]
+    if kind["type"] == "runFailed":
+        assert_type(kind, SessionEventKindViewRunFailed)
+        return kind["message"]
+    return None

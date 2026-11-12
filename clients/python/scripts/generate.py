@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 PACKAGE = Path(__file__).resolve().parents[1]
@@ -31,6 +32,11 @@ def model_types() -> str:
             "--output-model-type", "typing.TypedDict", "--target-python-version", "3.12",
             "--disable-timestamp", "--enum-field-as-literal", "all",
             "--formatters", "builtin", "--no-use-closed-typed-dict",
+            # Carry the contract's descriptions, and name each union variant after
+            # its tag (`SessionEventKindViewRunFailed`) so adding a variant does
+            # not renumber the ones after it.
+            "--use-schema-description", "--use-field-description",
+            "--infer-union-variant-names",
         ],
         cwd=CONTRACT,
         text=True,
@@ -82,6 +88,23 @@ def field_types(models: str) -> dict[str, dict[str, str]]:
     return fields
 
 
+def docstring(summary: str, description: str, arguments: dict[str, str]) -> list[str]:
+    """A helper's docstring: summary, description, then the arguments the contract describes."""
+    def wrap(text: str, indent: str, hanging: str = "") -> list[str]:
+        text = " ".join(text.split()).replace("\\", "\\\\").replace('"""', r'\"\"\"')
+        return textwrap.wrap(
+            text, width=100, initial_indent=indent, subsequent_indent=indent + hanging,
+            break_long_words=False, break_on_hyphens=False,
+        )
+
+    lines = ['        """' + wrap(summary, "")[0], "", *wrap(description, "        ")]
+    if arguments:
+        lines.extend(["", "        Args:"])
+        for name, text in arguments.items():
+            lines.extend(wrap(f"{name}: {text}", "            ", "    "))
+    return [*lines, '        """']
+
+
 def render_helper(entry: dict, name: str, targets: list[str], schema: dict, fields: dict) -> list[str]:
     method = entry["method"]
     params = reference(entry["params"]["schema"])
@@ -99,10 +122,15 @@ def render_helper(entry: dict, name: str, targets: list[str], schema: dict, fiel
         annotation = fields[params][key]
         args.append(f"{snake_case(key)}: {annotation}" + ("" if key in required else " | Unset = UNSET"))
     args.append("headers: HeadersInput | None = None")
+    described = {
+        snake_case(key): properties[key]["description"]
+        for key in [*targets, *(key for key in properties if key not in targets)]
+        if properties[key].get("description")
+    }
     lines = [
         "",
         f"    async def {name}(self, {', '.join(args)}) -> Api.{data}:",
-        f"        {entry['summary']!r}",
+        *docstring(entry["summary"], entry["description"], described),
         "        params: dict[str, Any] = {}",
     ]
     for key in properties:
@@ -126,6 +154,14 @@ def render_client(models: str, manifest: dict, schema: dict) -> str:
         "",
         "from . import types as Api",
         "from ._options import UNSET, HeadersInput, Unset",
+        "",
+        "METHODS = (",
+        *(f"    {method!r}," for method in methods),
+        ")",
+        "",
+        "NOTIFICATIONS = (",
+        *(f"    {method!r}," for method in manifest.get("notifications", [])),
+        ")",
         "",
         "METHOD_INFO = {",
     ]

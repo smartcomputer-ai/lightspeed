@@ -6,6 +6,164 @@ from typing import Any, Literal, cast, overload
 from . import types as Api
 from ._options import UNSET, HeadersInput, Unset
 
+METHODS = (
+    'vfs/workspaces/files/read',
+    'initialize',
+    'session/start',
+    'session/read',
+    'session/list',
+    'session/config/put',
+    'session/rename',
+    'session/metadata/put',
+    'session/retention/put',
+    'session/restart',
+    'session/close',
+    'session/delete',
+    'session/share',
+    'session/events/read',
+    'session/context/append',
+    'session/context/remove',
+    'session/context/replace',
+    'session/context/compact',
+    'session/runs/start',
+    'session/runs/list',
+    'session/runs/read',
+    'session/runs/cancel',
+    'session/runs/approvals/decide',
+    'session/runs/steer',
+    'session/skills/list',
+    'session/profiles/apply',
+    'session/environments/activate',
+    'session/environments/deactivate',
+    'environments/credentials/bind',
+    'environments/credentials/list',
+    'environments/credentials/unbind',
+    'environments/create',
+    'environments/read',
+    'environments/update',
+    'environments/list',
+    'environments/close',
+    'environments/external/create',
+    'environments/registered/put',
+    'environments/registered/release',
+    'environments/ingress/put',
+    'environments/power/put',
+    'environments/provider-bindings/list',
+    'environments/provider-bindings/read',
+    'environments/templates/list',
+    'environments/templates/read',
+    'environments/jobs/create',
+    'environments/jobs/read',
+    'environments/jobs/cancel',
+    'environments/registration-keys/create',
+    'environments/registration-keys/put',
+    'environments/registration-keys/read',
+    'environments/registration-keys/list',
+    'environments/registration-keys/update',
+    'environments/registration-keys/rotate',
+    'environments/registration-keys/revoke',
+    'transcriptions/start',
+    'transcriptions/read',
+    'transcriptions/cancel',
+    'models/defaults/read',
+    'models/defaults/put',
+    'models/list',
+    'profiles/create',
+    'profiles/read',
+    'profiles/list',
+    'profiles/put',
+    'profiles/delete',
+    'blobs/put',
+    'blobs/read',
+    'blobs/has',
+    'vfs/snapshots/commit',
+    'vfs/snapshots/read',
+    'vfs/workspaces/create',
+    'vfs/workspaces/read',
+    'vfs/workspaces/list',
+    'vfs/workspaces/update',
+    'vfs/workspaces/delete',
+    'mcp/servers/put',
+    'mcp/servers/auth/discover',
+    'mcp/servers/tools/discover',
+    'mcp/servers/read',
+    'mcp/servers/list',
+    'mcp/servers/delete',
+    'auth/grants/import',
+    'auth/grants/lease',
+    'auth/grants/read',
+    'auth/grants/list',
+    'auth/grants/put',
+    'auth/grants/revoke',
+    'auth/clients/create',
+    'auth/clients/read',
+    'auth/clients/list',
+    'auth/clients/delete',
+    'auth/flows/start',
+    'auth/flows/read',
+    'auth/providers/create',
+    'auth/providers/put',
+    'auth/providers/read',
+    'auth/providers/list',
+    'auth/providers/delete',
+    'auth/github/installations/list',
+    'auth/github/installations/grant',
+    'bots/create',
+    'bots/put',
+    'bots/read',
+    'bots/list',
+    'bots/close',
+    'bots/delete',
+    'bots/state/read',
+    'bots/sessions/rotate',
+    'bots/triggers/put',
+    'bots/triggers/read',
+    'bots/triggers/list',
+    'bots/triggers/delete',
+    'bots/events/admit',
+    'bots/events/replay',
+    'bots/events/list',
+    'bots/events/read',
+    'bots/filters/test',
+    'channels/accounts/create',
+    'channels/accounts/put',
+    'channels/accounts/read',
+    'channels/accounts/list',
+    'channels/accounts/delete',
+    'channels/inbound/admit',
+    'channels/pairings/list',
+    'channels/pairings/delete',
+    'channels/conversations/read',
+    'deployment/sessions/deleted/list',
+    'deployment/sessions/purge',
+    'deployment/environment-provider-bindings/list',
+    'deployment/universes/create',
+    'deployment/universes/list',
+    'deployment/universes/read',
+    'deployment/universes/handle/put',
+    'deployment/universes/delete',
+    'deployment/api-keys/create',
+    'deployment/api-keys/put',
+    'deployment/api-keys/list',
+    'deployment/api-keys/rotate',
+    'deployment/api-keys/revoke',
+    'deployment/environment-providers/put',
+    'deployment/environment-providers/list',
+    'deployment/environment-providers/read',
+    'deployment/environment-providers/delete',
+    'deployment/environment-providers/bindings/put',
+    'deployment/environment-providers/bindings/delete',
+    'deployment/channels/accounts/list',
+)
+
+NOTIFICATIONS = (
+    'session/started',
+    'session/event',
+    'session/runs/started',
+    'session/runs/completed',
+    'error',
+)
+
 METHOD_INFO = {
     'vfs/workspaces/files/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a workspace file', 'description': 'Reads bytes at a path in the current workspace head.'},
     'initialize': {'scope': 'connection', 'access': {'kind': 'connection'}, 'summary': 'Inspect the Lightspeed protocol', 'description': 'Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.'},
@@ -658,7 +816,12 @@ class GeneratedClient:
         return await self._invoke(method, cast(dict[str, Any], params), headers)
 
     async def initialize(self, *, capabilities: Api.ClientCapabilities | None | Unset = UNSET, client_info: Api.ClientInfo | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.InitializeResponse:
-        'Inspect the Lightspeed protocol'
+        """Inspect the Lightspeed protocol
+
+        Returns protocol version, server identity, credential scope and allowed groups before
+        universe selection. Requires authentication in authenticated mode; no universe header is
+        accepted.
+        """
         params: dict[str, Any] = {}
         if capabilities is not UNSET:
             params['capabilities'] = capabilities
@@ -667,7 +830,32 @@ class GeneratedClient:
         return cast(Api.InitializeResponse, (await self._invoke('initialize', params, headers))['result'])
 
     async def start_session(self, *, access: Api.AccessInput | None | Unset = UNSET, config: Api.SessionConfig | None | Unset = UNSET, delete_after_close_ms: int | None | Unset = UNSET, display_name: str | None | Unset = UNSET, integration: Api.SessionIntegrationInput | None | Unset = UNSET, metadata: dict[str, str] | Unset = UNSET, profile: Api.ProfileSource | None | Unset = UNSET, session_id: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionStartResponse:
-        'Start a session'
+        """Start a session
+
+        Creates a session, unshared unless access says universe, with optional config, profile and
+        immutable integration. Explicit values override profile metadata and retention; the default
+        environment attachment becomes active. Retrying an id returns it and restarts a stopped
+        execution from its log, unless integrated. Failed setup closes a server-allocated id.
+
+        Args:
+            access: Audience of the new session, set atomically with its creation. Absent means
+                unshared until `session/share`; a retry keeps the original.
+            delete_after_close_ms: Root-owned automatic soft deletion measured from close. Absent
+                inherits a profile default, explicit null keeps the tree, and a duration overrides
+                the profile.
+            display_name: Cannot contain NUL.
+            integration: Immutable lifecycle controller and workflow tools connecting this session
+                to outside workflows, admitted only when it is first created, with bound dispatch
+                stated explicitly. This document is not part of `SessionConfig` and cannot be
+                changed through `session/config/put`. Retrying an id with an integration requires
+                the same one, and a session started without one cannot gain one. Any retry of an
+                integrated session answers `sessionExecutionStopped` for a stopped workflow
+                execution instead of restarting it.
+            metadata: Descriptive key/value metadata, applied only when the session is first
+                created: at most 32 entries, keys 1..=64 bytes, values 1..=256 bytes, no control
+                characters, no `lightspeed.` prefix. It never affects routing, authority, or
+                selection; filter on it with `session/list`.
+        """
         params: dict[str, Any] = {}
         if access is not UNSET:
             params['access'] = access
@@ -688,7 +876,15 @@ class GeneratedClient:
         return cast(Api.SessionStartResponse, (await self._invoke('session/start', params, headers))['result'])
 
     async def read_session(self, session_id: str, *, run_limit: int | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionReadResponse:
-        'Read a session'
+        """Read a session
+
+        Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An
+        open session whose execution has stopped reports executionFailure. Follow nextRunCursor with
+        session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
+
+        Args:
+            run_limit: Newest run summaries to include. Values above the server maximum are clamped.
+        """
         params: dict[str, Any] = {}
         if run_limit is not UNSET:
             params['runLimit'] = run_limit
@@ -696,7 +892,28 @@ class GeneratedClient:
         return cast(Api.SessionReadResponse, (await self._invoke('session/read', params, headers))['result'])
 
     async def list_sessions(self, *, closed: bool | None | Unset = UNSET, cursor: str | None | Unset = UNSET, lifecycle_controlled: bool | None | Unset = UNSET, limit: int | None | Unset = UNSET, metadata: dict[str, str] | Unset = UNSET, parent: str | None | Unset = UNSET, subagent: bool | None | Unset = UNSET, trees: list[str] | Unset = UNSET, visible_to: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionListResponse:
-        'List sessions'
+        """List sessions
+
+        Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed
+        by filters such as visibleTo, which keeps sessions whose root is shared with the universe or
+        was created by that actor. An unknown parameter is refused. Pages may shift while sessions
+        are changing.
+
+        Args:
+            closed: Only closed sessions (`true`), or only new and open ones (`false`). Absent lists
+                both. Every filter here narrows the list, and an absent one does not filter.
+            cursor: Opaque cursor from the previous page's `nextCursor`.
+            lifecycle_controlled: Only work whose root a lifecycle controller owns (`true`), or work
+                no controller owns (`false`); sub-agents follow their root. Absent lists both.
+            metadata: Only sessions matching every entry (AND semantics). A non-empty value requires
+                an exact key/value pair; an empty value requires key presence.
+            parent: Only sub-agent sessions this session delegated directly.
+            subagent: Only sub-agent sessions (`true`), or only root sessions (`false`). Absent
+                lists both.
+            trees: Only these root sessions and all their sub-agents.
+            visible_to: Only sessions whose root is shared with the universe or was created by this
+                actor: what that actor sees as a non-administrator.
+        """
         params: dict[str, Any] = {}
         if closed is not UNSET:
             params['closed'] = closed
@@ -719,7 +936,13 @@ class GeneratedClient:
         return cast(Api.SessionListResponse, (await self._invoke('session/list', params, headers))['result'])
 
     async def rename_session(self, session_id: str, *, display_name: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionRenameResponse:
-        'Rename a session'
+        """Rename a session
+
+        Sets the display name, or clears it when displayName is omitted.
+
+        Args:
+            display_name: New display name; absent clears it. Cannot contain NUL.
+        """
         params: dict[str, Any] = {}
         if display_name is not UNSET:
             params['displayName'] = display_name
@@ -727,7 +950,14 @@ class GeneratedClient:
         return cast(Api.SessionRenameResponse, (await self._invoke('session/rename', params, headers))['result'])
 
     async def put_session_metadata(self, session_id: str, *, metadata: dict[str, str] | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionMetadataPutResponse:
-        'Replace session metadata'
+        """Replace session metadata
+
+        Replaces the complete descriptive key/value map (bounded like session/start); an omitted or
+        empty map clears it. Record-only: the event log and updatedAtMs are untouched.
+
+        Args:
+            metadata: The complete new map; empty clears it.
+        """
         params: dict[str, Any] = {}
         if metadata is not UNSET:
             params['metadata'] = metadata
@@ -735,7 +965,17 @@ class GeneratedClient:
         return cast(Api.SessionMetadataPutResponse, (await self._invoke('session/metadata/put', params, headers))['result'])
 
     async def put_session_config(self, session_id: str, *, config: Api.SessionConfig, expected_config_revision: int | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionConfigPutResponse:
-        'Replace session configuration'
+        """Replace session configuration
+
+        Replaces the complete sparse config while the session is idle. Use the current config
+        revision for safe read-modify-write; omitted features are revoked, an omitted model
+        preserves the current model, and an identical document is a no-op. A newly attached MCP
+        server must be usable; a held one that has gone away only drops out of later runs.
+
+        Args:
+            expected_config_revision: Checked against the session's current config revision when
+                present; absent replaces unconditionally.
+        """
         params: dict[str, Any] = {}
         params['config'] = config
         if expected_config_revision is not UNSET:
@@ -744,19 +984,41 @@ class GeneratedClient:
         return cast(Api.SessionConfigPutResponse, (await self._invoke('session/config/put', params, headers))['result'])
 
     async def share_session(self, session_id: str, *, headers: HeadersInput | None = None) -> Api.SessionShareResponse:
-        'Share a session with the universe'
+        """Share a session with the universe
+
+        Moves an unshared root session to universe visibility, one way; its delegated children
+        follow it. Refused on a bot's session, a delegated child, and a session already shared. Core
+        applies it for any caller of the method; who may share is the caller's gate's decision.
+        """
         params: dict[str, Any] = {}
         params['sessionId'] = session_id
         return cast(Api.SessionShareResponse, (await self._invoke('session/share', params, headers))['result'])
 
     async def restart_session(self, session_id: str, *, headers: HeadersInput | None = None) -> Api.SessionRestartResponse:
-        'Restart a stopped session'
+        """Restart a stopped session
+
+        Starts a new workflow execution for an open session whose last one stopped, from its log. A
+        run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards.
+        A running session is left alone. Refused for a closed session and for one with no run
+        history.
+        """
         params: dict[str, Any] = {}
         params['sessionId'] = session_id
         return cast(Api.SessionRestartResponse, (await self._invoke('session/restart', params, headers))['result'])
 
     async def close_session(self, session_id: str, *, force: bool | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionCloseResponse:
-        'Close a session'
+        """Close a session
+
+        Closes an idle session and detaches its environment bindings. Without force, active work of
+        any kind, including a pending detached promise, rejects the call. Force mode cancels active
+        work, drops queued runs, and can recover a session whose workflow is unavailable.
+
+        Args:
+            force: Cancel the active run and drop queued runs instead of rejecting on active work.
+                Recovers sessions whose workflow no longer exists (e.g. after an operator terminate)
+                by reconciling the session log directly. A session that never opened has no log to
+                close, so it is removed and the call answers `notFound`.
+        """
         params: dict[str, Any] = {}
         if force is not UNSET:
             params['force'] = force
@@ -764,7 +1026,21 @@ class GeneratedClient:
         return cast(Api.SessionCloseResponse, (await self._invoke('session/close', params, headers))['result'])
 
     async def delete_session(self, session_id: str, *, cascade: bool | Unset = UNSET, shared_only: bool | Unset = UNSET, soft_delete: bool | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionDeleteResponse:
-        'Delete closed sessions'
+        """Delete closed sessions
+
+        Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when
+        cascade is true. Set softDelete to true to hide sessions while retaining records and history
+        until a deployment administrator purges them. Prior soft deletion is not required for
+        permanent deletion.
+
+        Args:
+            cascade: Delete delegated descendants too. False requires the target to be a closed
+                retention-tree leaf.
+            shared_only: Atomically require every selected session's audience to be shared.
+                Delegating services use this guard for operators deleting shared work.
+            soft_delete: Hide sessions while retaining records, events, checkpoints and blob roots.
+                False (the default) permanently deletes them without prior soft deletion.
+        """
         params: dict[str, Any] = {}
         if cascade is not UNSET:
             params['cascade'] = cascade
@@ -776,7 +1052,14 @@ class GeneratedClient:
         return cast(Api.SessionDeleteResponse, (await self._invoke('session/delete', params, headers))['result'])
 
     async def list_runs(self, session_id: str, *, cursor: str | None | Unset = UNSET, limit: int | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.RunListResponse:
-        'List session runs'
+        """List session runs
+
+        Returns a newest-first keyset page of bounded run summaries, from current state for recent
+        runs and from the session's log for older ones.
+
+        Args:
+            cursor: Exclusive upper run-id bound from a previous page.
+        """
         params: dict[str, Any] = {}
         if cursor is not UNSET:
             params['cursor'] = cursor
@@ -786,21 +1069,35 @@ class GeneratedClient:
         return cast(Api.RunListResponse, (await self._invoke('session/runs/list', params, headers))['result'])
 
     async def read_run(self, session_id: str, run_id: str, *, headers: HeadersInput | None = None) -> Api.RunReadResponse:
-        'Read one session run'
+        """Read one session run
+
+        Projects one run from its events. A run past the server's detail limit keeps its opening and
+        its most recent turns and sets earlierEventsOmitted; session/events/read has the rest.
+        """
         params: dict[str, Any] = {}
         params['runId'] = run_id
         params['sessionId'] = session_id
         return cast(Api.RunReadResponse, (await self._invoke('session/runs/read', params, headers))['result'])
 
     async def cancel_run(self, session_id: str, run_id: str, *, headers: HeadersInput | None = None) -> Api.RunCancelResponse:
-        'Cancel a run'
+        """Cancel a run
+
+        Requests cancellation of the named queued or active run and returns its summary; observe
+        session events for terminal completion. In-flight model and tool activity is aborted; no
+        grace turn runs.
+        """
         params: dict[str, Any] = {}
         params['runId'] = run_id
         params['sessionId'] = session_id
         return cast(Api.RunCancelResponse, (await self._invoke('session/runs/cancel', params, headers))['result'])
 
     async def decide_approvals(self, session_id: str, run_id: str, *, decisions: list[Api.ApprovalDecisionInput], headers: HeadersInput | None = None) -> Api.RunApprovalsDecideResponse:
-        'Decide pending run approvals'
+        """Decide pending run approvals
+
+        Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply
+        independently; the run resumes only after every pending approval has a decision. A decision
+        whose wait runs out reports status pending and can still apply.
+        """
         params: dict[str, Any] = {}
         params['decisions'] = decisions
         params['runId'] = run_id
@@ -808,20 +1105,37 @@ class GeneratedClient:
         return cast(Api.RunApprovalsDecideResponse, (await self._invoke('session/runs/approvals/decide', params, headers))['result'])
 
     async def append_context(self, session_id: str, *, entries: list[Api.ContextAppendEntry], headers: HeadersInput | None = None) -> Api.ContextAppendResponse:
-        'Append keyed session context'
+        """Append keyed session context
+
+        Admits a batch of keyed context entries with per-entry results. The same content under a key
+        is a no-op. Different content replaces the earlier entry, which leaves active context, and
+        goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry
+        without discarding successful entries.
+        """
         params: dict[str, Any] = {}
         params['entries'] = entries
         params['sessionId'] = session_id
         return cast(Api.ContextAppendResponse, (await self._invoke('session/context/append', params, headers))['result'])
 
     async def compact_context(self, session_id: str, *, headers: HeadersInput | None = None) -> Api.ContextCompactResponse:
-        'Compact session context'
+        """Compact session context
+
+        Performs one standalone compaction in any automatic mode, including Disabled, and waits for
+        its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves
+        the context unchanged and fails the call with its reason. A wait that runs out fails with
+        operationPending while it can still complete; session events report the outcome.
+        """
         params: dict[str, Any] = {}
         params['sessionId'] = session_id
         return cast(Api.ContextCompactResponse, (await self._invoke('session/context/compact', params, headers))['result'])
 
     async def apply_profile(self, session_id: str, *, expected_config_revision: int | None | Unset = UNSET, expected_tools_revision: int | None | Unset = UNSET, profile: Api.ProfileSource, headers: HeadersInput | None = None) -> Api.ProfileApplyResponse:
-        'Apply a profile to a session'
+        """Apply a profile to a session
+
+        Applies a named or inline profile's config, instructions, and environment setup to an
+        existing session; mutating profile sections require it to be open and idle. Pass current
+        revisions to guard concurrent changes.
+        """
         params: dict[str, Any] = {}
         if expected_config_revision is not UNSET:
             params['expectedConfigRevision'] = expected_config_revision
@@ -832,43 +1146,73 @@ class GeneratedClient:
         return cast(Api.ProfileApplyResponse, (await self._invoke('session/profiles/apply', params, headers))['result'])
 
     async def list_session_skills(self, session_id: str, *, headers: HeadersInput | None = None) -> Api.SkillListResponse:
-        'List available session skills'
+        """List available session skills
+
+        Returns separate VFS and environment catalogs with source, reference, availability, readable
+        skill paths, and warnings. Refreshes only when open with no active or queued run, without
+        waking environments. Absent catalogs are omitted.
+        """
         params: dict[str, Any] = {}
         params['sessionId'] = session_id
         return cast(Api.SkillListResponse, (await self._invoke('session/skills/list', params, headers))['result'])
 
     async def activate_environment(self, session_id: str, environment_id: str, *, headers: HeadersInput | None = None) -> Api.SessionEnvironmentActivateResponse:
-        'Activate a session environment'
+        """Activate a session environment
+
+        Selects an attached, live universe environment for environment-targeted tools while the
+        session is idle.
+        """
         params: dict[str, Any] = {}
         params['environmentId'] = environment_id
         params['sessionId'] = session_id
         return cast(Api.SessionEnvironmentActivateResponse, (await self._invoke('session/environments/activate', params, headers))['result'])
 
     async def deactivate_environment(self, session_id: str, *, headers: HeadersInput | None = None) -> Api.SessionEnvironmentDeactivateResponse:
-        'Deactivate the session environment'
+        """Deactivate the session environment
+
+        Clears active environment selection without changing or closing the universe environment.
+        """
         params: dict[str, Any] = {}
         params['sessionId'] = session_id
         return cast(Api.SessionEnvironmentDeactivateResponse, (await self._invoke('session/environments/deactivate', params, headers))['result'])
 
     async def create_profile(self, *, profile: Api.AgentProfileInput, headers: HeadersInput | None = None) -> Api.ProfileCreateResponse:
-        'Create an agent profile'
+        """Create an agent profile
+
+        Creates a new universe-scoped reusable profile document; use profiles/put for
+        create-or-replace revision semantics.
+        """
         params: dict[str, Any] = {}
         params['profile'] = profile
         return cast(Api.ProfileCreateResponse, (await self._invoke('profiles/create', params, headers))['result'])
 
     async def read_profile(self, profile_id: Api.ProfileId, *, headers: HeadersInput | None = None) -> Api.ProfileReadResponse:
-        'Read an agent profile'
+        """Read an agent profile
+
+        Returns the complete profile document and current revision.
+        """
         params: dict[str, Any] = {}
         params['profileId'] = profile_id
         return cast(Api.ProfileReadResponse, (await self._invoke('profiles/read', params, headers))['result'])
 
     async def list_profiles(self, *, headers: HeadersInput | None = None) -> Api.ProfileListResponse:
-        'List agent profiles'
+        """List agent profiles
+
+        Returns lightweight summaries of universe-scoped reusable profiles.
+        """
         params: dict[str, Any] = {}
         return cast(Api.ProfileListResponse, (await self._invoke('profiles/list', params, headers))['result'])
 
     async def put_profile(self, *, expected_revision: int | None | Unset = UNSET, profile: Api.AgentProfileInput, headers: HeadersInput | None = None) -> Api.ProfilePutResponse:
-        'Create or replace an agent profile'
+        """Create or replace an agent profile
+
+        Stores the complete profile document. Use expectedRevision from profiles/read when replacing
+        to prevent lost updates; absence writes unconditionally.
+
+        Args:
+            expected_revision: Checked only when the profile already exists; absent replaces (or
+                creates) unconditionally.
+        """
         params: dict[str, Any] = {}
         if expected_revision is not UNSET:
             params['expectedRevision'] = expected_revision
@@ -876,25 +1220,63 @@ class GeneratedClient:
         return cast(Api.ProfilePutResponse, (await self._invoke('profiles/put', params, headers))['result'])
 
     async def delete_profile(self, profile_id: Api.ProfileId, *, headers: HeadersInput | None = None) -> Api.ProfileDeleteResponse:
-        'Delete an agent profile'
+        """Delete an agent profile
+
+        Deletes the catalog document; sessions previously created or configured from it retain their
+        materialized state.
+        """
         params: dict[str, Any] = {}
         params['profileId'] = profile_id
         return cast(Api.ProfileDeleteResponse, (await self._invoke('profiles/delete', params, headers))['result'])
 
     async def list_models(self, *, selectable_only: bool | Unset = UNSET, headers: HeadersInput | None = None) -> Api.ModelListResponse:
-        'Discover available models'
+        """Discover available models
+
+        Queries supported providers directly, with a brief process-local burst cache, and returns
+        best-effort selectable routes. One provider failure does not discard successful results from
+        others.
+
+        Args:
+            selectable_only: Apply Lightspeed's small, conservative selectable-model policy. It
+                keeps supported file-transcription routes and filters clearly unrelated OpenAI
+                families from agent suggestions (embeddings, moderation, image/video, speech
+                synthesis, and realtime). Agent suggestions also have an age limit. Clients select
+                routes by API kind for their intended use. This is an ID policy, not a provider
+                capability claim.
+        """
         params: dict[str, Any] = {}
         if selectable_only is not UNSET:
             params['selectableOnly'] = selectable_only
         return cast(Api.ModelListResponse, (await self._invoke('models/list', params, headers))['result'])
 
     async def read_model_defaults(self, *, headers: HeadersInput | None = None) -> Api.ModelDefaultsResponse:
-        'Read universe model defaults'
+        """Read universe model defaults
+
+        Returns the revision and independent agentRun and speechToText selections. Revision zero
+        means no update has been made. Does not contact model providers.
+        """
         params: dict[str, Any] = {}
         return cast(Api.ModelDefaultsResponse, (await self._invoke('models/defaults/read', params, headers))['result'])
 
     async def create_environment(self, *, display_name: str | None | Unset = UNSET, environment_id: str | None | Unset = UNSET, idle: Api.EnvironmentIdlePolicyView | None | Unset = UNSET, metadata: dict[str, str] | Unset = UNSET, provider_id: str, request_id: str, template_id: str, headers: HeadersInput | None = None) -> Api.EnvironmentCreateResponse:
-        'Create an environment'
+        """Create an environment
+
+        Creates a provisioned environment, attributed to the caller, from a template of a provider
+        enabled for the universe. Idempotent per requestId: same inputs, same environment; others
+        conflict. Provisioning until the target's first envd handshake, then open; idle overrides
+        the template default.
+
+        Args:
+            environment_id: The id profiles and bindings use for the environment. Omit it to have
+                one allocated. An id already in use is a conflict.
+            idle: Idle policy passed to the provider in place of the template's `idle`. The provider
+                runs the idle clock; it cannot be changed after create.
+            provider_id: The provider to create the environment with; the universe needs an enabled
+                binding to it.
+            request_id: Stable caller-generated retry identity, unique inside the universe. Retrying
+                with identical inputs returns the same environment.
+            template_id: The provider template to create the environment from.
+        """
         params: dict[str, Any] = {}
         if display_name is not UNSET:
             params['displayName'] = display_name
@@ -910,13 +1292,33 @@ class GeneratedClient:
         return cast(Api.EnvironmentCreateResponse, (await self._invoke('environments/create', params, headers))['result'])
 
     async def read_environment(self, environment_id: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentReadResponse:
-        'Read an environment'
+        """Read an environment
+
+        Returns one environment: its source, lifecycle state, derived display status, state message,
+        close reason, daemon build, and the latest provider observation.
+        """
         params: dict[str, Any] = {}
         params['environmentId'] = environment_id
         return cast(Api.EnvironmentReadResponse, (await self._invoke('environments/read', params, headers))['result'])
 
     async def list_environments(self, *, after: str | None | Unset = UNSET, include_closed: bool | Unset = UNSET, limit: int | None | Unset = UNSET, metadata: dict[str, str] | Unset = UNSET, provider_id: str | None | Unset = UNSET, registration_key_id: str | None | Unset = UNSET, state: Api.EnvironmentStateView | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.EnvironmentListResponse:
-        'List environments'
+        """List environments
+
+        Lists the universe environments in id order, one page at a time, optionally filtered by
+        provider, registration key, state, or metadata. Closed environments are omitted unless
+        includeClosed is set or state is closed. Continue from nextAfter.
+
+        Args:
+            after: Exclusive environment id cursor: a previous page's `nextAfter`.
+            include_closed: Also list closed environments; they are omitted by default.
+            limit: Most environments per page; omit for 100.
+            metadata: Only environments carrying every listed metadata pair (AND semantics); the
+                same filter `session/list` accepts.
+            provider_id: Only provisioned environments of this provider.
+            registration_key_id: Only registered environments admitted by this registration key.
+            state: Only environments in this lifecycle state. `closed` lists closed environments
+                without `includeClosed`.
+        """
         params: dict[str, Any] = {}
         if after is not UNSET:
             params['after'] = after
@@ -935,20 +1337,41 @@ class GeneratedClient:
         return cast(Api.EnvironmentListResponse, (await self._invoke('environments/list', params, headers))['result'])
 
     async def close_environment(self, environment_id: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentCloseResponse:
-        'Close an environment'
+        """Close an environment
+
+        Closes an environment; idempotent. A provisioned environment moves to closing while
+        Lightspeed asks its provider to remove the target, retrying until it is gone, then closed.
+        External and registered environments close at once, and a connected registered daemon is
+        told its environment closed.
+        """
         params: dict[str, Any] = {}
         params['environmentId'] = environment_id
         return cast(Api.EnvironmentCloseResponse, (await self._invoke('environments/close', params, headers))['result'])
 
     async def list_environment_templates(self, *, provider_id: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.EnvironmentTemplateListResponse:
-        'List environment templates'
+        """List environment templates
+
+        Reads templates live from the controllers of the universe's enabled provider bindings, or of
+        one provider: compute, power states, public ingress, and default idle policy.
+
+        Args:
+            provider_id: Only this provider's templates; omit for every enabled binding.
+        """
         params: dict[str, Any] = {}
         if provider_id is not UNSET:
             params['providerId'] = provider_id
         return cast(Api.EnvironmentTemplateListResponse, (await self._invoke('environments/templates/list', params, headers))['result'])
 
     async def create_workspace(self, *, display_name: str | None | Unset = UNSET, snapshot_ref: str | None | Unset = UNSET, workspace_id: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.VfsWorkspaceCreateResponse:
-        'Create a mutable VFS workspace'
+        """Create a mutable VFS workspace
+
+        Creates a universe workspace attributed to the caller at an optional seed snapshot; absence
+        starts from a server-created empty snapshot.
+
+        Args:
+            snapshot_ref: Snapshot to seed the workspace from. Absent starts the workspace from the
+                empty snapshot, committed server-side.
+        """
         params: dict[str, Any] = {}
         if display_name is not UNSET:
             params['displayName'] = display_name
@@ -959,57 +1382,94 @@ class GeneratedClient:
         return cast(Api.VfsWorkspaceCreateResponse, (await self._invoke('vfs/workspaces/create', params, headers))['result'])
 
     async def read_workspace(self, workspace_id: str, *, headers: HeadersInput | None = None) -> Api.VfsWorkspaceReadResponse:
-        'Read a VFS workspace'
+        """Read a VFS workspace
+
+        Returns workspace metadata, current head snapshot, and revision for safe updates.
+        """
         params: dict[str, Any] = {}
         params['workspaceId'] = workspace_id
         return cast(Api.VfsWorkspaceReadResponse, (await self._invoke('vfs/workspaces/read', params, headers))['result'])
 
     async def list_workspaces(self, *, headers: HeadersInput | None = None) -> Api.VfsWorkspaceListResponse:
-        'List VFS workspaces'
+        """List VFS workspaces
+
+        Lists the mutable universe workspaces with head snapshots, sizes, and revisions.
+        """
         params: dict[str, Any] = {}
         return cast(Api.VfsWorkspaceListResponse, (await self._invoke('vfs/workspaces/list', params, headers))['result'])
 
     async def delete_workspace(self, workspace_id: str, *, headers: HeadersInput | None = None) -> Api.VfsWorkspaceDeleteResponse:
-        'Delete a VFS workspace'
+        """Delete a VFS workspace
+
+        Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed
+        resources.
+        """
         params: dict[str, Any] = {}
         params['workspaceId'] = workspace_id
         return cast(Api.VfsWorkspaceDeleteResponse, (await self._invoke('vfs/workspaces/delete', params, headers))['result'])
 
     async def read_workspace_file(self, workspace_id: str, path: str, *, headers: HeadersInput | None = None) -> Api.BlobReadResponse:
-        'Read a workspace file'
+        """Read a workspace file
+
+        Reads bytes at a path in the current workspace head.
+        """
         params: dict[str, Any] = {}
         params['path'] = path
         params['workspaceId'] = workspace_id
         return cast(Api.BlobReadResponse, (await self._invoke('vfs/workspaces/files/read', params, headers))['result'])
 
     async def read_mcp_server(self, server_id: str, *, headers: HeadersInput | None = None) -> Api.McpServerReadResponse:
-        'Read an MCP server record'
+        """Read an MCP server record
+
+        Returns one catalog document with defaults, auth policy, non-secret grant binding, status,
+        and revision; no credential value is exposed.
+        """
         params: dict[str, Any] = {}
         params['serverId'] = server_id
         return cast(Api.McpServerReadResponse, (await self._invoke('mcp/servers/read', params, headers))['result'])
 
     async def list_mcp_servers(self, *, status: Api.McpServerStatus | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.McpServerListResponse:
-        'List MCP server records'
+        """List MCP server records
+
+        Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.
+        """
         params: dict[str, Any] = {}
         if status is not UNSET:
             params['status'] = status
         return cast(Api.McpServerListResponse, (await self._invoke('mcp/servers/list', params, headers))['result'])
 
     async def read_bot(self, bot_id: Api.BotId, *, headers: HeadersInput | None = None) -> Api.BotReadResponse:
-        'Read a bot'
+        """Read a bot
+
+        Returns the bot record, its current revision, and lifecycle columns.
+        """
         params: dict[str, Any] = {}
         params['botId'] = bot_id
         return cast(Api.BotReadResponse, (await self._invoke('bots/read', params, headers))['result'])
 
     async def list_bots(self, *, created_by: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.BotListResponse:
-        'List bots'
+        """List bots
+
+        Returns the roster: every bot with its trigger count, pending event count, and latest event,
+        optionally narrowed by createdBy.
+
+        Args:
+            created_by: Only bots this actor created.
+        """
         params: dict[str, Any] = {}
         if created_by is not UNSET:
             params['createdBy'] = created_by
         return cast(Api.BotListResponse, (await self._invoke('bots/list', params, headers))['result'])
 
     async def list_bot_events(self, bot_id: Api.BotId, *, cursor: str | None | Unset = UNSET, limit: int | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.BotEventListResponse:
-        "List a bot's events"
+        """List a bot's events
+
+        Cursor-paginated event log, newest first, with outcomes; payload documents stay in the CAS.
+
+        Args:
+            cursor: Opaque cursor from a previous page.
+            limit: Page size; server-clamped.
+        """
         params: dict[str, Any] = {}
         params['botId'] = bot_id
         if cursor is not UNSET:
@@ -1019,7 +1479,11 @@ class GeneratedClient:
         return cast(Api.BotEventListResponse, (await self._invoke('bots/events/list', params, headers))['result'])
 
     async def admit_bot_event(self, bot_id: Api.BotId, *, event: Api.BotEventInput, headers: HeadersInput | None = None) -> Api.BotEventAdmitResponse:
-        'Admit an event manually'
+        """Admit an event manually
+
+        Stores an operator-authored event for the bot's main session and wakes the controller.
+        eventId is the dedupe identity; a duplicate returns the stored row.
+        """
         params: dict[str, Any] = {}
         params['botId'] = bot_id
         params['event'] = event

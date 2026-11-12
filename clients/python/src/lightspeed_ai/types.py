@@ -7,18 +7,35 @@ from __future__ import annotations
 from typing import Any, Literal, NotRequired, TypedDict
 
 type LightspeedAgentApi = Any
+"""
+All JSON-RPC wire types of the Lightspeed agent API.
+"""
 
 
-class AccessScope1(TypedDict):
+class AccessScopeDeployment(TypedDict):
+    """
+    What a key reaches or a request addresses: one universe, or the
+    deployment.
+    """
+
     kind: Literal['deployment']
 
 
-class AccessScope2(TypedDict):
+class AccessScopeUniverse(TypedDict):
+    """
+    What a key reaches or a request addresses: one universe, or the
+    deployment.
+    """
+
     kind: Literal['universe']
     universeId: str
 
 
-type AccessScope = AccessScope1 | AccessScope2
+type AccessScope = AccessScopeDeployment | AccessScopeUniverse
+"""
+What a key reaches or a request addresses: one universe, or the
+deployment.
+"""
 
 
 type AgentApiErrorKind = Literal[
@@ -43,7 +60,7 @@ class Params4(TypedDict):
     sessionId: NotRequired[str | None]
 
 
-class AgentNotification5(TypedDict):
+class AgentNotificationError(TypedDict):
     method: Literal['error']
     params: Params4
 
@@ -79,32 +96,57 @@ type ApprovalSubjectView = ApprovalSubjectView1
 
 
 class AttachmentSourceView(TypedDict):
+    """
+    Descriptive source, independent of the attachment's immutable content identity.
+    """
+
     id: str
     kind: str
     path: str
 
 
-class Attribution1(TypedDict):
+class AttributionActor(TypedDict):
+    """
+    The actor a key asserted for its request.
+    """
+
     id: str
     kind: Literal['actor']
 
 
-class Attribution2(TypedDict):
+class AttributionKey(TypedDict):
+    """
+    A key acting for itself, named by its display prefix.
+    """
+
     kind: Literal['key']
     prefix: str
 
 
-class Attribution3(TypedDict):
+class AttributionLocal(TypedDict):
+    """
+    An unauthenticated local development request, or an in-process call.
+    """
+
     kind: Literal['local']
 
 
-class Attribution4(TypedDict):
+class AttributionInternal(TypedDict):
+    """
+    The runtime's own work: a bot, a delegated session, a registration,
+    or host administration through the server CLI.
+    """
+
     cause: str
     component: str
     kind: Literal['internal']
 
 
-type Attribution = Attribution1 | Attribution2 | Attribution3 | Attribution4
+type Attribution = AttributionActor | AttributionKey | AttributionLocal | AttributionInternal
+"""
+Who created a resource or authored bytes. An actor is whatever a key
+allowed to assert one said; core compares it and never resolves it.
+"""
 
 
 class AuthClientDeleteParams(TypedDict):
@@ -121,6 +163,10 @@ class AuthClientReadParams(TypedDict):
 
 class AuthFlowStartResponse(TypedDict):
     authorizeUrl: str
+    """
+    Authorization URL the user must open. It embeds the one-time `state`;
+    treat it as sensitive and do not log it server-side.
+    """
     expiresAtMs: int
     flowId: str
 
@@ -152,12 +198,25 @@ type AuthGrantExposure = Literal['brokered', 'retrievable']
 
 
 class AuthGrantImportParams(TypedDict):
+    """
+    Import a new token credential as an auth grant, under the given id or an
+    allocated one; an id already in use is a conflict. Together with
+    [`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:
+    `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
+    logging must never echo these params.
+    """
+
     audience: NotRequired[str | None]
     displayName: NotRequired[str | None]
     expiresAtMs: NotRequired[int | None]
     exposure: NotRequired[AuthGrantExposure]
     grantId: NotRequired[str | None]
     metadata: NotRequired[Any]
+    """
+    Non-secret, caller-defined metadata stored on the grant and returned
+    by reads (for example which product a pasted subscription token
+    belongs to). Must be a JSON object; never put secret material here.
+    """
     providerId: NotRequired[str | None]
     scopes: NotRequired[list[str]]
     subjectHint: NotRequired[str | None]
@@ -165,19 +224,56 @@ class AuthGrantImportParams(TypedDict):
 
 
 class AuthGrantLeaseParams(TypedDict):
+    """
+    Request a current access-token lease for a retrievable grant. Callers must
+    cache only in memory until shortly before `expiresAtMs` (or for at most
+    five minutes when it is absent), re-lease after target 401/403 responses,
+    and never persist the token or place it in a workflow payload.
+    """
+
     audience: NotRequired[str | None]
     grantId: str
 
 
 class AuthGrantPutParams(TypedDict):
+    """
+    Declare a token credential (`staticToken`): its id, its settings and the
+    token it holds. A credential that is missing is created. One that exists
+    has its settings replaced by these (an absent field is unset) and, when it
+    holds a different token, that token replaced, so MCP servers, headers,
+    bot polls and environment variables referencing the id use the new value
+    from their next request or process. Declaring it again changes nothing.
+
+    `token` is encrypted on receipt and never returned; `Debug` output redacts
+    it and request logging must never echo these params.
+    """
+
     audience: NotRequired[str | None]
     displayName: NotRequired[str | None]
     dryRun: NotRequired[bool]
+    """
+    Report what the declaration would do without doing it.
+    """
     expiresAtMs: NotRequired[int | None]
+    """
+    When the token expires. Absent means it does not expire.
+    """
     exposure: NotRequired[AuthGrantExposure]
+    """
+    Whether the token may be leased in plaintext. It cannot be changed
+    afterwards.
+    """
     grantId: str
     metadata: NotRequired[Any]
+    """
+    Non-secret, caller-defined metadata. Must be a JSON object; never put
+    secret material here.
+    """
     providerId: NotRequired[str | None]
+    """
+    Label recorded on the credential; `static` when absent. It cannot be
+    changed afterwards.
+    """
     scopes: NotRequired[list[str]]
     subjectHint: NotRequired[str | None]
     token: str
@@ -194,13 +290,18 @@ class AuthGrantRevokeParams(TypedDict):
 type AuthGrantStatus = Literal['active', 'needsReauth', 'revoked', 'failed']
 
 
-class AuthProviderConfigInput1(TypedDict):
+class AuthProviderConfigInputGithubApp(TypedDict):
     apiBaseUrl: NotRequired[str | None]
     appId: str
     type: Literal['githubApp']
 
 
-class AuthProviderConfigView1(TypedDict):
+class AuthProviderConfigViewGithubApp(TypedDict):
+    """
+    Non-secret, provider-specific configuration. New providers add a
+    variant, not a table.
+    """
+
     apiBaseUrl: str
     appId: str
     type: Literal['githubApp']
@@ -219,6 +320,14 @@ type AuthProviderKind = Literal[
     'modelOAuth',
     'modelEndpoint',
 ]
+"""
+On a grant, how its token is obtained; on a provider, what it configures.
+`staticToken` is a pasted secret, sent under whatever header its consumer
+uses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured
+endpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted
+on demand. The `model*` kinds configure model providers; `modelEndpoint`
+is a provider without a credential and never appears on a grant.
+"""
 
 
 class AuthProviderListParams(TypedDict):
@@ -250,6 +359,13 @@ class BlobPutItem(TypedDict):
 
 
 class BlobPutParams(TypedDict):
+    """
+    `blobs/put` is batch-native: pass one item to store a single blob. Results
+    come back in request order. Uploads are eligible for collection after the
+    deployment's grace period unless retained by a durable resource. Reads do
+    not extend retention; admitting an existing ref refreshes its grace.
+    """
+
     blobs: NotRequired[list[BlobPutItem]]
 
 
@@ -277,6 +393,11 @@ class BotActiveDeliverySnapshot(TypedDict):
 
 
 class BotBreaker(TypedDict):
+    """
+    Per-trigger flood breaker: a trigger that admits more than `fires`
+    events inside `window_ms` is disabled until a human re-enables it.
+    """
+
     fires: int
     windowMs: int
 
@@ -290,6 +411,10 @@ class BotBufferSnapshot(TypedDict):
 
 
 class BotCoalescePolicy(TypedDict):
+    """
+    Coalescing window: events sharing a route flush as one delivery.
+    """
+
     debounceMs: int
     maxCount: int
     maxWaitMs: int
@@ -307,9 +432,17 @@ type BotControllerStatus = Literal[
 
 
 class BotEventInput(TypedDict):
+    """
+    A manually admitted event: what an operator posts through
+    `bots/events/admit`.
+    """
+
     correlationId: NotRequired[str | None]
     data: NotRequired[Any]
     eventId: NotRequired[str | None]
+    """
+    Dedupe identity; generated when absent.
+    """
     headers: NotRequired[dict[str, str]]
     kind: str
     links: NotRequired[list[str]]
@@ -331,6 +464,11 @@ type BotEventOutcome = Literal[
     'appended',
     'archived',
 ]
+"""
+What came of an event: the model's decision (`handled`, `deferred`,
+`ignored`, `blocked`) or the system's when no decision was possible.
+`archived` rows were stored for the record and never delivered.
+"""
 
 
 class BotFilterTestResult(TypedDict):
@@ -344,6 +482,9 @@ type BotId = str
 
 class BotListParams(TypedDict):
     createdBy: NotRequired[str | None]
+    """
+    Only bots this actor created.
+    """
 
 
 class BotReadParams(TypedDict):
@@ -351,6 +492,10 @@ class BotReadParams(TypedDict):
 
 
 class BotRoutedSessionView(TypedDict):
+    """
+    The routed session an event was admitted to.
+    """
+
     label: str
     sessionId: str
 
@@ -361,6 +506,10 @@ type BotSessionKind = Literal['main', 'perKey', 'perEvent']
 class BotSessionRotateParams(TypedDict):
     botId: BotId
     sessionId: str
+    """
+    One of the bot's sessions (main or routed); the controller closes it
+    at its next idle boundary and continues on a successor generation.
+    """
 
 
 class BotSessionRotateResponse(TypedDict):
@@ -369,6 +518,9 @@ class BotSessionRotateResponse(TypedDict):
 
 class BotSessionSnapshot(TypedDict):
     busy: bool
+    """
+    A delivery lane or sidecar is running on it.
+    """
     generation: int
     kind: BotSessionKind
     label: str
@@ -400,26 +552,47 @@ class BotTriggerReadParams(TypedDict):
     triggerId: BotTriggerId
 
 
-class BotTriggerRoute1(TypedDict):
+class BotTriggerRouteBot(TypedDict):
+    """
+    Which session a trigger's events are delivered to; absent means the
+    bot's main session.
+    """
+
     policy: Literal['bot']
 
 
-class BotTriggerRoute2(TypedDict):
+class BotTriggerRoutePerKey(TypedDict):
+    """
+    One session per key: a CEL expression over `{event, data, headers}`
+    yielding the key, or the preset's key when absent.
+    """
+
     key: NotRequired[str | None]
     policy: Literal['perKey']
 
 
-class BotTriggerRoute3(TypedDict):
+class BotTriggerRoutePerEvent(TypedDict):
+    """
+    One fresh session per event.
+    """
+
     policy: Literal['perEvent']
 
 
-type BotTriggerRoute = BotTriggerRoute1 | BotTriggerRoute2 | BotTriggerRoute3
+type BotTriggerRoute = BotTriggerRouteBot | BotTriggerRoutePerKey | BotTriggerRoutePerEvent
+"""
+Which session a trigger's events are delivered to; absent means the
+bot's main session.
+"""
 
 
 type BotWhenBusy = Literal['queue', 'steer', 'append']
 
 
 type BoundWorkflowToolDispatchInput = Literal['pull', 'push']
+"""
+How an invocation of a bound workflow tool reaches its receiver.
+"""
 
 
 type ChannelAccountId = str
@@ -431,6 +604,9 @@ class ChannelAccountReadParams(TypedDict):
 
 class ChannelAccountSettings(TypedDict):
     printQr: NotRequired[bool | None]
+    """
+    WhatsApp: print the pairing QR code on the connector's terminal.
+    """
 
 
 class ChannelConversationReadParams(TypedDict):
@@ -440,6 +616,10 @@ class ChannelConversationReadParams(TypedDict):
 
 
 class ChannelConversationSnapshot(TypedDict):
+    """
+    The conversation workflow's live snapshot, for debugging.
+    """
+
     activeDeliveries: int
     botId: str
     deliveredCount: int
@@ -458,12 +638,20 @@ class ChannelConversationSnapshot(TypedDict):
 type ChannelInboundDecision = Literal[
     'bound', 'paired', 'pairingRequired', 'pairingPending', 'unbound'
 ]
+"""
+What the connector should do after admission. Pairing replies are the
+connector's to send, in the provider's own voice.
+"""
 
 
 type ChannelMediaKind = Literal['image', 'audio', 'document']
 
 
 type ChannelPairedVia = Literal['open', 'code']
+"""
+How a chat got its route: claimed by an open trigger's first contact,
+or paired by code.
+"""
 
 
 class ChannelPairingDeleteParams(TypedDict):
@@ -477,6 +665,11 @@ class ChannelPairingListParams(TypedDict):
 
 
 class ChannelPairingView(TypedDict):
+    """
+    A conversation's route: the chat is identified by `(accountId, chatId)`
+    and owned by the paired trigger.
+    """
+
     accountId: ChannelAccountId
     botId: BotId
     chatId: str
@@ -492,6 +685,9 @@ type ChatGroupActivation = Literal['mention', 'always']
 
 
 type ChatPairing = Literal['code', 'open']
+"""
+Whether a conversation must present a pairing code before it connects.
+"""
 
 
 type ChatScope = Literal['direct', 'group']
@@ -501,6 +697,11 @@ type ChatTurnAccess = Literal['anyone', 'listed']
 
 
 class CitationView(TypedDict):
+    """
+    A source the assistant cited, in the same shape for every provider. The
+    exact provider output stays in a separate opaque context entry for replay.
+    """
+
     citedText: NotRequired[str | None]
     title: NotRequired[str | None]
     url: str
@@ -516,46 +717,109 @@ class ClientInfo(TypedDict):
 
 
 class CodeModeFeature(TypedDict):
+    """
+    Grants JavaScript composition through `code_execute`. Available script tools
+    are the session's ordinary callable tools, optionally narrowed by allowedTools.
+    TypeScript, ambient filesystem/network access, and recursive code execution
+    are unavailable. An empty allowedTools list grants pure computation only.
+    """
+
     allowedTools: NotRequired[list[str] | None]
+    """
+    Logical tool ids (for example vfs.read_file), not provider wire names.
+    Absent permits every currently callable grant; an empty list permits none.
+    """
     maxCatalogBytes: NotRequired[int]
+    """
+    Pinned callable catalog bytes, at most 8 MiB.
+    """
     maxMemoryBytes: NotRequired[int]
+    """
+    Interpreter heap, at most 512 MiB.
+    """
     maxOutputBytes: NotRequired[int]
+    """
+    Combined text() output and return value, at most 8 MiB.
+    """
     maxOutstandingToolCalls: NotRequired[int]
+    """
+    Concurrent pending calls, at most 64 and no greater than maxToolCalls.
+    """
     maxRequestBytes: NotRequired[int]
+    """
+    Serialized arguments per tool request, at most 8 MiB.
+    """
     maxResultBytes: NotRequired[int]
+    """
+    Serialized completion per tool request, at most 8 MiB.
+    """
     maxSourceBytes: NotRequired[int]
+    """
+    UTF-8 source bytes, at most 1 MiB.
+    """
     maxStackBytes: NotRequired[int]
+    """
+    Interpreter native stack, at most 8 MiB.
+    """
     maxToolCalls: NotRequired[int]
+    """
+    Calls per script, at most 1,024.
+    """
     timeoutMs: NotRequired[int]
+    """
+    Total attempt time including input loading, interpreter capacity waits,
+    JavaScript evaluation, and tool waits; at most 600,000 milliseconds.
+    """
     version: NotRequired[int]
 
 
 type CodeToolProgressPhase = Literal[
     'scopeOpened', 'callAdmitted', 'callDeferred', 'callCompleted', 'scopeClosed'
 ]
+"""
+Bounded lifecycle telemetry for a session-owned code tool execution.
+"""
 
 
-class CompactionPolicy1(TypedDict):
+class CompactionPolicyDisabled(TypedDict):
+    """
+    The engine never compacts on its own, and `session/context/compact` still works.
+    Once active context reaches 2,000 entries each run fails at its next turn
+    boundary, until a compaction brings the count down or the policy changes.
+    """
+
     mode: Literal['disabled']
 
 
-class CompactionPolicy2(TypedDict):
+class CompactionPolicyProviderTriggered(TypedDict):
     compactThresholdTokens: NotRequired[int | None]
     mode: Literal['providerTriggered']
 
 
-class CompactionPolicy3(TypedDict):
+class CompactionPolicyProviderStandalone(TypedDict):
     compactThresholdTokens: NotRequired[int | None]
     mode: Literal['providerStandalone']
     targetTokens: NotRequired[int | None]
 
 
-type CompactionPolicy = CompactionPolicy1 | CompactionPolicy2 | CompactionPolicy3
+type CompactionPolicy = CompactionPolicyDisabled | CompactionPolicyProviderTriggered | CompactionPolicyProviderStandalone
 
 
 class ContentRefView(TypedDict):
+    """
+    Immutable content and its encoding. A reference can name plain text,
+    provider-native JSON, or media; it does not imply a UTF-8 text payload.
+    """
+
     blobRef: str
     mediaHandle: NotRequired[str | None]
+    """
+    The model-facing name of provider-native media (an admitted image or
+    PDF): `media:` plus the first twelve hex characters of `blobRef`.
+    The model writes it as a URL (`![…](media:3f9a2c1d4e7b)`) to refer to
+    media it was shown; resolve it against the media of the same session.
+    Absent for text and other content.
+    """
     mime: NotRequired[str | None]
     providerKind: NotRequired[str | None]
 
@@ -585,16 +849,38 @@ type ContextCompactionThresholdSource = Literal['disabled'] | Literal[
 ] | Literal['providerDefault'] | Literal['inputCapacity'] | Literal[
     'contextLengthError'
 ]
+"""
+Where `compactThresholdTokens` came from.
+"""
 
 
 type ContextCompactionTrigger = Literal['manual', 'highWatermark', 'contextLimit']
+"""
+What asked for a compaction.
+"""
 
 
 class ContextCompactionView(TypedDict):
+    """
+    Resolved automatic policy and the currently pending standalone operation.
+    """
+
     compactThresholdTokens: NotRequired[int | None]
     effectiveMode: ContextCompactionMode
+    """
+    Standalone when the context already holds a window from a native standalone
+    compaction, whatever was requested.
+    """
     effectiveStrategy: ContextCompactionStrategy
+    """
+    Native APIs are preferred where supported; summaries use the same model route.
+    """
     inputLimitTokens: NotRequired[int | None]
+    """
+    The active run's input capacity, or the declared limit. While idle with none
+    declared, what the last generation recorded, so a session that has not run yet
+    shows no reported capacity: that is resolved for each run as it is prepared.
+    """
     observedTokens: NotRequired[int | None]
     pending: bool
     queued: bool
@@ -605,101 +891,120 @@ class ContextCompactionView(TypedDict):
 
 class ContextConfig(TypedDict):
     compaction: NotRequired[CompactionPolicy | None]
+    """
+    Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
+    """
     inputLimitTokens: NotRequired[int | None]
+    """
+    Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors. Where a limit is known, a run start or steering holding one text entry over it is refused with `invalidRequest`.
+    """
 
 
-class ContextEntryKindView2(TypedDict):
+class ContextEntryKindViewInstructions(TypedDict):
     type: Literal['instructions']
 
 
-class ContextEntryKindView3(TypedDict):
+class ContextEntryKindViewCatalog(TypedDict):
+    """
+    Runtime or client catalog with a stored text body and independent key.
+    """
+
     title: str
     type: Literal['catalog']
 
 
-class ContextEntryKindView4(TypedDict):
+class ContextEntryKindViewToolCall(TypedDict):
     callId: str
     name: str
     type: Literal['toolCall']
 
 
-class ContextEntryKindView5(TypedDict):
+class ContextEntryKindViewToolResult(TypedDict):
     callId: str
     isError: bool
     type: Literal['toolResult']
 
 
-class ContextEntryKindView6(TypedDict):
+class ContextEntryKindViewReasoningState(TypedDict):
     type: Literal['reasoningState']
 
 
-class ContextEntryKindView7(TypedDict):
+class ContextEntryKindViewProviderOpaque(TypedDict):
     type: Literal['providerOpaque']
 
 
-class ContextEntryKindView8(TypedDict):
+class ContextEntryKindViewMcpApprovalResponse(TypedDict):
     approve: bool
     type: Literal['mcpApprovalResponse']
 
 
-class ContextEntrySourceView1(TypedDict):
+class ContextEntrySourceViewContextEdit(TypedDict):
     type: Literal['contextEdit']
 
 
-class ContextEntrySourceView2(TypedDict):
+class ContextEntrySourceViewRunInput(TypedDict):
     inputIndex: int
     runId: str
     type: Literal['runInput']
 
 
-class ContextEntrySourceView3(TypedDict):
+class ContextEntrySourceViewSteering(TypedDict):
     inputIndex: int
     runId: str
     steeringId: str
     type: Literal['steering']
 
 
-class ContextEntrySourceView4(TypedDict):
+class ContextEntrySourceViewAssistantOutput(TypedDict):
     runId: str
     turnId: str
     type: Literal['assistantOutput']
 
 
-class ContextEntrySourceView5(TypedDict):
+class ContextEntrySourceViewApprovalDecision(TypedDict):
     approvalId: str
     runId: str
     type: Literal['approvalDecision']
 
 
-class ContextEntrySourceView6(TypedDict):
+class ContextEntrySourceViewTool(TypedDict):
     batchId: NotRequired[str | None]
     runId: str
     turnId: str
     type: Literal['tool']
 
 
-class ContextEntrySourceView7(TypedDict):
+class ContextEntrySourceViewReasoning(TypedDict):
     runId: str
     turnId: str
     type: Literal['reasoning']
 
 
-class ContextEntrySourceView8(TypedDict):
+class ContextEntrySourceViewRuntime(TypedDict):
     label: str
     type: Literal['runtime']
 
 
-type ContextEntrySourceView = ContextEntrySourceView1 | ContextEntrySourceView2 | ContextEntrySourceView3 | ContextEntrySourceView4 | ContextEntrySourceView5 | ContextEntrySourceView6 | ContextEntrySourceView7 | ContextEntrySourceView8
+type ContextEntrySourceView = ContextEntrySourceViewContextEdit | ContextEntrySourceViewRunInput | ContextEntrySourceViewSteering | ContextEntrySourceViewAssistantOutput | ContextEntrySourceViewApprovalDecision | ContextEntrySourceViewTool | ContextEntrySourceViewReasoning | ContextEntrySourceViewRuntime
 
 
 type ContextMessageRoleView = Literal['user', 'assistant']
 
 
 type ContextRemovalReason = Literal['providerCompacted']
+"""
+Why entries left the active context.
+"""
 
 
 class ContextRemoveParams(TypedDict):
     keys: list[str]
+    """
+    Active context keys to remove. Removing a key that is already absent
+    is a per-key no-op (`absent`), so retries are idempotent. Keys under
+    reserved namespaces (`run`, `run.*`, `runtime`, `runtime.*`) are rejected
+    request-level.
+    """
     sessionId: str
 
 
@@ -719,31 +1024,58 @@ class DeletedSessionView(TypedDict):
 
 class DeploymentApiKeyListParams(TypedDict):
     scope: NotRequired[AccessScope | None]
+    """
+    Only keys of this scope; absent lists every key.
+    """
 
 
 class DeploymentApiKeyRevokeParams(TypedDict):
     keyId: str
     scope: AccessScope
+    """
+    The scope the key belongs to.
+    """
 
 
 class DeploymentApiKeyRotateParams(TypedDict):
     keyId: str
     scope: AccessScope
+    """
+    The scope the key belongs to.
+    """
 
 
 class DeploymentChannelAccountListParams(TypedDict):
     includeDisabled: NotRequired[bool]
+    """
+    Include disabled accounts; by default only enabled ones are listed.
+    """
     provider: NotRequired[ChannelProvider | None]
 
 
 class DeploymentChannelAccountView(TypedDict):
+    """
+    One channel account of any universe, for the connector host's discovery
+    pass.
+    """
+
     accountId: ChannelAccountId
     createdAtMs: int
     credentialGrantId: NotRequired[str | None]
+    """
+    Retrievable auth grant holding the provider token (a Telegram bot
+    token); the connector host leases it. Absent for providers whose
+    credential is a session state directory (WhatsApp).
+    """
     displayName: str
     enabled: NotRequired[bool]
     provider: ChannelProvider
     providerAccountId: str
+    """
+    Provider-native account identity: the Telegram bot username or
+    numeric id, the WhatsApp phone number. Unique per universe and
+    provider.
+    """
     revision: int
     settings: NotRequired[ChannelAccountSettings]
     universeId: str
@@ -752,7 +1084,13 @@ class DeploymentChannelAccountView(TypedDict):
 
 class DeploymentDeletedSessionsListParams(TypedDict):
     after: NotRequired[str | None]
+    """
+    Exclusive session ID cursor; each page contains at most 100 entries.
+    """
     universe: str
+    """
+    The universe's UUID or handle.
+    """
 
 
 class DeploymentDeletedSessionsListResponse(TypedDict):
@@ -769,10 +1107,32 @@ class DeploymentEnvironmentProviderListParams(TypedDict):
 
 
 class DeploymentEnvironmentProviderPutParams(TypedDict):
+    """
+    Register or replace a provider. `credential` is the optional bearer
+    token Lightspeed presents to the provider's controller and data routes:
+    it is sealed on receipt and never returned by any method. `Debug` output
+    redacts it; request logging must never echo these params.
+    """
+
     clearCredential: NotRequired[bool]
+    """
+    Remove the stored credential. Excludes `credential`.
+    """
     controllerEndpoint: str
+    """
+    `ws://`, `wss://` or `unix://` URL of the provider controller.
+    """
     credential: NotRequired[str | None]
+    """
+    A new bearer credential; omit to keep the stored one. A provider needs
+    none. Excludes `clearCredential`.
+    """
     dataRouteBase: NotRequired[str | None]
+    """
+    `ws://` or `wss://` base of the provider's data routes; omit to derive
+    it from the controller endpoint. Required for a `unix://` controller,
+    and must not be `ws://` for a `wss://` controller.
+    """
     displayName: NotRequired[str | None]
     providerId: str
 
@@ -783,11 +1143,27 @@ class DeploymentEnvironmentProviderReadParams(TypedDict):
 
 class DeploymentEnvironmentProviderView(TypedDict):
     controllerEndpoint: str
+    """
+    `ws://`, `wss://` or `unix://` URL of the provider controller.
+    """
     createdAtMs: int
     dataRouteBase: NotRequired[str | None]
+    """
+    Operator-configured `ws://` or `wss://` base of the provider's data
+    routes; absent derives it from the controller endpoint.
+    """
     displayName: NotRequired[str | None]
     effectiveDataRouteBase: NotRequired[str | None]
+    """
+    The data route base Lightspeed dials: `dataRouteBase`, or the
+    controller endpoint's origin followed by `/routes`. Absent only when it
+    cannot be derived.
+    """
     hasCredential: bool
+    """
+    A bearer credential is stored and presented to the controller and
+    data routes; without one no `Authorization` header is sent.
+    """
     providerId: str
     updatedAtMs: int
 
@@ -795,41 +1171,95 @@ class DeploymentEnvironmentProviderView(TypedDict):
 class DeploymentProviderBindingDeleteParams(TypedDict):
     providerId: str
     universe: str
+    """
+    The universe's UUID or handle.
+    """
 
 
 class DeploymentProviderBindingPutParams(TypedDict):
+    """
+    Create or replace a universe's binding to a deployment provider.
+    """
+
     enabled: bool
+    """
+    Admits creates, template listing and data routes for the universe.
+    """
     providerId: str
     universe: str
+    """
+    The universe's UUID or handle.
+    """
 
 
 class DeploymentSessionPurgeParams(TypedDict):
     sessionId: str
     universe: str
+    """
+    The universe's UUID or handle.
+    """
 
 
 class DeploymentSessionPurgeResponse(TypedDict):
     deletedSessionIds: list[str]
+    """
+    Includes soft-deleted delegated descendants.
+    Empty when the target has already been permanently deleted.
+    """
 
 
 class DeploymentUniverseCreateParams(TypedDict):
     handle: NotRequired[str | None]
+    """
+    The new universe's handle: 1-63 lowercase letters, digits and
+    hyphens, starting and ending with a letter or digit, and not in the
+    form of a UUID. Omit it to have one derived from the UUID. Ignored
+    when the universe already exists.
+    """
     universeId: str
 
 
 class DeploymentUniverseDeleteParams(TypedDict):
     universe: str
+    """
+    The universe's UUID or handle.
+    """
 
 
 class DeploymentUniverseDeleteResponse(TypedDict):
+    """
+    Purge report. The purge is idempotent: rerunning after a partial failure
+    resumes where it stopped, and the universe row is deleted last so a
+    half-purged universe is still visible to `deployment/universes/read`.
+    """
+
     blobObjectsDeleted: int
+    """
+    External object-store blobs deleted during the purge.
+    """
     universeId: str
     workflowsTerminated: int
+    """
+    Live session workflows terminated during the purge.
+    """
 
 
 class DeploymentUniverseHandlePutParams(TypedDict):
+    """
+    Rename a universe. The UUID and resources remain unchanged; the previous
+    handle is released, so requests and URLs using it stop reaching this
+    universe.
+    """
+
     handle: str
+    """
+    The new handle: 1-63 lowercase letters, digits and hyphens, starting
+    and ending with a letter or digit, and not in the form of a UUID.
+    """
     universe: str
+    """
+    The universe's UUID or current handle.
+    """
 
 
 class DeploymentUniverseListParams(TypedDict):
@@ -838,13 +1268,29 @@ class DeploymentUniverseListParams(TypedDict):
 
 class DeploymentUniverseReadParams(TypedDict):
     universe: str
+    """
+    The universe's UUID or handle.
+    """
 
 
 class DeploymentUniverseView(TypedDict):
+    """
+    Per-universe stats view. Counts are cheap aggregates computed at read
+    time, not maintained counters — approximate under concurrent writes.
+    """
+
     blobBytes: int
     createdAtMs: int
     handle: str
+    """
+    The universe's deployment-unique name. Requests may address the
+    universe by it wherever they may by UUID.
+    """
     lastActivityAtMs: NotRequired[int | None]
+    """
+    Most recent session activity (`max(sessions.updated_at_ms)`); absent
+    when the universe has no sessions.
+    """
     profiles: int
     sessions: int
     universeId: str
@@ -852,14 +1298,40 @@ class DeploymentUniverseView(TypedDict):
 
 
 type EnvironmentAccess = Literal['read', 'edit', 'exec', 'jobs']
+"""
+Per-attachment environment access, an ordered ladder: `edit` adds file
+editing to `read`, `exec` adds processes, `jobs` adds durable jobs.
+Processes can write files regardless of the file-tool level, so
+read-only files with commands is deliberately not expressible.
+"""
 
 
 class EnvironmentAttachment(TypedDict):
+    """
+    One environment the session may use. Exactly one of `environmentId` and
+    `inherit` identifies the machine. `inherit` is valid only in a profile
+    document applied to a sub-agent: it resolves to the delegating parent's
+    active environment at spawn and is stored on the child as a concrete id.
+    If the parent's environment is also listed explicitly, the explicit
+    attachment wins; if the parent has none, the inherit attachment is dropped.
+    """
+
     access: EnvironmentAccess
     default: NotRequired[bool]
+    """
+    Activated when a profile is applied while the session has no active
+    environment; creation is the trivial case. A `session/config/put` that
+    changes the default activates it when the put leaves nothing active, and
+    refuses a default that cannot be selected. Never overrides a live selection,
+    and an unchanged default never undoes a deliberate deactivation.
+    """
     environmentId: NotRequired[str | None]
     inherit: NotRequired[bool]
     workingDirectory: NotRequired[str | None]
+    """
+    Absolute machine working directory for file tools, commands, jobs,
+    and sources; absent uses the machine's advertised default.
+    """
 
 
 class EnvironmentCloseParams(TypedDict):
@@ -874,28 +1346,31 @@ type EnvironmentCloseReasonView = Literal[
     'offlineTimeout',
     'providerEnded',
 ]
+"""
+Why an environment is closing or closed.
+"""
 
 
 class EnvironmentCredentialListParams(TypedDict):
     environmentId: str
 
 
-class EnvironmentCredentialSourceView1(TypedDict):
+class EnvironmentCredentialSourceViewAuthGrant(TypedDict):
     grantId: str
     type: Literal['authGrant']
 
 
-class EnvironmentCredentialSourceView2(TypedDict):
+class EnvironmentCredentialSourceViewAuthProviderCredential(TypedDict):
     providerId: str
     type: Literal['authProviderCredential']
 
 
-class EnvironmentCredentialSourceView3(TypedDict):
+class EnvironmentCredentialSourceViewDirectSecret(TypedDict):
     secretId: str
     type: Literal['directSecret']
 
 
-type EnvironmentCredentialSourceView = EnvironmentCredentialSourceView1 | EnvironmentCredentialSourceView2 | EnvironmentCredentialSourceView3
+type EnvironmentCredentialSourceView = EnvironmentCredentialSourceViewAuthGrant | EnvironmentCredentialSourceViewAuthProviderCredential | EnvironmentCredentialSourceViewDirectSecret
 
 
 class EnvironmentCredentialUnbindParams(TypedDict):
@@ -912,13 +1387,32 @@ class EnvironmentCredentialView(TypedDict):
 
 
 class EnvironmentDaemonInfo(TypedDict):
+    """
+    The environment daemon (`lightspeed-envd`) that belongs to a server
+    release. Download locations and checksums are not here: the deployment
+    publishes them in its discovery document, outside the authenticated API.
+    """
+
     gitSha: str
     protocolVersion: int
+    """
+    The envd protocol version (data plane and registration channel)
+    the gateway speaks. A daemon registers only when it reports exactly
+    this number.
+    """
     targets: list[str]
+    """
+    Rust target triples the daemon is published for.
+    """
     version: str
 
 
 class EnvironmentDaemonView(TypedDict):
+    """
+    The envd build serving an environment, from its registration or
+    Lightspeed's open handshake.
+    """
+
     gitSha: NotRequired[str | None]
     protocolVersion: int
     version: NotRequired[str | None]
@@ -927,15 +1421,38 @@ class EnvironmentDaemonView(TypedDict):
 class EnvironmentExternalCreateParams(TypedDict):
     displayName: NotRequired[str | None]
     endpoint: str
+    """
+    `ws://`, `wss://` or `unix://` URL of an envd instance reachable from
+    Lightspeed.
+    """
     environmentId: NotRequired[str | None]
+    """
+    The id profiles and bindings use for the environment. Omit it to have
+    one allocated. An id already in use is a conflict.
+    """
     metadata: NotRequired[dict[str, str]]
     requestId: str
+    """
+    Stable caller-generated retry identity, unique inside the universe.
+    """
 
 
 type EnvironmentIdentityModeView = Literal['persistent', 'ephemeral']
+"""
+What happens to a registered environment while its daemon is
+disconnected. Policy of the registration key that admitted it.
+"""
 
 
 class EnvironmentIdlePolicyView(TypedDict):
+    """
+    Staged idle policy the provider applies. Thresholds are milliseconds of
+    envd-reported idle time (running processes, jobs and leftover process
+    groups hold it at zero) and must be non-decreasing in the order pause,
+    suspend, stop, close. Stages whose power state the template does not
+    support are skipped.
+    """
+
     closeAfterMs: NotRequired[int | None]
     pauseAfterMs: NotRequired[int | None]
     stopAfterMs: NotRequired[int | None]
@@ -944,16 +1461,32 @@ class EnvironmentIdlePolicyView(TypedDict):
 
 class EnvironmentIngressPutParams(TypedDict):
     enabled: bool
+    """
+    Ensure (`true`) or remove (`false`) the provider's public ingress.
+    """
     environmentId: str
 
 
 type EnvironmentPowerStateView = Literal['running'] | Literal['paused'] | Literal[
     'suspended'
 ] | Literal['stopped']
+"""
+Power state of a provisioned environment's target.
+"""
 
 
 class EnvironmentPromptsConfig(TypedDict):
+    """
+    Prompt loading scope resolved on the selected machine, never on the worker.
+    """
+
     roots: NotRequired[list[str] | None]
+    """
+    Optional source directories, absolute or relative to the environment
+    working directory. Explicit nonempty lists replace all defaults,
+    including home roots. Defaults are .agents/prompts and
+    .lightspeed/prompts under working directory and execution home.
+    """
 
 
 class EnvironmentProviderBindingListParams(TypedDict):
@@ -965,6 +1498,11 @@ class EnvironmentProviderBindingReadParams(TypedDict):
 
 
 class EnvironmentProviderBindingView(TypedDict):
+    """
+    A universe's binding to a deployment provider. Creates, templates and
+    data routes of the provider need it enabled.
+    """
+
     createdAtMs: int
     enabled: bool
     providerId: str
@@ -976,26 +1514,74 @@ class EnvironmentReadParams(TypedDict):
 
 
 class EnvironmentRegisteredPutParams(TypedDict):
+    """
+    Declare a fixed machine as an environment before its daemon registers.
+    The first daemon the key admits under `name` becomes this environment and
+    keeps its id; from then on only that daemon's identity reconnects to it.
+    """
+
     displayName: NotRequired[str | None]
     environmentId: str
+    """
+    The id profiles and bindings use for the environment.
+    """
     metadata: NotRequired[dict[str, str]]
     name: str
+    """
+    The name the daemon registers under: 1 to 128 bytes without control
+    characters, unique among the open environments of the key. It cannot
+    be changed afterwards.
+    """
     registrationKeyId: str
+    """
+    The persistent registration key whose daemons may fill it. It cannot
+    be changed afterwards.
+    """
 
 
 class EnvironmentRegisteredReleaseParams(TypedDict):
+    """
+    Forget the daemon bound to a declared environment so that another
+    identity may bind to it.
+    """
+
     environmentId: str
 
 
 class EnvironmentRegistrationKeyCreateParams(TypedDict):
     declaredOnly: NotRequired[bool]
+    """
+    Persistent keys only: admit only daemons whose registration name
+    matches an environment declared under this key.
+    """
     displayName: str
+    """
+    Group name for the environments this key admits.
+    """
     ephemeralDisconnectGraceMs: NotRequired[int | None]
+    """
+    Disconnect grace for ephemeral environments; omit for the default.
+    """
     expiresAtMs: NotRequired[int | None]
     identityMode: EnvironmentIdentityModeView
+    """
+    Immutable once the key exists.
+    """
     maxActiveEnvironments: NotRequired[int | None]
+    """
+    Non-closed environments the key may have at once; omit for unlimited.
+    """
     offlineCloseAfterMs: NotRequired[int | None]
+    """
+    Persistent keys only: close environments whose daemon has been away
+    longer than this; omit to keep them open.
+    """
     registrationKeyId: NotRequired[str | None]
+    """
+    The key's id within the universe: 1-128 ASCII letters, digits,
+    underscores, hyphens, dots or colons, starting with a letter or digit.
+    Omit it to have one allocated.
+    """
 
 
 class EnvironmentRegistrationKeyListParams(TypedDict):
@@ -1008,6 +1594,9 @@ class EnvironmentRegistrationKeyReadParams(TypedDict):
 
 class EnvironmentRegistrationKeyRevokeParams(TypedDict):
     closeEnvironments: NotRequired[bool]
+    """
+    Also close every non-closed environment the key admitted.
+    """
     registrationKeyId: str
 
 
@@ -1019,28 +1608,73 @@ type EnvironmentRegistrationKeyStatusView = Literal['active', 'revoked', 'expire
 
 
 class EnvironmentRegistrationKeyUpdateParams(TypedDict):
+    """
+    The complete editable policy of a registration key; an absent field is
+    unset. The identity mode is immutable.
+    """
+
     declaredOnly: NotRequired[bool]
+    """
+    Persistent keys only: admit only daemons whose registration name
+    matches an environment declared under this key.
+    """
     displayName: str
+    """
+    Group name for the environments this key admits.
+    """
     ephemeralDisconnectGraceMs: NotRequired[int | None]
+    """
+    Disconnect grace for ephemeral environments; omit for the default.
+    """
     expiresAtMs: NotRequired[int | None]
     maxActiveEnvironments: NotRequired[int | None]
+    """
+    Non-closed environments the key may have at once; omit for unlimited.
+    """
     offlineCloseAfterMs: NotRequired[int | None]
+    """
+    Persistent keys only: close environments whose daemon has been away
+    longer than this; omit to keep them open.
+    """
     registrationKeyId: str
 
 
 class EnvironmentRegistrationKeyView(TypedDict):
     activeEnvironmentCount: int
+    """
+    Non-closed environments admitted by this key.
+    """
     createdAtMs: int
     declaredOnly: NotRequired[bool]
+    """
+    The key admits only daemons whose registration name matches one of
+    its declared environments.
+    """
     displayName: str
+    """
+    The group name shown wherever registered environments are listed.
+    """
     ephemeralDisconnectGraceMs: int
+    """
+    Effective disconnect grace for ephemeral environments.
+    """
     expiresAtMs: NotRequired[int | None]
     identityMode: EnvironmentIdentityModeView
     keyPrefix: str
+    """
+    First characters of the key's live secret, for identification only.
+    """
     lastRegisteredAtMs: NotRequired[int | None]
     maxActiveEnvironments: NotRequired[int | None]
     offlineCloseAfterMs: NotRequired[int | None]
+    """
+    Persistent keys only: environments whose daemon has been away longer
+    than this are closed; absent keeps them open.
+    """
     registeredEnvironmentCount: int
+    """
+    Environments ever admitted by this key, closed included.
+    """
     registrationKeyId: str
     revokedAtMs: NotRequired[int | None]
     status: EnvironmentRegistrationKeyStatusView
@@ -1048,24 +1682,69 @@ class EnvironmentRegistrationKeyView(TypedDict):
 
 
 type EnvironmentRegistrationSecretView = str
+"""
+A freshly minted registration secret. `Debug` output is redacted so the
+plaintext cannot leak through derived logging; it is shown once.
+"""
 
 
 class EnvironmentSkillsConfig(TypedDict):
+    """
+    Skill discovery scope resolved on the selected machine, never on the worker.
+    """
+
     roots: NotRequired[list[str] | None]
+    """
+    Optional source directories, absolute or relative to the environment
+    working directory. Explicit nonempty lists replace all defaults,
+    including home roots. Defaults are .agents/skills and
+    .lightspeed/skills under working directory and execution home.
+    """
 
 
-class EnvironmentSourceView2(TypedDict):
+class EnvironmentSourceViewExternal(TypedDict):
     endpoint: str
+    """
+    `ws://`, `wss://` or `unix://` URL Lightspeed dials envd at.
+    """
     type: Literal['external']
 
 
-class EnvironmentSourceView3(TypedDict):
+class EnvironmentSourceViewRegistered(TypedDict):
+    """
+    An envd that dials the gateway outbound and is admitted by a
+    registration key. The key is the environment's group; the daemon id
+    is derived from the daemon's public key and is its identity.
+    """
+
     connected: bool
+    """
+    The daemon's control connection is up.
+    """
     connectionChangedAtMs: int
+    """
+    When the daemon last connected or disconnected.
+    """
     daemonId: NotRequired[str | None]
+    """
+    Absent while a declared environment has no daemon bound: it is
+    waiting for its machine, or its machine was released.
+    """
     identityMode: EnvironmentIdentityModeView
+    """
+    The admitting key's identity mode.
+    """
     lastSeenAtMs: int
+    """
+    When the gateway last recorded the daemon's control connection:
+    at connect, at disconnect, and at most every five minutes while
+    connected.
+    """
     name: NotRequired[str | None]
+    """
+    Set on a declared environment: the name its daemon registers
+    under.
+    """
     registrationKeyId: str
     type: Literal['registered']
 
@@ -1073,6 +1752,10 @@ class EnvironmentSourceView3(TypedDict):
 type EnvironmentStateView = Literal['open', 'closed'] | Literal[
     'provisioning'
 ] | Literal['closing'] | Literal['failed']
+"""
+The lifecycle Lightspeed owns. External and registered environments are
+only ever `open` or `closed`.
+"""
 
 
 type EnvironmentStatusView = Literal[
@@ -1082,15 +1765,26 @@ type EnvironmentStatusView = Literal[
 ] | Literal[
     'away'
 ]
+"""
+Display status derived from `state` and the latest observation; never
+stored. Tools that use a paused, suspended or stopped environment wake
+it.
+"""
 
 
 type EnvironmentTargetPhaseView = Literal[
     'provisioning', 'active', 'closing', 'closed', 'failed', 'unknown'
 ]
+"""
+Lifecycle phase of a provider target, as the provider reports it.
+"""
 
 
 class EnvironmentTemplateListParams(TypedDict):
     providerId: NotRequired[str | None]
+    """
+    Only this provider's templates; omit for every enabled binding.
+    """
 
 
 class EnvironmentTemplateReadParams(TypedDict):
@@ -1099,6 +1793,11 @@ class EnvironmentTemplateReadParams(TypedDict):
 
 
 class EnvironmentTemplateResourcesView(TypedDict):
+    """
+    A template's compute, in provider-neutral units. Each field is absent
+    when the provider does not fix it.
+    """
+
     diskBytes: NotRequired[int | None]
     memoryBytes: NotRequired[int | None]
     vcpus: NotRequired[int | None]
@@ -1109,25 +1808,76 @@ class EnvironmentTemplateView(TypedDict):
     description: NotRequired[str | None]
     displayName: str
     idle: NotRequired[EnvironmentIdlePolicyView | None]
+    """
+    Idle policy targets get when `environments/create` names none.
+    """
     metadata: NotRequired[dict[str, str]]
     powerStates: list[EnvironmentPowerStateView]
+    """
+    Power states `environments/power/put` can move targets of this
+    template to; empty without power control.
+    """
     providerId: str
     publicIngress: bool
+    """
+    `environments/ingress/put` can enable public ingress on targets of
+    this template.
+    """
     resources: NotRequired[EnvironmentTemplateResourcesView | None]
+    """
+    Compute targets of this template get; absent when the provider does
+    not fix it.
+    """
     templateId: str
 
 
 class EnvironmentUpdateParams(TypedDict):
+    """
+    Replace an environment's display name and caller metadata.
+    """
+
     displayName: NotRequired[str | None]
+    """
+    The new display name; omit to clear it.
+    """
     environmentId: str
     metadata: NotRequired[dict[str, str]]
+    """
+    The complete new caller metadata; omit or `{}` to clear it.
+    """
 
 
 class EnvironmentsFeature(TypedDict):
+    """
+    Grants session environments. The `environments` list is the allowed set:
+    the session can select, read, and run work only on a listed machine, each
+    with its own access grant and working directory. The installed tool
+    surface is the union of every attachment's grant; a call the active
+    machine's grant does not cover fails at execution, so switching machines
+    never changes the toolset. `{}` grants the feature with no reachable
+    machine.
+    """
+
     environments: NotRequired[list[EnvironmentAttachment]]
+    """
+    The environments this session may use; unique ids, at most one
+    default, at most one `inherit` (profiles only).
+    """
     prompts: NotRequired[EnvironmentPromptsConfig | None]
+    """
+    Independent environment prompt loading; absent disables sourced instructions.
+    """
     selection: NotRequired[bool]
+    """
+    Exposes `environment_list`, `environment_activate`, and
+    `environment_deactivate` over the attached environments.
+    `environment_read` is available whenever environments are enabled, and
+    external API/profile activation remains available when this is false.
+    """
     skills: NotRequired[EnvironmentSkillsConfig | None]
+    """
+    Independent environment skill discovery. Absent disables discovery.
+    """
     version: NotRequired[int]
 
 
@@ -1147,6 +1897,9 @@ class GitHubInstallationView(TypedDict):
     accountLogin: NotRequired[str | None]
     installationId: int
     permissions: NotRequired[Any]
+    """
+    Fine-grained permission map as GitHub reports it.
+    """
     repositorySelection: NotRequired[str | None]
 
 
@@ -1165,33 +1918,91 @@ class InputAdmissionFailureView(TypedDict):
     message: str
 
 
-class InputItem1(TypedDict):
+class InputItemText(TypedDict):
     origin: NotRequired[str | None]
+    """
+    Application-supplied display provenance (1–200 nonblank bytes, no NUL).
+    The platform uses `user:<id>` for direct human input and `event` for
+    bot deliveries; other values are allowed. Omitted means unknown.
+    This metadata is not an authorization identity or model input text.
+    """
     provenanceRef: NotRequired[str | None]
+    """
+    Optional source blob in this universe, retained with the session.
+    Provenance is metadata, not model input or an authorization identity.
+    """
     text: str
     type: Literal['text']
 
 
-class InputItem2(TypedDict):
+class InputItemTextRef(TypedDict):
     blobRef: str
     origin: NotRequired[str | None]
+    """
+    Application-supplied display provenance (1–200 nonblank bytes, no NUL).
+    The platform uses `user:<id>` for direct human input and `event` for
+    bot deliveries; other values are allowed. Omitted means unknown.
+    This metadata is not an authorization identity or model input text.
+    """
     provenanceRef: NotRequired[str | None]
+    """
+    Optional source blob in this universe, retained with the session.
+    Provenance is metadata, not model input or an authorization identity.
+    """
     type: Literal['textRef']
 
 
-class InputItem4(TypedDict):
+class InputItemCatalog(TypedDict):
+    """
+    A client-owned catalog document: what the model may pick from (a
+    directory, a roster, a menu), rendered by the client as text. Accepted
+    only by `session/context/append` under a client key; run input rejects
+    it. A changed catalog supersedes the earlier version instead of
+    replacing it, so the earlier version stays rendered and the provider
+    prefix cache holds; superseded versions are dropped at the next
+    context rewrite or beyond a per-key cap.
+    """
+
     text: str
+    """
+    The catalog body, plain text or Markdown.
+    """
     title: str
+    """
+    Short name shown as the catalog's heading, e.g. "Bot directory".
+    Cannot contain NUL.
+    """
     type: Literal['catalog']
 
 
 class LimitsConfig(TypedDict):
+    """
+    Limits applied to every run of the session unless the run sets its own.
+    """
+
     maxTurns: NotRequired[int | None]
+    """
+    Model turns a run may start, at least 1. A run that needs another turn past this fails with `limitExceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.
+    """
 
 
 class LlmUsageView(TypedDict):
+    """
+    Provider-reported token usage for generations and compactions, or their sum. Every
+    field is optional because providers report different subsets; counts
+    that a provider reports separately (Anthropic's cache read/write) are
+    folded into `input_tokens` so the field always means "prompt tokens
+    billed on this request, cached or not".
+    """
+
     cacheWriteInputTokens: NotRequired[int | None]
+    """
+    Prompt tokens written into the provider's prompt cache (Anthropic).
+    """
     cachedInputTokens: NotRequired[int | None]
+    """
+    Prompt tokens served from the provider's prompt cache.
+    """
     inputTokens: NotRequired[int | None]
     outputTokens: NotRequired[int | None]
     reasoningTokens: NotRequired[int | None]
@@ -1202,14 +2013,40 @@ class McpOAuthDiscoveryView(TypedDict):
     authorizationServers: NotRequired[list[str]]
     resource: str
     scopesSupported: NotRequired[list[str]]
+    """
+    Scopes advertised by current protected-resource/authorization-server
+    metadata. Advisory only; clients must not silently expand consent.
+    """
 
 
 class McpServerAttachment(TypedDict):
+    """
+    A selected universe MCP server. Its catalog record owns connection,
+    execution, exposure, approval, and auth; the attachment may only narrow the
+    record's tool allowlist for this session. A request that newly names a
+    server it cannot resolve is refused. Once attached, or when brought in by a
+    profile, a server that is disabled, deleted, or otherwise unusable is left out
+    of later runs and the model is told, so a catalog action never stops the
+    session.
+    """
+
     serverId: str
     tools: NotRequired[list[str] | None]
+    """
+    Non-empty subset of the record's allowed tools exposed to this
+    session, under both injection and search; absent exposes the record's
+    full allowlist.
+    """
 
 
 class McpServerAuthDiscoverParams(TypedDict):
+    """
+    Read-only authentication discovery for a prospective MCP endpoint. A
+    missing OAuth result is deliberately inconclusive: the server may be
+    public, use bearer auth, or expose OAuth metadata only through an explicit
+    URL. No catalog or auth records are created by this probe.
+    """
+
     serverUrl: str
 
 
@@ -1217,19 +2054,19 @@ class McpServerAuthDiscoverResponse(TypedDict):
     oauth: NotRequired[McpOAuthDiscoveryView | None]
 
 
-class McpServerAuthPolicy1(TypedDict):
+class McpServerAuthPolicyNone(TypedDict):
     type: Literal['none']
 
 
-class McpServerAuthPolicy2(TypedDict):
+class McpServerAuthPolicyOptionalBearer(TypedDict):
     type: Literal['optionalBearer']
 
 
-class McpServerAuthPolicy3(TypedDict):
+class McpServerAuthPolicyRequiredBearer(TypedDict):
     type: Literal['requiredBearer']
 
 
-class McpServerAuthPolicy4(TypedDict):
+class McpServerAuthPolicyOptionalOAuth(TypedDict):
     authorization_server: NotRequired[str | None]
     protected_resource_metadata_url: NotRequired[str | None]
     resource: str
@@ -1237,7 +2074,7 @@ class McpServerAuthPolicy4(TypedDict):
     type: Literal['optionalOAuth']
 
 
-class McpServerAuthPolicy5(TypedDict):
+class McpServerAuthPolicyRequiredOAuth(TypedDict):
     authorization_server: NotRequired[str | None]
     protected_resource_metadata_url: NotRequired[str | None]
     resource: str
@@ -1245,32 +2082,53 @@ class McpServerAuthPolicy5(TypedDict):
     type: Literal['requiredOAuth']
 
 
-type McpServerAuthPolicy = McpServerAuthPolicy1 | McpServerAuthPolicy2 | McpServerAuthPolicy3 | McpServerAuthPolicy4 | McpServerAuthPolicy5
+type McpServerAuthPolicy = McpServerAuthPolicyNone | McpServerAuthPolicyOptionalBearer | McpServerAuthPolicyRequiredBearer | McpServerAuthPolicyOptionalOAuth | McpServerAuthPolicyRequiredOAuth
 
 
 class McpServerCredential1(TypedDict):
+    """
+    Non-secret universe credential selected by this configured MCP server.
+    Token material remains in the auth subsystem and is never returned.
+    """
+
     grantId: str
     type: Literal['authGrant']
 
 
 type McpServerCredential = McpServerCredential1
+"""
+Non-secret universe credential selected by this configured MCP server.
+Token material remains in the auth subsystem and is never returned.
+"""
 
 
 class McpServerDeleteParams(TypedDict):
     serverId: str
 
 
-class McpServerHeader1(TypedDict):
+class McpServerHeaderLiteral(TypedDict):
+    """
+    Sent as written. Not secret: reads return the value.
+    """
+
     type: Literal['literal']
     value: str
 
 
-class McpServerHeader2(TypedDict):
+class McpServerHeaderCredential(TypedDict):
+    """
+    The token of a static-token credential in this universe, resolved at
+    each request and sent raw, without a scheme prefix.
+    """
+
     grantId: str
     type: Literal['credential']
 
 
-type McpServerHeader = McpServerHeader1 | McpServerHeader2
+type McpServerHeader = McpServerHeaderLiteral | McpServerHeaderCredential
+"""
+Value of one extra MCP request header.
+"""
 
 
 class McpServerReadParams(TypedDict):
@@ -1281,10 +2139,19 @@ type McpServerStatus = Literal['active', 'needsAuthConfig', 'unverified', 'disab
 
 
 class McpServerToolsDiscoverParams(TypedDict):
+    """
+    Live, non-persisting tool discovery for a configured MCP server.
+    """
+
     serverId: str
 
 
 class McpToolAnnotationsView(TypedDict):
+    """
+    Narrow projection of standard MCP `ToolAnnotations`. All values are
+    untrusted hints and never authorization facts.
+    """
+
     destructiveHint: NotRequired[bool | None]
     idempotentHint: NotRequired[bool | None]
     openWorldHint: NotRequired[bool | None]
@@ -1311,15 +2178,29 @@ type McpToolDiscoveryFailureCode = Literal[
 type MediaKind = Literal['image', 'audio', 'document']
 
 
-class MethodAccess1(TypedDict):
+class MethodAccessConnection(TypedDict):
+    """
+    Connection discovery, authenticated independently of universe selection.
+    """
+
     kind: Literal['connection']
 
 
-class MethodAccess3(TypedDict):
+class MethodAccessService(TypedDict):
+    """
+    A universe method for machines only, such as connectors delivering
+    messages or triggers leasing a credential. No person calls it.
+    """
+
     kind: Literal['service']
 
 
-class MethodAccess4(TypedDict):
+class MethodAccessDeployment(TypedDict):
+    """
+    A deployment method: it addresses the deployment and needs a
+    deployment key.
+    """
+
     kind: Literal['deployment']
 
 
@@ -1348,16 +2229,34 @@ type MethodGroup = Literal[
 ] | Literal[
     'deployment/channels'
 ]
+"""
+The methods a key may call, by group. Every public method but
+`initialize` belongs to exactly one group, derived from its name, so a
+new method never changes what an existing key reaches beyond its group.
+"""
 
 
 type MethodTarget = Literal['sessionId']
+"""
+Where a method names the session it acts on, so a gate can decide per
+session without a hand-written table. A creation method may name one that
+does not exist yet.
+"""
 
 
 class ModelCapabilitiesView(TypedDict):
     maxInputTokens: NotRequired[int | None]
     maxOutputTokens: NotRequired[int | None]
     parallelToolUse: NotRequired[bool | None]
+    """
+    Omitted when the provider model-list API does not report this fact.
+    """
     reasoningEfforts: NotRequired[list[str] | None]
+    """
+    Known provider effort values. Prefer provider-reported capabilities;
+    Lightspeed may enrich important built-in model families when the
+    provider's model-list API omits this metadata.
+    """
 
 
 class ModelConfig(TypedDict):
@@ -1367,9 +2266,18 @@ class ModelConfig(TypedDict):
 
 
 type ModelDefaultSlot = Literal['agentRun', 'speechToText']
+"""
+A universe's model selection for a particular use. Protocol and purpose
+are separate: several purposes may use the same provider API.
+"""
 
 
 class ModelDefaults(TypedDict):
+    """
+    Persisted universe defaults. Revision zero means no update has been made.
+    Clearing a slot still advances the revision, so setup cannot undo a clear.
+    """
+
     agentRun: NotRequired[ModelConfig | None]
     revision: int
     speechToText: NotRequired[ModelConfig | None]
@@ -1377,7 +2285,15 @@ class ModelDefaults(TypedDict):
 
 class ModelDefaultsPutParams(TypedDict):
     expectedRevision: NotRequired[int | None]
+    """
+    Write only if the defaults are still at this revision, as returned by
+    read or put; zero for a universe with no updates. Omit it to write
+    whatever the current revision is.
+    """
     model: ModelConfig | None
+    """
+    Complete selection, or explicit null to clear this slot. Required.
+    """
     slot: ModelDefaultSlot
 
 
@@ -1396,10 +2312,26 @@ class ModelEndpointConfig(TypedDict):
 
 
 class ModelListParams(TypedDict):
+    """
+    Direct provider model discovery. Results may be served from a brief
+    process-local cache; clients refresh by calling this method.
+    """
+
     selectableOnly: NotRequired[bool]
+    """
+    Apply Lightspeed's small, conservative selectable-model policy. It
+    keeps supported file-transcription routes and filters clearly unrelated
+    OpenAI families from agent suggestions (embeddings, moderation, image/video,
+    speech synthesis, and realtime). Agent suggestions also have an age limit.
+    Clients select routes by API kind for their intended use. This is an ID
+    policy, not a provider capability claim.
+    """
 
 
 type ModelProcessingTier = Literal['standard', 'fast', 'flex']
+"""
+Provider processing class used by session defaults and per-run overrides.
+"""
 
 
 type ModelProviderCredentialSource = Literal['none'] | Literal['universe'] | Literal[
@@ -1413,10 +2345,26 @@ type ModelProviderCredentialStatus = Literal[
 
 
 class ModelProviderDiscoveryView(TypedDict):
+    """
+    Best-effort status for one provider. A provider failure does not discard
+    models discovered from other providers.
+    """
+
     apiKinds: list[str]
     credential: ModelProviderCredentialStatus
+    """
+    Whether a usable credential exists for this provider — a stable signal
+    for clients (no string matching on `error`).
+    """
     credentialSource: ModelProviderCredentialSource
+    """
+    Where the credential used for this universe comes from.
+    """
     error: NotRequired[str | None]
+    """
+    Sanitized Lightspeed error; never a credential, request header, or raw
+    upstream response body.
+    """
     fetchedAtMs: NotRequired[int | None]
     providerId: str
 
@@ -1425,14 +2373,28 @@ type ModelSource = Literal['provider']
 
 
 class ModelView(TypedDict):
+    """
+    A model route returned directly by a provider API.
+    """
+
     apiKind: str
+    """
+    Canonical Lightspeed provider API kind, e.g. `openai:responses`.
+    """
     capabilities: ModelCapabilitiesView
     createdAtMs: NotRequired[int | None]
+    """
+    Provider-reported model creation time. Omitted when the provider does
+    not expose one; this is distinct from the discovery fetch time.
+    """
     displayName: str
     fetchedAtMs: int
     model: str
     providerId: str
     source: ModelSource
+    """
+    Always `provider`; there is no maintained model catalog.
+    """
 
 
 class PendingApprovalView(TypedDict):
@@ -1441,20 +2403,37 @@ class PendingApprovalView(TypedDict):
     subject: ApprovalSubjectView
 
 
-class PollCursorSpec1(TypedDict):
+class PollCursorSpecIdSet(TypedDict):
+    """
+    Dot path to each item's id.
+    """
+
     id: str
     kind: Literal['idSet']
 
 
-class PollCursorSpec2(TypedDict):
+class PollCursorSpecWatermark(TypedDict):
+    """
+    Dot path to each item's monotonically increasing field.
+    """
+
     field: str
     kind: Literal['watermark']
 
 
-type PollCursorSpec = PollCursorSpec1 | PollCursorSpec2
+type PollCursorSpec = PollCursorSpecIdSet | PollCursorSpecWatermark
+"""
+Dedupe discipline of a poll: an id set for unordered feeds, a watermark
+for ordered ones.
+"""
 
 
 class PollCursorState(TypedDict):
+    """
+    Poll cursor state: Lightspeed-owned, operator-visible, reset by a spec
+    edit. Absent until the baseline poll.
+    """
+
     baselinedAtMs: NotRequired[int | None]
     consecutiveFailures: NotRequired[int]
     ids: NotRequired[list[str]]
@@ -1463,33 +2442,66 @@ class PollCursorState(TypedDict):
 
 
 class PollHttpAuth(TypedDict):
+    """
+    Leased credential for an HTTP poll source; the value never appears in
+    the trigger document.
+    """
+
     audience: NotRequired[str | None]
     grantId: str
     header: NotRequired[str | None]
+    """
+    Header carrying the credential; default `authorization`.
+    """
     scheme: NotRequired[str | None]
+    """
+    Scheme prefix; default `Bearer`, empty sends the token raw.
+    """
 
 
 type PollHttpMethod = Literal['GET', 'POST']
 
 
-class PollSource1(TypedDict):
+class PollSourceHttp(TypedDict):
+    """
+    Where a poll trigger reads from.
+    """
+
     auth: NotRequired[PollHttpAuth | None]
     body: NotRequired[str | None]
     headers: NotRequired[dict[str, str]]
+    """
+    Non-secret headers only; credentials come from `auth`.
+    """
     kind: Literal['http']
     method: NotRequired[PollHttpMethod]
     url: str
 
 
-class PollSource2(TypedDict):
+class PollSourceExec(TypedDict):
+    """
+    Where a poll trigger reads from.
+    """
+
     argv: list[str]
     cwd: NotRequired[str | None]
     environmentId: NotRequired[str | None]
+    """
+    Universe environment the command runs in (woken on use); absent
+    runs in the bot's own environment (the profile's `existing`
+    one), resolved at fire time.
+    """
     kind: Literal['exec']
     timeoutMs: NotRequired[int | None]
+    """
+    Job wall-clock budget; also bounds the fire activity's wait.
+    """
 
 
-type PollSource = PollSource1 | PollSource2
+type PollSource = PollSourceHttp | PollSourceExec
+"""
+Where a poll trigger reads from.
+"""
 
 
 class ProfileApplySummary(TypedDict):
@@ -1501,17 +2513,22 @@ class ProfileApplySummary(TypedDict):
 type ProfileId = str
 
 
-class ProfileInstructions1(TypedDict):
+class ProfileInstructionsText(TypedDict):
     text: str
     type: Literal['text']
 
 
-class ProfileInstructions2(TypedDict):
+class ProfileInstructionsTextRef(TypedDict):
+    """
+    Borrowed CAS content: saving a profile does not retain the blob. Use
+    inline text, or keep this ref retained by another durable resource.
+    """
+
     blobRef: str
     type: Literal['textRef']
 
 
-type ProfileInstructions = ProfileInstructions1 | ProfileInstructions2
+type ProfileInstructions = ProfileInstructionsText | ProfileInstructionsTextRef
 
 
 class ProfileListParams(TypedDict):
@@ -1523,27 +2540,48 @@ class ProfileReadParams(TypedDict):
 
 
 class ProfileSessionRetention(TypedDict):
+    """
+    Root-session retention policy supplied by a profile at session creation.
+    """
+
     deleteAfterCloseMs: int
+    """
+    Positive close-relative automatic-deletion duration.
+    """
 
 
-class ProfileSource1(TypedDict):
+class ProfileSourceNamed(TypedDict):
     kind: Literal['named']
     profileId: ProfileId
 
 
 type PromiseSourceKind = Literal['timer', 'workflow']
+"""
+Where a promise's answer comes from.
+"""
 
 
 type ProviderNativeToolExecutionView = Literal['providerHosted', 'clientEffect']
 
 
 type RecommendedRole = Literal['viewer', 'contributor', 'operator', 'admin']
+"""
+Universe roles as gates built on this contract name them. Core holds no
+roles; this is metadata only.
+"""
 
 
 type RemoteMcpApprovalPolicy = Literal['never', 'always']
 
 
 type RemoteMcpExecution = Literal['provider', 'runtime']
+"""
+Who connects to the server and runs its tools. `runtime`, the default, means
+Lightspeed does: each call runs once, under the approval policy, and is recorded.
+With `provider` the model provider does, so the endpoint must be publicly reachable
+and tools run at least once: a retried generation re-sends the request, so a tool
+can run again with its side effects, and the transcript shows at most one run.
+"""
 
 
 type RemoteMcpExposure = Literal['inject', 'search']
@@ -1563,9 +2601,17 @@ type RunFailureKindView = Literal[
     'limitExceeded',
     'internal',
 ]
+"""
+Why a run failed, as the harness classified it.
+"""
 
 
 class RunFailureView(TypedDict):
+    """
+    Why a run failed. `kind` is the harness's classification; `message` is free text
+    for display, and the provider's own message for `requestRejected`.
+    """
+
     kind: RunFailureKindView
     message: str
     messageTruncated: NotRequired[bool]
@@ -1573,10 +2619,16 @@ class RunFailureView(TypedDict):
 
 class RunLimitsConfig(TypedDict):
     maxTurns: NotRequired[int | None]
+    """
+    Model turns this run may start, at least 1, in place of the session's `maxTurns`.
+    """
 
 
 class RunListParams(TypedDict):
     cursor: NotRequired[str | None]
+    """
+    Exclusive upper run-id bound from a previous page.
+    """
     limit: NotRequired[int | None]
     sessionId: str
 
@@ -1602,8 +2654,18 @@ type RunSummarySourceView = RunSummarySourceView1
 
 
 class RunSummaryView(TypedDict):
+    """
+    Bounded run metadata projected from reducer state. Transcript entries and
+    tool payloads are available only from `session/runs/read` or the event
+    stream.
+    """
+
     acceptedAtMs: int
     failure: NotRequired[RunFailureView | None]
+    """
+    Why a failed run failed. The message is cut to a preview here, and
+    `session/runs/read` has all of it.
+    """
     finishedAtMs: NotRequired[int | None]
     id: str
     pendingApprovals: NotRequired[list[PendingApprovalView]]
@@ -1611,6 +2673,10 @@ class RunSummaryView(TypedDict):
     startedAtMs: NotRequired[int | None]
     status: RunStatus
     usage: NotRequired[LlmUsageView | None]
+    """
+    Provider usage so far. A summary of a run old enough to be read back from the
+    session's log has none; `session/runs/read` still totals it.
+    """
 
 
 class RunTerminalNotificationInput(TypedDict):
@@ -1626,24 +2692,59 @@ class ServerCapabilities(TypedDict):
 
 class ServerInfo(TypedDict):
     envd: EnvironmentDaemonInfo
+    """
+    The environment daemon build this release ships. Descriptive: the
+    gateway admits any daemon that speaks `envd.protocolVersion`,
+    whatever commit it was built from.
+    """
     gitSha: str
+    """
+    Full git commit this server was built from.
+    """
     name: str
     version: str
+    """
+    Release version with the git commit as SemVer build metadata, for
+    example `0.1.0+2093b949…`.
+    """
 
 
 type SessionActivity = Literal['idle'] | Literal['working'] | Literal['waiting']
+"""
+What a session is doing now. A queued run counts as idle until it starts;
+a closed session is idle.
+"""
 
 
 class SessionCloseParams(TypedDict):
     force: NotRequired[bool]
+    """
+    Cancel the active run and drop queued runs instead of rejecting on
+    active work. Recovers sessions whose workflow no longer exists (e.g.
+    after an operator terminate) by reconciling the session log directly. A
+    session that never opened has no log to close, so it is removed and the
+    call answers `notFound`.
+    """
     sessionId: str
 
 
 class SessionDeleteParams(TypedDict):
     cascade: NotRequired[bool]
+    """
+    Delete delegated descendants too. False requires the target to be a
+    closed retention-tree leaf.
+    """
     sessionId: str
     sharedOnly: NotRequired[bool]
+    """
+    Atomically require every selected session's audience to be shared.
+    Delegating services use this guard for operators deleting shared work.
+    """
     softDelete: NotRequired[bool]
+    """
+    Hide sessions while retaining records, events, checkpoints and blob roots.
+    False (the default) permanently deletes them without prior soft deletion.
+    """
 
 
 class SessionEnvironmentActivateParams(TypedDict):
@@ -1658,36 +2759,45 @@ class SessionEnvironmentDeactivateParams(TypedDict):
 type SessionEventDirection = Literal['forward', 'backward']
 
 
-class SessionEventKindView1(TypedDict):
+class SessionEventKindViewSessionOpened(TypedDict):
     model: NotRequired[ModelConfig | None]
     type: Literal['sessionOpened']
 
 
-class SessionEventKindView2(TypedDict):
+class SessionEventKindViewSessionConfigChanged(TypedDict):
     model: NotRequired[ModelConfig | None]
     revision: int
     type: Literal['sessionConfigChanged']
 
 
-class SessionEventKindView3(TypedDict):
+class SessionEventKindViewWorkflowToolsConfigured(TypedDict):
     creationFingerprint: str
     lifecycleControllerWorkflowKind: NotRequired[str | None]
     type: Literal['workflowToolsConfigured']
     workflowToolIds: list[str]
 
 
-class SessionEventKindView4(TypedDict):
+class SessionEventKindViewSystemWorkflowToolConfigured(TypedDict):
+    """
+    One system-owned workflow-backed tool was durably admitted without
+    assigning lifecycle ownership to the session.
+    """
+
     bindingFingerprint: str
     type: Literal['systemWorkflowToolConfigured']
     workflowToolId: str
 
 
-class SessionEventKindView5(TypedDict):
+class SessionEventKindViewWorkflowToolInvoked(TypedDict):
     argumentsRef: str
     batchId: str
     bindingFingerprint: str
     callId: str
     completionPromises: NotRequired[dict[str, Any] | None]
+    """
+    Keyed completion promises created atomically with the
+    invocation; absent for accepted invocations.
+    """
     invocationId: str
     runId: str
     schemaRevision: int
@@ -1697,19 +2807,33 @@ class SessionEventKindView5(TypedDict):
     workflowToolId: str
 
 
-class SessionEventKindView6(TypedDict):
+class SessionEventKindViewWorkflowToolDeliveryFailed(TypedDict):
     errorRef: str
     invocationId: str
     type: Literal['workflowToolDeliveryFailed']
 
 
-class SessionEventKindView7(TypedDict):
+class SessionEventKindViewWorkflowToolStartRequested(TypedDict):
+    """
+    Durable start intent for a start-on-call workflow tool. There is no
+    successful started event; the deterministic execution id makes the
+    start replay-safe.
+    """
+
     argumentsRef: str
     batchId: str
     bindingFingerprint: str
     callId: str
     completionPromises: dict[str, str]
+    """
+    Keyed completion promises created atomically with the start
+    intent.
+    """
     executionId: str
+    """
+    System-derived deterministic execution id of the started plugin
+    workflow.
+    """
     invocationId: str
     runId: str
     schemaRevision: int
@@ -1719,45 +2843,53 @@ class SessionEventKindView7(TypedDict):
     workflowToolId: str
 
 
-class SessionEventKindView8(TypedDict):
+class SessionEventKindViewWorkflowToolStartFailed(TypedDict):
     errorRef: str
     invocationId: str
     type: Literal['workflowToolStartFailed']
 
 
-class SessionEventKindView9(TypedDict):
+class SessionEventKindViewSessionClosed(TypedDict):
     type: Literal['sessionClosed']
 
 
-class SessionEventKindView11(TypedDict):
+class SessionEventKindViewRunStarted(TypedDict):
     runId: str
     type: Literal['runStarted']
 
 
-class SessionEventKindView13(TypedDict):
+class SessionEventKindViewRunCancellationRequested(TypedDict):
     requestedBy: NotRequired[Attribution | None]
+    """
+    Who asked, as the API boundary attributed the request.
+    """
     runId: str
     type: Literal['runCancellationRequested']
 
 
-class SessionEventKindView14(TypedDict):
+class SessionEventKindViewApprovalRequested(TypedDict):
     approvalId: str
     runId: str
     subject: ApprovalSubjectView
     type: Literal['approvalRequested']
 
 
-class SessionEventKindView15(TypedDict):
+class SessionEventKindViewApprovalRunParked(TypedDict):
     runId: str
     type: Literal['approvalRunParked']
 
 
-class SessionEventKindView16(TypedDict):
+class SessionEventKindViewApprovalRunUnparked(TypedDict):
+    """
+    No approval remains and no batch holds the run parked, so it is working
+    again even if no other event follows for a while.
+    """
+
     runId: str
     type: Literal['approvalRunUnparked']
 
 
-class SessionEventKindView17(TypedDict):
+class SessionEventKindViewApprovalDecided(TypedDict):
     approvalId: str
     decidedBy: NotRequired[Attribution | None]
     decision: ApprovalDecisionKind
@@ -1766,89 +2898,104 @@ class SessionEventKindView17(TypedDict):
     type: Literal['approvalDecided']
 
 
-class SessionEventKindView18(TypedDict):
+class SessionEventKindViewApprovalCancelled(TypedDict):
     approvalId: str
     runId: str
     type: Literal['approvalCancelled']
 
 
-class SessionEventKindView19(TypedDict):
+class SessionEventKindViewRunCompleted(TypedDict):
     output: NotRequired[ContentRefView | None]
     runId: str
     type: Literal['runCompleted']
 
 
-class SessionEventKindView20(TypedDict):
+class SessionEventKindViewRunFailed(TypedDict):
+    """
+    The run ended in failure. `kind` is the harness's classification;
+    `message` is free text for display, and the provider's own message for
+    `requestRejected`.
+    """
+
     kind: RunFailureKindView
     message: str
     runId: str
     type: Literal['runFailed']
 
 
-class SessionEventKindView21(TypedDict):
+class SessionEventKindViewRunCancelled(TypedDict):
     requestedBy: NotRequired[Attribution | None]
+    """
+    Who cancelled a run that had not started; a started run records
+    its requester on the cancellation request.
+    """
     runId: str
     type: Literal['runCancelled']
 
 
-class SessionEventKindView22(TypedDict):
+class SessionEventKindViewPromiseCreated(TypedDict):
     promiseId: str
     source: PromiseSourceKind
     type: Literal['promiseCreated']
 
 
-class SessionEventKindView23(TypedDict):
+class SessionEventKindViewPromiseResolved(TypedDict):
     payloadRef: NotRequired[str | None]
     promiseId: str
     type: Literal['promiseResolved']
 
 
-class SessionEventKindView24(TypedDict):
+class SessionEventKindViewPromiseFailed(TypedDict):
     errorRef: NotRequired[str | None]
     promiseId: str
     type: Literal['promiseFailed']
 
 
-class SessionEventKindView25(TypedDict):
+class SessionEventKindViewPromiseCancelled(TypedDict):
     promiseId: str
     type: Literal['promiseCancelled']
 
 
-class SessionEventKindView26(TypedDict):
+class SessionEventKindViewPromiseDetached(TypedDict):
     promiseId: str
     type: Literal['promiseDetached']
 
 
-class SessionEventKindView27(TypedDict):
+class SessionEventKindViewTurnStarted(TypedDict):
     runId: str
     turnId: str
     type: Literal['turnStarted']
 
 
-class SessionEventKindView28(TypedDict):
+class SessionEventKindViewTurnPlanned(TypedDict):
     runId: str
     turnId: str
     type: Literal['turnPlanned']
 
 
-class SessionEventKindView29(TypedDict):
+class SessionEventKindViewTurnGenerationRequested(TypedDict):
     runId: str
     turnId: str
     type: Literal['turnGenerationRequested']
 
 
-class SessionEventKindView31(TypedDict):
+class SessionEventKindViewTurnCompleted(TypedDict):
     turnId: str
     type: Literal['turnCompleted']
 
 
-class SessionEventKindView32(TypedDict):
+class SessionEventKindViewTurnCancelled(TypedDict):
+    """
+    The run was cancelled while this turn was open; the turn ended without
+    a generation result.
+    """
+
     runId: str
     turnId: str
     type: Literal['turnCancelled']
 
 
-class SessionEventKindView34(TypedDict):
+class SessionEventKindViewContextEntriesRemoved(TypedDict):
     baseRevision: int
     entryIds: list[str]
     reason: ContextRemovalReason
@@ -1856,26 +3003,32 @@ class SessionEventKindView34(TypedDict):
     type: Literal['contextEntriesRemoved']
 
 
-class SessionEventKindView36(TypedDict):
+class SessionEventKindViewContextKeysRemoved(TypedDict):
     baseRevision: int
     keys: list[str]
     revision: int
     type: Literal['contextKeysRemoved']
 
 
-class SessionEventKindView38(TypedDict):
+class SessionEventKindViewContextCompactionQueued(TypedDict):
+    """
+    A compaction was asked for while something else held the context. It waits
+    for a safe boundary, where `contextCompactionRequested` follows, and the
+    context revision does not move until then.
+    """
+
     baseRevision: int
     type: Literal['contextCompactionQueued']
 
 
-class SessionEventKindView39(TypedDict):
+class SessionEventKindViewContextCompactionRequested(TypedDict):
     baseRevision: int
     revision: int
     trigger: ContextCompactionTrigger
     type: Literal['contextCompactionRequested']
 
 
-class SessionEventKindView40(TypedDict):
+class SessionEventKindViewContextCompactionFinished(TypedDict):
     baseRevision: int
     calls: NotRequired[int]
     failureRef: NotRequired[str | None]
@@ -1885,18 +3038,18 @@ class SessionEventKindView40(TypedDict):
     usage: NotRequired[LlmUsageView | None]
 
 
-class SessionEventKindView41(TypedDict):
+class SessionEventKindViewSkillCatalogSet(TypedDict):
     catalogRef: NotRequired[str | None]
     type: Literal['skillCatalogSet']
 
 
-class SessionEventKindView42(TypedDict):
+class SessionEventKindViewToolsReplaced(TypedDict):
     baseRevision: int
     revision: int
     type: Literal['toolsReplaced']
 
 
-class SessionEventKindView43(TypedDict):
+class SessionEventKindViewToolsPatched(TypedDict):
     baseRevision: int
     removed: list[str]
     revision: int
@@ -1904,12 +3057,12 @@ class SessionEventKindView43(TypedDict):
     upserted: list[str]
 
 
-class SessionEventKindView44(TypedDict):
+class SessionEventKindViewActiveEnvironmentChanged(TypedDict):
     environmentId: NotRequired[str | None]
     type: Literal['activeEnvironmentChanged']
 
 
-class SessionEventKindView46(TypedDict):
+class SessionEventKindViewToolCallStarted(TypedDict):
     batchId: str
     callId: str
     runId: str
@@ -1917,21 +3070,21 @@ class SessionEventKindView46(TypedDict):
     type: Literal['toolCallStarted']
 
 
-class SessionEventKindView48(TypedDict):
+class SessionEventKindViewToolBatchParked(TypedDict):
     batchId: str
     runId: str
     turnId: str
     type: Literal['toolBatchParked']
 
 
-class SessionEventKindView49(TypedDict):
+class SessionEventKindViewToolBatchUnparked(TypedDict):
     batchId: str
     runId: str
     turnId: str
     type: Literal['toolBatchUnparked']
 
 
-class SessionEventKindView50(TypedDict):
+class SessionEventKindViewToolBatchCompleted(TypedDict):
     batchId: str
     runId: str
     turnId: str
@@ -1941,15 +3094,33 @@ class SessionEventKindView50(TypedDict):
 class SessionEventsReadParams(TypedDict):
     after: NotRequired[EventCursor | None]
     before: NotRequired[EventCursor | None]
+    """
+    Exclusive upper sequence bound for backward reads only. Must be positive.
+    """
     direction: NotRequired[SessionEventDirection]
+    """
+    Forward reads follow `after`; backward reads select the latest window
+    below `before` (or the current head when absent). Both return events
+    chronologically. Backward reads do not replay reducer state.
+    """
     limit: NotRequired[int | None]
     sessionId: str
     waitMs: NotRequired[int | None]
+    """
+    Forward reads only. Long-poll: when no events exist past `after`, hold the request until
+    one lands or this many milliseconds elapse, then return a normal
+    (possibly empty) page. Zero or absent preserves immediate return.
+    Values above the server cap are clamped, not rejected.
+    """
 
 
 type SessionExecutionFailureView = Literal[
     'failed', 'terminated', 'timedOut', 'missing'
 ]
+"""
+How an open session's workflow execution stopped. A session that closed
+normally never reports one.
+"""
 
 
 type SessionJobCancelScopeView = Literal['job', 'dependents']
@@ -1963,18 +3134,29 @@ class SessionJobDependencyInput(TypedDict):
 type SessionJobDependencyPolicyView = Literal['allSucceeded', 'allTerminal']
 
 
-class SessionJobExitView1(TypedDict):
+class SessionJobExitViewCode(TypedDict):
+    """
+    Normal exit with this status code.
+    """
+
     code: int
     type: Literal['code']
 
 
-class SessionJobExitView2(TypedDict):
+class SessionJobExitViewSignal(TypedDict):
+    """
+    Killed by this signal, named like `SIGSEGV`.
+    """
+
     coreDumped: NotRequired[bool]
     signal: str
     type: Literal['signal']
 
 
-type SessionJobExitView = SessionJobExitView1 | SessionJobExitView2
+type SessionJobExitView = SessionJobExitViewCode | SessionJobExitViewSignal
+"""
+How a job's root process ended.
+"""
 
 
 class SessionJobHandleInput(TypedDict):
@@ -1991,6 +3173,11 @@ type SessionJobOutputGapReasonView = Literal['overflow', 'expired']
 
 
 class SessionJobOutputGapView(TypedDict):
+    """
+    Output bytes in `[offset, offset + omittedBytes)` that cannot be
+    returned.
+    """
+
     offset: int
     omittedBytes: int
     reason: SessionJobOutputGapReasonView
@@ -2019,51 +3206,132 @@ type SessionJobStatusView = Literal['running'] | Literal['queued'] | Literal[
 ] | Literal[
     'interrupted'
 ]
+"""
+Job lifecycle. `queued` and `running` are live; the rest are terminal.
+"""
 
 
 type SessionJobStoppedByView = Literal['timeout', 'terminate', 'kill']
+"""
+Why Lightspeed stopped a running job.
+"""
 
 
 class SessionJobSummaryView(TypedDict):
+    """
+    What a job is and how it ended. Instants are the environment's wall
+    clock.
+    """
+
     cancelRequestedAtMs: NotRequired[int | None]
+    """
+    When a cancel reached the job while it ran.
+    """
     createdAtMs: int
     dependencies: NotRequired[list[str]]
     durationMs: NotRequired[int | None]
+    """
+    Run time from start to finish, immune to clock jumps.
+    """
     exit: NotRequired[SessionJobExitView | None]
+    """
+    How the job's root process ended, once it ran and exited.
+    """
     failure: NotRequired[str | None]
     finishedAtMs: NotRequired[int | None]
     jobId: str
     name: NotRequired[str | None]
     orphanedDescendants: NotRequired[bool]
+    """
+    True when the job's root process exited while descendants it spawned
+    were still running; the host terminated them best-effort at job
+    completion.
+    """
     queueKey: NotRequired[str | None]
     queuedAtMs: NotRequired[int | None]
     requestId: str
+    """
+    The start request that created the job; part of its identity.
+    """
     startedAtMs: NotRequired[int | None]
     status: SessionJobStatusView
     stoppedBy: NotRequired[SessionJobStoppedByView | None]
+    """
+    Set when Lightspeed stopped the running job.
+    """
 
 
 type SessionLifecycleStatus = Literal['new', 'open', 'closed']
 
 
 class SessionListParams(TypedDict):
+    """
+    Filters for `session/list`. An unknown field is refused, so a misspelled
+    filter fails rather than returning a wider list.
+    """
+
     closed: NotRequired[bool | None]
+    """
+    Only closed sessions (`true`), or only new and open ones (`false`).
+    Absent lists both. Every filter here narrows the list, and an absent
+    one does not filter.
+    """
     cursor: NotRequired[str | None]
+    """
+    Opaque cursor from the previous page's `nextCursor`.
+    """
     lifecycleControlled: NotRequired[bool | None]
+    """
+    Only work whose root a lifecycle controller owns (`true`), or work no
+    controller owns (`false`); sub-agents follow their root. Absent lists
+    both.
+    """
     limit: NotRequired[int | None]
     metadata: NotRequired[dict[str, str]]
+    """
+    Only sessions matching every entry (AND semantics). A non-empty value
+    requires an exact key/value pair; an empty value requires key presence.
+    """
     parent: NotRequired[str | None]
+    """
+    Only sub-agent sessions this session delegated directly.
+    """
     subagent: NotRequired[bool | None]
+    """
+    Only sub-agent sessions (`true`), or only root sessions (`false`).
+    Absent lists both.
+    """
     trees: NotRequired[list[str]]
+    """
+    Only these root sessions and all their sub-agents.
+    """
     visibleTo: NotRequired[str | None]
+    """
+    Only sessions whose root is shared with the universe or was created
+    by this actor: what that actor sees as a non-administrator.
+    """
 
 
 class SessionMetadataPutParams(TypedDict):
+    """
+    Replace a session's metadata with a complete map (the same bounds as
+    `session/start`). Record-only: it does not touch the event log or
+    `updatedAtMs`. There is no merge form; read, edit, and put.
+    """
+
     metadata: NotRequired[dict[str, str]]
+    """
+    The complete new map; empty clears it.
+    """
     sessionId: str
 
 
 class SessionMutationView(TypedDict):
+    """
+    Compact acknowledgement returned by session mutations. Call
+    `session/read` when the complete current-state summary is needed.
+    """
+
     activity: SessionActivity
     configRevision: int
     contextRevision: int
@@ -2077,11 +3345,18 @@ type SessionOriginKind = Literal['subagent']
 
 class SessionReadParams(TypedDict):
     runLimit: NotRequired[int | None]
+    """
+    Newest run summaries to include. Values above the server maximum are
+    clamped.
+    """
     sessionId: str
 
 
 class SessionRenameParams(TypedDict):
     displayName: NotRequired[str | None]
+    """
+    New display name; absent clears it. Cannot contain NUL.
+    """
     sessionId: str
 
 
@@ -2091,15 +3366,26 @@ class SessionRestartParams(TypedDict):
 
 class SessionRestartResponse(TypedDict):
     restarted: bool
+    """
+    A new execution started. False when one was already running.
+    """
     session: SessionMutationView
 
 
 class SessionRetentionPutParams(TypedDict):
     deleteAfterCloseMs: int | None
+    """
+    Positive duration enables automatic tree soft deletion; null disables it.
+    """
     sessionId: str
 
 
 class SessionRetentionView(TypedDict):
+    """
+    Effective tree-owned retention for a session. Delegated children name their
+    owning root and project that root's policy and deadline.
+    """
+
     deleteAfterCloseMs: NotRequired[int | None]
     deleteAtMs: NotRequired[int | None]
     rootSessionId: str
@@ -2116,16 +3402,16 @@ class SessionStartResponse(TypedDict):
 type SkillCatalogAvailability = Literal['available', 'stale', 'unavailable']
 
 
-class SkillCatalogSource1(TypedDict):
+class SkillCatalogSourceVfs(TypedDict):
     type: Literal['vfs']
 
 
-class SkillCatalogSource2(TypedDict):
+class SkillCatalogSourceEnvironment(TypedDict):
     environmentId: str
     type: Literal['environment']
 
 
-type SkillCatalogSource = SkillCatalogSource1 | SkillCatalogSource2
+type SkillCatalogSource = SkillCatalogSourceVfs | SkillCatalogSourceEnvironment
 
 
 class SkillListParams(TypedDict):
@@ -2133,11 +3419,19 @@ class SkillListParams(TypedDict):
 
 
 class SkillLocationView(TypedDict):
+    """
+    Readable paths within the owning catalog's filesystem domain.
+    """
+
     skillDirPath: str
     skillDocPath: str
 
 
 class SubagentAgentPin(TypedDict):
+    """
+    The profile a sub-agent was spawned from, pinned at its revision.
+    """
+
     profileId: ProfileId
     revision: int
 
@@ -2150,17 +3444,46 @@ class SubagentLimitsView(TypedDict):
     maxConcurrent: int
     maxDepth: int
     runTimeoutMs: NotRequired[int | None]
+    """
+    Absent when a child's run has no time limit.
+    """
 
 
 class SubagentsFeature(TypedDict):
+    """
+    Grants sub-agent delegation: `agent_run` (joined, result inline) and
+    `agent_spawn` (promise, joined with `await`) over the listed agent
+    profiles. Limits are root-scoped and attenuating: every descendant of a
+    root session counts against the root, and a nested grant can narrow but
+    never widen the limits pinned on its origin.
+    """
+
     agents: list[SubagentAgentRef]
+    """
+    The agent menu. Every id must name an existing profile; the model
+    picks by id and reads descriptions from the sub-agent catalog.
+    """
     maxConcurrent: NotRequired[int]
+    """
+    Open sessions under the root at any time, excluding the root.
+    """
     maxDepth: NotRequired[int]
+    """
+    A child at depth `d` may spawn only while `d + 1 <= maxDepth`.
+    """
     runTimeoutMs: NotRequired[int | None]
+    """
+    Per-child run deadline in milliseconds. Omit it for no time limit.
+    """
     version: NotRequired[int]
 
 
 class TimersFeature(TypedDict):
+    """
+    Grants timer promises through the sleep tool plus the base concurrency
+    tools (await/cancel/detach).
+    """
+
     version: NotRequired[int]
 
 
@@ -2176,8 +3499,19 @@ class TokenEstimateView(TypedDict):
 
 
 class ToolAttachmentView(TypedDict):
+    """
+    A file a completed tool call supplied, linked by name rather than shown to the
+    model. Media a call supplied is in `media` on the call and in context entries.
+    """
+
     blobRef: str
+    """
+    Full immutable blob identity; read through the universe-scoped blob API.
+    """
     handle: str
+    """
+    Model-facing alias, resolved against recorded attachments.
+    """
     mime: NotRequired[str | None]
     name: str
     source: NotRequired[AttachmentSourceView | None]
@@ -2190,6 +3524,11 @@ type ToolCallDisplayGroup = Literal['other'] | Literal['explore'] | Literal[
 ] | Literal[
     'message'
 ]
+"""
+Coarse activity family of a tool call, chosen by the projection from the
+tool name. Clients key icons and colours on it; the verb and target carry
+the specifics. Unknown tools land in `Other`.
+"""
 
 
 class ToolCallDisplayView(TypedDict):
@@ -2205,35 +3544,46 @@ class ToolCallEventView(TypedDict):
     callId: str
     display: NotRequired[ToolCallDisplayView | None]
     toolId: NotRequired[str | None]
+    """
+    Admitted registry identity, absent when the model used an unavailable name.
+    """
     toolName: str
 
 
 class ToolCallMediaView(TypedDict):
+    """
+    One media item a tool call handed the model.
+    """
+
     blobRef: str
     handle: str
+    """
+    `media:` plus the first twelve hex characters of `blobRef`; what the
+    model calls this item.
+    """
     kind: MediaKind
     mime: str
     name: NotRequired[str | None]
 
 
-class ToolChoice1(TypedDict):
+class ToolChoiceAuto(TypedDict):
     type: Literal['auto']
 
 
-class ToolChoice2(TypedDict):
+class ToolChoiceNone(TypedDict):
     type: Literal['none']
 
 
-class ToolChoice3(TypedDict):
+class ToolChoiceRequiredAny(TypedDict):
     type: Literal['requiredAny']
 
 
-class ToolChoice4(TypedDict):
+class ToolChoiceSpecific(TypedDict):
     toolId: str
     type: Literal['specific']
 
 
-type ToolChoice = ToolChoice1 | ToolChoice2 | ToolChoice3 | ToolChoice4
+type ToolChoice = ToolChoiceAuto | ToolChoiceNone | ToolChoiceRequiredAny | ToolChoiceSpecific
 
 
 class ToolEffectView(TypedDict):
@@ -2246,12 +3596,16 @@ type ToolItemStatus = Literal[
 ]
 
 
-class ToolKindView1(TypedDict):
+class ToolKindViewBuiltin(TypedDict):
+    """
+    Code-owned definition; names and schemas are resolved for each turn.
+    """
+
     settings: Any
     type: Literal['builtin']
 
 
-class ToolKindView2(TypedDict):
+class ToolKindViewFunction(TypedDict):
     descriptionRef: NotRequired[str | None]
     inputSchemaRef: str
     outputSchemaRef: NotRequired[str | None]
@@ -2260,14 +3614,14 @@ class ToolKindView2(TypedDict):
     type: Literal['function']
 
 
-class ToolKindView3(TypedDict):
+class ToolKindViewProviderNative(TypedDict):
     apiKind: str
     execution: ProviderNativeToolExecutionView
     nativeToolRef: str
     type: Literal['providerNative']
 
 
-class ToolKindView4(TypedDict):
+class ToolKindViewRemoteMcp(TypedDict):
     allowedTools: NotRequired[list[str] | None]
     approval: NotRequired[RemoteMcpApprovalPolicy]
     deferLoading: NotRequired[bool | None]
@@ -2277,7 +3631,7 @@ class ToolKindView4(TypedDict):
     type: Literal['remoteMcp']
 
 
-type ToolKindView = ToolKindView1 | ToolKindView2 | ToolKindView3 | ToolKindView4
+type ToolKindView = ToolKindViewBuiltin | ToolKindViewFunction | ToolKindViewProviderNative | ToolKindViewRemoteMcp
 
 
 type ToolParallelismView = Literal['exclusive', 'parallelSafe']
@@ -2290,6 +3644,10 @@ class ToolView(TypedDict):
 
 
 class TranscriptionAudio(TypedDict):
+    """
+    Immutable audio input in this universe's content store.
+    """
+
     blobRef: str
     mime: str
     name: str
@@ -2311,6 +3669,11 @@ class TranscriptionReadParams(TypedDict):
 class TranscriptionStartParams(TypedDict):
     audio: TranscriptionAudio
     idempotencyKey: str
+    """
+    Scoped to the requester. Matching retries rejoin the original job,
+    including after defaults change; changed requests conflict. Identity is
+    retained for the Temporal namespace's workflow-history retention period.
+    """
     language: NotRequired[str | None]
     model: NotRequired[ModelConfig | None]
     prompt: NotRequired[str | None]
@@ -2324,6 +3687,9 @@ type TranscriptionStatus = Literal[
 type TurnGenerationStatus = Literal['succeeded', 'failed', 'cancelled'] | Literal[
     'rejected'
 ]
+"""
+How a generation ended.
+"""
 
 
 type UniverseAction = Literal[
@@ -2342,14 +3708,29 @@ type UniverseAction = Literal[
     'invokeBot',
     'createWorkspace',
 ] | Literal['shareSession'] | Literal['useResource'] | Literal['configureResource']
+"""
+What a public method does, independent of its RPC spelling. Requests are
+gated by their key's groups; this classifies what the runtime's own work
+may do and which role a gate built on the contract should require.
+"""
 
 
 class VfsPromptsConfig(TypedDict):
     roots: NotRequired[list[str] | None]
+    """
+    Absent searches .agents/prompts and .lightspeed/prompts beneath each
+    workspace attachment. Explicit roots replace these defaults and must be
+    non-empty absolute paths contained in workspace attachments.
+    """
 
 
 class VfsSkillsConfig(TypedDict):
     roots: NotRequired[list[str] | None]
+    """
+    Absent searches .agents/skills and .lightspeed/skills beneath each
+    workspace attachment. Explicit roots replace these defaults and must be
+    non-empty absolute paths contained in workspace attachments.
+    """
 
 
 class VfsSnapshotCommitParams(TypedDict):
@@ -2376,6 +3757,10 @@ class VfsSnapshotReadResponse(TypedDict):
 class VfsWorkspaceCreateParams(TypedDict):
     displayName: NotRequired[str | None]
     snapshotRef: NotRequired[str | None]
+    """
+    Snapshot to seed the workspace from. Absent starts the workspace from
+    the empty snapshot, committed server-side.
+    """
     workspaceId: NotRequired[str | None]
 
 
@@ -2384,6 +3769,10 @@ class VfsWorkspaceDeleteParams(TypedDict):
 
 
 class VfsWorkspaceFileReadParams(TypedDict):
+    """
+    Read a file from a workspace's current head, by path.
+    """
+
     path: str
     workspaceId: str
 
@@ -2406,9 +3795,15 @@ class VfsWorkspaceUpdateParams(TypedDict):
 class VfsWorkspaceView(TypedDict):
     baseSnapshotRef: NotRequired[str | None]
     bytes: int
+    """
+    Total byte size of the head snapshot.
+    """
     createdAtMs: int
     displayName: NotRequired[str | None]
     files: int
+    """
+    File count of the head snapshot.
+    """
     headSnapshotRef: str
     revision: int
     updatedAtMs: int
@@ -2416,6 +3811,10 @@ class VfsWorkspaceView(TypedDict):
 
 
 type Visibility = Literal['universe', 'restricted']
+"""
+Who sees a root's tree. Sessions start unshared (`restricted`) and are
+shared with the universe once, one way; everything else is shared.
+"""
 
 
 class WebFetchFeature(TypedDict):
@@ -2424,17 +3823,32 @@ class WebFetchFeature(TypedDict):
 
 class WebSearchFeature(TypedDict):
     allowedDomains: NotRequired[list[str] | None]
+    """
+    Absent means all domains; an explicit list must be non-empty.
+    """
     blockedDomains: NotRequired[list[str]]
 
 
 type WebhookPreset = Literal['github']
 
 
-class WebhookVerification1(TypedDict):
+class WebhookVerificationToken(TypedDict):
+    """
+    How an inbound webhook proves it comes from the sender: possession of
+    the URL token, or additionally an HMAC-SHA256 over the raw body with a
+    secret leased from a retrievable grant.
+    """
+
     scheme: Literal['token']
 
 
-class WebhookVerification2(TypedDict):
+class WebhookVerificationHmacSha256(TypedDict):
+    """
+    How an inbound webhook proves it comes from the sender: possession of
+    the URL token, or additionally an HMAC-SHA256 over the raw body with a
+    secret leased from a retrievable grant.
+    """
+
     audience: NotRequired[str | None]
     grantId: str
     header: str
@@ -2442,7 +3856,12 @@ class WebhookVerification2(TypedDict):
     scheme: Literal['hmac-sha256']
 
 
-type WebhookVerification = WebhookVerification1 | WebhookVerification2
+type WebhookVerification = WebhookVerificationToken | WebhookVerificationHmacSha256
+"""
+How an inbound webhook proves it comes from the sender: possession of
+the URL token, or additionally an HMAC-SHA256 over the raw body with a
+secret leased from a retrievable grant.
+"""
 
 
 class WorkflowEndpointInput(TypedDict):
@@ -2451,44 +3870,90 @@ class WorkflowEndpointInput(TypedDict):
 
 
 class WorkflowStartRefInput(TypedDict):
+    """
+    Opaque reference to a workflow-substrate recipe already stored through
+    the blob API. The fingerprint authenticates the exact recipe bytes used
+    by the workflow-start adapter.
+    """
+
     recipeFingerprint: str
     recipeFormat: int
     recipeRef: str
     recipeRevision: int
 
 
-class WorkflowToolCompletionInput1(TypedDict):
+class WorkflowToolCompletionInputAccepted(TypedDict):
+    """
+    Completion contract for one workflow-tool invocation. Joined tools park
+    the original call on one runtime-owned reply; Promises exposes handles for
+    model-controlled concurrency.
+    """
+
     type: Literal['accepted']
 
 
-class WorkflowToolCompletionInput2(TypedDict):
+class WorkflowToolCompletionInputJoined(TypedDict):
+    """
+    Completion contract for one workflow-tool invocation. Joined tools park
+    the original call on one runtime-owned reply; Promises exposes handles for
+    model-controlled concurrency.
+    """
+
     deadlineAfterMs: NotRequired[int | None]
+    """
+    Hard deadline for the reply, in milliseconds. Required for a bound
+    receiver, which has no other way to free a caller it never answers.
+    A started execution may omit it, because the recovery poll detects
+    an execution that died.
+    """
     replySchemaRef: NotRequired[str | None]
     type: Literal['joined']
 
 
-class WorkflowToolCompletionKeySourceInput1(TypedDict):
+class WorkflowToolCompletionKeySourceInputReply(TypedDict):
+    """
+    The single reserved `reply` key.
+    """
+
     type: Literal['reply']
 
 
-class WorkflowToolCompletionKeySourceInput2(TypedDict):
+class WorkflowToolCompletionKeySourceInputStringArray(TypedDict):
+    """
+    A JSON Pointer to an array of unique completion-key strings.
+    """
+
     pointer: str
     type: Literal['stringArray']
 
 
-class WorkflowToolCompletionKeySourceInput3(TypedDict):
+class WorkflowToolCompletionKeySourceInputArrayItemField(TypedDict):
+    """
+    A JSON Pointer to an array of objects; the named string field of
+    every item is its completion key, so the model's own name for a work
+    item keys that item's promise.
+    """
+
     field: str
     pointer: str
     type: Literal['arrayItemField']
 
 
-class WorkflowToolCompletionKeySourceInput4(TypedDict):
+class WorkflowToolCompletionKeySourceInputArrayIndices(TypedDict):
+    """
+    A JSON Pointer to an array; keys are `prefix` joined with each item's
+    zero-based index.
+    """
+
     pointer: str
     prefix: str
     type: Literal['arrayIndices']
 
 
-type WorkflowToolCompletionKeySourceInput = WorkflowToolCompletionKeySourceInput1 | WorkflowToolCompletionKeySourceInput2 | WorkflowToolCompletionKeySourceInput3 | WorkflowToolCompletionKeySourceInput4
+type WorkflowToolCompletionKeySourceInput = WorkflowToolCompletionKeySourceInputReply | WorkflowToolCompletionKeySourceInputStringArray | WorkflowToolCompletionKeySourceInputArrayItemField | WorkflowToolCompletionKeySourceInputArrayIndices
+"""
+Declarative promise-key derivation over schema-validated tool arguments.
+"""
 
 
 class WorkflowToolKindInput1(TypedDict):
@@ -2506,27 +3971,56 @@ type WorkflowToolKindInput = WorkflowToolKindInput1
 class WorkflowToolSpecInput(TypedDict):
     kind: WorkflowToolKindInput
     name: str
+    """
+    Function name exposed to the model and used as its registry identity.
+    """
     parallelism: NotRequired[ToolParallelismView]
 
 
-class WorkflowToolTargetInput1(TypedDict):
+class WorkflowToolTargetInputBound(TypedDict):
+    """
+    Lifecycle target of a workflow-backed tool. Bound tools deliver to an
+    existing execution; start tools create an execution from an immutable,
+    CAS-backed recipe for every invocation.
+    """
+
     dispatch: BoundWorkflowToolDispatchInput
     receiver: WorkflowEndpointInput
     type: Literal['bound']
 
 
-class WorkflowToolTargetInput2(TypedDict):
+class WorkflowToolTargetInputStart(TypedDict):
+    """
+    Lifecycle target of a workflow-backed tool. Bound tools deliver to an
+    existing execution; start tools create an execution from an immutable,
+    CAS-backed recipe for every invocation.
+    """
+
     start: WorkflowStartRefInput
     type: Literal['start']
 
 
-type WorkflowToolTargetInput = WorkflowToolTargetInput1 | WorkflowToolTargetInput2
+type WorkflowToolTargetInput = WorkflowToolTargetInputBound | WorkflowToolTargetInputStart
+"""
+Lifecycle target of a workflow-backed tool. Bound tools deliver to an
+existing execution; start tools create an execution from an immutable,
+CAS-backed recipe for every invocation.
+"""
 
 
 type WorkspaceAccess = Literal['read', 'edit']
+"""
+Per-attachment VFS access; `edit` implies `read`.
+"""
 
 
 class WorkspaceAttachment(TypedDict):
+    """
+    One catalog resource mounted into the session namespace. Exactly one of
+    `workspaceId` and `snapshotRef` names the resource; snapshots are
+    immutable and must be attached with `read` access.
+    """
+
     access: WorkspaceAccess
     path: str
     snapshotRef: NotRequired[str | None]
@@ -2534,6 +4028,13 @@ class WorkspaceAttachment(TypedDict):
 
 
 class AccessInput(TypedDict):
+    """
+    The audience of a new session, requested at creation. Absent means
+    unshared: visible to its creator until it is shared with the universe. A
+    session created under another root (a bot's session, a delegated child)
+    follows that root and refuses this.
+    """
+
     visibility: NotRequired[Visibility | None]
 
 
@@ -2546,7 +4047,14 @@ class AgentApiError(TypedDict):
     kind: AgentApiErrorKind
     message: str
     modelDefaultSlot: NotRequired[ModelDefaultSlot | None]
+    """
+    Present for modelDefaultUnset; clients need not parse the message.
+    """
     submissionId: NotRequired[str | None]
+    """
+    Present for operationPending on a call that took a submission id, including
+    one the server allocated. Retrying with it cannot land the same work twice.
+    """
 
 
 class AgentProfileSummary(TypedDict):
@@ -2575,6 +4083,13 @@ class ApprovalDecisionResult(TypedDict):
 
 
 class AuthClientCreateParams(TypedDict):
+    """
+    Register an OAuth client configuration. `client_secret` is the second
+    deliberate inbound-plaintext path after `auth/grants/import`: it is
+    encrypted on receipt and never returned by any method. `Debug` output
+    redacts it; request logging must never echo these params.
+    """
+
     audience: NotRequired[str | None]
     authorizationEndpoint: str
     authorizationResponseIssParameterSupported: NotRequired[bool]
@@ -2629,6 +4144,9 @@ class AuthGrantView(TypedDict):
     audience: NotRequired[str | None]
     createdAtMs: int
     createdBy: Attribution
+    """
+    Who created the grant. Attribution only; it confers no access.
+    """
     displayName: NotRequired[str | None]
     expiresAtMs: NotRequired[int | None]
     exposure: AuthGrantExposure
@@ -2638,6 +4156,10 @@ class AuthGrantView(TypedDict):
     lastLeasedAtMs: NotRequired[int | None]
     leaseCount: int
     metadata: NotRequired[Any]
+    """
+    Non-secret provider-specific metadata (for GitHub App installation
+    grants: installation id, account, permissions, repository selection).
+    """
     providerId: str
     providerKind: AuthProviderKind
     scopes: NotRequired[list[str]]
@@ -2646,47 +4168,86 @@ class AuthGrantView(TypedDict):
     updatedAtMs: int
 
 
-class AuthProviderConfigInput2(TypedDict):
+class AuthProviderConfigInputModelApiKey(TypedDict):
+    """
+    Stored model provider API key; the key arrives via `credential` and is
+    encrypted on receipt.
+    """
+
     endpoint: NotRequired[ModelEndpointConfig | None]
     type: Literal['modelApiKey']
 
 
-class AuthProviderConfigInput3(TypedDict):
+class AuthProviderConfigInputModelOAuth(TypedDict):
+    """
+    Bind an existing auth grant as a model provider credential. No
+    `credential` is accepted; the grant's tokens stay in the grant store.
+    """
+
     audience: NotRequired[str | None]
     endpoint: NotRequired[ModelEndpointConfig | None]
     grantId: str
     type: Literal['modelOAuth']
 
 
-class AuthProviderConfigInput4(TypedDict):
+class AuthProviderConfigInputModelEndpoint(TypedDict):
+    """
+    Register an endpoint that requires no provider credential.
+    """
+
     endpoint: ModelEndpointConfig
     type: Literal['modelEndpoint']
 
 
-type AuthProviderConfigInput = AuthProviderConfigInput1 | AuthProviderConfigInput2 | AuthProviderConfigInput3 | AuthProviderConfigInput4
+type AuthProviderConfigInput = AuthProviderConfigInputGithubApp | AuthProviderConfigInputModelApiKey | AuthProviderConfigInputModelOAuth | AuthProviderConfigInputModelEndpoint
 
 
-class AuthProviderConfigView2(TypedDict):
+class AuthProviderConfigViewModelApiKey(TypedDict):
+    """
+    Stored model provider API key (`model:<provider_id>` rows). The key itself
+    is the provider credential and never appears in views.
+    """
+
     endpoint: NotRequired[ModelEndpointConfig | None]
     type: Literal['modelApiKey']
 
 
-class AuthProviderConfigView3(TypedDict):
+class AuthProviderConfigViewModelOAuth(TypedDict):
+    """
+    OAuth-grant-backed model provider credential: provider calls send the
+    bound grant's access token as an OAuth bearer token.
+    """
+
     audience: NotRequired[str | None]
     endpoint: NotRequired[ModelEndpointConfig | None]
     grantId: str
     type: Literal['modelOAuth']
 
 
-class AuthProviderConfigView4(TypedDict):
+class AuthProviderConfigViewModelEndpoint(TypedDict):
+    """
+    Credentialless OpenAI-compatible endpoint.
+    """
+
     endpoint: ModelEndpointConfig
     type: Literal['modelEndpoint']
 
 
-type AuthProviderConfigView = AuthProviderConfigView1 | AuthProviderConfigView2 | AuthProviderConfigView3 | AuthProviderConfigView4
+type AuthProviderConfigView = AuthProviderConfigViewGithubApp | AuthProviderConfigViewModelApiKey | AuthProviderConfigViewModelOAuth | AuthProviderConfigViewModelEndpoint
+"""
+Non-secret, provider-specific configuration. New providers add a
+variant, not a table.
+"""
 
 
 class AuthProviderCreateParams(TypedDict):
+    """
+    Register an auth provider. `credential` (for GitHub Apps: the private
+    key PEM) is the third deliberate inbound-plaintext path: it is encrypted
+    on receipt and never returned by any method. `Debug` output redacts it;
+    request logging must never echo these params.
+    """
+
     config: AuthProviderConfigInput
     credential: NotRequired[str | None]
     displayName: NotRequired[str | None]
@@ -2694,10 +4255,28 @@ class AuthProviderCreateParams(TypedDict):
 
 
 class AuthProviderPutParams(TypedDict):
+    """
+    Declare a provider: its id, its configuration and its credential. A
+    provider that is missing is created. One that exists is rewritten in place
+    as if it were created again under the same id, where it differs: the new
+    settings are validated before anything changes, so a rejected declaration
+    leaves the provider as it was, and sessions and environment variables
+    referencing the id keep working throughout. Declaring it again changes
+    nothing. `credential` is encrypted on receipt and never returned; `Debug`
+    output redacts it.
+    """
+
     config: AuthProviderConfigInput
     credential: NotRequired[str | None]
+    """
+    The provider's credential, for the kinds that take one. Absent leaves
+    the provider without a credential.
+    """
     displayName: NotRequired[str | None]
     dryRun: NotRequired[bool]
+    """
+    Report what the declaration would do without doing it.
+    """
     providerId: str
 
 
@@ -2736,15 +4315,29 @@ class BotEventAdmitParams(TypedDict):
 class BotEventListParams(TypedDict):
     botId: BotId
     cursor: NotRequired[str | None]
+    """
+    Opaque cursor from a previous page.
+    """
     limit: NotRequired[int | None]
+    """
+    Page size; server-clamped.
+    """
 
 
 class BotEventMedia(TypedDict):
+    """
+    A prepared attachment appended to the run input after the rendering;
+    bytes live in the CAS.
+    """
+
     blobRef: str
     kind: BotEventMediaKind
     mime: str
     name: NotRequired[str | None]
     textRef: NotRequired[str | None]
+    """
+    Optional prepared UTF-8 text; the source attachment remains in blobRef.
+    """
 
 
 class BotEventReadParams(TypedDict):
@@ -2758,40 +4351,107 @@ class BotEventReplayParams(TypedDict):
 
 
 class BotEventReplyRef(TypedDict):
+    """
+    Public correlation of a receipt: the asked event's `#N` at the answering
+    bot.
+    """
+
     bot: BotId
     seq: int
 
 
 class BotEventSender(TypedDict):
+    """
+    Sender of a bot-originated event, as the receiver sees it.
+    """
+
     bot: BotId
 
 
 class BotEventView(TypedDict):
+    """
+    One row of the bot's event log. Grouped like the `bot_events` table:
+    identity, what arrived, the delivery plan, federation, and the
+    write-once outcome. The receiver route is private and never shown.
+    """
+
     documentRef: str
+    """
+    CAS ref of the full envelope document.
+    """
     eventId: str
+    """
+    Dedupe identity: provider delivery id where known, otherwise
+    derived.
+    """
     hops: NotRequired[int]
+    """
+    Bot-to-bot hops from the world.
+    """
     inReplyTo: NotRequired[BotEventReplyRef | None]
     kind: str
+    """
+    Event kind as authored by the source (`github.push`,
+    `schedule.fire`, `chat.message`, `bot.reply`).
+    """
     media: NotRequired[list[BotEventMedia]]
     occurredAtMs: int
+    """
+    When the source says it happened.
+    """
     outcome: NotRequired[BotEventOutcome | None]
+    """
+    Absent while the delivery is pending.
+    """
     outcomeDetail: NotRequired[str | None]
     promptRef: NotRequired[str | None]
+    """
+    CAS ref of the model-facing rendering; what the session saw.
+    """
     receivedAtMs: int
+    """
+    Admission time; the log is ordered by it.
+    """
     resolvedAtMs: NotRequired[int | None]
     runId: NotRequired[str | None]
+    """
+    Run that resolved the event, when one was started.
+    """
     senderBotId: NotRequired[BotId | None]
+    """
+    Sending bot for bot-originated events (self or addressed).
+    """
     seq: int
+    """
+    Per-bot sequence number: the only event handle shown to models and
+    humans.
+    """
     session: NotRequired[BotRoutedSessionView | None]
+    """
+    The routed session; absent means the bot's main session.
+    """
     summary: str
     triggerId: NotRequired[BotTriggerId | None]
+    """
+    Admitting trigger; absent for an operator admit.
+    """
 
 
 class BotFilterTestParams(TypedDict):
     botId: BotId
     filter: str
+    """
+    CEL over `{event, data, headers}`.
+    """
     limit: NotRequired[int | None]
+    """
+    How many recent stored events to sample when no payload is given.
+    """
     payload: NotRequired[Any]
+    """
+    A document to test instead of stored events: `{kind?, data?,
+    headers?}`.
+    """
 
 
 class BotFilterTestResponse(TypedDict):
@@ -2802,22 +4462,62 @@ class BotFilterTestResponse(TypedDict):
 
 
 class BotInput(TypedDict):
+    """
+    The mutable configuration of a bot, replaced whole with an expected
+    revision. The bot id, event counter, and lifecycle columns live on the
+    record, not here.
+    """
+
     botId: BotId
     breaker: NotRequired[BotBreaker | None]
     brief: NotRequired[str | None]
+    """
+    Standing instructions appended to the profile's instructions — the
+    bot's job description.
+    """
     description: NotRequired[str | None]
+    """
+    One line other bots read in the directory.
+    """
     displayName: NotRequired[str | None]
+    """
+    Mutable label for humans; the bot id stays the identity.
+    """
     emit: NotRequired[bool]
+    """
+    Capability grant: `bot_emit` — events to itself or another bot's
+    inbox. Emitting bots are rate-capped.
+    """
     enabled: NotRequired[bool]
+    """
+    Reversible pause: sessions and chat context stay, nothing is
+    delivered.
+    """
     profileId: ProfileId
     routedSessionCloseAfterMs: NotRequired[int | None]
+    """
+    Close routed (`perKey` / `perEvent`) sessions idle longer than this;
+    absent keeps them open. A trigger's `sessionCloseAfterMs` overrides it.
+    """
     runsPerDay: NotRequired[int | None]
+    """
+    Budget: runs started per UTC day (sub-agent descendants count);
+    absent means unlimited.
+    """
     selfConfig: NotRequired[bool]
+    """
+    Capability grant: the mutating self-configuration tools
+    (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
+    """
 
 
 class BotPutParams(TypedDict):
     bot: BotInput
     expectedRevision: NotRequired[int | None]
+    """
+    Checked only when the bot already exists; absent replaces (or
+    creates) unconditionally.
+    """
 
 
 class BotRecentDeliverySnapshot(TypedDict):
@@ -2836,54 +4536,127 @@ class BotTriggerDeleteParams(TypedDict):
     triggerId: BotTriggerId
 
 
-class BotTriggerInput1(TypedDict):
+class BotTriggerInputSchedule(TypedDict):
+    """
+    The whole configuration of one trigger, replaced with an expected
+    revision.
+    """
+
     coalesce: NotRequired[BotCoalescePolicy | None]
     deliver: NotRequired[BotDeliverPolicy | None]
     enabled: NotRequired[bool]
     filter: NotRequired[str | None]
+    """
+    CEL over `{event, data, headers}`; a non-matching event is refused
+    and never stored. Fails closed.
+    """
     pairingCode: NotRequired[str | None]
+    """
+    Chat triggers with `pairing: code`: set a specific pairing code
+    (8–64 chars) instead of the server-minted one. Never returned to
+    channel-facing views.
+    """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
+    """
+    Idle-close policy for sessions this trigger routes to: absent inherits the
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
+    chat default).
+    """
     triggerId: BotTriggerId
     atMs: NotRequired[int | None]
+    """
+    One-shot instant; the trigger disables itself after firing.
+    """
     cron: NotRequired[str | None]
+    """
+    Classic 5-field cron or an `@macro`; exclusive with `atMs`.
+    """
     kind: Literal['schedule']
     summary: str
+    """
+    What the fired event asks the session to do.
+    """
     timezone: NotRequired[str]
+    """
+    IANA timezone for cron evaluation; default `UTC`.
+    """
 
 
-class BotTriggerInput2(TypedDict):
+class BotTriggerInputWebhook(TypedDict):
+    """
+    The whole configuration of one trigger, replaced with an expected
+    revision.
+    """
+
     coalesce: NotRequired[BotCoalescePolicy | None]
     deliver: NotRequired[BotDeliverPolicy | None]
     enabled: NotRequired[bool]
     filter: NotRequired[str | None]
+    """
+    CEL over `{event, data, headers}`; a non-matching event is refused
+    and never stored. Fails closed.
+    """
     pairingCode: NotRequired[str | None]
+    """
+    Chat triggers with `pairing: code`: set a specific pairing code
+    (8–64 chars) instead of the server-minted one. Never returned to
+    channel-facing views.
+    """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
+    """
+    Idle-close policy for sessions this trigger routes to: absent inherits the
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
+    chat default).
+    """
     triggerId: BotTriggerId
     kind: Literal['webhook']
     preset: NotRequired[WebhookPreset | None]
     verification: NotRequired[WebhookVerification]
 
 
-class BotTriggerInput3(TypedDict):
+class BotTriggerInputPoll(TypedDict):
+    """
+    The whole configuration of one trigger, replaced with an expected
+    revision.
+    """
+
     coalesce: NotRequired[BotCoalescePolicy | None]
     deliver: NotRequired[BotDeliverPolicy | None]
     enabled: NotRequired[bool]
     filter: NotRequired[str | None]
+    """
+    CEL over `{event, data, headers}`; a non-matching event is refused
+    and never stored. Fails closed.
+    """
     pairingCode: NotRequired[str | None]
+    """
+    Chat triggers with `pairing: code`: set a specific pairing code
+    (8–64 chars) instead of the server-minted one. Never returned to
+    channel-facing views.
+    """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
+    """
+    Idle-close policy for sessions this trigger routes to: absent inherits the
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
+    chat default).
+    """
     triggerId: BotTriggerId
     cursor: PollCursorSpec
     intervalMs: int
     items: NotRequired[str | None]
+    """
+    Dot path to the item array in the payload; absent = the payload
+    is the item list (or one item).
+    """
     kind: Literal['poll']
     source: PollSource
 
 
-BotTriggerInput4 = TypedDict(
-    'BotTriggerInput4',
+BotTriggerInputBot = TypedDict(
+    'BotTriggerInputBot',
     {
         'coalesce': NotRequired[BotCoalescePolicy | None],
         'deliver': NotRequired[BotDeliverPolicy | None],
@@ -2899,49 +4672,123 @@ BotTriggerInput4 = TypedDict(
 )
 
 
-class BotTriggerView1(TypedDict):
+class BotTriggerViewSchedule(TypedDict):
+    """
+    The whole configuration of one trigger, replaced with an expected
+    revision.
+    """
+
     botId: BotId
     coalesce: NotRequired[BotCoalescePolicy | None]
     createdAtMs: int
     cursorState: NotRequired[PollCursorState | None]
+    """
+    Poll triggers: the advancing runtime cursor. Named apart from the
+    poll spec's dedupe `cursor`, which the flattened document already
+    serializes under that key.
+    """
     deliver: NotRequired[BotDeliverPolicy | None]
     disabledAtMs: NotRequired[int | None]
     disabledReason: NotRequired[BotTriggerDisabledReason | None]
     enabled: NotRequired[bool]
     filter: NotRequired[str | None]
+    """
+    CEL over `{event, data, headers}`; a non-matching event is refused
+    and never stored. Fails closed.
+    """
     ingestPath: NotRequired[str | None]
+    """
+    Webhook triggers: the ingest path including its URL token, for
+    bot-management callers only.
+    """
     lastFilterError: NotRequired[str | None]
+    """
+    Last runtime failure of the CEL filter (the event was refused);
+    cleared by the next match.
+    """
     lastFilterErrorAtMs: NotRequired[int | None]
     pairingCode: NotRequired[str | None]
+    """
+    Chat triggers with `pairing: code`: the code, for bot-management
+    callers only.
+    """
     revision: int
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
+    """
+    Idle-close policy for sessions this trigger routes to: absent inherits the
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
+    chat default).
+    """
     triggerId: BotTriggerId
     updatedAtMs: int
     atMs: NotRequired[int | None]
+    """
+    One-shot instant; the trigger disables itself after firing.
+    """
     cron: NotRequired[str | None]
+    """
+    Classic 5-field cron or an `@macro`; exclusive with `atMs`.
+    """
     kind: Literal['schedule']
     summary: str
+    """
+    What the fired event asks the session to do.
+    """
     timezone: NotRequired[str]
+    """
+    IANA timezone for cron evaluation; default `UTC`.
+    """
 
 
-class BotTriggerView2(TypedDict):
+class BotTriggerViewWebhook(TypedDict):
+    """
+    The whole configuration of one trigger, replaced with an expected
+    revision.
+    """
+
     botId: BotId
     coalesce: NotRequired[BotCoalescePolicy | None]
     createdAtMs: int
     cursorState: NotRequired[PollCursorState | None]
+    """
+    Poll triggers: the advancing runtime cursor. Named apart from the
+    poll spec's dedupe `cursor`, which the flattened document already
+    serializes under that key.
+    """
     deliver: NotRequired[BotDeliverPolicy | None]
     disabledAtMs: NotRequired[int | None]
     disabledReason: NotRequired[BotTriggerDisabledReason | None]
     enabled: NotRequired[bool]
     filter: NotRequired[str | None]
+    """
+    CEL over `{event, data, headers}`; a non-matching event is refused
+    and never stored. Fails closed.
+    """
     ingestPath: NotRequired[str | None]
+    """
+    Webhook triggers: the ingest path including its URL token, for
+    bot-management callers only.
+    """
     lastFilterError: NotRequired[str | None]
+    """
+    Last runtime failure of the CEL filter (the event was refused);
+    cleared by the next match.
+    """
     lastFilterErrorAtMs: NotRequired[int | None]
     pairingCode: NotRequired[str | None]
+    """
+    Chat triggers with `pairing: code`: the code, for bot-management
+    callers only.
+    """
     revision: int
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
+    """
+    Idle-close policy for sessions this trigger routes to: absent inherits the
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
+    chat default).
+    """
     triggerId: BotTriggerId
     updatedAtMs: int
     kind: Literal['webhook']
@@ -2949,34 +4796,69 @@ class BotTriggerView2(TypedDict):
     verification: NotRequired[WebhookVerification]
 
 
-class BotTriggerView3(TypedDict):
+class BotTriggerViewPoll(TypedDict):
+    """
+    The whole configuration of one trigger, replaced with an expected
+    revision.
+    """
+
     botId: BotId
     coalesce: NotRequired[BotCoalescePolicy | None]
     createdAtMs: int
     cursorState: NotRequired[PollCursorState | None]
+    """
+    Poll triggers: the advancing runtime cursor. Named apart from the
+    poll spec's dedupe `cursor`, which the flattened document already
+    serializes under that key.
+    """
     deliver: NotRequired[BotDeliverPolicy | None]
     disabledAtMs: NotRequired[int | None]
     disabledReason: NotRequired[BotTriggerDisabledReason | None]
     enabled: NotRequired[bool]
     filter: NotRequired[str | None]
+    """
+    CEL over `{event, data, headers}`; a non-matching event is refused
+    and never stored. Fails closed.
+    """
     ingestPath: NotRequired[str | None]
+    """
+    Webhook triggers: the ingest path including its URL token, for
+    bot-management callers only.
+    """
     lastFilterError: NotRequired[str | None]
+    """
+    Last runtime failure of the CEL filter (the event was refused);
+    cleared by the next match.
+    """
     lastFilterErrorAtMs: NotRequired[int | None]
     pairingCode: NotRequired[str | None]
+    """
+    Chat triggers with `pairing: code`: the code, for bot-management
+    callers only.
+    """
     revision: int
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
+    """
+    Idle-close policy for sessions this trigger routes to: absent inherits the
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
+    chat default).
+    """
     triggerId: BotTriggerId
     updatedAtMs: int
     cursor: PollCursorSpec
     intervalMs: int
     items: NotRequired[str | None]
+    """
+    Dot path to the item array in the payload; absent = the payload
+    is the item list (or one item).
+    """
     kind: Literal['poll']
     source: PollSource
 
 
-BotTriggerView4 = TypedDict(
-    'BotTriggerView4',
+BotTriggerViewBot = TypedDict(
+    'BotTriggerViewBot',
     {
         'botId': BotId,
         'coalesce': NotRequired[BotCoalescePolicy | None],
@@ -3003,30 +4885,96 @@ BotTriggerView4 = TypedDict(
 
 
 class BotView(TypedDict):
+    """
+    The mutable configuration of a bot, replaced whole with an expected
+    revision. The bot id, event counter, and lifecycle columns live on the
+    record, not here.
+    """
+
     botId: BotId
     breaker: NotRequired[BotBreaker | None]
     brief: NotRequired[str | None]
+    """
+    Standing instructions appended to the profile's instructions — the
+    bot's job description.
+    """
     closedAtMs: NotRequired[int | None]
+    """
+    Terminal: set once by `bots/close`; a closed bot keeps its record
+    and history but refuses events and cannot be re-enabled.
+    """
     closedSessions: NotRequired[list[str]]
+    """
+    Sessions the controller force-closed on the way out; `bots/delete`
+    erases them.
+    """
     createdAtMs: int
     description: NotRequired[str | None]
+    """
+    One line other bots read in the directory.
+    """
     displayName: NotRequired[str | None]
+    """
+    Mutable label for humans; the bot id stays the identity.
+    """
     emit: NotRequired[bool]
+    """
+    Capability grant: `bot_emit` — events to itself or another bot's
+    inbox. Emitting bots are rate-capped.
+    """
     enabled: NotRequired[bool]
+    """
+    Reversible pause: sessions and chat context stay, nothing is
+    delivered.
+    """
     eventSeq: int
+    """
+    Highest `#N` admitted so far.
+    """
     profileId: ProfileId
     revision: int
     routedSessionCloseAfterMs: NotRequired[int | None]
+    """
+    Close routed (`perKey` / `perEvent`) sessions idle longer than this;
+    absent keeps them open. A trigger's `sessionCloseAfterMs` overrides it.
+    """
     runsPerDay: NotRequired[int | None]
+    """
+    Budget: runs started per UTC day (sub-agent descendants count);
+    absent means unlimited.
+    """
     selfConfig: NotRequired[bool]
+    """
+    Capability grant: the mutating self-configuration tools
+    (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
+    """
     updatedAtMs: int
 
 
 class CallerAccess(TypedDict):
+    """
+    What the calling credential may do, so a client can offer only the
+    methods it may call. Descriptive: core still checks every call.
+    """
+
     groups: list[MethodGroup]
+    """
+    The method groups the caller may call. A request without a key holds
+    every group. `initialize` belongs to no group and is always allowed.
+    """
     keyPrefix: NotRequired[str | None]
+    """
+    Display prefix of the calling key; absent for a request without a
+    key, such as local development.
+    """
     scope: AccessScope
+    """
+    Credential scope, independent of a selected request universe.
+    """
     single: bool
+    """
+    True only for explicitly unauthenticated local development access.
+    """
 
 
 class ChannelAccountDeleteParams(TypedDict):
@@ -3034,12 +4982,28 @@ class ChannelAccountDeleteParams(TypedDict):
 
 
 class ChannelAccountInput(TypedDict):
+    """
+    A provider account served by the connector host. Secret material stays
+    in the referenced grant; this document is routing identity and
+    operational configuration.
+    """
+
     accountId: ChannelAccountId
     credentialGrantId: NotRequired[str | None]
+    """
+    Retrievable auth grant holding the provider token (a Telegram bot
+    token); the connector host leases it. Absent for providers whose
+    credential is a session state directory (WhatsApp).
+    """
     displayName: str
     enabled: NotRequired[bool]
     provider: ChannelProvider
     providerAccountId: str
+    """
+    Provider-native account identity: the Telegram bot username or
+    numeric id, the WhatsApp phone number. Unique per universe and
+    provider.
+    """
     settings: NotRequired[ChannelAccountSettings]
 
 
@@ -3053,13 +5017,29 @@ class ChannelAccountPutParams(TypedDict):
 
 
 class ChannelAccountView(TypedDict):
+    """
+    A provider account served by the connector host. Secret material stays
+    in the referenced grant; this document is routing identity and
+    operational configuration.
+    """
+
     accountId: ChannelAccountId
     createdAtMs: int
     credentialGrantId: NotRequired[str | None]
+    """
+    Retrievable auth grant holding the provider token (a Telegram bot
+    token); the connector host leases it. Absent for providers whose
+    credential is a session state directory (WhatsApp).
+    """
     displayName: str
     enabled: NotRequired[bool]
     provider: ChannelProvider
     providerAccountId: str
+    """
+    Provider-native account identity: the Telegram bot username or
+    numeric id, the WhatsApp phone number. Unique per universe and
+    provider.
+    """
     revision: int
     settings: NotRequired[ChannelAccountSettings]
     updatedAtMs: int
@@ -3067,17 +5047,31 @@ class ChannelAccountView(TypedDict):
 
 class ChannelConversationReadResponse(TypedDict):
     conversation: NotRequired[ChannelConversationSnapshot | None]
+    """
+    Absent when no conversation workflow exists for the chat yet.
+    """
 
 
 class ChannelInboundAdmitResponse(TypedDict):
     botId: NotRequired[BotId | None]
+    """
+    The bot serving the conversation, when decided.
+    """
     decision: ChannelInboundDecision
     triggerId: NotRequired[BotTriggerId | None]
 
 
 class ChannelInboundMedia(TypedDict):
+    """
+    A provider-owned attachment reference; never bytes. The connector
+    downloads it when the conversation workflow asks (`prepare_channel_media`).
+    """
+
     byteSize: NotRequired[int | None]
     fileId: str
+    """
+    Provider file handle (a Telegram file id, a sealed WhatsApp locator).
+    """
     kind: ChannelMediaKind
     mime: str
     name: NotRequired[str | None]
@@ -3092,12 +5086,29 @@ class ChannelPairingListResponse(TypedDict):
 
 
 class ChatAccess(TypedDict):
+    """
+    Who may take a turn and who may issue control commands, by provider
+    handle (Telegram user id, WhatsApp JID). Handle allowlists on the
+    trigger replace any platform membership lookup.
+    """
+
     allowed: NotRequired[list[str]]
+    """
+    Handles allowed to take a turn when `turn` is `listed`.
+    """
     controllers: NotRequired[list[str]]
+    """
+    Handles allowed to issue `/activation` and `/status`; empty denies
+    control commands to everyone.
+    """
     turn: NotRequired[ChatTurnAccess]
 
 
 class ChatActivation(TypedDict):
+    """
+    When the bot acts in a conversation.
+    """
+
     group: NotRequired[ChatGroupActivation | None]
     mentionNames: NotRequired[list[str]]
     triggerPrefixes: NotRequired[list[str]]
@@ -3107,12 +5118,12 @@ class ContextCompactResponse(TypedDict):
     session: SessionMutationView
 
 
-class ContextEntryKindView1(TypedDict):
+class ContextEntryKindViewMessage(TypedDict):
     role: ContextMessageRoleView
     type: Literal['message']
 
 
-type ContextEntryKindView = ContextEntryKindView1 | ContextEntryKindView2 | ContextEntryKindView3 | ContextEntryKindView4 | ContextEntryKindView5 | ContextEntryKindView6 | ContextEntryKindView7 | ContextEntryKindView8
+type ContextEntryKindView = ContextEntryKindViewMessage | ContextEntryKindViewInstructions | ContextEntryKindViewCatalog | ContextEntryKindViewToolCall | ContextEntryKindViewToolResult | ContextEntryKindViewReasoningState | ContextEntryKindViewProviderOpaque | ContextEntryKindViewMcpApprovalResponse
 
 
 class ContextRemoveResult(TypedDict):
@@ -3129,29 +5140,92 @@ class ContextReplaceResult(TypedDict):
 
 class DeploymentApiKeyCreateParams(TypedDict):
     assertActor: NotRequired[bool]
+    """
+    Whether the key may name the actor a request acts for with the
+    `x-lightspeed-actor` header. Give it only to a gate that authenticates
+    people, such as the Platform. It cannot be changed afterwards.
+    """
     displayName: str
+    """
+    Human-readable purpose shown in key-management interfaces.
+    """
     groups: NotRequired[list[MethodGroup] | None]
+    """
+    The method groups the key may call; absent grants every group its
+    scope allows.
+    """
     keyId: NotRequired[str | None]
+    """
+    The key's id: 1-128 ASCII letters, digits, underscores, hyphens, dots
+    or colons, starting with a letter or digit, and not yet used by a key
+    of this scope. Omit it to have one allocated.
+    """
     scope: AccessScope
+    """
+    A universe, or the deployment. A deployment key addresses a universe
+    with the `x-lightspeed-universe` header and may hold deployment groups.
+    """
 
 
 class DeploymentApiKeyPutParams(TypedDict):
+    """
+    Declare a key whose secret the caller supplies. `Debug` redacts the
+    secret; the serialized request remains sensitive and must not be logged.
+    """
+
     assertActor: NotRequired[bool]
+    """
+    Whether the key may name the actor a request acts for. It cannot be
+    changed afterwards.
+    """
     displayName: str
+    """
+    Human-readable purpose shown in key-management interfaces.
+    """
     groups: NotRequired[list[MethodGroup] | None]
+    """
+    The method groups the key may call; absent grants every group its
+    scope allows. An existing key's groups are replaced by these.
+    """
     keyId: str
+    """
+    The key's id within its scope: 1-128 ASCII letters, digits,
+    underscores, hyphens, dots or colons, starting with a letter or digit.
+    """
     scope: AccessScope
+    """
+    A universe, or the deployment. It cannot be changed afterwards.
+    """
     secret: str
+    """
+    The secret the key answers to: `lsk_` followed by 32 random bytes
+    encoded as base64url without padding. Generate it with a
+    cryptographic random source.
+    """
 
 
 class DeploymentApiKeyView(TypedDict):
+    """
+    Non-secret key metadata: what the key is called, reaches and may call,
+    and who minted it.
+    """
+
     assertActor: bool
     createdAtMs: int
     createdBy: Attribution
     displayName: NotRequired[str | None]
     groups: list[MethodGroup]
     keyId: str
+    """
+    The key's name among the keys of its scope. Together with the scope
+    it addresses the key, and it is kept when the secret is replaced.
+    """
     keyPrefix: str
+    """
+    The first characters of the key's current secret: enough to tell
+    which secret the key holds without revealing it. It changes when the
+    secret does.
+    """
     lastUsedAtMs: NotRequired[int | None]
     revokedAtMs: NotRequired[int | None]
     scope: AccessScope
@@ -3187,6 +5261,9 @@ class DeploymentProviderBindingPutResponse(TypedDict):
 
 class DeploymentUniverseCreateResponse(TypedDict):
     created: bool
+    """
+    False when the universe already existed (create is idempotent).
+    """
     universe: DeploymentUniverseView
 
 
@@ -3201,11 +5278,30 @@ class DeploymentUniverseReadResponse(TypedDict):
 class EnvironmentCreateParams(TypedDict):
     displayName: NotRequired[str | None]
     environmentId: NotRequired[str | None]
+    """
+    The id profiles and bindings use for the environment. Omit it to have
+    one allocated. An id already in use is a conflict.
+    """
     idle: NotRequired[EnvironmentIdlePolicyView | None]
+    """
+    Idle policy passed to the provider in place of the template's `idle`.
+    The provider runs the idle clock; it cannot be changed after create.
+    """
     metadata: NotRequired[dict[str, str]]
     providerId: str
+    """
+    The provider to create the environment with; the universe needs an
+    enabled binding to it.
+    """
     requestId: str
+    """
+    Stable caller-generated retry identity, unique inside the universe.
+    Retrying with identical inputs returns the same environment.
+    """
     templateId: str
+    """
+    The provider template to create the environment from.
+    """
 
 
 class EnvironmentCredentialBindParams(TypedDict):
@@ -3240,31 +5336,77 @@ class EnvironmentJobCreateParams(TypedDict):
 
 class EnvironmentJobReadParams(TypedDict):
     after: NotRequired[int | None]
+    """
+    Byte offset to read each job's output from: a previous entry's
+    `outputNext`. Omitted with `tailBytes` omitted reads from the start.
+    """
     jobs: list[SessionJobHandleInput]
     maxBytes: NotRequired[int | None]
+    """
+    Most output bytes per job; omit for the server's default page.
+    """
     tailBytes: NotRequired[int | None]
+    """
+    Read each job's last `tailBytes` of output instead; excludes `after`.
+    """
 
 
 class EnvironmentListParams(TypedDict):
     after: NotRequired[str | None]
+    """
+    Exclusive environment id cursor: a previous page's `nextAfter`.
+    """
     includeClosed: NotRequired[bool]
+    """
+    Also list closed environments; they are omitted by default.
+    """
     limit: NotRequired[int | None]
+    """
+    Most environments per page; omit for 100.
+    """
     metadata: NotRequired[dict[str, str]]
+    """
+    Only environments carrying every listed metadata pair (AND
+    semantics); the same filter `session/list` accepts.
+    """
     providerId: NotRequired[str | None]
+    """
+    Only provisioned environments of this provider.
+    """
     registrationKeyId: NotRequired[str | None]
+    """
+    Only registered environments admitted by this registration key.
+    """
     state: NotRequired[EnvironmentStateView | None]
+    """
+    Only environments in this lifecycle state. `closed` lists closed
+    environments without `includeClosed`.
+    """
 
 
 class EnvironmentObservedTargetView(TypedDict):
+    """
+    What the provider last reported about a provisioned environment's
+    target. Display only: Lightspeed never converges it, and it may be up to
+    a few minutes old.
+    """
+
     message: NotRequired[str | None]
     observedAtMs: int
     phase: EnvironmentTargetPhaseView
     power: NotRequired[EnvironmentPowerStateView | None]
+    """
+    Present only while `phase` is `active`.
+    """
 
 
 class EnvironmentPowerPutParams(TypedDict):
     environmentId: str
     power: EnvironmentPowerStateView
+    """
+    Power state to move the target to; one of its template's
+    `powerStates`.
+    """
 
 
 class EnvironmentProviderBindingListResponse(TypedDict):
@@ -3278,6 +5420,9 @@ class EnvironmentProviderBindingReadResponse(TypedDict):
 class EnvironmentRegistrationKeyCreateResponse(TypedDict):
     registrationKey: EnvironmentRegistrationKeyView
     secret: EnvironmentRegistrationSecretView
+    """
+    The plaintext secret, returned only here.
+    """
 
 
 class EnvironmentRegistrationKeyListResponse(TypedDict):
@@ -3285,21 +5430,59 @@ class EnvironmentRegistrationKeyListResponse(TypedDict):
 
 
 class EnvironmentRegistrationKeyPutParams(TypedDict):
+    """
+    Declare a registration key whose secret the caller supplies: its id, its
+    complete policy and the secret it answers to. An absent policy field is
+    unset.
+    """
+
     declaredOnly: NotRequired[bool]
+    """
+    Persistent keys only: admit only daemons whose registration name
+    matches an environment declared under this key.
+    """
     displayName: str
+    """
+    Group name for the environments this key admits.
+    """
     ephemeralDisconnectGraceMs: NotRequired[int | None]
+    """
+    Disconnect grace for ephemeral environments; omit for the default.
+    """
     expiresAtMs: NotRequired[int | None]
     identityMode: EnvironmentIdentityModeView
+    """
+    Immutable once the key exists.
+    """
     maxActiveEnvironments: NotRequired[int | None]
+    """
+    Non-closed environments the key may have at once; omit for unlimited.
+    """
     offlineCloseAfterMs: NotRequired[int | None]
+    """
+    Persistent keys only: close environments whose daemon has been away
+    longer than this; omit to keep them open.
+    """
     registrationKeyId: str
     secret: EnvironmentRegistrationSecretView
+    """
+    The secret daemons register with: `lsrk_` followed by 32 random bytes
+    encoded as base64url without padding. Generate it with a
+    cryptographic random source.
+    """
 
 
 class EnvironmentRegistrationKeyPutResponse(TypedDict):
     created: bool
+    """
+    False when the key already existed.
+    """
     registrationKey: EnvironmentRegistrationKeyView
     secretReplaced: bool
+    """
+    True when an existing key answered to a different secret, which is
+    now retired.
+    """
 
 
 class EnvironmentRegistrationKeyReadResponse(TypedDict):
@@ -3308,29 +5491,53 @@ class EnvironmentRegistrationKeyReadResponse(TypedDict):
 
 class EnvironmentRegistrationKeyRevokeResponse(TypedDict):
     closedEnvironmentIds: NotRequired[list[str]]
+    """
+    Environments closed by this call.
+    """
     registrationKey: EnvironmentRegistrationKeyView
 
 
 class EnvironmentRegistrationKeyRotateResponse(TypedDict):
     registrationKey: EnvironmentRegistrationKeyView
     secret: EnvironmentRegistrationSecretView
+    """
+    The new plaintext secret, returned only here.
+    """
 
 
 class EnvironmentRegistrationKeyUpdateResponse(TypedDict):
     registrationKey: EnvironmentRegistrationKeyView
 
 
-class EnvironmentSourceView1(TypedDict):
+class EnvironmentSourceViewProvisioned(TypedDict):
+    """
+    A target a deployment provider created from a template. The provider
+    owns its power, idle policy and ingress.
+    """
+
     idle: NotRequired[EnvironmentIdlePolicyView | None]
+    """
+    The create-time idle policy, when one replaced the template's.
+    """
     observed: NotRequired[EnvironmentObservedTargetView | None]
+    """
+    Absent until the provider first reported the target.
+    """
     providerId: str
     publicEndpoint: NotRequired[str | None]
+    """
+    The public endpoint the provider last reported.
+    """
     targetId: NotRequired[str | None]
+    """
+    The provider's handle for the target; absent until the provider
+    accepted the create.
+    """
     templateId: str
     type: Literal['provisioned']
 
 
-type EnvironmentSourceView = EnvironmentSourceView1 | EnvironmentSourceView2 | EnvironmentSourceView3
+type EnvironmentSourceView = EnvironmentSourceViewProvisioned | EnvironmentSourceViewExternal | EnvironmentSourceViewRegistered
 
 
 class EnvironmentTemplateListResponse(TypedDict):
@@ -3343,26 +5550,63 @@ class EnvironmentTemplateReadResponse(TypedDict):
 
 class EnvironmentView(TypedDict):
     closeReason: NotRequired[EnvironmentCloseReasonView | None]
+    """
+    Present exactly while `state` is `closing` or `closed`.
+    """
     closedAtMs: NotRequired[int | None]
     createdAtMs: int
     daemon: NotRequired[EnvironmentDaemonView | None]
+    """
+    The envd build serving the environment; absent until known.
+    """
     displayName: NotRequired[str | None]
     environmentId: str
     metadata: NotRequired[dict[str, str]]
+    """
+    Caller metadata.
+    """
     requestId: NotRequired[str | None]
+    """
+    The caller's retry identity; absent for registered environments.
+    """
     source: EnvironmentSourceView
     state: EnvironmentStateView
     stateChangedAtMs: int
+    """
+    When `state` last changed.
+    """
     stateMessage: NotRequired[str | None]
+    """
+    Why the environment failed, or what provisioning or closing is
+    waiting on.
+    """
     status: EnvironmentStatusView
     updatedAtMs: int
 
 
 class GenerationConfig(TypedDict):
+    """
+    Turn-shaping defaults applied to every LLM generation. Per-run overrides
+    ride `session/runs/start`.
+    """
+
     maxOutputTokens: NotRequired[int | None]
     parallelToolUse: NotRequired[bool | None]
+    """
+    Whether the model may call several tools in one turn; absent leaves
+    the provider default.
+    """
     processingTier: NotRequired[ModelProcessingTier | None]
+    """
+    Provider processing class. In session/profile config this becomes the
+    default for every run; in run config it overrides that run. Currently
+    supported only by the built-in OpenAI provider.
+    """
     reasoningEffort: NotRequired[str | None]
+    """
+    Reasoning effort tier as a provider-native string (e.g. "none",
+    "high", "xhigh", "max"); validated against the session's provider.
+    """
     toolChoice: NotRequired[ToolChoice | None]
 
 
@@ -3373,16 +5617,25 @@ class InitializeResponse(TypedDict):
     serverInfo: ServerInfo
 
 
-class InputItem3(TypedDict):
+class InputItemMedia(TypedDict):
     blobRef: str
     kind: MediaKind
     mime: str
     name: NotRequired[str | None]
+    """
+    Shown as the item's preview; at most 256 characters, with no NUL.
+    """
     origin: NotRequired[str | None]
+    """
+    Application-supplied display provenance (1–200 nonblank bytes, no NUL).
+    The platform uses `user:<id>` for direct human input and `event` for
+    bot deliveries; other values are allowed. Omitted means unknown.
+    This metadata is not an authorization identity or model input text.
+    """
     type: Literal['media']
 
 
-type InputItem = InputItem1 | InputItem2 | InputItem3 | InputItem4
+type InputItem = InputItemText | InputItemTextRef | InputItemMedia | InputItemCatalog
 
 
 class JsonRpcError(TypedDict):
@@ -3399,23 +5652,45 @@ class McpAdvertisedToolView(TypedDict):
 
 
 class McpFeature(TypedDict):
+    """
+    Grants remote MCP tools by declaring attached servers from the universe MCP
+    catalog. Server ids must be unique; an empty list grants no MCP tools.
+    """
+
     servers: NotRequired[list[McpServerAttachment]]
     version: NotRequired[int]
 
 
 class McpServerInput(TypedDict):
+    """
+    Full MCP server document as submitted by clients.
+    """
+
     allowPrivateNetwork: NotRequired[bool]
     allowedTools: NotRequired[list[str] | None]
     approval: NotRequired[RemoteMcpApprovalPolicy]
+    """
+    Approval policy for every session linking this server.
+    """
     authPolicy: NotRequired[McpServerAuthPolicy]
     credential: NotRequired[McpServerCredential | None]
     defaultServerLabel: str
     deferLoading: NotRequired[bool | None]
+    """
+    Provider-side deferred loading of tool definitions where supported.
+    """
     description: NotRequired[str | None]
     displayName: NotRequired[str | None]
     execution: NotRequired[RemoteMcpExecution]
     exposure: NotRequired[RemoteMcpExposure]
     headers: NotRequired[dict[str, McpServerHeader]]
+    """
+    Extra request headers sent on every request to the server, alongside
+    any `Authorization` the auth policy produces. Names are
+    case-insensitive and stored lowercased; transport headers,
+    `authorization` and `x-lightspeed-*` are reserved. Requires `runtime`
+    execution.
+    """
     serverId: str
     serverUrl: str
     status: NotRequired[McpServerStatus]
@@ -3427,22 +5702,43 @@ class McpServerListParams(TypedDict):
 
 class McpServerPutParams(TypedDict):
     expectedRevision: NotRequired[int | None]
+    """
+    Checked only when the server already exists; absent replaces (or
+    creates) unconditionally.
+    """
     server: McpServerInput
 
 
-class McpServerToolsDiscoverResponse1(TypedDict):
+class McpServerToolsDiscoverResponseSuccess(TypedDict):
+    """
+    The result of one live MCP `tools/list` exchange. Operational connection
+    failures are data so management clients can render stable remediation;
+    ordinary API admission/not-found/internal failures remain API errors.
+    """
+
     status: Literal['success']
     tools: list[McpAdvertisedToolView]
 
 
-class McpServerToolsDiscoverResponse2(TypedDict):
+class McpServerToolsDiscoverResponseFailure(TypedDict):
+    """
+    The result of one live MCP `tools/list` exchange. Operational connection
+    failures are data so management clients can render stable remediation;
+    ordinary API admission/not-found/internal failures remain API errors.
+    """
+
     code: McpToolDiscoveryFailureCode
     message: str
     required_scopes: NotRequired[list[str]]
     status: Literal['failure']
 
 
-type McpServerToolsDiscoverResponse = McpServerToolsDiscoverResponse1 | McpServerToolsDiscoverResponse2
+type McpServerToolsDiscoverResponse = McpServerToolsDiscoverResponseSuccess | McpServerToolsDiscoverResponseFailure
+"""
+The result of one live MCP `tools/list` exchange. Operational connection
+failures are data so management clients can render stable remediation;
+ordinary API admission/not-found/internal failures remain API errors.
+"""
 
 
 class McpServerView(TypedDict):
@@ -3459,6 +5755,10 @@ class McpServerView(TypedDict):
     execution: RemoteMcpExecution
     exposure: RemoteMcpExposure
     headers: NotRequired[dict[str, McpServerHeader]]
+    """
+    Extra request headers, keyed by lowercased name. Credential headers
+    show only the credential id; the token is never returned.
+    """
     revision: int
     serverId: str
     serverUrl: str
@@ -3466,12 +5766,17 @@ class McpServerView(TypedDict):
     updatedAtMs: int
 
 
-class MethodAccess2(TypedDict):
+class MethodAccessUniverse(TypedDict):
+    """
+    A universe method, and the action internal work is held to when it
+    calls it.
+    """
+
     action: UniverseAction
     kind: Literal['universe']
 
 
-type MethodAccess = MethodAccess1 | MethodAccess2 | MethodAccess3 | MethodAccess4
+type MethodAccess = MethodAccessConnection | MethodAccessUniverse | MethodAccessService | MethodAccessDeployment
 
 
 class ModelListResponse(TypedDict):
@@ -3517,7 +5822,16 @@ class ProviderContextDisplayView(TypedDict):
 
 
 class ResourceAccessSummary(TypedDict):
+    """
+    The audience of a session's or bot's root as views show it: whether it is
+    shared with the universe, and who created it. A bot's session and a
+    delegated child show their root's.
+    """
+
     createdBy: NotRequired[Attribution | None]
+    """
+    Absent for work whose creator was not recorded.
+    """
     visibility: Visibility
 
 
@@ -3546,6 +5860,11 @@ class RunStartConfig(TypedDict):
     generation: NotRequired[GenerationConfig | None]
     limits: NotRequired[RunLimitsConfig | None]
     model: NotRequired[ModelConfig | None]
+    """
+    Optional model override within the session's provider identity and API
+    kind. Changing either requires a new session, even before the first run.
+    Any model on that route is allowed, whatever context the session retains.
+    """
 
 
 class RunStartResponse(TypedDict):
@@ -3562,14 +5881,34 @@ type RunStartSource = RunStartSource1
 
 class RunSteerParams(TypedDict):
     items: list[InputItem]
+    """
+    Steering input, same vocabulary as run input. Delivered to the model
+    at the next turn boundary of the run; it does not interrupt the
+    in-flight turn or wake a parked run. If the run fails before that
+    boundary, the input still enters context and the next run sees it as
+    history. Cancelling the run drops it.
+    """
     runId: str
+    """
+    The run to steer. Must be the session's current active run, running or
+    parked; a queued, finished or cancelling run is rejected so a late steer
+    never lands on the next run.
+    """
     sessionId: str
     submissionId: NotRequired[str | None]
+    """
+    Client-supplied idempotency key. Retrying with the same id and the same items
+    lands the steering once and returns its original id; reusing the id with other
+    items is rejected. The run recognizes it among its most recent steering batches.
+    """
 
 
 class RunSteerResponse(TypedDict):
     run: RunSummaryView
     steeringId: str
+    """
+    Identifier of the accepted steering batch within the session.
+    """
 
 
 class RunViewSource1(TypedDict):
@@ -3588,15 +5927,19 @@ class SessionConfigPutResponse(TypedDict):
     session: SessionMutationView
 
 
-class SessionEventKindView30(TypedDict):
+class SessionEventKindViewTurnGenerationCompleted(TypedDict):
     runId: str
     status: TurnGenerationStatus
     turnId: str
     type: Literal['turnGenerationCompleted']
     usage: NotRequired[LlmUsageView | None]
+    """
+    Provider token usage for this generation, including the
+    prompt-cache read/write counts, when the provider reported it.
+    """
 
 
-class SessionEventKindView45(TypedDict):
+class SessionEventKindViewToolBatchStarted(TypedDict):
     batchId: str
     calls: list[ToolCallEventView]
     runId: str
@@ -3604,8 +5947,18 @@ class SessionEventKindView45(TypedDict):
     type: Literal['toolBatchStarted']
 
 
-class SessionEventKindView47(TypedDict):
+class SessionEventKindViewToolCallCompleted(TypedDict):
+    """
+    One tool call finished. `output_bytes` is the size of the
+    model-visible text the tool produced before the runtime's projection
+    budget was applied, absent for synthetic results; `truncated` is true
+    when that budget cut it.
+    """
+
     attachments: NotRequired[list[ToolAttachmentView]]
+    """
+    Files the call linked. Media it supplied arrives as context entries.
+    """
     batchId: str
     callId: str
     effects: NotRequired[list[ToolEffectView]]
@@ -3617,7 +5970,13 @@ class SessionEventKindView47(TypedDict):
     type: Literal['toolCallCompleted']
 
 
-class SessionEventKindView51(TypedDict):
+class SessionEventKindViewCodeToolProgress(TypedDict):
+    """
+    Progress of a code tool execution. This preserves the contiguous session
+    event cursor without projecting internal scope bindings or payloads as
+    conversational tool calls.
+    """
+
     executionId: str
     phase: CodeToolProgressPhase
     requestId: NotRequired[str | None]
@@ -3634,16 +5993,38 @@ class SessionJobCancelEntryView(TypedDict):
 class SessionJobOutputChunkView(TypedDict):
     dataBase64: str
     offset: int
+    """
+    Byte offset of the chunk's first byte in the job's combined output.
+    """
     stream: SessionJobOutputStreamView
 
 
 class SessionJobReadEntryView(TypedDict):
+    """
+    One job's summary and output page, or why it could not be read: an
+    entry with `error` and no summary names a job the environment does not
+    know (never created, or garbage-collected).
+    """
+
     error: NotRequired[str | None]
     handle: NotRequired[SessionJobHandleView | None]
     outputChunks: NotRequired[list[SessionJobOutputChunkView]]
+    """
+    Output in offset order.
+    """
     outputEnd: int
+    """
+    Output bytes the job produced so far; final once it is terminal.
+    """
     outputGaps: NotRequired[list[SessionJobOutputGapView]]
+    """
+    Output ranges between the requested start and `outputNext` that
+    cannot be returned.
+    """
     outputNext: int
+    """
+    Byte offset to continue reading from: pass it as `after`.
+    """
     summary: NotRequired[SessionJobSummaryView | None]
 
 
@@ -3658,14 +6039,30 @@ class SessionJobStartedView(TypedDict):
 
 
 class SessionOriginView(TypedDict):
+    """
+    Typed provenance of a delegated (sub-agent) session: who created it,
+    under which root, at what depth, and the effective limits it was spawned
+    with. Provenance, never ownership — the child is an ordinary session.
+    """
+
     agent: SubagentAgentPin
     depth: int
+    """
+    Absolute depth from the root; a root's direct child is 1.
+    """
     invocationId: str
+    """
+    The workflow-tool invocation that created the child.
+    """
     kind: SessionOriginKind
     limits: SubagentLimitsView
     parentRunId: str
     parentSessionId: str
     rootSessionId: str
+    """
+    Nearest ancestor without an origin; root-scoped limits count every
+    session naming this root.
+    """
 
 
 class SessionShareResponse(TypedDict):
@@ -3674,15 +6071,32 @@ class SessionShareResponse(TypedDict):
 
 class SessionSummaryView(TypedDict):
     access: ResourceAccessSummary
+    """
+    The audience of the session's root: whether it is shared with the
+    universe, and who created it.
+    """
     activity: SessionActivity
+    """
+    What the session is doing now: idle, working on a run, or waiting for
+    an approval.
+    """
     closedAtMs: NotRequired[int | None]
     createdAtMs: int
     displayName: NotRequired[str | None]
     id: str
     lifecycleControlled: bool
+    """
+    True only when the session's integration names a lifecycle controller.
+    """
     lifecycleStatus: SessionLifecycleStatus
     metadata: NotRequired[dict[str, str]]
+    """
+    Descriptive key/value metadata; empty when none was set.
+    """
     origin: NotRequired[SessionOriginView | None]
+    """
+    Sub-agent lineage; absent for root sessions.
+    """
     retention: SessionRetentionView
     updatedAtMs: int
 
@@ -3691,6 +6105,9 @@ class SkillListItem(TypedDict):
     description: str
     enabled: bool
     location: SkillLocationView
+    """
+    Where to read the instructions and resolve supporting files.
+    """
     name: str
     shortDescription: NotRequired[str | None]
     skillId: str
@@ -3698,25 +6115,64 @@ class SkillListItem(TypedDict):
 
 class ToolCallView(TypedDict):
     arguments: NotRequired[str | None]
+    """
+    Bounded preview; `argumentsRef` has the full body.
+    """
     argumentsPreviewTruncated: NotRequired[bool]
     argumentsRef: str
     attachments: NotRequired[list[ToolAttachmentView]]
+    """
+    Files the call linked, which the model does not get as input. Media it supplied
+    is in `media`.
+    """
     callId: str
     display: NotRequired[ToolCallDisplayView | None]
     durationMs: NotRequired[int | None]
+    """
+    Execution milliseconds measured by the runtime around the call body;
+    the remainder of the started/completed window is overhead.
+    """
     effects: NotRequired[list[ToolEffectView]]
     finishedAtMs: NotRequired[int | None]
+    """
+    When the call's terminal result was committed. The window to
+    `startedAtMs` includes runtime scheduling overhead.
+    """
     isError: NotRequired[bool]
     media: NotRequired[list[ToolCallMediaView]]
+    """
+    Media the call handed the model (MCP images and documents, file
+    reads, sub-agent hand-offs), in the order the model saw it. Each item
+    is also a user-role media entry of the run; fetch bytes with
+    `blobs/read`.
+    """
     output: NotRequired[str | None]
+    """
+    Bounded preview of the model-visible result; `outputRef` has the full body.
+    """
     outputBytes: NotRequired[int | None]
+    """
+    Bytes of model-visible text the tool produced before the runtime applied its
+    budget, from the call's `toolCallCompleted` event.
+    """
     outputPreviewTruncated: NotRequired[bool]
     outputRef: NotRequired[str | None]
     startedAtMs: NotRequired[int | None]
+    """
+    When the call was dispatched for execution, from the committed
+    `toolCallStarted` event. Absent until dispatch.
+    """
     status: ToolItemStatus
     toolId: NotRequired[str | None]
+    """
+    Admitted registry identity, absent when the model used an unavailable name.
+    """
     toolName: str
     truncated: NotRequired[bool]
+    """
+    The runtime cut the model-visible text to its budget, from the call's
+    `toolCallCompleted` event. This is separate from the preview bound above.
+    """
 
 
 class TranscriptionFailure(TypedDict):
@@ -3733,15 +6189,43 @@ class TranscriptionView(TypedDict):
     status: TranscriptionStatus
     text: NotRequired[str | None]
     transcriptRef: NotRequired[str | None]
+    """
+    Plain UTF-8 transcript blob, usable as ordinary textRef input.
+    Unsubmitted content can be swept after the ordinary CAS grace period.
+    """
     transcriptionId: str
 
 
 class VfsFeature(TypedDict):
+    """
+    Grants the session virtual filesystem. Workspace attachments declare the
+    session-visible namespace and the VFS catalog is surfaced. The file tool
+    surface is derived from the attachments: any attachment installs the read
+    tools, any `edit` attachment adds the write tools, and with the
+    environments feature granted the matching transfer tools appear. `{}`
+    grants a VFS with no attachments, no tools, and no sourcing.
+    """
+
     prompts: NotRequired[VfsPromptsConfig | None]
+    """
+    Prompt-instruction sourcing from the VFS. Absent disables loading;
+    an empty block discovers conventional attached roots.
+    """
     skills: NotRequired[VfsSkillsConfig | None]
+    """
+    Independent VFS skill discovery. Absent disables discovery and removes
+    its runtime catalog; an empty block discovers conventional attached roots.
+    """
     version: NotRequired[int]
     workingDirectory: NotRequired[str | None]
+    """
+    Absolute VFS tool working directory; absent uses /.
+    """
     workspaces: NotRequired[list[WorkspaceAttachment]]
+    """
+    Catalog resources exposed in the session's workspace namespace at
+    disjoint absolute paths.
+    """
 
 
 class VfsWorkspaceCreateResponse(TypedDict):
@@ -3765,12 +6249,23 @@ class VfsWorkspaceUpdateResponse(TypedDict):
 
 
 class WebFeature(TypedDict):
+    """
+    Grants network access through the web toolset; `fetch` and `search` are
+    independently granted, and a web block granting neither is rejected.
+    """
+
     fetch: NotRequired[WebFetchFeature | None]
     search: NotRequired[WebSearchFeature | None]
     version: NotRequired[int]
 
 
-class WorkflowToolCompletionInput3(TypedDict):
+class WorkflowToolCompletionInputPromises(TypedDict):
+    """
+    Completion contract for one workflow-tool invocation. Joined tools park
+    the original call on one runtime-owned reply; Promises exposes handles for
+    model-controlled concurrency.
+    """
+
     deadlineAfterMs: NotRequired[int | None]
     keySource: WorkflowToolCompletionKeySourceInput
     maxPromises: int
@@ -3778,7 +6273,12 @@ class WorkflowToolCompletionInput3(TypedDict):
     type: Literal['promises']
 
 
-type WorkflowToolCompletionInput = WorkflowToolCompletionInput1 | WorkflowToolCompletionInput2 | WorkflowToolCompletionInput3
+type WorkflowToolCompletionInput = WorkflowToolCompletionInputAccepted | WorkflowToolCompletionInputJoined | WorkflowToolCompletionInputPromises
+"""
+Completion contract for one workflow-tool invocation. Joined tools park
+the original call on one runtime-owned reply; Promises exposes handles for
+model-controlled concurrency.
+"""
 
 
 class WorkflowToolDefinitionInput(TypedDict):
@@ -3786,6 +6286,10 @@ class WorkflowToolDefinitionInput(TypedDict):
     semanticType: str
     tool: WorkflowToolSpecInput
     workflowToolId: str
+    """
+    The workflow-tool namespace: what invocations and bindings are keyed on. The
+    registry identity the model sees through `activeTools` is `tool.name`.
+    """
 
 
 class AuthClientCreateResponse(TypedDict):
@@ -3818,8 +6322,18 @@ class AuthGrantListResponse(TypedDict):
 
 class AuthGrantPutResponse(TypedDict):
     created: bool
+    """
+    False when the credential already existed.
+    """
     grant: AuthGrantView
+    """
+    The credential as declared: as it is now, or as it would be for a
+    dry run.
+    """
     tokenReplaced: bool
+    """
+    True when an existing credential held a different token.
+    """
 
 
 class AuthGrantReadResponse(TypedDict):
@@ -3844,8 +6358,19 @@ class AuthProviderListResponse(TypedDict):
 
 class AuthProviderPutResponse(TypedDict):
     created: bool
+    """
+    False when the provider already existed.
+    """
     credentialReplaced: bool
+    """
+    True when an existing provider held a different credential, or gained
+    or lost one.
+    """
     provider: AuthProviderView
+    """
+    The provider as declared: as it is now, or as it would be for a dry
+    run.
+    """
 
 
 class AuthProviderReadResponse(TypedDict):
@@ -3857,6 +6382,10 @@ class BotCloseResponse(TypedDict):
 
 
 class BotControllerSnapshot(TypedDict):
+    """
+    The controller's live snapshot (its `bot_state` query).
+    """
+
     activeDeliveries: NotRequired[list[BotActiveDeliverySnapshot]]
     appliedProfileRevision: NotRequired[int | None]
     buffers: NotRequired[list[BotBufferSnapshot]]
@@ -3871,6 +6400,9 @@ class BotControllerSnapshot(TypedDict):
     pendingDeliveries: NotRequired[int]
     recentDeliveries: NotRequired[list[BotRecentDeliverySnapshot]]
     runDay: NotRequired[str | None]
+    """
+    UTC day (`YYYY-MM-DD`) the budget counters belong to.
+    """
     runsToday: NotRequired[int]
     sessions: NotRequired[list[BotSessionSnapshot]]
     setupStatus: BotSetupStatus
@@ -3879,14 +6411,26 @@ class BotControllerSnapshot(TypedDict):
 class BotDeleteResponse(TypedDict):
     bot: BotView
     deletedSessions: NotRequired[list[str]]
+    """
+    Sessions deleted along with the bot.
+    """
 
 
 class BotEventAdmitResponse(TypedDict):
     duplicate: bool
+    """
+    The event id was already stored; the existing row is returned and
+    the controller is woken again.
+    """
     event: BotEventView
 
 
 class BotEventDocument(TypedDict):
+    """
+    The envelope document stored in the CAS and shown to the session as
+    untrusted input.
+    """
+
     correlationId: NotRequired[str | None]
     data: NotRequired[Any]
     headers: NotRequired[dict[str, str]]
@@ -3903,6 +6447,9 @@ class BotEventDocument(TypedDict):
 
 class BotEventListResponse(TypedDict):
     events: NotRequired[list[BotEventView]]
+    """
+    Newest first.
+    """
     nextCursor: NotRequired[str | None]
 
 
@@ -3913,29 +6460,84 @@ class BotEventReadResponse(TypedDict):
 
 class BotEventReplayResponse(TypedDict):
     event: BotEventView
+    """
+    The fresh replay event, routed like the original.
+    """
 
 
 class BotListItem(TypedDict):
+    """
+    Roster row: the bot plus what the console needs at a glance.
+    """
+
     access: ResourceAccessSummary
     activity: SessionActivity
+    """
+    What the bot's sessions are doing now: waiting when one waits for an
+    approval, else working when one is running, else idle.
+    """
     botId: BotId
     breaker: NotRequired[BotBreaker | None]
     brief: NotRequired[str | None]
+    """
+    Standing instructions appended to the profile's instructions — the
+    bot's job description.
+    """
     closedAtMs: NotRequired[int | None]
+    """
+    Terminal: set once by `bots/close`; a closed bot keeps its record
+    and history but refuses events and cannot be re-enabled.
+    """
     closedSessions: NotRequired[list[str]]
+    """
+    Sessions the controller force-closed on the way out; `bots/delete`
+    erases them.
+    """
     createdAtMs: int
     description: NotRequired[str | None]
+    """
+    One line other bots read in the directory.
+    """
     displayName: NotRequired[str | None]
+    """
+    Mutable label for humans; the bot id stays the identity.
+    """
     emit: NotRequired[bool]
+    """
+    Capability grant: `bot_emit` — events to itself or another bot's
+    inbox. Emitting bots are rate-capped.
+    """
     enabled: NotRequired[bool]
+    """
+    Reversible pause: sessions and chat context stay, nothing is
+    delivered.
+    """
     eventSeq: int
+    """
+    Highest `#N` admitted so far.
+    """
     lastEvent: NotRequired[BotEventView | None]
     pendingCount: int
+    """
+    Events whose delivery has not finished.
+    """
     profileId: ProfileId
     revision: int
     routedSessionCloseAfterMs: NotRequired[int | None]
+    """
+    Close routed (`perKey` / `perEvent`) sessions idle longer than this;
+    absent keeps them open. A trigger's `sessionCloseAfterMs` overrides it.
+    """
     runsPerDay: NotRequired[int | None]
+    """
+    Budget: runs started per UTC day (sub-agent descendants count);
+    absent means unlimited.
+    """
     selfConfig: NotRequired[bool]
+    """
+    Capability grant: the mutating self-configuration tools
+    (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
+    """
     triggerCount: int
     updatedAtMs: int
 
@@ -3950,70 +6552,156 @@ class BotPutResponse(TypedDict):
 
 class BotReadResponse(TypedDict):
     access: ResourceAccessSummary
+    """
+    The bot's audience, always the universe, and who created it.
+    """
     bot: BotView
 
 
 class BotStateView(TypedDict):
     controller: NotRequired[BotControllerSnapshot | None]
+    """
+    Absent when the controller workflow is not running (a bot that never
+    received an event, or a closed bot whose workflow completed).
+    """
     sessions: NotRequired[list[SessionSummaryView]]
+    """
+    The bot's sessions and their sub-agents, most recently updated
+    first, each with what it is doing now. Bounded at 2,000 sessions;
+    the least recently updated fall off a larger tree.
+    """
 
 
-class BotTriggerInput5(TypedDict):
+class BotTriggerInputChat(TypedDict):
+    """
+    The whole configuration of one trigger, replaced with an expected
+    revision.
+    """
+
     coalesce: NotRequired[BotCoalescePolicy | None]
     deliver: NotRequired[BotDeliverPolicy | None]
     enabled: NotRequired[bool]
     filter: NotRequired[str | None]
+    """
+    CEL over `{event, data, headers}`; a non-matching event is refused
+    and never stored. Fails closed.
+    """
     pairingCode: NotRequired[str | None]
+    """
+    Chat triggers with `pairing: code`: set a specific pairing code
+    (8–64 chars) instead of the server-minted one. Never returned to
+    channel-facing views.
+    """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
+    """
+    Idle-close policy for sessions this trigger routes to: absent inherits the
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
+    chat default).
+    """
     triggerId: BotTriggerId
     access: NotRequired[ChatAccess]
     accountId: str
+    """
+    The universe's channel account this connection serves.
+    """
     activation: NotRequired[ChatActivation]
     kind: Literal['chat']
     matchScope: NotRequired[ChatScope | None]
     pairing: NotRequired[ChatPairing]
     priority: NotRequired[int]
+    """
+    Lower wins among matching chat triggers on one account.
+    """
 
 
-type BotTriggerInput = BotTriggerInput1 | BotTriggerInput2 | BotTriggerInput3 | BotTriggerInput4 | BotTriggerInput5
+type BotTriggerInput = BotTriggerInputSchedule | BotTriggerInputWebhook | BotTriggerInputPoll | BotTriggerInputBot | BotTriggerInputChat
+"""
+The whole configuration of one trigger, replaced with an expected
+revision.
+"""
 
 
 class BotTriggerPutParams(TypedDict):
     botId: BotId
     expectedRevision: NotRequired[int | None]
+    """
+    Checked only when the trigger already exists; absent replaces (or
+    creates) unconditionally.
+    """
     trigger: BotTriggerInput
 
 
-class BotTriggerView5(TypedDict):
+class BotTriggerViewChat(TypedDict):
+    """
+    The whole configuration of one trigger, replaced with an expected
+    revision.
+    """
+
     botId: BotId
     coalesce: NotRequired[BotCoalescePolicy | None]
     createdAtMs: int
     cursorState: NotRequired[PollCursorState | None]
+    """
+    Poll triggers: the advancing runtime cursor. Named apart from the
+    poll spec's dedupe `cursor`, which the flattened document already
+    serializes under that key.
+    """
     deliver: NotRequired[BotDeliverPolicy | None]
     disabledAtMs: NotRequired[int | None]
     disabledReason: NotRequired[BotTriggerDisabledReason | None]
     enabled: NotRequired[bool]
     filter: NotRequired[str | None]
+    """
+    CEL over `{event, data, headers}`; a non-matching event is refused
+    and never stored. Fails closed.
+    """
     ingestPath: NotRequired[str | None]
+    """
+    Webhook triggers: the ingest path including its URL token, for
+    bot-management callers only.
+    """
     lastFilterError: NotRequired[str | None]
+    """
+    Last runtime failure of the CEL filter (the event was refused);
+    cleared by the next match.
+    """
     lastFilterErrorAtMs: NotRequired[int | None]
     pairingCode: NotRequired[str | None]
+    """
+    Chat triggers with `pairing: code`: the code, for bot-management
+    callers only.
+    """
     revision: int
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
+    """
+    Idle-close policy for sessions this trigger routes to: absent inherits the
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
+    chat default).
+    """
     triggerId: BotTriggerId
     updatedAtMs: int
     access: NotRequired[ChatAccess]
     accountId: str
+    """
+    The universe's channel account this connection serves.
+    """
     activation: NotRequired[ChatActivation]
     kind: Literal['chat']
     matchScope: NotRequired[ChatScope | None]
     pairing: NotRequired[ChatPairing]
     priority: NotRequired[int]
+    """
+    Lower wins among matching chat triggers on one account.
+    """
 
 
-type BotTriggerView = BotTriggerView1 | BotTriggerView2 | BotTriggerView3 | BotTriggerView4 | BotTriggerView5
+type BotTriggerView = BotTriggerViewSchedule | BotTriggerViewWebhook | BotTriggerViewPoll | BotTriggerViewBot | BotTriggerViewChat
+"""
+The whole configuration of one trigger, replaced with an expected
+revision.
+"""
 
 
 class ChannelAccountCreateParams(TypedDict):
@@ -4041,6 +6729,11 @@ class ChannelAccountReadResponse(TypedDict):
 
 
 class ChannelInbound(TypedDict):
+    """
+    One normalized provider message, as the connector host hands it to the
+    core. Provider and account come from the admitting account.
+    """
+
     chatId: str
     isDirect: bool
     isReplyToBot: bool
@@ -4048,6 +6741,9 @@ class ChannelInbound(TypedDict):
     mentionedBot: bool
     messageId: str
     senderId: str
+    """
+    Provider handle of the sender (Telegram user id, WhatsApp JID).
+    """
     senderName: str
     text: str
     threadId: NotRequired[str | None]
@@ -4062,6 +6758,14 @@ class ChannelInboundAdmitParams(TypedDict):
 class ContextAppendEntry(TypedDict):
     item: InputItem
     key: str
+    """
+    Stable client-chosen context key, which names one entry. Re-sending
+    the key with the same content is a no-op, so a retry lands once. With
+    different content the earlier entry leaves active context and the new
+    one goes last under a new id; a catalog keeps the earlier version
+    rendered and supersedes it instead.
+    `run`, `run.*`, `runtime`, and `runtime.*` are reserved for the runtime.
+    """
 
 
 class ContextAppendParams(TypedDict):
@@ -4073,27 +6777,78 @@ class ContextEntryInputView(TypedDict):
     content: ContentRefView
     kind: ContextEntryKindView
     origin: NotRequired[str | None]
+    """
+    Application-supplied display origin, independent of role and insertion source.
+    `user:<id>` identifies platform composer input; `event` marks bot deliveries.
+    Other values are allowed; omission means unknown. Not an authorization identity.
+    """
     preview: NotRequired[str | None]
     provenanceRef: NotRequired[str | None]
+    """
+    Immutable artifact recording this entry's origin or construction.
+    """
     tokenEstimate: NotRequired[TokenEstimateView | None]
 
 
 class ContextEntryView(TypedDict):
+    """
+    A session context entry, faithful to the stored harness entry: keyed,
+    kind-tagged, ref-backed. Keys are a stable extension point — clients
+    reconstruct derived surfaces (e.g. the prompted instruction set via the
+    `instructions.100.prompts` key prefix) by filtering on `key` and fetching
+    original bytes through `blobs/read`. `text` contains complete message and
+    visible reasoning text; tool and catalog bodies use bounded text previews.
+    """
+
     citations: NotRequired[list[CitationView]]
+    """
+    Sources this assistant message cites, derived from its own native
+    payload. Empty for every other entry kind.
+    """
     content: ContentRefView
     display: NotRequired[ProviderContextDisplayView | None]
     id: str
     key: NotRequired[str | None]
     kind: ContextEntryKindView
     origin: NotRequired[str | None]
+    """
+    Application-supplied display origin, independent of role and insertion source.
+    `user:<id>` identifies platform composer input; `event` marks bot deliveries.
+    Other values are allowed; omission means unknown. Not an authorization identity.
+    """
     preview: NotRequired[str | None]
     provenanceRef: NotRequired[str | None]
+    """
+    Immutable artifact recording this entry's origin or construction.
+    """
     providerItemId: NotRequired[str | None]
+    """
+    Native item identity derived from the payload, when present.
+    """
     source: NotRequired[ContextEntrySourceView | None]
+    """
+    Where the entry came from: run input, a steering batch, model output,
+    a tool result, reasoning state, a context edit, or the runtime. Lets
+    transcripts render steering distinctly from the run's first input.
+    """
     supersededBy: NotRequired[str | None]
+    """
+    For a catalog entry that a newer version has updated: that newer
+    entry. Present only on state views (`session/read`), where the whole
+    active context is known.
+    """
     supersedes: NotRequired[str | None]
+    """
+    For a catalog entry: the earlier version of the same keyed catalog
+    that this entry updates. The earlier entry stays in context until a
+    rewrite drops it.
+    """
     text: NotRequired[str | None]
     textTruncated: NotRequired[bool]
+    """
+    True when a tool or catalog body's `text` is a bounded prefix. Fetch
+    its original content through `blobs/read`. Messages and reasoning are full.
+    """
     tokenEstimate: NotRequired[TokenEstimateView | None]
 
 
@@ -4104,6 +6859,11 @@ class ContextRemoveResponse(TypedDict):
 
 class ContextReplaceEntry(TypedDict):
     entryId: str
+    """
+    The active entry to replace, by the `id` that `session/read` lists in
+    `activeContext`. Only tool results and user messages can be replaced,
+    and the entry keeps its kind: a tool result takes only text.
+    """
     item: InputItem
 
 
@@ -4124,6 +6884,13 @@ class ContextView(TypedDict):
 
 
 class DeploymentApiKeyCreateResponse(TypedDict):
+    """
+    A newly minted or rotated key. `secret` is returned only by create or rotate and cannot be
+    recovered later. Its custom `Debug` implementation redacts the DTO before
+    JSON-RPC serialization; the serialized response payload remains sensitive
+    and must not be logged.
+    """
+
     apiKey: DeploymentApiKeyView
     secret: str
 
@@ -4135,7 +6902,14 @@ class DeploymentApiKeyListResponse(TypedDict):
 class DeploymentApiKeyPutResponse(TypedDict):
     apiKey: DeploymentApiKeyView
     created: bool
+    """
+    False when the key already existed.
+    """
     secretReplaced: bool
+    """
+    True when an existing key held a different secret, which no longer
+    works.
+    """
 
 
 class DeploymentApiKeyRevokeResponse(TypedDict):
@@ -4174,7 +6948,13 @@ class EnvironmentJobReadResponse(TypedDict):
 
 class EnvironmentListResponse(TypedDict):
     environments: NotRequired[list[EnvironmentView]]
+    """
+    Environments in environment id order.
+    """
     nextAfter: NotRequired[str | None]
+    """
+    Pass as `after` to read the next page; absent on the last page.
+    """
 
 
 class EnvironmentPowerPutResponse(TypedDict):
@@ -4187,12 +6967,18 @@ class EnvironmentReadResponse(TypedDict):
 
 class EnvironmentRegisteredPutResponse(TypedDict):
     created: bool
+    """
+    False when the environment was already declared.
+    """
     environment: EnvironmentView
 
 
 class EnvironmentRegisteredReleaseResponse(TypedDict):
     environment: EnvironmentView
     released: bool
+    """
+    False when no daemon was bound.
+    """
 
 
 class EnvironmentUpdateResponse(TypedDict):
@@ -4200,6 +6986,11 @@ class EnvironmentUpdateResponse(TypedDict):
 
 
 class FeaturesConfig(TypedDict):
+    """
+    Capability grants. An absent feature is not granted; `{}` grants it with
+    defaults. Every block carries a behavior `version` that pins semantics.
+    """
+
     codeMode: NotRequired[CodeModeFeature | None]
     environments: NotRequired[EnvironmentsFeature | None]
     mcp: NotRequired[McpFeature | None]
@@ -4236,22 +7027,68 @@ type RunAcceptedSourceView = RunAcceptedSourceView1
 class RunStartParams(TypedDict):
     config: NotRequired[RunStartConfig | None]
     notifyOnTerminal: NotRequired[RunTerminalNotificationInput | None]
+    """
+    Request a terminal emission to the session's immutable
+    lifecycle controller. It is delivered to a running controller, which may
+    hear it more than once; others reconcile through `session/runs/read`.
+    The destination is derived by the gateway; callers supply only the
+    controller's opaque dedup token.
+    """
     sessionId: str
     source: RunStartSource
     submissionId: NotRequired[str | None]
+    """
+    Client-supplied idempotency key, unique per session. Retrying
+    `session/runs/start` with the same submission id and the same
+    source/config/terminal notification returns the original run instead
+    of starting a second one; reusing a submission id with any of those
+    inputs changed is rejected. The session recognizes it against queued and
+    active runs and its most recent 256 terminal runs, so a retry older than
+    that starts a new run.
+    """
 
 
 class SessionConfig(TypedDict):
+    """
+    Session configuration document.
+
+    Sparse and capability-oriented: an omitted section means defaults, an
+    absent feature is not granted (no tools, no access). The document is
+    replaced whole via `session/config/put`; reads return exactly the stored
+    document, so read-modify-write round-trips.
+    """
+
     context: NotRequired[ContextConfig | None]
     features: NotRequired[FeaturesConfig | None]
     generation: NotRequired[GenerationConfig | None]
     limits: NotRequired[LimitsConfig | None]
     model: NotRequired[ModelConfig | None]
+    """
+    At creation, omission uses the profile model or universe agentRun
+    default. On configuration replacement or profile application to an
+    existing session, omission preserves its current model. Documents read
+    back from a session always carry the model. Provider identity and API
+    kind are fixed for the session lifetime. The model name may change at
+    any time: retained reasoning and compaction state goes to the new model
+    unchanged, and the provider keeps or drops it. A combination the provider
+    refuses fails that run as `requestRejected`, and the session stays open.
+    """
 
 
 class SessionConfigPutParams(TypedDict):
+    """
+    Replace the session config with a complete document. Anything omitted
+    from the document reverts to defaults; an absent feature is revoked.
+    Requires an idle session; putting an identical document is a no-op that
+    leaves the revision untouched.
+    """
+
     config: SessionConfig
     expectedConfigRevision: NotRequired[int | None]
+    """
+    Checked against the session's current config revision when present;
+    absent replaces unconditionally.
+    """
     sessionId: str
 
 
@@ -4260,37 +7097,49 @@ class SessionDeleteResponse(TypedDict):
     session: SessionSummaryView
 
 
-class SessionEventKindView10(TypedDict):
+class SessionEventKindViewRunAccepted(TypedDict):
     requestedBy: NotRequired[Attribution | None]
+    """
+    Who asked, as the API boundary attributed the request.
+    """
     runId: str
     source: RunAcceptedSourceView
     submissionId: NotRequired[str | None]
     type: Literal['runAccepted']
 
 
-class SessionEventKindView12(TypedDict):
+class SessionEventKindViewRunSteeringAccepted(TypedDict):
     input: list[ContextEntryInputView]
     requestedBy: NotRequired[Attribution | None]
+    """
+    Who asked, as the API boundary attributed the request.
+    """
     runId: str
     steeringId: str
     type: Literal['runSteeringAccepted']
 
 
-class SessionEventKindView33(TypedDict):
+class SessionEventKindViewContextEntriesApplied(TypedDict):
     baseRevision: int
     entries: list[ContextEntryView]
     revision: int
     type: Literal['contextEntriesApplied']
 
 
-class SessionEventKindView35(TypedDict):
+class SessionEventKindViewContextEntriesReplaced(TypedDict):
+    """
+    Active entries replaced in place by id (`session/context/replace`).
+    Each keeps its id, position, and kind; the replaced content stays in
+    the event history.
+    """
+
     baseRevision: int
     entries: list[ContextEntryView]
     revision: int
     type: Literal['contextEntriesReplaced']
 
 
-class SessionEventKindView37(TypedDict):
+class SessionEventKindViewContextKeyPrefixReplaced(TypedDict):
     baseRevision: int
     entries: list[ContextEntryView]
     keyPrefix: str
@@ -4298,7 +7147,7 @@ class SessionEventKindView37(TypedDict):
     type: Literal['contextKeyPrefixReplaced']
 
 
-type SessionEventKindView = SessionEventKindView1 | SessionEventKindView2 | SessionEventKindView3 | SessionEventKindView4 | SessionEventKindView5 | SessionEventKindView6 | SessionEventKindView7 | SessionEventKindView8 | SessionEventKindView9 | SessionEventKindView10 | SessionEventKindView11 | SessionEventKindView12 | SessionEventKindView13 | SessionEventKindView14 | SessionEventKindView15 | SessionEventKindView16 | SessionEventKindView17 | SessionEventKindView18 | SessionEventKindView19 | SessionEventKindView20 | SessionEventKindView21 | SessionEventKindView22 | SessionEventKindView23 | SessionEventKindView24 | SessionEventKindView25 | SessionEventKindView26 | SessionEventKindView27 | SessionEventKindView28 | SessionEventKindView29 | SessionEventKindView30 | SessionEventKindView31 | SessionEventKindView32 | SessionEventKindView33 | SessionEventKindView34 | SessionEventKindView35 | SessionEventKindView36 | SessionEventKindView37 | SessionEventKindView38 | SessionEventKindView39 | SessionEventKindView40 | SessionEventKindView41 | SessionEventKindView42 | SessionEventKindView43 | SessionEventKindView44 | SessionEventKindView45 | SessionEventKindView46 | SessionEventKindView47 | SessionEventKindView48 | SessionEventKindView49 | SessionEventKindView50 | SessionEventKindView51
+type SessionEventKindView = SessionEventKindViewSessionOpened | SessionEventKindViewSessionConfigChanged | SessionEventKindViewWorkflowToolsConfigured | SessionEventKindViewSystemWorkflowToolConfigured | SessionEventKindViewWorkflowToolInvoked | SessionEventKindViewWorkflowToolDeliveryFailed | SessionEventKindViewWorkflowToolStartRequested | SessionEventKindViewWorkflowToolStartFailed | SessionEventKindViewSessionClosed | SessionEventKindViewRunAccepted | SessionEventKindViewRunStarted | SessionEventKindViewRunSteeringAccepted | SessionEventKindViewRunCancellationRequested | SessionEventKindViewApprovalRequested | SessionEventKindViewApprovalRunParked | SessionEventKindViewApprovalRunUnparked | SessionEventKindViewApprovalDecided | SessionEventKindViewApprovalCancelled | SessionEventKindViewRunCompleted | SessionEventKindViewRunFailed | SessionEventKindViewRunCancelled | SessionEventKindViewPromiseCreated | SessionEventKindViewPromiseResolved | SessionEventKindViewPromiseFailed | SessionEventKindViewPromiseCancelled | SessionEventKindViewPromiseDetached | SessionEventKindViewTurnStarted | SessionEventKindViewTurnPlanned | SessionEventKindViewTurnGenerationRequested | SessionEventKindViewTurnGenerationCompleted | SessionEventKindViewTurnCompleted | SessionEventKindViewTurnCancelled | SessionEventKindViewContextEntriesApplied | SessionEventKindViewContextEntriesRemoved | SessionEventKindViewContextEntriesReplaced | SessionEventKindViewContextKeysRemoved | SessionEventKindViewContextKeyPrefixReplaced | SessionEventKindViewContextCompactionQueued | SessionEventKindViewContextCompactionRequested | SessionEventKindViewContextCompactionFinished | SessionEventKindViewSkillCatalogSet | SessionEventKindViewToolsReplaced | SessionEventKindViewToolsPatched | SessionEventKindViewActiveEnvironmentChanged | SessionEventKindViewToolBatchStarted | SessionEventKindViewToolCallStarted | SessionEventKindViewToolCallCompleted | SessionEventKindViewToolBatchParked | SessionEventKindViewToolBatchUnparked | SessionEventKindViewToolBatchCompleted | SessionEventKindViewCodeToolProgress
 
 
 class SessionEventView(TypedDict):
@@ -4311,13 +7160,35 @@ class SessionEventView(TypedDict):
 
 class SessionEventsReadResponse(TypedDict):
     complete: bool
+    """
+    No more events in the requested direction at the time of this read.
+    This does not imply that the session is closed.
+    """
     events: NotRequired[list[SessionEventView]]
+    """
+    Events are always chronological, including backward pages. A page may
+    begin inside a run or tool batch; clients must retain continuation state.
+    """
     headCursor: NotRequired[EventCursor | None]
+    """
+    Backward reads fence the head before reading. The initial backward
+    page's head is the starting `after` cursor for live forward reads.
+    An empty backward read returns sequence zero.
+    """
     nextCursor: NotRequired[EventCursor | None]
+    """
+    Forward: pass as `after`. Backward: pass as `before` to fetch older
+    history; absent when the beginning is reached. Never use a backward
+    continuation to advance a forward live cursor.
+    """
 
 
 class SessionListResponse(TypedDict):
     nextCursor: NotRequired[str | None]
+    """
+    Present when more sessions exist past this page. Ordering is most
+    recently updated first; pages can drift under concurrent activity.
+    """
     sessions: NotRequired[list[SessionSummaryView]]
 
 
@@ -4334,6 +7205,10 @@ class SessionRetentionPutResponse(TypedDict):
 
 
 class SkillCatalogView(TypedDict):
+    """
+    An independent catalog instance; sources are never merged or used as fallbacks.
+    """
+
     availability: SkillCatalogAvailability
     catalogRef: NotRequired[str | None]
     skills: list[SkillListItem]
@@ -4366,7 +7241,7 @@ class Params1(TypedDict):
     event: SessionEventView
 
 
-class AgentNotification2(TypedDict):
+class AgentNotificationSessionEvent(TypedDict):
     method: Literal['session/event']
     params: Params1
 
@@ -4378,8 +7253,18 @@ class AgentProfile(TypedDict):
     displayName: NotRequired[str | None]
     instructions: NotRequired[ProfileInstructions | None]
     metadata: NotRequired[dict[str, str]]
+    """
+    Descriptive metadata defaults copied to a session when it is created
+    from this profile. Explicit `session/start` metadata wins key by key.
+    Applying the profile to an existing session does not change metadata.
+    """
     profileId: ProfileId
     retention: NotRequired[ProfileSessionRetention | None]
+    """
+    Creation-time session retention default. Absence keeps the tree until
+    manual deletion. Applying a profile to an existing session does not
+    change retention.
+    """
     revision: int
     updatedAtMs: int
 
@@ -4390,13 +7275,27 @@ class AgentProfileInput(TypedDict):
     displayName: NotRequired[str | None]
     instructions: NotRequired[ProfileInstructions | None]
     metadata: NotRequired[dict[str, str]]
+    """
+    Descriptive metadata defaults copied to a session when it is created
+    from this profile. Explicit `session/start` metadata wins key by key.
+    Applying the profile to an existing session does not change metadata.
+    """
     profileId: ProfileId
     retention: NotRequired[ProfileSessionRetention | None]
+    """
+    Creation-time session retention default. Absence keeps the tree until
+    manual deletion. Applying a profile to an existing session does not
+    change retention.
+    """
 
 
 class BotCreateParams(TypedDict):
     bot: BotInput
     triggers: NotRequired[list[BotTriggerInput]]
+    """
+    Triggers created with the bot in one go; a failure rolls the bot
+    back.
+    """
 
 
 class BotCreateResponse(TypedDict):
@@ -4437,7 +7336,17 @@ class InlineAgentProfile(TypedDict):
     displayName: NotRequired[str | None]
     instructions: NotRequired[ProfileInstructions | None]
     metadata: NotRequired[dict[str, str]]
+    """
+    Descriptive metadata defaults copied to a session when it is created
+    from this profile. Explicit `session/start` metadata wins key by key.
+    Applying the profile to an existing session does not change metadata.
+    """
     retention: NotRequired[ProfileSessionRetention | None]
+    """
+    Creation-time session retention default. Absence keeps the tree until
+    manual deletion. Applying a profile to an existing session does not
+    change retention.
+    """
 
 
 class ProfileCreateParams(TypedDict):
@@ -4454,6 +7363,10 @@ class ProfileDeleteResponse(TypedDict):
 
 class ProfilePutParams(TypedDict):
     expectedRevision: NotRequired[int | None]
+    """
+    Checked only when the profile already exists; absent replaces (or
+    creates) unconditionally.
+    """
     profile: AgentProfileInput
 
 
@@ -4465,28 +7378,56 @@ class ProfileReadResponse(TypedDict):
     profile: AgentProfile
 
 
-class ProfileSource2(TypedDict):
+class ProfileSourceInline(TypedDict):
     kind: Literal['inline']
     profile: InlineAgentProfile
 
 
-type ProfileSource = ProfileSource1 | ProfileSource2
+type ProfileSource = ProfileSourceNamed | ProfileSourceInline
 
 
 class RunView(TypedDict):
     earlierEventsOmitted: NotRequired[bool]
+    """
+    This run is past the server's detail limit: `entries` and `toolBatches` hold
+    its opening and its most recent turns. `session/events/read` has the turns
+    between them.
+    """
     entries: NotRequired[list[ContextEntryView]]
     failure: NotRequired[RunFailureView | None]
+    """
+    Why a failed run failed, with its whole message.
+    """
     finishedAtMs: NotRequired[int | None]
+    """
+    When the run reached a terminal state, derived from its committed
+    completed, failed, or cancelled event. Absent for non-terminal runs.
+    """
     id: str
     output: NotRequired[ContentRefView | None]
+    """
+    Authoritative terminal output, retained independently of active context.
+    """
     outputText: NotRequired[str | None]
+    """
+    Complete visible text derived from `output`; absent for non-text output
+    or runs without a terminal output. Native metadata stays in the blob.
+    """
     pendingApprovals: NotRequired[list[PendingApprovalView]]
     source: RunViewSource
     startedAtMs: NotRequired[int | None]
+    """
+    When the run left the queue and began executing, derived from the
+    committed `runStarted` event. Absent while the run is queued.
+    """
     status: RunStatus
     toolBatches: NotRequired[list[ToolBatchView]]
     usage: NotRequired[LlmUsageView | None]
+    """
+    Provider token usage summed over the run's completed generations and standalone compactions;
+    absent until the first operation reports usage. The cached share
+    (`cachedInputTokens / inputTokens`) is the prompt-cache hit rate.
+    """
 
 
 class SessionIntegrationInput(TypedDict):
@@ -4497,34 +7438,107 @@ class SessionIntegrationInput(TypedDict):
 
 class SessionStartParams(TypedDict):
     access: NotRequired[AccessInput | None]
+    """
+    Audience of the new session, set atomically with its creation. Absent
+    means unshared until `session/share`; a retry keeps the original.
+    """
     config: NotRequired[SessionConfig | None]
     deleteAfterCloseMs: NotRequired[int | None]
+    """
+    Root-owned automatic soft deletion measured from close. Absent inherits a
+    profile default, explicit null keeps the tree, and a duration overrides
+    the profile.
+    """
     displayName: NotRequired[str | None]
+    """
+    Cannot contain NUL.
+    """
     integration: NotRequired[SessionIntegrationInput | None]
+    """
+    Immutable lifecycle controller and workflow tools connecting this session
+    to outside workflows, admitted only when it is first created, with bound
+    dispatch stated explicitly. This document is not part of `SessionConfig`
+    and cannot be changed through `session/config/put`. Retrying an id with an
+    integration requires the same one, and a session started without one
+    cannot gain one. Any retry of an integrated session answers
+    `sessionExecutionStopped` for a stopped workflow execution instead of
+    restarting it.
+    """
     metadata: NotRequired[dict[str, str]]
+    """
+    Descriptive key/value metadata, applied only when the session is
+    first created: at most 32 entries, keys 1..=64 bytes, values 1..=256
+    bytes, no control characters, no `lightspeed.` prefix. It never
+    affects routing, authority, or selection; filter on it with
+    `session/list`.
+    """
     profile: NotRequired[ProfileSource | None]
     sessionId: NotRequired[str | None]
 
 
 class SessionView(TypedDict):
     access: ResourceAccessSummary
+    """
+    The audience of the session's root: whether it is shared with the
+    universe, and who created it.
+    """
     activeContext: ContextView
     activeEnvironmentId: NotRequired[str | None]
+    """
+    The universe environment selected by the session event log.
+    """
     activeRun: NotRequired[RunSummaryView | None]
+    """
+    The currently executing run, always present when one exists — the
+    paged `runs` window can omit it behind newer queued runs, so control
+    surfaces (steering, status) must read it from here.
+    """
     activeTools: NotRequired[ActiveToolsView]
     activity: SessionActivity
+    """
+    What the session is doing now: idle, working on a run, or waiting for
+    an approval. Lists carry the same value.
+    """
     closedAtMs: NotRequired[int | None]
     config: NotRequired[SessionConfig | None]
+    """
+    The stored sparse config document, exactly as last put (model and
+    feature versions materialized at admission). Effective tool reality
+    is visible via `active_tools`.
+    """
     configRevision: int
     createdAtMs: int
     displayName: NotRequired[str | None]
     executionFailure: NotRequired[SessionExecutionFailureView | None]
+    """
+    Set by `session/read` when the session is still open but its workflow
+    execution has stopped. Nothing is running and the rest of the view is
+    the stored log, so `activity` can still say what it last did. Lists do not check
+    the execution, so a list and a read of the same session can differ.
+    """
     id: str
     integration: NotRequired[SessionIntegrationInput | None]
+    """
+    Immutable workflow integration. A lifecycle controller indicates external
+    session ownership; a tools-only integration does not.
+    """
     lifecycleControlled: bool
+    """
+    True only when the session's integration names a lifecycle controller.
+    """
     lifecycleStatus: SessionLifecycleStatus
+    """
+    Whether the session has opened or closed. What it is doing while open is
+    `activity`, and whether its workflow is still there is `executionFailure`.
+    """
     metadata: NotRequired[dict[str, str]]
+    """
+    Descriptive key/value metadata; empty when none was set.
+    """
     origin: NotRequired[SessionOriginView | None]
+    """
+    Sub-agent lineage; absent for root sessions.
+    """
     retention: SessionRetentionView
     runs: NotRequired[list[RunSummaryView]]
     updatedAtMs: int
@@ -4534,7 +7548,7 @@ class Params(TypedDict):
     session: SessionView
 
 
-class AgentNotification1(TypedDict):
+class AgentNotificationSessionStarted(TypedDict):
     method: Literal['session/started']
     params: Params
 
@@ -4544,17 +7558,17 @@ class Params2(TypedDict):
     sessionId: str
 
 
-class AgentNotification3(TypedDict):
+class AgentNotificationSessionRunsStarted(TypedDict):
     method: Literal['session/runs/started']
     params: Params2
 
 
-class AgentNotification4(TypedDict):
+class AgentNotificationSessionRunsCompleted(TypedDict):
     method: Literal['session/runs/completed']
     params: Params2
 
 
-type AgentNotification = AgentNotification1 | AgentNotification2 | AgentNotification3 | AgentNotification4 | AgentNotification5
+type AgentNotification = AgentNotificationSessionStarted | AgentNotificationSessionEvent | AgentNotificationSessionRunsStarted | AgentNotificationSessionRunsCompleted | AgentNotificationError
 
 
 class ContextAppendResponse(TypedDict):
@@ -4575,6 +7589,14 @@ class ProfileApplyResponse(TypedDict):
 
 
 class RunReadResponse(TypedDict):
+    """
+    The projection of one run. A run past the server's detail limit keeps its opening
+    events, so its input renders, and its most recent whole turns, and reports the gap
+    in `earlierEventsOmitted`; `session/events/read` has the rest. Inline message and
+    reasoning text is complete. Tool and catalog previews are bounded; their full bodies
+    remain available through `blobs/read`.
+    """
+
     run: RunView
 
 
@@ -4589,6 +7611,9 @@ class SessionEnvironmentDeactivateResponse(TypedDict):
 class SessionReadResponse(TypedDict):
     hasOlderRuns: bool
     nextRunCursor: NotRequired[str | None]
+    """
+    Exclusive upper run-id bound for `session/runs/list`.
+    """
     session: SessionView
 
 

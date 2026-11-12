@@ -33,6 +33,7 @@ type RequestId = str | int
 type Callback[**P] = Callable[P, None | Awaitable[None]]
 
 TERMINAL_STATUSES = frozenset(("completed", "failed", "cancelled"))
+"""The run statuses that never change again."""
 _TERMINAL_EVENTS = frozenset(("runCompleted", "runFailed", "runCancelled"))
 _WAIT_MS = 30_000
 _WAIT_MIN_MS = 1_000
@@ -42,11 +43,16 @@ _WAIT_RETRY_BASE = 1.0
 
 
 class AwaitRunResult(TypedDict):
+    """What `await_run` returns."""
+
     run: RunView
+    """The finished run, as `read_run` returns it. Its status is one of `TERMINAL_STATUSES`."""
     cursor: EventCursor | None
+    """Where to resume reading the session's events. None if none were read."""
 
 
 def generate_submission_id() -> str:
+    """A fresh submission ID. Keep the one you send: a retry needs it to find the same run."""
     return str(uuid4())
 
 
@@ -78,7 +84,31 @@ async def _notify[**P](callback: Callback[P] | None, *args: P.args, **kwargs: P.
 
 
 class AsyncLightspeedClient(GeneratedClient):
-    """Async gateway client. An injected HTTP client remains owned by its caller."""
+    """A client for the Lightspeed API.
+
+    `call` reaches every method and returns its full outcome. Named helpers
+    cover what most applications need, return just the method's data, and take
+    the IDs of their target as positional arguments.
+
+    Use it as an async context manager, or call `aclose` when done, to release
+    its connections. An `http_client` you pass in stays yours to close.
+
+    Args:
+        endpoint: The gateway's `/rpc` URL.
+        api_key: Sent as the bearer credential. Omit it only for a gateway in
+            single mode.
+        universe: The universe a deployment key addresses, as its UUID or its
+            handle. A universe key must leave this out.
+        actor: Attributes requests to this opaque ID, which the key must be
+            allowed to assert. It does not limit what the key can do. See
+            `with_actor`.
+        headers: Extra headers, or a function returning them for each request,
+            which may be async. These override the options above.
+        request_id: Supplies each request's JSON-RPC ID instead of a counter.
+        http_client: An `httpx.AsyncClient` to send with, for custom
+            transports, timeouts, or tests. Without one the client makes its
+            own, with a 60 second timeout.
+    """
 
     def __init__(
         self,
@@ -110,11 +140,15 @@ class AsyncLightspeedClient(GeneratedClient):
         await self.aclose()
 
     async def aclose(self) -> None:
+        """Close the HTTP client, unless the caller supplied it."""
         if self._owns_client:
             await self._http_client.aclose()
 
     def with_actor(self, actor: str) -> AsyncLightspeedClient:
-        """Attribute calls to an actor using this client's connection and credential."""
+        """A client like this one whose requests are attributed to `actor`.
+
+        It shares this client's connections, so closing it closes nothing.
+        """
         return AsyncLightspeedClient(
             self._endpoint, api_key=self._api_key, universe=self._universe, actor=actor,
             headers=self._headers, request_id=self._request_id, http_client=self._http_client,
@@ -196,7 +230,12 @@ class AsyncLightspeedClient(GeneratedClient):
         config: RunStartConfig | None | Unset = UNSET,
         headers: HeadersInput | None = None,
     ) -> RunStartResponse:
-        """Submit work. Keep the same submission ID and input when retrying."""
+        """Start a run from plain text or input items.
+
+        A submission ID is generated if you give none, but only one you keep
+        lets a retry find the same run after a lost response. Repeat a retry
+        with the same input.
+        """
         params: RunStartParams = {
             "sessionId": session_id,
             "source": {"type": "input", "items": _input_items(input)},
@@ -215,7 +254,7 @@ class AsyncLightspeedClient(GeneratedClient):
         submission_id: str | None | Unset = UNSET,
         headers: HeadersInput | None = None,
     ) -> RunSteerResponse:
-        """Send input to an active run."""
+        """Send input to a run in progress, which its next model turn receives."""
         params: RunSteerParams = {
             "sessionId": session_id,
             "runId": run_id,
@@ -233,7 +272,14 @@ class AsyncLightspeedClient(GeneratedClient):
         wait_ms: int | None | Unset = UNSET,
         headers: HeadersInput | None = None,
     ) -> SessionEventsReadResponse:
-        """Read one forward page of durable session events."""
+        """Read one page of the session's durable events, oldest first.
+
+        Args:
+            after: Read events after this cursor. Without it, from the beginning.
+            limit: The most events to return.
+            wait_ms: Hold the request open this long for an event to arrive.
+                Values above the server's limit are clamped.
+        """
         params: SessionEventsReadParams = {"sessionId": session_id}
         if not isinstance(after, Unset):
             params["after"] = after
@@ -256,7 +302,29 @@ class AsyncLightspeedClient(GeneratedClient):
         heartbeat: Callback[[EventCursor | None, SessionEventsReadResponse]] | None = None,
         headers: HeadersInput | None = None,
     ) -> AwaitRunResult:
-        """Follow a run to its terminal state. Cancelling this wait leaves the run alone."""
+        """Wait until a run finishes and return it with the cursor reached.
+
+        Repeats reads that fail on the network for about 30 seconds, and raises
+        `LightspeedRpcError` of kind `sessionExecutionStopped` when nothing can
+        finish the run. A run that has already finished returns at once,
+        whatever the cursor.
+
+        Giving up on the wait does not cancel the run: bound it with
+        `asyncio.timeout`, or cancel the task, and read or wait for the run
+        again later. To cancel the run itself, call `cancel_run`.
+
+        Args:
+            after: A saved cursor to resume from. Without it, the wait reads
+                the session from its beginning.
+            limit: The most events to read per page.
+            wait_ms: How long each read holds open for new events, 30 seconds
+                by default and at least one.
+            on_event: Called for this run's own events. May be async.
+            on_page: Called for every page read, which holds every event in
+                the session, not only this run's. May be async.
+            heartbeat: Called after each page with the cursor reached. May be
+                async.
+        """
         wait_ms = max(wait_ms if wait_ms is not None else _WAIT_MS, _WAIT_MIN_MS)
         cursor = after
         current_wait_ms = 0
@@ -317,13 +385,20 @@ class AsyncLightspeedClient(GeneratedClient):
             current_wait_ms = wait_ms
 
     async def read_blob_bytes(self, blob_ref: str, *, headers: HeadersInput | None = None) -> bytes:
+        """A blob's bytes. Refs come from run output, tool calls, and message entries."""
         outcome = await self.call("blobs/read", {"blobRef": blob_ref}, headers=headers)
         return base64.b64decode(outcome["result"]["bytesBase64"], validate=True)
 
     async def read_blob_text(self, blob_ref: str, *, headers: HeadersInput | None = None) -> str:
+        """A blob as text, raising `UnicodeDecodeError` if it is not valid UTF-8.
+
+        Text is not always what a blob holds: model output can be provider
+        JSON or media.
+        """
         return (await self.read_blob_bytes(blob_ref, headers=headers)).decode("utf-8-sig")
 
     async def put_blob(self, data: str | bytes, *, headers: HeadersInput | None = None) -> str:
+        """Store bytes, or text as UTF-8, and return the reference to use them by."""
         if isinstance(data, str):
             data = data.encode("utf-8")
         params: BlobPutParams = {"blobs": [{"bytesBase64": base64.b64encode(data).decode("ascii")}]}
