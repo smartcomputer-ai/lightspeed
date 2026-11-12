@@ -639,16 +639,12 @@ async fn fetch_http_payload(
 ) -> Result<Value, PollFetchError> {
     // A poll carries a leased credential to whatever the URL resolves to, so
     // it gets the same pinned client as outbound MCP: public addresses over
-    // HTTPS unless the deployment lists the host as a private network, and no
-    // redirects (a 3xx is a failed fire, not a forwarded token).
+    // HTTPS unless the deployment lists the host or the network it resolves
+    // into, and no redirects (a 3xx is a failed fire, not a forwarded token).
     let parsed = url::Url::parse(url)
         .map_err(|error| PollFetchError::Failed(format!("invalid poll URL: {error}")))?;
-    let policy = if api.private_networks().permits(url, true) {
-        auth::PinnedHttpPolicy::allowing_private_networks()
-    } else {
-        auth::PinnedHttpPolicy::public_only()
-    };
-    let client = policy
+    let client = auth::PinnedHttpPolicy::public_only()
+        .with_private_access(api.private_networks().access(url, true))
         .with_timeout(HTTP_POLL_TIMEOUT)
         .client_for_url(&parsed)
         .await

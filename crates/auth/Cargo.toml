@@ -10,6 +10,7 @@ base64 = "0.23"
 harness = { path = "../harness" }
 futures-util = "0.3"
 hex = "0.4"
+ipnet = "2"
 jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
 oauth2 = { version = "5", default-features = false }
 rand = "0.10"

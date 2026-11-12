@@ -4191,7 +4191,7 @@ impl AgentApiService for GatewayAgentApi {
                 &request_auth,
                 trusted_universe,
                 self.mcp_private_networks
-                    .permits(&record.server_url, record.allow_private_network),
+                    .access(&record.server_url, record.allow_private_network),
                 mcp::McpToolDiscoveryLimits::default(),
             )
             .await

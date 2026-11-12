@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use auth::{PinnedHttpPolicy, SecretValue};
+use auth::{PinnedHttpPolicy, PrivateNetworkAccess, SecretValue};
 use futures_util::{StreamExt, stream::BoxStream};
 use http::{HeaderName, HeaderValue};
 use llm_runtime::secrets::{
@@ -186,7 +186,7 @@ pub(crate) trait McpToolDiscoverer: Send + Sync {
         server_url: &str,
         auth: &McpRequestAuth,
         trusted_universe: Option<uuid::Uuid>,
-        allow_private_network: bool,
+        private_access: PrivateNetworkAccess,
         limits: McpToolDiscoveryLimits,
     ) -> Result<DiscoveredMcpInventory, McpToolDiscoveryFailure>;
 }
@@ -200,8 +200,8 @@ pub(crate) struct DiscoveredMcpInventory {
 
 #[derive(Clone, Debug)]
 pub(crate) struct HttpMcpToolDiscoverer {
-    public_http_policy: PinnedHttpPolicy,
-    private_http_policy: PinnedHttpPolicy,
+    /// Public-only until a call widens it for one server.
+    http_policy: PinnedHttpPolicy,
     timeout: Duration,
 }
 
@@ -662,9 +662,7 @@ impl HttpMcpToolDiscoverer {
         // budget while still remaining strictly bounded.
         let timeout = Duration::from_secs(30);
         Self {
-            public_http_policy: PinnedHttpPolicy::public_only().with_timeout(timeout),
-            private_http_policy: PinnedHttpPolicy::allowing_private_networks()
-                .with_timeout(timeout),
+            http_policy: PinnedHttpPolicy::public_only().with_timeout(timeout),
             timeout,
         }
     }
@@ -672,19 +670,19 @@ impl HttpMcpToolDiscoverer {
     async fn pinned_client(
         &self,
         endpoint: &Url,
-        allow_private_network: bool,
+        private_access: PrivateNetworkAccess,
     ) -> Result<reqwest::Client, McpToolDiscoveryFailure> {
-        let policy = if allow_private_network {
-            &self.private_http_policy
-        } else {
-            &self.public_http_policy
-        };
-        policy.client_for_url(endpoint).await.map_err(|error| {
-            failure(
-                FailureKind::Unreachable,
-                format!("MCP endpoint rejected by outbound network policy: {error}"),
-            )
-        })
+        self.http_policy
+            .clone()
+            .with_private_access(private_access)
+            .client_for_url(endpoint)
+            .await
+            .map_err(|error| {
+                failure(
+                    FailureKind::Unreachable,
+                    format!("MCP endpoint rejected by outbound network policy: {error}"),
+                )
+            })
     }
 
     async fn start_service(
@@ -734,7 +732,7 @@ impl HttpMcpToolDiscoverer {
         server_url: &str,
         auth: &McpRequestAuth,
         trusted_universe: Option<uuid::Uuid>,
-        allow_private_network: bool,
+        private_access: PrivateNetworkAccess,
         limits: McpToolDiscoveryLimits,
         request: McpToolCallRequest,
     ) -> Result<CallToolResult, McpToolDiscoveryFailure> {
@@ -750,7 +748,7 @@ impl HttpMcpToolDiscoverer {
             ));
         }
         tokio::time::timeout(self.timeout, async {
-            let client = self.pinned_client(&endpoint, allow_private_network).await?;
+            let client = self.pinned_client(&endpoint, private_access).await?;
             let (service, diagnostics) = self
                 .start_service(
                     &client,
@@ -786,7 +784,7 @@ impl McpToolDiscoverer for HttpMcpToolDiscoverer {
         server_url: &str,
         auth: &McpRequestAuth,
         trusted_universe: Option<uuid::Uuid>,
-        allow_private_network: bool,
+        private_access: PrivateNetworkAccess,
         limits: McpToolDiscoveryLimits,
     ) -> Result<DiscoveredMcpInventory, McpToolDiscoveryFailure> {
         let endpoint = Url::parse(server_url)
@@ -802,7 +800,7 @@ impl McpToolDiscoverer for HttpMcpToolDiscoverer {
         }
 
         tokio::time::timeout(self.timeout, async {
-            let client = self.pinned_client(&endpoint, allow_private_network).await?;
+            let client = self.pinned_client(&endpoint, private_access).await?;
             let (service, diagnostics) = self
                 .start_service(
                     &client,
@@ -1720,7 +1718,7 @@ mod tests {
                     &endpoint,
                     &auth,
                     None,
-                    true,
+                    PrivateNetworkAccess::Any,
                     McpToolDiscoveryLimits::default(),
                 )
                 .await
@@ -1884,7 +1882,7 @@ mod tests {
                 &endpoint,
                 &auth,
                 None,
-                true,
+                PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
             )
             .await
@@ -1894,7 +1892,7 @@ mod tests {
                 &endpoint,
                 &auth,
                 None,
-                true,
+                PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
                 McpToolCallRequest {
                     tool_name: "search".to_owned(),
@@ -1942,7 +1940,7 @@ mod tests {
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::none(),
                 None,
-                true,
+                PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
             )
             .await
@@ -1978,7 +1976,7 @@ mod tests {
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::none(),
                 None,
-                true,
+                PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
                 McpToolCallRequest {
                     tool_name: "search".to_owned(),
@@ -2018,7 +2016,7 @@ mod tests {
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::none(),
                 None,
-                true,
+                PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
             )
             .await
@@ -2054,7 +2052,7 @@ mod tests {
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::none(),
                 None,
-                true,
+                PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits {
                     max_response_bytes: 1024,
                     ..McpToolDiscoveryLimits::default()
@@ -2090,7 +2088,7 @@ mod tests {
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::bearer("expired-token"),
                 None,
-                true,
+                PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
             )
             .await
@@ -2119,22 +2117,74 @@ mod tests {
         });
 
         let error = HttpMcpToolDiscoverer {
-            public_http_policy: PinnedHttpPolicy::public_only()
-                .with_timeout(Duration::from_millis(10)),
-            private_http_policy: PinnedHttpPolicy::allowing_private_networks()
-                .with_timeout(Duration::from_millis(10)),
+            http_policy: PinnedHttpPolicy::public_only().with_timeout(Duration::from_millis(10)),
             timeout: Duration::from_millis(10),
         }
         .discover_tools(
             &format!("http://{address}/mcp"),
             &McpRequestAuth::none(),
             None,
-            true,
+            PrivateNetworkAccess::Any,
             McpToolDiscoveryLimits::default(),
         )
         .await
         .expect_err("slow discovery must time out");
         assert_eq!(error.kind, FailureKind::Unreachable);
+        server.abort();
+    }
+
+    /// The deployment lists networks, the server is named by hostname: the
+    /// name is admitted when it resolves into a listed network and refused
+    /// when it resolves outside them. `localhost` stands in for an internal
+    /// DNS name because it resolves without the network.
+    #[tokio::test(flavor = "current_thread")]
+    async fn hostname_is_admitted_by_the_network_it_resolves_into() {
+        use crate::worker::mcp::McpPrivateNetworkPolicy;
+
+        let app = Router::new()
+            .route("/mcp", post(streamable_handler).delete(shutdown_handler))
+            .with_state(Arc::new(Mutex::new(TestMcpState::default())));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fixture");
+        let port = listener.local_addr().expect("fixture address").port();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve fixture");
+        });
+        let endpoint = format!("http://localhost:{port}/mcp");
+        let discover = |networks: &'static str| {
+            let access = McpPrivateNetworkPolicy::parse(Some(networks))
+                .expect("policy")
+                .access(&endpoint, true);
+            let endpoint = endpoint.clone();
+            async move {
+                HttpMcpToolDiscoverer::new()
+                    .discover_tools(
+                        &endpoint,
+                        &McpRequestAuth::none(),
+                        None,
+                        access,
+                        McpToolDiscoveryLimits::default(),
+                    )
+                    .await
+            }
+        };
+
+        let inventory = discover("127.0.0.0/8,::1/128")
+            .await
+            .expect("hostname inside a listed network");
+        assert_eq!(inventory.tools.len(), 2);
+
+        let error = discover("10.0.0.0/8")
+            .await
+            .expect_err("hostname outside the listed networks");
+        assert_eq!(error.kind, FailureKind::Unreachable);
+        assert!(
+            error
+                .to_string()
+                .contains(&auth::PinnedHttpError::NonPublicAddress.to_string()),
+            "{error}"
+        );
         server.abort();
     }
 }

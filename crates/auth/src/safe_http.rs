@@ -6,9 +6,11 @@
 
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt as _;
+use ipnet::IpNet;
 use reqwest::{Method, StatusCode, Url};
 use rmcp::transport::auth::{
     OAuthHttpClient, OAuthHttpClientError, OAuthHttpClientFuture, OAuthHttpRedirectPolicy,
@@ -19,9 +21,40 @@ pub const DEFAULT_OAUTH_HTTP_MAX_BODY_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_OAUTH_HTTP_MAX_HEADER_BYTES: usize = 64 * 1024;
 pub const DEFAULT_OAUTH_HTTP_MAX_REDIRECTS: usize = 5;
 
+/// Which non-public destinations a pinned client may reach.
+///
+/// The decision is made per resolved address, after DNS, so a hostname is
+/// judged by where it actually points and the connection is pinned to the
+/// addresses that passed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum PrivateNetworkAccess {
+    /// Public addresses only, over HTTPS.
+    #[default]
+    None,
+    /// Public addresses over HTTPS, plus any address inside these networks
+    /// over HTTP or HTTPS.
+    Networks(Arc<[IpNet]>),
+    /// Any address the process can reach, over HTTP or HTTPS.
+    Any,
+}
+
+impl PrivateNetworkAccess {
+    fn admits(&self, ip: IpAddr) -> bool {
+        match self {
+            Self::None => false,
+            Self::Networks(networks) => {
+                // An IPv4-mapped IPv6 address is the IPv4 destination it names.
+                let ip = ip.to_canonical();
+                networks.iter().any(|network| network.contains(&ip))
+            }
+            Self::Any => true,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PinnedHttpPolicy {
-    allow_private_networks: bool,
+    private_access: PrivateNetworkAccess,
     timeout: Duration,
     max_body_bytes: usize,
     max_header_bytes: usize,
@@ -31,7 +64,7 @@ pub struct PinnedHttpPolicy {
 impl PinnedHttpPolicy {
     pub fn public_only() -> Self {
         Self {
-            allow_private_networks: false,
+            private_access: PrivateNetworkAccess::None,
             timeout: Duration::from_secs(30),
             max_body_bytes: DEFAULT_OAUTH_HTTP_MAX_BODY_BYTES,
             max_header_bytes: DEFAULT_OAUTH_HTTP_MAX_HEADER_BYTES,
@@ -40,10 +73,12 @@ impl PinnedHttpPolicy {
     }
 
     pub fn allowing_private_networks() -> Self {
-        Self {
-            allow_private_networks: true,
-            ..Self::public_only()
-        }
+        Self::public_only().with_private_access(PrivateNetworkAccess::Any)
+    }
+
+    pub fn with_private_access(mut self, private_access: PrivateNetworkAccess) -> Self {
+        self.private_access = private_access;
+        self
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
@@ -66,10 +101,6 @@ impl PinnedHttpPolicy {
         self
     }
 
-    pub fn allow_private_networks(&self) -> bool {
-        self.allow_private_networks
-    }
-
     pub async fn client_for_url(&self, url: &Url) -> Result<reqwest::Client, PinnedHttpError> {
         self.validate_scheme(url)?;
         if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
@@ -79,14 +110,31 @@ impl PinnedHttpPolicy {
         let port = url
             .port_or_known_default()
             .ok_or(PinnedHttpError::InvalidUrl)?;
-        let resolved = tokio::time::timeout(self.timeout, tokio::net::lookup_host((host, port)))
-            .await
-            .map_err(|_| PinnedHttpError::Timeout)?
-            .map_err(|_| PinnedHttpError::Dns)?;
+        // An IP literal is its own resolution; the URL writes IPv6 in brackets,
+        // which a resolver would treat as a name.
+        let literal = host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<IpAddr>();
+        let resolved: Vec<SocketAddr> = match literal {
+            Ok(ip) => vec![SocketAddr::new(ip, port)],
+            Err(_) => tokio::time::timeout(self.timeout, tokio::net::lookup_host((host, port)))
+                .await
+                .map_err(|_| PinnedHttpError::Timeout)?
+                .map_err(|_| PinnedHttpError::Dns)?
+                .collect(),
+        };
+        let plaintext = url.scheme() == "http";
         let mut addresses = BTreeSet::new();
         for address in resolved {
-            if !self.allow_private_networks && !is_public_network_ip(address.ip()) {
+            let admitted = self.private_access.admits(address.ip());
+            if !admitted && !is_public_network_ip(address.ip()) {
                 return Err(PinnedHttpError::NonPublicAddress);
+            }
+            // Plaintext is for destinations the deployment named, never for a
+            // public address that merely shares a policy with them.
+            if plaintext && !admitted {
+                return Err(PinnedHttpError::HttpsRequired);
             }
             addresses.insert(address);
         }
@@ -106,7 +154,7 @@ impl PinnedHttpPolicy {
     fn validate_scheme(&self, url: &Url) -> Result<(), PinnedHttpError> {
         match url.scheme() {
             "https" => Ok(()),
-            "http" if self.allow_private_networks => Ok(()),
+            "http" if self.private_access != PrivateNetworkAccess::None => Ok(()),
             "http" => Err(PinnedHttpError::HttpsRequired),
             _ => Err(PinnedHttpError::InvalidUrl),
         }
@@ -369,5 +417,78 @@ mod tests {
             .client_for_url(&url)
             .await
             .expect("build pinned loopback client");
+    }
+
+    fn within(networks: &[&str]) -> PinnedHttpPolicy {
+        let networks: Vec<IpNet> = networks
+            .iter()
+            .map(|network| network.parse().expect("network"))
+            .collect();
+        PinnedHttpPolicy::public_only()
+            .with_private_access(PrivateNetworkAccess::Networks(networks.into()))
+    }
+
+    async fn verdict(policy: &PinnedHttpPolicy, url: &str) -> Result<(), PinnedHttpError> {
+        policy
+            .client_for_url(&Url::parse(url).unwrap())
+            .await
+            .map(|_| ())
+    }
+
+    /// `localhost` resolves to loopback on every host, which makes it a
+    /// hostname whose resolution the test can rely on without the network.
+    #[tokio::test(flavor = "current_thread")]
+    async fn listed_network_admits_a_hostname_by_its_resolved_address() {
+        let policy = within(&["127.0.0.0/8", "::1/128"]);
+        assert_eq!(verdict(&policy, "https://localhost:9/mcp").await, Ok(()));
+        assert_eq!(verdict(&policy, "http://localhost:9/mcp").await, Ok(()));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unlisted_private_address_stays_forbidden_beside_a_listed_network() {
+        let policy = within(&["10.0.0.0/8"]);
+        for url in [
+            "https://localhost:9/mcp",
+            "https://127.0.0.1:9/mcp",
+            "https://169.254.169.254/latest",
+            "https://192.168.1.1/mcp",
+            "https://[::1]:9/mcp",
+        ] {
+            assert_eq!(
+                verdict(&policy, url).await,
+                Err(PinnedHttpError::NonPublicAddress),
+                "{url}"
+            );
+        }
+        assert_eq!(verdict(&policy, "https://10.103.178.244/mcp").await, Ok(()));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn listed_network_matches_ipv6_literals_and_mapped_ipv4() {
+        let policy = within(&["fd00::/8", "10.0.0.0/8"]);
+        assert_eq!(verdict(&policy, "http://[fd00::10]:9/mcp").await, Ok(()));
+        assert_eq!(
+            verdict(&policy, "http://[::ffff:10.1.2.3]:9/mcp").await,
+            Ok(())
+        );
+        assert_eq!(
+            verdict(&policy, "https://[fe80::1]:9/mcp").await,
+            Err(PinnedHttpError::NonPublicAddress)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn plaintext_reaches_only_listed_networks() {
+        let policy = within(&["10.0.0.0/8"]);
+        assert_eq!(verdict(&policy, "http://10.1.2.3/mcp").await, Ok(()));
+        assert_eq!(
+            verdict(&policy, "http://8.8.8.8/mcp").await,
+            Err(PinnedHttpError::HttpsRequired)
+        );
+        assert_eq!(verdict(&policy, "https://8.8.8.8/mcp").await, Ok(()));
+        assert_eq!(
+            verdict(&PinnedHttpPolicy::public_only(), "http://8.8.8.8/mcp").await,
+            Err(PinnedHttpError::HttpsRequired)
+        );
     }
 }

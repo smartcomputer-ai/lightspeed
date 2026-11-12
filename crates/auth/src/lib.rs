@@ -158,7 +158,8 @@ pub use providers::{
 };
 pub use safe_http::{
     DEFAULT_OAUTH_HTTP_MAX_BODY_BYTES, DEFAULT_OAUTH_HTTP_MAX_HEADER_BYTES,
-    DEFAULT_OAUTH_HTTP_MAX_REDIRECTS, PinnedHttpError, PinnedHttpPolicy, is_public_network_ip,
+    DEFAULT_OAUTH_HTTP_MAX_REDIRECTS, PinnedHttpError, PinnedHttpPolicy, PrivateNetworkAccess,
+    is_public_network_ip,
 };
 pub use secrets::{
     PutSecretRecord, SECRET_KIND_MODEL_API_KEY, SECRET_KIND_STATIC_TOKEN, SecretRecordMeta,
