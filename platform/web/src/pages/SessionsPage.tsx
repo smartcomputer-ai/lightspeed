@@ -159,7 +159,7 @@ const EXECUTION_FAILURE_TEXT: Record<NonNullable<SessionView["executionFailure"]
 };
 
 export function SessionsPage({ admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const { sessionId } = useParams<{ sessionId: string }>();
   const location = useLocation();
   const canCreate = useActionPermissions(universe?.id).can("createSession");
@@ -171,7 +171,7 @@ export function SessionsPage({ admin }: { admin: boolean }) {
   if (!universe || !universe.role) {
     return (
       <div className="p-6">
-        <UniverseNotFound slug={slug} />
+        <UniverseNotFound handle={handle} />
       </div>
     );
   }
@@ -179,18 +179,18 @@ export function SessionsPage({ admin }: { admin: boolean }) {
   return (
     <div className="flex min-h-0 min-w-0 max-w-full flex-1">
       <ListPane detailOpen={Boolean(sessionId)}>
-        <SessionList key={universe.id} universeId={universe.id} slug={slug!} activeId={sessionId} />
+        <SessionList key={universe.id} universeId={universe.id} handle={handle!} activeId={sessionId} />
       </ListPane>
       <section className={cn("min-w-0 flex-1 flex-col", sessionId ? "flex" : "hidden md:flex")}>
-        {!sessionId && <ProviderReadinessBanner universeId={universe.id} slug={slug!} />}
+        {!sessionId && <ProviderReadinessBanner universeId={universe.id} handle={handle!} />}
         {sessionId ? (
           <SessionDetail
             key={sessionDraftKey(universe.id, sessionId)}
             universeId={universe.id}
-            slug={slug!}
+            handle={handle!}
             sessionId={sessionId}
-            backTo={`/u/${slug}/sessions${location.search}`}
-            sessionHref={(target) => `/u/${slug}/sessions/${target}${location.search}`}
+            backTo={`/u/${handle}/sessions${location.search}`}
+            sessionHref={(target) => `/u/${handle}/sessions/${target}${location.search}`}
           />
         ) : (
           <DetailPrompt
@@ -207,11 +207,11 @@ export function SessionsPage({ admin }: { admin: boolean }) {
 
 function SessionList({
   universeId,
-  slug,
+  handle,
   activeId,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   activeId: string | undefined;
 }) {
   const queryClient = useQueryClient();
@@ -654,7 +654,7 @@ function SessionList({
             <SessionTreeItem
               key={node.session.id}
               node={node}
-              slug={slug}
+              handle={handle}
               activeId={activeId}
               depth={0}
               selecting={selecting}
@@ -682,7 +682,7 @@ function SessionList({
       )}
       {canCreate && createOpen && <NewSessionDialog
         universeId={universeId}
-        slug={slug}
+        handle={handle}
         open={createOpen}
         onOpenChange={setCreateOpen}
         search={listSearch}
@@ -791,13 +791,13 @@ interface SessionRowControls {
 
 function SessionTreeItem({
   node,
-  slug,
+  handle,
   activeId,
   depth,
   ...controls
 }: {
   node: SessionNode;
-  slug: string;
+  handle: string;
   activeId: string | undefined;
   depth: number;
 } & SessionRowControls) {
@@ -805,7 +805,7 @@ function SessionTreeItem({
     <>
       <SessionListItem
         session={node.session}
-        slug={slug}
+        handle={handle}
         active={node.session.id === activeId}
         depth={depth}
         {...controls}
@@ -814,7 +814,7 @@ function SessionTreeItem({
         <SessionTreeItem
           key={child.session.id}
           node={child}
-          slug={slug}
+          handle={handle}
           activeId={activeId}
           depth={depth + 1}
           {...controls}
@@ -826,7 +826,7 @@ function SessionTreeItem({
 
 function SessionListItem({
   session,
-  slug,
+  handle,
   active,
   depth = 0,
   selecting,
@@ -837,7 +837,7 @@ function SessionListItem({
   search,
 }: {
   session: SessionSummary;
-  slug: string;
+  handle: string;
   active: boolean;
   depth?: number;
 } & SessionRowControls) {
@@ -920,7 +920,7 @@ function SessionListItem({
         </label>
       ) : (
         <NavLink
-          to={`/u/${slug}/sessions/${session.id}${search ? `?${search}` : ""}`}
+          to={`/u/${handle}/sessions/${session.id}${search ? `?${search}` : ""}`}
           className={rowClass}
           style={indent}
         >
@@ -933,13 +933,13 @@ function SessionListItem({
 
 function NewSessionDialog({
   universeId,
-  slug,
+  handle,
   open,
   onOpenChange,
   search,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   search: string;
@@ -986,7 +986,7 @@ function NewSessionDialog({
         </span>
         {modelPending ? "Loading…" : effectiveModel.model ? modelLabel(effectiveModel.model) : defaults.error ? "Could not load default" : "Not selected"}
       </p>
-      <ProviderReadinessBanner universeId={universeId} slug={slug} model={effectiveModel.model ?? (defaults.data ? null : undefined)} enabled={open && !modelPending} className="rounded-lg border" />
+      <ProviderReadinessBanner universeId={universeId} handle={handle} model={effectiveModel.model ?? (defaults.data ? null : undefined)} enabled={open && !modelPending} className="rounded-lg border" />
     </div>
   );
   const create = useMutation({
@@ -1008,7 +1008,7 @@ function NewSessionDialog({
       setError(null);
       const nextSearch = new URLSearchParams(search);
       nextSearch.delete("new");
-      navigate(`/u/${slug}/sessions/${target}${nextSearch.size ? `?${nextSearch}` : ""}`);
+      navigate(`/u/${handle}/sessions/${target}${nextSearch.size ? `?${nextSearch}` : ""}`);
     },
     onError: (err) => setError(err.message),
   });
@@ -1315,14 +1315,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function SessionDetail({
   universeId,
-  slug,
+  handle,
   sessionId,
-  backTo = `/u/${slug}/sessions`,
+  backTo = `/u/${handle}/sessions`,
   embedded = false,
   sessionHref,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   sessionId: string;
   backTo?: string;
   /**
@@ -1619,7 +1619,7 @@ export function SessionDetail({
   // into the hidden bot page.
   const botsOn = useFeature("bots");
   const owningBotHref = owningBotId && botsOn
-    ? `/u/${slug}/bots/${encodeURIComponent(owningBotId)}/chat/${encodeURIComponent(sessionId)}`
+    ? `/u/${handle}/bots/${encodeURIComponent(owningBotId)}/chat/${encodeURIComponent(sessionId)}`
     : null;
   // Emit rows and event bands name peer bots; only a bot's own sessions
   // carry that traffic, and only bot managers may list the roster.
@@ -1646,13 +1646,13 @@ export function SessionDetail({
   const transcriptFiles = useMemo(() => filesByHandle(entries), [entries]);
   const transcriptLinks = useMemo<TranscriptLinks>(() => {
     const names = new Map((botRoster ?? []).map((bot) => [bot.botId, botLabel(bot)]));
-    const href = sessionHref ?? ((target: string) => `/u/${slug}/sessions/${target}`);
+    const href = sessionHref ?? ((target: string) => `/u/${handle}/sessions/${target}`);
     return {
       botName: (botId) => names.get(botId),
       sessionHref: href,
       // A browser address: these links open in a new tab, outside the router.
       blobHref: (blobRef, hints) => {
-        const path = blobHref(slug, blobRef, { ...hints, session: sessionId });
+        const path = blobHref(handle, blobRef, { ...hints, session: sessionId });
         return path && appHref(path);
       },
       navigate: (target) => void navigate(target),
@@ -1664,7 +1664,7 @@ export function SessionDetail({
         load: (handle, signal) => findFileReference(handle, (before) => fetchHistory(universeId, sessionId, before, signal)),
       },
     };
-  }, [botRoster, sessionHref, slug, sessionId, navigate, loadMedia, transcriptMedia, transcriptFiles, universeId]);
+  }, [botRoster, sessionHref, handle, sessionId, navigate, loadMedia, transcriptMedia, transcriptFiles, universeId]);
   // Operator override: the engine happily admits direct runs on a controlled
   // session (they queue like any client run), so the gate here is policy,
   // not capability. Off by default because direct input bypasses the
@@ -2048,7 +2048,7 @@ export function SessionDetail({
 
   return (
     <>
-      <ProviderReadinessBanner universeId={universeId} slug={slug} model={modelFromConfig(session.data?.config)} enabled={Boolean(session.data)} />
+      <ProviderReadinessBanner universeId={universeId} handle={handle} model={modelFromConfig(session.data?.config)} enabled={Boolean(session.data)} />
       {session.data?.executionFailure && (
         <div role="alert" className="flex items-center gap-3 border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">
           <span className="min-w-0 flex-1">
@@ -2214,13 +2214,13 @@ export function SessionDetail({
       )}
       <SessionLineage
         universeId={universeId}
-        slug={slug}
+        handle={handle}
         sessionId={sessionId}
         origin={session.data?.origin ?? null}
         runRevision={runRevision}
         sessionHref={sessionHref}
         resources={showSessionResources && session.data && hasResources(resources) ? (
-          <SessionResourceChips resources={resources} slug={slug}
+          <SessionResourceChips resources={resources} handle={handle}
             onConfigure={!embedded && canConfigure ? () => setSettingsOpen(true) : undefined} />
         ) : undefined}
       />
@@ -2339,7 +2339,7 @@ export function SessionDetail({
         </div>
       ))}
       <SessionComposer
-        dictation={{ ...dictation, settingsHref: `/u/${slug}/models` }}
+        dictation={{ ...dictation, settingsHref: `/u/${handle}/models` }}
         key={sessionDraftKey(universeId, sessionId)}
         draftKey={sessionDraftKey(universeId, sessionId)}
         runActive={runActive}
@@ -2517,7 +2517,7 @@ function SessionScrollFollower({
 /// moves, since delegations appear and close mid-run.
 export function SessionLineage({
   universeId,
-  slug,
+  handle,
   sessionId,
   origin,
   runRevision,
@@ -2525,7 +2525,7 @@ export function SessionLineage({
   resources,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   sessionId: string;
   origin: SessionOrigin | null;
   runRevision: number;
@@ -2533,7 +2533,7 @@ export function SessionLineage({
   /// What the session can reach, shown first in the strip.
   resources?: ReactNode;
 }) {
-  const href = sessionHref ?? ((id: string) => `/u/${slug}/sessions/${id}`);
+  const href = sessionHref ?? ((id: string) => `/u/${handle}/sessions/${id}`);
   const parentId = origin?.parentSessionId;
   const parent = useQuery({
     queryKey: ["session", universeId, parentId],

@@ -273,6 +273,7 @@ dependencies = [
  "futures-util",
  "harness",
  "hex",
+ "ipnet",
  "jsonwebtoken",
  "oauth2",
  "rand 0.10.3",
@@ -746,12 +747,17 @@ dependencies = [
  "dotenvy",
  "futures-util",
  "harness",
+ "jsonschema",
  "pulldown-cmark",
+ "rand 0.10.3",
  "ratatui",
  "release-info",
  "reqwest",
+ "schemars",
  "serde",
+ "serde_ignored",
  "serde_json",
+ "serde_yaml",
  "tempfile",
  "tokio",
  "unicode-width",
@@ -4637,6 +4643,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "serde_ignored"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "115dffd5f3853e06e746965a20dcbae6ee747ae30b543d91b0e089668bb07798"
+dependencies = [
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

@@ -5,6 +5,16 @@ runtime owns the team's sessions and resources; the Platform owns its members,
 roles, and display information. Preserve that association when adopting,
 recovering, or retiring a universe.
 
+Each universe also has a handle: a readable name, unique within the
+deployment, that appears in its Platform URL and that API clients with a
+deployment key may use in place of the UUID. A handle is 1 to 63 lowercase
+letters, digits and hyphens, and can be changed; the UUID cannot. Because the
+UUID usually differs between deployments, the handle is what deployment
+automation should use to address the same universe in development, test and
+production. See
+[API keys and service access](../access-and-security/api-keys-and-service-access.md)
+for how a request selects a universe.
+
 For the isolation model and shared infrastructure, see
 [Tenant isolation and data protection](../access-and-security/tenant-isolation-and-data-protection.md).
 For sign-in and membership, see [People and roles](../access-and-security/people-and-roles.md).
@@ -15,7 +25,10 @@ A Platform administrator creates universes under **Platform admin → Universes*
 Creation adds a runtime universe and a Platform organization, with the creator as an
 Admin member. Universe admins then add existing accounts under **Members**.
 Creating a runtime universe directly through the API or server CLI creates
-only the runtime record; use **Adopt** to connect it to the Platform.
+only the runtime record; use **Adopt** to connect it to the Platform. Adoption
+keeps the universe's handle. The handle is chosen at creation, or derived from
+the UUID when none is given, and is renamed afterwards under **Settings →
+General** or with `lightspeed universe set-handle`.
 
 ## Keep Platform and runtime records aligned
 

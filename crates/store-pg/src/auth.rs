@@ -10,7 +10,7 @@ use ::auth::{
     AuthGrantExposure, AuthGrantId, AuthGrantRecord, AuthGrantStatus, AuthGrantStore,
     AuthGrantTokenRefresh, AuthProviderKind, AuthRegistryError, CreateAuthGrantRecord,
     ListAuthGrants, OAuthClientId, PutSecretRecord, SecretId, SecretRecordMeta, SecretStore,
-    SecretValue,
+    SecretValue, TokenCredentialUpdate,
 };
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
@@ -444,18 +444,23 @@ impl AuthGrantStore for PgStore {
         grant_record_from_row(&row)
     }
 
-    async fn replace_grant_token(
+    async fn update_token_credential(
         &self,
         grant_id: &AuthGrantId,
         expected: &SecretId,
-        replacement: AuthGrantTokenRefresh,
+        update: TokenCredentialUpdate,
     ) -> Result<Option<AuthGrantRecord>, AuthRegistryError> {
         let query = format!(
             r#"
             UPDATE auth_grants
             SET access_token_secret_id = $4,
-                expires_at_ms = $5,
-                updated_at_ms = $6
+                display_name = $5,
+                subject_hint = $6,
+                scopes = $7,
+                audience = $8,
+                metadata_json = $9,
+                expires_at_ms = $10,
+                updated_at_ms = GREATEST(updated_at_ms, $11)
             WHERE universe_id = $1 AND grant_id = $2 AND access_token_secret_id = $3
             RETURNING {GRANT_COLUMNS}
             "#
@@ -464,12 +469,17 @@ impl AuthGrantStore for PgStore {
             .bind(self.config.universe_id)
             .bind(grant_id.as_str())
             .bind(expected.as_str())
-            .bind(replacement.access_token_secret.as_str())
-            .bind(replacement.expires_at_ms)
-            .bind(replacement.updated_at_ms)
+            .bind(update.access_token_secret.as_str())
+            .bind(update.display_name.as_deref())
+            .bind(update.subject_hint.as_deref())
+            .bind(&update.scopes)
+            .bind(update.audience.as_deref())
+            .bind(&update.metadata)
+            .bind(update.expires_at_ms)
+            .bind(update.updated_at_ms)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("replace auth grant token", error))?;
+            .map_err(|error| auth_sql_error("update token credential", error))?;
         match row {
             Some(row) => grant_record_from_row(&row).map(Some),
             None => {

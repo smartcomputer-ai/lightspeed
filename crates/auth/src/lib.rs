@@ -110,9 +110,10 @@ mod safe_http;
 mod secrets;
 
 pub use api_keys::{
-    API_KEY_DISPLAY_PREFIX_LEN, API_KEY_LAST_USED_RESOLUTION_MS, API_KEY_SECRET_PREFIX,
-    ApiKeyError, ApiKeyRecord, ApiKeySpec, MintedApiKey, api_key_display_prefix, api_key_hash,
-    import_api_key, mint_api_key,
+    API_KEY_DISPLAY_PREFIX_LEN, API_KEY_ID_MAX_LEN, API_KEY_LAST_USED_RESOLUTION_MS,
+    API_KEY_SECRET_PREFIX, ApiKeyError, ApiKeyRecord, ApiKeySpec, MintedApiKey,
+    allocate_api_key_id, api_key_display_prefix, api_key_hash, import_api_key,
+    is_allocated_api_key_id, mint_api_key, validate_api_key_id,
 };
 pub use broker::{
     AuthBrokerError, AuthTokenBroker, DEFAULT_REFRESH_EXPIRY_MARGIN_MS, GrantTokenSource,
@@ -129,7 +130,7 @@ pub use github::{
 };
 pub use grants::{
     AuthGrantExposure, AuthGrantRecord, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
-    AuthProviderKind, CreateAuthGrantRecord, ListAuthGrants,
+    AuthProviderKind, CreateAuthGrantRecord, ListAuthGrants, TokenCredentialUpdate,
 };
 pub use locks::{GrantLockGuard, GrantRefreshLock, InMemoryGrantLocks};
 pub use mcp_oauth::{
@@ -157,11 +158,13 @@ pub use providers::{
 };
 pub use safe_http::{
     DEFAULT_OAUTH_HTTP_MAX_BODY_BYTES, DEFAULT_OAUTH_HTTP_MAX_HEADER_BYTES,
-    DEFAULT_OAUTH_HTTP_MAX_REDIRECTS, PinnedHttpError, PinnedHttpPolicy, is_public_network_ip,
+    DEFAULT_OAUTH_HTTP_MAX_REDIRECTS, PinnedHttpError, PinnedHttpPolicy, PrivateNetworkAccess,
+    is_public_network_ip,
 };
 pub use secrets::{
     PutSecretRecord, SECRET_KIND_MODEL_API_KEY, SECRET_KIND_STATIC_TOKEN, SecretRecordMeta,
-    SecretStore, SecretValue, generate_prefixed_secret, secret_display_prefix, secret_sha256_hex,
+    SecretStore, SecretValue, generate_prefixed_secret, is_prefixed_secret, secret_display_prefix,
+    secret_sha256_hex,
 };
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AuthRegistryError {

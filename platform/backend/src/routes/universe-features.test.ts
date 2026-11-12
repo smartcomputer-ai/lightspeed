@@ -16,7 +16,7 @@ function setup(role: string, stored: Record<string, boolean>) {
     features: stored,
   };
   const sets: Record<string, unknown>[] = [];
-  const queue: unknown[][] = [[{ universe, slug: "test" }], [{ role }]];
+  const queue: unknown[][] = [[{ universe, handle: "test" }], [{ role }]];
   const next = async () => {
     const rows = queue.shift();
     if (!rows) throw new Error("unexpected database read");

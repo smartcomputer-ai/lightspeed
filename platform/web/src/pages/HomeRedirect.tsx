@@ -21,7 +21,7 @@ export function HomeRedirect({ admin }: { admin: boolean }) {
 
   const mine = memberships(universes.data);
   const last = lastUniverse();
-  const target = mine.find((u) => u.slug === last) ?? mine[0];
+  const target = mine.find((u) => u.handle === last) ?? mine[0];
   if (target) {
     return <Navigate to={universeHome(target)} replace />;
   }

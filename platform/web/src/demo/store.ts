@@ -162,7 +162,7 @@ export interface UniverseState {
 
 export interface UniverseInit {
   id?: string;
-  slug: string;
+  handle: string;
   name: string;
   icon?: UniverseIconName;
   iconColor?: UniverseIconColor;
@@ -230,9 +230,9 @@ export class DemoStore {
     return id ? (this.universes.get(id) ?? null) : null;
   }
 
-  universeBySlug(slug: string): UniverseState | null {
+  universeByHandle(handle: string): UniverseState | null {
     for (const state of this.universes.values()) {
-      if (state.universe.slug === slug) return state;
+      if (state.universe.handle === handle) return state;
     }
     return null;
   }
@@ -248,7 +248,7 @@ export class DemoStore {
         name: init.name,
         icon: init.icon ?? "orbit",
         iconColor: init.iconColor ?? "default",
-        slug: init.slug,
+        handle: init.handle,
         gatewayUrl: null,
         status: "active",
         createdAt,
@@ -303,7 +303,7 @@ export class DemoStore {
     for (const workspace of state.workspaces.values()) blobBytes += workspace.row.bytes;
     return {
       universeId: state.universe.lightspeedUniverseId,
-      slug: state.universe.slug,
+      handle: state.universe.handle,
       sessions: state.sessions.size,
       workspaces: state.workspaces.size,
       profiles: state.profiles.size,
@@ -314,12 +314,18 @@ export class DemoStore {
   }
 }
 
+/// The id core allocates for a key whose creator chose none.
+export function allocatedKeyId(): string {
+  return `api_key_${crypto.randomUUID().replaceAll("-", "")}`;
+}
+
 /// A key scoped to `state`'s universe, as core lists it.
 export function universeApiKey(
   state: UniverseState,
-  key: { keyPrefix: string; displayName: string; groups: MethodGroup[]; createdAtMs: number; createdBy: string; lastUsedAtMs?: number | null; revokedAtMs?: number | null },
+  key: { keyId?: string; keyPrefix: string; displayName: string; groups: MethodGroup[]; createdAtMs: number; createdBy: string; lastUsedAtMs?: number | null; revokedAtMs?: number | null },
 ): DeploymentApiKeyView {
   return {
+    keyId: key.keyId ?? allocatedKeyId(),
     keyPrefix: key.keyPrefix,
     displayName: key.displayName,
     scope: { kind: "universe", universeId: state.universe.lightspeedUniverseId },

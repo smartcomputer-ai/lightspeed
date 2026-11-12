@@ -288,7 +288,7 @@ where
         support::live::local_request_context_for(api::AccessScope::Deployment).await?,
         GatewayDeploymentApi::new(runtime.clone()).create_universe(
             api::DeploymentUniverseCreateParams {
-                slug: None,
+                handle: None,
                 universe_id: universe.to_string(),
             },
         ),
@@ -326,6 +326,8 @@ where
         seed_agent_default(&store, &support::live::openai_live_model()).await?;
         let environment_id = if environment {
             let key = state.api.create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
+                declared_only: false,
+                registration_key_id: None,
                 display_name:"Code capability test".into(), identity_mode:api::EnvironmentIdentityModeView::Ephemeral,
                 max_active_environments:Some(1), ephemeral_disconnect_grace_ms:None, offline_close_after_ms:None, expires_at_ms:None,
             }).await?.result;

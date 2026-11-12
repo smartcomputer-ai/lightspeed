@@ -13,7 +13,7 @@ The same boundary follows requests into storage and workflows.
 ## How the universe follows a request
 
 A universe API key selects its one stored universe. A deployment key can
-address a universe by supplying its UUID in `x-lightspeed-universe`, subject
+address a universe by supplying its UUID or handle in `x-lightspeed-universe`, subject
 to the key's method groups. The Platform uses this second path after checking
 the person's membership and permissions. The runtime resolves a service bound
 to that universe before dispatching ordinary resource operations.

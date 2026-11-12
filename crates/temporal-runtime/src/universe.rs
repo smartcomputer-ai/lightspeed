@@ -396,7 +396,7 @@ impl UniverseRuntime {
                     continue;
                 }
             };
-            for (universe_id, _slug) in universes {
+            for (universe_id, _handle) in universes {
                 let state = match self.state_for(universe_id, false).await {
                     Ok(state) => state,
                     Err(error) => {

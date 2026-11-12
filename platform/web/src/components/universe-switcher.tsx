@@ -1,4 +1,4 @@
-import { slugify, universeSlugSchema } from "@lightspeed-ai/platform-shared";
+import { UNIVERSE_HANDLE_MAX_LENGTH, universeHandleFromName, universeHandleSchema } from "@lightspeed-ai/platform-shared";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -121,26 +121,26 @@ export function NewUniverseDialog({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [slugEdited, setSlugEdited] = useState(false);
+  const [handle, setHandle] = useState("");
+  const [handleEdited, setHandleEdited] = useState(false);
 
   const create = useMutation({
-    mutationFn: (input: { name: string; slug: string }) =>
+    mutationFn: (input: { name: string; handle: string }) =>
       api<Universe>("POST", "/api/v1/universes", input),
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: ["universes"] });
       onOpenChange(false);
       setName("");
-      setSlug("");
-      setSlugEdited(false);
+      setHandle("");
+      setHandleEdited(false);
       navigate(universeHome(created));
     },
   });
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!universeSlugSchema.safeParse(slug.trim()).success) return;
-    create.mutate({ name: name.trim(), slug: slug.trim() });
+    if (!universeHandleSchema.safeParse(handle.trim()).success) return;
+    create.mutate({ name: name.trim(), handle: handle.trim() });
   };
 
   return (
@@ -158,17 +158,19 @@ export function NewUniverseDialog({
             <Input
               id="new-universe-name"
               value={name}
-              onChange={(e) => { setName(e.target.value); if (!slugEdited) setSlug(slugify(e.target.value)); }}
+              onChange={(e) => { setName(e.target.value); if (!handleEdited) setHandle(universeHandleFromName(e.target.value)); }}
               placeholder="My Universe"
               autoFocus
               required
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor="new-universe-slug">Slug</FieldLabel>
-            <Input id="new-universe-slug" value={slug} required maxLength={128}
-              onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }} placeholder="my-universe" />
-            <p className="text-sm text-muted-foreground">Unique in runtime and used in Platform URLs.</p>
+            <FieldLabel htmlFor="new-universe-handle">Handle</FieldLabel>
+            <Input id="new-universe-handle" value={handle} required maxLength={UNIVERSE_HANDLE_MAX_LENGTH}
+              onChange={(e) => { setHandle(e.target.value); setHandleEdited(true); }} placeholder="my-universe" />
+            <p className="text-sm text-muted-foreground">
+              Unique in this deployment and used in URLs. Lowercase letters, digits and hyphens.
+            </p>
           </Field>
           {create.error && (
             <p className="text-sm text-destructive">{create.error.message}</p>
@@ -177,7 +179,7 @@ export function NewUniverseDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={create.isPending || !name.trim() || !universeSlugSchema.safeParse(slug.trim()).success}>
+            <Button type="submit" disabled={create.isPending || !name.trim() || !universeHandleSchema.safeParse(handle.trim()).success}>
               {create.isPending ? "Creating…" : "Create"}
             </Button>
           </DialogFooter>

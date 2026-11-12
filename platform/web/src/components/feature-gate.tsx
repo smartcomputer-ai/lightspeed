@@ -13,7 +13,7 @@ import { useActiveUniverse, useFeature } from "@/lib/universes";
  */
 export function FeatureGate({ feature, children }: { feature: FeatureKey; children: ReactNode }) {
   const on = useFeature(feature);
-  const { universe, slug } = useActiveUniverse();
+  const { universe, handle } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
   if (on) return children;
   const { label } = FEATURES[feature];
@@ -23,7 +23,7 @@ export function FeatureGate({ feature, children }: { feature: FeatureKey; childr
         {permissions.can("manageAccess") ? (
           <>
             An admin turned them off.{" "}
-            <Link to={`/u/${slug}/settings/general`} className="font-medium text-foreground underline">
+            <Link to={`/u/${handle}/settings/general`} className="font-medium text-foreground underline">
               Turn them on in Settings
             </Link>
             .

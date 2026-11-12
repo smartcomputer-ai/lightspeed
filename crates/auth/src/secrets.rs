@@ -54,7 +54,7 @@ pub fn generate_prefixed_secret(prefix: &str) -> String {
     use base64::Engine as _;
     use rand::TryRng;
 
-    let mut bytes = [0u8; 32];
+    let mut bytes = [0u8; api::KEY_SECRET_RANDOM_BYTES];
     rand::rngs::SysRng
         .try_fill_bytes(&mut bytes)
         .expect("OS random source unavailable");
@@ -62,6 +62,22 @@ pub fn generate_prefixed_secret(prefix: &str) -> String {
         "{prefix}{}",
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
     )
+}
+
+/// Whether `secret` has the representation [`generate_prefixed_secret`]
+/// produces. A supplied secret is accepted only in this form, so a key made
+/// elsewhere carries the same entropy as one minted here.
+pub fn is_prefixed_secret(prefix: &str, secret: &str) -> bool {
+    use base64::Engine as _;
+
+    secret
+        .strip_prefix(prefix)
+        .and_then(|value| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(value)
+                .ok()
+        })
+        .is_some_and(|bytes| bytes.len() == api::KEY_SECRET_RANDOM_BYTES)
 }
 
 /// Lowercase hex SHA-256 of a minted secret: the stored lookup key. No KDF,

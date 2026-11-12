@@ -1197,6 +1197,7 @@ fn registration_policy(mode: RegisteredIdentityMode) -> RegistrationKeyPolicy {
         max_active_environments: None,
         ephemeral_disconnect_grace_ms: None,
         offline_close_after_ms: None,
+        declared_only: false,
         expires_at_ms: None,
     }
 }
@@ -1261,7 +1262,7 @@ fn daemon_ids_derive_from_the_public_key() {
     let record = registered_record(RegisteredIdentityMode::Persistent, true);
     assert_eq!(
         record.registered().unwrap().daemon_id(),
-        EnvironmentDaemonId::from_public_key(&[0x51u8; 32])
+        Some(EnvironmentDaemonId::from_public_key(&[0x51u8; 32]))
     );
 }
 
@@ -1339,6 +1340,7 @@ async fn key_settings_replace_the_editable_policy() {
         max_active_environments: None,
         ephemeral_disconnect_grace_ms: None,
         offline_close_after_ms: Some(3_600_000),
+        declared_only: false,
         expires_at_ms: Some(99_000),
     };
     let updated = store
@@ -2114,6 +2116,440 @@ async fn registered_environments_list_by_key() {
         .expect("list");
     assert_eq!(by_key.environments.len(), 1);
     assert_eq!(by_key.environments[0].environment_id, a.environment_id);
+}
+
+// --- declared registered environments ---------------------------------------
+
+fn declare(key: &str, environment: &str, name: &str, at: i64) -> DeclareRegisteredEnvironment {
+    DeclareRegisteredEnvironment {
+        environment_id: EnvironmentId::new(environment),
+        registration_key_id: EnvironmentRegistrationKeyId::new(key),
+        name: name.to_owned(),
+        display_name: None,
+        metadata: BTreeMap::new(),
+        declared_at_ms: at,
+    }
+}
+
+fn bind(key: &str, environment: &str, public_key: &str, at: i64) -> BindRegisteredEnvironment {
+    BindRegisteredEnvironment {
+        environment_id: EnvironmentId::new(environment),
+        registration_key_id: EnvironmentRegistrationKeyId::new(key),
+        secret_hash: key_secret_hash(key),
+        daemon_public_key: public_key.to_owned(),
+        daemon_build: build("0.1.0"),
+        bound_at_ms: at,
+    }
+}
+
+fn already_exists(error: EnvironmentRegistryError) -> &'static str {
+    match error {
+        EnvironmentRegistryError::AlreadyExists { kind, .. } => kind,
+        other => panic!("expected AlreadyExists, got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_declared_environment_exists_before_its_daemon_and_converges() {
+    let (_, store) = store().await;
+    minted_key(
+        &store,
+        "runners",
+        registration_policy(RegisteredIdentityMode::Persistent),
+    )
+    .await;
+    minted_key(
+        &store,
+        "scratch",
+        registration_policy(RegisteredIdentityMode::Ephemeral),
+    )
+    .await;
+
+    let (declared, outcome) = store
+        .declare_registered_environment(declare("runners", "build-box", "runner-0", 2_000))
+        .await
+        .expect("declare");
+    assert_eq!(outcome, DeclaredOutcome::Created);
+    assert_eq!(declared.environment_id, EnvironmentId::new("build-box"));
+    assert_eq!(declared.state, EnvironmentState::Open);
+    let source = declared.registered().expect("registered");
+    assert!(source.awaits_daemon());
+    assert!(!source.connected);
+    assert_eq!(source.daemon_id(), None);
+    assert_eq!(source.registration_name.as_deref(), Some("runner-0"));
+    assert_eq!(
+        store
+            .read_declared_environment(&EnvironmentRegistrationKeyId::new("runners"), "runner-0")
+            .await
+            .expect("read")
+            .map(|record| record.environment_id),
+        Some(EnvironmentId::new("build-box"))
+    );
+    // Used before its machine arrived, it is waited for like a persistent
+    // machine whose daemon is away, and then says what it is waiting for.
+    assert_eq!(
+        declared.use_gate(2_000 + 1_000),
+        EnvironmentUse::Wait {
+            reason: EnvironmentWaitReason::Disconnected,
+            retry_after_ms: WAIT_RETRY_AFTER_MS,
+            until_ms: Some(2_000 + REGISTERED_RECONNECT_WAIT_MS),
+        }
+    );
+    assert_eq!(
+        declared.use_gate(2_000 + REGISTERED_RECONNECT_WAIT_MS + 60_000),
+        EnvironmentUse::Gone {
+            reason: EnvironmentGoneReason::Away,
+            message: Some("no daemon has registered for it; waiting for 3m".to_owned()),
+        }
+    );
+    assert_eq!(declared.display_status(), EnvironmentDisplayStatus::Away);
+
+    // Declaring again changes nothing; the display name and metadata follow
+    // the declaration.
+    let (_, outcome) = store
+        .declare_registered_environment(declare("runners", "build-box", "runner-0", 3_000))
+        .await
+        .expect("redeclare");
+    assert_eq!(outcome, DeclaredOutcome::Unchanged);
+    let (renamed, outcome) = store
+        .declare_registered_environment(DeclareRegisteredEnvironment {
+            display_name: Some("Build box".to_owned()),
+            ..declare("runners", "build-box", "runner-0", 4_000)
+        })
+        .await
+        .expect("rename");
+    assert_eq!(outcome, DeclaredOutcome::Updated);
+    assert_eq!(renamed.display_name.as_deref(), Some("Build box"));
+    assert_eq!(renamed.updated_at_ms, 4_000);
+
+    // The key and the name are fixed, and a name fills one open environment
+    // of its key.
+    assert_eq!(
+        already_exists(
+            store
+                .declare_registered_environment(declare("runners", "build-box", "runner-1", 5_000))
+                .await
+                .expect_err("another name under the id")
+        ),
+        "environment"
+    );
+    assert_eq!(
+        already_exists(
+            store
+                .declare_registered_environment(declare("runners", "other-box", "runner-0", 5_000))
+                .await
+                .expect_err("the name is taken")
+        ),
+        "registration_name"
+    );
+    // An id that belongs to another kind of environment is not a declaration.
+    open_provisioned(&store, "provisioned-box").await;
+    assert_eq!(
+        already_exists(
+            store
+                .declare_registered_environment(declare(
+                    "runners",
+                    "provisioned-box",
+                    "runner-2",
+                    6_000
+                ))
+                .await
+                .expect_err("a provisioned environment holds the id")
+        ),
+        "environment"
+    );
+
+    // An ephemeral environment is closed while its daemon is away, so only a
+    // persistent key has declared environments.
+    assert!(matches!(
+        store
+            .declare_registered_environment(declare("scratch", "scratch-box", "runner-0", 6_000))
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    for name in ["", "line\nbreak", &"n".repeat(129)] {
+        assert!(
+            validate_registration_name(name).is_err(),
+            "name {name:?} is refused"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_first_daemon_binds_a_declared_environment_and_only_release_frees_it() {
+    let (_, store) = store().await;
+    minted_key(
+        &store,
+        "runners",
+        registration_policy(RegisteredIdentityMode::Persistent),
+    )
+    .await;
+    let id = EnvironmentId::new("build-box");
+    store
+        .declare_registered_environment(declare("runners", "build-box", "runner-0", 2_000))
+        .await
+        .expect("declare");
+
+    // No daemon is bound, so no connection can be recorded.
+    assert!(
+        store
+            .mark_registered_connected(MarkRegisteredConnected {
+                environment_id: id.clone(),
+                daemon_build: build("0.1.0"),
+                at_ms: 2_500,
+            })
+            .await
+            .is_err()
+    );
+
+    let first = daemon_key(0x41);
+    let bound = store
+        .bind_registered_environment(bind("runners", "build-box", &first, 3_000))
+        .await
+        .expect("bind");
+    assert_eq!(bound.environment_id, id);
+    let source = bound.registered().expect("registered");
+    assert!(source.connected);
+    assert!(!source.awaits_daemon());
+    assert_eq!(source.daemon_public_key.as_deref(), Some(first.as_str()));
+    assert_eq!(source.registration_name.as_deref(), Some("runner-0"));
+    assert_eq!(
+        store
+            .read_environment_by_daemon_public_key(&first)
+            .await
+            .expect("by key")
+            .map(|record| record.environment_id),
+        Some(id.clone())
+    );
+
+    // Another identity never displaces the bound one.
+    let second = daemon_key(0x42);
+    assert_eq!(
+        already_exists(
+            store
+                .bind_registered_environment(bind("runners", "build-box", &second, 4_000))
+                .await
+                .expect_err("bound to another identity")
+        ),
+        "daemon_identity"
+    );
+    // A retired secret binds nothing.
+    assert!(matches!(
+        store
+            .bind_registered_environment(BindRegisteredEnvironment {
+                secret_hash: registration_key_hash("lsrk_another-secret"),
+                ..bind("runners", "build-box", &first, 4_000)
+            })
+            .await,
+        Err(EnvironmentRegistryError::RegistrationKeyUnavailable { .. })
+    ));
+
+    let (released, was_bound) = store
+        .release_registered_environment(ReleaseRegisteredEnvironment {
+            environment_id: id.clone(),
+            released_at_ms: 5_000,
+        })
+        .await
+        .expect("release");
+    assert!(was_bound);
+    assert_eq!(released.state, EnvironmentState::Open);
+    assert!(released.registered().unwrap().awaits_daemon());
+    assert!(!released.registered().unwrap().connected);
+    assert_eq!(released.daemon_build, None);
+    assert_eq!(
+        store
+            .read_environment_by_daemon_public_key(&first)
+            .await
+            .expect("by key"),
+        None
+    );
+    let (_, was_bound) = store
+        .release_registered_environment(ReleaseRegisteredEnvironment {
+            environment_id: id.clone(),
+            released_at_ms: 5_500,
+        })
+        .await
+        .expect("release again");
+    assert!(!was_bound);
+
+    let rebound = store
+        .bind_registered_environment(bind("runners", "build-box", &second, 6_000))
+        .await
+        .expect("rebind");
+    assert_eq!(rebound.environment_id, id);
+    assert_eq!(
+        rebound.registered().unwrap().daemon_public_key.as_deref(),
+        Some(second.as_str())
+    );
+
+    // An undeclared machine is nothing without its daemon: it is closed, not
+    // released.
+    store
+        .create_registered_environment(register("runners", "self-registered", &first, 7_000))
+        .await
+        .expect("self-register");
+    assert!(matches!(
+        store
+            .release_registered_environment(ReleaseRegisteredEnvironment {
+                environment_id: EnvironmentId::new("self-registered"),
+                released_at_ms: 8_000,
+            })
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_waiting_declared_environment_is_never_swept_and_counts_against_its_key() {
+    let (_, store) = store().await;
+    minted_key(
+        &store,
+        "runners",
+        RegistrationKeyPolicy {
+            max_active_environments: Some(2),
+            offline_close_after_ms: Some(600_000),
+            ..registration_policy(RegisteredIdentityMode::Persistent)
+        },
+    )
+    .await;
+    let start = 1_000_000;
+    for (environment, name) in [("waiting", "runner-0"), ("bound", "runner-1")] {
+        store
+            .declare_registered_environment(declare("runners", environment, name, start))
+            .await
+            .expect("declare");
+    }
+    // Declared environments are open environments of the key.
+    assert!(matches!(
+        store
+            .declare_registered_environment(declare("runners", "third", "runner-2", start))
+            .await,
+        Err(EnvironmentRegistryError::RegistrationCapacityExhausted { .. })
+    ));
+    assert!(matches!(
+        store
+            .create_registered_environment(register(
+                "runners",
+                "self-registered",
+                &daemon_key(0x53),
+                start
+            ))
+            .await,
+        Err(EnvironmentRegistryError::RegistrationCapacityExhausted { .. })
+    ));
+
+    store
+        .bind_registered_environment(bind("runners", "bound", &daemon_key(0x51), start))
+        .await
+        .expect("bind");
+    store
+        .mark_registered_disconnected(MarkRegisteredDisconnected {
+            environment_id: EnvironmentId::new("bound"),
+            at_ms: start,
+        })
+        .await
+        .expect("disconnect");
+
+    // Long after the key's offline limit: the machine that went away is
+    // closed, the one that never arrived keeps waiting.
+    let later = start + 10 * 600_000;
+    let sweep = store
+        .sweep_registered_environments(later)
+        .await
+        .expect("sweep");
+    assert_eq!(sweep.disconnected, []);
+    assert_eq!(
+        sweep.closed,
+        [(
+            EnvironmentId::new("bound"),
+            EnvironmentCloseReason::OfflineTimeout
+        )]
+    );
+    assert_eq!(
+        store
+            .read_environment(&EnvironmentId::new("waiting"))
+            .await
+            .unwrap()
+            .state,
+        EnvironmentState::Open
+    );
+
+    // Closing frees the name for a new declaration; the id stays taken.
+    assert_eq!(
+        already_exists(
+            store
+                .declare_registered_environment(declare("runners", "bound", "runner-1", later))
+                .await
+                .expect_err("a closed environment holds the id")
+        ),
+        "environment"
+    );
+    let (again, outcome) = store
+        .declare_registered_environment(declare("runners", "bound-2", "runner-1", later))
+        .await
+        .expect("the name is free again");
+    assert_eq!(outcome, DeclaredOutcome::Created);
+    assert!(again.registered().unwrap().awaits_daemon());
+
+    // A released environment waits like one that was never bound.
+    store
+        .bind_registered_environment(bind("runners", "bound-2", &daemon_key(0x52), later))
+        .await
+        .expect("bind");
+    store
+        .release_registered_environment(ReleaseRegisteredEnvironment {
+            environment_id: EnvironmentId::new("bound-2"),
+            released_at_ms: later,
+        })
+        .await
+        .expect("release");
+    let quiet = store
+        .sweep_registered_environments(later + 10 * 600_000)
+        .await
+        .expect("sweep");
+    assert_eq!(quiet, RegisteredSweep::default());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn only_a_persistent_key_can_be_set_to_admit_declared_environments_only() {
+    let (_, store) = store().await;
+    assert!(
+        mint_registration_key(
+            EnvironmentRegistrationKeyId::new("rk-eph"),
+            RegistrationKeyPolicy {
+                declared_only: true,
+                ..registration_policy(RegisteredIdentityMode::Ephemeral)
+            },
+            5,
+        )
+        .is_err()
+    );
+    let minted = minted_key(
+        &store,
+        "runners",
+        RegistrationKeyPolicy {
+            declared_only: true,
+            ..registration_policy(RegisteredIdentityMode::Persistent)
+        },
+    )
+    .await;
+    assert!(minted.record.declared_only);
+    let updated = store
+        .update_registration_key(UpdateEnvironmentRegistrationKey {
+            registration_key_id: EnvironmentRegistrationKeyId::new("runners"),
+            settings: RegistrationKeySettings {
+                display_name: "fleet".to_owned(),
+                max_active_environments: None,
+                ephemeral_disconnect_grace_ms: None,
+                offline_close_after_ms: None,
+                declared_only: false,
+                expires_at_ms: None,
+            },
+            updated_at_ms: 2_000,
+        })
+        .await
+        .expect("update");
+    assert!(!updated.declared_only);
 }
 
 #[test]

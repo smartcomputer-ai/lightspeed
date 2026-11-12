@@ -372,7 +372,7 @@ export function member(
     id: store.nextId("member"),
     userId,
     role,
-    email: user?.email ?? `${userId}@${universe.universe.slug}.example`,
+    email: user?.email ?? `${userId}@${universe.universe.handle}.example`,
     name: user?.name ?? userId,
     createdAt: atIso(joinedAtMs),
   };
@@ -598,7 +598,10 @@ export function externalEnvironment(init: ExternalEnvironmentInit): Environment 
 
 export interface RegisteredEnvironmentInit extends EnvironmentInit {
   registrationKeyId: string;
-  daemonId: string;
+  /// Absent on a declared environment that no daemon is bound to.
+  daemonId?: string;
+  /// The registration name of a declared environment.
+  name?: string;
   identityMode: EnvironmentIdentityModeView;
   connected: boolean;
   connectionChangedAtMs: number;
@@ -606,12 +609,16 @@ export interface RegisteredEnvironmentInit extends EnvironmentInit {
 }
 
 export function registeredEnvironment(init: RegisteredEnvironmentInit): Environment {
+  const { daemon, ...record } = lifecycle(init);
   const environment: Omit<Environment, "status"> = {
-    ...lifecycle(init),
+    ...record,
+    // The daemon build is known only once a daemon has connected.
+    ...(init.daemonId ? { daemon } : {}),
     source: {
       type: "registered",
       registrationKeyId: init.registrationKeyId,
-      daemonId: init.daemonId,
+      ...(init.daemonId ? { daemonId: init.daemonId } : {}),
+      ...(init.name ? { name: init.name } : {}),
       identityMode: init.identityMode,
       connected: init.connected,
       connectionChangedAtMs: init.connectionChangedAtMs,

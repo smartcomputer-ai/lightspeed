@@ -28,7 +28,7 @@ const ROSTER_REFRESH_MS = 5_000;
 
 /// Bots: a roster on the left and one bot's conversations or activity on the right.
 export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const { botId, sessionId } = useParams<{ botId?: string; sessionId?: string }>();
   const permissions = useActionPermissions(universe?.id);
   const [createOpen, setCreateOpen] = useCreateParam("bot");
@@ -37,7 +37,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
   if (!universe) {
     return (
       <div className="p-6">
-        <UniverseNotFound slug={slug} />
+        <UniverseNotFound handle={handle} />
       </div>
     );
   }
@@ -48,7 +48,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
       <ListPane detailOpen={Boolean(botId)}>
         <BotsPane
           universeId={universe.id}
-          slug={slug!}
+          handle={handle!}
           activeId={botId}
           create={create}
           onCreate={() => setCreateOpen(true)}
@@ -59,7 +59,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
           <BotWorkspace
             key={botId}
             universeId={universe.id}
-            slug={slug!}
+            handle={handle!}
             botId={botId}
             view={view}
             sessionId={sessionId}
@@ -76,7 +76,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
       {create && createOpen && (
         <BotCreateDialog
           universeId={universe.id}
-          slug={slug!}
+          handle={handle!}
           open={createOpen}
           onOpenChange={setCreateOpen}
         />
@@ -127,13 +127,13 @@ function rosterGroups(bots: BotListItem[]) {
 
 function BotsPane({
   universeId,
-  slug,
+  handle,
   activeId,
   create,
   onCreate,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   activeId: string | undefined;
   create: boolean;
   onCreate: () => void;
@@ -183,7 +183,7 @@ function BotsPane({
                 return (
                   <li key={bot.botId}>
                     <NavLink
-                      to={`/u/${slug}/bots/${bot.botId}`}
+                      to={`/u/${handle}/bots/${bot.botId}`}
                       className={cn(
                         "grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2.5 border-b px-4 py-2.5 text-sm hover:bg-muted/50",
                         bot.botId === activeId && "bg-muted",
@@ -226,13 +226,13 @@ function BotsPane({
 
 function BotWorkspace({
   universeId,
-  slug,
+  handle,
   botId,
   view,
   sessionId,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   botId: string;
   view: BotTab;
   sessionId: string | undefined;
@@ -262,7 +262,7 @@ function BotWorkspace({
   return (
     <BotDetail
       universeId={universeId}
-      slug={slug}
+      handle={handle}
       bot={bot.data.bot}
       {...(state.data?.state ? { state: state.data.state } : {})}
       {...(state.error ? { stateError: state.error.message } : {})}

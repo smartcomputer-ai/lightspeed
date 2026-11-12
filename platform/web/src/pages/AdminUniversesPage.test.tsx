@@ -12,11 +12,11 @@ const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 
 const universe = (id: string, overrides: Partial<Universe> = {}): Universe => ({
-  id, lightspeedUniverseId: `core-${id}`, name: id, slug: id, gatewayUrl: null, status: "active",
+  id, lightspeedUniverseId: `core-${id}`, name: id, handle: id, gatewayUrl: null, status: "active",
   createdAt: "2026-01-01T00:00:00Z", role: null, features: { bots: true, channels: true }, ...overrides,
 });
 const orphan = (universeId: string, overrides: Partial<EngineUniverse> = {}): EngineUniverse => ({
-  universeId, sessions: 3, workspaces: 1, profiles: 2, blobBytes: 2048, createdAtMs: 0, ...overrides,
+  universeId, handle: `u-${universeId}`, sessions: 3, workspaces: 1, profiles: 2, blobBytes: 2048, createdAtMs: 0, ...overrides,
 });
 let universes: Universe[];
 let reconcile: UniverseReconcile | Error;
@@ -37,7 +37,7 @@ beforeEach(() => {
       { id: "mid", lightspeedUniverseId: "core-mid", engine: "missing" },
       { id: "alpha", lightspeedUniverseId: "core-alpha", engine: "unchecked" },
     ],
-    orphans: [orphan("core-orphan", { slug: "kept" }), orphan("core-bare", { blobBytes: 5 * 1024 * 1024 })],
+    orphans: [orphan("core-orphan", { handle: "kept" }), orphan("core-bare", { blobBytes: 5 * 1024 * 1024 })],
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
     if (method === "GET" && path === "/api/v1/universes") return universes;
@@ -45,7 +45,7 @@ beforeEach(() => {
       if (reconcile instanceof Error) throw reconcile;
       return reconcile;
     }
-    if (method === "POST" && path === "/api/v1/universes/sync-slugs") return { updated: 2, skipped: 1 };
+    if (method === "POST" && path === "/api/v1/universes/sync-handles") return { updated: 2, skipped: 1 };
     if (method !== "GET") return {};
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
@@ -125,12 +125,12 @@ it("opens a universe at its landing page", async () => {
   await waitForUi(() => expect(container.querySelector('[data-testid="location"]')?.textContent).toBe("/u/mid/sessions"));
 });
 
-it("reports what a runtime slug sync updated and skipped", async () => {
+it("reports what a runtime handle sync updated and skipped", async () => {
   await show();
   await act(async () => buttonIn(container, "Sync from runtime")!.click());
-  await waitForUi(() => expect(container.querySelector('[role="status"]')?.textContent).toContain("Synced runtime slugs: 2 updated."));
-  expect(container.querySelector('[role="status"]')?.textContent).toContain("1 missing or unnamed runtime universes skipped");
-  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/sync-slugs", {});
+  await waitForUi(() => expect(container.querySelector('[role="status"]')?.textContent).toContain("Synced runtime handles: 2 updated."));
+  expect(container.querySelector('[role="status"]')?.textContent).toContain("1 missing from the runtime and skipped");
+  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/sync-handles", {});
 });
 
 it("lists engine-only universes with their size, and deletes one after confirmation", async () => {
@@ -145,30 +145,21 @@ it("lists engine-only universes with their size, and deletes one after confirmat
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/v1/universes/engine/core-bare"));
 });
 
-it("adopts an orphan with a new slug, refusing an invalid one first", async () => {
+it("requires a display name before adopting", async () => {
   await show();
   await act(async () => buttonIn(rows(tables()[1])[1]!, "Adopt")!.click());
   await waitForUi(() => expect(document.querySelector("#adopt-name")).not.toBeNull());
   const form = document.querySelector<HTMLFormElement>('[role="dialog"] form')!;
-  // The slug is a required input, so the name check is reached with one filled in.
-  await type("#adopt-slug", "-bad");
   await act(async () => form.requestSubmit());
   expect(form.textContent).toContain("a name is required");
-  await type("#adopt-name", "Recovered");
-  await act(async () => form.requestSubmit());
-  expect(form.textContent).toContain("Enter a slug starting with a letter or digit");
   expect(writes()).toHaveLength(0);
-  await type("#adopt-slug", "recovered");
-  await act(async () => form.requestSubmit());
-  await waitForUi(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
-  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/adopt", { lightspeedUniverseId: "core-bare", name: "Recovered", slug: "recovered" });
 });
 
-it("adopts an orphan under the runtime slug it already has", async () => {
+it("adopts an orphan under the runtime handle it already has", async () => {
   await show();
   await act(async () => buttonIn(rows(tables()[1])[0]!, "Adopt")!.click());
-  await waitForUi(() => expect(document.querySelector<HTMLInputElement>("#adopt-slug")?.readOnly).toBe(true));
-  expect(document.querySelector<HTMLInputElement>("#adopt-slug")!.value).toBe("kept");
+  await waitForUi(() => expect(document.querySelector<HTMLInputElement>("#adopt-handle")?.readOnly).toBe(true));
+  expect(document.querySelector<HTMLInputElement>("#adopt-handle")!.value).toBe("kept");
   await type("#adopt-name", "Kept");
   await act(async () => document.querySelector<HTMLFormElement>('[role="dialog"] form')!.requestSubmit());
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/adopt", { lightspeedUniverseId: "core-orphan", name: "Kept" }));

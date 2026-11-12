@@ -114,7 +114,7 @@ export function GitHubAppForm({
           className="font-mono"
         />
         <FieldDescription>
-          The numeric App ID shown on the App's settings page (not the client ID or slug).
+          The numeric App ID shown on the App's settings page (not the client ID or handle).
         </FieldDescription>
       </Field>
       <Field>

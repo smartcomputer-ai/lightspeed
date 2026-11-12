@@ -6,23 +6,22 @@ use api::{
     AuthClientListParams, AuthClientListResponse, AuthClientReadParams, AuthClientReadResponse,
     AuthFlowStartParams, AuthFlowStartResponse, AuthFlowStatusParams, AuthFlowStatusResponse,
     AuthGitHubInstallationGrantParams, AuthGitHubInstallationGrantResponse,
-    AuthGitHubInstallationListParams, AuthGitHubInstallationListResponse, AuthGrantImportParams,
-    AuthGrantImportResponse, AuthGrantListParams, AuthGrantListResponse, AuthGrantReadParams,
-    AuthGrantReadResponse, AuthGrantRevokeParams, AuthGrantRevokeResponse,
-    AuthProviderCreateParams, AuthProviderCreateResponse, AuthProviderDeleteParams,
-    AuthProviderDeleteResponse, AuthProviderListParams, AuthProviderListResponse,
-    AuthProviderReadParams, AuthProviderReadResponse, BlobHasParams, BlobHasResponse,
-    BlobPutParams, BlobPutResponse, BlobReadParams, BlobReadResponse, EnvironmentCloseParams,
-    EnvironmentCloseResponse, EnvironmentCredentialBindParams, EnvironmentCredentialBindResponse,
-    EnvironmentCredentialListParams, EnvironmentCredentialListResponse,
-    EnvironmentCredentialUnbindParams, EnvironmentCredentialUnbindResponse, EnvironmentListParams,
-    EnvironmentListResponse, EnvironmentPowerPutParams, EnvironmentPowerPutResponse,
-    EnvironmentProviderBindingListParams, EnvironmentProviderBindingListResponse,
-    EnvironmentReadParams, EnvironmentReadResponse, JsonRpcRequest, JsonRpcResponse,
-    METHOD_AUTH_CLIENTS_CREATE, METHOD_AUTH_CLIENTS_DELETE, METHOD_AUTH_CLIENTS_LIST,
-    METHOD_AUTH_CLIENTS_READ, METHOD_AUTH_FLOWS_READ, METHOD_AUTH_FLOWS_START,
-    METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT, METHOD_AUTH_GITHUB_INSTALLATIONS_LIST,
-    METHOD_AUTH_GRANTS_IMPORT, METHOD_AUTH_GRANTS_LIST, METHOD_AUTH_GRANTS_READ,
+    AuthGitHubInstallationListParams, AuthGitHubInstallationListResponse, AuthGrantListParams,
+    AuthGrantListResponse, AuthGrantReadParams, AuthGrantReadResponse, AuthGrantRevokeParams,
+    AuthGrantRevokeResponse, AuthProviderCreateParams, AuthProviderCreateResponse,
+    AuthProviderDeleteParams, AuthProviderDeleteResponse, AuthProviderListParams,
+    AuthProviderListResponse, AuthProviderReadParams, AuthProviderReadResponse, BlobHasParams,
+    BlobHasResponse, BlobPutParams, BlobPutResponse, BlobReadParams, BlobReadResponse,
+    EnvironmentCloseParams, EnvironmentCloseResponse, EnvironmentCredentialBindParams,
+    EnvironmentCredentialBindResponse, EnvironmentCredentialListParams,
+    EnvironmentCredentialListResponse, EnvironmentCredentialUnbindParams,
+    EnvironmentCredentialUnbindResponse, EnvironmentListParams, EnvironmentListResponse,
+    EnvironmentPowerPutParams, EnvironmentPowerPutResponse, EnvironmentProviderBindingListParams,
+    EnvironmentProviderBindingListResponse, EnvironmentReadParams, EnvironmentReadResponse,
+    JsonRpcRequest, JsonRpcResponse, METHOD_AUTH_CLIENTS_CREATE, METHOD_AUTH_CLIENTS_DELETE,
+    METHOD_AUTH_CLIENTS_LIST, METHOD_AUTH_CLIENTS_READ, METHOD_AUTH_FLOWS_READ,
+    METHOD_AUTH_FLOWS_START, METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT,
+    METHOD_AUTH_GITHUB_INSTALLATIONS_LIST, METHOD_AUTH_GRANTS_LIST, METHOD_AUTH_GRANTS_READ,
     METHOD_AUTH_GRANTS_REVOKE, METHOD_AUTH_PROVIDERS_CREATE, METHOD_AUTH_PROVIDERS_DELETE,
     METHOD_AUTH_PROVIDERS_LIST, METHOD_AUTH_PROVIDERS_READ, METHOD_BLOBS_HAS, METHOD_BLOBS_PUT,
     METHOD_BLOBS_READ, METHOD_ENVIRONMENTS_CLOSE, METHOD_ENVIRONMENTS_CREDENTIALS_BIND,
@@ -32,7 +31,6 @@ use api::{
     METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST, METHOD_MCP_SERVERS_PUT,
     METHOD_MCP_SERVERS_READ, METHOD_MODELS_LIST, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST,
     METHOD_PROFILES_PUT, METHOD_PROFILES_READ, METHOD_SESSION_CONFIG_PUT,
-    METHOD_SESSION_ENVIRONMENTS_ACTIVATE, METHOD_SESSION_ENVIRONMENTS_DEACTIVATE,
     METHOD_SESSION_EVENTS_READ, METHOD_SESSION_LIST, METHOD_SESSION_PROFILES_APPLY,
     METHOD_SESSION_READ, METHOD_SESSION_RUNS_APPROVALS_DECIDE, METHOD_SESSION_RUNS_CANCEL,
     METHOD_SESSION_RUNS_READ, METHOD_SESSION_RUNS_START, METHOD_SESSION_RUNS_STEER,
@@ -46,16 +44,14 @@ use api::{
     ProfilePutParams, ProfilePutResponse, ProfileReadParams, ProfileReadResponse, RequestId,
     RunApprovalsDecideParams, RunApprovalsDecideResponse, RunCancelParams, RunCancelResponse,
     RunReadParams, RunReadResponse, RunStartParams, RunStartResponse, RunSteerParams,
-    RunSteerResponse, SessionConfigPutParams, SessionConfigPutResponse,
-    SessionEnvironmentActivateParams, SessionEnvironmentActivateResponse,
-    SessionEnvironmentDeactivateParams, SessionEnvironmentDeactivateResponse,
-    SessionEventsReadParams, SessionEventsReadResponse, SessionListParams, SessionListResponse,
-    SessionReadParams, SessionReadResponse, SessionStartParams, SessionStartResponse,
-    SkillListParams, SkillListResponse, VfsSnapshotCommitParams, VfsSnapshotCommitResponse,
-    VfsSnapshotReadParams, VfsSnapshotReadResponse, VfsWorkspaceCreateParams,
-    VfsWorkspaceCreateResponse, VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse,
-    VfsWorkspaceListParams, VfsWorkspaceListResponse, VfsWorkspaceReadParams,
-    VfsWorkspaceReadResponse, VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
+    RunSteerResponse, SessionConfigPutParams, SessionConfigPutResponse, SessionEventsReadParams,
+    SessionEventsReadResponse, SessionListParams, SessionListResponse, SessionReadParams,
+    SessionReadResponse, SessionStartParams, SessionStartResponse, SkillListParams,
+    SkillListResponse, VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
+    VfsSnapshotReadResponse, VfsWorkspaceCreateParams, VfsWorkspaceCreateResponse,
+    VfsWorkspaceDeleteParams, VfsWorkspaceDeleteResponse, VfsWorkspaceListParams,
+    VfsWorkspaceListResponse, VfsWorkspaceReadParams, VfsWorkspaceReadResponse,
+    VfsWorkspaceUpdateParams, VfsWorkspaceUpdateResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -96,6 +92,11 @@ impl HttpAgentApi {
             connection,
             next_id: AtomicU64::new(1),
         }
+    }
+
+    /// The connection this client sends requests over.
+    pub(crate) fn connection(&self) -> &crate::connection::ResolvedConnection {
+        &self.connection
     }
 
     pub(crate) async fn open_or_start_session(
@@ -388,13 +389,6 @@ impl HttpAgentApi {
         self.request(METHOD_MCP_SERVERS_DELETE, params).await
     }
 
-    pub(crate) async fn import_auth_grant(
-        &self,
-        params: AuthGrantImportParams,
-    ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_GRANTS_IMPORT, params).await
-    }
-
     pub(crate) async fn list_auth_grants(
         &self,
         params: AuthGrantListParams,
@@ -409,11 +403,11 @@ impl HttpAgentApi {
         self.request(METHOD_AUTH_GRANTS_READ, params).await
     }
 
-    pub(crate) async fn replace_auth_grant(
+    pub(crate) async fn put_auth_grant(
         &self,
-        params: api::AuthGrantReplaceParams,
-    ) -> Result<AgentApiOutcome<api::AuthGrantReplaceResponse>, AgentApiError> {
-        self.request(api::METHOD_AUTH_GRANTS_REPLACE, params).await
+        params: api::AuthGrantPutParams,
+    ) -> Result<AgentApiOutcome<api::AuthGrantPutResponse>, AgentApiError> {
+        self.request(api::METHOD_AUTH_GRANTS_PUT, params).await
     }
 
     pub(crate) async fn revoke_auth_grant(
@@ -516,22 +510,6 @@ impl HttpAgentApi {
         self.request(METHOD_SESSION_CONFIG_PUT, params).await
     }
 
-    pub(crate) async fn activate_session_environment(
-        &self,
-        params: SessionEnvironmentActivateParams,
-    ) -> Result<AgentApiOutcome<SessionEnvironmentActivateResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_ENVIRONMENTS_ACTIVATE, params)
-            .await
-    }
-
-    pub(crate) async fn deactivate_session_environment(
-        &self,
-        params: SessionEnvironmentDeactivateParams,
-    ) -> Result<AgentApiOutcome<SessionEnvironmentDeactivateResponse>, AgentApiError> {
-        self.request(METHOD_SESSION_ENVIRONMENTS_DEACTIVATE, params)
-            .await
-    }
-
     pub(crate) async fn bind_environment_credential(
         &self,
         params: EnvironmentCredentialBindParams,
@@ -628,6 +606,14 @@ impl HttpAgentApi {
         params: api::EnvironmentRegistrationKeyUpdateParams,
     ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyUpdateResponse>, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_UPDATE, params)
+            .await
+    }
+
+    pub(crate) async fn put_environment_registration_key(
+        &self,
+        params: api::EnvironmentRegistrationKeyPutParams,
+    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyPutResponse>, AgentApiError> {
+        self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_PUT, params)
             .await
     }
 

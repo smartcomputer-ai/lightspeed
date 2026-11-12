@@ -294,17 +294,17 @@ impl DeploymentStores {
     /// Build the universe-bound store. Does not create the universe row;
     /// callers decide existence policy first (see `UniverseRuntime`).
     pub fn store_for(&self, universe_id: Uuid) -> Arc<PgStore> {
-        self.store_for_with_slug(universe_id, None)
+        self.store_for_with_handle(universe_id, None)
     }
 
-    pub fn store_for_with_slug(
+    pub fn store_for_with_handle(
         &self,
         universe_id: Uuid,
-        universe_slug: Option<String>,
+        universe_handle: Option<String>,
     ) -> Arc<PgStore> {
         let mut config = PgStoreConfig::new(universe_id);
-        if let Some(slug) = universe_slug {
-            config = config.with_universe_slug(slug);
+        if let Some(handle) = universe_handle {
+            config = config.with_universe_handle(handle);
         }
         if let Some(prefix) = &self.object_prefix {
             config = config.with_object_prefix(prefix.clone());

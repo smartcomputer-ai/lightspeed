@@ -6,8 +6,8 @@ import { universeRoutes } from "./universes.js";
 
 afterEach(() => vi.unstubAllGlobals());
 const id = "11111111-1111-4111-8111-111111111111";
-function fixture({ role = "admin", exists = true, slug = "runtime-slug", conflict = false, returnedSlug }: {
-  role?: string; exists?: boolean; slug?: string | null; conflict?: boolean; returnedSlug?: string;
+function fixture({ role = "admin", exists = true, handle = "runtime-handle", conflict = false, cached = false, returnedHandle }: {
+  role?: string; exists?: boolean; handle?: string; conflict?: boolean; cached?: boolean; returnedHandle?: string;
 } = {}) {
   const calls: { method: string; params: Record<string, unknown> }[] = [];
   const writes: { table: unknown; values: Record<string, unknown> }[] = [];
@@ -15,14 +15,18 @@ function fixture({ role = "admin", exists = true, slug = "runtime-slug", conflic
     const rpc = JSON.parse(String(init.body));
     calls.push(rpc);
     const error = !exists ? { code: -32004, message: "not found" }
-      : conflict && rpc.method !== "deployment/universes/read" ? { code: -32009, message: "slug conflict" } : null;
+      : conflict && rpc.method !== "deployment/universes/read" ? { code: -32009, message: "handle conflict" } : null;
     if (error) return Response.json({ id: rpc.id, error });
     return Response.json({ id: rpc.id, result: { result: { universe: {
-      universeId: rpc.params.universeId,
-      slug: returnedSlug ?? (rpc.method === "deployment/universes/read" ? slug : rpc.params.slug),
+      universeId: rpc.params.universeId ?? rpc.params.universe,
+      handle: returnedHandle ?? (rpc.method === "deployment/universes/read" ? handle : rpc.params.handle),
     } }, notifications: [] } });
   }));
-  const chain = { from: () => chain, innerJoin: () => chain, where: () => chain, limit: async () => [], then: (resolve: (value: unknown[]) => unknown) => Promise.resolve([]).then(resolve) };
+  // The first read finds no linked universe; `cached` makes the handle cache
+  // lookup that follows find another organization.
+  const reads: unknown[][] = cached ? [[], [{ id: "other-org" }]] : [];
+  const next = async () => reads.shift() ?? [];
+  const chain = { from: () => chain, innerJoin: () => chain, where: () => chain, limit: next, then: (resolve: (value: unknown[]) => unknown) => next().then(resolve) };
   const db = {
     select: () => chain,
     insert: (table: unknown) => ({ values: (values: Record<string, unknown>) => {
@@ -43,51 +47,51 @@ function fixture({ role = "admin", exists = true, slug = "runtime-slug", conflic
   return { request, writes, calls };
 }
 
-it("adopts the existing runtime slug, preserving the UUID and resources", async () => {
+it("adopts under the existing runtime handle, preserving the UUID and resources", async () => {
   const f = fixture();
   const response = await f.request();
   expect(response.status).toBe(201);
-  expect((await response.json() as { slug: string }).slug).toBe("runtime-slug");
-  expect(f.calls.map(c => c.method)).toEqual(["deployment/universes/read"]);
-  expect(f.writes.find(w => w.table === schema.organization)?.values.slug).toBe("runtime-slug");
+  expect((await response.json() as { handle: string }).handle).toBe("runtime-handle");
+  expect(f.calls).toEqual([expect.objectContaining({ method: "deployment/universes/read", params: { universe: id } })]);
+  expect(f.writes.find(w => w.table === schema.organization)?.values.slug).toBe("runtime-handle");
   expect(f.writes.find(w => w.table === schema.universes)?.values).toMatchObject({ lightspeedUniverseId: id });
   expect(f.writes.find(w => w.table === schema.member)?.values).toMatchObject({ userId: "operator", role: "admin" });
 });
 
-it("requires a supplied slug before adopting an unnamed universe", async () => {
-  const f = fixture({ slug: null });
-  expect((await f.request()).status).toBe(400);
+it("never renames during adoption: a handle in the request is refused", async () => {
+  const f = fixture();
+  expect((await f.request({ handle: "different" })).status).toBe(400);
   expect(f.writes).toEqual([]);
-  expect(f.calls.map(c => c.method)).toEqual(["deployment/universes/read"]);
-  const response = await f.request({ slug: "personal" });
-  expect(response.status).toBe(201);
-  expect(f.calls.at(-1)).toMatchObject({ method: "deployment/universes/slug/put", params: { universeId: id, slug: "personal", onlyIfUnset: true } });
-  expect((await response.json() as { slug: string }).slug).toBe("personal");
+  expect(f.calls).toEqual([]);
 });
 
-it("does not rename an existing universe during adoption", async () => {
-  const f = fixture();
-  expect((await f.request({ slug: "different" })).status).toBe(409);
+it("refuses to adopt a universe whose handle another Platform universe already uses", async () => {
+  const f = fixture({ cached: true });
+  expect((await f.request()).status).toBe(409);
   expect(f.writes).toEqual([]);
-  expect(f.calls).toHaveLength(1);
+  expect(f.calls.map(c => c.method)).toEqual(["deployment/universes/read"]);
 });
 
 it("carries creation input to runtime and caches only the runtime response", async () => {
-  const f = fixture({ returnedSlug: "authoritative" });
-  const response = await f.request({ slug: "requested" }, "/");
+  const f = fixture({ returnedHandle: "authoritative" });
+  const response = await f.request({ handle: "requested" }, "/");
   expect(response.status).toBe(201);
-  expect(f.calls[0]).toMatchObject({ method: "deployment/universes/create", params: { slug: "requested" } });
-  expect((await response.json() as { slug: string }).slug).toBe("authoritative");
+  expect(f.calls[0]).toMatchObject({ method: "deployment/universes/create", params: { handle: "requested" } });
+  expect((await response.json() as { handle: string }).handle).toBe("authoritative");
   expect(f.writes.find(w => w.table === schema.organization)?.values.slug).toBe("authoritative");
 });
 
-it("rejects collisions and racing adoption without suffixes or Platform records", async () => {
-  for (const path of ["/", "/adopt"]) {
-    const f = fixture({ slug: null, conflict: true });
-    expect((await f.request({ slug: "taken" }, path)).status).toBe(409);
-    expect(f.writes).toEqual([]);
-    expect(f.calls.at(-1)?.params.slug).toBe("taken");
-  }
+it("derives the handle from the display name when creation names none", async () => {
+  const f = fixture();
+  expect((await f.request({ name: "Display Name" }, "/")).status).toBe(201);
+  expect(f.calls[0]).toMatchObject({ method: "deployment/universes/create", params: { handle: "display-name" } });
+});
+
+it("rejects a creation collision without a suffix or Platform records", async () => {
+  const f = fixture({ conflict: true });
+  expect((await f.request({ handle: "taken" }, "/")).status).toBe(409);
+  expect(f.writes).toEqual([]);
+  expect(f.calls.at(-1)?.params.handle).toBe("taken");
 });
 
 it("refuses adoption without Platform administration or an existing runtime universe", async () => {

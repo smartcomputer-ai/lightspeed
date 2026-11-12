@@ -87,10 +87,23 @@ pub async fn authenticate(
         return Err(forbidden());
     }
 
-    let selected = match header_value(headers, UNIVERSE_HEADER)?.map(Uuid::parse_str) {
-        Some(Ok(universe_id)) => Some(universe_id),
-        Some(Err(_)) => return Err(forbidden()),
+    // The header names a universe by UUID or by handle. Only a deployment
+    // key may name one, so only it pays for the handle lookup, and it is told
+    // when the handle names nothing.
+    let selected = match header_value(headers, UNIVERSE_HEADER)? {
         None => None,
+        Some(reference) => match Uuid::parse_str(reference) {
+            Ok(universe_id) => Some(universe_id),
+            Err(_) if key.scope == AccessScope::Deployment => Some(
+                keys.resolve_universe_handle(reference)
+                    .await
+                    .map_err(|error| AgentApiError::internal(error.to_string()))?
+                    .ok_or_else(|| {
+                        AgentApiError::not_found(format!("unknown universe: {reference}"))
+                    })?,
+            ),
+            Err(_) => return Err(forbidden()),
+        },
     };
     let target = target_scope(scope, key.scope, selected).ok_or_else(forbidden)?;
     let actor = match header_value(headers, ACTOR_HEADER)? {
@@ -114,7 +127,7 @@ pub async fn authenticate(
 
 /// What a request addresses. A universe key reaches only its universe and
 /// takes no universe header; a deployment key names the universe of a
-/// universe method by header; deployment methods need a deployment key and
+/// universe method by header, as its UUID or its handle; deployment methods need a deployment key and
 /// take no universe.
 fn target_scope(
     method: MethodScope,

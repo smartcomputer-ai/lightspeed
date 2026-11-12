@@ -1159,7 +1159,11 @@ export type EnvironmentSourceView =
        * When the daemon last connected or disconnected.
        */
       connectionChangedAtMs: number;
-      daemonId: string;
+      /**
+       * Absent while a declared environment has no daemon bound: it is
+       * waiting for its machine, or its machine was released.
+       */
+      daemonId?: string | null;
       /**
        * The admitting key's identity mode.
        */
@@ -1170,6 +1174,11 @@ export type EnvironmentSourceView =
        * connected.
        */
       lastSeenAtMs: number;
+      /**
+       * Set on a declared environment: the name its daemon registers
+       * under.
+       */
+      name?: string | null;
       registrationKeyId: string;
       type: "registered";
     };
@@ -2673,18 +2682,30 @@ export interface AgentApiOutcomeOfAuthGrantListResponse {
 export interface AuthGrantListResponse {
   grants?: AuthGrantView[];
 }
+export interface AgentApiOutcomeOfAuthGrantPutResponse {
+  notifications?: AgentNotification[];
+  result: AuthGrantPutResponse;
+}
+export interface AuthGrantPutResponse {
+  /**
+   * False when the credential already existed.
+   */
+  created: boolean;
+  /**
+   * The credential as declared: as it is now, or as it would be for a
+   * dry run.
+   */
+  grant: AuthGrantView;
+  /**
+   * True when an existing credential held a different token.
+   */
+  tokenReplaced: boolean;
+}
 export interface AgentApiOutcomeOfAuthGrantReadResponse {
   notifications?: AgentNotification[];
   result: AuthGrantReadResponse;
 }
 export interface AuthGrantReadResponse {
-  grant: AuthGrantView;
-}
-export interface AgentApiOutcomeOfAuthGrantReplaceResponse {
-  notifications?: AgentNotification[];
-  result: AuthGrantReplaceResponse;
-}
-export interface AuthGrantReplaceResponse {
   grant: AuthGrantView;
 }
 export interface AgentApiOutcomeOfAuthGrantRevokeResponse {
@@ -2732,18 +2753,31 @@ export interface AgentApiOutcomeOfAuthProviderListResponse {
 export interface AuthProviderListResponse {
   providers?: AuthProviderView[];
 }
+export interface AgentApiOutcomeOfAuthProviderPutResponse {
+  notifications?: AgentNotification[];
+  result: AuthProviderPutResponse;
+}
+export interface AuthProviderPutResponse {
+  /**
+   * False when the provider already existed.
+   */
+  created: boolean;
+  /**
+   * True when an existing provider held a different credential, or gained
+   * or lost one.
+   */
+  credentialReplaced: boolean;
+  /**
+   * The provider as declared: as it is now, or as it would be for a dry
+   * run.
+   */
+  provider: AuthProviderView;
+}
 export interface AgentApiOutcomeOfAuthProviderReadResponse {
   notifications?: AgentNotification[];
   result: AuthProviderReadResponse;
 }
 export interface AuthProviderReadResponse {
-  provider: AuthProviderView;
-}
-export interface AgentApiOutcomeOfAuthProviderReplaceResponse {
-  notifications?: AgentNotification[];
-  result: AuthProviderReplaceResponse;
-}
-export interface AuthProviderReplaceResponse {
   provider: AuthProviderView;
 }
 export interface AgentApiOutcomeOfBlobHasResponse {
@@ -3578,8 +3612,8 @@ export interface DeploymentApiKeyCreateResponse {
   secret: string;
 }
 /**
- * Non-secret key metadata: what the key reaches and may call, and who
- * minted it.
+ * Non-secret key metadata: what the key is called, reaches and may call,
+ * and who minted it.
  */
 export interface DeploymentApiKeyView {
   assertActor: boolean;
@@ -3587,6 +3621,16 @@ export interface DeploymentApiKeyView {
   createdBy: Attribution;
   displayName?: string | null;
   groups: MethodGroup[];
+  /**
+   * The key's name among the keys of its scope. Together with the scope
+   * it addresses the key, and it is kept when the secret is replaced.
+   */
+  keyId: string;
+  /**
+   * The first characters of the key's current secret: enough to tell
+   * which secret the key holds without revealing it. It changes when the
+   * secret does.
+   */
   keyPrefix: string;
   lastUsedAtMs?: number | null;
   revokedAtMs?: number | null;
@@ -3598,6 +3642,22 @@ export interface AgentApiOutcomeOfDeploymentApiKeyListResponse {
 }
 export interface DeploymentApiKeyListResponse {
   apiKeys?: DeploymentApiKeyView[];
+}
+export interface AgentApiOutcomeOfDeploymentApiKeyPutResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentApiKeyPutResponse;
+}
+export interface DeploymentApiKeyPutResponse {
+  apiKey: DeploymentApiKeyView;
+  /**
+   * False when the key already existed.
+   */
+  created: boolean;
+  /**
+   * True when an existing key held a different secret, which no longer
+   * works.
+   */
+  secretReplaced: boolean;
 }
 export interface AgentApiOutcomeOfDeploymentApiKeyRevokeResponse {
   notifications?: AgentNotification[];
@@ -3761,13 +3821,17 @@ export interface DeploymentUniverseView {
   blobBytes: number;
   createdAtMs: number;
   /**
+   * The universe's deployment-unique name. Requests may address the
+   * universe by it wherever they may by UUID.
+   */
+  handle: string;
+  /**
    * Most recent session activity (`max(sessions.updated_at_ms)`); absent
    * when the universe has no sessions.
    */
   lastActivityAtMs?: number | null;
   profiles: number;
   sessions: number;
-  slug?: string | null;
   universeId: string;
   workspaces: number;
 }
@@ -4103,6 +4167,28 @@ export interface AgentApiOutcomeOfEnvironmentReadResponse {
 export interface EnvironmentReadResponse {
   environment: EnvironmentView;
 }
+export interface AgentApiOutcomeOfEnvironmentRegisteredPutResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentRegisteredPutResponse;
+}
+export interface EnvironmentRegisteredPutResponse {
+  /**
+   * False when the environment was already declared.
+   */
+  created: boolean;
+  environment: EnvironmentView;
+}
+export interface AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentRegisteredReleaseResponse;
+}
+export interface EnvironmentRegisteredReleaseResponse {
+  environment: EnvironmentView;
+  /**
+   * False when no daemon was bound.
+   */
+  released: boolean;
+}
 export interface AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse {
   notifications?: AgentNotification[];
   result: EnvironmentRegistrationKeyCreateResponse;
@@ -4120,6 +4206,11 @@ export interface EnvironmentRegistrationKeyView {
    */
   activeEnvironmentCount: number;
   createdAtMs: number;
+  /**
+   * The key admits only daemons whose registration name matches one of
+   * its declared environments.
+   */
+  declaredOnly?: boolean;
   /**
    * The group name shown wherever registered environments are listed.
    */
@@ -4156,6 +4247,22 @@ export interface AgentApiOutcomeOfEnvironmentRegistrationKeyListResponse {
 }
 export interface EnvironmentRegistrationKeyListResponse {
   registrationKeys?: EnvironmentRegistrationKeyView[];
+}
+export interface AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse {
+  notifications?: AgentNotification[];
+  result: EnvironmentRegistrationKeyPutResponse;
+}
+export interface EnvironmentRegistrationKeyPutResponse {
+  /**
+   * False when the key already existed.
+   */
+  created: boolean;
+  registrationKey: EnvironmentRegistrationKeyView;
+  /**
+   * True when an existing key answered to a different secret, which is
+   * now retired.
+   */
+  secretReplaced: boolean;
 }
 export interface AgentApiOutcomeOfEnvironmentRegistrationKeyReadResponse {
   notifications?: AgentNotification[];
@@ -5005,8 +5112,9 @@ export interface AuthGitHubInstallationListParams {
   providerId: string;
 }
 /**
- * Import a token credential as an auth grant. Together with
- * [`AuthGrantReplaceParams`] this is the deliberate inbound-plaintext path:
+ * Import a new token credential as an auth grant, under the given id or an
+ * allocated one; an id already in use is a conflict. Together with
+ * [`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:
  * `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
  * logging must never echo these params.
  */
@@ -5042,24 +5150,52 @@ export interface AuthGrantLeaseParams {
 export interface AuthGrantListParams {
   status?: AuthGrantStatus | null;
 }
-export interface AuthGrantReadParams {
-  grantId: string;
-}
 /**
- * Replace the token of an active token credential (`staticToken`). The
- * credential keeps its id, display name, audience, exposure and everything
- * that references it, so MCP servers, headers, bot polls and environment
- * variables use the new value from their next request or process. `token` is
- * encrypted on receipt and never returned; `Debug` output redacts it.
+ * Declare a token credential (`staticToken`): its id, its settings and the
+ * token it holds. A credential that is missing is created. One that exists
+ * has its settings replaced by these (an absent field is unset) and, when it
+ * holds a different token, that token replaced, so MCP servers, headers,
+ * bot polls and environment variables referencing the id use the new value
+ * from their next request or process. Declaring it again changes nothing.
+ *
+ * `token` is encrypted on receipt and never returned; `Debug` output redacts
+ * it and request logging must never echo these params.
  */
-export interface AuthGrantReplaceParams {
+export interface AuthGrantPutParams {
+  audience?: string | null;
+  displayName?: string | null;
   /**
-   * When the new token expires. Absent means it does not expire; the old
-   * token's expiry is not carried over.
+   * Report what the declaration would do without doing it.
+   */
+  dryRun?: boolean;
+  /**
+   * When the token expires. Absent means it does not expire.
    */
   expiresAtMs?: number | null;
+  /**
+   * Whether the token may be leased in plaintext. It cannot be changed
+   * afterwards.
+   */
+  exposure?: AuthGrantExposure & string;
   grantId: string;
+  /**
+   * Non-secret, caller-defined metadata. Must be a JSON object; never put
+   * secret material here.
+   */
+  metadata?: {
+    [k: string]: unknown;
+  };
+  /**
+   * Label recorded on the credential; `static` when absent. It cannot be
+   * changed afterwards.
+   */
+  providerId?: string | null;
+  scopes?: string[];
+  subjectHint?: string | null;
   token: string;
+}
+export interface AuthGrantReadParams {
+  grantId: string;
 }
 export interface AuthGrantRevokeParams {
   grantId: string;
@@ -5080,21 +5216,31 @@ export interface AuthProviderDeleteParams {
   providerId: string;
 }
 export interface AuthProviderListParams {}
-export interface AuthProviderReadParams {
-  providerId: string;
-}
 /**
- * Replace an existing provider's configuration and credential in place, as
- * if it were created again under the same id. The new settings are validated
- * before anything changes, so a rejected replacement leaves the provider as
- * it was; sessions and environment variables referencing the id keep working
- * throughout. `credential` is encrypted on receipt and never returned;
- * `Debug` output redacts it.
+ * Declare a provider: its id, its configuration and its credential. A
+ * provider that is missing is created. One that exists is rewritten in place
+ * as if it were created again under the same id, where it differs: the new
+ * settings are validated before anything changes, so a rejected declaration
+ * leaves the provider as it was, and sessions and environment variables
+ * referencing the id keep working throughout. Declaring it again changes
+ * nothing. `credential` is encrypted on receipt and never returned; `Debug`
+ * output redacts it.
  */
-export interface AuthProviderReplaceParams {
+export interface AuthProviderPutParams {
   config: AuthProviderConfigInput;
+  /**
+   * The provider's credential, for the kinds that take one. Absent leaves
+   * the provider without a credential.
+   */
   credential?: string | null;
   displayName?: string | null;
+  /**
+   * Report what the declaration would do without doing it.
+   */
+  dryRun?: boolean;
+  providerId: string;
+}
+export interface AuthProviderReadParams {
   providerId: string;
 }
 export interface BlobHasParams {
@@ -5429,7 +5575,7 @@ export interface DeploymentApiKeyCreateParams {
   /**
    * Whether the key may name the actor a request acts for with the
    * `x-lightspeed-actor` header. Give it only to a gate that authenticates
-   * people, such as the Platform.
+   * people, such as the Platform. It cannot be changed afterwards.
    */
   assertActor?: boolean;
   /**
@@ -5438,10 +5584,15 @@ export interface DeploymentApiKeyCreateParams {
   displayName: string;
   /**
    * The method groups the key may call; absent grants every group its
-   * scope allows. To change what a key may do, revoke
-   * it and mint another.
+   * scope allows.
    */
   groups?: MethodGroup[] | null;
+  /**
+   * The key's id: 1-128 ASCII letters, digits, underscores, hyphens, dots
+   * or colons, starting with a letter or digit, and not yet used by a key
+   * of this scope. Omit it to have one allocated.
+   */
+  keyId?: string | null;
   /**
    * A universe, or the deployment. A deployment key addresses a universe
    * with the `x-lightspeed-universe` header and may hold deployment groups.
@@ -5454,11 +5605,54 @@ export interface DeploymentApiKeyListParams {
    */
   scope?: AccessScope | null;
 }
+/**
+ * Declare a key whose secret the caller supplies. `Debug` redacts the
+ * secret; the serialized request remains sensitive and must not be logged.
+ */
+export interface DeploymentApiKeyPutParams {
+  /**
+   * Whether the key may name the actor a request acts for. It cannot be
+   * changed afterwards.
+   */
+  assertActor?: boolean;
+  /**
+   * Human-readable purpose shown in key-management interfaces.
+   */
+  displayName: string;
+  /**
+   * The method groups the key may call; absent grants every group its
+   * scope allows. An existing key's groups are replaced by these.
+   */
+  groups?: MethodGroup[] | null;
+  /**
+   * The key's id within its scope: 1-128 ASCII letters, digits,
+   * underscores, hyphens, dots or colons, starting with a letter or digit.
+   */
+  keyId: string;
+  /**
+   * A universe, or the deployment. It cannot be changed afterwards.
+   */
+  scope: AccessScope;
+  /**
+   * The secret the key answers to: `lsk_` followed by 32 random bytes
+   * encoded as base64url without padding. Generate it with a
+   * cryptographic random source.
+   */
+  secret: string;
+}
 export interface DeploymentApiKeyRevokeParams {
-  keyPrefix: string;
+  keyId: string;
+  /**
+   * The scope the key belongs to.
+   */
+  scope: AccessScope;
 }
 export interface DeploymentApiKeyRotateParams {
-  keyPrefix: string;
+  keyId: string;
+  /**
+   * The scope the key belongs to.
+   */
+  scope: AccessScope;
 }
 export interface DeploymentChannelAccountListParams {
   /**
@@ -5472,7 +5666,10 @@ export interface DeploymentDeletedSessionsListParams {
    * Exclusive session ID cursor; each page contains at most 100 entries.
    */
   after?: string | null;
-  universeId: string;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
 }
 export interface DeploymentEnvironmentProviderDeleteParams {
   providerId: string;
@@ -5512,7 +5709,10 @@ export interface DeploymentEnvironmentProviderReadParams {
 }
 export interface DeploymentProviderBindingDeleteParams {
   providerId: string;
-  universeId: string;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
 }
 /**
  * Create or replace a universe's binding to a deployment provider.
@@ -5523,48 +5723,67 @@ export interface DeploymentProviderBindingPutParams {
    */
   enabled: boolean;
   providerId: string;
-  universeId: string;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
 }
 export interface DeploymentSessionPurgeParams {
   sessionId: string;
-  universeId: string;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
 }
 export interface DeploymentUniverseCreateParams {
   /**
-   * Optional core universe slug, set only when the universe is first created.
+   * The new universe's handle: 1-63 lowercase letters, digits and
+   * hyphens, starting and ending with a letter or digit, and not in the
+   * form of a UUID. Omit it to have one derived from the UUID. Ignored
+   * when the universe already exists.
    */
-  slug?: string | null;
+  handle?: string | null;
   universeId: string;
 }
 export interface DeploymentUniverseDeleteParams {
-  universeId: string;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
+}
+/**
+ * Rename a universe. The UUID and resources remain unchanged; the previous
+ * handle is released, so requests and URLs using it stop reaching this
+ * universe.
+ */
+export interface DeploymentUniverseHandlePutParams {
+  /**
+   * The new handle: 1-63 lowercase letters, digits and hyphens, starting
+   * and ending with a letter or digit, and not in the form of a UUID.
+   */
+  handle: string;
+  /**
+   * The universe's UUID or current handle.
+   */
+  universe: string;
 }
 export interface DeploymentUniverseListParams {}
 export interface DeploymentUniverseReadParams {
-  universeId: string;
-}
-/**
- * Set or change an existing universe's deployment-unique slug. The UUID and
- * resources remain unchanged; URLs using the previous slug may stop working.
- */
-export interface DeploymentUniverseSlugPutParams {
   /**
-   * For adoption: assign only if unnamed, or succeed if already equal.
-   * Reject a different existing slug instead of renaming it.
+   * The universe's UUID or handle.
    */
-  onlyIfUnset?: boolean;
-  /**
-   * 1-128 ASCII characters: an alphanumeric first character, followed by
-   * alphanumerics, underscores, hyphens, dots or colons.
-   */
-  slug: string;
-  universeId: string;
+  universe: string;
 }
 export interface EnvironmentCloseParams {
   environmentId: string;
 }
 export interface EnvironmentCreateParams {
   displayName?: string | null;
+  /**
+   * The id profiles and bindings use for the environment. Omit it to have
+   * one allocated. An id already in use is a conflict.
+   */
+  environmentId?: string | null;
   /**
    * Idle policy passed to the provider in place of the template's `idle`.
    * The provider runs the idle clock; it cannot be changed after create.
@@ -5607,6 +5826,11 @@ export interface EnvironmentExternalCreateParams {
    * Lightspeed.
    */
   endpoint: string;
+  /**
+   * The id profiles and bindings use for the environment. Omit it to have
+   * one allocated. An id already in use is a conflict.
+   */
+  environmentId?: string | null;
   metadata?: {
     [k: string]: string;
   };
@@ -5719,7 +5943,45 @@ export interface EnvironmentProviderBindingReadParams {
 export interface EnvironmentReadParams {
   environmentId: string;
 }
+/**
+ * Declare a fixed machine as an environment before its daemon registers.
+ * The first daemon the key admits under `name` becomes this environment and
+ * keeps its id; from then on only that daemon's identity reconnects to it.
+ */
+export interface EnvironmentRegisteredPutParams {
+  displayName?: string | null;
+  /**
+   * The id profiles and bindings use for the environment.
+   */
+  environmentId: string;
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * The name the daemon registers under: 1 to 128 bytes without control
+   * characters, unique among the open environments of the key. It cannot
+   * be changed afterwards.
+   */
+  name: string;
+  /**
+   * The persistent registration key whose daemons may fill it. It cannot
+   * be changed afterwards.
+   */
+  registrationKeyId: string;
+}
+/**
+ * Forget the daemon bound to a declared environment so that another
+ * identity may bind to it.
+ */
+export interface EnvironmentRegisteredReleaseParams {
+  environmentId: string;
+}
 export interface EnvironmentRegistrationKeyCreateParams {
+  /**
+   * Persistent keys only: admit only daemons whose registration name
+   * matches an environment declared under this key.
+   */
+  declaredOnly?: boolean;
   /**
    * Group name for the environments this key admits.
    */
@@ -5742,8 +6004,55 @@ export interface EnvironmentRegistrationKeyCreateParams {
    * longer than this; omit to keep them open.
    */
   offlineCloseAfterMs?: number | null;
+  /**
+   * The key's id within the universe: 1-128 ASCII letters, digits,
+   * underscores, hyphens, dots or colons, starting with a letter or digit.
+   * Omit it to have one allocated.
+   */
+  registrationKeyId?: string | null;
 }
 export interface EnvironmentRegistrationKeyListParams {}
+/**
+ * Declare a registration key whose secret the caller supplies: its id, its
+ * complete policy and the secret it answers to. An absent policy field is
+ * unset.
+ */
+export interface EnvironmentRegistrationKeyPutParams {
+  /**
+   * Persistent keys only: admit only daemons whose registration name
+   * matches an environment declared under this key.
+   */
+  declaredOnly?: boolean;
+  /**
+   * Group name for the environments this key admits.
+   */
+  displayName: string;
+  /**
+   * Disconnect grace for ephemeral environments; omit for the default.
+   */
+  ephemeralDisconnectGraceMs?: number | null;
+  expiresAtMs?: number | null;
+  /**
+   * Immutable once the key exists.
+   */
+  identityMode: EnvironmentIdentityModeView;
+  /**
+   * Non-closed environments the key may have at once; omit for unlimited.
+   */
+  maxActiveEnvironments?: number | null;
+  /**
+   * Persistent keys only: close environments whose daemon has been away
+   * longer than this; omit to keep them open.
+   */
+  offlineCloseAfterMs?: number | null;
+  registrationKeyId: string;
+  /**
+   * The secret daemons register with: `lsrk_` followed by 32 random bytes
+   * encoded as base64url without padding. Generate it with a
+   * cryptographic random source.
+   */
+  secret: EnvironmentRegistrationSecretView;
+}
 export interface EnvironmentRegistrationKeyReadParams {
   registrationKeyId: string;
 }
@@ -5762,6 +6071,11 @@ export interface EnvironmentRegistrationKeyRotateParams {
  * unset. The identity mode is immutable.
  */
 export interface EnvironmentRegistrationKeyUpdateParams {
+  /**
+   * Persistent keys only: admit only daemons whose registration name
+   * matches an environment declared under this key.
+   */
+  declaredOnly?: boolean;
   /**
    * Group name for the environments this key admits.
    */
@@ -5906,9 +6220,11 @@ export interface McpServerToolsDiscoverParams {
 }
 export interface ModelDefaultsPutParams {
   /**
-   * Revision returned by read/put; zero for a universe with no updates.
+   * Write only if the defaults are still at this revision, as returned by
+   * read or put; zero for a universe with no updates. Omit it to write
+   * whatever the current revision is.
    */
-  expectedRevision: number;
+  expectedRevision?: number | null;
   /**
    * Complete selection, or explicit null to clear this slot. Required.
    */

@@ -3558,6 +3558,30 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
+    async fn put_registered_environment(
+        &self,
+        params: EnvironmentRegisteredPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegisteredPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTERED_PUT, None)
+            .await?;
+        self.environment_service()
+            .put_registered_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn release_registered_environment(
+        &self,
+        params: EnvironmentRegisteredReleaseParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegisteredReleaseResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTERED_RELEASE, None)
+            .await?;
+        self.environment_service()
+            .release_registered_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
     async fn create_environment_registration_key(
         &self,
         params: EnvironmentRegistrationKeyCreateParams,
@@ -3565,6 +3589,18 @@ impl AgentApiService for GatewayAgentApi {
         self.authorize_method(METHOD_ENVIRONMENTS_REGISTRATION_KEYS_CREATE, None)
             .await?;
         self.create_environment_registration_key_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn put_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTRATION_KEYS_PUT, None)
+            .await?;
+        self.environment_service()
+            .put_environment_registration_key_record(params)
             .await
             .map(AgentApiOutcome::new)
     }
@@ -4155,7 +4191,7 @@ impl AgentApiService for GatewayAgentApi {
                 &request_auth,
                 trusted_universe,
                 self.mcp_private_networks
-                    .permits(&record.server_url, record.allow_private_network),
+                    .access(&record.server_url, record.allow_private_network),
                 mcp::McpToolDiscoveryLimits::default(),
             )
             .await
@@ -4324,41 +4360,111 @@ impl AgentApiService for GatewayAgentApi {
         }))
     }
 
-    async fn replace_auth_grant(
+    async fn put_auth_grant(
         &self,
-        params: AuthGrantReplaceParams,
-    ) -> Result<AgentApiOutcome<AuthGrantReplaceResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_GRANTS_REPLACE, None)
-            .await?;
-        let grant_id = parse_auth_grant_id(params.grant_id)?;
-        let current = self
-            .store
-            .read_grant(&grant_id)
-            .await
-            .map_err(map_auth_error)?;
-        let draft = auth_api::auth_grant_replace_draft(
-            &current,
-            params.token,
-            params.expires_at_ms,
-            now_ms()?,
+        params: AuthGrantPutParams,
+    ) -> Result<AgentApiOutcome<AuthGrantPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GRANTS_PUT, None).await?;
+        let dry_run = params.dry_run;
+        let now = now_ms()?;
+        // The declaration is validated exactly as an import is, so the rules
+        // cannot drift; nothing is written until it is known to be valid.
+        let draft = auth_grant_import_draft(
+            AuthGrantImportParams {
+                grant_id: Some(params.grant_id),
+                provider_id: params.provider_id,
+                exposure: params.exposure,
+                token: params.token,
+                display_name: params.display_name,
+                subject_hint: params.subject_hint,
+                scopes: params.scopes,
+                audience: params.audience,
+                expires_at_ms: params.expires_at_ms,
+                metadata: params.metadata,
+            },
+            now,
         )?;
-        self.store
-            .put_secret(draft.secret.clone())
+        let grant_id = draft.grant.grant_id.clone();
+        let current = match self.store.read_grant(&grant_id).await {
+            Ok(record) => Some(record),
+            Err(auth::AuthRegistryError::GrantNotFound { .. }) => None,
+            Err(error) => return Err(map_auth_error(error)),
+        };
+        let outcome = |record, created, token_replaced| {
+            Ok(AgentApiOutcome::new(AuthGrantPutResponse {
+                grant: auth_grant_view(record),
+                created,
+                token_replaced,
+            }))
+        };
+        let Some(current) = current else {
+            if dry_run {
+                return outcome(draft.grant.into_record(), true, false);
+            }
+            self.store
+                .put_secret(draft.secret.clone())
+                .await
+                .map_err(map_auth_error)?;
+            return match self.store.create_grant(draft.grant).await {
+                Ok(record) => outcome(record, true, false),
+                Err(error) => {
+                    let _ = self.store.delete_secret(&draft.secret.secret_id).await;
+                    Err(map_auth_error(error))
+                }
+            };
+        };
+        let (expected, update) = auth_api::token_credential_update(&current, &draft, now)?;
+        // The stored token is compared here, where it can be read, so the
+        // caller never has to keep a fingerprint of what it last supplied.
+        let (_, stored) = self
+            .store
+            .read_secret(&expected)
             .await
             .map_err(map_auth_error)?;
-        // Swap only if nobody replaced the value since the read, so two
-        // concurrent replacements never strand each other's secrets.
-        let swapped = self
+        let token_replaced = auth::secret_sha256_hex(stored.expose())
+            != auth::secret_sha256_hex(draft.secret.value.expose());
+        let update = auth::TokenCredentialUpdate {
+            access_token_secret: if token_replaced {
+                draft.secret.secret_id.clone()
+            } else {
+                expected.clone()
+            },
+            ..update
+        };
+        let declared = update.apply(&current);
+        declared.validate().map_err(map_auth_error)?;
+        let unchanged = !token_replaced && {
+            let mut same_time = declared.clone();
+            same_time.updated_at_ms = current.updated_at_ms;
+            same_time == current
+        };
+        if unchanged {
+            return outcome(current, false, false);
+        }
+        if dry_run {
+            return outcome(declared, false, token_replaced);
+        }
+        if token_replaced {
+            self.store
+                .put_secret(draft.secret.clone())
+                .await
+                .map_err(map_auth_error)?;
+        }
+        // Write only if nobody changed the value since the read, so two
+        // concurrent declarations never strand each other's secrets.
+        let written = self
             .store
-            .replace_grant_token(&grant_id, &draft.expected, draft.replacement)
+            .update_token_credential(&grant_id, &expected, update)
             .await;
-        let record = match swapped {
+        let record = match written {
             Ok(Some(record)) => record,
             other => {
-                let _ = self.store.delete_secret(&draft.secret.secret_id).await;
+                if token_replaced {
+                    let _ = self.store.delete_secret(&draft.secret.secret_id).await;
+                }
                 return Err(match other {
                     Ok(_) => AgentApiError::conflict(format!(
-                        "auth grant {grant_id} was changed while its value was being replaced; retry"
+                        "auth grant {grant_id} was changed while it was being declared; retry"
                     )),
                     Err(error) => map_auth_error(error),
                 });
@@ -4366,12 +4472,10 @@ impl AgentApiService for GatewayAgentApi {
         };
         // The old value is unreferenced now. A failed delete leaves an
         // unreachable sealed value behind, never a broken credential.
-        if let Err(error) = self.store.delete_secret(&draft.expected).await {
+        if token_replaced && let Err(error) = self.store.delete_secret(&expected).await {
             tracing::warn!(grant_id = %grant_id, %error, "could not delete a replaced credential value");
         }
-        Ok(AgentApiOutcome::new(AuthGrantReplaceResponse {
-            grant: auth_grant_view(record),
-        }))
+        outcome(record, false, token_replaced)
     }
 
     async fn revoke_auth_grant(
@@ -4582,20 +4686,17 @@ impl AgentApiService for GatewayAgentApi {
         }
     }
 
-    async fn replace_auth_provider(
+    async fn put_auth_provider(
         &self,
-        params: AuthProviderReplaceParams,
-    ) -> Result<AgentApiOutcome<AuthProviderReplaceResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_PROVIDERS_REPLACE, None)
+        params: AuthProviderPutParams,
+    ) -> Result<AgentApiOutcome<AuthProviderPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_PROVIDERS_PUT, None)
             .await?;
+        let dry_run = params.dry_run;
         let provider_id = parse_auth_provider_id(params.provider_id.clone())?;
-        let current = self
-            .store
-            .read_auth_provider(&provider_id)
-            .await
-            .map_err(map_auth_error)?;
+        let now = now_ms()?;
         // Same validation as create, so the rules cannot drift; nothing is
-        // written until the whole replacement is known to be valid.
+        // written until the whole declaration is known to be valid.
         let draft = auth_provider_create_draft(
             AuthProviderCreateParams {
                 provider_id: Some(params.provider_id),
@@ -4603,8 +4704,9 @@ impl AgentApiService for GatewayAgentApi {
                 config: params.config,
                 credential: params.credential,
             },
-            now_ms()?,
+            now,
         )?;
+        // A model_oauth binding must point at a real, active grant.
         if let auth::AuthProviderConfig::ModelOAuth(config) = &draft.provider.config {
             let grant = self
                 .store
@@ -4618,26 +4720,94 @@ impl AgentApiService for GatewayAgentApi {
                 )));
             }
         }
-        if let Some(secret) = &draft.secret {
+        let current = match self.store.read_auth_provider(&provider_id).await {
+            Ok(record) => Some(record),
+            Err(auth::AuthRegistryError::ProviderNotFound { .. }) => None,
+            Err(error) => return Err(map_auth_error(error)),
+        };
+        let outcome = |record, created, credential_replaced| {
+            Ok(AgentApiOutcome::new(AuthProviderPutResponse {
+                provider: auth_provider_view(record),
+                created,
+                credential_replaced,
+            }))
+        };
+        let Some(current) = current else {
+            if dry_run {
+                return outcome(draft.provider.into_record(), true, false);
+            }
+            // The secret must exist before the provider row: auth_providers
+            // carries a foreign key into auth_secrets.
+            if let Some(secret) = &draft.secret {
+                self.store
+                    .put_secret(secret.clone())
+                    .await
+                    .map_err(map_auth_error)?;
+            }
+            return match self.store.create_auth_provider(draft.provider).await {
+                Ok(record) => {
+                    self.model_discovery
+                        .invalidate_auth_provider(record.provider_id.as_str());
+                    outcome(record, true, false)
+                }
+                Err(error) => {
+                    if let Some(secret) = &draft.secret {
+                        let _ = self.store.delete_secret(&secret.secret_id).await;
+                    }
+                    Err(map_auth_error(error))
+                }
+            };
+        };
+        // The stored credential is compared here, where it can be read.
+        let credential_replaced = match (&current.credential_secret, &draft.secret) {
+            (None, None) => false,
+            (Some(stored), Some(supplied)) => {
+                let (_, stored) = self
+                    .store
+                    .read_secret(stored)
+                    .await
+                    .map_err(map_auth_error)?;
+                auth::secret_sha256_hex(stored.expose())
+                    != auth::secret_sha256_hex(supplied.value.expose())
+            }
+            _ => true,
+        };
+        let mut declared = draft.provider.into_record();
+        declared.created_at_ms = current.created_at_ms;
+        if !credential_replaced {
+            declared.credential_secret = current.credential_secret.clone();
+        }
+        let unchanged = !credential_replaced && {
+            let mut same_time = declared.clone();
+            same_time.updated_at_ms = current.updated_at_ms;
+            same_time == current
+        };
+        if unchanged {
+            return outcome(current, false, false);
+        }
+        if dry_run {
+            return outcome(declared, false, credential_replaced);
+        }
+        let new_secret = draft.secret.filter(|_| credential_replaced);
+        if let Some(secret) = &new_secret {
             self.store
                 .put_secret(secret.clone())
                 .await
                 .map_err(map_auth_error)?;
         }
-        let replacement = draft.provider.into_record();
-        let swapped = self
+        let written = self
             .store
-            .replace_auth_provider(replacement, current.credential_secret.as_ref())
+            .replace_auth_provider(declared, current.credential_secret.as_ref())
             .await;
-        let record = match swapped {
+        let record = match written {
             Ok(Some(record)) => record,
             other => {
-                if let Some(secret) = &draft.secret {
+                if let Some(secret) = &new_secret {
                     let _ = self.store.delete_secret(&secret.secret_id).await;
                 }
                 return Err(match other {
                     Ok(_) => AgentApiError::conflict(format!(
-                        "auth provider {provider_id} was changed while it was being replaced; retry"
+                        "auth provider {provider_id} was changed while it was being declared; retry"
                     )),
                     Err(error) => map_auth_error(error),
                 });
@@ -4647,14 +4817,13 @@ impl AgentApiService for GatewayAgentApi {
             .invalidate_auth_provider(record.provider_id.as_str());
         // The old credential is unreferenced now. A failed delete leaves an
         // unreachable sealed value behind, never a broken provider.
-        if let Some(old) = &current.credential_secret
+        if credential_replaced
+            && let Some(old) = &current.credential_secret
             && let Err(error) = self.store.delete_secret(old).await
         {
             tracing::warn!(provider_id = %provider_id, %error, "could not delete a replaced provider credential");
         }
-        Ok(AgentApiOutcome::new(AuthProviderReplaceResponse {
-            provider: auth_provider_view(record),
-        }))
+        outcome(record, false, credential_replaced)
     }
 
     async fn list_auth_providers(

@@ -62,7 +62,7 @@ async function show(runRevision: number, withParent = false, universeId = "unive
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <SessionLineage
-          universeId={universeId} slug={universeId} sessionId={sessionId}
+          universeId={universeId} handle={universeId} sessionId={sessionId}
           origin={withParent ? origin : null} runRevision={runRevision}
         />
       </MemoryRouter>

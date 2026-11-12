@@ -37,8 +37,8 @@ impl Runtime {
         let done = stop.clone();
         let worker = thread::spawn(move || {
             let mut universes = json!([
-                {"universeId":"00000000-0000-0000-0000-000000000001","slug":"one","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0},
-                {"universeId":"00000000-0000-0000-0000-000000000002","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0}
+                {"universeId":"00000000-0000-0000-0000-000000000001","handle":"one","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0},
+                {"universeId":"00000000-0000-0000-0000-000000000002","handle":"u-000000000002","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0}
             ]);
             while !done.load(Ordering::Relaxed) {
                 let (mut stream, _) = match listener.accept() {
@@ -88,25 +88,35 @@ impl Runtime {
                     "deployment/universes/list" => {
                         json!({"universes":universes})
                     }
+                    // As the runtime does, address a universe by UUID or handle.
                     "deployment/universes/read" => {
-                        json!({"universe":universes.as_array().unwrap().iter().find(|u| u["universeId"] == body["params"]["universeId"])})
+                        let named = &body["params"]["universe"];
+                        json!({"universe":universes.as_array().unwrap().iter().find(|u| u["universeId"] == *named || u["handle"] == *named)})
                     }
-                    "deployment/universes/slug/put" => {
+                    "deployment/universes/handle/put" => {
+                        let named = &body["params"]["universe"];
                         let universe = universes
                             .as_array_mut()
                             .unwrap()
                             .iter_mut()
-                            .find(|u| u["universeId"] == body["params"]["universeId"])
+                            .find(|u| u["universeId"] == *named || u["handle"] == *named)
                             .unwrap();
-                        universe["slug"] = body["params"]["slug"].clone();
+                        universe["handle"] = body["params"]["handle"].clone();
                         json!({"universe":universe})
                     }
                     "models/list" => json!({"models":[],"providers":[]}),
                     _ => panic!("unexpected method {method}"),
                 };
-                let response = if method == "deployment/universes/read"
-                    && result["universe"].is_null()
-                {
+                // As the runtime does, refuse a deployment method to a key
+                // that does not hold its group.
+                let permitted = !method.starts_with("deployment/universes")
+                    || single
+                    || groups
+                        .as_array()
+                        .is_some_and(|held| held.contains(&json!("deployment/universes")));
+                let response = if !permitted {
+                    json!({"id":body["id"],"error":{"code":-32003,"message":"forbidden"}})
+                } else if method == "deployment/universes/read" && result["universe"].is_null() {
                     json!({"id":body["id"],"error":{"code":-32004,"message":"unknown universe"}})
                 } else {
                     json!({"id":body["id"],"result":{"result":result,"notifications":[]}})
@@ -301,7 +311,7 @@ fn named_connections_universe_selection_and_per_command_override() {
     ));
     let universes = success(cli(dir, &["universe", "list"], None));
     assert!(universes.contains("* 00000000-0000-0000-0000-000000000001  one"));
-    assert!(universes.contains("00000000-0000-0000-0000-000000000002  (no slug)"));
+    assert!(universes.contains("00000000-0000-0000-0000-000000000002  u-000000000002"));
     let overridden = success(cli(
         dir,
         &[
@@ -320,7 +330,7 @@ fn named_connections_universe_selection_and_per_command_override() {
         overridden["activeUniverseId"],
         "00000000-0000-0000-0000-000000000002"
     );
-    let unnamed = success(cli(
+    let derived = success(cli(
         dir,
         &[
             "--universe",
@@ -330,8 +340,12 @@ fn named_connections_universe_selection_and_per_command_override() {
         ],
         None,
     ));
-    assert!(unnamed.contains("Slug: (no slug)"));
-    let renamed = success(cli(dir, &["universe", "set-slug", "one", "renamed"], None));
+    assert!(derived.contains("Handle: u-000000000002"));
+    let renamed = success(cli(
+        dir,
+        &["universe", "set-handle", "one", "renamed"],
+        None,
+    ));
     assert!(renamed.contains("00000000-0000-0000-0000-000000000001  renamed"));
     let status = success(cli(dir, &["connect", "status", "--json"], None));
     assert_eq!(
@@ -339,18 +353,18 @@ fn named_connections_universe_selection_and_per_command_override() {
         "00000000-0000-0000-0000-000000000001"
     );
     assert_eq!(
-        serde_json::from_str::<Value>(&status).unwrap()["activeUniverse"]["slug"],
+        serde_json::from_str::<Value>(&status).unwrap()["activeUniverse"]["handle"],
         "renamed"
     );
     let status = success(cli(dir, &["connect", "status"], None));
     assert!(status.contains("\n\nAPI key:\n"));
     assert!(status.ends_with(
-        "\n\nSelected universe:\n  Slug: renamed\n  UUID: 00000000-0000-0000-0000-000000000001\n"
+        "\n\nSelected universe:\n  Handle: renamed\n  UUID: 00000000-0000-0000-0000-000000000001\n"
     ));
     let universe_status = success(cli(dir, &["universe", "status", "--json"], None));
     assert_eq!(
         serde_json::from_str::<Value>(&universe_status).unwrap(),
-        json!({"universeId":"00000000-0000-0000-0000-000000000001", "slug":"renamed"})
+        json!({"universeId":"00000000-0000-0000-0000-000000000001", "handle":"renamed"})
     );
     let requests = runtime.requests.lock().unwrap();
     let models: Vec<_> = requests
@@ -408,12 +422,12 @@ fn universe_key_and_explicit_single_mode_send_no_selection_header() {
         let status: Value = serde_json::from_str(&status).unwrap();
         assert_eq!(status["universeId"], "00000000-0000-0000-0000-000000000001");
         if single {
-            assert_eq!(status["slug"], "one");
+            assert_eq!(status["handle"], "one");
             let listed = success(cli(dir, &["universe", "list"], None));
             assert!(listed.contains("* 00000000-0000-0000-0000-000000000001  one"));
         } else {
             assert!(
-                status["slugUnavailableReason"]
+                status["unavailableReason"]
                     .as_str()
                     .unwrap()
                     .contains("requires a deployment key")
@@ -477,8 +491,8 @@ fn universe_status_distinguishes_restricted_metadata_and_missing_universes() {
         ));
         let status: Value = serde_json::from_str(&output).unwrap();
         assert_eq!(status["universeId"], overrides[2].1);
-        assert!(status["slug"].is_null());
-        let reason = status["slugUnavailableReason"].as_str().unwrap();
+        assert!(status["handle"].is_null());
+        let reason = status["unavailableReason"].as_str().unwrap();
         if restricted {
             assert!(reason.contains("requires a deployment key"));
         } else {
@@ -495,4 +509,138 @@ fn universe_status_distinguishes_restricted_metadata_and_missing_universes() {
             usize::from(!restricted)
         );
     }
+}
+
+#[test]
+fn a_named_handle_is_sent_as_given_and_only_a_saved_selection_becomes_a_uuid() {
+    const ONE: &str = "00000000-0000-0000-0000-000000000001";
+    let universe_headers = |runtime: &Runtime, method: &str| -> Vec<String> {
+        runtime
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, _)| m == method)
+            .map(|(_, headers)| {
+                headers
+                    .lines()
+                    .find_map(|line| line.strip_prefix("x-lightspeed-universe: "))
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect()
+    };
+
+    // A key that cannot read universes still addresses one by handle: the
+    // handle goes out in the header and nothing is looked up first.
+    let restricted = Runtime::with_groups(
+        json!({"kind":"deployment"}),
+        false,
+        json!(["session", "models"]),
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let dir = directory.path();
+    let connection = [
+        ("LIGHTSPEED_API_URL", restricted.endpoint.as_str()),
+        ("LIGHTSPEED_API_KEY", "lsk_fixture_secret"),
+    ];
+    success(cli_env(
+        dir,
+        &["--universe", "one", "models", "list"],
+        None,
+        &connection,
+    ));
+    let from_environment = [connection[0], connection[1], ("LIGHTSPEED_UNIVERSE", "one")];
+    success(cli_env(dir, &["models", "list"], None, &from_environment));
+    assert_eq!(universe_headers(&restricted, "models/list"), ["one", "one"]);
+    let status = success(cli_env(
+        dir,
+        &["universe", "status", "--json"],
+        None,
+        &from_environment,
+    ));
+    let status: Value = serde_json::from_str(&status).unwrap();
+    assert!(status["universeId"].is_null());
+    assert_eq!(status["handle"], "one");
+    assert!(
+        status["unavailableReason"]
+            .as_str()
+            .unwrap()
+            .contains("requires a deployment key")
+    );
+    assert!(
+        !restricted
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(method, _)| method.starts_with("deployment/"))
+    );
+    // Saving a selection needs the UUID, which this key cannot look up.
+    success(cli(
+        dir,
+        &[
+            "connect",
+            "add",
+            "restricted",
+            "--url",
+            &restricted.endpoint,
+            "--api-key-stdin",
+        ],
+        Some("lsk_fixture_secret"),
+    ));
+    success(cli(dir, &["connect", "use", "restricted"], None));
+    let refused = cli(dir, &["universe", "use", "one"], None);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("--universe one"));
+    success(cli(dir, &["universe", "use", ONE], None));
+    // A key that can read universes saves the UUID a handle names, and
+    // reports both halves of a selection made by handle.
+    let runtime = Runtime::start(json!({"kind":"deployment"}), false);
+    let directory = tempfile::tempdir().unwrap();
+    let dir = directory.path();
+    success(cli(
+        dir,
+        &[
+            "--universe",
+            "one",
+            "connect",
+            "add",
+            "test",
+            "--url",
+            &runtime.endpoint,
+            "--api-key-stdin",
+        ],
+        Some("lsk_fixture_secret"),
+    ));
+    let saved = success(cli(dir, &["connect", "list", "--json"], None));
+    assert_eq!(
+        serde_json::from_str::<Value>(&saved).unwrap()[0]["universe"],
+        ONE
+    );
+    success(cli(dir, &["connect", "use", "test"], None));
+    success(cli(dir, &["models", "list"], None));
+    success(cli(dir, &["--universe", "one", "models", "list"], None));
+    assert_eq!(universe_headers(&runtime, "models/list"), [ONE, "one"]);
+    let status = success(cli(
+        dir,
+        &["--universe", "one", "universe", "status", "--json"],
+        None,
+    ));
+    assert_eq!(
+        serde_json::from_str::<Value>(&status).unwrap(),
+        json!({"universeId": ONE, "handle": "one"})
+    );
+    let listed = success(cli(
+        dir,
+        &["--universe", "u-000000000002", "universe", "list", "--json"],
+        None,
+    ));
+    let listed: Value = serde_json::from_str(&listed).unwrap();
+    assert_eq!(listed["universes"][0]["active"], false);
+    assert_eq!(listed["universes"][1]["active"], true);
+    assert_eq!(
+        listed["activeUniverseId"],
+        "00000000-0000-0000-0000-000000000002"
+    );
 }

@@ -8,6 +8,7 @@ import type {
   McpServer,
   McpToolDiscovery,
   Environment,
+  EnvironmentRegistrationKey,
   SessionEventsPage,
   SessionListPage,
   SessionView,
@@ -186,28 +187,28 @@ describe("demo router", () => {
     expect(universe.bots.has("no-model")).toBe(false);
   });
 
-  it("carries runtime slugs through creation and adoption without local suffixes", async () => {
+  it("carries runtime handles through creation and adoption without local suffixes", async () => {
     const { store, call } = await boot();
-    const created = await call("POST", "/api/v1/universes", { name: "Display", slug: "chosen" });
+    const created = await call("POST", "/api/v1/universes", { name: "Display", handle: "chosen" });
     expect(created.status).toBe(201);
-    expect(created.json).toMatchObject({ slug: "chosen" });
-    expect((await call("POST", "/api/v1/universes", { name: "Another", slug: "chosen" })).status).toBe(409);
-    const named = { universeId: "11111111-1111-4111-8111-111111111111", slug: "from-runtime", sessions: 0, workspaces: 0, profiles: 0, blobBytes: 0, createdAtMs: 0 };
-    const unnamed = { ...named, universeId: "22222222-2222-4222-8222-222222222222", slug: undefined };
-    store.orphanEngineUniverses.push(named, unnamed);
+    expect(created.json).toMatchObject({ handle: "chosen" });
+    expect((await call("POST", "/api/v1/universes", { name: "Another", handle: "chosen" })).status).toBe(409);
+    const named = { universeId: "11111111-1111-4111-8111-111111111111", handle: "from-runtime", sessions: 0, workspaces: 0, profiles: 0, blobBytes: 0, createdAtMs: 0 };
+    store.orphanEngineUniverses.push(named);
     const adopted = await call("POST", "/api/v1/universes/adopt", { name: "Unrelated name", lightspeedUniverseId: named.universeId });
     expect(adopted.status).toBe(201);
-    expect(adopted.json).toMatchObject({ slug: "from-runtime", lightspeedUniverseId: named.universeId });
-    expect((await call("POST", "/api/v1/universes/adopt", { name: "Unnamed", lightspeedUniverseId: unnamed.universeId })).status).toBe(400);
-    expect(store.orphanEngineUniverses.some(u => u.universeId === unnamed.universeId)).toBe(true);
-    expect((await call("POST", "/api/v1/universes/adopt", { name: "Unnamed", lightspeedUniverseId: unnamed.universeId, slug: "now-named" })).status).toBe(201);
+    expect(adopted.json).toMatchObject({ handle: "from-runtime", lightspeedUniverseId: named.universeId });
+    const other = { ...named, universeId: "22222222-2222-4222-8222-222222222222", handle: "kept" };
+    store.orphanEngineUniverses.push(other);
+    expect((await call("POST", "/api/v1/universes/adopt", { name: "Other", lightspeedUniverseId: other.universeId, handle: "renamed-on-adopt" })).status).toBe(400);
+    expect(store.orphanEngineUniverses.some(u => u.universeId === other.universeId)).toBe(true);
     const universe = created.json as Universe;
-    expect((await call("PUT", `/api/v1/universes/${universe.id}/slug`, { slug: "from-runtime" })).status).toBe(409);
-    const renamed = await call("PUT", `/api/v1/universes/${universe.id}/slug`, { slug: "renamed" });
+    expect((await call("PUT", `/api/v1/universes/${universe.id}/handle`, { handle: "from-runtime" })).status).toBe(409);
+    const renamed = await call("PUT", `/api/v1/universes/${universe.id}/handle`, { handle: "renamed" });
     expect(renamed.status).toBe(200);
-    expect(renamed.json).toMatchObject({ id: universe.id, lightspeedUniverseId: universe.lightspeedUniverseId, slug: "renamed" });
-    expect((await call("GET", "/api/v1/universes")).json).toEqual(expect.arrayContaining([expect.objectContaining({ id: universe.id, slug: "renamed" })]));
-    expect((await call("POST", "/api/v1/universes/sync-slugs", {})).json).toEqual({ updated: 0, skipped: 0 });
+    expect(renamed.json).toMatchObject({ id: universe.id, lightspeedUniverseId: universe.lightspeedUniverseId, handle: "renamed" });
+    expect((await call("GET", "/api/v1/universes")).json).toEqual(expect.arrayContaining([expect.objectContaining({ id: universe.id, handle: "renamed" })]));
+    expect((await call("POST", "/api/v1/universes/sync-handles", {})).json).toEqual({ updated: 0, skipped: 0 });
   });
 
   it("keeps seeded final replies outside each run's collapsible activity", async () => {
@@ -220,7 +221,7 @@ describe("demo router", () => {
         for (const run of session.runs.values()) {
           if (run.status !== "completed" || !run.outputText) continue;
           const section = sections.find((section) => section.runId === run.id);
-          expect(section?.reply, `${universe.universe.slug}/${session.view.id}/${run.id}`).toMatchObject({
+          expect(section?.reply, `${universe.universe.handle}/${session.view.id}/${run.id}`).toMatchObject({
             role: "assistant",
             runId: run.id,
             contentRef: run.output?.blobRef,
@@ -319,22 +320,22 @@ describe("demo router", () => {
     for (const universe of list) {
       for (const path of universeReads) {
         const result = await call("GET", `/api/v1/universes/${universe.id}/${path}`);
-        expect(result.status, `${universe.slug}: ${path}`).toBe(200);
+        expect(result.status, `${universe.handle}: ${path}`).toBe(200);
       }
       const bots = ((await call("GET", `/api/v1/universes/${universe.id}/bots`)).json as { bots: BotListItem[] }).bots;
-      expect(bots.length, `${universe.slug}: bots`).toBeGreaterThan(0);
+      expect(bots.length, `${universe.handle}: bots`).toBeGreaterThan(0);
       for (const bot of bots) {
         for (const path of ["", "/triggers", "/events", "/state"]) {
           const result = await call("GET", `/api/v1/universes/${universe.id}/bots/${bot.botId}${path}`);
-          expect(result.status, `${universe.slug}: bots/${bot.botId}${path}`).toBe(200);
+          expect(result.status, `${universe.handle}: bots/${bot.botId}${path}`).toBe(200);
         }
       }
       const sessions = (await call("GET", `/api/v1/universes/${universe.id}/sessions`)).json as SessionListPage;
-      expect(sessions.sessions.length, `${universe.slug}: sessions`).toBeGreaterThan(0);
+      expect(sessions.sessions.length, `${universe.handle}: sessions`).toBeGreaterThan(0);
       for (const session of sessions.sessions) {
         for (const path of ["", "/events?limit=200", "/events?direction=backward&limit=200", "/instructions"]) {
           const result = await call("GET", `/api/v1/universes/${universe.id}/sessions/${session.id}${path}`);
-          expect(result.status, `${universe.slug}: sessions/${session.id}${path}`).toBe(200);
+          expect(result.status, `${universe.handle}: sessions/${session.id}${path}`).toBe(200);
         }
       }
     }
@@ -475,27 +476,55 @@ describe("demo router", () => {
       displayName: "Connector", scope: { kind: "universe", universeId: universe.universe.id }, groups: ["channels/inbound"],
     });
     expect(created.status).toBe(201);
-    const { apiKey } = created.json as { apiKey: { keyPrefix: string } };
-    const listed = (await call("GET", "/api/v1/admin/api-keys")).json as { keyPrefix: string; groups: string[]; scope: { kind: string } }[];
-    expect(listed.find((key) => key.keyPrefix === apiKey.keyPrefix)).toMatchObject({ groups: ["channels/inbound"], scope: { kind: "universe" } });
-    expect(listed.find((key) => key.keyPrefix === "lsk_platform")).toMatchObject({ scope: { kind: "deployment" } });
-    expect((await call("DELETE", `/api/v1/admin/api-keys/${apiKey.keyPrefix}`)).status).toBe(200);
+    const { apiKey } = created.json as { apiKey: { keyId: string } };
+    const listed = (await call("GET", "/api/v1/admin/api-keys")).json as { keyId: string; groups: string[]; scope: { kind: string } }[];
+    expect(listed.find((key) => key.keyId === apiKey.keyId)).toMatchObject({ groups: ["channels/inbound"], scope: { kind: "universe" } });
+    expect(listed.find((key) => key.keyId === "platform")).toMatchObject({ scope: { kind: "deployment" } });
+    // A key id is resolved within its scope: the universe's key is not a
+    // deployment key of that id.
+    expect((await call("DELETE", `/api/v1/admin/api-keys/${apiKey.keyId}`)).status).toBe(404);
+    const scoped = `?universeId=${universe.universe.lightspeedUniverseId}`;
+    expect((await call("DELETE", `/api/v1/admin/api-keys/${apiKey.keyId}${scoped}`)).status).toBe(200);
   });
 
-  it.each(["admin", "universe"])("rotates %s keys immediately and refuses stale or revoked prefixes", async (scope) => {
+  it.each(["admin", "universe"])("rotates %s keys by id, keeping the id, and refuses revoked keys", async (scope) => {
     const { store, call } = await boot();
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const base = scope === "admin" ? "/api/v1/admin/api-keys" : `/api/v1/universes/${universe.universe.id}/api-keys`;
     const created = await call("POST", base, { displayName: "Rotation test", groups: ["session"], scope: { kind: "deployment" } });
-    const before = created.json as { apiKey: Record<string, unknown> & { keyPrefix: string }; secret: string };
-    const rotated = await call("POST", `${base}/${before.apiKey.keyPrefix}/rotate`);
+    const before = created.json as { apiKey: Record<string, unknown> & { keyId: string; keyPrefix: string }; secret: string };
+    const rotated = await call("POST", `${base}/${before.apiKey.keyId}/rotate`);
     expect(rotated.status).toBe(200);
     const after = rotated.json as typeof before;
     expect(after.secret).not.toBe(before.secret);
     expect(after.apiKey).toEqual({ ...before.apiKey, keyPrefix: after.secret.slice(0, 12), lastUsedAtMs: null });
     expect((await call("POST", `${base}/${before.apiKey.keyPrefix}/rotate`)).status).toBe(404);
-    expect((await call("DELETE", `${base}/${after.apiKey.keyPrefix}`)).status).toBe(200);
-    expect((await call("POST", `${base}/${after.apiKey.keyPrefix}/rotate`)).status).toBe(404);
+    expect((await call("DELETE", `${base}/${after.apiKey.keyId}`)).status).toBe(200);
+    expect((await call("POST", `${base}/${after.apiKey.keyId}/rotate`)).status).toBe(404);
+  });
+
+  it.each(["admin", "universe"])("mints %s keys under a chosen id and refuses an id a key already holds", async (scope) => {
+    const { store, call } = await boot();
+    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const base = scope === "admin" ? "/api/v1/admin/api-keys" : `/api/v1/universes/${universe.universe.id}/api-keys`;
+    const body = { displayName: "CI", groups: ["session"], scope: { kind: "deployment" }, keyId: " ci " };
+    const created = await call("POST", base, body);
+    expect(created.status).toBe(201);
+    expect(created.json).toMatchObject({ apiKey: { keyId: "ci", revokedAtMs: null } });
+    expect((await call("POST", base, body)).json).toEqual({
+      error: 'key ID "ci" is already in use; leave it blank to generate a new ID or choose another',
+    });
+    // Revoking never frees the id.
+    expect((await call("DELETE", `${base}/ci`)).status).toBe(200);
+    const reused = await call("POST", base, body);
+    expect(reused.status).toBe(409);
+    expect(reused.json).toEqual({
+      error: 'key ID "ci" belongs to a revoked key and cannot be reused; leave it blank to generate a new ID or choose another',
+    });
+    // An id is taken within its scope only.
+    if (scope === "admin") {
+      expect((await call("POST", base, { ...body, scope: { kind: "universe", universeId: universe.universe.id } })).status).toBe(201);
+    }
   });
 
   it("updates a user's admin-managed account fields and accepts a password reset", async () => {
@@ -693,6 +722,80 @@ describe("demo router", () => {
     expect(audit.filter((event) => event.targetId === session.id).map((event) => event.action)).toEqual(["session.purge"]);
     const after = ((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments;
     expect(after.find((env) => env.environmentId === existing.environmentId)).toEqual(existing);
+  });
+
+  it("mints a registration key under a chosen id and refuses an id a key already holds", async () => {
+    const { call } = await boot();
+    const keys = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/environment-registration-keys`;
+    const body = { identityMode: "ephemeral", displayName: "Sandboxes", registrationKeyId: " sandboxes " };
+    const created = await call("POST", keys, body);
+    expect(created.status).toBe(201);
+    expect(created.json).toMatchObject({ registrationKey: { registrationKeyId: "sandboxes", status: "active" } });
+    const taken = await call("POST", keys, body);
+    expect(taken.status).toBe(409);
+    expect(taken.json).toEqual({
+      error: 'key ID "sandboxes" is already in use; leave it blank to generate a new ID or choose another',
+    });
+    // Revoking never frees the id.
+    expect((await call("POST", `${keys}/sandboxes/revoke`, {})).status).toBe(200);
+    expect((await call("POST", keys, body)).json).toEqual({
+      error: 'key ID "sandboxes" belongs to a revoked key and cannot be reused; leave it blank to generate a new ID or choose another',
+    });
+    expect(((await call("GET", keys)).json as EnvironmentRegistrationKey[])
+      .filter((key) => key.registrationKeyId === "sandboxes")).toHaveLength(1);
+  });
+
+  it("declares registered environments under persistent keys and releases their daemons", async () => {
+    const { call, store } = await boot();
+    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const keys = `${base}/environment-registration-keys`;
+    const mint = async (body: Record<string, unknown>) =>
+      ((await call("POST", keys, body)).json as { registrationKey: EnvironmentRegistrationKey }).registrationKey;
+    expect((await call("POST", keys, { identityMode: "ephemeral", displayName: "Sandboxes", declaredOnly: true })).status).toBe(400);
+    const ephemeral = await mint({ identityMode: "ephemeral", displayName: "Sandboxes" });
+    const key = await mint({ identityMode: "persistent", displayName: "Build machines", declaredOnly: true });
+    expect(key.declaredOnly).toBe(true);
+    // An update is the complete policy: leaving the field out turns it off.
+    const renamed = (await call("PUT", `${keys}/${key.registrationKeyId}`, { displayName: "Build fleet", declaredOnly: true })).json;
+    expect(renamed).toMatchObject({ displayName: "Build fleet", declaredOnly: true });
+    const cleared = (await call("PUT", `${keys}/${key.registrationKeyId}`, { displayName: "Build fleet" })).json as EnvironmentRegistrationKey;
+    expect(cleared.declaredOnly).toBeUndefined();
+
+    const declaration = { environmentId: "build-box-01", registrationKeyId: key.registrationKeyId, name: "build-01" };
+    expect((await call("POST", `${base}/environments/registered`, { ...declaration, registrationKeyId: ephemeral.registrationKeyId })).status).toBe(400);
+    expect((await call("POST", `${base}/environments/registered`, { ...declaration, name: " " })).status).toBe(400);
+    const declared = await call("POST", `${base}/environments/registered`, declaration);
+    expect(declared.status).toBe(201);
+    expect(declared.json).toMatchObject({
+      environmentId: "build-box-01", state: "open", status: "away",
+      source: { type: "registered", registrationKeyId: key.registrationKeyId, name: "build-01", identityMode: "persistent", connected: false },
+    });
+    expect((declared.json as Environment).source).not.toHaveProperty("daemonId");
+    const listed = ((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments;
+    expect(listed.map((environment) => environment.environmentId)).toContain("build-box-01");
+    expect(((await call("GET", keys)).json as EnvironmentRegistrationKey[])
+      .find((candidate) => candidate.registrationKeyId === key.registrationKeyId)).toMatchObject({ activeEnvironmentCount: 1 });
+
+    // Declaring again converges the display name; the key and name are fixed.
+    const again = await call("POST", `${base}/environments/registered`, { ...declaration, displayName: "Build box 01" });
+    expect(again.status).toBe(200);
+    expect(again.json).toMatchObject({ environmentId: "build-box-01", displayName: "Build box 01" });
+    expect((await call("POST", `${base}/environments/registered`, { ...declaration, name: "build-02" })).status).toBe(409);
+    expect((await call("POST", `${base}/environments/registered`, { ...declaration, environmentId: "build-box-02" })).status).toBe(409);
+
+    // Releasing forgets the bound daemon and keeps the environment.
+    const release = `${base}/environments/build-box-01/release`;
+    expect((await call("POST", release)).json).toEqual(again.json);
+    const source = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.environments.get("build-box-01")!.source;
+    if (source.type !== "registered") throw new Error("expected a registered environment");
+    source.daemonId = "daemon_bound";
+    source.connected = true;
+    const released = await call("POST", release);
+    expect(released.status).toBe(200);
+    expect(released.json).toMatchObject({ environmentId: "build-box-01", status: "away", source: { name: "build-01", connected: false } });
+    expect((released.json as Environment).source).not.toHaveProperty("daemonId");
+    const undeclared = listed.find((environment) => environment.source.type !== "registered")!;
+    expect((await call("POST", `${base}/environments/${undeclared.environmentId}/release`)).status).toBe(400);
   });
 
   it("rejects unlisted activation and clears removed selections without filling defaults", async () => {

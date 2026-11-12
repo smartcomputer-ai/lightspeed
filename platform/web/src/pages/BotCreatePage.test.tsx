@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", async (original) => ({
   ...await original<typeof import("@/lib/universes")>(),
-  useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, slug: "factory", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, handle: "factory", isLoading: false }),
   useFeature: () => true,
 }));
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
@@ -89,7 +89,7 @@ async function show() {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={["/u/factory/bots"]}>
       <Routes>
-        <Route path="/u/:slug/bots" element={<BotCreateDialog universeId="universe" slug="factory" open onOpenChange={() => undefined} />} />
+        <Route path="/u/:handle/bots" element={<BotCreateDialog universeId="universe" handle="factory" open onOpenChange={() => undefined} />} />
         <Route path="*" element={<Location />} />
       </Routes>
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,

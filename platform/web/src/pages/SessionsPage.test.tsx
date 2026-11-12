@@ -387,11 +387,11 @@ async function show(pathway: Pathway, universeId = "universe", sessionId = "sess
   await act(async () => root.render(
     <MemoryRouter>
       {pathway === "session" ? (
-        <SessionDetail universeId={universeId} slug={universeId} sessionId={sessionId} />
+        <SessionDetail universeId={universeId} handle={universeId} sessionId={sessionId} />
       ) : (
         <BotChat
           universeId={universeId}
-          slug={universeId}
+          handle={universeId}
           bot={bot}
           state={{ controller: {
             mainSessionId: pathway === "bot-main" ? sessionId : "main",

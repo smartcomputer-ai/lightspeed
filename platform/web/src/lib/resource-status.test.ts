@@ -51,6 +51,19 @@ it("shows when a disconnected registered daemon was last seen", () => {
     .toEqual({ label: "Ready", tone: "positive" });
 });
 
+it("says a declared environment without a daemon is waiting for it to register", () => {
+  const source: Environment["source"] = {
+    type: "registered", registrationKeyId: "key", name: "build-01", identityMode: "persistent",
+    connected: false, connectionChangedAtMs: Date.now() - 120_000, lastSeenAtMs: Date.now() - 120_000,
+  };
+  expect(environmentStatus({ source, state: "open", status: "away" }))
+    .toEqual({ label: "Disconnected", tone: "neutral", description: "Waiting for its daemon to register as build-01" });
+  expect(environmentStatus({ source: { ...source, daemonId: "daemon" }, state: "open", status: "away" }))
+    .toEqual({ label: "Disconnected", tone: "neutral", description: "Last seen 2m ago" });
+  expect(environmentStatus({ source, state: "closed", status: "closed", closeReason: "requested" }))
+    .toEqual({ label: "Closed", tone: "neutral", description: "Closed on request" });
+});
+
 it("distinguishes signing in from binding a bearer credential", () => {
   const server: Pick<McpServer, "status" | "authPolicy"> = { status: "needsAuthConfig", authPolicy: { type: "requiredOAuth" } };
   expect(mcpServerStatus(server)).toEqual({ label: "Needs sign-in", tone: "warning" });

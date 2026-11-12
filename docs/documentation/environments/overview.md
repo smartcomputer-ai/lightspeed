@@ -44,7 +44,10 @@ machine. Lightspeed supports three ways to reach and manage it:
 A registered machine needs outbound connectivity to Lightspeed, so it does
 not need its own inbound daemon address. A registration key admits machines
 into a particular universe. Each admitted daemon then uses its own persistent
-identity to reconnect.
+identity to reconnect. A fixed machine can also be declared in advance, with
+an environment ID you choose, so that profiles can name it before its daemon
+has registered; see
+[Run registered daemons](registered-daemons.md#declare-fixed-machines-before-their-daemons-register).
 
 A provider adds machine lifecycle management. Lightspeed asks it to create a
 machine and, later, to close it; the provider runs everything in between,

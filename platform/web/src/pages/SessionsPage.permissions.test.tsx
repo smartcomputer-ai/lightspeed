@@ -10,7 +10,7 @@ import type { ModelDefaults } from "@/api";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "contributor" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, slug: "universe", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, handle: "universe", isLoading: false }) }));
 vi.mock("@/components/provider-readiness-banner", () => ({ ProviderReadinessBanner: () => null }));
 vi.mock("@/components/ui/select", () => {
   // Exercise the page's selection behavior without popup positioning in jsdom.

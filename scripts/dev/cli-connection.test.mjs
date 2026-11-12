@@ -28,7 +28,7 @@ test("runtime and full profiles share a persistent CLI key and separate Platform
   const f = fixture(t);
   const first = await prepareCliConnection({ ...f, full: false });
   const universeCall = f.calls.find(c => c.args.includes("universe"));
-  assert.deepEqual(universeCall.args.slice(-4), ["--universe-id", f.env.LIGHTSPEED_PG_UNIVERSE_ID, "--slug", "development"]);
+  assert.deepEqual(universeCall.args.slice(-4), ["--universe-id", f.env.LIGHTSPEED_PG_UNIVERSE_ID, "--handle", "development"]);
   const handoff = JSON.parse(readFileSync(first.handoff));
   const secret = readFileSync(handoff.credentialFile, "utf8");
   assert.equal(statSync(handoff.credentialFile).mode & 0o777, 0o600);
@@ -37,7 +37,12 @@ test("runtime and full profiles share a persistent CLI key and separate Platform
   const second = await prepareCliConnection({ ...f, full: true });
   assert.equal(readFileSync(handoff.credentialFile, "utf8"), secret);
   assert.notEqual(second.platformSecret, secret);
-  assert.ok(f.calls.filter(c => c.args.includes("provision")).every(c => c.args.includes("--refresh-groups")));
+  // Each kind is declared under its own key id, the same on every start, and
+  // never asked merely to verify.
+  const keyIds = f.calls.filter(c => c.args.includes("provision")).map(c => c.args[c.args.indexOf("--key-id") + 1]);
+  assert.deepEqual([...new Set(keyIds)].map(id => id.replace(/-[0-9a-f]{8}$/, "")).sort(), ["dev-cli", "dev-platform"]);
+  assert.equal(new Set(keyIds).size, 2);
+  assert.ok(f.calls.filter(c => c.args.includes("provision")).every(c => !c.args.includes("--require-existing")));
   f.keys.set(secret, "revoked");
   await assert.rejects(prepareCliConnection({ ...f, full: true }), /revoked/);
   assert.equal(f.keys.size, 2, "revocation does not trigger another key");
@@ -67,7 +72,7 @@ test("bootstrap opt-out does not repair missing database credentials or refresh 
   await prepareCliConnection({ ...f, full: true });
   f.calls.length = 0;
   await prepareCliConnection({ ...f, full: true, noBootstrap: true });
-  assert.ok(f.calls.filter(c => c.args.includes("provision")).every(c => c.args.includes("--require-existing") && !c.args.includes("--refresh-groups")));
+  assert.ok(f.calls.filter(c => c.args.includes("provision")).every(c => c.args.includes("--require-existing")));
   f.keys.clear();
   await assert.rejects(prepareCliConnection({ ...f, full: true, noBootstrap: true }), /restart must use an active key/);
   assert.equal(f.keys.size, 0);
