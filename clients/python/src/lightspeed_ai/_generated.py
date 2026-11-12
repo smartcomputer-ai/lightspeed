@@ -86,10 +86,11 @@ METHOD_INFO = {
     'mcp/servers/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read an MCP server record', 'description': 'Returns one catalog document with defaults, auth policy, non-secret grant binding, status, and revision; no credential value is exposed.'},
     'mcp/servers/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List MCP server records', 'description': 'Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.'},
     'mcp/servers/delete': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Delete an MCP server record', 'description': 'Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.'},
-    'auth/grants/import': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Import a static bearer grant', 'description': 'Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.'},
+    'auth/grants/import': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Import a token credential', 'description': 'Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.'},
     'auth/grants/lease': {'scope': 'service', 'access': {'kind': 'service'}, 'summary': 'Lease a retrievable authentication grant', 'description': 'Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.'},
     'auth/grants/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read authentication grant metadata', 'description': 'Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.'},
     'auth/grants/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List authentication grants', 'description': 'Lists non-secret grant metadata for the universe, optionally filtered by status.'},
+    'auth/grants/replace': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': "Replace a token credential's value", 'description': 'Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.'},
     'auth/grants/revoke': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Revoke an authentication grant', 'description': 'Marks the grant unusable by token consumers while retaining non-secret audit metadata.'},
     'auth/clients/create': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Register an OAuth client', 'description': 'Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.'},
     'auth/clients/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read OAuth client metadata', 'description': 'Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.'},
@@ -98,6 +99,7 @@ METHOD_INFO = {
     'auth/flows/start': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Start an OAuth authorization flow', 'description': 'Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.'},
     'auth/flows/read': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Read OAuth flow status', 'description': "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed."},
     'auth/providers/create': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Register an authentication provider', 'description': 'Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.'},
+    'auth/providers/replace': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Replace an authentication provider', 'description': "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call."},
     'auth/providers/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read authentication provider metadata', 'description': 'Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.'},
     'auth/providers/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List authentication providers', 'description': 'Lists non-secret model/GitHub provider registrations for the universe.'},
     'auth/providers/delete': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Delete an authentication provider', 'description': 'Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.'},
@@ -454,6 +456,9 @@ class GeneratedClient:
     async def call(self, method: Literal['auth/grants/list'], params: Api.AuthGrantListParams,
                    *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthGrantListResponse: ...
     @overload
+    async def call(self, method: Literal['auth/grants/replace'], params: Api.AuthGrantReplaceParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthGrantReplaceResponse: ...
+    @overload
     async def call(self, method: Literal['auth/grants/revoke'], params: Api.AuthGrantRevokeParams,
                    *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthGrantRevokeResponse: ...
     @overload
@@ -477,6 +482,9 @@ class GeneratedClient:
     @overload
     async def call(self, method: Literal['auth/providers/create'], params: Api.AuthProviderCreateParams,
                    *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthProviderCreateResponse: ...
+    @overload
+    async def call(self, method: Literal['auth/providers/replace'], params: Api.AuthProviderReplaceParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthProviderReplaceResponse: ...
     @overload
     async def call(self, method: Literal['auth/providers/read'], params: Api.AuthProviderReadParams,
                    *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthProviderReadResponse: ...

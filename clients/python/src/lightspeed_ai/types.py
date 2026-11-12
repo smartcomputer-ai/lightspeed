@@ -173,6 +173,12 @@ class AuthGrantReadParams(TypedDict):
     grantId: str
 
 
+class AuthGrantReplaceParams(TypedDict):
+    expiresAtMs: NotRequired[int | None]
+    grantId: str
+    token: str
+
+
 class AuthGrantRevokeParams(TypedDict):
     grantId: str
 
@@ -197,7 +203,7 @@ class AuthProviderDeleteParams(TypedDict):
 
 
 type AuthProviderKind = Literal[
-    'staticBearer',
+    'staticToken',
     'mcpOAuth',
     'gitHubApp',
     'customOAuth',
@@ -1225,6 +1231,19 @@ type McpServerCredential = McpServerCredential1
 
 class McpServerDeleteParams(TypedDict):
     serverId: str
+
+
+class McpServerHeader1(TypedDict):
+    type: Literal['literal']
+    value: str
+
+
+class McpServerHeader2(TypedDict):
+    grantId: str
+    type: Literal['credential']
+
+
+type McpServerHeader = McpServerHeader1 | McpServerHeader2
 
 
 class McpServerReadParams(TypedDict):
@@ -2647,6 +2666,13 @@ class AuthProviderCreateParams(TypedDict):
     providerId: NotRequired[str | None]
 
 
+class AuthProviderReplaceParams(TypedDict):
+    config: AuthProviderConfigInput
+    credential: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    providerId: str
+
+
 class AuthProviderView(TypedDict):
     config: AuthProviderConfigView
     createdAtMs: int
@@ -3331,6 +3357,7 @@ class McpServerInput(TypedDict):
     displayName: NotRequired[str | None]
     execution: NotRequired[RemoteMcpExecution]
     exposure: NotRequired[RemoteMcpExposure]
+    headers: NotRequired[dict[str, McpServerHeader]]
     serverId: str
     serverUrl: str
     status: NotRequired[McpServerStatus]
@@ -3373,6 +3400,7 @@ class McpServerView(TypedDict):
     displayName: NotRequired[str | None]
     execution: RemoteMcpExecution
     exposure: RemoteMcpExposure
+    headers: NotRequired[dict[str, McpServerHeader]]
     revision: int
     serverId: str
     serverUrl: str
@@ -3734,6 +3762,10 @@ class AuthGrantReadResponse(TypedDict):
     grant: AuthGrantView
 
 
+class AuthGrantReplaceResponse(TypedDict):
+    grant: AuthGrantView
+
+
 class AuthGrantRevokeResponse(TypedDict):
     grant: AuthGrantView
 
@@ -3751,6 +3783,10 @@ class AuthProviderListResponse(TypedDict):
 
 
 class AuthProviderReadResponse(TypedDict):
+    provider: AuthProviderView
+
+
+class AuthProviderReplaceResponse(TypedDict):
     provider: AuthProviderView
 
 
@@ -4538,6 +4574,11 @@ class AgentApiOutcomeOfAuthGrantReadResponse(TypedDict):
     result: AuthGrantReadResponse
 
 
+class AgentApiOutcomeOfAuthGrantReplaceResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: AuthGrantReplaceResponse
+
+
 class AgentApiOutcomeOfAuthGrantRevokeResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: AuthGrantRevokeResponse
@@ -4561,6 +4602,11 @@ class AgentApiOutcomeOfAuthProviderListResponse(TypedDict):
 class AgentApiOutcomeOfAuthProviderReadResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: AuthProviderReadResponse
+
+
+class AgentApiOutcomeOfAuthProviderReplaceResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: AuthProviderReplaceResponse
 
 
 class AgentApiOutcomeOfBlobHasResponse(TypedDict):
