@@ -22,7 +22,7 @@ key. Today such a machine cannot be referenced in advance:
 So a profile cannot name a machine that has not registered yet, and the id it
 eventually gets differs in every deployment. This blocks declaring a universe
 as a document ([declarative universe
-configuration](later/pNNN-declarative-universe-configuration.md)).
+configuration](p199-declarative-universe-configuration.md)).
 
 Pools of interchangeable or autoscaled machines are a different problem and
 are out of scope; see [Out of scope](#out-of-scope).
@@ -207,8 +207,9 @@ Names are unique among the open rows of a key. Registration keys gain
 - Platform: the environment list and details show a declared environment that
   is waiting for its daemon, with its name; the registration key editor
   carries the new setting.
-- Declarative universe document: an environment entry takes `registered:
-  { registrationKeyId, name }`.
+- Declarative universe document: an environment entry takes `source:
+  { type: registered, registrationKeyId, name }`, the shape of the `source`
+  object the API returns.
 
 ## Out of scope
 
