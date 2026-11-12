@@ -9,6 +9,7 @@ import type {
   DeploymentEnvironmentProviderView,
   MethodGroup,
 } from "@lightspeed-ai/sdk";
+import { keyIdConflictMessage } from "@lightspeed-ai/platform-shared";
 import { groupsFor } from "@/lib/method-groups";
 import { DEMO_POWER_STATES } from "../fixtures/builders";
 import { allocatedKeyId, type DemoStore, type UniverseState } from "../store";
@@ -93,18 +94,22 @@ export function adminRoutes(store: DemoStore): Hono {
       scope?: { kind: "deployment" } | { kind: "universe"; universeId: string };
       groups?: MethodGroup[];
       assertActor?: boolean;
+      keyId?: string;
     }>(c);
     const displayName = body.displayName?.trim();
     if (!displayName || !body.scope) return badRequest(c, "displayName and scope are required");
+    const state = body.scope.kind === "universe" ? store.universes.get(body.scope.universeId) : undefined;
+    if (body.scope.kind === "universe" && !state) return notFound(c, "universe not found");
+    // A chosen id is taken while any key of the scope holds it, revoked or not.
+    const keyId = body.keyId?.trim() || undefined;
+    const holder = (state ? state.apiKeys : store.deploymentKeys).find((key) => key.keyId === keyId);
+    if (keyId && holder) return conflict(c, keyIdConflictMessage(keyId, holder.revokedAtMs != null));
     const secret = `lsk_${crypto.randomUUID().replaceAll("-", "")}`;
-    const key = { keyId: allocatedKeyId(), keyPrefix: secret.slice(0, 12), displayName, createdAtMs: Date.now(), revokedAtMs: null, lastUsedAtMs: null };
+    const key = { keyId: keyId ?? allocatedKeyId(), keyPrefix: secret.slice(0, 12), displayName, createdAtMs: Date.now(), revokedAtMs: null, lastUsedAtMs: null };
     const kind = body.scope.kind;
     const groups = body.groups ?? groupsFor(kind);
     const assertActor = body.assertActor ?? false;
-    if (body.scope.kind === "universe") {
-      const universeId = body.scope.universeId;
-      const state = store.universes.get(universeId);
-      if (!state) return notFound(c, "universe not found");
+    if (state) {
       const apiKey: DeploymentApiKeyView = {
         ...key, scope: { kind: "universe", universeId: state.universe.lightspeedUniverseId }, groups, assertActor,
         createdBy: { kind: "actor", id: store.currentUser.id },

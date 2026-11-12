@@ -571,7 +571,7 @@ function PasteCredentialDialog({
         }
       }}
     >
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Paste a token or secret</DialogTitle>
           <DialogDescription>
@@ -746,7 +746,7 @@ function ReplaceValueDialog({
   };
   return (
     <Dialog open={grant !== null} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Replace value</DialogTitle>
           <DialogDescription>

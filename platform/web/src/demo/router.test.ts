@@ -503,6 +503,30 @@ describe("demo router", () => {
     expect((await call("POST", `${base}/${after.apiKey.keyId}/rotate`)).status).toBe(404);
   });
 
+  it.each(["admin", "universe"])("mints %s keys under a chosen id and refuses an id a key already holds", async (scope) => {
+    const { store, call } = await boot();
+    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const base = scope === "admin" ? "/api/v1/admin/api-keys" : `/api/v1/universes/${universe.universe.id}/api-keys`;
+    const body = { displayName: "CI", groups: ["session"], scope: { kind: "deployment" }, keyId: " ci " };
+    const created = await call("POST", base, body);
+    expect(created.status).toBe(201);
+    expect(created.json).toMatchObject({ apiKey: { keyId: "ci", revokedAtMs: null } });
+    expect((await call("POST", base, body)).json).toEqual({
+      error: 'key ID "ci" is already in use; leave it blank to generate a new ID or choose another',
+    });
+    // Revoking never frees the id.
+    expect((await call("DELETE", `${base}/ci`)).status).toBe(200);
+    const reused = await call("POST", base, body);
+    expect(reused.status).toBe(409);
+    expect(reused.json).toEqual({
+      error: 'key ID "ci" belongs to a revoked key and cannot be reused; leave it blank to generate a new ID or choose another',
+    });
+    // An id is taken within its scope only.
+    if (scope === "admin") {
+      expect((await call("POST", base, { ...body, scope: { kind: "universe", universeId: universe.universe.id } })).status).toBe(201);
+    }
+  });
+
   it("updates a user's admin-managed account fields and accepts a password reset", async () => {
     const { store, call } = await boot();
     const target = [...store.users.values()].find((user) => user.id !== store.currentUser.id)!;
@@ -698,6 +722,27 @@ describe("demo router", () => {
     expect(audit.filter((event) => event.targetId === session.id).map((event) => event.action)).toEqual(["session.purge"]);
     const after = ((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments;
     expect(after.find((env) => env.environmentId === existing.environmentId)).toEqual(existing);
+  });
+
+  it("mints a registration key under a chosen id and refuses an id a key already holds", async () => {
+    const { call } = await boot();
+    const keys = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/environment-registration-keys`;
+    const body = { identityMode: "ephemeral", displayName: "Sandboxes", registrationKeyId: " sandboxes " };
+    const created = await call("POST", keys, body);
+    expect(created.status).toBe(201);
+    expect(created.json).toMatchObject({ registrationKey: { registrationKeyId: "sandboxes", status: "active" } });
+    const taken = await call("POST", keys, body);
+    expect(taken.status).toBe(409);
+    expect(taken.json).toEqual({
+      error: 'key ID "sandboxes" is already in use; leave it blank to generate a new ID or choose another',
+    });
+    // Revoking never frees the id.
+    expect((await call("POST", `${keys}/sandboxes/revoke`, {})).status).toBe(200);
+    expect((await call("POST", keys, body)).json).toEqual({
+      error: 'key ID "sandboxes" belongs to a revoked key and cannot be reused; leave it blank to generate a new ID or choose another',
+    });
+    expect(((await call("GET", keys)).json as EnvironmentRegistrationKey[])
+      .filter((key) => key.registrationKeyId === "sandboxes")).toHaveLength(1);
   });
 
   it("declares registered environments under persistent keys and releases their daemons", async () => {

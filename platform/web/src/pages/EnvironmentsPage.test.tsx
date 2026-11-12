@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Environment, EnvironmentRegistrationKey, EnvironmentTemplate } from "@/api";
+import { ApiError, type Environment, type EnvironmentRegistrationKey, type EnvironmentTemplate } from "@/api";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { EnvironmentsPage } from "./EnvironmentsPage";
 
@@ -411,6 +411,41 @@ it("keeps a key's declared-only policy when another field is edited", async () =
   expect(writes()).toEqual([["PUT", "/api/v1/universes/universe/environment-registration-keys/key-id", {
     displayName: "Build machines", offlineCloseAfterMs: 600_000,
   }]]);
+});
+
+it("mints a registration key under a chosen id, and reopens the id field when that id is taken", async () => {
+  mocks.role = "operator";
+  await show();
+  await click(buttonIn(container, "Registration key"));
+  const mint = () => dialogTitled("Mint a registration key");
+  const toggle = () => mint().querySelector<HTMLButtonElement>('[aria-label="Change key ID"]')!;
+  expect(mint().textContent).toContain("Generated key ID");
+  expect(document.getElementById("registration-key-id")).toBeNull();
+  await type("registration-key-name", "CI runners");
+  await click(toggle());
+  await type("registration-key-id", " ci ");
+  await click(toggle());
+  expect(document.getElementById("registration-key-id")).toBeNull();
+  expect(mint().textContent).toContain("Key ID ci");
+
+  const taken = 'key ID "ci" belongs to a revoked key and cannot be reused; leave it blank to generate a new ID or choose another';
+  mocks.api.mockRejectedValueOnce(new ApiError(409, { error: taken }));
+  await click(buttonIn(mint(), "Mint key"));
+  expect(writes()).toEqual([["POST", "/api/v1/universes/universe/environment-registration-keys", {
+    identityMode: "persistent", displayName: "CI runners", registrationKeyId: "ci",
+  }]]);
+  expect(mint().textContent).toContain(taken);
+  expect(document.getElementById("registration-key-id")?.getAttribute("aria-invalid")).toBe("true");
+
+  // Editing the id clears the refusal; blank goes back to a generated id.
+  await type("registration-key-id", "");
+  expect(mint().textContent).not.toContain(taken);
+  mocks.api.mockResolvedValueOnce({ registrationKey: { ...registrationKey, displayName: "CI runners" }, secret: "lsrk_secret" });
+  await click(buttonIn(mint(), "Mint key"));
+  expect(writes().at(-1)).toEqual(["POST", "/api/v1/universes/universe/environment-registration-keys", {
+    identityMode: "persistent", displayName: "CI runners",
+  }]);
+  expect((document.getElementById("registration-key-secret") as HTMLInputElement).value).toBe("lsrk_secret");
 });
 
 it("offers the declared-only policy for persistent keys only", async () => {

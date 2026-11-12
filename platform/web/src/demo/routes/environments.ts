@@ -5,6 +5,7 @@
 /// synchronous provider calls, as in the core.
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { keyIdConflictMessage } from "@lightspeed-ai/platform-shared";
 import type {
   EnvironmentIdlePolicyView,
   EnvironmentPowerStateView,
@@ -381,14 +382,18 @@ export function environmentRoutes(store: DemoStore): Hono {
   app.post("/:id/environment-registration-keys", async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
-    const body = await readBody<RegistrationKeyBody>(c);
+    const body = await readBody<RegistrationKeyBody & { registrationKeyId?: string }>(c);
     const identityMode = body.identityMode === "ephemeral" ? "ephemeral" : "persistent";
     const policy = registrationKeyPolicy(body, identityMode);
     if ("error" in policy) return badRequest(c, policy.error);
+    // A chosen id is taken while any key of the universe holds it, revoked or not.
+    const keyId = body.registrationKeyId?.trim() || undefined;
+    const holder = universe.registrationKeys.find((key) => key.registrationKeyId === keyId);
+    if (keyId && holder) return conflict(c, keyIdConflictMessage(keyId, holder.status === "revoked"));
     const now = Date.now();
     const secret = mintSecret();
     const key: EnvironmentRegistrationKey = {
-      registrationKeyId: `registration_key_${crypto.randomUUID().replace(/-/g, "")}`,
+      registrationKeyId: keyId ?? `registration_key_${crypto.randomUUID().replace(/-/g, "")}`,
       keyPrefix: secret.slice(0, 12),
       identityMode,
       ...policy,

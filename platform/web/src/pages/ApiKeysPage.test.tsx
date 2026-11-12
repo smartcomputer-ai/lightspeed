@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { ApiError } from "@/api";
 import { ApiKeysPage } from "./ApiKeysPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
@@ -92,6 +93,53 @@ it("starts a key as an agent client and sends exactly the groups chosen", async 
     displayName: "Configurator",
     groups: ["profiles", "models", "mcp", "environments", "bots", "channels", "auth", "auth/lease"],
   });
+  expect(document.querySelector<HTMLInputElement>("#api-key-secret")?.value).toBe("lsk_new_secret");
+});
+
+it("sends a key id only when one is chosen, and reopens the field when that id is taken", async () => {
+  await render();
+  await act(async () => button("Create key")!.click());
+  await settle();
+  const type = async (id: string, value: string) => {
+    const field = document.querySelector<HTMLInputElement>(`#${id}`)!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, value);
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  const toggle = () => document.querySelector<HTMLButtonElement>('[role="dialog"] [aria-label="Change key ID"]')!;
+  const submit = async () => {
+    await act(async () => document.querySelector<HTMLFormElement>('[role="dialog"] form')!.requestSubmit());
+    await settle();
+  };
+  const lastBody = () => mocks.api.mock.calls.filter(([method]) => method === "POST").at(-1)![2] as Record<string, unknown>;
+
+  // Closed, the summary says an id is generated; the field appears on request.
+  expect(dialogText()).toContain("Generated key ID");
+  expect(document.querySelector("#api-key-id")).toBeNull();
+  await act(async () => toggle().click());
+  expect(dialogText()).toContain("It cannot be changed later.");
+  await type("api-key-name", "CI");
+  await type("api-key-id", " ci ");
+  await act(async () => toggle().click());
+  expect(document.querySelector("#api-key-id")).toBeNull();
+  expect(dialogText()).toContain("Key ID ci");
+
+  const taken = 'key ID "ci" is already in use; leave it blank to generate a new ID or choose another';
+  mocks.api.mockRejectedValueOnce(new ApiError(409, { error: taken }));
+  await submit();
+  expect(lastBody()).toMatchObject({ displayName: "CI", keyId: "ci" });
+  expect(dialogText()).toContain(taken);
+  expect(document.querySelector("#api-key-id")?.getAttribute("aria-invalid")).toBe("true");
+  expect(toggle().disabled).toBe(true);
+  expect(document.querySelector("#api-key-secret")).toBeNull();
+
+  // Editing the id clears the refusal; blank goes back to a generated id.
+  await type("api-key-id", " ");
+  expect(dialogText()).not.toContain(taken);
+  expect(toggle().disabled).toBe(false);
+  await submit();
+  expect(lastBody()).not.toHaveProperty("keyId");
   expect(document.querySelector<HTMLInputElement>("#api-key-secret")?.value).toBe("lsk_new_secret");
 });
 

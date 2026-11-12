@@ -56,6 +56,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { EmptyState, LoadingNote, PageHeader, SectionHeader, ShowHiddenToggle, UniverseNotFound } from "@/components/page";
 import type { EnvironmentIdlePolicyView } from "@lightspeed-ai/sdk";
+import { isKeyIdConflict, KeyIdField } from "@/components/api-keys/key-id-field";
 import { EnvironmentPowerControls } from "@/components/environment/power-controls";
 import { IdlePolicyFields, idlePolicyProblem, idleStagesFor } from "@/components/environment/idle-policy-fields";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";
@@ -662,7 +663,7 @@ function AssignCredentialDialog({
           if (!nextOpen) setError(null);
         }}
       >
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Assign secret</DialogTitle>
             <DialogDescription>
@@ -874,7 +875,7 @@ function DeclareEnvironmentDialog({
   });
   return (
     <Dialog open={registrationKey !== null} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Declare an environment under “{registrationKey?.displayName}”</DialogTitle>
           <DialogDescription>
@@ -1049,7 +1050,7 @@ function RotateRegistrationKeyButton({
         </AlertDialogContent>
       </AlertDialog>
       <Dialog open={rotate.data !== undefined} onOpenChange={(next) => { if (!next) rotate.reset(); }}>
-        <DialogContent showCloseButton={false}>
+        <DialogContent showCloseButton={false} className="max-h-[90vh] overflow-y-auto">
           {rotate.data && <RegistrationSecret created={rotate.data} onDone={() => rotate.reset()} />}
         </DialogContent>
       </Dialog>
@@ -1265,13 +1266,18 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(() => registrationKeyForm(null));
   const [identityMode, setIdentityMode] = useState<"persistent" | "ephemeral">("persistent");
+  const [keyId, setKeyId] = useState("");
   const [created, setCreated] = useState<EnvironmentRegistrationKeyCreated | null>(null);
   const create = useMutation({
     mutationFn: () =>
       api<EnvironmentRegistrationKeyCreated>(
         "POST",
         `/api/v1/universes/${universeId}/environment-registration-keys`,
-        { identityMode, ...registrationKeySettings(form, identityMode, null) },
+        {
+          identityMode,
+          ...registrationKeySettings(form, identityMode, null),
+          ...(keyId.trim() ? { registrationKeyId: keyId.trim() } : {}),
+        },
       ),
     onSuccess: async (result) => {
       setCreated(result);
@@ -1282,6 +1288,7 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
     setOpen(false);
     setForm(registrationKeyForm(null));
     setIdentityMode("persistent");
+    setKeyId("");
     setCreated(null);
     create.reset();
   };
@@ -1294,7 +1301,7 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
         Registration key
       </Button>
       <Dialog open={open} onOpenChange={(next) => { if (!next) reset(); }}>
-        <DialogContent showCloseButton={!created}>
+        <DialogContent showCloseButton={!created} className="max-h-[90vh] overflow-y-auto">
           {created ? (
             <RegistrationSecret created={created} onDone={reset} />
           ) : (
@@ -1328,6 +1335,12 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
                   </FieldDescription>
                 </Field>
                 <RegistrationKeyFields form={form} identityMode={identityMode} onChange={setForm} />
+                <KeyIdField
+                  id="registration-key-id"
+                  value={keyId}
+                  onChange={(value) => { setKeyId(value); create.reset(); }}
+                  conflict={isKeyIdConflict(create.error, keyId)}
+                />
                 {create.error && <p className="text-sm text-destructive">{create.error.message}</p>}
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={reset}>Cancel</Button>
@@ -1376,7 +1389,7 @@ function EditRegistrationKeyDialog({
   const formError = registrationKeyFormError(form);
   return (
     <Dialog open={registrationKey !== null} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit “{registrationKey?.displayName}”</DialogTitle>
           <DialogDescription>
@@ -1631,7 +1644,7 @@ function EditEnvironmentDialog({
   });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Rename {environmentName(environment)}</DialogTitle>
           <DialogDescription>
@@ -1733,7 +1746,7 @@ function CreateEnvironmentDialog({
         New environment
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>New universe environment</DialogTitle>
             <DialogDescription>
@@ -1895,7 +1908,7 @@ function RegisterExternalEnvironmentDialog({
         {suggestedEndpoint && !alreadyRegistered ? "Attach local daemon" : "Register external"}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Register external environment</DialogTitle>
             <DialogDescription>

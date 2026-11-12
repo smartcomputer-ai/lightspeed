@@ -99,6 +99,20 @@ export function universeHandleFromName(name: string): string {
   return UUID_SHAPED.test(handle) ? `u-${handle}`.slice(0, UNIVERSE_HANDLE_MAX_LENGTH) : handle;
 }
 
+/// The id of an API key or registration key when its creator chooses it
+/// instead of having one allocated. The runtime owns which characters it may
+/// hold and refuses the rest as an invalid request.
+export const KEY_ID_MAX_LENGTH = 128;
+export const chosenKeyIdSchema = z.string().trim().min(1).max(KEY_ID_MAX_LENGTH);
+
+/// Why a create that chose its own key id was refused: the id is taken. A
+/// revoked key keeps its id for good, so that case reads differently.
+export function keyIdConflictMessage(keyId: string, revoked: boolean): string {
+  return revoked
+    ? `key ID "${keyId}" belongs to a revoked key and cannot be reused; leave it blank to generate a new ID or choose another`
+    : `key ID "${keyId}" is already in use; leave it blank to generate a new ID or choose another`;
+}
+
 interface FeatureDefinition<Key extends string> {
   label: string;
   description: string;

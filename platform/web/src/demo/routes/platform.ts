@@ -2,7 +2,7 @@
 /// universe API keys. The demo user is a platform admin, so every gate the
 /// real server applies passes.
 import { Hono } from "hono";
-import { effectiveFeatures, featureOverridesSchema, memberUpdateSchema, mergeFeatureOverrides, universeHandleFromName, universeRoleSchema, universeHandleSchema, universeUpdateSchema } from "@lightspeed-ai/platform-shared";
+import { effectiveFeatures, featureOverridesSchema, keyIdConflictMessage, memberUpdateSchema, mergeFeatureOverrides, universeHandleFromName, universeRoleSchema, universeHandleSchema, universeUpdateSchema } from "@lightspeed-ai/platform-shared";
 import type { MethodGroup } from "@lightspeed-ai/sdk";
 import type { EngineUniverse, Member, Universe } from "@/api";
 import { universeApiKey, type DemoStore, type UniverseState } from "../store";
@@ -211,12 +211,17 @@ export function platformRoutes(store: DemoStore): Hono {
   app.post("/universes/:id/api-keys", async (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
-    const body = await readBody<{ displayName?: string; groups?: MethodGroup[] }>(c);
+    const body = await readBody<{ displayName?: string; groups?: MethodGroup[]; keyId?: string }>(c);
     const displayName = body.displayName?.trim();
     if (!displayName) return badRequest(c, "validation failed — displayName: required");
     if (!body.groups?.length) return badRequest(c, "validation failed — groups: required");
+    // A chosen id is taken while any key of the universe holds it, revoked or not.
+    const keyId = body.keyId?.trim() || undefined;
+    const holder = state.apiKeys.find((key) => key.keyId === keyId);
+    if (keyId && holder) return conflict(c, keyIdConflictMessage(keyId, holder.revokedAtMs != null));
     const secret = `lsk_${randomHex(24)}`;
     const apiKey = universeApiKey(state, {
+      keyId,
       keyPrefix: secret.slice(0, 12),
       displayName,
       groups: body.groups,

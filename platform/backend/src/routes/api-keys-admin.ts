@@ -3,11 +3,12 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import type { AccessScope, MethodGroup } from "@lightspeed-ai/sdk";
 import { schema } from "@lightspeed-ai/platform-db";
+import { chosenKeyIdSchema } from "@lightspeed-ai/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
 import { isPlatformAdmin } from "../context.js";
 import { auditIdentity } from "../identity-audit.js";
 import { parseBody } from "../http.js";
-import { deploymentClientFor, withGateway } from "./gateway.js";
+import { createApiKey, deploymentClientFor, withGateway } from "./gateway.js";
 
 // Shape only: runtime universe ids need not be RFC 4122 conformant.
 const runtimeUniverseId = z.string().regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/);
@@ -22,6 +23,8 @@ const createSchema = z.object({
   /// Absent grants every group the scope allows; core validates the names.
   groups: z.array(z.string().min(1).max(100)).max(32).optional(),
   assertActor: z.boolean().default(false),
+  /// Absent has the runtime allocate one. Create only: an id never changes.
+  keyId: chosenKeyIdSchema.optional(),
 });
 
 /// Every core key of the deployment, for platform admins: what each reaches
@@ -61,14 +64,16 @@ export function apiKeyAdminRoutes(ctx: AppContext) {
       scope = { kind: "universe", universeId: universe.lightspeedUniverseId };
     }
     return withGateway(c, async () => {
-      const response = await deploymentClientFor(ctx).call("deployment/api-keys/create", {
+      const created = await createApiKey(c, deploymentClientFor(ctx), {
         scope,
         displayName: input.displayName,
         ...(input.groups ? { groups: input.groups as MethodGroup[] } : {}),
         assertActor: input.assertActor,
+        ...(input.keyId ? { keyId: input.keyId } : {}),
       });
-      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.create", targetId: response.result.apiKey.keyId, universeId: input.scope.kind === "universe" ? input.scope.universeId : null, details: { keyPrefix: response.result.apiKey.keyPrefix } });
-      return c.json(response.result, 201);
+      if (created instanceof Response) return created;
+      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.create", targetId: created.apiKey.keyId, universeId: input.scope.kind === "universe" ? input.scope.universeId : null, details: { keyPrefix: created.apiKey.keyPrefix } });
+      return c.json(created, 201);
     });
   });
 

@@ -25,7 +25,7 @@ export function RotateKeyDialog({ apiKey, basePath, query = "", onClose, onRotat
     onClose();
   };
   return <Dialog open onOpenChange={(open) => { if (!open) close(); }}>
-    <DialogContent>
+    <DialogContent className="max-h-[90vh] overflow-y-auto">
       {rotate.data ? <ApiKeySecret secret={rotate.data.secret} keyPrefix={rotate.data.apiKey.keyPrefix} onDone={close} /> : <>
         <DialogHeader>
           <DialogTitle>Rotate this API key?</DialogTitle>

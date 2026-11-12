@@ -15,6 +15,8 @@ import {
   type AuthGitHubInstallationListParams,
   type AuthGrantListParams,
   type AuthProviderCreateParams,
+  type DeploymentApiKeyCreateParams,
+  type DeploymentApiKeyCreateResponse,
   type EnvironmentCreateParams,
   type EnvironmentExternalCreateParams,
   type EnvironmentListParams,
@@ -34,6 +36,8 @@ import {
   MAX_ATTACHMENT_BYTES,
   MAX_DICTATION_AUDIO_BYTES,
   attachmentUploadSchema,
+  chosenKeyIdSchema,
+  keyIdConflictMessage,
   messageInputItems,
   messageRunConfig,
   modelDefaultsPutSchema,
@@ -247,6 +251,8 @@ const registrationKeySettingsSchema = z.object({
 });
 const registrationKeyCreateSchema = registrationKeySettingsSchema.extend({
   identityMode: z.enum(["persistent", "ephemeral"]),
+  /// Absent has the runtime allocate one. Create only: an id never changes.
+  registrationKeyId: chosenKeyIdSchema.optional(),
 });
 
 const registrationKeyRevokeSchema = z.object({
@@ -1820,11 +1826,23 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const response = await client.call(
-        "environments/registration-keys/create",
-        body.data as EnvironmentRegistrationKeyCreateParams,
-      );
-      return c.json(response.result, 201);
+      const { registrationKeyId } = body.data;
+      try {
+        const response = await client.call(
+          "environments/registration-keys/create",
+          body.data as EnvironmentRegistrationKeyCreateParams,
+        );
+        return c.json(response.result, 201);
+      } catch (error) {
+        if (registrationKeyId && isConflict(error)) {
+          const holder = await client
+            .call("environments/registration-keys/read", { registrationKeyId })
+            .catch(() => null);
+          const revoked = holder?.result.registrationKey.status === "revoked";
+          return c.json({ error: keyIdConflictMessage(registrationKeyId, revoked) }, 409);
+        }
+        throw error;
+      }
     });
   });
 
@@ -2575,6 +2593,29 @@ export function credentialIdConflictMessage(grantId: string, status?: string): s
   }
   const state = status ? `an access credential with status "${status}"` : "another access credential";
   return `credential ID "${grantId}" already belongs to ${state}; leave it blank to generate a new ID or choose another`;
+}
+
+function isConflict(error: unknown): boolean {
+  return error instanceof LightspeedRpcError && error.kind === "conflict";
+}
+
+/// `deployment/api-keys/create` for a key of `scope`. A chosen id the
+/// runtime refuses as taken becomes a 409 that says whether its holder,
+/// looked up among the scope's keys, is revoked.
+export async function createApiKey(
+  c: { json: (body: unknown, status?: 409) => Response },
+  client: LightspeedClient,
+  params: DeploymentApiKeyCreateParams,
+): Promise<DeploymentApiKeyCreateResponse | Response> {
+  try {
+    return (await client.call("deployment/api-keys/create", params)).result;
+  } catch (error) {
+    const { keyId, scope } = params;
+    if (!keyId || !isConflict(error)) throw error;
+    const keys = await client.call("deployment/api-keys/list", { scope }).catch(() => null);
+    const holder = keys?.result.apiKeys?.find((key) => key.keyId === keyId);
+    return c.json({ error: keyIdConflictMessage(keyId, holder?.revokedAtMs != null) }, 409);
+  }
 }
 
 /// The engine deliberately namespaces model credentials as

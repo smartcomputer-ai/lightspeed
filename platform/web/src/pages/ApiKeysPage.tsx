@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Plus, RotateCw, ShieldOff } from "lucide-react";
 import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/sdk";
+import { isKeyIdConflict, KeyIdField } from "@/components/api-keys/key-id-field";
 import { GroupSummary, KeyPresetField, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
 import { RotateKeyDialog } from "@/components/api-keys/rotate-key-dialog";
 import { keyIdentifier } from "@/lib/api-keys";
@@ -244,6 +245,7 @@ function CreateApiKeyDialog({
   onCreated: () => void;
 }) {
   const [displayName, setDisplayName] = useState("");
+  const [keyId, setKeyId] = useState("");
   const [groups, setGroups] = useState<Set<MethodGroup>>(() => new Set(DEFAULT_UNIVERSE_KEY_GROUPS));
   const [created, setCreated] = useState<DeploymentApiKeyCreateResponse | null>(null);
   const allowed = groupsFor("universe");
@@ -253,6 +255,7 @@ function CreateApiKeyDialog({
       api<DeploymentApiKeyCreateResponse>("POST", `/api/v1/universes/${universeId}/api-keys`, {
         displayName: displayName.trim(),
         groups: allowed.filter((group) => groups.has(group)),
+        ...(keyId.trim() ? { keyId: keyId.trim() } : {}),
       }),
     onSuccess: (result) => {
       setCreated(result);
@@ -263,6 +266,7 @@ function CreateApiKeyDialog({
   const close = () => {
     onOpenChange(false);
     setDisplayName("");
+    setKeyId("");
     setGroups(new Set(DEFAULT_UNIVERSE_KEY_GROUPS));
     setCreated(null);
     create.reset();
@@ -284,7 +288,7 @@ function CreateApiKeyDialog({
         }
       }}
     >
-      <DialogContent showCloseButton={!created} className="sm:max-w-lg">
+      <DialogContent showCloseButton={!created} className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         {created ? (
           <ApiKeySecret secret={created.secret} keyPrefix={created.apiKey.keyPrefix} onDone={close} />
         ) : (
@@ -310,6 +314,12 @@ function CreateApiKeyDialog({
                 />
                 <FieldDescription>Shown in this list; it is not part of the secret.</FieldDescription>
               </Field>
+              <KeyIdField
+                id="api-key-id"
+                value={keyId}
+                onChange={(value) => { setKeyId(value); create.reset(); }}
+                conflict={isKeyIdConflict(create.error, keyId)}
+              />
               <KeyPresetField groups={groups} onChange={setGroups} />
               <MethodGroupPicker idPrefix="api-key" allowed={allowed} chosen={groups} onChange={setGroups} />
               {create.error && (

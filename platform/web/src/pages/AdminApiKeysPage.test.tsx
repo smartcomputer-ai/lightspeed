@@ -3,6 +3,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { ApiError } from "@/api";
 import { AdminApiKeysPage } from "./AdminApiKeysPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
@@ -92,6 +93,46 @@ it("mints a universe key with only universe groups, then shows its secret once",
   await settle();
   expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/admin/api-keys", {
     displayName: "Agent", scope: { kind: "universe", universeId: "platform-universe" }, assertActor: false,
+  });
+  expect(document.querySelector<HTMLInputElement>("#api-key-secret")?.value).toBe("lsk_new_secret");
+});
+
+it("mints a key under a chosen id, and reopens the id field when that id is taken", async () => {
+  await act(async () => root.render(<QueryClientProvider client={client}><AdminApiKeysPage /></QueryClientProvider>));
+  await settle();
+  await act(async () => button("Create key")!.click());
+  await settle();
+  const type = async (id: string, value: string) => {
+    const field = document.querySelector<HTMLInputElement>(`#${id}`)!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, value);
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  const toggle = () => document.querySelector<HTMLButtonElement>('[role="dialog"] [aria-label="Change key ID"]')!;
+  const submit = async () => {
+    await act(async () => document.querySelector<HTMLFormElement>('[role="dialog"] form')!.requestSubmit());
+    await settle();
+  };
+  expect(dialogText()).toContain("Generated key ID");
+  await type("admin-key-name", "Gate");
+  await act(async () => toggle().click());
+  await type("admin-key-id", "platform");
+  await act(async () => toggle().click());
+  expect(document.querySelector("#admin-key-id")).toBeNull();
+
+  const taken = 'key ID "platform" is already in use; leave it blank to generate a new ID or choose another';
+  mocks.api.mockRejectedValueOnce(new ApiError(409, { error: taken }));
+  await submit();
+  expect(dialogText()).toContain(taken);
+  expect(document.querySelector("#admin-key-id")?.getAttribute("aria-invalid")).toBe("true");
+
+  await type("admin-key-id", "gate");
+  expect(dialogText()).not.toContain(taken);
+  expect(dialogText()).toContain("Key ID gate");
+  await submit();
+  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/admin/api-keys", {
+    displayName: "Gate", scope: { kind: "deployment" }, assertActor: false, keyId: "gate",
   });
   expect(document.querySelector<HTMLInputElement>("#api-key-secret")?.value).toBe("lsk_new_secret");
 });

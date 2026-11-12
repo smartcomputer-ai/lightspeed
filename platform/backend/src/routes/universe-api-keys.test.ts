@@ -9,12 +9,16 @@ const universe = { id: "platform-universe", organizationId: "org", lightspeedUni
 
 /// Universe key routes for a caller with `role`, over a core that records
 /// each call and a database that answers the universe and membership reads.
+/// The core holds `keys` and refuses a create that chooses one of their ids.
 function setup(role: string, keys = [{ keyId: "agent", keyPrefix: "lsk_abcdefgh", assertActor: false, revokedAtMs: null as number | null }]) {
   const calls: { method: string; params: Record<string, unknown> }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
     const rpc = JSON.parse(String(init.body));
     calls.push({ method: rpc.method, params: rpc.params });
-    const apiKey = { keyId: "agent", keyPrefix: "lsk_abcdefgh", groups: rpc.params.groups };
+    if (rpc.method === "deployment/api-keys/create" && keys.some((key) => key.keyId === rpc.params.keyId)) {
+      return Response.json({ id: rpc.id, error: { code: -32603, message: `api key id is already in use: ${rpc.params.keyId}`, data: { kind: "conflict" } } });
+    }
+    const apiKey = { keyId: rpc.params.keyId ?? "agent", keyPrefix: "lsk_abcdefgh", groups: rpc.params.groups };
     return Response.json({ id: rpc.id, result: { result: rpc.method === "deployment/api-keys/list" ? { apiKeys: keys } : { apiKey, secret: "lsk_secret" }, notifications: [] } });
   }));
   const queue: unknown[][] = [[{ universe, handle: "test" }], [{ role }]];
@@ -55,6 +59,35 @@ it("mints a universe key with only the groups the admin chose", async () => {
   }]);
 });
 
+it("mints a key under the id its creator chose", async () => {
+  const { create, calls, audit } = setup("admin");
+  const response = await create({ displayName: "CI", groups: ["session"], keyId: " ci " });
+  expect(response.status).toBe(201);
+  expect(calls.map((call) => call.method)).toEqual(["deployment/api-keys/create"]);
+  expect(calls[0]!.params).toMatchObject({ keyId: "ci", displayName: "CI" });
+  expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "key.create", targetId: "ci", universeId: universe.id }));
+});
+
+it.each([
+  ["a live key", null, 'key ID "agent" is already in use; leave it blank to generate a new ID or choose another'],
+  ["a revoked key", 10, 'key ID "agent" belongs to a revoked key and cannot be reused; leave it blank to generate a new ID or choose another'],
+] as const)("refuses a chosen id held by %s", async (_name, revokedAtMs, message) => {
+  const { create, calls, audit } = setup("admin", [{ keyId: "agent", keyPrefix: "lsk_abcdefgh", assertActor: false, revokedAtMs }]);
+  const response = await create({ displayName: "Agent", groups: ["session"], keyId: "agent" });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: message });
+  const scope = { kind: "universe", universeId: universe.lightspeedUniverseId };
+  expect(calls.map((call) => call.method)).toEqual(["deployment/api-keys/create", "deployment/api-keys/list"]);
+  expect(calls[1]!.params).toEqual({ scope });
+  expect(audit).not.toHaveBeenCalled();
+});
+
+it.each([" ", "k".repeat(129)])("refuses the malformed key id %j before asking the runtime", async (keyId) => {
+  const { create, calls } = setup("admin");
+  expect((await create({ displayName: "Agent", groups: ["session"], keyId })).status).toBe(400);
+  expect(calls).toEqual([]);
+});
+
 it("refuses a key without groups rather than granting every group", async () => {
   const { create, calls } = setup("admin");
   expect((await create({ displayName: "Agent" })).status).toBe(400);
@@ -65,6 +98,9 @@ it("refuses a key without groups rather than granting every group", async () => 
 it("keeps universe keys with admins", async () => {
   const { create, calls } = setup("operator");
   expect((await create({ displayName: "Agent", groups: ["session"] })).status).toBe(404);
+  const chosen = setup("operator");
+  expect((await chosen.create({ displayName: "Agent", groups: ["session"], keyId: "ci" })).status).toBe(404);
+  expect(chosen.calls).toEqual([]);
   expect(calls).toEqual([]);
 });
 

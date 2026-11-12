@@ -5,6 +5,7 @@ import { and, eq, ne } from "drizzle-orm";
 import { LightspeedRpcError, type MethodGroup } from "@lightspeed-ai/sdk";
 import { schema } from "@lightspeed-ai/platform-db";
 import {
+  chosenKeyIdSchema,
   effectiveFeatures,
   memberAddSchema,
   memberUpdateSchema,
@@ -21,7 +22,7 @@ import { isPlatformAdmin } from "../context.js";
 import { auditIdentity } from "../identity-audit.js";
 import { parseBody } from "../http.js";
 import type { Member } from "../runtime-client.js";
-import { deploymentClientFor, withGateway } from "./gateway.js";
+import { createApiKey, deploymentClientFor, withGateway } from "./gateway.js";
 
 const { universes, organization, member, user } = schema;
 
@@ -137,6 +138,8 @@ const apiKeyCreateSchema = z.object({
   /// Required, so a universe key never silently holds every group; core
   /// validates the names and refuses deployment groups.
   groups: z.array(z.string().min(1).max(100)).min(1).max(32),
+  /// Absent has the runtime allocate one. Create only: an id never changes.
+  keyId: chosenKeyIdSchema.optional(),
 });
 
 export function universeRoutes(ctx: AppContext) {
@@ -309,14 +312,16 @@ export function universeRoutes(ctx: AppContext) {
       return body.response;
     }
     return withGateway(c, async () => {
-      const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call("deployment/api-keys/create", {
+      const created = await createApiKey(c, deploymentClientFor(ctx, access.universe.gatewayUrl), {
         scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
         displayName: body.data.displayName,
         groups: body.data.groups as MethodGroup[],
         assertActor: false,
+        ...(body.data.keyId ? { keyId: body.data.keyId } : {}),
       });
-      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.create", targetId: response.result.apiKey.keyId, universeId: access.universe.id, details: { keyPrefix: response.result.apiKey.keyPrefix } });
-      return c.json(response.result, 201);
+      if (created instanceof Response) return created;
+      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.create", targetId: created.apiKey.keyId, universeId: access.universe.id, details: { keyPrefix: created.apiKey.keyPrefix } });
+      return c.json(created, 201);
     });
   });
 
