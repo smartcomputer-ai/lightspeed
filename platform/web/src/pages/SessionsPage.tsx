@@ -145,6 +145,7 @@ import {
   writeSessionListPreferences,
 } from "@/lib/sessions/list-preferences";
 import { DetailHeader } from "@/components/detail-header";
+import { useDocumentTitle } from "@/lib/document-title";
 import {
   ListPane,
   ListPaneBody,
@@ -1390,6 +1391,9 @@ export function SessionDetail({
       ),
     refetchInterval: (query) => sessionMayBeRunning(query.state.data) ? SESSION_LIVENESS_REFRESH_MS : false,
   });
+  const title = session.data?.displayName ?? sessionId.slice(0, 24);
+  // Embedded, the surrounding page names what is open.
+  useDocumentTitle(embedded ? [] : [title]);
   const compaction = useSessionCompaction(universeId, sessionId, session.data);
   const owner = useSessionOwner(universeId, session.data?.access);
   const canShare = useCanShareSession(universeId, session.data?.access, Boolean(session.data?.origin));
@@ -2135,7 +2139,7 @@ export function SessionDetail({
             doing. Right is action, all of it behind ⋯. */}
         <DetailHeader
           back={{ to: backTo, label: "Back to sessions" }}
-          title={session.data?.displayName ?? sessionId.slice(0, 24)}
+          title={title}
           tags={meta.length > 0 && <MetaToolbar items={meta} place="header" expandOnHover label="Session details" className="grow" />}
           actions={[{
             kind: "custom",

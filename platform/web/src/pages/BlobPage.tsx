@@ -13,6 +13,7 @@ import { formatBytes } from "@/lib/composer-attachments";
 import { blobView, type BlobView } from "@/lib/blob-view";
 import { useActionPermissions } from "@/lib/permissions";
 import { useActiveUniverse } from "@/lib/universes";
+import { useDocumentTitle } from "@/lib/document-title";
 
 /// One stored blob, addressed by its digest within the universe: stored
 /// text, instructions, catalogs, and media the model was shown. Links carry
@@ -52,11 +53,7 @@ function BlobDetail({ universeId, slug, digest }: { universeId: string; slug: st
   );
   const view = useMemo(() => (bytes ? blobView(bytes, hint) : null), [bytes, hint]);
   const title = name ?? `sha256:${digest.slice(0, 12)}…`;
-  useEffect(() => {
-    const previous = document.title;
-    document.title = title;
-    return () => { document.title = previous; };
-  }, [title]);
+  useDocumentTitle([title]);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">

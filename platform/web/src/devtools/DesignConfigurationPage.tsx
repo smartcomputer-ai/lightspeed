@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useDocumentTitle } from "@/lib/document-title";
 import { AddIcon, DeleteIcon, ExportCodeIcon, ResetIcon, SearchIcon, SettingsIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -77,9 +78,7 @@ export function DesignConfigurationPage() {
     theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light");
   const [exportOpen, setExportOpen] = useState(false);
 
-  useEffect(() => {
-    document.title = "Design tokens · Lightspeed";
-  }, []);
+  useDocumentTitle(["Design tokens"]);
 
   const publish = (next: DesignOverrides) => {
     setOverrides(next);

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useDocumentTitle } from "@/lib/document-title";
 import { Link, NavLink, useParams } from "react-router-dom";
 import { DEFAULT_UNIVERSE_ICON, UNIVERSE_ICONS } from "@lightspeed-ai/platform-shared";
-import { AddIcon, BotIcon, CopyIcon, CopyLinkIcon, DarkThemeIcon, DeleteIcon, DownloadIcon, EditIcon, EmailIcon, InboxIcon, MoreIcon, NewFileIcon, NewFolderIcon, LightThemeIcon, NotificationIcon, SearchIcon, SelectModeIcon, SettingsIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
+import { AddIcon, BotIcon, CopyIcon, CopyLinkIcon, DarkThemeIcon, DeleteIcon, DownloadIcon, EditIcon, EmailIcon, InboxIcon, MoreIcon, NewFileIcon, NewFolderIcon, LightThemeIcon, NotificationIcon, RefreshIcon, SearchIcon, SelectModeIcon, SettingsIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -103,6 +104,7 @@ import { UNIVERSE_NAV } from "@/components/universe-nav";
 import { ListGroupLabel, ListPaneBody, ListPaneHeader, ListPaneToolbar, ListRow, ListRowLine, PaneBar, type ListRowTree } from "@/components/list-pane";
 import { LightspeedLogo, LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { Starscape } from "@/components/starscape/starscape";
+import { PAGE_NEBULA_SEED, PageNebula } from "@/components/starscape/page-nebula";
 import { UniverseIcon } from "@/components/universe-icon";
 import { HEADER_STARSCAPE_CLASS, HEADER_STARSCAPE_CONFIG, HEADER_STARSCAPE_FADE } from "@/components/universe-switcher";
 import { collectRoleUsage, iconRoles, libraryGlyphs, type IconRole, type RoleGlyph } from "./icon-usage";
@@ -173,6 +175,7 @@ export function UiOverviewPage() {
     window.scrollTo(0, 0);
   }, [section]);
   const Section = isCategory(section) ? SECTIONS[section] : undefined;
+  useDocumentTitle([CATEGORIES.find((category) => category.id === section)?.title, "UI overview"]);
   return (
     <div className="flex min-h-svh bg-background text-foreground">
       <nav className="sticky top-0 hidden h-svh w-56 shrink-0 overflow-y-auto border-r bg-sidebar p-4 md:block" aria-label="Categories">
@@ -322,6 +325,7 @@ function BrandingSection() {
           <Starscape className="absolute inset-0" />
         </div>
       </Specimen>
+      <NebulaSpecimen />
       <div className="grid gap-5 sm:grid-cols-2">
         <Specimen title="Logo on the starscape" note="anchor, fade 60–480px, transparentBackground" className="p-0">
           <div className="relative grid h-72 w-full place-items-center overflow-hidden rounded-xl">
@@ -361,6 +365,32 @@ function BrandingSection() {
         ))}
       </Specimen>
     </Category>
+  );
+}
+
+/// The pages' background on a large surface, as behind the content area.
+/// Regenerate draws another seed's nebula; the app keeps its own.
+function NebulaSpecimen() {
+  const [seed, setSeed] = useState(PAGE_NEBULA_SEED);
+  return (
+    <Specimen
+      title="Page nebula"
+      note={`PageNebula seed={${seed}}${seed === PAGE_NEBULA_SEED ? " (the app's)" : ""}, at --page-nebula-opacity`}
+      className="p-0"
+    >
+      <div className="relative isolate h-[32rem] w-full overflow-hidden rounded-xl bg-background">
+        <PageNebula seed={seed} className="absolute inset-0 -z-10" />
+        <Button
+          variant="outline"
+          size="sm"
+          className="absolute top-3 right-3"
+          onClick={() => setSeed(Math.floor(Math.random() * 1_000_000))}
+        >
+          <RefreshIcon data-icon="inline-start" />
+          Regenerate
+        </Button>
+      </div>
+    </Specimen>
   );
 }
 

@@ -70,6 +70,18 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
   { label: "Settings", items: SETTINGS_NAV },
 ];
 
+/// The sidebar's names for a universe page, most specific first, given the
+/// path below `/u/:slug/`: ["Sessions"], or ["General", "Settings"] for a
+/// page under its own group's path. Groups like Setup and Access are only
+/// headings in the menu, not part of the path. Unknown pages yield [].
+export function universeSectionTrail(path: string): string[] {
+  for (const group of UNIVERSE_NAV) {
+    const item = group.items.find((candidate) => path === candidate.path || path.startsWith(`${candidate.path}/`));
+    if (item) return item.path.includes("/") && group.label ? [item.label, group.label] : [item.label];
+  }
+  return [];
+}
+
 /// Bare `/settings`: the first settings page the caller may see, else the
 /// universe's home.
 export function settingsIndexPath(

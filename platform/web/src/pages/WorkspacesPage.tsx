@@ -1,4 +1,5 @@
 import { useActionPermissions } from "@/lib/permissions";
+import { useDocumentTitle } from "@/lib/document-title";
 import { ReadError } from "@/components/read-error";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -182,6 +183,11 @@ function WorkspacePane({
       ),
     enabled: workspaceId !== undefined,
   });
+  const workspaceName = workspaceId && workspaces.data
+    ? (workspaces.data.find((w) => w.workspaceId === workspaceId)?.displayName ?? workspaceId)
+    : undefined;
+  // The open file's path, deepest folder first, then its workspace.
+  useDocumentTitle([...(filePath?.split("/").reverse() ?? []), workspaceName]);
   const [createOpen, setCreateOpen] = useCreateParam("workspace");
 
   // Auto-select the first workspace when landing on bare /workspaces.

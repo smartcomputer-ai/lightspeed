@@ -1,7 +1,7 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { useEffect, type ComponentType, type CSSProperties } from "react";
-import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
+import { Link, matchPath, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
 import { ApiKeyIcon, AppearanceIcon, AuditLogIcon, BackIcon, ChannelIcon, EnvironmentProviderIcon, SecurityIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
 import {
   Sidebar,
@@ -20,7 +20,8 @@ import {
 } from "@/components/ui/sidebar";
 import { UniverseSwitcher } from "@/components/universe-switcher";
 import { UserMenu } from "@/components/user-menu";
-import { UNIVERSE_NAV, navItemVisible } from "@/components/universe-nav";
+import { UNIVERSE_NAV, navItemVisible, universeSectionTrail } from "@/components/universe-nav";
+import { DocumentTitleProvider } from "@/lib/document-title";
 import { ResizeHandle, useResizableWidth } from "@/components/resize-handle";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,33 @@ import { rememberUniverse, useUniverses } from "@/lib/universes";
 /// universe structure — the header becomes a deliberately generic "Back"
 /// (naming no universe) and the content is the mode's own menu.
 type ShellMode = "universe" | "admin" | "account";
+
+const ADMIN_TITLE = "Platform admin";
+const ACCOUNT_TITLE = "Your account";
+
+const ADMIN_NAV: Array<{ to: string; icon: ComponentType; label: string }> = [
+  { to: "/admin/users", icon: UserAdminIcon, label: "Users" },
+  { to: "/admin/universes", icon: UniversesIcon, label: "Universes" },
+  { to: "/admin/api-keys", icon: ApiKeyIcon, label: "API keys" },
+  { to: "/admin/channels", icon: ChannelIcon, label: "Channels" },
+  { to: "/admin/audit", icon: AuditLogIcon, label: "Audit log" },
+  { to: "/admin/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers" },
+];
+
+/// The part of the page title the route alone determines, most specific
+/// first: the sidebar's name for the page and the universe or mode holding
+/// it. Pages add what they have open through `useDocumentTitle`.
+export function shellTitleTrail(pathname: string, universeName: string | undefined): string[] {
+  if (pathname === "/admin" || pathname.startsWith("/admin/")) {
+    const item = ADMIN_NAV.find(({ to }) => pathname === to || pathname.startsWith(`${to}/`));
+    return item ? [item.label, ADMIN_TITLE] : [ADMIN_TITLE];
+  }
+  if (pathname === "/account" || pathname.startsWith("/account/")) return [ACCOUNT_TITLE];
+  const universe = matchPath("/u/:slug/*", pathname);
+  if (!universe) return [];
+  const section = universeSectionTrail(universe.params["*"] ?? "");
+  return universeName ? [...section, universeName] : section;
+}
 
 /// Active on the page itself and on detail views nested under it.
 function NavItem({
@@ -130,7 +158,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
 
   const mobileTitle =
     mode === "admin"
-      ? "Platform admin"
+      ? ADMIN_TITLE
       : mode === "account"
         ? "Account"
         : (active?.name ?? "Lightspeed");
@@ -157,7 +185,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           {mode === "universe" ? (
             <UniverseSwitcher active={active} admin={admin} />
           ) : (
-            <ModeHeader title={mode === "admin" ? "Platform admin" : "Your account"} />
+            <ModeHeader title={mode === "admin" ? ADMIN_TITLE : ACCOUNT_TITLE} />
           )}
         </SidebarHeader>
         <SidebarContent className="relative">
@@ -184,26 +212,19 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           })}
           {mode === "admin" && (
             <SidebarGroup>
-              <SidebarGroupLabel>Platform admin</SidebarGroupLabel>
+              <SidebarGroupLabel>{ADMIN_TITLE}</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  <NavItem to="/admin/users" icon={UserAdminIcon} label="Users" />
-                  <NavItem to="/admin/universes" icon={UniversesIcon} label="Universes" />
-                  <NavItem to="/admin/api-keys" icon={ApiKeyIcon} label="API keys" />
-                  <NavItem to="/admin/channels" icon={ChannelIcon} label="Channels" />
-                  <NavItem to="/admin/audit" icon={AuditLogIcon} label="Audit log" />
-                  <NavItem
-                    to="/admin/environment-providers"
-                    icon={EnvironmentProviderIcon}
-                    label="Environment providers"
-                  />
+                  {ADMIN_NAV.map((item) => (
+                    <NavItem key={item.to} to={item.to} icon={item.icon} label={item.label} />
+                  ))}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
           )}
           {mode === "account" && (
             <SidebarGroup>
-              <SidebarGroupLabel>Your account</SidebarGroupLabel>
+              <SidebarGroupLabel>{ACCOUNT_TITLE}</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
                   <SidebarMenuItem>
@@ -248,17 +269,19 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         {/* Master-detail surfaces (sessions, workspaces, profiles, bots)
             manage their own panes and scrolling — full-bleed. Everything else
             gets the centered scrolling column. */}
-        {/\/u\/[^/]+\/(sessions|workspaces|profiles|bots)/.test(location.pathname) ? (
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <Outlet />
-          </main>
-        ) : (
-          <main className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto w-full max-w-5xl px-4 py-6 md:px-8 md:py-10">
+        <DocumentTitleProvider base={shellTitleTrail(location.pathname, active?.name)}>
+          {/\/u\/[^/]+\/(sessions|workspaces|profiles|bots)/.test(location.pathname) ? (
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col">
               <Outlet />
-            </div>
-          </main>
-        )}
+            </main>
+          ) : (
+            <main className="min-h-0 flex-1 overflow-y-auto">
+              <div className="mx-auto w-full max-w-5xl px-4 py-6 md:px-8 md:py-10">
+                <Outlet />
+              </div>
+            </main>
+          )}
+        </DocumentTitleProvider>
       </SidebarInset>
       <WelcomeDialog />
     </SidebarProvider>

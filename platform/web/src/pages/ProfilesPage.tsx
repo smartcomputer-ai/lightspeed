@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useDocumentTitle } from "@/lib/document-title";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { slugify } from "@lightspeed-ai/platform-shared";
@@ -310,6 +311,8 @@ function ProfileEditor({
       setError(`invalid JSON: ${(parseError as Error).message}`);
     }
   };
+
+  useDocumentTitle([(draft?.displayName as string | undefined) || profileId]);
 
   if (doc.isLoading || !draft) {
     return (

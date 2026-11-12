@@ -30,6 +30,7 @@ import {
 import { activityTone, foldActivity } from "@/components/activity-dot";
 import type { SessionActivity } from "@lightspeed-ai/sdk";
 import { cn } from "@/lib/utils";
+import { useDocumentTitle } from "@/lib/document-title";
 import { useActionPermissions } from "@/lib/permissions";
 import { BotActivity } from "./activity";
 import { BotActionsMenu } from "./bot-actions-menu";
@@ -153,6 +154,10 @@ export function BotDetail({
     state,
     view === "chat" ? selected : undefined,
   );
+  useDocumentTitle([
+    view === "activity" ? "Activity" : inline.find((tab) => tab.id === selected)?.label,
+    botLabel(bot),
+  ]);
   const sessionHref = (id: string) => (id === controller?.mainSessionId ? base : `${base}/chat/${encodeURIComponent(id)}`);
   const enabled = bot.enabled ?? true;
   const togglePause = useMutation({

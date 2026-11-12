@@ -7,7 +7,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SessionUser } from "@/auth";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
-import { AppShell } from "./app-shell";
+import { AppShell, shellTitleTrail } from "./app-shell";
+import { TITLE_APP_NAME, TITLE_SEPARATOR } from "@/lib/document-title";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -105,6 +106,30 @@ it("leaves bots, and the channels they need, out of the menu", async () => {
     "": ["Sessions", "Workspaces"],
     Settings: ["General", "Templates"],
   });
+});
+
+it("titles the tab with the page and its universe, read backwards", async () => {
+  await sidebarFor("admin");
+  expect(document.title).toBe(["Bots", "Test", TITLE_APP_NAME].join(TITLE_SEPARATOR));
+});
+
+it.each([
+  ["/u/test/sessions", ["Sessions", "Test"]],
+  ["/u/test/sessions/s-1", ["Sessions", "Test"]],
+  ["/u/test/workspaces/w-1/files/src/main.rs", ["Workspaces", "Test"]],
+  ["/u/test/mcp-servers", ["MCP servers", "Test"]],
+  ["/u/test/settings/general", ["General", "Settings", "Test"]],
+  ["/u/test/blobs/abc", ["Test"]],
+  ["/admin/audit", ["Audit log", "Platform admin"]],
+  ["/admin/environment-providers", ["Environment providers", "Platform admin"]],
+  ["/account", ["Your account"]],
+  ["/", []],
+])("names %s from the menu", (path, trail) => {
+  expect(shellTitleTrail(path, "Test")).toEqual(trail);
+});
+
+it("leaves the universe out until it has loaded", () => {
+  expect(shellTitleTrail("/u/test/sessions", undefined)).toEqual(["Sessions"]);
 });
 
 it("links each page at its flat route", async () => {
