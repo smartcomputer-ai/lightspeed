@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{AuthRegistryError, SecretId, validate_token_component};
 
-pub const SECRET_KIND_STATIC_BEARER: &str = "auth.static_bearer";
+pub const SECRET_KIND_STATIC_TOKEN: &str = "auth.static_token";
 pub const SECRET_KIND_MODEL_API_KEY: &str = "auth.model.api_key";
 
 /// An in-memory secret value. `Debug` output is redacted and the type is
@@ -156,7 +156,7 @@ mod tests {
     fn put_secret_records_redact_debug_output() {
         let record = PutSecretRecord {
             secret_id: SecretId::new("authsec_1"),
-            secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+            secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
             value: SecretValue::new("super-secret-token"),
             created_at_ms: 10,
         };
@@ -171,7 +171,7 @@ mod tests {
     fn put_secret_records_reject_empty_values() {
         let record = PutSecretRecord {
             secret_id: SecretId::new("authsec_1"),
-            secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+            secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
             value: SecretValue::new(""),
             created_at_ms: 10,
         };

@@ -8,10 +8,26 @@ use crate::{
     validate_token_component,
 };
 
+/// Names two related things, depending on where it is stored.
+///
+/// On a grant it says how the broker obtains the grant's token: stored as
+/// pasted (`StaticToken`), OAuth with endpoints discovered from an MCP server
+/// (`McpOAuth`) or configured by hand (`CustomOAuth`), a GitHub App
+/// installation token minted from a signed app JWT (`GitHubApp`), or a model
+/// provider credential (`ModelApiKey`, `ModelOAuth`).
+///
+/// On a provider configuration row it says what the row configures: a GitHub
+/// App (`GitHubApp`) or a model provider reached with an API key
+/// (`ModelApiKey`), an OAuth grant (`ModelOAuth`), or no credential at all
+/// (`ModelEndpoint`, which never appears on a grant).
+///
+/// A grant kind is added only for a new token-minting protocol. Standard OAuth
+/// providers use `CustomOAuth` rather than a kind of their own; `GitHubApp`
+/// exists because installation tokens are not OAuth and need GitHub's API.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AuthProviderKind {
-    #[serde(rename = "static_bearer")]
-    StaticBearer,
+    #[serde(rename = "static_token")]
+    StaticToken,
     #[serde(rename = "mcp_oauth")]
     McpOAuth,
     #[serde(rename = "github_app")]
@@ -223,6 +239,16 @@ pub trait AuthGrantStore: Send + Sync {
         refresh: AuthGrantTokenRefresh,
     ) -> Result<AuthGrantRecord, AuthRegistryError>;
 
+    /// Point the grant at a replacement access-token secret and expiry, only
+    /// if it still points at `expected`. `Ok(None)` means another writer
+    /// replaced it first; the caller still owns the secret it stored.
+    async fn replace_grant_token(
+        &self,
+        grant_id: &AuthGrantId,
+        expected: &SecretId,
+        replacement: AuthGrantTokenRefresh,
+    ) -> Result<Option<AuthGrantRecord>, AuthRegistryError>;
+
     /// Record the expiry of a token minted on demand without persisting the
     /// token itself (for example a GitHub App installation token).
     async fn record_grant_mint_expiry(
@@ -253,7 +279,7 @@ mod tests {
         CreateAuthGrantRecord {
             grant_id: AuthGrantId::new(grant_id),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticBearer,
+            provider_kind: AuthProviderKind::StaticToken,
             exposure: AuthGrantExposure::Brokered,
             created_by: Attribution::Local,
             display_name: Some("CRM token".to_owned()),

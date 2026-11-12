@@ -118,3 +118,24 @@ it("rejects unreadable drops, duplicates and excessive sizes before uploading", 
   Object.defineProperty(file, "size", { value: 33 * 1024 * 1024 });
   expect(() => validateUploadEntries(selectedFiles([file]))).toThrow("32 MiB");
 });
+
+it("validates against the deployment's limits and names them", async () => {
+  const limits = { maxBytes: 200 * 1024 * 1024, maxEntries: 2 };
+  const large = new File(["x"], "large.bin");
+  Object.defineProperty(large, "size", { value: 100 * 1024 * 1024 });
+  // Above the default 32 MiB, within the configured 200 MiB.
+  expect(() => validateUploadEntries(selectedFiles([large]))).toThrow("32 MiB");
+  expect(() => validateUploadEntries(selectedFiles([large]), limits)).not.toThrow();
+
+  const three = selectedFiles([new File(["a"], "a"), new File(["b"], "b"), new File(["c"], "c")]);
+  expect(() => validateUploadEntries(three, limits)).toThrow(
+    "Select at most 2 files and folders per upload.",
+  );
+  await expect(uploadPayload(three, "", 0, false, () => {}, limits)).rejects.toThrow("at most 2");
+
+  const huge = new File(["x"], "huge.bin");
+  Object.defineProperty(huge, "size", { value: 300 * 1024 * 1024 });
+  expect(() => validateUploadEntries(selectedFiles([huge]), limits)).toThrow(
+    "Select up to 200 MiB per upload.",
+  );
+});

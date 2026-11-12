@@ -1,7 +1,7 @@
 /// Coding-agent subscription credentials: vendor-specific parsing and
 /// normalisation for credentials that tools *inside environments* consume
 /// (Claude Code `setup-token`, Codex `auth.json`). Core stores them as
-/// ordinary `static_bearer` grants with metadata and injects them verbatim;
+/// ordinary `static_token` grants with metadata and injects them verbatim;
 /// everything vendor-shaped lives here, in Platform.
 
 export type SubscriptionProvider = "anthropic" | "openAi";
@@ -143,7 +143,7 @@ export function isSubscriptionGrant(grant: {
   metadata?: Record<string, unknown>;
 }): boolean {
   return (
-    grant.providerKind === "staticBearer"
+    grant.providerKind === "staticToken"
     && (grant.metadata?.subscription === "claudeCode" || grant.metadata?.subscription === "codex")
   );
 }

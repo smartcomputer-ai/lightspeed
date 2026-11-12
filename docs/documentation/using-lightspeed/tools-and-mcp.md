@@ -109,15 +109,48 @@ to every agent.
    small inventory, or **Let the model search on demand** for a larger one.
 5. Configure authentication and finish adding the server.
 
-For **No authentication**, the server must accept unauthenticated requests.
+For **No authentication**, the server must accept unauthenticated requests,
+unless it takes a credential in a header of its own; see
+[custom request headers](#authenticate-with-custom-request-headers).
 For **Bearer token**, first open **Credentials → Add credential → Paste a
-token or secret**. Set **Secret type** to **Bearer token**, enter a **Display
+token or secret**. Set **Secret type** to **Token**, enter a **Display
 name** and **Secret value**, and choose **Add credential**. Select that
-credential in the MCP form.
+credential in the MCP form. Lightspeed sends it as
+`Authorization: Bearer <token>`.
 
 For **OAuth sign-in**, choose **Add and connect**, then **Open the sign-in**.
 Complete the external service's consent flow and return until the connection
 shows **Connected**. The next step selects which profiles can use it.
+
+## Authenticate with custom request headers
+
+Some servers, such as self-hosted MCP gateways, expect their credential in a
+header of their own rather than `Authorization`, and may need other headers
+too, for example the address of the service behind the gateway. Add them under
+**Customize → Request headers**, one row per header:
+
+- **Plain text** is stored and shown as written. Never put a secret here.
+- **Credential** sends the value of a **Token** from **Credentials** exactly as
+  stored, without a `Bearer` prefix. Create the token first, as for bearer
+  authentication.
+
+For a server whose only credential is such a header, leave **Authentication**
+at **No authentication**: that setting controls only the `Authorization`
+header. The server list then shows **Request headers** under Authentication.
+Headers are otherwise sent alongside a bearer token or OAuth sign-in. Every
+request to the server carries them: tool discovery, tool calls, and session
+traffic.
+
+Header names are case-insensitive and stored in lowercase. `Authorization`,
+the transport's own headers such as `Content-Type` and `Mcp-Session-Id`, and
+names starting with `X-Lightspeed-` are reserved. A credential header needs an
+active token; if the token is bound to an audience, the audience must cover
+the server URL. A missing or revoked token fails the request before anything
+is sent. Request headers require **Lightspeed connects**.
+
+To change a token later, choose **Replace value** on its row in
+**Credentials**. The credential keeps its ID, so the server sends the new
+value from its next request without being edited.
 
 ## Select tools and grant the server
 
@@ -171,7 +204,7 @@ last known tool list, or none, for 60 seconds before the next attempt.
 | Choice | Where calls happen | What it requires |
 | --- | --- | --- |
 | **Lightspeed connects** (`runtime`, the default) | Lightspeed discovers and calls the server, returning results to the model. | Runtime network access to the endpoint. Supports Responses, Chat Completions, and Anthropic Messages. |
-| **Model provider connects directly** (`provider`) | The model provider connects to the MCP server through its hosted MCP support. | A publicly reachable endpoint and a supporting provider/model. Chat Completions does not support this path. |
+| **Model provider connects directly** (`provider`) | The model provider connects to the MCP server through its hosted MCP support. | A publicly reachable endpoint and a supporting provider/model. Chat Completions does not support this path, and a server with request headers cannot use it. |
 
 With runtime execution, a call runs once and credentials and tool traffic stay between
 Lightspeed and the server. A provider-hosted call is at-least-once. It happens inside

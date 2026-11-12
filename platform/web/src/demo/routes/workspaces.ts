@@ -5,7 +5,7 @@
 /// bump on the workspace row; the head manifest lives on the record.
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { MAX_WORKSPACE_UPLOAD_BODY_BYTES, workspaceUploadSchema, prepareWorkspaceUpload, workspaceDownload, WorkspaceTransferError, workspaceEntryDeleteSchema, removeWorkspaceEntry } from "@lightspeed-ai/platform-shared";
+import { DEFAULT_WORKSPACE_UPLOAD_LIMITS, workspaceUploadBodyBytes, workspaceUploadSchema, prepareWorkspaceUpload, workspaceDownload, WorkspaceTransferError, workspaceEntryDeleteSchema, removeWorkspaceEntry } from "@lightspeed-ai/platform-shared";
 import { workspaceEntryRenameSchema, renameWorkspaceEntry, workspaceEntryMoveSchema, moveWorkspaceEntry, workspaceRenameSchema } from "@lightspeed-ai/platform-shared";
 import type { VfsDirEntry, VfsFileEntry, VfsTreeEntry, WorkspaceRow, WorkspaceTree } from "@/api";
 import { base64ToBytes, type DemoStore, type WorkspaceRecord } from "../store";
@@ -84,14 +84,18 @@ export function workspaceRoutes(store: DemoStore): Hono {
     const universe = universeFor(store, c);
     const record = universe?.workspaces.get(c.req.param("workspaceId"));
     if (!record) return notFound(c, "not found in engine");
-    const tree: WorkspaceTree = { workspace: record.row, manifest: record.manifest };
+    const tree: WorkspaceTree = {
+      workspace: record.row,
+      manifest: record.manifest,
+      uploadLimits: DEFAULT_WORKSPACE_UPLOAD_LIMITS,
+    };
     return c.json(tree);
   });
 
   app.post(
     "/:id/workspaces/:workspaceId/upload",
     bodyLimit({
-      maxSize: MAX_WORKSPACE_UPLOAD_BODY_BYTES,
+      maxSize: workspaceUploadBodyBytes(DEFAULT_WORKSPACE_UPLOAD_LIMITS),
       onError: (c) =>
         c.json(
           {

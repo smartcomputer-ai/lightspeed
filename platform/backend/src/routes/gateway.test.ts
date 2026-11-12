@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   credentialIdConflictMessage,
+  credentialReplaceParams,
   environmentSecretGrantParams,
   gitHubAppProviderId,
   mcpOAuthFlowCompletionError,
@@ -73,6 +74,19 @@ describe("environment secrets", () => {
       displayName: "px-dev SSH key",
       token: privateKey,
     });
+  });
+});
+
+describe("credential replacement", () => {
+  it("forwards the new value exactly and only a given expiry", () => {
+    expect(credentialReplaceParams("px-dev-ssh-key", {
+      value: "-----BEGIN KEY-----\nline\n-----END KEY-----\n",
+    })).toEqual({
+      grantId: "px-dev-ssh-key",
+      token: "-----BEGIN KEY-----\nline\n-----END KEY-----\n",
+    });
+    expect(credentialReplaceParams("authgrant_1", { value: "t", expiresAtMs: 5 }))
+      .toEqual({ grantId: "authgrant_1", token: "t", expiresAtMs: 5 });
   });
 });
 

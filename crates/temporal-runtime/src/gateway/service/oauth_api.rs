@@ -135,7 +135,7 @@ pub(super) fn auth_flow_view(record: auth::AuthFlowRecord, now_ms: i64) -> api::
 
 pub(super) fn registry_auth_provider_kind(value: api::AuthProviderKind) -> auth::AuthProviderKind {
     match value {
-        api::AuthProviderKind::StaticBearer => auth::AuthProviderKind::StaticBearer,
+        api::AuthProviderKind::StaticToken => auth::AuthProviderKind::StaticToken,
         api::AuthProviderKind::McpOAuth => auth::AuthProviderKind::McpOAuth,
         api::AuthProviderKind::GitHubApp => auth::AuthProviderKind::GitHubApp,
         api::AuthProviderKind::CustomOAuth => auth::AuthProviderKind::CustomOAuth,

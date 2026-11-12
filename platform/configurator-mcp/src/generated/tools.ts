@@ -8411,6 +8411,45 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           ]
         },
+        "McpServerHeader": {
+          "description": "Value of one extra MCP request header.",
+          "oneOf": [
+            {
+              "description": "Sent as written. Not secret: reads return the value.",
+              "properties": {
+                "type": {
+                  "const": "literal",
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "The token of a static-token credential in this universe, resolved at\neach request and sent raw, without a scheme prefix.",
+              "properties": {
+                "grantId": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "credential",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "grantId"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "McpServerInput": {
           "additionalProperties": {
             "not": {}
@@ -8496,6 +8535,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 }
               ],
               "default": "inject"
+            },
+            "headers": {
+              "additionalProperties": {
+                "$ref": "#/definitions/McpServerHeader"
+              },
+              "description": "Extra request headers sent on every request to the server, alongside\nany `Authorization` the auth policy produces. Names are\ncase-insensitive and stored lowercased; transport headers,\n`authorization` and `x-lightspeed-*` are reserved. Requires `runtime`\nexecution.",
+              "type": "object"
             },
             "serverId": {
               "type": "string"
@@ -8682,13 +8728,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_auth_grants_import",
     "method": "auth/grants/import",
     "group": "auth",
-    "summary": "Import a static bearer grant",
+    "summary": "Import a token credential",
     "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
     "paramsType": "AuthGrantImportParams",
     "resultType": "AgentApiOutcome<AuthGrantImportResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "description": "Import a static bearer credential as an auth grant. This is the one\ndeliberate inbound-plaintext path: `token` is encrypted on receipt and is\nnever returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
+      "description": "Import a token credential as an auth grant. Together with\n[`AuthGrantReplaceParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
       "properties": {
         "audience": {
           "type": [
@@ -8821,6 +8867,40 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
+    "name": "lightspeed_auth_grants_replace",
+    "method": "auth/grants/replace",
+    "group": "auth",
+    "summary": "Replace a token credential's value",
+    "description": "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.",
+    "paramsType": "AuthGrantReplaceParams",
+    "resultType": "AgentApiOutcome<AuthGrantReplaceResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Replace the token of an active token credential (`staticToken`). The\ncredential keeps its id, display name, audience, exposure and everything\nthat references it, so MCP servers, headers, bot polls and environment\nvariables use the new value from their next request or process. `token` is\nencrypted on receipt and never returned; `Debug` output redacts it.",
+      "properties": {
+        "expiresAtMs": {
+          "description": "When the new token expires. Absent means it does not expire; the old\ntoken's expiry is not carried over.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "grantId": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "grantId",
+        "token"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "lightspeed_auth_grants_revoke",
     "method": "auth/grants/revoke",
     "group": "auth",
@@ -8937,8 +9017,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "type": "object",
       "definitions": {
         "AuthProviderKind": {
+          "description": "On a grant, how its token is obtained; on a provider, what it configures.\n`staticToken` is a pasted secret, sent under whatever header its consumer\nuses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured\nendpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted\non demand. The `model*` kinds configure model providers; `modelEndpoint`\nis a provider without a credential and never appears on a grant.",
           "enum": [
-            "staticBearer",
+            "staticToken",
             "mcpOAuth",
             "gitHubApp",
             "customOAuth",
@@ -9123,6 +9204,169 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         }
       },
       "required": [
+        "config"
+      ],
+      "type": "object",
+      "definitions": {
+        "AuthProviderConfigInput": {
+          "oneOf": [
+            {
+              "properties": {
+                "apiBaseUrl": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "appId": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "githubApp",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "appId"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Stored model provider API key; the key arrives via `credential` and is\nencrypted on receipt.",
+              "properties": {
+                "endpoint": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/ModelEndpointConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": {
+                  "const": "modelApiKey",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Bind an existing auth grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
+              "properties": {
+                "audience": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "endpoint": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/ModelEndpointConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "grantId": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "modelOAuth",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "grantId"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Register an endpoint that requires no provider credential.",
+              "properties": {
+                "endpoint": {
+                  "$ref": "#/definitions/ModelEndpointConfig"
+                },
+                "type": {
+                  "const": "modelEndpoint",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "endpoint"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "ModelEndpointConfig": {
+          "properties": {
+            "apiKinds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "baseUrl": {
+              "type": "string"
+            },
+            "headers": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "baseUrl",
+            "apiKinds"
+          ],
+          "type": "object"
+        }
+      }
+    }
+  },
+  {
+    "name": "lightspeed_auth_providers_replace",
+    "method": "auth/providers/replace",
+    "group": "auth",
+    "summary": "Replace an authentication provider",
+    "description": "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
+    "paramsType": "AuthProviderReplaceParams",
+    "resultType": "AgentApiOutcome<AuthProviderReplaceResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Replace an existing provider's configuration and credential in place, as\nif it were created again under the same id. The new settings are validated\nbefore anything changes, so a rejected replacement leaves the provider as\nit was; sessions and environment variables referencing the id keep working\nthroughout. `credential` is encrypted on receipt and never returned;\n`Debug` output redacts it.",
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/AuthProviderConfigInput"
+        },
+        "credential": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
         "config"
       ],
       "type": "object",

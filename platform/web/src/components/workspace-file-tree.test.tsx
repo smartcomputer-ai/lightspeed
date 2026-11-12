@@ -41,12 +41,7 @@ const entries: Record<string, VfsTreeEntry> = {
 function Location() {
   return <output>{useLocation().pathname}</output>;
 }
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  menuClick.mockReset();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
+async function render(activePath: string | undefined) {
   await act(async () =>
     root.render(
       <MemoryRouter>
@@ -54,12 +49,20 @@ beforeEach(async () => {
           entries={entries}
           slug="u"
           workspaceId="ws"
-          activePath={undefined}
+          activePath={activePath}
         />
         <Location />
       </MemoryRouter>,
     ),
   );
+}
+beforeEach(async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  menuClick.mockReset();
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await render(undefined);
 });
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -85,7 +88,35 @@ async function key(
   return event;
 }
 
+async function expandDocs() {
+  await act(async () =>
+    item("docs").querySelector<HTMLElement>("[data-tree-entry]")!.click(),
+  );
+}
+
+it("starts with folders collapsed so only the top level renders", () => {
+  expect(item("docs").getAttribute("aria-expanded")).toBe("false");
+  expect(item("docs/one.txt")).toBeUndefined();
+  expect(item("z.txt")).toBeDefined();
+});
+
+it("opens the folders holding the file being viewed, also when it changes later", async () => {
+  await render("docs/two.txt");
+  expect(item("docs").getAttribute("aria-expanded")).toBe("true");
+  expect(item("docs/two.txt").getAttribute("aria-selected")).toBe("true");
+
+  // Collapsing stays possible; opening another file inside reopens it.
+  await act(async () =>
+    item("docs").querySelector<HTMLElement>("[data-tree-entry]")!.click(),
+  );
+  expect(item("docs").getAttribute("aria-expanded")).toBe("false");
+  await render("docs/one.txt");
+  expect(item("docs").getAttribute("aria-expanded")).toBe("true");
+  expect(item("docs/one.txt")).toBeDefined();
+});
+
 it("uses Up and Down to focus visible items instead of scrolling", async () => {
+  await expandDocs();
   expect(item("docs").tabIndex).toBe(0);
   await act(async () => item("docs").focus());
   expect((await key("ArrowDown")).defaultPrevented).toBe(true);
@@ -103,6 +134,7 @@ it("uses Up and Down to focus visible items instead of scrolling", async () => {
 });
 
 it("collapses and expands folders and skips their hidden children", async () => {
+  await expandDocs();
   await act(async () => item("docs/one.txt").focus());
   await key("ArrowLeft");
   expect(document.activeElement).toBe(item("docs"));
@@ -118,6 +150,7 @@ it("collapses and expands folders and skips their hidden children", async () => 
 });
 
 it("handles arrows after focusing a file link and opens the focused file with Enter", async () => {
+  await expandDocs();
   await act(async () =>
     item("docs/one.txt").querySelector<HTMLElement>("a")!.focus(),
   );
@@ -130,6 +163,7 @@ it("handles arrows after focusing a file link and opens the focused file with En
 });
 
 it("offers the focused item's menu via Tab or Shift+F10 without stealing its arrow keys", async () => {
+  await expandDocs();
   await act(async () => item("docs/one.txt").focus());
   const menu = item("docs/one.txt").querySelector<HTMLElement>(
     "[data-workspace-actions]",

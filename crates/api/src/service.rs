@@ -452,6 +452,11 @@ pub trait AgentApiService: Send + Sync {
         params: AuthGrantReadParams,
     ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError>;
 
+    async fn replace_auth_grant(
+        &self,
+        params: AuthGrantReplaceParams,
+    ) -> Result<AgentApiOutcome<AuthGrantReplaceResponse>, AgentApiError>;
+
     async fn revoke_auth_grant(
         &self,
         params: AuthGrantRevokeParams,
@@ -491,6 +496,11 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: AuthProviderCreateParams,
     ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError>;
+
+    async fn replace_auth_provider(
+        &self,
+        params: AuthProviderReplaceParams,
+    ) -> Result<AgentApiOutcome<AuthProviderReplaceResponse>, AgentApiError>;
 
     async fn list_auth_providers(
         &self,

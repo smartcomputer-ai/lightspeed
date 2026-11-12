@@ -20,6 +20,7 @@ import {
   Pencil,
 } from "lucide-react";
 import {
+  DEFAULT_WORKSPACE_UPLOAD_LIMITS,
   validWorkspaceTransferPath,
   workspaceUploadConflicts,
   renameWorkspaceEntry,
@@ -118,6 +119,7 @@ export function WorkspaceTransfers({
   });
   const canUpload =
     !!workspaceId && !!tree.data && permissions.can("useResource");
+  const uploadLimits = tree.data?.uploadLimits ?? DEFAULT_WORKSPACE_UPLOAD_LIMITS;
   const canConfigureWorkspace =
     !!workspaceId && !!tree.data && permissions.can("configureResource");
   const filesInput = useRef<HTMLInputElement>(null);
@@ -184,7 +186,7 @@ export function WorkspaceTransfers({
     let attempted = false;
     try {
       entries = await readEntries();
-      validateUploadEntries(entries);
+      validateUploadEntries(entries, uploadLimits);
       let revision = approvedRevision;
       if (revision === undefined) {
         const latest = await api<WorkspaceTree>("GET", `${baseUrl}/tree`);
@@ -202,6 +204,7 @@ export function WorkspaceTransfers({
         revision,
         approvedRevision !== undefined,
         (done) => setProgress(`Preparing ${done} of ${entries.length}…`),
+        uploadLimits,
       );
       setProgress("Uploading…");
       attempted = true;
@@ -242,7 +245,7 @@ export function WorkspaceTransfers({
       // Invoke the picker during the click's user activation, before awaiting.
       const selection = picker.call(window, { mode: "read" });
       void upload(async () =>
-        into(await directoryEntries(await selection), path),
+        into(await directoryEntries(await selection, uploadLimits), path),
       );
       return;
     }
@@ -343,7 +346,7 @@ export function WorkspaceTransfers({
       return;
     }
     // Capture browser drag entries before the event's data store is cleared.
-    const entries = droppedEntries(event.dataTransfer);
+    const entries = droppedEntries(event.dataTransfer, uploadLimits);
     void upload(async () => into(await entries, path));
   };
   const confirmDelete = async () => {

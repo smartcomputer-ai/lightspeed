@@ -160,7 +160,7 @@ pub use safe_http::{
     DEFAULT_OAUTH_HTTP_MAX_REDIRECTS, PinnedHttpError, PinnedHttpPolicy, is_public_network_ip,
 };
 pub use secrets::{
-    PutSecretRecord, SECRET_KIND_MODEL_API_KEY, SECRET_KIND_STATIC_BEARER, SecretRecordMeta,
+    PutSecretRecord, SECRET_KIND_MODEL_API_KEY, SECRET_KIND_STATIC_TOKEN, SecretRecordMeta,
     SecretStore, SecretValue, generate_prefixed_secret, secret_display_prefix, secret_sha256_hex,
 };
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

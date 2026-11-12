@@ -125,7 +125,7 @@ Use a distinct source occurrence field for a genuinely new occurrence. To
 deliberately repeat an already stored event, use Activity's replay action.
 
 The other verification choices are **HMAC-SHA256 signature** and **GitHub
-(signed)**. Create a bearer token on **Credentials** with **Retrievable by
+(signed)**. Create a token on **Credentials** with **Retrievable by
 trusted services** enabled, then enter its ID in **Credential grant ID**.
 The GitHub preset uses GitHub's signature format and delivery ID, maps events to kinds such as
 `issues.opened` and `pull_request.opened`, and can route by issue or pull

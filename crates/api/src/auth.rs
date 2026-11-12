@@ -1,9 +1,15 @@
 use super::*;
 
+/// On a grant, how its token is obtained; on a provider, what it configures.
+/// `staticToken` is a pasted secret, sent under whatever header its consumer
+/// uses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured
+/// endpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted
+/// on demand. The `model*` kinds configure model providers; `modelEndpoint`
+/// is a provider without a credential and never appears on a grant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum AuthProviderKind {
-    StaticBearer,
+    StaticToken,
     McpOAuth,
     GitHubApp,
     CustomOAuth,
@@ -71,9 +77,9 @@ fn metadata_is_empty(value: &serde_json::Value) -> bool {
     }
 }
 
-/// Import a static bearer credential as an auth grant. This is the one
-/// deliberate inbound-plaintext path: `token` is encrypted on receipt and is
-/// never returned by any method. `Debug` output redacts the token; request
+/// Import a token credential as an auth grant. Together with
+/// [`AuthGrantReplaceParams`] this is the deliberate inbound-plaintext path:
+/// `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
 /// logging must never echo these params.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -180,6 +186,38 @@ pub struct AuthGrantReadParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthGrantReadResponse {
+    pub grant: AuthGrantView,
+}
+
+/// Replace the token of an active token credential (`staticToken`). The
+/// credential keeps its id, display name, audience, exposure and everything
+/// that references it, so MCP servers, headers, bot polls and environment
+/// variables use the new value from their next request or process. `token` is
+/// encrypted on receipt and never returned; `Debug` output redacts it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantReplaceParams {
+    pub grant_id: String,
+    pub token: String,
+    /// When the new token expires. Absent means it does not expire; the old
+    /// token's expiry is not carried over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<i64>,
+}
+
+impl std::fmt::Debug for AuthGrantReplaceParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthGrantReplaceParams")
+            .field("grant_id", &self.grant_id)
+            .field("token", &"<redacted>")
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthGrantReplaceResponse {
     pub grant: AuthGrantView,
 }
 
@@ -528,6 +566,43 @@ impl std::fmt::Debug for AuthProviderCreateParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthProviderCreateResponse {
+    pub provider: AuthProviderView,
+}
+
+/// Replace an existing provider's configuration and credential in place, as
+/// if it were created again under the same id. The new settings are validated
+/// before anything changes, so a rejected replacement leaves the provider as
+/// it was; sessions and environment variables referencing the id keep working
+/// throughout. `credential` is encrypted on receipt and never returned;
+/// `Debug` output redacts it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderReplaceParams {
+    pub provider_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub config: AuthProviderConfigInput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
+impl std::fmt::Debug for AuthProviderReplaceParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthProviderReplaceParams")
+            .field("provider_id", &self.provider_id)
+            .field("display_name", &self.display_name)
+            .field("config", &self.config)
+            .field(
+                "credential",
+                &self.credential.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthProviderReplaceResponse {
     pub provider: AuthProviderView,
 }
 

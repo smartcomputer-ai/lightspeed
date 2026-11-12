@@ -1041,7 +1041,7 @@ Deletes the catalog document. Existing session configs that reference it are not
 
 ### `auth/grants/import`
 
-**Import a static bearer grant**
+**Import a token credential**
 
 Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.
 
@@ -1096,6 +1096,19 @@ Lists non-secret grant metadata for the universe, optionally filtered by status.
 - Target: `none`
 - Params: `AuthGrantListParams`
 - Result: `AgentApiOutcome<AuthGrantListResponse>`
+
+### `auth/grants/replace`
+
+**Replace a token credential's value**
+
+Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.
+
+- Access: `{"kind":"universe","action":"configureResource"}`
+- Group: `auth`
+- Role: `operator`
+- Target: `none`
+- Params: `AuthGrantReplaceParams`
+- Result: `AgentApiOutcome<AuthGrantReplaceResponse>`
 
 ### `auth/grants/revoke`
 
@@ -1200,6 +1213,19 @@ Creates a model or GitHub credential source. Plaintext API keys/private keys are
 - Target: `none`
 - Params: `AuthProviderCreateParams`
 - Result: `AgentApiOutcome<AuthProviderCreateResponse>`
+
+### `auth/providers/replace`
+
+**Replace an authentication provider**
+
+Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.
+
+- Access: `{"kind":"universe","action":"configureResource"}`
+- Group: `auth`
+- Role: `operator`
+- Target: `none`
+- Params: `AuthProviderReplaceParams`
+- Result: `AgentApiOutcome<AuthProviderReplaceResponse>`
 
 ### `auth/providers/read`
 

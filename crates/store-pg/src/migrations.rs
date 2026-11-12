@@ -40,6 +40,7 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "environment_registration_key_secrets",
     "environment_registration_keys",
     "environments",
+    "mcp_server_headers",
     "mcp_servers",
     "session_activity",
     "session_checkpoints",
@@ -129,9 +130,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "runtime_and_lifecycle_vocabulary",
         sql: include_str!("../migrations/014_runtime_and_lifecycle_vocabulary.sql"),
     },
+    EmbeddedMigration {
+        version: 15,
+        name: "mcp_headers_and_static_tokens",
+        sql: include_str!("../migrations/015_mcp_headers_and_static_tokens.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 14;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 15;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

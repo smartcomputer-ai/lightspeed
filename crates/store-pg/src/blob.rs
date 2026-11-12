@@ -13,6 +13,22 @@ use crate::{
     },
 };
 
+/// `cas_blobs` has two unique indexes over the same identity: the primary key
+/// on `digest` and one on the generated `blob_ref`. `ON CONFLICT` naming only
+/// one of them lets a concurrent insert of the same content fail on the other,
+/// so inserts arbitrate on every unique index with a bare `ON CONFLICT DO
+/// NOTHING` and then touch the winner's row. A sweep can delete that row
+/// between the two statements, so the pair is retried a few times.
+const PUT_RACE_ATTEMPTS: usize = 3;
+
+fn put_race_exhausted(blob_ref: &BlobRef) -> BlobStoreError {
+    BlobStoreError::Store {
+        message: format!(
+            "blob {blob_ref} was deleted concurrently {PUT_RACE_ATTEMPTS} times while being stored"
+        ),
+    }
+}
+
 impl PgStore {
     /// Renew the upload grace when existing refs are admitted as new input.
     /// One indexed update for the whole batch; reads never refresh grace.
@@ -59,21 +75,7 @@ impl PgStore {
             cache.insert(self.config.universe_id, &blob_ref, &bytes);
         }
 
-        let touched = sqlx::query(
-            r#"
-            UPDATE cas_blobs
-            SET touched_at_ms = GREATEST(touched_at_ms, $3)
-            WHERE universe_id = $1 AND digest = $2
-            RETURNING 1
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(digest)
-        .bind(now_ms)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| blob_sql_error("touch blob", error))?;
-        if touched.is_some() {
+        if self.touch_blob(digest, now_ms).await?.is_some() {
             return Ok(blob_ref);
         }
 
@@ -82,66 +84,85 @@ impl PgStore {
             .map_err(|error| blob_store_error("ensure universe", error))?;
 
         if bytes.len() <= self.config.inline_threshold_bytes {
-            sqlx::query(
-                r#"
-                INSERT INTO cas_blobs (
-                    universe_id,
-                    digest,
-                    byte_len,
-                    storage_kind,
-                    inline_bytes,
-                    created_at_ms,
-                    touched_at_ms
+            for _ in 0..PUT_RACE_ATTEMPTS {
+                let inserted = sqlx::query(
+                    r#"
+                    INSERT INTO cas_blobs (
+                        universe_id,
+                        digest,
+                        byte_len,
+                        storage_kind,
+                        inline_bytes,
+                        created_at_ms,
+                        touched_at_ms
+                    )
+                    VALUES ($1, $2, $3, 'inline', $4, $5, $5)
+                    ON CONFLICT DO NOTHING
+                    "#,
                 )
-                VALUES ($1, $2, $3, 'inline', $4, $5, $5)
-                ON CONFLICT (universe_id, digest) DO UPDATE
-                SET touched_at_ms = GREATEST(cas_blobs.touched_at_ms, EXCLUDED.touched_at_ms)
-                "#,
-            )
-            .bind(self.config.universe_id)
-            .bind(digest)
-            .bind(byte_len)
-            .bind(bytes)
-            .bind(now_ms)
-            .execute(&self.pool)
-            .await
-            .map_err(|error| blob_sql_error("insert inline blob", error))?;
-            return Ok(blob_ref);
+                .bind(self.config.universe_id)
+                .bind(digest)
+                .bind(byte_len)
+                .bind(&bytes)
+                .bind(now_ms)
+                .execute(&self.pool)
+                .await
+                .map_err(|error| blob_sql_error("insert inline blob", error))?
+                .rows_affected();
+                if inserted == 1 || self.touch_blob(digest, now_ms).await?.is_some() {
+                    return Ok(blob_ref);
+                }
+            }
+            return Err(put_race_exhausted(&blob_ref));
         }
 
         let object_key = direct_blob_key(&self.config, &blob_ref)?;
         let put_result = self.put_object(&object_key, bytes).await?;
         // Each upload has its own physical key. A delayed sweep can only
         // delete the previous incarnation, never this replacement's bytes.
-        let stored_key: Option<String> = sqlx::query_scalar(
-            r#"
-            INSERT INTO cas_blobs (
-                universe_id,
-                digest,
-                byte_len,
-                storage_kind,
-                object_key,
-                object_etag,
-                object_version,
-                created_at_ms,
-                touched_at_ms
+        let mut stored_key = None;
+        for _ in 0..PUT_RACE_ATTEMPTS {
+            let inserted: Option<String> = sqlx::query_scalar(
+                r#"
+                INSERT INTO cas_blobs (
+                    universe_id,
+                    digest,
+                    byte_len,
+                    storage_kind,
+                    object_key,
+                    object_etag,
+                    object_version,
+                    created_at_ms,
+                    touched_at_ms
+                )
+                VALUES ($1, $2, $3, 'object', $4, $5, $6, $7, $7)
+                ON CONFLICT DO NOTHING
+                RETURNING object_key
+                "#,
             )
-            VALUES ($1, $2, $3, 'object', $4, $5, $6, $7, $7)
-            ON CONFLICT (universe_id, digest) DO UPDATE
-            SET touched_at_ms = GREATEST(cas_blobs.touched_at_ms, EXCLUDED.touched_at_ms)
-            RETURNING object_key
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(digest)
-        .bind(byte_len)
-        .bind(&object_key)
-        .bind(put_result.e_tag)
-        .bind(put_result.version)
-        .bind(now_ms)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|error| blob_sql_error("insert object blob", error))?;
+            .bind(self.config.universe_id)
+            .bind(digest)
+            .bind(byte_len)
+            .bind(&object_key)
+            .bind(put_result.e_tag.clone())
+            .bind(put_result.version.clone())
+            .bind(now_ms)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| blob_sql_error("insert object blob", error))?;
+            if inserted.is_some() {
+                stored_key = Some(inserted);
+                break;
+            }
+            // Another writer's row: inline storage has no object key.
+            if let Some(existing) = self.touch_blob(digest, now_ms).await? {
+                stored_key = Some(existing);
+                break;
+            }
+        }
+        let Some(stored_key) = stored_key else {
+            return Err(put_race_exhausted(&blob_ref));
+        };
         if stored_key.as_deref() != Some(object_key.as_str()) {
             // Another writer won (possibly with inline storage). Only our
             // unused upload is ours to remove. A failed cleanup leaks safely.
@@ -151,6 +172,29 @@ impl PgStore {
             }
         }
         Ok(blob_ref)
+    }
+
+    /// Move an existing row's `touched_at_ms` forward. `None` when no row
+    /// exists; otherwise the row's object key (`None` for inline storage).
+    async fn touch_blob(
+        &self,
+        digest: &str,
+        now_ms: i64,
+    ) -> Result<Option<Option<String>>, BlobStoreError> {
+        sqlx::query_scalar(
+            r#"
+            UPDATE cas_blobs
+            SET touched_at_ms = GREATEST(touched_at_ms, $3)
+            WHERE universe_id = $1 AND digest = $2
+            RETURNING object_key
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(digest)
+        .bind(now_ms)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| blob_sql_error("touch blob", error))
     }
 
     /// Catalog timestamps of one blob: `(created_at_ms, touched_at_ms)`.

@@ -370,6 +370,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfAuthGrantReplaceResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AuthGrantReplaceResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfAuthGrantRevokeResponse": {
         "properties": {
           "notifications": {
@@ -448,6 +465,23 @@
           },
           "result": {
             "$ref": "#/components/schemas/AuthProviderReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfAuthProviderReplaceResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AuthProviderReplaceResponse"
           }
         },
         "required": [
@@ -3359,7 +3393,7 @@
         "type": "string"
       },
       "AuthGrantImportParams": {
-        "description": "Import a static bearer credential as an auth grant. This is the one\ndeliberate inbound-plaintext path: `token` is encrypted on receipt and is\nnever returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
+        "description": "Import a token credential as an auth grant. Together with\n[`AuthGrantReplaceParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
         "properties": {
           "audience": {
             "type": [
@@ -3518,6 +3552,41 @@
         "type": "object"
       },
       "AuthGrantReadResponse": {
+        "properties": {
+          "grant": {
+            "$ref": "#/components/schemas/AuthGrantView"
+          }
+        },
+        "required": [
+          "grant"
+        ],
+        "type": "object"
+      },
+      "AuthGrantReplaceParams": {
+        "description": "Replace the token of an active token credential (`staticToken`). The\ncredential keeps its id, display name, audience, exposure and everything\nthat references it, so MCP servers, headers, bot polls and environment\nvariables use the new value from their next request or process. `token` is\nencrypted on receipt and never returned; `Debug` output redacts it.",
+        "properties": {
+          "expiresAtMs": {
+            "description": "When the new token expires. Absent means it does not expire; the old\ntoken's expiry is not carried over.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "grantId": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "grantId",
+          "token"
+        ],
+        "type": "object"
+      },
+      "AuthGrantReplaceResponse": {
         "properties": {
           "grant": {
             "$ref": "#/components/schemas/AuthGrantView"
@@ -3921,8 +3990,9 @@
         "type": "object"
       },
       "AuthProviderKind": {
+        "description": "On a grant, how its token is obtained; on a provider, what it configures.\n`staticToken` is a pasted secret, sent under whatever header its consumer\nuses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured\nendpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted\non demand. The `model*` kinds configure model providers; `modelEndpoint`\nis a provider without a credential and never appears on a grant.",
         "enum": [
-          "staticBearer",
+          "staticToken",
           "mcpOAuth",
           "gitHubApp",
           "customOAuth",
@@ -3959,6 +4029,45 @@
         "type": "object"
       },
       "AuthProviderReadResponse": {
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/AuthProviderView"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "AuthProviderReplaceParams": {
+        "description": "Replace an existing provider's configuration and credential in place, as\nif it were created again under the same id. The new settings are validated\nbefore anything changes, so a rejected replacement leaves the provider as\nit was; sessions and environment variables referencing the id keep working\nthroughout. `credential` is encrypted on receipt and never returned;\n`Debug` output redacts it.",
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/AuthProviderConfigInput"
+          },
+          "credential": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "providerId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId",
+          "config"
+        ],
+        "type": "object"
+      },
+      "AuthProviderReplaceResponse": {
         "properties": {
           "provider": {
             "$ref": "#/components/schemas/AuthProviderView"
@@ -11915,6 +12024,45 @@
         ],
         "type": "object"
       },
+      "McpServerHeader": {
+        "description": "Value of one extra MCP request header.",
+        "oneOf": [
+          {
+            "description": "Sent as written. Not secret: reads return the value.",
+            "properties": {
+              "type": {
+                "const": "literal",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The token of a static-token credential in this universe, resolved at\neach request and sent raw, without a scheme prefix.",
+            "properties": {
+              "grantId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "credential",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "grantId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "McpServerInput": {
         "additionalProperties": false,
         "description": "Full MCP server document as submitted by clients.",
@@ -11998,6 +12146,13 @@
               }
             ],
             "default": "inject"
+          },
+          "headers": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/McpServerHeader"
+            },
+            "description": "Extra request headers sent on every request to the server, alongside\nany `Authorization` the auth policy produces. Names are\ncase-insensitive and stored lowercased; transport headers,\n`authorization` and `x-lightspeed-*` are reserved. Requires `runtime`\nexecution.",
+            "type": "object"
           },
           "serverId": {
             "type": "string"
@@ -12233,6 +12388,13 @@
           },
           "exposure": {
             "$ref": "#/components/schemas/RemoteMcpExposure"
+          },
+          "headers": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/McpServerHeader"
+            },
+            "description": "Extra request headers, keyed by lowercased name. Credential headers\nshow only the credential id; the token is never returned.",
+            "type": "object"
           },
           "revision": {
             "format": "uint64",
@@ -21627,7 +21789,7 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantImportResponse"
         }
       },
-      "summary": "Import a static bearer grant",
+      "summary": "Import a token credential",
       "x-lightspeed-access": {
         "action": "configureResource",
         "kind": "universe"
@@ -21717,6 +21879,34 @@
       },
       "x-lightspeed-group": "auth",
       "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
+    },
+    {
+      "description": "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.",
+      "name": "auth/grants/replace",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/AuthGrantReplaceParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthGrantReplaceResponse"
+        }
+      },
+      "summary": "Replace a token credential's value",
+      "x-lightspeed-access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
       "x-lightspeed-target": null
     },
     {
@@ -21935,6 +22125,34 @@
         }
       },
       "summary": "Register an authentication provider",
+      "x-lightspeed-access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "auth",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
+    },
+    {
+      "description": "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
+      "name": "auth/providers/replace",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/AuthProviderReplaceParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfAuthProviderReplaceResponse"
+        }
+      },
+      "summary": "Replace an authentication provider",
       "x-lightspeed-access": {
         "action": "configureResource",
         "kind": "universe"

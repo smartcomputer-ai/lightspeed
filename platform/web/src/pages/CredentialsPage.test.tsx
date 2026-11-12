@@ -6,7 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SecretGrant } from "@/api";
 import { PermissionIdentityProvider } from "@/lib/permissions";
-import { CredentialsPage, isReusableCredential } from "./CredentialsPage";
+import { CredentialsPage, isReplaceable, isReusableCredential } from "./CredentialsPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -19,14 +19,14 @@ function grant(grantId: string, providerKind: string, extra: Partial<SecretGrant
   };
 }
 const reusable = [
-  grant("bearer", "staticBearer"),
-  grant("environment", "staticBearer", { providerId: "environment-secret" }),
+  grant("bearer", "staticToken"),
+  grant("environment", "staticToken", { providerId: "environment-secret" }),
   grant("installation", "gitHubApp", { providerId: "github-app:1" }),
   grant("oauth", "customOAuth", { hasRefreshToken: true }),
 ];
 const hidden = [
-  grant("claude", "staticBearer", { providerId: "anthropic", metadata: { subscription: "claudeCode" } }),
-  grant("telegram-bot", "staticBearer", { providerId: "telegram" }),
+  grant("claude", "staticToken", { providerId: "anthropic", metadata: { subscription: "claudeCode" } }),
+  grant("telegram-bot", "staticToken", { providerId: "telegram" }),
   grant("mcp-login", "mcpOAuth"),
   grant("model-login", "modelOAuth"),
   grant("model-key", "modelApiKey"),
@@ -88,3 +88,50 @@ it("lists reusable credentials only and points model and MCP logins at their pag
   expect(container.textContent).toContain("1 installation granted");
   expect(container.querySelector('[aria-label="Revoke bearer credential"]')).not.toBeNull();
 });
+
+it("offers a new value only for active tokens and environment secrets", () => {
+  expect(isReplaceable(grant("bearer", "staticToken"))).toBe(true);
+  expect(isReplaceable(grant("environment", "staticToken", { providerId: "environment-secret" }))).toBe(true);
+  expect(isReplaceable(grant("revoked", "staticToken", { status: "revoked" }))).toBe(false);
+  expect(isReplaceable(grant("installation", "gitHubApp"))).toBe(false);
+  expect(isReplaceable(grant("oauth", "customOAuth"))).toBe(false);
+});
+
+it("replaces an environment secret's value exactly, under the same credential", async () => {
+  const implementation = mocks.api.getMockImplementation()!;
+  mocks.api.mockImplementation(async (method: string, path: string, body?: unknown) => {
+    if (method === "POST" && path.endsWith("/replace")) return reusable[1];
+    return implementation(method, path, body);
+  });
+  await act(async () => root.render(
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter>
+      <CredentialsPage admin={false} />
+    </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
+  ));
+  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+
+  // GitHub App installations and OAuth have no such action.
+  expect(container.querySelector('[aria-label="Replace value of installation credential"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Replace value of oauth credential"]')).toBeNull();
+  const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Replace value of environment credential"]')!;
+  expect(trigger).not.toBeNull();
+  await act(async () => trigger.click());
+
+  const dialog = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')].at(-1)!;
+  expect(dialog.textContent).toContain("keeps its ID");
+  const field = dialog.querySelector<HTMLTextAreaElement>("textarea#replace-value")!;
+  expect(field).not.toBeNull();
+  const value = "-----BEGIN KEY-----\nline\n-----END KEY-----\n";
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(field, value);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const submit = [...dialog.querySelectorAll<HTMLButtonElement>('button[type="submit"]')].at(-1)!;
+  await act(async () => submit.click());
+  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+
+  const call = mocks.api.mock.calls.find(([method, path]) => method === "POST" && (path as string).endsWith("/replace"));
+  expect(call?.[1]).toBe("/api/v1/universes/universe/secrets/grants/environment/replace");
+  expect(call?.[2]).toEqual({ value });
+});
+
