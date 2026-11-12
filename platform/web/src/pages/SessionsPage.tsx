@@ -46,7 +46,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";
 import { useUserPreferences } from "@/lib/user-preferences";
@@ -147,6 +146,7 @@ import {
 import { DetailHeader } from "@/components/detail-header";
 import { useDocumentTitle } from "@/lib/document-title";
 import {
+  LIST_CHECKBOX_INSET_CLASS,
   ListPane,
   ListPaneBody,
   ListPaneFooter,
@@ -155,7 +155,9 @@ import {
   ListPaneToolbar,
   ListRow,
   ListRowLine,
+  ListSelectionButtons,
   type ListRowTree,
+  type ListSelectionAction,
 } from "@/components/list-pane";
 
 /// U4a+U4d: master-detail session chat. Pane = paged session list plus
@@ -277,6 +279,8 @@ function SessionList({
   const [selectingAll, setSelectingAll] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [bulkNotice, setBulkNotice] = useState<string | null>(null);
+  // The bulk action awaiting confirmation, from the selection bar or a selected row's menu.
+  const [confirming, setConfirming] = useState<"close" | "delete" | null>(null);
 
   const sessions = pages.data?.pages.flatMap((page) => page.sessions) ?? [];
   const tree = buildSessionTree(sessions);
@@ -413,6 +417,12 @@ function SessionList({
       await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
     },
   });
+  // What can be done with the selection: the bar's buttons and a selected row's right-click menu.
+  const bulkBusy = bulk.isPending || selectingAll;
+  const selectionActions: ListSelectionAction[] = [
+    { key: "close", label: "Close", icon: <SessionCloseIcon />, count: selectedOpen.length, destructive: true, disabled: bulkBusy, onSelect: () => setConfirming("close") },
+    { key: "delete", label: "Delete", icon: <DeleteIcon />, count: selectedClosed.length, destructive: true, disabled: bulkBusy, onSelect: () => setConfirming("delete") },
+  ];
 
   return (
     <>
@@ -587,7 +597,8 @@ function SessionList({
             {(canSelect || selecting) && <Button
               variant="ghost"
               size="icon-sm"
-              className={cn(selecting && "text-primary")}
+              // On while selecting, drawn like an open menu's button.
+              aria-pressed={selecting}
               onClick={() => (selecting ? exitSelecting() : setSelecting(true))}
               aria-label={selecting ? "Exit selection" : "Select sessions"}
               title={selecting ? "Exit selection" : "Select sessions to close or delete"}
@@ -607,6 +618,8 @@ function SessionList({
       {selecting && (
         <ListPaneToolbar className="bg-muted/40">
           <Checkbox
+            // In the rows' checkbox column.
+            className={LIST_CHECKBOX_INSET_CLASS}
             checked={allVisibleSelected}
             disabled={selectingAll}
             onCheckedChange={(checked) =>
@@ -615,7 +628,7 @@ function SessionList({
             aria-label="Select all listed sessions"
           />
           <span className="text-muted-foreground">
-            {selected.size} selected · {selectedOpen.length + selectedClosed.length} actionable
+            {selected.size} selected
             {pages.hasNextPage ? ` of ${sessions.length} loaded` : ""}
           </span>
           {pages.hasNextPage && (
@@ -628,26 +641,23 @@ function SessionList({
               {selectingAll ? "Loading all…" : "Select all matching"}
             </button>
           )}
-          <div className="ml-auto flex items-center gap-1">
-            <BulkActionDialog
-              action="close"
-              count={selectedOpen.length}
-              pending={bulk.isPending || selectingAll}
-              onConfirm={() =>
-                bulk.mutate({ action: "close", ids: selectedOpen.map((session) => session.id) })
-              }
-            />
-            <BulkActionDialog
-              action="delete"
-              count={selectedClosed.length}
-              pending={bulk.isPending || selectingAll}
-              onConfirm={() =>
-                bulk.mutate({ action: "delete", ids: selectedClosed.map((session) => session.id) })
-              }
-            />
-          </div>
+          <ListSelectionButtons actions={selectionActions} />
         </ListPaneToolbar>
       )}
+      <BulkActionDialog
+        action="close"
+        count={selectedOpen.length}
+        open={confirming === "close"}
+        onOpenChange={(open) => setConfirming(open ? "close" : null)}
+        onConfirm={() => bulk.mutate({ action: "close", ids: selectedOpen.map((session) => session.id) })}
+      />
+      <BulkActionDialog
+        action="delete"
+        count={selectedClosed.length}
+        open={confirming === "delete"}
+        onOpenChange={(open) => setConfirming(open ? "delete" : null)}
+        onConfirm={() => bulk.mutate({ action: "delete", ids: selectedClosed.map((session) => session.id) })}
+      />
       {bulkNotice && (
         <ListPaneToolbar className="py-1.5 text-muted-foreground">
           {bulk.isPending && <LoadingIcon className="size-3 animate-spin" />}
@@ -686,6 +696,7 @@ function SessionList({
               selecting={selecting}
               selected={selected}
               onToggle={toggleSelected}
+              selectionActions={selectionActions}
               showSessionIds={showSessionIds}
               metadataKeys={metadataKeys}
               search={listSearch}
@@ -733,35 +744,25 @@ export async function runBatched<T, R>(
   return results;
 }
 
+/// The confirmation of a bulk close or delete, opened by its selection
+/// action (the selection bar's button or a selected row's menu).
 function BulkActionDialog({
   action,
   count,
-  pending,
+  open,
+  onOpenChange,
   onConfirm,
 }: {
   action: "close" | "delete";
   count: number;
-  pending: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const verb = action === "close" ? "Close" : "Delete";
   const noun = count === 1 ? "session" : "sessions";
   return (
-    <AlertDialog open={open} onOpenChange={setOpen}>
-      <AlertDialogTrigger
-        render={
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-destructive"
-            disabled={count === 0 || pending}
-          />
-        }
-      >
-        {action === "close" ? <SessionCloseIcon /> : <DeleteIcon />}
-        {verb} {count}
-      </AlertDialogTrigger>
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
@@ -778,7 +779,7 @@ function BulkActionDialog({
           <AlertDialogAction
             className="bg-destructive text-white hover:bg-destructive/90"
             onClick={() => {
-              setOpen(false);
+              onOpenChange(false);
               onConfirm();
             }}
           >
@@ -812,6 +813,8 @@ interface SessionRowControls {
   selecting: boolean;
   selected: Set<string>;
   onToggle: (id: string) => void;
+  /// What can be done with the selection: a selected row's right-click menu.
+  selectionActions: readonly ListSelectionAction[];
   showSessionIds: boolean;
   metadataKeys: string[];
   search: string;
@@ -874,6 +877,7 @@ function SessionListItem({
   selecting,
   selected,
   onToggle,
+  selectionActions,
   showSessionIds,
   metadataKeys,
   search,
@@ -901,8 +905,9 @@ function SessionListItem({
     <ListRow
       to={to}
       // Right-click: the session (opened if it is not) and its page's ⋯
-      // menu, at the pointer. While selecting, the browser's own.
-      entryProps={selecting ? undefined : {
+      // menu, at the pointer; while selecting, on a selected row, what can
+      // be done with the selection instead (ListRow decides).
+      entryProps={{
         onContextMenu: (event) => {
           event.preventDefault();
           if (!active) navigate(to);
@@ -911,7 +916,7 @@ function SessionListItem({
       }}
       active={active}
       selection={selecting
-        ? { checked: isSelected, onToggle: () => onToggle(session.id), label: `Select ${session.displayName ?? session.id}` }
+        ? { checked: isSelected, onToggle: () => onToggle(session.id), label: `Select ${session.displayName ?? session.id}`, actions: selectionActions }
         : undefined}
       tree={tree}
       indicator={<ActivityDot activity={session.activity} closed={session.lifecycleStatus === "closed"} />}

@@ -1,23 +1,11 @@
 import { BotIcon } from "@/icons";
+import { idColor } from "@/lib/identity-colors";
 import { cn } from "@/lib/utils";
 
-/// A bot keeps one colour everywhere it appears — roster, header, threads —
-/// derived from its immutable id, so renaming never changes the face.
-export function botHue(botId: string): number {
-  let hash = 7;
-  for (const char of botId) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return hash % 360;
-}
-
-/// A bot's colour: its hue, saturated like the run steps' colours, deep in
-/// the light theme and bright in the dark one (--bot-color-lightness and
-/// --bot-color-chroma).
+/// A bot keeps one colour everywhere it appears (roster, header, threads):
+/// its id's colour, so renaming never changes the face.
 export function botColor(botId: string): string {
-  return botHueColor(botHue(botId));
-}
-
-export function botHueColor(hue: number): string {
-  return `oklch(var(--bot-color-lightness) var(--bot-color-chroma) ${hue})`;
+  return idColor(botId);
 }
 
 /// A bot's avatar, wherever a bot is shown (its list, setup, creation, …):

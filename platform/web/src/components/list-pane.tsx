@@ -1,9 +1,12 @@
-import { createContext, useContext, type ComponentProps, type CSSProperties, type HTMLAttributes, type ReactNode } from "react";
+import { createContext, useContext, useState, type ComponentProps, type CSSProperties, type HTMLAttributes, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { ResizeHandle, useResizableWidth } from "@/components/resize-handle";
 import { ListNote } from "@/components/page";
 import { ReadError } from "@/components/read-error";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { menuPoint, pointAnchor, type RowMenuAnchor } from "@/lib/row-menu";
 import { useUserPreferences } from "@/lib/user-preferences";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -245,9 +248,15 @@ const LIST_INSET_REM = 1.5;
 const ROW_DOT_REM = -LIST_INSET_REM / 2;
 const ROW_DOT_RADIUS_PX = 4;
 const TREE_BRANCH_REM = 0.875;
-/// What a selection checkbox (size-4), its margin and the row's gap after
-/// it add before the content: the dot sits between it and the content.
-const TREE_SELECTION_REM = 2.375;
+/// A selection checkbox sits mostly in the list's inset (pulled left by
+/// 1rem, so it starts 8px from the edge). Exported so a select-all checkbox
+/// in a toolbar keeps the same column.
+export const LIST_CHECKBOX_INSET_CLASS = "-ml-4";
+
+/// What a selection checkbox (size-4, pulled into the inset), its margin and
+/// the row's gap after it add before the content: the dot sits between it
+/// and the content, 10px from the checkbox.
+const TREE_SELECTION_REM = 1.625;
 
 /// How far a row at this depth is indented.
 const treeIndent = (depth: number) => depth * TREE_BRANCH_REM;
@@ -355,6 +364,75 @@ export interface ListRowSelection {
   onToggle: () => void;
   /** Accessible name of the checkbox. */
   label: string;
+  /** What can be done with the selected rows: a checked row's right-click menu. */
+  actions?: readonly ListSelectionAction[];
+}
+
+/// Something a list can do with its selected rows, e.g. close or delete
+/// them. One list of these is drawn twice: as the selection bar's buttons
+/// (ListSelectionButtons) and as the menu a right-click on a selected row
+/// opens. The action decides what selecting it does, typically opening its
+/// confirmation, which the page owns.
+export interface ListSelectionAction {
+  key: string;
+  /** The verb, e.g. "Close"; shown with the count. */
+  label: string;
+  icon?: ReactNode;
+  /** How many of the selected rows it applies to; with none it is disabled. */
+  count: number;
+  destructive?: boolean;
+  /** Unavailable for now, e.g. while another bulk action runs. */
+  disabled?: boolean;
+  onSelect: () => void;
+}
+
+const actionText = (action: ListSelectionAction) => `${action.label} ${action.count}`;
+const actionDisabled = (action: ListSelectionAction) => action.disabled || action.count === 0;
+
+/// The selection bar's buttons for its actions.
+export function ListSelectionButtons({ actions }: { actions: readonly ListSelectionAction[] }) {
+  return (
+    <div className="ml-auto flex items-center gap-1">
+      {actions.map((action) => (
+        <Button
+          key={action.key}
+          variant="outline"
+          size="sm"
+          className={cn(action.destructive && "text-destructive")}
+          disabled={actionDisabled(action)}
+          onClick={action.onSelect}
+        >
+          {action.icon}
+          {actionText(action)}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+/// The actions as a menu at a point: a selected row's right-click.
+function ListSelectionMenu({ actions, anchor, onClose }: {
+  actions: readonly ListSelectionAction[];
+  anchor: RowMenuAnchor;
+  onClose: () => void;
+}) {
+  return (
+    <DropdownMenu open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DropdownMenuContent anchor={anchor} className="min-w-44">
+        {actions.map((action) => (
+          <DropdownMenuItem
+            key={action.key}
+            variant={action.destructive ? "destructive" : "default"}
+            disabled={actionDisabled(action)}
+            onClick={action.onSelect}
+          >
+            {action.icon}
+            {actionText(action)}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 /// One row of a list pane: a link to its detail, a button that opens and
@@ -495,8 +573,8 @@ export function ListRow({
           onCheckedChange={selection.onToggle}
           aria-label={selection.label}
           // Room for the dot (and a nested row's indent) between it and the content.
-          className="mr-3"
-          style={indent > 0 ? { marginRight: `${0.75 + indent}rem` } : undefined}
+          className={cn(LIST_CHECKBOX_INSET_CLASS, "mr-4")}
+          style={indent > 0 ? { marginRight: `${1 + indent}rem` } : undefined}
         />
       )}
       {lead && <span className="flex shrink-0 items-center">{lead}</span>}
@@ -529,19 +607,33 @@ export function ListRow({
       </span>
     </>
   );
-  const { className: _entryClassName, onClick: entryClick, ...entry } = entryProps ?? {};
+  const { className: _entryClassName, onClick: entryClick, onContextMenu: entryContextMenu, ...entry } = entryProps ?? {};
+  // While selecting, a right-click on a selected row opens what can be done
+  // with the selection; on any other row it does what it does outside
+  // selection mode (the row's own menu, if it has one).
+  const selectionActions = selection?.checked && selection.actions?.length ? selection.actions : undefined;
+  const [selectionMenu, setSelectionMenu] = useState<RowMenuAnchor | null>(null);
+  const contextMenu = (event: ReactMouseEvent<HTMLElement>) => {
+    if (selectionActions) {
+      event.preventDefault();
+      setSelectionMenu(pointAnchor(menuPoint(event)));
+      return;
+    }
+    entryContextMenu?.(event);
+  };
   const { className: itemClassName, ...item } = itemProps ?? {};
   return (
     // With actions the item is the row's hover group too, so the row stays
     // lit (and its title bright) over them.
     <li {...item} className={cn(rowActions && "group/row relative", itemClassName)}>
       {selection ? (
-        <label {...entry} className={className} style={style} data-list-mode={mode} data-highlighted={highlighted || undefined}>{content}</label>
+        <label {...entry} onContextMenu={contextMenu} className={className} style={style} data-list-mode={mode} data-highlighted={highlighted || undefined}>{content}</label>
       ) : toggle ? (
         <button
           type="button"
           aria-expanded={toggle.open}
           {...entry}
+          onContextMenu={entryContextMenu}
           className={className}
           style={style}
           onClick={(event) => {
@@ -556,6 +648,7 @@ export function ListRow({
       ) : (
         <NavLink
           {...entry}
+          onContextMenu={entryContextMenu}
           to={to ?? ""}
           className={className}
           style={style}
@@ -565,6 +658,9 @@ export function ListRow({
         >
           {content}
         </NavLink>
+      )}
+      {selectionActions && selectionMenu && (
+        <ListSelectionMenu actions={selectionActions} anchor={selectionMenu} onClose={() => setSelectionMenu(null)} />
       )}
       {rowActions && (
         <div className="absolute top-1/2 right-2 z-20 flex -translate-y-1/2 items-center opacity-0 transition-opacity duration-(--list-transition-duration) group-focus-visible/row:opacity-100 group-has-[:focus-visible]/row:opacity-100 group-hover/row:opacity-100 group-has-[[data-popup-open]]/row:opacity-100 [@media(hover:none)]:opacity-100">

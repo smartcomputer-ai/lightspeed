@@ -23,16 +23,24 @@ const subscribe = (listener: () => void) => {
   return () => listeners.delete(listener);
 };
 
+/// Where a row's right-click menu opens: at the pointer, or, opened from the
+/// keyboard (which has no pointer), under the row's start.
+export function menuPoint(event: ReactMouseEvent<HTMLElement>): { x: number; y: number } {
+  const { clientX: x, clientY: y } = event;
+  if (x !== 0 || y !== 0) return { x, y };
+  const row = event.currentTarget.getBoundingClientRect();
+  return { x: row.left + 24, y: row.bottom };
+}
+
+/// A menu anchor at a point.
+export function pointAnchor({ x, y }: { x: number; y: number }): RowMenuAnchor {
+  return { getBoundingClientRect: () => new DOMRect(x, y, 0, 0) };
+}
+
 /// Asks for the menu of `kind` `id` at the right-click's pointer (or, from
 /// the keyboard, which has none, under the row's start).
 export function requestRowMenu(kind: RowMenuKind, id: string, event: ReactMouseEvent<HTMLElement>) {
-  let { clientX: x, clientY: y } = event;
-  if (x === 0 && y === 0) {
-    const row = event.currentTarget.getBoundingClientRect();
-    x = row.left + 24;
-    y = row.bottom;
-  }
-  pending = { kind, id, x, y };
+  pending = { kind, id, ...menuPoint(event) };
   notify();
 }
 
@@ -47,8 +55,7 @@ export function useRowMenu(kind: RowMenuKind | null, id: string) {
     if (!kind || !request || request.kind !== kind || request.id !== id) return;
     pending = null;
     notify();
-    const { x, y } = request;
-    setAnchor({ getBoundingClientRect: () => new DOMRect(x, y, 0, 0) });
+    setAnchor(pointAnchor(request));
     setOpen(true);
   }, [kind, id, request]);
   return {

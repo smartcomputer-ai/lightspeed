@@ -100,7 +100,8 @@ import type { IconComponent } from "@/icons";
 import ROLES_SOURCE from "@/icons/roles.ts?raw";
 import OWN_SOURCE from "./UiOverviewPage.tsx?raw";
 import { GROUP_ORDER, StepRow, groupStyle } from "@/components/session/tool-trace";
-import { BotAvatar, botHue } from "@/components/bot/face";
+import { BotAvatar } from "@/components/bot/face";
+import { idColor, idHue } from "@/lib/identity-colors";
 import { UNIVERSE_NAV } from "@/components/universe-nav";
 import { ListGroupLabel, ListPaneBody, ListPaneHeader, ListPaneToolbar, ListRow, ListRowLine, PaneBar, type ListRowTree } from "@/components/list-pane";
 import { LightspeedLogo, LightspeedMark } from "@/components/brand/lightspeed-logo";
@@ -492,6 +493,8 @@ function ColorsSection() {
           </div>
         ))}
       </Specimen>
+      <IdColorsSpecimen />
+      <SurfacesSpecimen />
       <Specimen title="Lines and charts" className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
         {["border", "input", "ring", "sidebar-border", "chart-1", "chart-2", "chart-3", "chart-4", "chart-5"].map((token) => (
           <div key={token} className="grid gap-1.5">
@@ -517,6 +520,102 @@ function ColorsSection() {
         ))}
       </Specimen>
     </Category>
+  );
+}
+
+/// Ids as the app has them: bots, and a few other things with ids.
+const SAMPLE_IDS = ["implementer", "planner", "pr-reviewer", "ci-watch", "intake", "release-scribe", "triage", "digest", "support", "scheduler", "researcher", "notifier"];
+
+/// Colours from ids (lib/identity-colors idColor): samples, and a tester
+/// that shows the colour of whatever id is typed.
+function IdColorsSpecimen() {
+  const [id, setId] = useState("my-new-bot");
+  const color = idColor(id);
+  return (
+    <>
+      <Specimen
+        title="Id colours"
+        note="idColor (lib/identity-colors): a stable hue from the id at --id-color-lightness and --id-color-chroma; bots use it for their faces"
+        className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4"
+      >
+        {SAMPLE_IDS.map((sample) => (
+          <div key={sample} className="flex min-w-0 items-center gap-2.5">
+            <BotAvatar botId={sample} size={28} />
+            <div className="grid min-w-0">
+              <span className="truncate text-sm">{sample}</span>
+              <span className="font-mono text-[11px] text-muted-foreground">hue {idHue(sample)}</span>
+            </div>
+          </div>
+        ))}
+      </Specimen>
+      <Specimen title="Id colour tester" note="Type an id; its colour follows as you type" className="grid gap-4 sm:grid-cols-[minmax(0,16rem)_minmax(0,1fr)] sm:items-end">
+        <Field>
+          <FieldLabel htmlFor="id-color-tester">Id</FieldLabel>
+          <Input id="id-color-tester" value={id} onChange={(event) => setId(event.target.value)} spellCheck={false} autoComplete="off" className="font-mono" />
+        </Field>
+        <div className="flex min-w-0 flex-wrap items-center gap-4">
+          <span data-id-color-swatch="" className="size-10 shrink-0 rounded-full" style={{ background: color }} aria-hidden />
+          <BotAvatar botId={id} size={36} />
+          <span className="text-sm font-medium" style={{ color }}>Text in the colour</span>
+          <span className="rounded-md px-2 py-1 text-xs font-medium" style={{ color, background: `color-mix(in oklab, ${color} 14%, transparent)` }}>Tinted</span>
+          <Caption>hue {idHue(id)}</Caption>
+        </div>
+      </Specimen>
+    </>
+  );
+}
+
+/// The app's main surfaces in one frame, as they sit side by side and on
+/// top of each other: the sidebar, then the page area with the nebula
+/// behind both the list pane and the content, and a card on the content.
+/// Only the surfaces, none of the controls that sit on them.
+function SurfacesSpecimen() {
+  return (
+    <Specimen
+      title="Main surfaces"
+      note="The layout's surfaces, side by side and stacked; the nebula is behind the list pane and the page content, as in the app"
+      className="block p-0"
+    >
+      <div className="flex aspect-video min-h-72 w-full overflow-hidden rounded-xl">
+        <div className="flex w-[18%] min-w-24 shrink-0 flex-col border-r border-sidebar-border bg-sidebar sheen-sidebar text-sidebar-foreground">
+          <SurfaceBar />
+          <SurfaceLabel name="Sidebar" tokens="--sidebar, sheen-sidebar" />
+        </div>
+        <div className="relative isolate flex min-w-0 flex-1 bg-background">
+          <PageNebula className="absolute inset-0 -z-10" />
+          <div className="flex w-[30%] min-w-28 shrink-0 flex-col border-r bg-(--surface-list) sheen-list">
+            <SurfaceBar />
+            <SurfaceLabel name="List pane" tokens="--surface-list, sheen-list" />
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <SurfaceBar />
+            <SurfaceLabel name="Page" tokens="--background, PageNebula at --page-nebula-opacity" />
+            <div className="flex flex-1 items-center justify-center p-[6%]">
+              <Card size="sm" className="w-full max-w-64">
+                <CardHeader>
+                  <CardTitle>Card</CardTitle>
+                  <CardDescription className="font-mono text-[11px]">--surface-card, its border, radius and shadow</CardDescription>
+                </CardHeader>
+              </Card>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Specimen>
+  );
+}
+
+/// A pane's top bar: the line under it, at the pane bar's height.
+function SurfaceBar() {
+  return <div className="h-(--pane-bar-height) shrink-0 border-b" aria-hidden />;
+}
+
+function SurfaceLabel({ name, tokens }: { name: string; tokens: string }) {
+  return (
+    <div className="grid gap-0.5 p-3">
+      <span className="text-xs font-medium">{name}</span>
+      <span className="font-mono text-[11px] text-muted-foreground">{tokens}</span>
+    </div>
   );
 }
 
@@ -1660,7 +1759,6 @@ const NAV_ENTITIES: PlainEntity[] = UNIVERSE_NAV.flatMap((group) =>
 
 /// Bot ids for the bot colours specimen: the demo's bots and a few more,
 /// spread around the hue wheel.
-const SAMPLE_BOTS = ["implementer", "planner", "pr-reviewer", "ci-watch", "intake", "release-scribe", "triage", "digest", "support", "scheduler", "researcher", "notifier"];
 
 function EntitiesSection() {
   const Brain = Icons.ThinkingIcon;
@@ -1693,21 +1791,6 @@ function EntitiesSection() {
             );
           })}
         </EntityTable>
-      </Specimen>
-      <Specimen
-        title="Bot colours"
-        note="BotAvatar (components/bot/face): each bot's hue from its id, saturated like the steps (--bot-color-lightness, --bot-color-chroma)"
-        className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4"
-      >
-        {SAMPLE_BOTS.map((botId) => (
-          <div key={botId} className="flex min-w-0 items-center gap-2.5">
-            <BotAvatar botId={botId} size={28} />
-            <div className="grid min-w-0">
-              <span className="truncate text-sm">{botId}</span>
-              <span className="font-mono text-[11px] text-muted-foreground">hue {botHue(botId)}</span>
-            </div>
-          </div>
-        ))}
       </Specimen>
       <Specimen title="Tool families" note={`Folded run strips list them in this order (${GROUP_ORDER.length})`}>
         {GROUP_ORDER.map((group) => {

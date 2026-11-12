@@ -107,3 +107,88 @@ visibility ever widens beyond read access.
 - List and read: the field appears on summaries, is omitted for sessions
   without messages, and respects access filtering.
 - Contract: the regenerated contract and clients include the field.
+
+## Session list: active environment
+
+**Status:** Web UI and demo backend done. Server not started.
+
+### What the UI shows
+
+A Sessions row carries an environment mark for the environment the
+session runs its commands in: its name and a dot for its state, looked up
+in the universe's environment catalog. Rows without it show no mark, so
+the list keeps working while the server does not send it. The session
+page already shows the active environment, from the single-session read.
+
+The web reads an optional field on each session summary of
+`GET /api/v1/universes/{id}/sessions` (`session/list`):
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `activeEnvironmentId` | `string`, optional | The universe environment the session's event log has selected, the same value as `activeEnvironmentId` on the session read. Omitted when none is active. |
+
+The field is declared on `SessionSummary` in `platform/web/src/api.ts`,
+marked as demo-only for now.
+
+### Why it needs the server
+
+The active environment is chosen by the session's event log
+(`ActiveEnvironmentSet` and `ActiveEnvironmentCleared` in
+`crates/harness/src/core/components/environment.rs`) and lives only in
+reducer state. The session read reports it, but `SessionSummaryView`
+(`crates/api/src/sessions.rs`) does not, and the store keeps no copy the
+list query could read. Reading each listed session to find it would mean
+one request per row on every list load and refresh.
+
+### Reference behaviour
+
+The demo lists the same value its session read reports, and
+`platform/web/src/demo/router.test.ts` pins it ("lists each session with
+its active environment"). The server's list value should always equal
+`activeEnvironmentId` on that session's read, including after the
+environment is deactivated or detached from the session's config.
+
+### Proposed implementation
+
+1. **Store projection.** Keep the active environment beside
+   `session_activity`: a nullable column on `sessions`, or a row in a small
+   projection keyed by `(universe_id, session_id)`. Write it in the same
+   transaction that appends events (`crates/store-pg/src/session.rs`,
+   where `write_activity` runs) whenever the committed entries include an
+   environment event. Read it in the list query and the single-session
+   summary.
+2. **Migration.** Add the next migration in `crates/store-pg/migrations/`
+   and raise `REQUIRED_SCHEMA_REVISION` and `LIGHTSPEED_SCHEMA_REVISION`
+   together, as for the preview; the two can share one migration. Existing
+   sessions need a backfill from their reducer state, or they list without
+   a mark until their next environment change.
+3. **API.** Add `active_environment_id: Option<EnvironmentId>` to
+   `SessionSummaryView` with wire documentation and
+   `skip_serializing_if = "Option::is_none"`, and fill it wherever
+   summaries are built (see the preview's step 4 for the list).
+4. **Contract and clients.** Regenerate the API contract and every
+   TypeScript consumer.
+5. **Web.** Remove the demo-only note from `SessionSummary` in
+   `platform/web/src/api.ts`. The Sessions row needs no change.
+
+### Access
+
+An environment id is not new information to anyone who can list the
+session: the session read already carries it. The environment's name and
+state come from the environment catalog, under its own access rules.
+
+### Tests
+
+- Store: the projection follows set and clear events, and survives
+  restarts.
+- List and read: the list value equals the session read's for each
+  session, and is omitted when none is active.
+- Contract: the regenerated contract and clients include the field.
+
+## Not missing: the bot mark on sessions
+
+A Sessions row marks a bot's conversation from what the server already
+sends: `lifecycleControlled` on the summary and the `bot:v1:<bot id>…`
+form of a bot's session ids, which also gives the mark its bot's colour.
+The bot's name and link come from the bot roster on the session page.
+Nothing here needs the server.

@@ -40,7 +40,7 @@
 
 @keyframes status-dot-ring {
     from { inset: 0; opacity: 0.9; }
-    to { inset: -0.5rem; opacity: 0; }
+    to { inset: -0.375rem; opacity: 0; }
 }
 
 @layer components {
@@ -284,11 +284,11 @@
        where they meet. */
     --list-tree-line: color-mix(in oklab, var(--muted-foreground) 35%, var(--background));
     --list-tree-dot: color-mix(in oklab, var(--muted-foreground) 70%, var(--background));
-    /* Bot colours: each bot's hue (from its id) at this lightness and
-       chroma. Saturated like the run steps' colours: deep here, bright in
-       the dark theme. */
-    --bot-color-lightness: 0.53;
-    --bot-color-chroma: 0.19;
+    /* Id colours (lib/identity-colors idColor, e.g. each bot's): a hue from
+       the id at this lightness and chroma. Saturated like the run steps'
+       colours: deep here, bright in the dark theme. */
+    --id-color-lightness: 0.53;
+    --id-color-chroma: 0.19;
     /* Scrollbars (standard scrollbar-width and scrollbar-color only): thin,
        and nothing at rest; hovering a scroll area (or focusing it from the
        keyboard) shows its thumb, over the track color. */
@@ -390,8 +390,8 @@
     --item-foreground-rest: color-mix(in oklab, var(--foreground) 70%, transparent);
     --list-tree-line: color-mix(in oklab, var(--muted-foreground) 35%, var(--background));
     --list-tree-dot: color-mix(in oklab, var(--muted-foreground) 70%, var(--background));
-    --bot-color-lightness: 0.8;
-    --bot-color-chroma: 0.17;
+    --id-color-lightness: 0.8;
+    --id-color-chroma: 0.17;
     --scrollbar-thumb: color-mix(in oklab, var(--foreground) 22%, transparent);
     --scrollbar-track: transparent;
     --scrollbar-thumb-rest: transparent;
