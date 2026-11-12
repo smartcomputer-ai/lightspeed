@@ -328,7 +328,7 @@
     --menu-item-font-weight-selected: var(--font-weight-semibold);
     /* Tailwind's normal and medium weights (font-normal, font-medium and
        the weights above): IBM Plex Sans is variable, so any weight renders. */
-    --font-weight-normal: 460;
+    --font-weight-normal: 430;
     --font-weight-medium: 520;
     /* The standard transition times, one per family of components. Everything
        a time covers shares it and the standard easing, so it moves together.
