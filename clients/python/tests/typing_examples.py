@@ -2,7 +2,7 @@ from typing import assert_type
 
 from lightspeed_ai import AsyncLightspeedClient
 from lightspeed_ai.types import (
-    AgentApiOutcomeOfAuthGrantReplaceResponse,
+    AgentApiOutcomeOfAuthGrantPutResponse,
     AgentApiOutcomeOfMcpServerPutResponse,
     AgentApiOutcomeOfRunReadResponse,
     SessionStartResponse,
@@ -30,6 +30,6 @@ async def configure_mcp_server(client: AsyncLightspeedClient) -> None:
         AgentApiOutcomeOfMcpServerPutResponse,
     )
     assert_type(
-        await client.call("auth/grants/replace", {"grantId": "grant", "token": "fixture-token"}),
-        AgentApiOutcomeOfAuthGrantReplaceResponse,
+        await client.call("auth/grants/put", {"grantId": "grant", "token": "fixture-token"}),
+        AgentApiOutcomeOfAuthGrantPutResponse,
     )

@@ -169,14 +169,22 @@ class AuthGrantLeaseParams(TypedDict):
     grantId: str
 
 
+class AuthGrantPutParams(TypedDict):
+    audience: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    dryRun: NotRequired[bool]
+    expiresAtMs: NotRequired[int | None]
+    exposure: NotRequired[AuthGrantExposure]
+    grantId: str
+    metadata: NotRequired[Any]
+    providerId: NotRequired[str | None]
+    scopes: NotRequired[list[str]]
+    subjectHint: NotRequired[str | None]
+    token: str
+
+
 class AuthGrantReadParams(TypedDict):
     grantId: str
-
-
-class AuthGrantReplaceParams(TypedDict):
-    expiresAtMs: NotRequired[int | None]
-    grantId: str
-    token: str
 
 
 class AuthGrantRevokeParams(TypedDict):
@@ -714,11 +722,13 @@ class DeploymentApiKeyListParams(TypedDict):
 
 
 class DeploymentApiKeyRevokeParams(TypedDict):
-    keyPrefix: str
+    keyId: str
+    scope: AccessScope
 
 
 class DeploymentApiKeyRotateParams(TypedDict):
-    keyPrefix: str
+    keyId: str
+    scope: AccessScope
 
 
 class DeploymentChannelAccountListParams(TypedDict):
@@ -742,7 +752,7 @@ class DeploymentChannelAccountView(TypedDict):
 
 class DeploymentDeletedSessionsListParams(TypedDict):
     after: NotRequired[str | None]
-    universeId: str
+    universe: str
 
 
 class DeploymentDeletedSessionsListResponse(TypedDict):
@@ -784,18 +794,18 @@ class DeploymentEnvironmentProviderView(TypedDict):
 
 class DeploymentProviderBindingDeleteParams(TypedDict):
     providerId: str
-    universeId: str
+    universe: str
 
 
 class DeploymentProviderBindingPutParams(TypedDict):
     enabled: bool
     providerId: str
-    universeId: str
+    universe: str
 
 
 class DeploymentSessionPurgeParams(TypedDict):
     sessionId: str
-    universeId: str
+    universe: str
 
 
 class DeploymentSessionPurgeResponse(TypedDict):
@@ -803,12 +813,12 @@ class DeploymentSessionPurgeResponse(TypedDict):
 
 
 class DeploymentUniverseCreateParams(TypedDict):
-    slug: NotRequired[str | None]
+    handle: NotRequired[str | None]
     universeId: str
 
 
 class DeploymentUniverseDeleteParams(TypedDict):
-    universeId: str
+    universe: str
 
 
 class DeploymentUniverseDeleteResponse(TypedDict):
@@ -817,27 +827,26 @@ class DeploymentUniverseDeleteResponse(TypedDict):
     workflowsTerminated: int
 
 
+class DeploymentUniverseHandlePutParams(TypedDict):
+    handle: str
+    universe: str
+
+
 class DeploymentUniverseListParams(TypedDict):
     pass
 
 
 class DeploymentUniverseReadParams(TypedDict):
-    universeId: str
-
-
-class DeploymentUniverseSlugPutParams(TypedDict):
-    onlyIfUnset: NotRequired[bool]
-    slug: str
-    universeId: str
+    universe: str
 
 
 class DeploymentUniverseView(TypedDict):
     blobBytes: int
     createdAtMs: int
+    handle: str
     lastActivityAtMs: NotRequired[int | None]
     profiles: int
     sessions: int
-    slug: NotRequired[str | None]
     universeId: str
     workspaces: int
 
@@ -918,6 +927,7 @@ class EnvironmentDaemonView(TypedDict):
 class EnvironmentExternalCreateParams(TypedDict):
     displayName: NotRequired[str | None]
     endpoint: str
+    environmentId: NotRequired[str | None]
     metadata: NotRequired[dict[str, str]]
     requestId: str
 
@@ -965,13 +975,27 @@ class EnvironmentReadParams(TypedDict):
     environmentId: str
 
 
+class EnvironmentRegisteredPutParams(TypedDict):
+    displayName: NotRequired[str | None]
+    environmentId: str
+    metadata: NotRequired[dict[str, str]]
+    name: str
+    registrationKeyId: str
+
+
+class EnvironmentRegisteredReleaseParams(TypedDict):
+    environmentId: str
+
+
 class EnvironmentRegistrationKeyCreateParams(TypedDict):
+    declaredOnly: NotRequired[bool]
     displayName: str
     ephemeralDisconnectGraceMs: NotRequired[int | None]
     expiresAtMs: NotRequired[int | None]
     identityMode: EnvironmentIdentityModeView
     maxActiveEnvironments: NotRequired[int | None]
     offlineCloseAfterMs: NotRequired[int | None]
+    registrationKeyId: NotRequired[str | None]
 
 
 class EnvironmentRegistrationKeyListParams(TypedDict):
@@ -995,6 +1019,7 @@ type EnvironmentRegistrationKeyStatusView = Literal['active', 'revoked', 'expire
 
 
 class EnvironmentRegistrationKeyUpdateParams(TypedDict):
+    declaredOnly: NotRequired[bool]
     displayName: str
     ephemeralDisconnectGraceMs: NotRequired[int | None]
     expiresAtMs: NotRequired[int | None]
@@ -1006,6 +1031,7 @@ class EnvironmentRegistrationKeyUpdateParams(TypedDict):
 class EnvironmentRegistrationKeyView(TypedDict):
     activeEnvironmentCount: int
     createdAtMs: int
+    declaredOnly: NotRequired[bool]
     displayName: str
     ephemeralDisconnectGraceMs: int
     expiresAtMs: NotRequired[int | None]
@@ -1036,9 +1062,10 @@ class EnvironmentSourceView2(TypedDict):
 class EnvironmentSourceView3(TypedDict):
     connected: bool
     connectionChangedAtMs: int
-    daemonId: str
+    daemonId: NotRequired[str | None]
     identityMode: EnvironmentIdentityModeView
     lastSeenAtMs: int
+    name: NotRequired[str | None]
     registrationKeyId: str
     type: Literal['registered']
 
@@ -1349,7 +1376,7 @@ class ModelDefaults(TypedDict):
 
 
 class ModelDefaultsPutParams(TypedDict):
-    expectedRevision: int
+    expectedRevision: NotRequired[int | None]
     model: ModelConfig | None
     slot: ModelDefaultSlot
 
@@ -2666,10 +2693,11 @@ class AuthProviderCreateParams(TypedDict):
     providerId: NotRequired[str | None]
 
 
-class AuthProviderReplaceParams(TypedDict):
+class AuthProviderPutParams(TypedDict):
     config: AuthProviderConfigInput
     credential: NotRequired[str | None]
     displayName: NotRequired[str | None]
+    dryRun: NotRequired[bool]
     providerId: str
 
 
@@ -3103,7 +3131,17 @@ class DeploymentApiKeyCreateParams(TypedDict):
     assertActor: NotRequired[bool]
     displayName: str
     groups: NotRequired[list[MethodGroup] | None]
+    keyId: NotRequired[str | None]
     scope: AccessScope
+
+
+class DeploymentApiKeyPutParams(TypedDict):
+    assertActor: NotRequired[bool]
+    displayName: str
+    groups: NotRequired[list[MethodGroup] | None]
+    keyId: str
+    scope: AccessScope
+    secret: str
 
 
 class DeploymentApiKeyView(TypedDict):
@@ -3112,6 +3150,7 @@ class DeploymentApiKeyView(TypedDict):
     createdBy: Attribution
     displayName: NotRequired[str | None]
     groups: list[MethodGroup]
+    keyId: str
     keyPrefix: str
     lastUsedAtMs: NotRequired[int | None]
     revokedAtMs: NotRequired[int | None]
@@ -3161,6 +3200,7 @@ class DeploymentUniverseReadResponse(TypedDict):
 
 class EnvironmentCreateParams(TypedDict):
     displayName: NotRequired[str | None]
+    environmentId: NotRequired[str | None]
     idle: NotRequired[EnvironmentIdlePolicyView | None]
     metadata: NotRequired[dict[str, str]]
     providerId: str
@@ -3242,6 +3282,24 @@ class EnvironmentRegistrationKeyCreateResponse(TypedDict):
 
 class EnvironmentRegistrationKeyListResponse(TypedDict):
     registrationKeys: NotRequired[list[EnvironmentRegistrationKeyView]]
+
+
+class EnvironmentRegistrationKeyPutParams(TypedDict):
+    declaredOnly: NotRequired[bool]
+    displayName: str
+    ephemeralDisconnectGraceMs: NotRequired[int | None]
+    expiresAtMs: NotRequired[int | None]
+    identityMode: EnvironmentIdentityModeView
+    maxActiveEnvironments: NotRequired[int | None]
+    offlineCloseAfterMs: NotRequired[int | None]
+    registrationKeyId: str
+    secret: EnvironmentRegistrationSecretView
+
+
+class EnvironmentRegistrationKeyPutResponse(TypedDict):
+    created: bool
+    registrationKey: EnvironmentRegistrationKeyView
+    secretReplaced: bool
 
 
 class EnvironmentRegistrationKeyReadResponse(TypedDict):
@@ -3758,11 +3816,13 @@ class AuthGrantListResponse(TypedDict):
     grants: NotRequired[list[AuthGrantView]]
 
 
-class AuthGrantReadResponse(TypedDict):
+class AuthGrantPutResponse(TypedDict):
+    created: bool
     grant: AuthGrantView
+    tokenReplaced: bool
 
 
-class AuthGrantReplaceResponse(TypedDict):
+class AuthGrantReadResponse(TypedDict):
     grant: AuthGrantView
 
 
@@ -3782,11 +3842,13 @@ class AuthProviderListResponse(TypedDict):
     providers: NotRequired[list[AuthProviderView]]
 
 
-class AuthProviderReadResponse(TypedDict):
+class AuthProviderPutResponse(TypedDict):
+    created: bool
+    credentialReplaced: bool
     provider: AuthProviderView
 
 
-class AuthProviderReplaceResponse(TypedDict):
+class AuthProviderReadResponse(TypedDict):
     provider: AuthProviderView
 
 
@@ -4070,6 +4132,12 @@ class DeploymentApiKeyListResponse(TypedDict):
     apiKeys: NotRequired[list[DeploymentApiKeyView]]
 
 
+class DeploymentApiKeyPutResponse(TypedDict):
+    apiKey: DeploymentApiKeyView
+    created: bool
+    secretReplaced: bool
+
+
 class DeploymentApiKeyRevokeResponse(TypedDict):
     apiKey: DeploymentApiKeyView
 
@@ -4115,6 +4183,16 @@ class EnvironmentPowerPutResponse(TypedDict):
 
 class EnvironmentReadResponse(TypedDict):
     environment: EnvironmentView
+
+
+class EnvironmentRegisteredPutResponse(TypedDict):
+    created: bool
+    environment: EnvironmentView
+
+
+class EnvironmentRegisteredReleaseResponse(TypedDict):
+    environment: EnvironmentView
+    released: bool
 
 
 class EnvironmentUpdateResponse(TypedDict):
@@ -4569,14 +4647,14 @@ class AgentApiOutcomeOfAuthGrantListResponse(TypedDict):
     result: AuthGrantListResponse
 
 
+class AgentApiOutcomeOfAuthGrantPutResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: AuthGrantPutResponse
+
+
 class AgentApiOutcomeOfAuthGrantReadResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: AuthGrantReadResponse
-
-
-class AgentApiOutcomeOfAuthGrantReplaceResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGrantReplaceResponse
 
 
 class AgentApiOutcomeOfAuthGrantRevokeResponse(TypedDict):
@@ -4599,14 +4677,14 @@ class AgentApiOutcomeOfAuthProviderListResponse(TypedDict):
     result: AuthProviderListResponse
 
 
+class AgentApiOutcomeOfAuthProviderPutResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: AuthProviderPutResponse
+
+
 class AgentApiOutcomeOfAuthProviderReadResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: AuthProviderReadResponse
-
-
-class AgentApiOutcomeOfAuthProviderReplaceResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthProviderReplaceResponse
 
 
 class AgentApiOutcomeOfBlobHasResponse(TypedDict):
@@ -4784,6 +4862,11 @@ class AgentApiOutcomeOfDeploymentApiKeyListResponse(TypedDict):
     result: DeploymentApiKeyListResponse
 
 
+class AgentApiOutcomeOfDeploymentApiKeyPutResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: DeploymentApiKeyPutResponse
+
+
 class AgentApiOutcomeOfDeploymentApiKeyRevokeResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: DeploymentApiKeyRevokeResponse
@@ -4929,6 +5012,16 @@ class AgentApiOutcomeOfEnvironmentReadResponse(TypedDict):
     result: EnvironmentReadResponse
 
 
+class AgentApiOutcomeOfEnvironmentRegisteredPutResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: EnvironmentRegisteredPutResponse
+
+
+class AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: EnvironmentRegisteredReleaseResponse
+
+
 class AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: EnvironmentRegistrationKeyCreateResponse
@@ -4937,6 +5030,11 @@ class AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse(TypedDict):
 class AgentApiOutcomeOfEnvironmentRegistrationKeyListResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: EnvironmentRegistrationKeyListResponse
+
+
+class AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: EnvironmentRegistrationKeyPutResponse
 
 
 class AgentApiOutcomeOfEnvironmentRegistrationKeyReadResponse(TypedDict):
