@@ -63,8 +63,6 @@ pub(crate) enum Action {
     Unchanged,
     /// The document asks for something `apply` will not do.
     Conflict,
-    /// Part of the document that this version does not apply.
-    NotApplied,
     /// The write was attempted and refused.
     Failed,
 }
@@ -85,7 +83,6 @@ impl Action {
             (Self::Remove, true) => "removed",
             (Self::Unchanged, _) => "unchanged",
             (Self::Conflict, _) => "conflict",
-            (Self::NotApplied, _) => "not applied",
             (Self::Failed, _) => "failed",
         }
     }
@@ -213,19 +210,18 @@ pub(crate) async fn plan(
     loaded: &LoadedDocument,
 ) -> Result<DocumentPlan> {
     let subject = loaded.subject();
-    let (resources, sections, handle, name) = match &loaded.document {
+    let (resources, sections, handle) = match &loaded.document {
         Document::Universe(document) => (
             universe_resources(),
             universe_sections(document)?,
             Some(document.handle.clone()),
-            document.name.clone(),
         ),
         Document::Deployment(document) => {
             let mut sections = BTreeMap::new();
             if let Some(keys) = &document.api_keys {
                 sections.insert("apiKeys", keys.clone());
             }
-            (deployment_resources(), sections, None, None)
+            (deployment_resources(), sections, None)
         }
     };
 
@@ -272,21 +268,14 @@ pub(crate) async fn plan(
 
     let target = connect(base, handle.as_deref()).await?;
     let mut steps = Vec::new();
-    if let Some(handle) = &handle {
-        if target.universe_id.is_none() {
-            let mut step = Step::new(&subject, "universe", handle, Action::Create);
-            step.work = Some(Work::CreateUniverse {
-                handle: handle.clone(),
-            });
-            steps.push(step);
-        }
-        if name.is_some() {
-            steps.push(
-                Step::new(&subject, "universe", handle, Action::NotApplied).with_message(
-                    "the display name belongs to the Platform organization, which apply cannot set yet",
-                ),
-            );
-        }
+    if let Some(handle) = &handle
+        && target.universe_id.is_none()
+    {
+        let mut step = Step::new(&subject, "universe", handle, Action::Create);
+        step.work = Some(Work::CreateUniverse {
+            handle: handle.clone(),
+        });
+        steps.push(step);
     }
 
     let mut state: BTreeMap<&'static str, BTreeMap<String, Live>> = BTreeMap::new();

@@ -90,8 +90,6 @@ kind: universe
 # The universe's deployment-unique name. apply finds the universe by it and
 # creates the universe when no universe has it.
 handle: research
-# The name people see. The Platform organization owns it.
-name: Research
 
 # auth/grants/put — token credentials.
 credentials:
@@ -186,7 +184,6 @@ The same document as JSON, shortened:
   "schemaVersion": 1,
   "kind": "universe",
   "handle": "research",
-  "name": "Research",
   "credentials": [
     { "grantId": "tracker-token", "displayName": "Issue tracker", "tokenFrom": { "env": "TRACKER_TOKEN" } }
   ],
@@ -206,7 +203,7 @@ document; see [Ownership and pruning](#ownership-and-pruning).
 
 | Section | Entry is | Written with | Read with | Id |
 | --- | --- | --- | --- | --- |
-| `handle`, `name` | the universe | `deployment/universes/create`; the Platform for `name` | `deployment/universes/read` | handle |
+| `handle` | the universe | `deployment/universes/create` | `deployment/universes/read` | handle |
 | `credentials` | `auth/grants/put` params | `auth/grants/put` | `auth/grants/list` | `grantId` |
 | `providers` | `auth/providers/put` params | `auth/providers/put` | `auth/providers/list` | `providerId` |
 | `modelDefaults` | a map of slot to `ModelConfig` | `models/defaults/put`, once per slot | `models/defaults/read` | slot (`agentRun`, `speechToText`) |
@@ -387,7 +384,7 @@ replacement:
 
 ## Identity
 
-A universe is declared by its **handle** and a display name. The handle is
+A universe is declared by its **handle**. The handle is
 the universe's deployment-unique name: every universe has one, the runtime
 resolves it wherever it accepts a UUID, and it is the same in every deployment
 a document is applied to. The runtime UUID differs between deployments and
@@ -494,8 +491,8 @@ The format has no templating or interpolation. Values that differ between
 deployments are handled by the layer above: chart values in a GitOps
 pipeline, or separate directories.
 
-A template is a document applied with a different handle and name
-(`apply --handle … --name …`). It is a starting point, not a link: a universe
+A template is a document applied with a different handle
+(`config apply --handle …`). It is a starting point, not a link: a universe
 created from a template does not follow later changes to it.
 
 ## Required changes
@@ -511,10 +508,21 @@ created from a template does not follow later changes to it.
 
 The runtime has no universe display name; the Platform organization owns it,
 and a runtime-only universe has no members until an administrator adopts it.
-The Platform's universe routes (`POST /universes`, `/adopt`) authenticate a
-browser session today. `apply` needs a way to create or adopt the
-organization and set its name with a service credential. Without it a
-declared universe exists but nobody can sign in to it.
+A universe created by `apply` therefore needs one manual step: a Platform
+admin adopts it in the web app and names it. Everything inside the universe
+is applied from the document.
+
+Automating that step is deferred. The CLI talks only to the runtime, and the
+Platform accepts only browser sessions, so the two candidates are:
+
+| Approach | What it adds |
+| --- | --- |
+| The runtime owns the display name, next to the handle it already owns, and the Platform adopts named runtime universes by itself with the deployment key it already has. | One nullable field and one method in the runtime; the Platform's handle sync extended to adopt and to sync names. `apply` stays a runtime-only client. Preferred when this is picked up. |
+| A Platform endpoint that `apply` calls with a service credential. | The CLI's first connection to the Platform (a second URL and credential in every pipeline), and a machine credential on a system that today authenticates people only. |
+
+A Platform admin acts as admin in every universe, so an adopted universe
+needs no declared members to be usable. Declaring members and role mappings
+is a separate, later question.
 
 ### Runtime
 
@@ -570,8 +578,11 @@ Built as proposed, with these additions and deviations:
 - **Model defaults are written without `expectedRevision`.** Both slots
   share one revision, so a guard read before the first write would refuse
   the second.
-- **`name` is accepted and reported as `not applied`** until the Platform
-  step exists.
+- **A document has no `name`.** The name people see belongs to the Platform
+  organization, which `apply` does not reach, so the field was removed from
+  the format (decided 2026-11-12). A universe is named when an admin adopts
+  it. The field can return without a format break if the runtime comes to
+  own the display name; see [Platform](#platform).
 - **Reference checks** cover an MCP server's and a provider's credential, an
   environment's registration key, an environment credential's source, and a
   profile's attached environments. A profile's model, MCP servers and
@@ -596,7 +607,7 @@ Built as proposed, with these additions and deviations:
 
 Not built:
 
-- **Templates** (`apply --handle … --name …`). Editing `handle` in an
+- **Templates** (`config apply --handle …`). Editing `handle` in an
   exported file does the same.
 - **An offline `validate`.** The first phase runs without a connection in
   the code, but no command exposes it alone.
@@ -616,7 +627,9 @@ Not built:
    resource table.
 2. **`diff` and `apply`** for the same set, with round-trip tests. No
    deletion. Slices 1 and 2 are done.
-3. **Platform organization** creation and naming with a service credential.
+3. **Platform organization** creation and naming. Deferred (decided
+   2026-11-12): a Platform admin adopts a declared universe once in the web
+   app. See [Platform](#platform).
 4. **The CLI image.**
 
 ## Later
@@ -637,9 +650,6 @@ Not built:
 
 ## Open questions
 
-- Should the Platform step be a Platform endpoint that accepts a service key,
-  or should the runtime own a universe display name so `apply` needs no
-  Platform call for naming?
 - How does `--prune` decide what it may delete? See
   [Ownership and pruning](#ownership-and-pruning).
 - Which provisioned environments are configuration? `export` cannot yet tell

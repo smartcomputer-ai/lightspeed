@@ -2033,10 +2033,6 @@
           },
           "type": "object"
         },
-        "name": {
-          "description": "The name people see. It belongs to the Platform organization.",
-          "type": "string"
-        },
         "profiles": {
           "items": {
             "anyOf": [

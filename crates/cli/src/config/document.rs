@@ -35,9 +35,6 @@ pub(crate) struct UniverseDocument {
     pub kind: Kind,
     /// The universe's deployment-unique name.
     pub handle: String,
-    /// The name people see; owned by the Platform organization.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credentials: Option<Vec<Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

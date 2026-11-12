@@ -191,13 +191,6 @@ pub(crate) fn document_schema() -> Value {
                     "minLength": 1,
                 }),
             );
-            properties.insert(
-                "name".to_owned(),
-                json!({
-                    "description": "The name people see. It belongs to the Platform organization.",
-                    "type": "string",
-                }),
-            );
         }
         properties.extend(sections);
         json!({
@@ -271,7 +264,6 @@ mod tests {
 schemaVersion: 1
 kind: universe
 handle: research
-name: Research
 credentials:
   - grantId: tracker-token
     displayName: Issue tracker
@@ -479,6 +471,12 @@ apiKeys:
             (
                 "an unknown field of an entry",
                 edited(|document| document["providers"][0]["displayNam"] = json!("typo")),
+            ),
+            (
+                // The name people see belongs to the Platform organization,
+                // which no document reaches.
+                "a display name for the universe",
+                edited(|document| document["name"] = json!("Research")),
             ),
             (
                 "an unknown field deep in a profile",

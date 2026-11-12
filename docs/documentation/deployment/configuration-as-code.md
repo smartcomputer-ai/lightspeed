@@ -271,11 +271,10 @@ renames a universe. Both stay explicit commands:
 `handle` before the next `apply`, or it creates a new universe under the old
 handle.
 
-A universe document may carry a `name`, the name people see. That name
-belongs to the Platform organization, which `apply` cannot set yet; it is
-reported as `not applied`. A universe created by `apply` has no Platform
-organization until an administrator adopts it; see
-[Managing universes](multi-tenancy.md).
+A document does not carry the name people see. That name belongs to the
+Platform organization. A universe created by `apply` has no Platform
+organization until an administrator adopts it in the web app, and names it
+there; see [Managing universes](multi-tenancy.md).
 
 ## Export a universe
 
