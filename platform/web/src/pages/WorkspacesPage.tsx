@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { slugify, workspaceCreateSchema, validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
-import { AddIcon, FileIcon, NewTabIcon, WorkspaceIcon } from "@/icons";
+import { AddIcon, FileIcon, WorkspaceIcon } from "@/icons";
 import {
   api,
   type BlobContent,
@@ -39,6 +39,9 @@ import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { appHref, blobHref } from "@/lib/blob-view";
 import { DetailHeader } from "@/components/detail-header";
+import { MetaToolbar } from "@/components/meta-toolbar";
+import { formatBytes } from "@/lib/composer-attachments";
+import { fileMetaItems } from "@/components/workspace-file-meta";
 import { ListPane, ListPaneHeader, ListPaneToolbar } from "@/components/list-pane";
 import { WorkspaceFileTree } from "@/components/workspace-file-tree";
 import { PdfPreview } from "@/components/pdf-preview";
@@ -513,18 +516,23 @@ function FileDetail({
         title={filePath}
         titleHint={filePath}
         titleClassName="font-mono font-normal"
-        details={file ? formatBytes(file.size_bytes) : undefined}
+        tags={file && (
+          <MetaToolbar
+            items={fileMetaItems({
+              name: filePath.split("/").at(-1) ?? filePath,
+              file,
+              text,
+              revision: tree.data?.workspace.revision,
+              blobViewerHref: blobLink ? appHref(blobLink) : null,
+              unsaved: dirty,
+            })}
+            place="header"
+            expandOnHover
+            label="File details"
+            className="grow"
+          />
+        )}
         actions={[
-          ...(blobLink
-            ? [{
-                key: "open",
-                label: "Open in blob viewer (new tab)",
-                hint: dirty ? "Open saved version in blob viewer (new tab)" : "Open in blob viewer (new tab)",
-                icon: <NewTabIcon />,
-                href: appHref(blobLink),
-                external: true,
-              }]
-            : []),
           ...(decoded?.kind === "text"
             ? [{
                 kind: "choice" as const,
@@ -881,19 +889,4 @@ function classify(
     }
   }
   return "text";
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  const units = ["KiB", "MiB", "GiB"];
-  let value = bytes;
-  let unit = "B";
-  for (const next of units) {
-    if (value < 1024) break;
-    value /= 1024;
-    unit = next;
-  }
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${unit}`;
 }
