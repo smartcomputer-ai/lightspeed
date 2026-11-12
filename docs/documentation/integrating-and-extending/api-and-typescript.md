@@ -9,7 +9,9 @@ recover from a lost HTTP response without creating duplicate work.
 The TypeScript client supplies typed JSON-RPC calls and helpers for starting
 runs and waiting for them to finish. Its public types come from the Rust API contract.
 Build against this client and the public contract so runtime implementation
-changes do not become dependencies of your application.
+changes do not become dependencies of your application. A
+[Python client](../../../clients/python/README.md) covers the same API; what this
+page says about identifiers, events, and lifecycle applies to it too.
 
 ## Prepare an endpoint and a profile
 

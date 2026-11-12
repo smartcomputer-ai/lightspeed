@@ -20,6 +20,8 @@ function fixture(t) {
     write(`crates/${name}/Cargo.toml`, `[package]\nname = "${name}"\nversion.workspace = true\nedition = "2024"\n`);
     write(`crates/${name}/src/lib.rs`, '');
   }
+  write('clients/python/pyproject.toml', '[build-system]\nrequires = ["hatchling"]\n\n[project]\nname = "lightspeed-ai"\nversion = "0.2.0"\n');
+  write('clients/python/uv.lock', 'version = 1\n\n[[package]]\nname = "httpx"\nversion = "0.28.1"\n\n[[package]]\nname = "lightspeed-ai"\nversion = "0.2.0"\nsource = { editable = "." }\n');
   execFileSync('cargo', ['generate-lockfile', '--offline'], { cwd, stdio: 'pipe' });
   return { cwd, write, read };
 }
@@ -30,9 +32,22 @@ test('preparation updates every released package and lockfile without changing c
   assert.equal(verifyVersions(f.cwd), '0.3.0');
   assert.equal(f.read('release/metadata.env'), 'LIGHTSPEED_PRODUCT_VERSION=0.3.0\nLIGHTSPEED_SCHEMA_REVISION=10\n');
   assert.equal((f.read('Cargo.lock').match(/version = "0.3.0"/g) ?? []).length, releasePackages.length);
+  assert.match(f.read('clients/python/pyproject.toml'), /^name = "lightspeed-ai"\nversion = "0\.3\.0"$/m);
+  assert.equal(f.read('clients/python/uv.lock'), 'version = 1\n\n[[package]]\nname = "httpx"\nversion = "0.28.1"\n\n[[package]]\nname = "lightspeed-ai"\nversion = "0.3.0"\nsource = { editable = "." }\n');
   const lock = f.read('Cargo.lock');
   prepareVersion(f.cwd, '0.3.0');
   assert.equal(f.read('Cargo.lock'), lock);
+});
+
+test('verification detects a Python client left at another version', (t) => {
+  const f = fixture(t);
+  for (const file of ['clients/python/pyproject.toml', 'clients/python/uv.lock']) {
+    const original = f.read(file);
+    f.write(file, original.replace('version = "0.2.0"', 'version = "0.1.0"'));
+    assert.throws(() => verifyVersions(f.cwd), new RegExp(`${file}: expected product version 0.2.0, found 0.1.0`));
+    f.write(file, original);
+  }
+  assert.equal(verifyVersions(f.cwd), '0.2.0');
 });
 
 test('invalid versions and unsupported prerelease channels are rejected', () => {
@@ -56,7 +71,10 @@ test('failed preparation restores manifests and lockfile, preserving existing ed
   const manifest = 'crates/cli/Cargo.toml';
   f.write(manifest, f.read(manifest).replace('version.workspace = true', 'version = "0.2.0"'));
   f.write('release/metadata.env', `${f.read('release/metadata.env')}# local note\n`);
-  const paths = ['Cargo.toml', 'release/metadata.env', 'Cargo.lock', manifest];
+  const paths = [
+    'Cargo.toml', 'release/metadata.env', 'Cargo.lock', manifest,
+    'clients/python/pyproject.toml', 'clients/python/uv.lock',
+  ];
   const before = paths.map(f.read);
   assert.throws(() => prepareVersion(f.cwd, '0.3.0'), /cli: expected product version/);
   assert.deepEqual(paths.map(f.read), before);
