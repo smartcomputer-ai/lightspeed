@@ -41,12 +41,12 @@ pods:
 
 ```bash
 lightspeed environment registration-key create \
-  --name "CI runners" --mode persistent --max-active 5
+  --display-name "CI runners" --mode persistent --max-active 5
 ```
 
 Set `--max-active` to the replica count plus room for a rollout, so a
 leaked key cannot add more machines than you expect. For a persistent key,
-`--offline-close-after-min` closes environments whose daemon stays away
+`--offline-close-after` (for example `12h` or `30d`) closes environments whose daemon stays away
 that long, which suits a fleet whose volumes you delete when scaling down.
 Store the secret printed once in a Kubernetes Secret, or in a file readable
 only by the daemon's user on a VM:
@@ -69,12 +69,12 @@ secret, mount it into the daemons, and declare the key from the same value.
 No step has to read a secret out of Lightspeed.
 
 ```bash
-lightspeed generate secret registration-key > registration-key   # or generate it in the secret store
+lightspeed environment registration-key generate-secret > registration-key   # or generate it in the secret store
 kubectl -n lightspeed-runners create secret generic lightspeed-envd-key \
   --from-file=registration-key=./registration-key
 
 lightspeed environment registration-key put ci-runners \
-  --name "CI runners" --mode persistent --max-active 5 \
+  --display-name "CI runners" --mode persistent --max-active 5 \
   --secret-file ./registration-key
 ```
 
@@ -228,12 +228,12 @@ can instead declare each environment in advance, with an ID you choose:
 
 ```bash
 lightspeed environment registration-key put ci-runners \
-  --name "CI runners" --mode persistent --max-active 3 --declared-only \
+  --display-name "CI runners" --mode persistent --max-active 3 --declared-only \
   --secret-file ./registration-key
 
 for i in 0 1 2; do
-  lightspeed environment registered put "runner-$i" \
-    --key ci-runners --name "lightspeed-runner-$i"
+  lightspeed environment declare "runner-$i" \
+    --key ci-runners --registration-name "lightspeed-runner-$i"
 done
 ```
 
@@ -285,7 +285,7 @@ second machine take the place of one that profiles and credentials point at.
 Release the environment to let the new machine in:
 
 ```bash
-lightspeed environment registered release runner-1
+lightspeed environment release runner-1
 ```
 
 The environment forgets its daemon and keeps its ID, its name, its credential

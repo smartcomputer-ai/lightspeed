@@ -76,8 +76,8 @@ yet.
 
 To supply the key from deployment secret configuration, set
 `LIGHTSPEED_BOOTSTRAP_API_KEY` for the provision command. Its format is `lsk_`
-followed by 32 random bytes encoded as unpadded base64url; `lightspeed generate
-secret api-key` prints one. The command stores only its hash and metadata in
+followed by 32 random bytes encoded as unpadded base64url; `lightspeed api-key
+generate-secret` prints one. The command stores only its hash and metadata in
 the normal key store, and declares the key: repeating it with the same secret
 changes nothing, changed groups are applied, and a different secret replaces
 the previous one at once. A revoked key and a changed actor flag fail.
@@ -172,14 +172,14 @@ Provider credentials are separate from the Lightspeed gateway key. Store a
 built-in provider key from an environment variable:
 
 ```bash
-lightspeed model provider add openai --api-key-env OPENAI_API_KEY
+lightspeed model provider put openai --api-key-env OPENAI_API_KEY
 lightspeed model list
 ```
 
 For a compatible endpoint, supply its full configuration:
 
 ```bash
-lightspeed model provider add my-provider \
+lightspeed model provider put my-provider \
   --base-url https://provider.example/v1 \
   --api-kind openai:completions \
   --api-key-env MY_PROVIDER_KEY
@@ -187,7 +187,8 @@ lightspeed model provider add my-provider \
 
 Repeat `--api-kind` for multiple supported APIs and `--header NAME=VALUE` for
 non-secret headers. For a credentialless endpoint, use `--no-auth` instead of
-a key source. The runtime validates endpoint configuration; its loopback URLs
+a key source. `put` declares the provider: repeating it changes nothing. The
+runtime validates endpoint configuration; its loopback URLs
 refer to the runtime host. Provider setup requires the `auth` group and model
 discovery requires `models`.
 
@@ -248,11 +249,11 @@ files are not kept in sync, and agent edits are not written back to your machine
 default to `/workspace` with `edit` access. `--workspace-path` and
 `--workspace-access read|edit` require one of the two sources.
 
-These shortcuts use the same revision-checked attachment operation as
-`session workspace attach`. They replace an attachment at the specified path
+These shortcuts change the session's configuration with a revision check.
+They replace an attachment at the specified path
 and preserve other attachments and configuration. Repeating `--upload` creates
 another workspace. Resuming with `chat -s SESSION_ID` alone retains the session's
-existing attachments. Every `--session` option also accepts `-s`.
+existing attachments. `--session` also accepts `-s`.
 
 ## Configure universe model defaults
 
@@ -287,16 +288,18 @@ intended routes with these commands.
 A deployment key with `deployment/api-keys` can issue narrower keys:
 
 ```bash
-lightspeed api-key create --name "Agent client" --universe-id UNIVERSE_UUID \
+lightspeed --universe UNIVERSE api-key create --display-name "Agent client" \
   --group session --group models --group vfs --group blobs/put
 lightspeed api-key list
-lightspeed api-key rotate KEY_ID --universe-id UNIVERSE_UUID
-lightspeed api-key revoke KEY_ID --universe-id UNIVERSE_UUID
+lightspeed --universe UNIVERSE api-key rotate KEY_ID
+lightspeed --universe UNIVERSE api-key revoke KEY_ID
 ```
 
-A key is addressed by its key id and its scope: `--universe-id`, or
-`--deployment` for a deployment key. Pass `--key-id` to `create` to choose the
-id; otherwise one is allocated and shown by `list`. Rotation replaces the
+A key is addressed by its key id and its scope. The scope is the selected
+universe, given by UUID or handle with `--universe` or taken from the saved
+selection, or the deployment with `--deployment`. A handle is resolved to the
+UUID first, which needs the `deployment/universes` group. Pass `--id` to
+`create` to choose the id; otherwise one is allocated and shown by `list`. Rotation replaces the
 secret immediately and prints its replacement once. Update every client using
 the old secret. The key id, scope and permissions stay the same.
 
@@ -304,16 +307,16 @@ To declare a key whose secret already exists in your secret store, use `put`
 with a secret read from a file, an environment variable or standard input:
 
 ```bash
-lightspeed generate secret api-key > agent.key
-lightspeed api-key put --key-id agent-client --name "Agent client" \
-  --universe-id UNIVERSE_UUID --group session --group models \
+lightspeed api-key generate-secret > agent.key
+lightspeed --universe UNIVERSE api-key put agent-client \
+  --display-name "Agent client" --group session --group models \
   --secret-file agent.key
 ```
 
 Repeating `put` changes nothing; changed groups are applied; a different
 secret replaces the previous one at once. See
 [Declare a key with a supplied secret](../access-and-security/api-keys-and-service-access.md#declare-a-key-with-a-supplied-secret).
-`lightspeed generate secret` needs no connection.
+`generate-secret` needs no connection.
 
 Create prints the secret once; use `--json` for machine-readable output. Add `--group auth` if the client needs
 to configure provider credentials, and other groups for the resources it
@@ -349,16 +352,16 @@ Resource commands use singular names and accept plural aliases: `universe(s)`,
 `api-key(s)`, `session(s)`, `profile(s)`, `model(s)`, `workspace(s)`, `credential(s)`,
 `environment(s)`, and `mcp`/`mcps`. `env` is also an alias for `environment`.
 `connect` (`connections`) manages local connection settings; `chat` (`chats`)
-starts or continues a conversation. `vfs` (`vfses`) uploads and downloads
-immutable snapshots. `--connection`, `--universe`, and `--api-url` can appear
+starts or continues a conversation. `workspace snapshot` (`snapshots`) uploads
+and downloads immutable snapshots. `--connection`, `--universe`, and `--api-url` can appear
 before or after subcommands. The endpoint override follows the same credential
 isolation rules as saved connections.
 
 Workspaces, MCP registrations, credentials and environments belong to the
 selected universe and have independent lifecycles. Session attachments declare
-which resources an agent may use. Changing an attachment preserves unrelated
-configuration and checks its revision; configuration changes require an idle
-session. Attaching an environment does not activate or provision it.
+which resources an agent may use. They are part of the session's
+configuration; configuration changes check its revision and require an idle
+session. Attaching an environment does not provision it.
 
 ```bash
 lightspeed workspace list
@@ -367,7 +370,6 @@ lightspeed mcp list
 lightspeed mcp tools my-server
 lightspeed mcp login my-server
 lightspeed credential list
-lightspeed credential import --provider-id my-service --token-env SERVICE_TOKEN
 lightspeed credential put my-service-token --token-env SERVICE_TOKEN --display-name "My service"
 lightspeed credential replace my-service-token --token-stdin
 lightspeed model provider list
@@ -378,25 +380,22 @@ lightspeed session read SESSION_ID
 lightspeed session config read SESSION_ID --json > session-config.json
 lightspeed session config put SESSION_ID --file session-config.json
 lightspeed session profile apply SESSION_ID --profile reviewer
-lightspeed session workspace attach --session SESSION_ID --workspace WORKSPACE_ID --path /repo --access read
-lightspeed session mcp attach SERVER_ID --session SESSION_ID --tools search,fetch
-lightspeed session environment attach ENVIRONMENT_ID --session SESSION_ID --access exec --working-directory /repo
-lightspeed session environment activate ENVIRONMENT_ID --session SESSION_ID
-lightspeed session skill list --session SESSION_ID
-lightspeed session skill use SKILL_ID --session SESSION_ID
 ```
 
-`credential import` adds a new token credential and fails if its id exists.
-`credential put` declares one by id: it is created when missing, its settings
+`credential put` declares a token credential by id: it is created when missing, its settings
 follow the flags given (unset ones are cleared), its token is replaced only
 when it differs, and repeating the command changes nothing. `--dry-run`
 reports what would change. `credential replace` swaps only the token and
-keeps the settings.
+keeps the settings. Both read the token from `--token-file`, `--token-env` or
+`--token-stdin`, never from the command line.
 
-The workspace, MCP and environment groups under `session` each provide
-`attach`, `detach` and `list`. Lists show declared attachments rather than
-inferring them from materialized tools. Detaching does not delete the resource.
-Environment lists mark the active attachment. Skill selection submits ordinary
+A session's attached workspaces, MCP servers and environments are part of its
+configuration. To change them, read the configuration with
+`session config read --json`, edit the document and write it back with
+`session config put`, or apply a profile that attaches them with
+`session profile apply`. Removing an attachment does not delete the resource.
+`session read` shows the active environment. In the chat TUI, `/skills` lists
+discovered skills and `/skill` selects one. Skill selection submits ordinary
 agent input (or steers an existing run); there is no separate skill execution
 or installation registry.
 
@@ -415,6 +414,25 @@ unless `--json` is requested. Configuration `put` replaces a complete document;
 omitted fields return to their defaults, except an omitted model preserves the
 existing session model. It checks the revision read immediately
 before the write, or the explicit `--expected-revision` supplied by the caller.
+
+## Keep configuration in files
+
+The `config` commands treat a universe's configuration as a document:
+
+```bash
+lightspeed --universe research config export -o research.yaml
+lightspeed config diff -f research.yaml
+lightspeed config apply -f research.yaml
+```
+
+`export` writes credentials, providers, model defaults, MCP servers,
+registration keys, environments, profiles and API keys in the shape of the
+API's own inputs, with each secret named by where it comes from. `apply`
+makes the universe named by the document's `handle` match it, creating the
+universe when it does not exist, and changes nothing when it already
+matches. `diff` shows what `apply` would do and exits with status 2 when that
+is anything. See
+[Configuration as code](../deployment/configuration-as-code.md).
 
 ## Repair rejected context
 
@@ -457,22 +475,23 @@ full context window rather than a specific rejected entry, use the
 A deployment administrator registers a provider controller and binds it to a
 universe. `environment provider put` takes the provider ID, its
 `--controller-endpoint`, and optionally `--display-name`, `--data-route-base`
-(required for a `unix://` controller), and `--credential-file`; omitting the
+(required for a `unix://` controller), and a credential from
+`--credential-file`, `--credential-env` or `--credential-stdin`; omitting the
 credential keeps the stored one, and `--clear-credential` removes it.
-`environment binding put PROVIDER_ID --enabled` (or `--disabled`) binds the
+`environment binding put PROVIDER_ID --enable` (or `--disable`) binds the
 selected universe. These operations require a deployment key; provider
 list/read/delete and binding delete do as well. Normal environment and
 template operations operate within the selected universe.
 
 ```bash
 lightspeed environment provider put incus-local --controller-endpoint ws://127.0.0.1:19090/control --credential-file ./provider-credential
-lightspeed environment binding put incus-local --enabled
+lightspeed environment binding put incus-local --enable
 lightspeed environment template list --provider incus-local
 lightspeed environment create --provider incus-local --template linux-v1 --request-id provision-my-machine
 lightspeed environment register wss://machine.example/envd --request-id register-my-machine
 lightspeed environment list --include-closed --limit 50
 lightspeed environment read ENVIRONMENT_ID
-lightspeed environment update ENVIRONMENT_ID --name "Build machine" --metadata team=release
+lightspeed environment update ENVIRONMENT_ID --display-name "Build machine" --metadata team=release
 lightspeed environment power ENVIRONMENT_ID paused
 lightspeed environment ingress ENVIRONMENT_ID --enable
 ```
@@ -488,23 +507,25 @@ replaces the display name and metadata, so omitted flags clear them.
 
 Outbound daemons use `environment registration-key create|put|list|read|update|rotate|revoke`.
 `create --id` chooses the key's id, and `put` declares a key with a secret you
-supply (`lightspeed generate secret registration-key`), for pipelines that
+supply (`environment registration-key generate-secret`), for pipelines that
 keep the secret in a secret store.
 `update` replaces a key's group name and policy, including
-`--offline-close-after-min` and `--declared-only` for a persistent key; `rotate`
-prints a new secret once and retires the old one.
+`--offline-close-after` and `--declared-only` for a persistent key; `rotate`
+prints a new secret once and retires the old one. Durations such as
+`--grace 5m`, `--offline-close-after 12h` and `--expires-in 24h` take the
+suffixes `ms`, `s`, `m`, `h`, `d` and `w`.
 
 A fixed machine can be declared before its daemon registers, under an
 environment ID you choose:
 
 ```bash
-lightspeed environment registered put build-box --key ci-runners --name lightspeed-runner-0
-lightspeed environment registered release build-box
+lightspeed environment declare build-box --key ci-runners --registration-name lightspeed-runner-0
+lightspeed environment release build-box
 ```
 
-`registered put` makes the environment exist, disconnected, until the first
+`declare` makes the environment exist, disconnected, until the first
 daemon that key admits under that registration name binds to it; running it
-again changes nothing. `registered release` forgets the bound daemon so that a
+again changes nothing. `release` forgets the bound daemon so that a
 machine with a new identity can take its place. `environment create` and
 `environment register` take `--id` to choose their environment's ID as well.
 See [Run registered daemons](../environments/registered-daemons.md#declare-fixed-machines-before-their-daemons-register).

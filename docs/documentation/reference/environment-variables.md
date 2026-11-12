@@ -81,7 +81,7 @@ See [API keys and service access](../access-and-security/api-keys-and-service-ac
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_BOOTSTRAP_API_KEY` | Unset (generate a key) | Secret input to `lightspeed-runtime api-key provision`, also accepted on first development setup. Must be `lsk_` plus 32 random bytes in unpadded base64url, as `lightspeed generate secret api-key` prints. The command declares the key of its `--key-id`: the hash is stored in the normal key store, a changed secret replaces the previous one at once, and changed groups are applied. It does not bypass revocation or enable provisioning on ordinary production startup. |
+| `LIGHTSPEED_BOOTSTRAP_API_KEY` | Unset (generate a key) | Secret input to `lightspeed-runtime api-key provision`, also accepted on first development setup. Must be `lsk_` plus 32 random bytes in unpadded base64url, as `lightspeed api-key generate-secret` prints. The command declares the key of its `--key-id`: the hash is stored in the normal key store, a changed secret replaces the previous one at once, and changed groups are applied. It does not bypass revocation or enable provisioning on ordinary production startup. |
 
 The development opt-out is the launcher option `--no-api-key-bootstrap`, not
 an environment variable. It skips API-key provisioning without disabling

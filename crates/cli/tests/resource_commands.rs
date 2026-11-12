@@ -383,94 +383,6 @@ fn chat_upload_and_workspace_flags_preserve_other_attachments_and_plain_resume()
     );
 }
 
-#[test]
-fn attachments_preserve_configuration_and_list_declarations_without_materialized_tools() {
-    let state = Arc::new(Mutex::new(session(json!({"limits":{"maxTurns":7}}))));
-    let stored = state.clone();
-    let runtime = Runtime::start(move |method, params| match method {
-        "session/read" => json!({"session":stored.lock().unwrap().clone(),"hasOlderRuns":false}),
-        "session/config/put" => {
-            assert_eq!(params["expectedConfigRevision"], 7);
-            let mut session = stored.lock().unwrap();
-            session["config"] = params["config"].clone();
-            json!({"session":session.clone()})
-        }
-        _ => panic!("unexpected method: {method}"),
-    });
-    runtime.success(&[
-        "session",
-        "workspace",
-        "attach",
-        "--session",
-        "s1",
-        "--workspace",
-        "w1",
-        "--path",
-        "/repo",
-        "--access",
-        "read",
-    ]);
-    runtime.success(&[
-        "session",
-        "mcp",
-        "attach",
-        "m1",
-        "--session",
-        "s1",
-        "--tools",
-        "search",
-    ]);
-    let declared = runtime.json(&["sessions", "mcps", "list", "--session", "s1", "--json"]);
-    assert_eq!(declared, json!([{"serverId":"m1","tools":["search"]}]));
-    runtime.success(&[
-        "session",
-        "environment",
-        "attach",
-        "e1",
-        "--session",
-        "s1",
-        "--access",
-        "jobs",
-        "--working-directory",
-        "/repo",
-    ]);
-    let config = state.lock().unwrap()["config"].clone();
-    assert_eq!(config["limits"]["maxTurns"], 7);
-    assert_eq!(config["features"]["vfs"]["workspaces"][0]["access"], "read");
-    assert_eq!(
-        config["features"]["environments"]["environments"][0]["access"],
-        "jobs"
-    );
-    assert_eq!(
-        runtime.json(&["session", "config", "read", "s1", "--json"]),
-        config
-    );
-    runtime.success(&["session", "mcp", "detach", "m1", "--session", "s1"]);
-    assert_eq!(
-        runtime.json(&["session", "mcp", "list", "--session", "s1", "--json"]),
-        json!([])
-    );
-    assert!(
-        !runtime
-            .run(&["session", "mcp", "detach", "m1", "--session", "s1"])
-            .status
-            .success()
-    );
-    runtime.success(&["session", "environment", "detach", "e1", "--session", "s1"]);
-    assert_eq!(
-        runtime.json(&[
-            "session",
-            "environment",
-            "list",
-            "--session",
-            "s1",
-            "--json"
-        ]),
-        json!([])
-    );
-    assert_eq!(state.lock().unwrap()["config"]["limits"]["maxTurns"], 7);
-}
-
 fn provider(id: &str, kind: &str, config: Value) -> Value {
     json!({"providerId":id,"providerKind":kind,"config":config,"hasCredential":true,"status":"active","createdAtMs":0,"updatedAtMs":0})
 }
@@ -637,7 +549,7 @@ fn provisioning_and_template_commands_send_current_typed_requests() {
         "environment",
         "update",
         "env1",
-        "--name",
+        "--display-name",
         "Build box",
         "--metadata",
         "team=platform",
@@ -704,7 +616,7 @@ fn a_fixed_machine_is_declared_released_and_given_a_chosen_id() {
         "create",
         "--id",
         "runners",
-        "--name",
+        "--display-name",
         "Runners",
         "--declared-only",
         "--json",
@@ -713,12 +625,11 @@ fn a_fixed_machine_is_declared_released_and_given_a_chosen_id() {
 
     let declared = runtime.success(&[
         "environment",
-        "registered",
-        "put",
+        "declare",
         "build-box",
         "--key",
         "runners",
-        "--name",
+        "--registration-name",
         "lightspeed-runner-0",
         "--display-name",
         "Build box",
@@ -733,18 +644,12 @@ fn a_fixed_machine_is_declared_released_and_given_a_chosen_id() {
     // A declaration names its key and the daemon's registration name.
     assert!(
         !runtime
-            .run(&["environment", "registered", "put", "build-box"])
+            .run(&["environment", "declare", "build-box"])
             .status
             .success()
     );
 
-    let released = runtime.json(&[
-        "environment",
-        "registered",
-        "release",
-        "build-box",
-        "--json",
-    ]);
+    let released = runtime.json(&["environment", "release", "build-box", "--json"]);
     assert_eq!(released["released"], true);
     assert!(released["environment"]["source"].get("daemonId").is_none());
 
@@ -917,10 +822,10 @@ fn model_defaults_conflict_is_not_retried_with_a_new_revision() {
 fn a_generated_secret_declares_an_api_key_and_a_registration_key() {
     // Generation contacts nothing: it works with no connection configured.
     let offline = tempfile::tempdir().unwrap();
-    let generate = |kind: &str| {
+    let generate = |kind: &[&str]| {
         let output = Command::new(env!("CARGO_BIN_EXE_lightspeed"))
             .current_dir(offline.path())
-            .args(["generate", "secret", kind])
+            .args(kind)
             .env("LIGHTSPEED_CONFIG_DIR", offline.path().join("config"))
             .env_remove("LIGHTSPEED_API_URL")
             .env_remove("LIGHTSPEED_API_KEY")
@@ -934,8 +839,8 @@ fn a_generated_secret_declares_an_api_key_and_a_registration_key() {
         );
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     };
-    let api_secret = generate("api-key");
-    let registration_secret = generate("registration-key");
+    let api_secret = generate(&["api-key", "generate-secret"]);
+    let registration_secret = generate(&["environment", "registration-key", "generate-secret"]);
     assert!(api_secret.starts_with("lsk_") && api_secret.len() == 4 + 43);
     assert!(registration_secret.starts_with("lsrk_") && registration_secret.len() == 5 + 43);
 
@@ -989,12 +894,9 @@ fn a_generated_secret_declares_an_api_key_and_a_registration_key() {
     let output = runtime.json(&[
         "api-key",
         "put",
-        "--key-id",
         "release-bot",
-        "--name",
+        "--display-name",
         "Release bot",
-        "--universe-id",
-        "00000000-0000-0000-0000-000000000001",
         "--group",
         "session",
         "--group",
@@ -1013,7 +915,7 @@ fn a_generated_secret_declares_an_api_key_and_a_registration_key() {
             "registration-key",
             "put",
             "build-pool",
-            "--name",
+            "--display-name",
             "Build pool",
             "--mode",
             "ephemeral",
@@ -1049,29 +951,16 @@ fn a_generated_secret_declares_an_api_key_and_a_registration_key() {
         &[][..],
         &["--secret-stdin", "--secret-env", "POOL_SECRET"][..],
     ] {
-        let mut args = vec![
-            "api-key",
-            "put",
-            "--key-id",
-            "x",
-            "--name",
-            "x",
-            "--deployment",
-        ];
+        let mut args = vec!["api-key", "put", "x", "--display-name", "x", "--deployment"];
         args.extend_from_slice(sources);
         assert!(!runtime.run(&args).status.success());
     }
 
-    // Rotation and revocation address a key by its id and scope.
+    // Rotation and revocation address a key by its id and scope: the
+    // selected universe unless --deployment is given.
     let rotated = runtime.json(&["api-key", "rotate", "platform", "--deployment", "--json"]);
     assert_eq!(rotated["secret"], "lsk_rotated_secret");
     runtime.success(&["api-key", "revoke", "platform", "--deployment"]);
-    assert!(
-        !runtime
-            .run(&["api-key", "revoke", "platform"])
-            .status
-            .success()
-    );
 }
 
 #[test]
@@ -1194,4 +1083,326 @@ fn a_credential_is_declared_and_its_value_replaced_with_its_settings_kept() {
         methods,
         ["auth/grants/put", "auth/grants/read", "auth/grants/put"]
     );
+}
+
+/// A runtime that keeps what is put into it, for the document commands: a
+/// universe that exists once created, token credentials whose token it
+/// compares itself, MCP servers with revisions, and registration keys that
+/// list the prefix of their secret.
+fn document_runtime() -> Runtime {
+    let mut universe: Option<Value> = None;
+    let mut tokens = std::collections::BTreeMap::<String, (Value, String)>::new();
+    let mut servers = std::collections::BTreeMap::<String, Value>::new();
+    let mut keys = std::collections::BTreeMap::<String, (Value, String)>::new();
+    Runtime::start_api(move |method, params| {
+        Ok(match method {
+            "deployment/universes/read" => match &universe {
+                Some(universe) => json!({ "universe": universe }),
+                None => {
+                    return Err(
+                        json!({"code":-32004,"message":"unknown universe","data":{"kind":"notFound","message":"unknown universe"}}),
+                    );
+                }
+            },
+            "deployment/universes/create" => {
+                assert_eq!(params["handle"], "research");
+                universe = Some(
+                    json!({"universeId":params["universeId"],"handle":"research","createdAtMs":1,"sessions":0,"workspaces":0,"profiles":0,"blobBytes":0}),
+                );
+                json!({ "universe": universe, "created": true })
+            }
+            "auth/grants/list" => json!({
+                "grants": tokens.values().map(|(view, _)| view.clone()).collect::<Vec<_>>()
+            }),
+            "auth/grants/put" => {
+                let id = params["grantId"].as_str().unwrap().to_owned();
+                let token = params["token"].as_str().unwrap().to_owned();
+                assert!(!token.is_empty(), "a put carries the resolved token");
+                let existing = tokens.get(&id).map(|(_, stored)| stored.clone());
+                let view = json!({
+                    "grantId": id, "providerId": "static", "providerKind": "staticToken",
+                    "exposure": "brokered", "createdBy": {"kind": "local"},
+                    "displayName": params["displayName"],
+                    "hasAccessToken": true, "hasRefreshToken": false, "status": "active",
+                    "leaseCount": 0, "createdAtMs": 1, "updatedAtMs": 1,
+                });
+                if params["dryRun"] != json!(true) {
+                    tokens.insert(id, (view.clone(), token.clone()));
+                }
+                json!({
+                    "grant": view,
+                    "created": existing.is_none(),
+                    "tokenReplaced": existing.is_some_and(|stored| stored != token),
+                })
+            }
+            "mcp/servers/list" => json!({ "servers": servers.values().collect::<Vec<_>>() }),
+            "mcp/servers/put" => {
+                let id = params["server"]["serverId"].as_str().unwrap().to_owned();
+                let revision = servers
+                    .get(&id)
+                    .map_or(0, |server| server["revision"].as_u64().unwrap());
+                // A replacement is guarded by the revision that was read.
+                assert_eq!(
+                    params.get("expectedRevision").and_then(Value::as_u64),
+                    (revision > 0).then_some(revision)
+                );
+                let mut view = json!({
+                    "execution": "hosted", "exposure": "upfront", "approval": "never",
+                    "allowPrivateNetwork": false, "authPolicy": "none", "status": "active",
+                    "headers": {},
+                });
+                for (field, value) in params["server"].as_object().unwrap() {
+                    view[field] = value.clone();
+                }
+                view["revision"] = json!(revision + 1);
+                view["createdAtMs"] = json!(1);
+                view["updatedAtMs"] = json!(1);
+                servers.insert(id, view.clone());
+                json!({ "server": view })
+            }
+            "environments/registration-keys/list" => json!({
+                "registrationKeys": keys.values().map(|(view, _)| view.clone()).collect::<Vec<_>>()
+            }),
+            "environments/registration-keys/put" => {
+                let id = params["registrationKeyId"].as_str().unwrap().to_owned();
+                let secret = params["secret"].as_str().unwrap().to_owned();
+                let existing = keys.get(&id).map(|(_, stored)| stored.clone());
+                let view = json!({
+                    "registrationKeyId": id, "displayName": params["displayName"],
+                    "keyPrefix": &secret[..12], "identityMode": params["identityMode"],
+                    "maxActiveEnvironments": params["maxActiveEnvironments"],
+                    "ephemeralDisconnectGraceMs": 300000, "status": "active",
+                    "registeredEnvironmentCount": 0, "activeEnvironmentCount": 0,
+                    "createdAtMs": 1, "updatedAtMs": 1,
+                });
+                keys.insert(id, (view.clone(), secret.clone()));
+                json!({
+                    "registrationKey": view,
+                    "created": existing.is_none(),
+                    "secretReplaced": existing.is_some_and(|stored| stored != secret),
+                })
+            }
+            _ => panic!("unexpected request {method}"),
+        })
+    })
+}
+
+fn run_documents(runtime: &Runtime, args: &[&str], secrets: &[(&str, &str)]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lightspeed"));
+    command
+        .current_dir(runtime.directory.path())
+        .args(args)
+        .env(
+            "LIGHTSPEED_CONFIG_DIR",
+            runtime.directory.path().join("config"),
+        )
+        .env("LIGHTSPEED_API_URL", &runtime.endpoint)
+        .env("LIGHTSPEED_API_KEY", "lsk_fixture")
+        .env_remove("LIGHTSPEED_UNIVERSE")
+        .env_remove("TRACKER_TOKEN")
+        .env_remove("RUNNERS_KEY");
+    for (name, value) in secrets {
+        command.env(name, value);
+    }
+    command.output().unwrap()
+}
+
+#[test]
+fn a_document_is_diffed_applied_and_applied_again_without_a_write() {
+    let runtime = document_runtime();
+    let directory = runtime.directory.path();
+    std::fs::write(
+        directory.join("research.yaml"),
+        r#"
+schemaVersion: 1
+kind: universe
+handle: research
+credentials:
+  - grantId: tracker-token
+    displayName: Issue tracker
+    tokenFrom: { env: TRACKER_TOKEN }
+mcpServers:
+  - serverId: tracker
+    serverUrl: https://tracker.example.com/mcp
+    defaultServerLabel: tracker
+    headers:
+      x-upstream-token: { type: credential, grantId: tracker-token }
+registrationKeys:
+  - registrationKeyId: runners
+    displayName: Runners
+    identityMode: persistent
+    secretFrom: { env: RUNNERS_KEY }
+"#,
+    )
+    .unwrap();
+    let first_secrets = [
+        ("TRACKER_TOKEN", "tracker-secret-1"),
+        ("RUNNERS_KEY", "lsrk_first-secret-of-the-runners-key"),
+    ];
+    let text = |output: &Output| {
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    };
+    let writes = |runtime: &Runtime| {
+        runtime
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|request| {
+                let method = request["method"].as_str().unwrap();
+                (method.ends_with("/put") || method.ends_with("/create"))
+                    && request["params"]["dryRun"] != json!(true)
+            })
+            .count()
+    };
+
+    // Requests other than the connection's own handshake.
+    let calls = |runtime: &Runtime| {
+        runtime
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|request| request["method"] != "initialize")
+            .count()
+    };
+
+    // A missing secret fails before anything is read or written.
+    let missing = run_documents(&runtime, &["config", "apply", "-f", "research.yaml"], &[]);
+    assert!(!missing.status.success());
+    let message = text(&missing);
+    assert!(message.contains("TRACKER_TOKEN is not set"), "{message}");
+    assert!(message.contains("RUNNERS_KEY is not set"), "{message}");
+    assert_eq!(calls(&runtime), 0);
+
+    // diff reports the plan with status 2 and writes nothing.
+    let planned = run_documents(
+        &runtime,
+        &["config", "diff", "-f", "research.yaml"],
+        &first_secrets,
+    );
+    assert_eq!(planned.status.code(), Some(2), "{}", text(&planned));
+    let plan = text(&planned);
+    for line in [
+        "create      universe/research",
+        "create      credentials/tracker-token",
+        "create      mcpServers/tracker",
+        "create      registrationKeys/runners",
+        "4 to change, 0 unchanged",
+    ] {
+        assert!(plan.contains(line), "missing {line:?} in:\n{plan}");
+    }
+    assert_eq!(writes(&runtime), 0);
+
+    // apply writes each resource once, and no secret reaches the output.
+    let applied = run_documents(
+        &runtime,
+        &["config", "apply", "-f", "research.yaml"],
+        &first_secrets,
+    );
+    assert!(applied.status.success(), "{}", text(&applied));
+    let report = text(&applied);
+    assert!(
+        report.contains("created     mcpServers/tracker"),
+        "{report}"
+    );
+    assert!(report.contains("4 changed, 0 unchanged"), "{report}");
+    assert!(!report.contains("tracker-secret-1") && !report.contains("lsrk_first"));
+    assert_eq!(writes(&runtime), 4);
+
+    // Applying the same document again changes nothing.
+    let again = run_documents(
+        &runtime,
+        &["config", "apply", "-f", "research.yaml"],
+        &first_secrets,
+    );
+    assert!(again.status.success(), "{}", text(&again));
+    assert!(text(&again).contains("3 unchanged"), "{}", text(&again));
+    assert_eq!(writes(&runtime), 4, "an unchanged document causes no write");
+    let quiet = run_documents(
+        &runtime,
+        &["config", "diff", "-f", "research.yaml"],
+        &first_secrets,
+    );
+    assert_eq!(quiet.status.code(), Some(0), "{}", text(&quiet));
+
+    // A changed field and two changed secrets are found and written; the
+    // server compares the token, the key is recognised by its prefix.
+    let edited = std::fs::read_to_string(directory.join("research.yaml"))
+        .unwrap()
+        .replace("tracker.example.com/mcp", "tracker.example.com/v2/mcp");
+    std::fs::write(directory.join("research.yaml"), edited).unwrap();
+    let second_secrets = [
+        ("TRACKER_TOKEN", "tracker-secret-2"),
+        ("RUNNERS_KEY", "lsrk_second-secret-of-the-runners-key"),
+    ];
+    let changed = run_documents(
+        &runtime,
+        &["config", "diff", "-f", "research.yaml", "--json"],
+        &second_secrets,
+    );
+    assert_eq!(changed.status.code(), Some(2));
+    let steps: Value = serde_json::from_slice(&changed.stdout).unwrap();
+    let step = |section: &str| {
+        steps
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|step| step["section"] == section)
+            .unwrap_or_else(|| panic!("no step for {section}"))
+            .clone()
+    };
+    assert_eq!(step("credentials")["action"], "update");
+    assert_eq!(step("credentials")["secretReplaced"], true);
+    assert_eq!(step("mcpServers")["fields"], json!(["serverUrl"]));
+    assert_eq!(step("registrationKeys")["secretReplaced"], true);
+    let updated = run_documents(
+        &runtime,
+        &["config", "apply", "-f", "research.yaml"],
+        &second_secrets,
+    );
+    assert!(updated.status.success(), "{}", text(&updated));
+    assert_eq!(writes(&runtime), 7);
+
+    // An unknown field is refused before any call.
+    std::fs::write(
+        directory.join("typo.yaml"),
+        "schemaVersion: 1\nkind: universe\nhandle: other\nmcpServers:\n  - serverId: x\n    serverUrl: https://x.example.com/mcp\n    defaultServerLabel: x\n    serverURL: typo\n",
+    )
+    .unwrap();
+    let before = calls(&runtime);
+    let typo = run_documents(&runtime, &["config", "apply", "-f", "typo.yaml"], &[]);
+    assert!(!typo.status.success());
+    assert!(
+        text(&typo).contains("unknown field `serverURL`"),
+        "{}",
+        text(&typo)
+    );
+    assert_eq!(calls(&runtime), before);
+}
+
+#[test]
+fn the_document_schema_is_printed_without_a_connection() {
+    let offline = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_lightspeed"))
+        .current_dir(offline.path())
+        .args(["config", "schema"])
+        .env("LIGHTSPEED_CONFIG_DIR", offline.path().join("config"))
+        .env_remove("LIGHTSPEED_API_URL")
+        .env_remove("LIGHTSPEED_API_KEY")
+        .env_remove("LIGHTSPEED_UNIVERSE")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let schema: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(schema["title"], "Lightspeed configuration document");
+    assert!(schema["definitions"]["UniverseDocument"].is_object());
 }

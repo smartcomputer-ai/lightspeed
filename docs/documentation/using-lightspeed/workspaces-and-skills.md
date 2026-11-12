@@ -205,22 +205,17 @@ unused skills out of the working context.
 ## Select a skill explicitly
 
 With the [CLI connection settings](sessions-and-runs.md#continue-from-the-cli)
-configured, list the discovered skills:
+configured, open the session in the chat TUI:
 
 ```bash
-lightspeed session skill list --session "<session-id>"
+lightspeed chat --session "<session-id>"
 ```
 
-Copy the returned skill ID. It identifies a catalog entry and may differ from
-the skill's name. Submit a request to read and use it:
-
-```bash
-lightspeed session skill use --session "<session-id>" "<skill-id>"
-```
-
-This starts an ordinary run when idle, or steers the current run. In the
-chat TUI, `/skills` lists entries, `/skill` opens the picker, and
-`/skill <skill-id>` selects an entry directly, including during an active run.
+`/skills` lists the discovered skills with their IDs. A skill ID identifies a
+catalog entry and may differ from the skill's name. `/skill` opens the picker,
+and `/skill <skill-id>` selects an entry directly, including during an active
+run. Selecting a skill starts an ordinary run when idle, or steers the current
+run.
 
 API clients can use `session/skills/list` to obtain the same locations and submit
 ordinary input through `session/runs/start` or `session/runs/steer`. See the
@@ -354,7 +349,7 @@ Use a snapshot when the task must keep reading a fixed version.
 | A write fails despite edit tools | Check attachment access and whether the target is a snapshot. Read-only attachments remain read-only. |
 | Prompt files have no effect | Enable Prompt loading, check the default or overridden roots inside attachments, use direct .md or .txt files, and start the next run after the update. |
 | A skill is absent from the catalog | Enable Skill discovery and check the default or overridden root, direct child directory, exact `SKILL.md` name, and required frontmatter. |
-| A discovered skill has not affected the answer | Inspect whether the agent read it, or select it with `/skill` or `session skill use`. Discovery alone loads only its catalog entry. |
+| A discovered skill has not affected the answer | Inspect whether the agent read it, or select it with `/skill` in the chat TUI. Discovery alone loads only its catalog entry. |
 | Saving reports a revision conflict | Reload and reconcile with the intervening edit; do not assume the save was merged. |
 
 ## Copy files to or from a machine

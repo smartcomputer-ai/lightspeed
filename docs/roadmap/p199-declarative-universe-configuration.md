@@ -1,12 +1,11 @@
 # P199 — Declarative universe configuration
 
-**Status:** Proposed, 2026-11-10; revised 2026-11-12 with the document format
-and the resource list. The API prerequisites are implemented as of
-2026-11-11: universe handles, declared API and registration keys, declared
-credentials and providers, optional `expectedRevision`, and
-[declared registered environments](p198-declared-registered-environments.md)
-with chosen environment ids. The document format, `export`, `diff` and
-`apply` are not started, nor are the Platform step and the CLI image.
+**Status:** Slices 1 and 2 implemented, 2026-11-12: the document format,
+`export`, `diff` and `apply` in the CLI, for universe and deployment
+documents and every section in the resource table. See
+[Implementation](#implementation) for what was built, where it differs from
+the proposal, and the test results. Not started: the Platform step, the CLI
+image, and `--prune`.
 
 ## Goal
 
@@ -31,14 +30,16 @@ nothing records the intended result.
 ## Design
 
 **The document format stands alone. Deployment machinery only transports it.**
-Lightspeed defines the format and three client-side verbs. Helm charts, jobs
+Lightspeed defines the format and three client-side verbs, grouped under
+`lightspeed config` like the CLI's other commands (decided 2026-11-12; they
+were first built as top-level commands). Helm charts, jobs
 and pipelines stay outside the repository's core and call the verbs.
 
 | Verb | Effect |
 | --- | --- |
-| `lightspeed export` | Reads a universe and writes its configuration document. |
-| `lightspeed apply` | Makes a universe match a document. |
-| `lightspeed diff` | Reports what `apply` would change. Also serves as drift detection and as a merge-request check. |
+| `lightspeed config export` | Reads a universe and writes its configuration document. |
+| `lightspeed config apply` | Makes a universe match a document. |
+| `lightspeed config diff` | Reports what `apply` would change. Also serves as drift detection and as a merge-request check. |
 
 All three are public API clients in `crates/cli`. They add no runtime
 transport and no server-side reconciler. A Kubernetes operator with custom
@@ -148,8 +149,11 @@ environments:
       - envName: TRACKER_TOKEN
         source: { type: authGrant, grantId: tracker-token }
   - environmentId: sandbox
-    source: { type: provisioned, providerId: pods, templateId: default }
-    idle: { stopAfterMs: 1800000 }
+    source:
+      type: provisioned
+      providerId: pods
+      templateId: default
+      idle: { stopAfterMs: 1800000 }
   - environmentId: lab
     source: { type: external, endpoint: wss://lab.example.com/envd }
 
@@ -379,7 +383,7 @@ replacement:
   or the key and name of a declared machine.
 - The daemon bound to a declared environment. `apply` never releases one;
   replacing a machine that lost its identity stays an explicit
-  `environment registered release`.
+  `environment release`.
 
 ## Identity
 
@@ -438,14 +442,27 @@ the document does not contain. This partial ownership is the default, because
 a central team commonly manages providers and credentials while teams add
 their own profiles.
 
-Deletion is opt-in: `apply --prune` removes resources that carry the managed
-marker and are absent from the document. Universes are never pruned.
-Retiring a universe remains the manual procedure in the deployment guide,
-because the runtime purge does not reach every workflow, schedule and machine.
+The first version never deletes. A resource removed from a document stays
+in the universe until someone removes it by hand, and `apply` only creates
+and updates. Universes are never removed by `apply` in any version: retiring
+one remains the manual procedure in the deployment guide, because the runtime
+purge does not reach every workflow, schedule and machine.
 
-Each applied resource records that it is managed (in `metadata` where the
-resource has it). A UI indication, and possibly read-only editing, for managed
-resources is a later step.
+Removing what a document no longer names (`apply --prune`) is deferred
+(decided 2026-11-12). It needs an answer to which resources `apply` may
+delete, and each candidate has a cost:
+
+| Approach | Deletes | Cost |
+| --- | --- | --- |
+| A marker on each managed resource | what carries the marker and is absent from the document | Several resources have nowhere to put it: MCP servers, keys, model defaults and provider enablement have no `metadata`, a profile's `metadata` is session defaults, and caller metadata refuses the reserved `lightspeed.` prefix. |
+| Section ownership | everything in a section the document contains and does not list | Nothing new, but it deletes what users created themselves. |
+| A stored record of the last applied document | what the previous document named and this one does not | Exact and safe for user-created resources; one new stored record per universe. It would also let `diff` tell a changed document from an interactive edit. |
+
+Pruning is also the part that cannot always be undone: revoking a key or
+closing an environment spends its id, closing a provisioned environment
+destroys the machine, and revoking a credential breaks what references it.
+It has to run in reverse dependency order and refuse to remove what is still
+referenced.
 
 ## Configuration, not state
 
@@ -516,7 +533,7 @@ declared universe exists but nobody can sign in to it.
 
 This lives outside the core repository and is shown for orientation. A small
 configuration chart renders the documents into a ConfigMap and runs
-`lightspeed apply` as a job whose name includes a content hash, so a changed
+`lightspeed config apply` as a job whose name includes a content hash, so a changed
 document triggers a new run. The chart depends on the runtime's chart and is
 versioned separately, so a profile edit does not roll the runtime. Between
 runs, interactive edits to managed resources persist; a scheduled job running
@@ -525,13 +542,80 @@ the same command closes that gap where it matters.
 A ConfigMap holds at most 1 MiB. Split per universe if profile or skill
 content approaches that.
 
+## Implementation
+
+The commands live in `crates/cli/src/config`. Entries stay JSON throughout:
+an entry is checked by decoding it into the API's input type and encoding it
+again, which rejects unknown fields and fills in defaults, and a read view is
+brought into the same form the same way. Each section is one small
+implementation of a `Resource` trait: how to check an entry, read the current
+state, compare a secret, and write.
+
+Built as proposed, with these additions and deviations:
+
+- **Conflicts stop everything.** A document that asks for a change `apply`
+  will not make (a fixed setting, a revoked key, a closed environment's id)
+  writes nothing at all, in any of the documents given. A refused write, by
+  contrast, stops at that resource and leaves earlier writes in place.
+- **Server-filled fields.** A field the server fills in when the input
+  leaves it out (`providerId` of a credential, a registration key's
+  disconnect grace, a key's default groups) is not compared unless the
+  document states it. `export` leaves it out again when it holds the
+  server's default.
+- **An environment's idle policy is part of `source`**, as in the API's
+  view. The whole `source` is fixed after creation.
+- **An environment's `credentials` list is owned.** A binding missing from
+  the list is unbound. This is the one removal `apply` performs; without the
+  list the bindings are not managed.
+- **Model defaults are written without `expectedRevision`.** Both slots
+  share one revision, so a guard read before the first write would refuse
+  the second.
+- **`name` is accepted and reported as `not applied`** until the Platform
+  step exists.
+- **Reference checks** cover an MCP server's and a provider's credential, an
+  environment's registration key, an environment credential's source, and a
+  profile's attached environments. A profile's model, MCP servers and
+  workspaces are checked by the runtime when the profile is written.
+- **`export`** takes the universe from `--universe`, writes YAML unless the
+  output file ends in `.json` or `--format json` is given, and names secret
+  placeholders after the resource (`TRACKER_TOKEN`,
+  `RUNNERS_REGISTRATION_KEY`, `RELEASE_BOT_API_KEY`,
+  `MODEL_PRIMARY_CREDENTIAL`). Nested fields are written in alphabetical
+  order, with each entry's id first.
+- **The commands need a deployment key**, because they resolve the universe
+  by its handle through `deployment/universes/read`.
+
+- **The document schema** is generated from the same input types the
+  commands check entries against, with the same differences applied (secret
+  sources, undeclared fields, unknown fields refused at every level).
+  `lightspeed config schema` prints it, the committed copy is
+  `crates/cli/contract/configuration-document.schema.json`, and a test fails
+  while that copy is stale. A second test feeds the same documents and the
+  same mistakes to the schema and to the commands and requires them to
+  agree.
+
+Not built:
+
+- **Templates** (`apply --handle … --name …`). Editing `handle` in an
+  exported file does the same.
+- **An offline `validate`.** The first phase runs without a connection in
+  the code, but no command exposes it alone.
+
+### Tests
+
+| Suite | Coverage | Result |
+| --- | --- | --- |
+| `cli` unit (`config::`) | loading YAML, JSON and includes; envelope errors; secret sources; entry checks per section; comparison and server-filled fields; export normal form; the schema accepts a document that uses every section, refuses what the commands refuse, and its committed copy is current | pass |
+| `cli` `resource_commands` | the commands against a stateful mock runtime: a missing secret fails before any call, `diff` plans without writing, `apply` writes once and then not at all, changed fields and secrets are found, an unknown field is refused | pass |
+| `cli` `config_live` (needs a running authenticated runtime) | a full universe document is applied and converges; an edit made outside the document is reverted; a changed secret is replaced; a conflict writes nothing; the export of the universe builds a second universe that exports identically; a deployment key is declared, re-keyed, and is a conflict once revoked | pass |
+
 ## Slices
 
 1. **Format and `export`.** Read-only, and it shows where a read view does
    not map cleanly onto its write input. Covers every section in the
    resource table.
-2. **`diff` and `apply`** for the same set, with the managed marker and
-   round-trip tests.
+2. **`diff` and `apply`** for the same set, with round-trip tests. No
+   deletion. Slices 1 and 2 are done.
 3. **Platform organization** creation and naming with a service credential.
 4. **The CLI image.**
 
@@ -548,6 +632,7 @@ content approaches that.
   (`deployment/environment-providers/put`).
 - An offline `validate` that runs the load phase only.
 - "Create universe from template" in the Platform, using stored documents.
+- `apply --prune`.
 - Managed-resource indication in the web UI.
 
 ## Open questions
@@ -555,12 +640,8 @@ content approaches that.
 - Should the Platform step be a Platform endpoint that accepts a service key,
   or should the runtime own a universe display name so `apply` needs no
   Platform call for naming?
-- Should a fully managed mode exist, where `apply` prunes everything not in
-  the document, or is `--prune` over marked resources sufficient?
-- Where does the managed marker live for resources without `metadata`
-  (model defaults, provider enablement)? Caller metadata also refuses the
-  reserved `lightspeed.` prefix today, so the marker needs either an
-  exception or a name outside it.
+- How does `--prune` decide what it may delete? See
+  [Ownership and pruning](#ownership-and-pruning).
 - Which provisioned environments are configuration? `export` cannot yet tell
   a long-lived machine an operator created from one a session or a bot
   created for its own use.

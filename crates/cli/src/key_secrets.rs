@@ -4,7 +4,7 @@
 use std::{io::Read as _, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
-use clap::{Args, Subcommand, ValueEnum};
+use clap::Args;
 
 /// Where a declared key's secret comes from. It is never given on the
 /// command line, where it would be visible to other processes and saved in
@@ -43,23 +43,8 @@ impl SecretSourceArgs {
     }
 }
 
-#[derive(Args, Debug)]
-pub struct GenerateArgs {
-    #[command(subcommand)]
-    command: GenerateCommand,
-}
-
-#[derive(Subcommand, Debug)]
-enum GenerateCommand {
-    /// Print a new secret for a key you will declare. Nothing is sent to a
-    /// runtime and nothing is saved: keep the output in your secret store.
-    Secret {
-        #[arg(value_enum)]
-        kind: SecretKind,
-    },
-}
-
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+/// The kinds of key whose secret can be supplied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecretKind {
     /// For `api-key put`.
     ApiKey,
@@ -76,8 +61,9 @@ impl SecretKind {
     }
 }
 
-pub fn generate(args: GenerateArgs) -> Result<()> {
-    let GenerateCommand::Secret { kind } = args.command;
+/// Print a new secret of `kind`. Nothing is sent to a runtime and nothing
+/// is saved.
+pub fn print_generated_secret(kind: SecretKind) -> Result<()> {
     println!("{}", generate_secret(kind)?);
     Ok(())
 }

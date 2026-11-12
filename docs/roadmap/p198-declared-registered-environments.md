@@ -200,8 +200,8 @@ Names are unique among the open rows of a key. Registration keys gain
 
 ## Clients
 
-- CLI: `environment registered put ID --key KEY --name NAME` and
-  `environment registered release ID`; `--id` on `environment create` and
+- CLI: `environment declare ID --key KEY --registration-name NAME` and
+  `environment release ID`; `--id` on `environment create` and
   `environment register`; `--declared-only` on the registration key
   commands.
 - Platform: the environment list and details show a declared environment that

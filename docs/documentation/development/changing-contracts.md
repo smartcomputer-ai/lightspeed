@@ -110,6 +110,7 @@ consumers:
 
 ```bash
 cargo run -p api --bin export-schema
+cargo run -q -p cli -- config schema > crates/cli/contract/configuration-document.schema.json
 npm install
 npm run generate --workspace @lightspeed-ai/sdk
 npm run generate --workspace @lightspeed-ai/configurator-mcp
@@ -121,6 +122,12 @@ The API exporter writes four files under `crates/api/contract/`:
 `api.schema.json`, `methods.json`, `openrpc.json`, and `api-reference.md`.
 Downstream code generation reads the JSON Schema bundle and method manifest;
 OpenRPC is an additional documentation format.
+
+The second command writes the JSON Schema of a
+[configuration document](../deployment/configuration-as-code.md). A document
+entry is the input of the API method that writes the resource, so a change to
+one of those inputs changes this schema too. A CLI test fails while the
+committed copy is stale.
 
 The TypeScript generator reads both the API and workflow exports. It writes
 the generated types and method metadata under `clients/typescript/src/generated/`

@@ -175,7 +175,7 @@ configured, bind a stored grant by reference:
 
 ```bash
 target/debug/lightspeed environment credentials bind "<environment-id>" \
-  --env-name ACORN_RELEASE_TOKEN --grant-id "<credential-id>"
+  --env-name ACORN_RELEASE_TOKEN --grant "<credential-id>"
 target/debug/lightspeed environment credentials list "<environment-id>"
 ```
 

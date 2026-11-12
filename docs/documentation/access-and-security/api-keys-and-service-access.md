@@ -163,7 +163,8 @@ an operation outside that group is refused.
 
 Every key has a key id: its name among the keys of its scope, which is one
 universe or the deployment. The id addresses the key and stays the same when
-its secret changes. You may choose it when creating a key (`--key-id`);
+its secret changes. You may choose it when creating a key (`--id` with
+`lightspeed`, `--key-id` with `lightspeed-runtime`);
 otherwise the runtime allocates one. Two universes can each have a key with
 the same id. Listings also show the display prefix, the first characters of
 the key's current secret, which tells you which secret a key holds and changes
@@ -182,12 +183,14 @@ API keys**.
 Both CLIs rotate a key by its id and scope:
 
 ```bash
-lightspeed api-key rotate "<key-id>" --universe-id "<universe-uuid>"
+lightspeed --universe "<universe>" api-key rotate "<key-id>"
 lightspeed api-key rotate "<key-id>" --deployment
 lightspeed-runtime api-key rotate "<key-id>" --universe-id "<universe-uuid>"
 ```
 
-The first two commands use the configured connection; the third accesses the
+The first two commands use the configured connection. Without `--deployment`
+the key belongs to the selected universe: `--universe` with a UUID or handle,
+or the saved selection. The third accesses the
 store from the server host, where omitting `--universe-id` addresses a
 deployment key. Each returns the new secret once. If you rotate the
 credential used by your CLI connection or Platform service, update that
@@ -212,12 +215,12 @@ and the service that will use the key should read it from there. For that,
 declare the key and supply its secret:
 
 ```bash
-lightspeed generate secret api-key > platform.key   # or let your secret store generate it
-lightspeed api-key put --key-id platform --name "Platform" --deployment \
+lightspeed api-key generate-secret > platform.key   # or let your secret store generate it
+lightspeed api-key put platform --display-name "Platform" --deployment \
   --assert-actor --secret-file platform.key
 ```
 
-`lightspeed generate secret` works offline and prints a secret in the form the
+`lightspeed api-key generate-secret` works offline and prints a secret in the form the
 runtime accepts: `lsk_` followed by 32 random bytes encoded as base64url
 without padding. Any cryptographic random source that produces that form will
 do, for example `printf 'lsk_%s' "$(openssl rand 32 | basenc --base64url | tr -d '=')"`.

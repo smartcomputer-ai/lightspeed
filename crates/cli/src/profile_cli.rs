@@ -51,7 +51,8 @@ enum ProfilesCommand {
     /// Export a stored profile as an AgentProfileInput-shaped JSON document.
     Export {
         profile_id: String,
-        #[arg(long)]
+        /// Write the document to this file instead of standard output.
+        #[arg(short = 'o', long = "output")]
         out: Option<PathBuf>,
     },
     /// Validate a profile import document without modifying remote state.

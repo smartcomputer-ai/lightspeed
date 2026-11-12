@@ -255,14 +255,21 @@ with `session/start` can name an attached environment or `none` to suppress
 the default.
 
 With the [CLI connection settings](../using-lightspeed/sessions-and-runs.md#continue-from-the-cli)
-configured, the equivalent controls are:
+configured, inspect the machines and the session's selection, and replace the
+session's configuration:
 
 ```bash
 target/debug/lightspeed environment list
 target/debug/lightspeed environment read "<environment-id>"
-target/debug/lightspeed session environment activate --session "<session-id>" "<environment-id>"
-target/debug/lightspeed session environment deactivate --session "<session-id>"
+target/debug/lightspeed session read "<session-id>"
+target/debug/lightspeed session config read "<session-id>" --json > session-config.json
+target/debug/lightspeed session config put "<session-id>" --file session-config.json
 ```
+
+`session read` shows the active environment. `session config put` replaces
+the configuration, with the effect on the selection described above. The CLI
+has no command that activates or deactivates an environment directly; use the
+session's settings or the API for that.
 
 The public methods are `environments/list`, `environments/read`,
 `session/environments/activate`, and `session/environments/deactivate` in the
