@@ -158,20 +158,18 @@ pub(crate) async fn resolve_mcp_request_headers(
         let header_name = HeaderName::from_bytes(name.as_bytes())
             .map_err(|_| invalid(format!("MCP header name {name:?} is invalid")))?;
         let header_value = match value {
-            mcp::McpServerHeaderValue::Literal { value } => HeaderValue::from_str(value)
+            auth::RequestHeaderValue::Literal { value } => HeaderValue::from_str(value)
                 .map_err(|_| invalid(format!("MCP header {name:?} value is invalid")))?,
-            mcp::McpServerHeaderValue::Credential { .. } => {
+            auth::RequestHeaderValue::Credential { .. } => {
+                // The secret resolver reads the server's live record, so a
+                // tool call started before a change sends what is configured
+                // now. It hands the token back as text; this is the same
+                // conversion the resolver's own lookup ended with.
                 let resolved = secrets
                     .resolve(&secret_ref, Some(&record.server_url))
                     .await?;
-                // The message never echoes the token.
-                let mut value = HeaderValue::from_str(resolved.expose()).map_err(|_| {
-                    invalid(format!(
-                        "the credential for MCP header {name:?} is not a valid header value"
-                    ))
-                })?;
-                value.set_sensitive(true);
-                value
+                auth::credential_header_value(resolved.expose())
+                    .map_err(|error| invalid(format!("MCP header {name:?}: {error}")))?
             }
         };
         headers.insert(header_name, header_value);
@@ -1767,16 +1765,16 @@ mod tests {
     }
 
     fn header_record() -> mcp::McpServerRecord {
-        let mut headers = mcp::McpServerHeaders::new();
+        let mut headers = auth::RequestHeaders::new();
         headers.insert(
             "x-upstream-url".to_owned(),
-            mcp::McpServerHeaderValue::Literal {
+            auth::RequestHeaderValue::Literal {
                 value: "https://tracker.example.com".to_owned(),
             },
         );
         headers.insert(
             "x-upstream-token".to_owned(),
-            mcp::McpServerHeaderValue::Credential {
+            auth::RequestHeaderValue::Credential {
                 grant_id: auth::AuthGrantId::new("authgrant_upstream"),
             },
         );

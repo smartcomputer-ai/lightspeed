@@ -8,14 +8,15 @@
 
 use api::{
     BotControllerSnapshot, BotEventDocument, BotEventOutcome, BotEventReplyRef, BotEventSender,
-    BotId, BotTriggerKind, BotTriggerSpec, ChatPairing, InputItem, MediaKind,
+    BotId, BotTriggerKind, BotTriggerSpec, InputItem, MediaKind,
 };
 use serde_json::{Map, Value, json};
 
 use crate::render::{DEFAULT_READ_BUDGET, iso_time, largest_branches, render_value, resolve_path};
 use crate::{
     BotError, BotEvent, BotEventMediaKind, BotRecord, BotRefusalCode, BotTriggerRecord,
-    ids::routed_session_base, records::BotEventRecord,
+    ids::routed_session_base,
+    records::{BotEventRecord, BotTriggerSecrets},
 };
 
 /// Bounds of the `bot_event_read` size cap.
@@ -191,14 +192,10 @@ fn session_label(snapshot: &BotControllerSnapshot, session_id: &str) -> Option<S
 
 /// A trigger by its name. The spec is the document's minus the kind tag; a
 /// chat trigger names its account as `account` (the same id
-/// `bot_trigger_put` accepts). Secrets stay out except the pairing code
-/// when the caller says the reader manages the trigger (a bot under the
-/// self-configuration grant has to tell the human what to send).
-pub fn trigger_tool_view(
-    record: &BotTriggerRecord,
-    ingest_url: Option<String>,
-    show_pairing_code: bool,
-) -> Value {
+/// `bot_trigger_put` accepts). The trigger's secrets are never part of it:
+/// a session's transcript is read by more people than may manage the bot,
+/// and a session that talks to outsiders can be asked to list its triggers.
+pub fn trigger_tool_view(record: &BotTriggerRecord) -> Value {
     let document = &record.document;
     let mut spec = match serde_json::to_value(&document.spec) {
         Ok(Value::Object(spec)) => spec,
@@ -232,24 +229,55 @@ pub fn trigger_tool_view(
         "lastFilterError",
         record.last_filter_error.clone(),
     );
-    if record.kind() == BotTriggerKind::Webhook {
-        insert_some(&mut view, "ingestUrl", ingest_url);
+    Value::Object(view)
+}
+
+/// The secrets a put minted: what the stored trigger holds after the write
+/// and did not hold before it. A put that keeps a webhook's URL token or a
+/// chat trigger's pairing code mints nothing, so repeating a put never
+/// reveals a secret again.
+pub fn minted_trigger_secrets(
+    before: Option<&BotTriggerSecrets>,
+    after: &BotTriggerSecrets,
+) -> BotTriggerSecrets {
+    let minted = |before: Option<&String>, after: &Option<String>| {
+        after.clone().filter(|after| before != Some(after))
+    };
+    BotTriggerSecrets {
+        webhook_token: minted(
+            before.and_then(|before| before.webhook_token.as_ref()),
+            &after.webhook_token,
+        ),
+        pairing_code: minted(
+            before.and_then(|before| before.pairing_code.as_ref()),
+            &after.pairing_code,
+        ),
     }
-    if show_pairing_code
-        && matches!(
-            document.spec,
-            BotTriggerSpec::Chat {
-                pairing: ChatPairing::Code,
-                ..
-            }
-        )
-    {
-        insert_some(
-            &mut view,
-            "pairingCode",
-            record.secrets.pairing_code.clone(),
-        );
-    }
+}
+
+/// What a `bot_trigger_put` result shows of the secrets its call minted.
+/// Empty unless the caller decided the invoking session may be told.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MintedTriggerSecretsView {
+    /// The full public ingest URL of a webhook trigger this call created.
+    pub ingest_url: Option<String>,
+    /// The pairing code this call minted for a chat trigger.
+    pub pairing_code: Option<String>,
+}
+
+/// Result of `bot_trigger_put`: the trigger as `bot_trigger_list` shows it,
+/// whether the call created it, and beside it (never inside the trigger)
+/// the secrets the call minted.
+pub fn trigger_put_tool_view(
+    record: &BotTriggerRecord,
+    created: bool,
+    minted: MintedTriggerSecretsView,
+) -> Value {
+    let mut view = Map::new();
+    view.insert("trigger".to_owned(), trigger_tool_view(record));
+    view.insert("created".to_owned(), json!(created));
+    insert_some(&mut view, "ingestUrl", minted.ingest_url);
+    insert_some(&mut view, "pairingCode", minted.pairing_code);
     Value::Object(view)
 }
 
@@ -671,11 +699,11 @@ pub fn steer_input_items(events: &[BotEvent]) -> Vec<InputItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::records::{BotTriggerSecrets, EventReceiver, RoutedSession};
+    use crate::records::{EventReceiver, RoutedSession};
     use api::{
         BotActiveDeliverySnapshot, BotBreaker, BotBufferSnapshot, BotDocument, BotEventMedia,
         BotRecentDeliverySnapshot, BotSessionKind, BotSessionSnapshot, BotTriggerDocument,
-        BotTriggerId, BotTriggerRoute, ProfileId, WebhookPreset, WebhookVerification,
+        BotTriggerId, BotTriggerRoute, ChatPairing, ProfileId, WebhookPreset, WebhookVerification,
     };
 
     const T0: i64 = 1_787_738_400_000; // 2026-08-26T10:00:00Z
@@ -1120,26 +1148,54 @@ mod tests {
         assert_eq!(view["summary"], json!("PR #12 opened"));
     }
 
-    #[test]
-    fn shows_triggers_by_name_with_the_ingest_url_never_the_secrets() {
-        let mut webhook = trigger(
+    fn webhook_trigger() -> BotTriggerRecord {
+        trigger(
             "triage",
             "github",
             BotTriggerSpec::Webhook {
                 verification: WebhookVerification::Token,
                 preset: Some(WebhookPreset::Github),
             },
-        );
+        )
+    }
+
+    fn chat_trigger(pairing: ChatPairing) -> BotTriggerRecord {
+        trigger(
+            "triage",
+            "tg",
+            BotTriggerSpec::Chat {
+                account_id: "tg-main".to_owned(),
+                match_scope: None,
+                activation: Default::default(),
+                access: Default::default(),
+                pairing,
+                priority: 100,
+            },
+        )
+    }
+
+    /// The test record holds both secrets whatever its kind, so a view that
+    /// leaked either would show it here.
+    fn assert_no_trigger_secret(view: &Value) {
+        let text = serde_json::to_string(view).unwrap();
+        assert!(!text.contains(&"a".repeat(48)), "URL token in {text}");
+        assert!(!text.contains("Pair-Code-42"), "pairing code in {text}");
+        assert!(!text.contains("ingestUrl"), "{text}");
+        assert!(!text.contains("ingestPath"), "{text}");
+        assert!(!text.contains("pairingCode"), "{text}");
+        assert!(!text.contains("/hooks/"), "{text}");
+    }
+
+    #[test]
+    fn shows_triggers_by_name_and_never_their_secrets() {
+        let mut webhook = webhook_trigger();
         webhook.document.filter = Some("event.kind.startsWith(\"pull_request\")".to_owned());
         webhook.document.route = Some(BotTriggerRoute::PerKey {
             key: Some("data.number".to_owned()),
         });
-        let view = trigger_tool_view(
-            &webhook,
-            Some("https://example.test/hooks/bots/u-1/triage/github/tok-1234".to_owned()),
-            false,
-        );
+        let view = trigger_tool_view(&webhook);
         assert_no_ids(&view);
+        assert_no_trigger_secret(&view);
         assert!(view.get("id").is_none());
         assert!(view.get("botId").is_none());
         assert!(view.get("cursor").is_none());
@@ -1159,12 +1215,6 @@ mod tests {
         );
         assert_eq!(view["coalesce"], Value::Null);
         assert!(view.get("sessionCloseAfterMs").is_none());
-        assert!(view["ingestUrl"].as_str().unwrap().contains("/hooks/bots/"));
-        assert!(
-            !serde_json::to_string(&view)
-                .unwrap()
-                .contains(&"a".repeat(48))
-        );
 
         let schedule = trigger(
             "triage",
@@ -1176,49 +1226,108 @@ mod tests {
                 summary: "Triage overnight".to_owned(),
             },
         );
-        let view = trigger_tool_view(&schedule, Some("https://ignored".to_owned()), true);
-        assert!(view.get("ingestUrl").is_none());
-        assert!(view.get("pairingCode").is_none());
+        let view = trigger_tool_view(&schedule);
+        assert_no_trigger_secret(&view);
         assert_eq!(view["spec"]["cron"], json!("0 3 * * *"));
         assert!(view["spec"].get("kind").is_none());
     }
 
     #[test]
-    fn chat_triggers_show_the_account_id_and_the_code_only_to_managers() {
-        let mut chat = trigger(
-            "triage",
-            "tg",
-            BotTriggerSpec::Chat {
-                account_id: "tg-main".to_owned(),
-                match_scope: None,
-                activation: Default::default(),
-                access: Default::default(),
-                pairing: ChatPairing::Code,
-                priority: 100,
-            },
-        );
+    fn chat_triggers_show_the_account_id_and_never_the_pairing_code() {
+        let mut chat = chat_trigger(ChatPairing::Code);
         chat.document.session_close_after_ms = Some(0);
         chat.disabled_reason = Some(api::BotTriggerDisabledReason::Breaker);
         chat.document.enabled = false;
-        let managed = trigger_tool_view(&chat, None, true);
-        assert_no_ids(&managed);
-        assert_eq!(managed["spec"]["account"], json!("tg-main"));
-        assert!(managed["spec"].get("accountId").is_none());
-        assert_eq!(managed["pairingCode"], json!("Pair-Code-42"));
-        assert_eq!(managed["sessionCloseAfterMs"], json!(0));
-        assert_eq!(managed["enabled"], json!(false));
-        assert_eq!(managed["disabledReason"], json!("breaker"));
-        let redacted = trigger_tool_view(&chat, None, false);
-        assert!(redacted.get("pairingCode").is_none());
-        // An open connection has no code to show.
-        if let BotTriggerSpec::Chat { pairing, .. } = &mut chat.document.spec {
-            *pairing = ChatPairing::Open;
-        }
-        assert!(
-            trigger_tool_view(&chat, None, true)
-                .get("pairingCode")
-                .is_none()
+        let view = trigger_tool_view(&chat);
+        assert_no_ids(&view);
+        assert_no_trigger_secret(&view);
+        assert_eq!(view["spec"]["account"], json!("tg-main"));
+        assert!(view["spec"].get("accountId").is_none());
+        // The model still learns that a code is required, not the code.
+        assert_eq!(view["spec"]["pairing"], json!("code"));
+        assert_eq!(view["sessionCloseAfterMs"], json!(0));
+        assert_eq!(view["enabled"], json!(false));
+        assert_eq!(view["disabledReason"], json!("breaker"));
+    }
+
+    #[test]
+    fn a_put_mints_only_what_the_trigger_did_not_hold_before() {
+        let held = BotTriggerSecrets {
+            webhook_token: Some("tok-1".to_owned()),
+            pairing_code: Some("CODE-ONE".to_owned()),
+        };
+        // A created trigger: everything it holds is new.
+        assert_eq!(minted_trigger_secrets(None, &held), held);
+        assert_eq!(
+            minted_trigger_secrets(Some(&BotTriggerSecrets::default()), &held),
+            held
         );
+        // An edit that keeps the stored secrets mints nothing.
+        assert_eq!(
+            minted_trigger_secrets(Some(&held), &held),
+            BotTriggerSecrets::default()
+        );
+        // Pairing switched back on, or a replaced code: only the code is new.
+        let open = BotTriggerSecrets {
+            webhook_token: Some("tok-1".to_owned()),
+            pairing_code: None,
+        };
+        assert_eq!(
+            minted_trigger_secrets(Some(&open), &held),
+            BotTriggerSecrets {
+                webhook_token: None,
+                pairing_code: Some("CODE-ONE".to_owned()),
+            }
+        );
+        let replaced = BotTriggerSecrets {
+            webhook_token: Some("tok-1".to_owned()),
+            pairing_code: Some("CODE-TWO".to_owned()),
+        };
+        assert_eq!(
+            minted_trigger_secrets(Some(&held), &replaced).pairing_code,
+            Some("CODE-TWO".to_owned())
+        );
+        // A secret that went away is not a minted one.
+        assert_eq!(
+            minted_trigger_secrets(Some(&held), &BotTriggerSecrets::default()),
+            BotTriggerSecrets::default()
+        );
+    }
+
+    #[test]
+    fn a_put_result_shows_minted_secrets_beside_the_trigger_only() {
+        let webhook = webhook_trigger();
+        let silent = trigger_put_tool_view(&webhook, false, MintedTriggerSecretsView::default());
+        assert_no_trigger_secret(&silent);
+        assert_eq!(silent["created"], json!(false));
+        assert_eq!(silent["trigger"], trigger_tool_view(&webhook));
+
+        let url = "https://example.test/hooks/bots/u-1/triage/github/tok-1234";
+        let created = trigger_put_tool_view(
+            &webhook,
+            true,
+            MintedTriggerSecretsView {
+                ingest_url: Some(url.to_owned()),
+                pairing_code: None,
+            },
+        );
+        assert_eq!(created["created"], json!(true));
+        assert_eq!(created["ingestUrl"], json!(url));
+        assert!(created.get("pairingCode").is_none());
+        assert_no_trigger_secret(&created["trigger"]);
+
+        let chat = chat_trigger(ChatPairing::Code);
+        let paired = trigger_put_tool_view(
+            &chat,
+            true,
+            MintedTriggerSecretsView {
+                ingest_url: None,
+                pairing_code: Some("Pair-Code-42".to_owned()),
+            },
+        );
+        assert_eq!(paired["pairingCode"], json!("Pair-Code-42"));
+        assert!(paired.get("ingestUrl").is_none());
+        assert_no_trigger_secret(&paired["trigger"]);
     }
 
     #[test]

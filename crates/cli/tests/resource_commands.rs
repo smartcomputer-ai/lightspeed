@@ -423,6 +423,57 @@ fn github_commands_filter_providers_and_refuse_to_delete_model_connections() {
 }
 
 #[test]
+fn model_provider_put_sends_each_header_with_its_value_source() {
+    let runtime = Runtime::start(|method, params| {
+        assert_eq!(method, "auth/providers/put");
+        assert_eq!(params["providerId"], "model:router");
+        assert_eq!(params["config"]["type"], "modelEndpoint");
+        assert_eq!(
+            params["config"]["endpoint"]["headers"],
+            json!({
+                "X-Api-Key": { "type": "credential", "grantId": "gateway-key" },
+                "X-Title": { "type": "literal", "value": "Lightspeed" },
+            })
+        );
+        // The runtime answers with the names it stored.
+        let stored = json!({
+            "type": "modelEndpoint",
+            "endpoint": {
+                "baseUrl": "https://router.example/v1",
+                "apiKinds": ["openai:completions"],
+                "headers": {
+                    "x-api-key": { "type": "credential", "grantId": "gateway-key" },
+                    "x-title": { "type": "literal", "value": "Lightspeed" },
+                },
+            },
+        });
+        let mut provider = provider("model:router", "modelEndpoint", stored);
+        provider["hasCredential"] = json!(false);
+        json!({"provider": provider, "created": true, "credentialReplaced": false})
+    });
+    let put = runtime.json(&[
+        "model",
+        "provider",
+        "put",
+        "router",
+        "--no-auth",
+        "--base-url",
+        "https://router.example/v1",
+        "--api-kind",
+        "openai:completions",
+        "--header",
+        "X-Title=Lightspeed",
+        "--header-credential",
+        "X-Api-Key=gateway-key",
+        "--json",
+    ]);
+    assert_eq!(
+        put["provider"]["config"]["endpoint"]["headers"]["x-api-key"],
+        json!({ "type": "credential", "grantId": "gateway-key" })
+    );
+}
+
+#[test]
 fn oauth_no_wait_and_empty_lists_have_useful_output_and_clean_json() {
     let runtime = Runtime::start(|method, _| match method {
         "auth/flows/start" => {
@@ -846,6 +897,21 @@ fn a_generated_secret_declares_an_api_key_and_a_registration_key() {
 
     let (expected_api, expected_registration) = (api_secret.clone(), registration_secret.clone());
     let runtime = Runtime::start(move |method, params| match method {
+        // Every group is asked for by name, never by leaving the field out.
+        "deployment/api-keys/put" if params["keyId"] == "operator" => {
+            assert_eq!(
+                *params,
+                json!({
+                    "scope": {"kind":"deployment"},
+                    "keyId": "operator",
+                    "groups": "all",
+                    "assertActor": false,
+                    "displayName": "Operator",
+                    "secret": expected_api,
+                })
+            );
+            json!({"apiKey":{"keyId":"operator","keyPrefix":&expected_api[..12],"scope":params["scope"],"groups":["session","deployment/api-keys"],"assertActor":false,"createdBy":{"kind":"local"},"displayName":"Operator","createdAtMs":1},"created":false,"secretReplaced":false})
+        }
         "deployment/api-keys/put" => {
             assert_eq!(
                 *params,
@@ -908,6 +974,34 @@ fn a_generated_secret_declares_an_api_key_and_a_registration_key() {
     assert_eq!(output["created"], true);
     assert!(!output.to_string().contains(&api_secret));
 
+    // A key's groups are always stated: a list, or every group by name.
+    let operator = [
+        "api-key",
+        "put",
+        "operator",
+        "--display-name",
+        "Operator",
+        "--deployment",
+        "--secret-file",
+        file.to_str().unwrap(),
+        "--json",
+    ];
+    let unstated = runtime.run(&operator);
+    assert!(!unstated.status.success());
+    assert!(String::from_utf8_lossy(&unstated.stderr).contains("--group"));
+    let mut everything = operator.to_vec();
+    everything.push("--all-groups");
+    assert_eq!(runtime.json(&everything)["created"], false);
+    let mut both = everything.clone();
+    both.extend(["--group", "session"]);
+    assert!(!runtime.run(&both).status.success());
+    assert!(
+        !runtime
+            .run(&["api-key", "create", "--display-name", "x", "--deployment"])
+            .status
+            .success()
+    );
+
     let declared = Command::new(env!("CARGO_BIN_EXE_lightspeed"))
         .current_dir(runtime.directory.path())
         .args([
@@ -951,7 +1045,15 @@ fn a_generated_secret_declares_an_api_key_and_a_registration_key() {
         &[][..],
         &["--secret-stdin", "--secret-env", "POOL_SECRET"][..],
     ] {
-        let mut args = vec!["api-key", "put", "x", "--display-name", "x", "--deployment"];
+        let mut args = vec![
+            "api-key",
+            "put",
+            "x",
+            "--display-name",
+            "x",
+            "--deployment",
+            "--all-groups",
+        ];
         args.extend_from_slice(sources);
         assert!(!runtime.run(&args).status.success());
     }

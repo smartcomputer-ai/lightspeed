@@ -54,6 +54,14 @@
           }
         ]
       },
+      "AccessScopeKind": {
+        "description": "The kind of an [`AccessScope`]: the deployment, or a universe. Where a\nrecord already belongs to one universe this is enough to tell a universe\nkey of that universe from a deployment key.",
+        "enum": [
+          "deployment",
+          "universe"
+        ],
+        "type": "string"
+      },
       "ActiveToolsView": {
         "properties": {
           "revision": {
@@ -126,7 +134,7 @@
           },
           {
             "const": "unauthenticated",
-            "description": "No valid credential was presented.",
+            "description": "No valid credential was presented. An authenticated gateway decides\nthis from the request headers and answers HTTP 401 without reading\nthe request body, so the error answers no request id.",
             "type": "string"
           },
           {
@@ -822,6 +830,23 @@
           },
           "result": {
             "$ref": "#/components/schemas/BotTriggerReadResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfBotTriggerSecretsReadResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/BotTriggerSecretsReadResponse"
           }
         },
         "required": [
@@ -2856,6 +2881,22 @@
         ],
         "type": "object"
       },
+      "ApiKeyGroups": {
+        "anyOf": [
+          {
+            "const": "all",
+            "type": "string"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/MethodGroup"
+            },
+            "type": "array",
+            "uniqueItems": true
+          }
+        ],
+        "description": "The method groups a key is created or declared with: the literal `all`, which is every group the key's scope allows, or a non-empty list of groups."
+      },
       "ApprovalDecisionFailure": {
         "properties": {
           "kind": {
@@ -3039,19 +3080,23 @@
             "type": "object"
           },
           {
-            "description": "A key acting for itself, named by its display prefix.",
+            "description": "A key acting for itself, named by its key id. A key id is unique\namong the keys of one scope, so `scopeKind` says whether it names a\ndeployment key or a key of the universe the record belongs to. The\nid survives a change of secret; the secret's display prefix does not\nand is deliberately not recorded.",
             "properties": {
+              "keyId": {
+                "type": "string"
+              },
               "kind": {
                 "const": "key",
                 "type": "string"
               },
-              "prefix": {
-                "type": "string"
+              "scopeKind": {
+                "$ref": "#/components/schemas/AccessScopeKind"
               }
             },
             "required": [
               "kind",
-              "prefix"
+              "keyId",
+              "scopeKind"
             ],
             "type": "object"
           },
@@ -3454,11 +3499,19 @@
         "type": "object"
       },
       "AuthGrantExposure": {
-        "enum": [
-          "brokered",
-          "retrievable"
-        ],
-        "type": "string"
+        "description": "Where a credential's plain value may go, fixed when it is created.",
+        "oneOf": [
+          {
+            "const": "brokered",
+            "description": "The value stays inside the runtime, which attaches it to its own\noutbound requests (an MCP server, a model endpoint header).",
+            "type": "string"
+          },
+          {
+            "const": "retrievable",
+            "description": "The value may also be leased to a trusted service and bound into an\nenvironment, where commands receive it.",
+            "type": "string"
+          }
+        ]
       },
       "AuthGrantImportParams": {
         "description": "Import a new token credential as an auth grant, under the given id or an\nallocated one; an id already in use is a conflict. Together with\n[`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
@@ -3642,7 +3695,7 @@
               }
             ],
             "default": "brokered",
-            "description": "Whether the token may be leased in plaintext. It cannot be changed\nafterwards."
+            "description": "Whether the plain token may be leased to a service or bound into an\nenvironment. It cannot be changed afterwards."
           },
           "grantId": {
             "type": "string"
@@ -4682,6 +4735,13 @@
         "properties": {
           "bot": {
             "$ref": "#/components/schemas/BotView"
+          },
+          "triggerSecrets": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/BotTriggerSecretsView"
+            },
+            "description": "Secrets of the triggers created with the bot, by trigger id; a\ntrigger that has none is left out.",
+            "type": "object"
           },
           "triggers": {
             "default": [],
@@ -6116,7 +6176,7 @@
             ]
           },
           "pairingCode": {
-            "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nchannel-facing views.",
+            "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Absent keeps the\nstored code, so an edit never has to send it back.",
             "type": [
               "string",
               "null"
@@ -6199,6 +6259,14 @@
       },
       "BotTriggerPutResponse": {
         "properties": {
+          "secrets": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BotTriggerSecretsView"
+              }
+            ],
+            "description": "The trigger's secrets as stored after this write, minted or kept."
+          },
           "trigger": {
             "$ref": "#/components/schemas/BotTriggerView"
           }
@@ -6282,6 +6350,61 @@
             "type": "object"
           }
         ]
+      },
+      "BotTriggerSecretsReadParams": {
+        "properties": {
+          "botId": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "triggerId": {
+            "$ref": "#/components/schemas/BotTriggerId"
+          }
+        },
+        "required": [
+          "botId",
+          "triggerId"
+        ],
+        "type": "object"
+      },
+      "BotTriggerSecretsReadResponse": {
+        "description": "The secrets of one trigger; both fields are absent for a trigger that\nhas none.",
+        "properties": {
+          "ingestPath": {
+            "description": "Webhook triggers: the ingest path including its URL token.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pairingCode": {
+            "description": "Chat triggers with `pairing: code`: the code a conversation sends\nonce to connect.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "BotTriggerSecretsView": {
+        "description": "What lets an outsider reach a trigger: whoever holds the ingest path can\npost events to the bot, and whoever holds the pairing code can connect a\nconversation to it. Kept apart from [`BotTriggerView`] so that reading or\nlisting triggers never discloses either; only bot-management methods\nreturn this.",
+        "properties": {
+          "ingestPath": {
+            "description": "Webhook triggers: the ingest path including its URL token.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pairingCode": {
+            "description": "Chat triggers with `pairing: code`: the code a conversation sends\nonce to connect.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
       },
       "BotTriggerView": {
         "description": "The whole configuration of one trigger, replaced with an expected\nrevision.",
@@ -6538,13 +6661,6 @@
               "null"
             ]
           },
-          "ingestPath": {
-            "description": "Webhook triggers: the ingest path including its URL token, for\nbot-management callers only.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "lastFilterError": {
             "description": "Last runtime failure of the CEL filter (the event was refused);\ncleared by the next match.",
             "type": [
@@ -6556,13 +6672,6 @@
             "format": "int64",
             "type": [
               "integer",
-              "null"
-            ]
-          },
-          "pairingCode": {
-            "description": "Chat triggers with `pairing: code`: the code, for bot-management\ncallers only.",
-            "type": [
-              "string",
               "null"
             ]
           },
@@ -6769,8 +6878,15 @@
             },
             "type": "array"
           },
+          "keyId": {
+            "description": "The calling key's id, unique among the keys of `scope`. It is what\nrecords attribute the key's own requests to. Absent for a request\nwithout a key, such as local development.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "keyPrefix": {
-            "description": "Display prefix of the calling key; absent for a request without a\nkey, such as local development.",
+            "description": "Display prefix of the calling key's current secret; absent for a\nrequest without a key, such as local development.",
             "type": [
               "string",
               "null"
@@ -8797,14 +8913,12 @@
             "type": "string"
           },
           "groups": {
-            "description": "The method groups the key may call; absent grants every group its\nscope allows.",
-            "items": {
-              "$ref": "#/components/schemas/MethodGroup"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ApiKeyGroups"
+              }
+            ],
+            "description": "The method groups the key may call: a non-empty list, or `\"all\"` for\nevery group its scope allows. The key stores the resulting set."
           },
           "keyId": {
             "description": "The key's id: 1-128 ASCII letters, digits, underscores, hyphens, dots\nor colons, starting with a letter or digit, and not yet used by a key\nof this scope. Omit it to have one allocated.",
@@ -8824,6 +8938,7 @@
         },
         "required": [
           "scope",
+          "groups",
           "displayName"
         ],
         "type": "object"
@@ -8887,14 +9002,12 @@
             "type": "string"
           },
           "groups": {
-            "description": "The method groups the key may call; absent grants every group its\nscope allows. An existing key's groups are replaced by these.",
-            "items": {
-              "$ref": "#/components/schemas/MethodGroup"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ApiKeyGroups"
+              }
+            ],
+            "description": "The method groups the key may call: a non-empty list, or `\"all\"` for\nevery group its scope allows. An existing key's groups are replaced\nby these, and `\"all\"` is resolved again on every call, so repeating a\ndeclaration after an upgrade gives the key the groups added since."
           },
           "keyId": {
             "description": "The key's id within its scope: 1-128 ASCII letters, digits,\nunderscores, hyphens, dots or colons, starting with a letter or digit.",
@@ -8916,6 +9029,7 @@
         "required": [
           "scope",
           "keyId",
+          "groups",
           "displayName",
           "secret"
         ],
@@ -9856,6 +9970,7 @@
       "EnvironmentCredentialSourceView": {
         "oneOf": [
           {
+            "description": "A credential grant. It must be retrievable: a bound value is handed\nto the commands of the machine in plain form, which is exactly what\na brokered grant promises never to do.",
             "properties": {
               "grantId": {
                 "type": "string"
@@ -9872,6 +9987,7 @@
             "type": "object"
           },
           {
+            "description": "The stored API key of a model API key provider. No other provider\nkind can be bound; this is the one source whose plain value reaches\na machine without a retrievable grant.",
             "properties": {
               "providerId": {
                 "type": "string"
@@ -9884,22 +10000,6 @@
             "required": [
               "type",
               "providerId"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "secretId": {
-                "type": "string"
-              },
-              "type": {
-                "const": "directSecret",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "secretId"
             ],
             "type": "object"
           }
@@ -12491,45 +12591,6 @@
         ],
         "type": "object"
       },
-      "McpServerHeader": {
-        "description": "Value of one extra MCP request header.",
-        "oneOf": [
-          {
-            "description": "Sent as written. Not secret: reads return the value.",
-            "properties": {
-              "type": {
-                "const": "literal",
-                "type": "string"
-              },
-              "value": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "value"
-            ],
-            "type": "object"
-          },
-          {
-            "description": "The token of a static-token credential in this universe, resolved at\neach request and sent raw, without a scheme prefix.",
-            "properties": {
-              "grantId": {
-                "type": "string"
-              },
-              "type": {
-                "const": "credential",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "grantId"
-            ],
-            "type": "object"
-          }
-        ]
-      },
       "McpServerInput": {
         "additionalProperties": false,
         "description": "Full MCP server document as submitted by clients.",
@@ -12616,9 +12677,9 @@
           },
           "headers": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/McpServerHeader"
+              "$ref": "#/components/schemas/RequestHeader"
             },
-            "description": "Extra request headers sent on every request to the server, alongside\nany `Authorization` the auth policy produces. Names are\ncase-insensitive and stored lowercased; transport headers,\n`authorization` and `x-lightspeed-*` are reserved. Requires `runtime`\nexecution.",
+            "description": "Extra request headers sent on every request to the server, alongside\nany `Authorization` the auth policy produces. Names are\ncase-insensitive and stored lowercased; transport headers,\n`authorization` and `x-lightspeed-*` are reserved. `api-key` and\n`x-api-key` carry a secret and accept only a `credential` value.\nRequires `runtime` execution.",
             "type": "object"
           },
           "serverId": {
@@ -12858,7 +12919,7 @@
           },
           "headers": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/McpServerHeader"
+              "$ref": "#/components/schemas/RequestHeader"
             },
             "description": "Extra request headers, keyed by lowercased name. Credential headers\nshow only the credential id; the token is never returned.",
             "type": "object"
@@ -13254,8 +13315,9 @@
           },
           "headers": {
             "additionalProperties": {
-              "type": "string"
+              "$ref": "#/components/schemas/RequestHeader"
             },
+            "description": "Extra request headers sent on every request to the endpoint, alongside\nthe provider's own credential. Names are case-insensitive and stored\nlowercased; transport headers and `authorization` are reserved.\n`api-key`, `x-api-key` and `proxy-authorization` carry a secret and\naccept only a `credential` value.",
             "type": "object"
           }
         },
@@ -14128,6 +14190,45 @@
           "search"
         ],
         "type": "string"
+      },
+      "RequestHeader": {
+        "description": "Value of one configured request header, as an MCP server and a model\nprovider's endpoint both carry them. A name listed in\n[`CREDENTIAL_ONLY_HEADER_NAMES`] accepts only a `credential` value.",
+        "oneOf": [
+          {
+            "description": "Sent as written. Not secret: reads return the value.",
+            "properties": {
+              "type": {
+                "const": "literal",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The token of a static-token credential in this universe, resolved at\neach request and sent raw, without a scheme prefix.",
+            "properties": {
+              "grantId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "credential",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "grantId"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "ResourceAccessSummary": {
         "description": "The audience of a session's or bot's root as views show it: whether it is\nshared with the universe, and who created it. A bot's session and a\ndelegated child show their root's.",
@@ -20023,7 +20124,7 @@
     }
   },
   "info": {
-    "description": "JSON-RPC 2.0 over HTTP POST /rpc. Results are wrapped in the AgentApiOutcome envelope; session events are consumed via session/events/read cursor pagination.",
+    "description": "JSON-RPC 2.0 over HTTP POST /rpc. Results are wrapped in the AgentApiOutcome envelope; session events are consumed via session/events/read cursor pagination. An authenticated gateway answers a request without a valid API key with HTTP 401 and a JSON-RPC error whose id is null, before it reads the request body. An error decided for a request that was read is a JSON-RPC error for that request's id.",
     "title": "Lightspeed Agent API",
     "version": "0.1.0"
   },
@@ -20812,7 +20913,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
+      "description": "Maps an environment variable name to a retrievable credential grant or to a model API key provider's stored key. Commands in the environment receive the plain value, so a brokered grant and any other provider credential are refused. Requires configuring resources in the universe. The response exposes only the source handle, never secret material.",
       "name": "environments/credentials/bind",
       "paramStructure": "by-name",
       "params": [
@@ -20868,7 +20969,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
+      "description": "Removes one variable-to-credential mapping without deleting the underlying grant or provider credential.",
       "name": "environments/credentials/unbind",
       "paramStructure": "by-name",
       "params": [
@@ -22324,7 +22425,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
+      "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.",
       "name": "auth/grants/import",
       "paramStructure": "by-name",
       "params": [
@@ -22827,7 +22928,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
+      "description": "Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.",
       "name": "auth/github/installations/grant",
       "paramStructure": "by-name",
       "params": [
@@ -22855,7 +22956,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.",
+      "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.",
       "name": "bots/create",
       "paramStructure": "by-name",
       "params": [
@@ -23079,7 +23180,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.",
+      "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.",
       "name": "bots/triggers/put",
       "paramStructure": "by-name",
       "params": [
@@ -23107,7 +23208,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.",
+      "description": "Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.",
       "name": "bots/triggers/read",
       "paramStructure": "by-name",
       "params": [
@@ -23135,7 +23236,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Returns every trigger of the bot ordered by id, secrets included for bot-management callers.",
+      "description": "Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.",
       "name": "bots/triggers/list",
       "paramStructure": "by-name",
       "params": [
@@ -23160,6 +23261,34 @@
       },
       "x-lightspeed-group": "bots",
       "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
+    },
+    {
+      "description": "Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.",
+      "name": "bots/triggers/secrets/read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/BotTriggerSecretsReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfBotTriggerSecretsReadResponse"
+        }
+      },
+      "summary": "Read a trigger's secrets",
+      "x-lightspeed-access": {
+        "action": "manageBot",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "bots",
+      "x-lightspeed-role": "operator",
       "x-lightspeed-target": null
     },
     {

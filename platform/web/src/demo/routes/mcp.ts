@@ -2,9 +2,9 @@
 /// semantics, advisory auth discovery, and an OAuth flow that approves
 /// itself so the sign-in dialog's polling path runs end to end.
 import { Hono } from "hono";
-import type { McpOAuthFlow, McpServer, McpServerHeader, SecretGrant } from "@/api";
+import type { McpOAuthFlow, McpServer, SecretGrant } from "@/api";
 import type { DemoStore, UniverseState } from "../store";
-import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
+import { badRequest, conflict, notFound, parseRequestHeaders, readBody, universeFor } from "./common";
 
 const APPROVALS = new Set<string>(["always", "never"]);
 const STATUSES = new Set<string>(["active", "needsAuthConfig", "unverified", "disabled"]);
@@ -58,22 +58,14 @@ function materialize(
   if (credential && !universe.secrets.grants.some((grant) => grant.grantId === credential.grantId)) {
     return { error: `auth grant not found: ${credential.grantId}`, status: 404 };
   }
-  const headers: Record<string, McpServerHeader> = {};
-  for (const [rawName, value] of Object.entries(isRecord(input.headers) ? input.headers : {})) {
-    const name = rawName.toLowerCase();
-    if (name in headers) {
-      return { error: `duplicate MCP header "${name}"; header names are case-insensitive`, status: 400 };
-    }
-    if (isRecord(value) && value.type === "literal" && typeof value.value === "string") {
-      headers[name] = { type: "literal", value: value.value };
-    } else if (isRecord(value) && value.type === "credential" && typeof value.grantId === "string") {
-      const grantId = value.grantId;
-      if (!universe.secrets.grants.some((grant) => grant.grantId === grantId)) {
-        return { error: `auth grant not found: ${grantId}`, status: 404 };
-      }
-      headers[name] = { type: "credential", grantId };
-    } else {
-      return { error: `MCP header "${name}" needs a literal value or a credential`, status: 400 };
+  const parsedHeaders = parseRequestHeaders(input.headers, "MCP server");
+  if ("error" in parsedHeaders) {
+    return { error: parsedHeaders.error, status: 400 };
+  }
+  const headers = parsedHeaders.headers;
+  for (const header of Object.values(headers)) {
+    if (header.type === "credential" && !universe.secrets.grants.some((grant) => grant.grantId === header.grantId)) {
+      return { error: `auth grant not found: ${header.grantId}`, status: 404 };
     }
   }
   if (input.execution === "provider" && Object.keys(headers).length > 0) {

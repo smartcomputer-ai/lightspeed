@@ -3,7 +3,7 @@ import remarkGfm from "remark-gfm";
 import type { ComponentProps } from "react";
 import { useMediaUrl } from "@/components/session/media";
 import { TranscriptLinksContext } from "@/components/session/transcript-links";
-import { useContext, useState } from "react";
+import { createContext, useContext, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { isFileHandle, type FileReference } from "@/lib/file-references";
 import { cn } from "@/lib/utils";
@@ -18,11 +18,41 @@ function urlTransform(url: string): string {
 
 type ReferenceProps = ComponentProps<"a"> & { showImage?: boolean };
 
+/// Whether the content being rendered sits inside a markdown link.
+const InsideLinkContext = createContext(false);
+
+/// The host an address leads to when that is not this app, resolved the way
+/// the browser would (`//host/path` names another host too); null for an
+/// address on this origin or one that names no host.
+function foreignHost(url: string): string | null {
+  try {
+    const resolved = new URL(url, window.location.href);
+    return resolved.origin === window.location.origin ? null : resolved.host || null;
+  } catch {
+    return null;
+  }
+}
+
+/// Only images recorded with the session or its files are displayed. Any
+/// other source is content the agent, a tool result or a file chose: fetching
+/// it on display would tell that host who is reading and let the address
+/// carry data out without a click. It becomes a link that names its host.
 function MarkdownImage({ src, alt }: ComponentProps<"img">) {
+  const insideLink = useContext(InsideLinkContext);
   if (typeof src === "string" && (src.startsWith("file:") || src.startsWith(MEDIA_SCHEME))) {
     return <MarkdownLink href={src} showImage>{alt ?? "Image"}</MarkdownLink>;
   }
-  return <img src={src} alt={alt} />;
+  const label = alt || "Image";
+  // An address the sanitizer emptied leaves nothing to open.
+  if (typeof src !== "string" || src === "") return <span className="text-muted-foreground">{label}</span>;
+  const host = foreignHost(src);
+  const text = host ? `${label} (${host})` : label;
+  // A link cannot hold another link: the surrounding one keeps its target.
+  return insideLink ? <span>{text}</span> : <MarkdownLink href={src}>{text}</MarkdownLink>;
+}
+
+function MarkdownAnchor(props: ReferenceProps) {
+  return <InsideLinkContext.Provider value={true}><MarkdownLink {...props} /></InsideLinkContext.Provider>;
 }
 
 function MarkdownLink({ href, children, showImage = false, ...rest }: ReferenceProps) {
@@ -121,7 +151,7 @@ export function MarkdownContent({
         className,
       )}
     >
-      <Markdown remarkPlugins={[remarkGfm]} urlTransform={urlTransform} components={{ img: MarkdownImage, a: MarkdownLink }}>
+      <Markdown remarkPlugins={[remarkGfm]} urlTransform={urlTransform} components={{ img: MarkdownImage, a: MarkdownAnchor }}>
         {children}
       </Markdown>
     </div>

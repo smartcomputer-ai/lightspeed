@@ -71,7 +71,7 @@ use temporal_runtime::{
         request_context::{RequestContext, with_request_context as calling},
     },
 };
-use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
+use temporal_workflow::{TemporalConnectionConfig, connect_temporal};
 use tools::{
     environment::process::{
         ContinueProcessRequest, ProcessExecutor, ProcessRequest, ProcessSignal as ExecutorSignal,
@@ -94,11 +94,7 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
     require_storage_live_env()?;
     let _guard = LIVE_TEST_LOCK.lock().await;
 
-    let temporal_target =
-        std::env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-    let namespace = std::env::var("TEMPORAL_NAMESPACE")
-        .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
-    let client = connect_temporal(&temporal_target, &namespace).await?;
+    let client = connect_temporal(&TemporalConnectionConfig::from_env()?).await?;
     let stores = DeploymentStores::from_env().await?;
     let suffix = Uuid::new_v4().simple().to_string();
     let universe_id = Uuid::new_v4();

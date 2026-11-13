@@ -1210,6 +1210,101 @@ async fn run_model_key_replacement_live_client(
         "a settings change must keep the stored key"
     );
 
+    // An endpoint header that names a credential. The declaration is refused,
+    // in a dry run too, while the credential does not exist, and a plain value
+    // under a name that carries a secret is refused whatever its value. Once
+    // the credential is a token credential the declaration is accepted, and
+    // what comes back names the credential under the lowercased header, never
+    // its token.
+    let header_suffix = uuid::Uuid::new_v4().simple().to_string();
+    let header_grant = format!("authgrant_gateway_{header_suffix}");
+    let header_token = format!("gateway-live-token-{header_suffix}");
+    let credential_header = || api::RequestHeader::Credential {
+        grant_id: header_grant.clone(),
+    };
+    let declare_header = |header: api::RequestHeader, dry_run: bool| {
+        declare(
+            Some("Renamed"),
+            Some(api::ModelEndpointConfig {
+                base_url: "https://models.example.com/v1".to_owned(),
+                headers: std::collections::BTreeMap::from([("X-Api-Key".to_owned(), header)]),
+                api_kinds: vec!["openai:completions".to_owned()],
+            }),
+            "key-two",
+            dry_run,
+        )
+    };
+    for dry_run in [true, false] {
+        let missing = declare_header(credential_header(), dry_run).await;
+        anyhow::ensure!(
+            missing.is_err_and(|error| error.kind == api::AgentApiErrorKind::NotFound),
+            "a header must name a credential that exists"
+        );
+    }
+    let plain = declare_header(
+        api::RequestHeader::Literal {
+            value: header_token.clone(),
+        },
+        false,
+    )
+    .await;
+    anyhow::ensure!(
+        plain.is_err_and(|error| error.kind == api::AgentApiErrorKind::InvalidRequest),
+        "a header that carries a secret takes a credential, not a plain value"
+    );
+    api.import_auth_grant(api::AuthGrantImportParams {
+        grant_id: Some(header_grant.clone()),
+        provider_id: None,
+        exposure: api::AuthGrantExposure::Brokered,
+        token: header_token.clone(),
+        display_name: Some("Model gateway".to_owned()),
+        subject_hint: None,
+        scopes: Vec::new(),
+        audience: None,
+        expires_at_ms: None,
+        metadata: None,
+    })
+    .await?;
+    let declared = declare_header(credential_header(), false).await?.result;
+    anyhow::ensure!(!declared.created && !declared.credential_replaced);
+    let api::AuthProviderConfigView::ModelApiKey {
+        endpoint: Some(endpoint),
+    } = &declared.provider.config
+    else {
+        anyhow::bail!("the declared provider keeps its endpoint");
+    };
+    anyhow::ensure!(
+        endpoint.headers
+            == std::collections::BTreeMap::from([("x-api-key".to_owned(), credential_header())]),
+        "the header is stored under its lowercased name and names the credential"
+    );
+    anyhow::ensure!(
+        !serde_json::to_string(&declared.provider)?.contains(&header_token),
+        "a provider never returns the token of a header credential"
+    );
+    let headers_in_document: bool = sqlx::query_scalar(
+        "SELECT config_json #> '{endpoint,headers}' IS NOT NULL
+         FROM auth_providers WHERE universe_id = $1 AND provider_id = $2",
+    )
+    .bind(store.config().universe_id)
+    .bind(provider_id.as_str())
+    .fetch_one(store.pool())
+    .await?;
+    anyhow::ensure!(
+        !headers_in_document,
+        "headers are rows beside the provider, not part of its document"
+    );
+    // A credential that was revoked can no longer be declared for a header.
+    api.revoke_auth_grant(api::AuthGrantRevokeParams {
+        grant_id: header_grant.clone(),
+    })
+    .await?;
+    let revoked = declare_header(credential_header(), true).await;
+    anyhow::ensure!(
+        revoked.is_err_and(|error| error.kind == api::AgentApiErrorKind::Rejected),
+        "a header must name an active credential"
+    );
+
     // A provider that does not exist is created by its declaration.
     let fresh_id = format!("model:declared_{}", uuid::Uuid::new_v4().simple());
     let preview = api
@@ -1325,41 +1420,52 @@ async fn run_custom_headers_live_client(
     let headers = std::collections::BTreeMap::from([
         (
             "X-Upstream-Url".to_owned(),
-            api::McpServerHeader::Literal {
+            api::RequestHeader::Literal {
                 value: "https://tracker.example.com".to_owned(),
             },
         ),
         (
             "X-Upstream-Token".to_owned(),
-            api::McpServerHeader::Credential {
+            api::RequestHeader::Credential {
                 grant_id: grant_id.clone(),
             },
         ),
     ]);
-    let created = api
-        .put_mcp_server(McpServerPutParams {
-            server: McpServerInput {
-                server_id: server_id.clone(),
-                display_name: Some("Header gateway".to_owned()),
-                server_url,
-                default_server_label: "gateway".to_owned(),
-                description: None,
-                allowed_tools: None,
-                execution: RemoteMcpExecution::Runtime,
-                exposure: RemoteMcpExposure::Inject,
-                approval: RemoteMcpApprovalPolicy::Never,
-                defer_loading: None,
-                allow_private_network: true,
-                auth_policy: api::McpServerAuthPolicy::None,
-                credential: None,
-                headers,
-                status: McpServerStatus::Active,
+    let server = |headers| McpServerPutParams {
+        server: McpServerInput {
+            server_id: server_id.clone(),
+            display_name: Some("Header gateway".to_owned()),
+            server_url: server_url.clone(),
+            default_server_label: "gateway".to_owned(),
+            description: None,
+            allowed_tools: None,
+            execution: RemoteMcpExecution::Runtime,
+            exposure: RemoteMcpExposure::Inject,
+            approval: RemoteMcpApprovalPolicy::Never,
+            defer_loading: None,
+            allow_private_network: true,
+            auth_policy: api::McpServerAuthPolicy::None,
+            credential: None,
+            headers,
+            status: McpServerStatus::Active,
+        },
+        expected_revision: None,
+    };
+    // A name that carries a secret takes a credential: a plain value would be
+    // returned to every reader of the server.
+    let plain = api
+        .put_mcp_server(server(std::collections::BTreeMap::from([(
+            "X-Api-Key".to_owned(),
+            api::RequestHeader::Literal {
+                value: token.clone(),
             },
-            expected_revision: None,
-        })
-        .await?
-        .result
-        .server;
+        )])))
+        .await;
+    anyhow::ensure!(
+        plain.is_err_and(|error| error.kind == api::AgentApiErrorKind::InvalidRequest),
+        "a header that carries a secret takes a credential, not a plain value"
+    );
+    let created = api.put_mcp_server(server(headers)).await?.result.server;
     // Names come back lowercased; the credential is named, never its token.
     anyhow::ensure!(
         created.headers.keys().collect::<Vec<_>>() == vec!["x-upstream-token", "x-upstream-url"],

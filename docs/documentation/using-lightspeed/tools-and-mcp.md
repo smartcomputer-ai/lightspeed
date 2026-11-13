@@ -129,10 +129,15 @@ header of their own rather than `Authorization`, and may need other headers
 too, for example the address of the service behind the gateway. Add them under
 **Customize → Request headers**, one row per header:
 
-- **Plain text** is stored and shown as written. Never put a secret here.
+- **Plain text** is stored and shown as written, to everyone who can read the
+  server. Never put a secret here.
 - **Credential** sends the value of a **Token** from **Credentials** exactly as
   stored, without a `Bearer` prefix. Create the token first, as for bearer
   authentication.
+
+The names `Api-Key` and `X-Api-Key` carry a secret by convention and are
+accepted only as a **Credential**; a plain value under them is refused. Use a
+credential for any other header that holds a key or token as well.
 
 For a server whose only credential is such a header, leave **Authentication**
 at **No authentication**: that setting controls only the `Authorization`
@@ -142,11 +147,16 @@ request to the server carries them: tool discovery, tool calls, and session
 traffic.
 
 Header names are case-insensitive and stored in lowercase. `Authorization`,
-the transport's own headers such as `Content-Type` and `Mcp-Session-Id`, and
-names starting with `X-Lightspeed-` are reserved. A credential header needs an
-active token; if the token is bound to an audience, the audience must cover
-the server URL. A missing or revoked token fails the request before anything
-is sent. Request headers require **Lightspeed connects**.
+the transport's own headers such as `Content-Type`, `Proxy-Authorization` and
+`Mcp-Session-Id`, and names starting with `X-Lightspeed-` are reserved. A
+server takes at most 32 headers; a plain value is 1 to 4,096 printable ASCII
+characters. A credential header needs an active token; if the token is bound
+to an audience, the audience must cover the server URL. A missing or revoked
+token fails the request before anything is sent. Request headers require
+**Lightspeed connects**.
+
+A model provider's [extra headers](models-and-credentials.md#extra-headers)
+follow the same rules; only the reserved names differ.
 
 To change a token later, choose **Replace value** on its row in
 **Credentials**. The credential keeps its ID, so the server sends the new
@@ -227,8 +237,10 @@ For a private endpoint under runtime execution, enable **Advanced options →
 Allow private-network egress** on the server and have the operator include
 the destination in `LIGHTSPEED_MCP_PRIVATE_NETWORKS`. Both controls must
 permit the connection.
-Private-network permission for an OAuth sign-in is separate and does not
-authorize tool-call egress. See the
+An OAuth sign-in follows the same list. The server's metadata, client
+registration, and token endpoints are each checked by their own host, so an
+internal authorization server must be listed as well as the MCP server it
+protects. See the
 [environment-variable reference](../reference/environment-variables.md) for operator settings.
 
 ## See images and documents from tools

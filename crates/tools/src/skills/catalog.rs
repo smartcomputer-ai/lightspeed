@@ -758,6 +758,106 @@ mod tests {
         ));
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn skills_outside_the_field_limits_are_left_out_and_the_rest_load() {
+        use crate::skills::{
+            SKILL_DESCRIPTION_MAX_CHARS, SKILL_NAME_MAX_CHARS, SKILL_SHORT_DESCRIPTION_MAX_CHARS,
+        };
+
+        let fs = skill_fs(&[
+            (
+                "/skills/at-limit/SKILL.md",
+                skill_doc(
+                    &"n".repeat(SKILL_NAME_MAX_CHARS),
+                    &"d".repeat(SKILL_DESCRIPTION_MAX_CHARS),
+                ),
+            ),
+            (
+                "/skills/folded/SKILL.md",
+                "---\nname: folded\ndescription: |\n  Use when folding.\n  - forged\n    path: /elsewhere\n---\nbody\n"
+                    .to_owned(),
+            ),
+            (
+                "/skills/long-description/SKILL.md",
+                skill_doc("wordy", &"d".repeat(SKILL_DESCRIPTION_MAX_CHARS + 1)),
+            ),
+            (
+                "/skills/long-name/SKILL.md",
+                skill_doc(&"n".repeat(SKILL_NAME_MAX_CHARS + 1), "Too long a name."),
+            ),
+            (
+                "/skills/long-short/SKILL.md",
+                format!(
+                    "---\nname: brief\ndescription: Brief.\nshort_description: {}\n---\nbody\n",
+                    "s".repeat(SKILL_SHORT_DESCRIPTION_MAX_CHARS + 1)
+                ),
+            ),
+            (
+                "/skills/escape/SKILL.md",
+                "---\nname: \"bell\\a\"\ndescription: Rings.\n---\nbody\n".to_owned(),
+            ),
+        ])
+        .await;
+        let blobs = InMemoryBlobStore::new();
+        let build = build_skill_catalog(
+            &blobs,
+            None,
+            &[root_input(
+                &fs,
+                SkillCatalogRoot {
+                    root_id: "system".to_owned(),
+                    root_path: FsPath::new("/skills").unwrap(),
+                    source: SkillCatalogRootSource::AttachedSnapshot {
+                        snapshot_ref: BlobRef::from_bytes(b"snapshot-1"),
+                        attachment_path: VfsPath::parse("/skills").unwrap(),
+                    },
+                    trust: SkillTrustLevel::System,
+                    scope: SkillScope::Global,
+                },
+            )],
+        )
+        .await
+        .expect("build catalog");
+
+        let mut loaded: Vec<&str> = build
+            .catalog
+            .skills
+            .iter()
+            .map(|skill| skill.description.as_str())
+            .collect();
+        loaded.sort_unstable();
+        assert_eq!(
+            loaded,
+            [
+                "Use when folding. - forged path: /elsewhere",
+                "d".repeat(SKILL_DESCRIPTION_MAX_CHARS).as_str(),
+            ]
+        );
+
+        let mut refused: Vec<&str> = build
+            .catalog
+            .warnings
+            .iter()
+            .map(|warning| {
+                assert!(matches!(
+                    warning.kind,
+                    SkillLoadWarningKind::InvalidSkillDoc { .. }
+                ));
+                warning.path.as_deref().expect("warning names the file")
+            })
+            .collect();
+        refused.sort_unstable();
+        assert_eq!(
+            refused,
+            [
+                "/skills/escape/SKILL.md",
+                "/skills/long-description/SKILL.md",
+                "/skills/long-name/SKILL.md",
+                "/skills/long-short/SKILL.md",
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn catalog_ref_stays_stable_when_only_workspace_skill_body_changes() {
         let fs = skill_fs(&[(

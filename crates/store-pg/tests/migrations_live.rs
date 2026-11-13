@@ -110,8 +110,8 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
     }
 
     // The environment baseline is folded into one migration; the ledger
-    // ends at revision 18.
-    if REQUIRED_SCHEMA_REVISION != 18 {
+    // ends at revision 21.
+    if REQUIRED_SCHEMA_REVISION != 21 {
         return Err(format!(
             "unexpected required schema revision {REQUIRED_SCHEMA_REVISION}"
         ));
@@ -128,6 +128,7 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
          JOIN pg_class AS target ON target.oid = constraint_row.confrelid
          WHERE source.relnamespace = current_schema()::regnamespace
            AND constraint_row.conname IN (
+               'auth_provider_headers_grant_fk',
                'environments_registration_key_fk',
                'mcp_server_headers_grant_fk',
                'mcp_servers_auth_grant_fk'
@@ -140,8 +141,14 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
     if foreign_keys
         != vec![
             // Deferrable but checked immediately, so only a universe delete
-            // (which defers its constraints) can remove keys and
-            // environments in either cascade order.
+            // (which defers its constraints) can remove grants and headers,
+            // or keys and environments, in either cascade order.
+            (
+                "auth_provider_headers_grant_fk".to_owned(),
+                true,
+                false,
+                true,
+            ),
             (
                 "environments_registration_key_fk".to_owned(),
                 true,

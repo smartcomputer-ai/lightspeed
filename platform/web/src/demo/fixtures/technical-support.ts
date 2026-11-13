@@ -2323,6 +2323,8 @@ export function seedTechnicalSupport(store: DemoStore): void {
     role: "admin",
     createdAt: agoIso(49 * DAY_MS),
     responder,
+    // Bots and channels are off in a new universe; this one is built on them.
+    features: { bots: true, channels: true },
   });
   seedMembers(store, universe);
   seedProfiles(universe);

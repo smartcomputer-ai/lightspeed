@@ -83,7 +83,7 @@ impl Runtime {
                 recorded.lock().unwrap().push((method.into(), headers));
                 let result = match method {
                     "initialize" => {
-                        json!({"protocolVersion":"test", "serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "capabilities":{"notifications":false,"historyRead":true,"eventLog":true,"localExecution":false}, "caller":{"scope":scope,"single":single,"keyPrefix":if single {Value::Null} else {json!("lsk_fixture")},"groups":groups}})
+                        json!({"protocolVersion":"test", "serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "capabilities":{"notifications":false,"historyRead":true,"eventLog":true,"localExecution":false}, "caller":{"scope":scope,"single":single,"keyId":if single {Value::Null} else {json!("fixture-key")},"keyPrefix":if single {Value::Null} else {json!("lsk_fixture")},"groups":groups}})
                     }
                     "deployment/universes/list" => {
                         json!({"universes":universes})
@@ -357,7 +357,9 @@ fn named_connections_universe_selection_and_per_command_override() {
         "renamed"
     );
     let status = success(cli(dir, &["connect", "status"], None));
-    assert!(status.contains("\n\nAPI key:\n"));
+    // The key is shown by the id records attribute it to, then by the
+    // prefix of the secret in use.
+    assert!(status.contains("\n\nAPI key:\n  Key ID: fixture-key\n  Prefix: lsk_fixture\n"));
     assert!(status.ends_with(
         "\n\nSelected universe:\n  Handle: renamed\n  UUID: 00000000-0000-0000-0000-000000000001\n"
     ));

@@ -817,6 +817,34 @@ fn mcp_server_put_lowercases_header_names_and_refuses_case_duplicates() {
 }
 
 #[test]
+fn mcp_server_headers_that_carry_a_secret_take_only_a_credential() {
+    for headers in [
+        serde_json::json!({ "api-key": { "type": "literal", "value": "sk-plain" } }),
+        serde_json::json!({ "X-Api-Key": { "type": "literal", "value": "sk-plain" } }),
+        // The transport owns this one whatever the value source.
+        serde_json::json!({
+            "Proxy-Authorization": { "type": "credential", "grantId": "authgrant_1" },
+        }),
+    ] {
+        let error = mcp_api::put_mcp_server_record(header_input(headers.clone()), 1)
+            .expect_err("refused headers");
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest, "{headers}");
+    }
+
+    let record = mcp_api::put_mcp_server_record(
+        header_input(serde_json::json!({
+            "X-Api-Key": { "type": "credential", "grantId": "authgrant_upstream" },
+        })),
+        1,
+    )
+    .expect("a credential under a name that carries a secret");
+    assert_eq!(
+        record.headers["x-api-key"].grant_id(),
+        Some(&auth::AuthGrantId::new("authgrant_upstream"))
+    );
+}
+
+#[test]
 fn mcp_header_credentials_must_be_active_static_tokens_covering_the_server() {
     let record = mcp_api::put_mcp_server_record(header_input(serde_json::json!({})), 1)
         .expect("server converts");
@@ -825,15 +853,20 @@ fn mcp_header_credentials_must_be_active_static_tokens_covering_the_server() {
         test_auth_grant_record("authgrant_upstream", kind, status, audience)
     };
 
-    mcp_api::validate_mcp_header_grant(
-        &record,
-        header,
-        &grant(
-            auth::AuthProviderKind::StaticToken,
-            auth::AuthGrantStatus::Active,
-            Some("https://gateway.example.com"),
-        ),
-    )
+    let check = |grant: &auth::AuthGrantRecord| {
+        validate_header_credential(
+            &mcp::MCP_SERVER_HEADER_POLICY,
+            header,
+            &record.server_url,
+            grant,
+        )
+    };
+
+    check(&grant(
+        auth::AuthProviderKind::StaticToken,
+        auth::AuthGrantStatus::Active,
+        Some("https://gateway.example.com"),
+    ))
     .expect("an active static token covering the URL is accepted");
 
     for (kind, status, audience) in [
@@ -853,9 +886,7 @@ fn mcp_header_credentials_must_be_active_static_tokens_covering_the_server() {
             Some("https://elsewhere.example.com"),
         ),
     ] {
-        let error =
-            mcp_api::validate_mcp_header_grant(&record, header, &grant(kind, status, audience))
-                .expect_err("refused header credential");
+        let error = check(&grant(kind, status, audience)).expect_err("refused header credential");
         assert_eq!(
             error.kind,
             AgentApiErrorKind::Rejected,
@@ -869,7 +900,7 @@ fn mcp_server_view_returns_header_names_and_grant_ids_only() {
     let mut record = test_mcp_server_record("gateway", mcp::McpServerStatus::Active);
     record.headers.insert(
         "x-upstream-token".to_owned(),
-        mcp::McpServerHeaderValue::Credential {
+        auth::RequestHeaderValue::Credential {
             grant_id: auth::AuthGrantId::new("authgrant_upstream"),
         },
     );
@@ -880,6 +911,143 @@ fn mcp_server_view_returns_header_names_and_grant_ids_only() {
             "x-upstream-token": {"type": "credential", "grantId": "authgrant_upstream"}
         })
     );
+}
+
+fn model_endpoint_draft(
+    headers: serde_json::Value,
+) -> Result<github_api::AuthProviderCreateDraft, AgentApiError> {
+    let config = serde_json::from_value(serde_json::json!({
+        "type": "modelEndpoint",
+        "endpoint": {
+            "baseUrl": "https://router.example/v1",
+            "headers": headers,
+            "apiKinds": ["openai:completions"],
+        },
+    }))
+    .expect("provider config input");
+    auth_provider_create_draft(
+        AuthProviderCreateParams {
+            provider_id: Some("model:router".to_owned()),
+            display_name: None,
+            config,
+            credential: None,
+        },
+        1,
+    )
+}
+
+#[test]
+fn model_endpoint_headers_normalize_names_and_keep_their_value_source() {
+    let draft = model_endpoint_draft(serde_json::json!({
+        "X-Title": { "type": "literal", "value": "Lightspeed" },
+        "X-Api-Key": { "type": "credential", "grantId": "authgrant_router" },
+    }))
+    .expect("headers convert");
+    let endpoint = draft
+        .provider
+        .config
+        .model_endpoint()
+        .expect("model endpoint");
+    assert_eq!(
+        endpoint.headers.get("x-title"),
+        Some(&auth::RequestHeaderValue::Literal {
+            value: "Lightspeed".to_owned(),
+        })
+    );
+    assert_eq!(
+        endpoint.headers.get("x-api-key"),
+        Some(&auth::RequestHeaderValue::Credential {
+            grant_id: auth::AuthGrantId::new("authgrant_router"),
+        })
+    );
+
+    // Reads return header names, literal values and grant ids, never a token.
+    let view = serde_json::to_value(auth_provider_view(draft.provider.into_record()))
+        .expect("serialize view");
+    assert_eq!(
+        view["config"]["endpoint"]["headers"],
+        serde_json::json!({
+            "x-api-key": { "type": "credential", "grantId": "authgrant_router" },
+            "x-title": { "type": "literal", "value": "Lightspeed" },
+        })
+    );
+}
+
+#[test]
+fn model_endpoint_headers_refuse_plain_secrets_duplicates_and_reserved_names() {
+    for headers in [
+        // Names that carry a secret take a credential, never a plain value.
+        serde_json::json!({ "api-key": { "type": "literal", "value": "sk-plain" } }),
+        serde_json::json!({ "X-Api-Key": { "type": "literal", "value": "sk-plain" } }),
+        serde_json::json!({ "Proxy-Authorization": { "type": "literal", "value": "Basic abc" } }),
+        // The transport owns Authorization whatever the value source.
+        serde_json::json!({ "Authorization": { "type": "credential", "grantId": "authgrant_1" } }),
+        // One header spelled in two cases.
+        serde_json::json!({
+            "x-title": { "type": "literal", "value": "a" },
+            "X-Title": { "type": "literal", "value": "b" },
+        }),
+        serde_json::json!({ "x-token": { "type": "credential", "grantId": "not a grant id" } }),
+    ] {
+        let error = model_endpoint_draft(headers.clone()).expect_err("refused headers");
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest, "{headers}");
+    }
+}
+
+#[test]
+fn model_endpoint_header_credentials_must_be_active_static_tokens_covering_the_endpoint() {
+    let draft = model_endpoint_draft(serde_json::json!({})).expect("endpoint converts");
+    let endpoint = draft
+        .provider
+        .config
+        .model_endpoint()
+        .expect("model endpoint");
+    let header = "x-api-key";
+    let grant =
+        |kind, status, audience| test_auth_grant_record("authgrant_router", kind, status, audience);
+
+    let check = |grant: &auth::AuthGrantRecord| {
+        validate_header_credential(
+            &auth::MODEL_ENDPOINT_HEADER_POLICY,
+            header,
+            &endpoint.base_url,
+            grant,
+        )
+    };
+
+    for audience in [None, Some("https://router.example")] {
+        check(&grant(
+            auth::AuthProviderKind::StaticToken,
+            auth::AuthGrantStatus::Active,
+            audience,
+        ))
+        .expect("an active static token covering the endpoint is accepted");
+    }
+
+    for (kind, status, audience) in [
+        (
+            auth::AuthProviderKind::CustomOAuth,
+            auth::AuthGrantStatus::Active,
+            None,
+        ),
+        (
+            auth::AuthProviderKind::StaticToken,
+            auth::AuthGrantStatus::Revoked,
+            None,
+        ),
+        (
+            auth::AuthProviderKind::StaticToken,
+            auth::AuthGrantStatus::Active,
+            Some("https://elsewhere.example.com"),
+        ),
+    ] {
+        let error = check(&grant(kind, status, audience)).expect_err("refused header credential");
+        assert_eq!(
+            error.kind,
+            AgentApiErrorKind::Rejected,
+            "{kind:?} {status:?}"
+        );
+    }
 }
 
 #[test]

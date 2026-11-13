@@ -12,7 +12,7 @@ use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
-use auth::AuthGrantId;
+use auth::{AuthGrantId, RequestHeaderError, RequestHeaderPolicy, RequestHeaders};
 use harness::{StringIdError, validate_general_string_id};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use thiserror::Error;
@@ -264,7 +264,7 @@ pub struct McpServerRecord {
     /// Extra request headers sent on every request to the server, keyed by
     /// lowercased name. Independent of `auth_policy`, which governs only
     /// `Authorization`.
-    pub headers: McpServerHeaders,
+    pub headers: RequestHeaders,
     pub status: McpServerStatus,
     pub revision: u64,
     pub created_at_ms: i64,
@@ -295,7 +295,7 @@ impl McpServerRecord {
                 message: "MCP servers with auth policy none cannot bind an auth grant".to_owned(),
             });
         }
-        validate_server_headers(&self.headers)?;
+        MCP_SERVER_HEADER_POLICY.validate(&self.headers)?;
         if self.execution == McpExecution::Provider && !self.headers.is_empty() {
             return Err(McpRegistryError::InvalidInput {
                 message: "custom headers require runtime MCP execution; provider connectors \
@@ -336,7 +336,7 @@ pub struct PutMcpServerRecord {
     pub allow_private_network: bool,
     pub auth_policy: McpServerAuthPolicy,
     pub auth_grant_id: Option<AuthGrantId>,
-    pub headers: McpServerHeaders,
+    pub headers: RequestHeaders,
     pub status: McpServerStatus,
     pub now_ms: i64,
 }
@@ -503,149 +503,41 @@ impl McpServerAuthPolicy {
     }
 }
 
-/// Extra request headers of one MCP server, keyed by lowercased header name.
-pub type McpServerHeaders = BTreeMap<String, McpServerHeaderValue>;
+/// What an MCP server adds to the shared header rules: the names the
+/// transport, the built-in auth policies, or Lightspeed itself set. Configured
+/// headers never override them, whatever their value source.
+pub const MCP_SERVER_HEADER_POLICY: RequestHeaderPolicy = RequestHeaderPolicy {
+    owner: "MCP server",
+    target: "this MCP server's URL",
+    reserved_names: &[
+        "accept",
+        "authorization",
+        "connection",
+        "content-length",
+        "content-type",
+        "expect",
+        "host",
+        "keep-alive",
+        "last-event-id",
+        "mcp-protocol-version",
+        "mcp-session-id",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    ],
+    reserved_prefixes: &["x-lightspeed-"],
+};
 
-/// Value of one configured request header. A literal is configuration and is
-/// returned by reads; a credential names a universe auth grant whose token is
-/// resolved at each request and sent raw.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum McpServerHeaderValue {
-    Literal { value: String },
-    Credential { grant_id: AuthGrantId },
-}
-
-impl McpServerHeaderValue {
-    pub fn grant_id(&self) -> Option<&AuthGrantId> {
-        match self {
-            Self::Literal { .. } => None,
-            Self::Credential { grant_id } => Some(grant_id),
+impl From<RequestHeaderError> for McpRegistryError {
+    fn from(error: RequestHeaderError) -> Self {
+        Self::InvalidInput {
+            message: error.to_string(),
         }
     }
-}
-
-pub const MCP_SERVER_HEADERS_MAX: usize = 32;
-pub const MCP_SERVER_HEADER_NAME_MAX_LEN: usize = 128;
-pub const MCP_SERVER_HEADER_VALUE_MAX_LEN: usize = 4096;
-
-/// Headers the transport, the built-in auth policies, or Lightspeed itself
-/// own. Configured headers never override them.
-const RESERVED_HEADER_NAMES: &[&str] = &[
-    "accept",
-    "authorization",
-    "connection",
-    "content-length",
-    "content-type",
-    "expect",
-    "host",
-    "keep-alive",
-    "last-event-id",
-    "mcp-protocol-version",
-    "mcp-session-id",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "proxy-connection",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-];
-const RESERVED_HEADER_PREFIX: &str = "x-lightspeed-";
-
-/// Canonical form of a configured header name: lowercased, then validated as
-/// an HTTP field name that is not reserved.
-pub fn normalize_mcp_server_header_name(name: &str) -> Result<String, McpRegistryError> {
-    let normalized = name.to_ascii_lowercase();
-    validate_server_header_name(&normalized)?;
-    Ok(normalized)
-}
-
-fn validate_server_header_name(name: &str) -> Result<(), McpRegistryError> {
-    if name.is_empty() || name.len() > MCP_SERVER_HEADER_NAME_MAX_LEN {
-        return Err(McpRegistryError::InvalidInput {
-            message: format!(
-                "header name must be 1 to {MCP_SERVER_HEADER_NAME_MAX_LEN} bytes: {name:?}"
-            ),
-        });
-    }
-    // RFC 9110 token characters.
-    let is_tchar = |ch: char| {
-        ch.is_ascii_alphanumeric()
-            || matches!(
-                ch,
-                '!' | '#'
-                    | '$'
-                    | '%'
-                    | '&'
-                    | '\''
-                    | '*'
-                    | '+'
-                    | '-'
-                    | '.'
-                    | '^'
-                    | '_'
-                    | '`'
-                    | '|'
-                    | '~'
-            )
-    };
-    if !name.chars().all(is_tchar) {
-        return Err(McpRegistryError::InvalidInput {
-            message: format!("header name {name:?} is not a valid HTTP field name"),
-        });
-    }
-    if name.chars().any(|ch| ch.is_ascii_uppercase()) {
-        return Err(McpRegistryError::InvalidInput {
-            message: format!("header name {name:?} must be lowercase"),
-        });
-    }
-    if RESERVED_HEADER_NAMES.contains(&name) || name.starts_with(RESERVED_HEADER_PREFIX) {
-        return Err(McpRegistryError::InvalidInput {
-            message: format!("header {name:?} is reserved and cannot be configured"),
-        });
-    }
-    Ok(())
-}
-
-/// A header value must be visible ASCII or tab/space inside, without leading
-/// or trailing whitespace. Credential tokens are checked against the same
-/// rule when they are resolved.
-pub fn validate_mcp_server_header_value(name: &str, value: &str) -> Result<(), McpRegistryError> {
-    if value.is_empty() || value.len() > MCP_SERVER_HEADER_VALUE_MAX_LEN {
-        return Err(McpRegistryError::InvalidInput {
-            message: format!(
-                "header {name:?} value must be 1 to {MCP_SERVER_HEADER_VALUE_MAX_LEN} bytes"
-            ),
-        });
-    }
-    if value.trim() != value
-        || !value
-            .bytes()
-            .all(|byte| byte == b'\t' || (0x20..0x7f).contains(&byte))
-    {
-        return Err(McpRegistryError::InvalidInput {
-            message: format!(
-                "header {name:?} value must be printable ASCII without surrounding whitespace"
-            ),
-        });
-    }
-    Ok(())
-}
-
-fn validate_server_headers(headers: &McpServerHeaders) -> Result<(), McpRegistryError> {
-    if headers.len() > MCP_SERVER_HEADERS_MAX {
-        return Err(McpRegistryError::InvalidInput {
-            message: format!("at most {MCP_SERVER_HEADERS_MAX} custom headers are allowed"),
-        });
-    }
-    for (name, value) in headers {
-        validate_server_header_name(name)?;
-        if let McpServerHeaderValue::Literal { value } = value {
-            validate_mcp_server_header_value(name, value)?;
-        }
-    }
-    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1014,6 +906,7 @@ fn validate_mcp_component(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auth::RequestHeaderValue;
 
     fn put_request(server_id: &str, status: McpServerStatus) -> PutMcpServerRecord {
         PutMcpServerRecord {
@@ -1031,7 +924,7 @@ mod tests {
             allow_private_network: false,
             auth_policy: McpServerAuthPolicy::None,
             auth_grant_id: None,
-            headers: McpServerHeaders::new(),
+            headers: RequestHeaders::new(),
             status,
             now_ms: 10,
         }
@@ -1115,9 +1008,15 @@ mod tests {
         record
     }
 
-    fn literal(value: &str) -> McpServerHeaderValue {
-        McpServerHeaderValue::Literal {
+    fn literal(value: &str) -> RequestHeaderValue {
+        RequestHeaderValue::Literal {
             value: value.to_owned(),
+        }
+    }
+
+    fn credential(grant_id: &str) -> RequestHeaderValue {
+        RequestHeaderValue::Credential {
+            grant_id: auth::AuthGrantId::new(grant_id),
         }
     }
 
@@ -1128,13 +1027,54 @@ mod tests {
             "x-upstream-url".to_owned(),
             literal("https://tracker.example.com"),
         );
-        record.headers.insert(
-            "x-upstream-token".to_owned(),
-            McpServerHeaderValue::Credential {
-                grant_id: auth::AuthGrantId::new("authgrant_1"),
-            },
-        );
+        record
+            .headers
+            .insert("x-upstream-token".to_owned(), credential("authgrant_1"));
         record.validate().expect("valid custom headers");
+    }
+
+    #[test]
+    fn header_names_that_carry_a_secret_accept_only_a_credential() {
+        // A plain value would be returned to every reader of the server.
+        for name in ["api-key", "x-api-key"] {
+            let mut plain = runtime_record();
+            plain.headers.insert(name.to_owned(), literal("sk-plain"));
+            assert!(
+                matches!(plain.validate(), Err(McpRegistryError::InvalidInput { .. })),
+                "{name} must not accept a literal"
+            );
+            assert_eq!(
+                MCP_SERVER_HEADER_POLICY.validate(&plain.headers),
+                Err(RequestHeaderError::CredentialOnly {
+                    owner: "MCP server",
+                    name: name.to_owned(),
+                })
+            );
+
+            let mut referenced = runtime_record();
+            referenced
+                .headers
+                .insert(name.to_owned(), credential("authgrant_1"));
+            referenced
+                .validate()
+                .unwrap_or_else(|error| panic!("{name} accepts a credential: {error}"));
+        }
+
+        // `proxy-authorization` belongs to the transport and takes no value
+        // of either source.
+        for value in [literal("basic abc"), credential("authgrant_1")] {
+            let mut proxy = runtime_record();
+            proxy
+                .headers
+                .insert("proxy-authorization".to_owned(), value);
+            assert_eq!(
+                MCP_SERVER_HEADER_POLICY.validate(&proxy.headers),
+                Err(RequestHeaderError::Reserved {
+                    owner: "MCP server",
+                    name: "proxy-authorization".to_owned(),
+                })
+            );
+        }
     }
 
     #[test]
@@ -1176,11 +1116,22 @@ mod tests {
     #[test]
     fn header_names_normalize_to_lowercase() {
         assert_eq!(
-            normalize_mcp_server_header_name("X-Upstream-Token").expect("valid"),
+            MCP_SERVER_HEADER_POLICY
+                .normalize_name("X-Upstream-Token")
+                .expect("valid"),
             "x-upstream-token"
         );
-        assert!(normalize_mcp_server_header_name("Authorization").is_err());
-        assert!(normalize_mcp_server_header_name("X-Lightspeed-Universe").is_err());
+        for reserved in ["Authorization", "X-Lightspeed-Universe", "Mcp-Session-Id"] {
+            assert!(
+                matches!(
+                    MCP_SERVER_HEADER_POLICY.normalize_name(reserved),
+                    Err(RequestHeaderError::Reserved { .. })
+                ),
+                "{reserved}"
+            );
+        }
+        // A model endpoint reserves `cookie`; an MCP server does not.
+        assert!(MCP_SERVER_HEADER_POLICY.normalize_name("Cookie").is_ok());
     }
 
     #[test]
@@ -1198,7 +1149,7 @@ mod tests {
         }
 
         let mut record = runtime_record();
-        for index in 0..=MCP_SERVER_HEADERS_MAX {
+        for index in 0..=auth::REQUEST_HEADERS_MAX {
             record
                 .headers
                 .insert(format!("x-header-{index}"), literal("v"));

@@ -12,7 +12,10 @@ deliberately combine conversations.
 
 Start with a working bot from [Bots and triggers](bots-and-triggers.md) and a
 model suited to its tasks. Use an Operator or Admin account to manage channel
-accounts and bot triggers.
+accounts and bot triggers. The universe needs both **Bots** and **Channels**
+switched on under **Settings → General → Features**; a new universe starts
+with them off, and until an Admin turns them on the **Channels** page is
+hidden and its requests are refused.
 
 ## Make the connector available
 
@@ -79,7 +82,8 @@ For a first test, use a direct chat and retain code-based pairing:
 3. Set **Conversations** to **Direct chats only**.
 4. Keep **Require a pairing code** enabled and the default **One session per
    conversation** routing. Add the trigger.
-5. Copy the pairing code from the saved trigger.
+5. Copy the pairing code from the saved trigger. It is shown to Operators
+   and Admins only.
 6. From another account, open a direct chat with the Telegram bot or WhatsApp
    number. Send the pairing code as the entire message.
 

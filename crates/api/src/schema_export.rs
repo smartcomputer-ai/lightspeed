@@ -155,7 +155,11 @@ pub fn export_schemas() -> ExportedSchemas {
             "description":
                 "JSON-RPC 2.0 over HTTP POST /rpc. Results are wrapped in the \
                  AgentApiOutcome envelope; session events are consumed via \
-                 session/events/read cursor pagination.",
+                 session/events/read cursor pagination. An authenticated \
+                 gateway answers a request without a valid API key with HTTP \
+                 401 and a JSON-RPC error whose id is null, before it reads \
+                 the request body. An error decided for a request that was \
+                 read is a JSON-RPC error for that request's id.",
         },
         "methods": openrpc_methods,
         "components": { "schemas": schema_bundle["definitions"].clone() },
@@ -205,7 +209,7 @@ mod tests {
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 147);
+        assert_eq!(total, 148);
         assert_eq!(
             manifest
                 .iter()

@@ -174,6 +174,118 @@ fn auth_provider_create_params_redact_credential_in_debug_output() {
 }
 
 #[test]
+fn model_endpoint_headers_are_tagged_values_on_the_wire() {
+    let endpoint = json!({
+        "baseUrl": "https://router.example/v1",
+        "headers": {
+            "x-api-key": { "type": "credential", "grantId": "authgrant_router" },
+            "x-title": { "type": "literal", "value": "Lightspeed" },
+        },
+        "apiKinds": ["openai:completions"],
+    });
+    let decoded: ModelEndpointConfig =
+        serde_json::from_value(endpoint.clone()).expect("deserialize endpoint");
+    assert_eq!(
+        decoded.headers.get("x-api-key"),
+        Some(&RequestHeader::Credential {
+            grant_id: "authgrant_router".to_owned(),
+        })
+    );
+    assert_eq!(
+        decoded.headers.get("x-title"),
+        Some(&RequestHeader::Literal {
+            value: "Lightspeed".to_owned(),
+        })
+    );
+    assert_eq!(serde_json::to_value(&decoded).unwrap(), endpoint);
+
+    // A header is always tagged: a bare string names no value source.
+    let bare = json!({
+        "baseUrl": "https://router.example/v1",
+        "headers": { "x-title": "Lightspeed" },
+        "apiKinds": ["openai:completions"],
+    });
+    assert!(serde_json::from_value::<ModelEndpointConfig>(bare).is_err());
+
+    // An endpoint without headers leaves the field out.
+    let plain = ModelEndpointConfig {
+        base_url: "https://router.example/v1".to_owned(),
+        headers: Default::default(),
+        api_kinds: vec!["openai:completions".to_owned()],
+    };
+    assert!(
+        serde_json::to_value(&plain)
+            .unwrap()
+            .get("headers")
+            .is_none()
+    );
+}
+
+#[test]
+fn mcp_servers_and_model_endpoints_share_one_header_shape() {
+    let headers = json!({
+        "x-tenant": { "type": "literal", "value": "acme" },
+        "x-upstream-token": { "type": "credential", "grantId": "authgrant_upstream" },
+    });
+    let expected = BTreeMap::from([
+        (
+            "x-tenant".to_owned(),
+            RequestHeader::Literal {
+                value: "acme".to_owned(),
+            },
+        ),
+        (
+            "x-upstream-token".to_owned(),
+            RequestHeader::Credential {
+                grant_id: "authgrant_upstream".to_owned(),
+            },
+        ),
+    ]);
+
+    let server: McpServerInput = serde_json::from_value(json!({
+        "serverId": "tracker",
+        "serverUrl": "https://tracker.example/mcp",
+        "defaultServerLabel": "tracker",
+        "headers": headers,
+    }))
+    .expect("deserialize server");
+    assert_eq!(server.headers, expected);
+    assert_eq!(serde_json::to_value(&server).unwrap()["headers"], headers);
+
+    let endpoint: ModelEndpointConfig = serde_json::from_value(json!({
+        "baseUrl": "https://router.example/v1",
+        "headers": headers,
+        "apiKinds": ["openai:completions"],
+    }))
+    .expect("deserialize endpoint");
+    assert_eq!(endpoint.headers, expected);
+    assert_eq!(serde_json::to_value(&endpoint).unwrap()["headers"], headers);
+
+    for name in ["api-key", "X-Api-Key", "Proxy-Authorization"] {
+        assert!(is_credential_only_header(name), "{name}");
+    }
+    assert!(!is_credential_only_header("x-tenant"));
+    assert!(
+        CREDENTIAL_ONLY_HEADER_NAMES
+            .windows(2)
+            .all(|pair| pair[0] < pair[1])
+    );
+
+    // The value source is always named; nothing else is accepted.
+    for invalid in [
+        json!("acme"),
+        json!({ "value": "acme" }),
+        json!({ "type": "secret", "value": "acme" }),
+        json!({ "type": "credential", "grant_id": "authgrant_upstream" }),
+    ] {
+        assert!(
+            serde_json::from_value::<RequestHeader>(invalid.clone()).is_err(),
+            "{invalid}"
+        );
+    }
+}
+
+#[test]
 fn environment_provider_put_params_redact_credential_in_debug_output() {
     let params: DeploymentEnvironmentProviderPutParams = serde_json::from_value(json!({
         "providerId": "incus-local",
@@ -2008,6 +2120,7 @@ impl AgentApiService for TestService {
                     universe_id: uuid::Uuid::nil(),
                 },
                 single: true,
+                key_id: None,
                 key_prefix: None,
                 groups: MethodGroup::ALL.to_vec(),
             },
@@ -3204,6 +3317,15 @@ impl AgentApiService for TestService {
         ))
     }
 
+    async fn read_bot_trigger_secrets(
+        &self,
+        _params: BotTriggerSecretsReadParams,
+    ) -> Result<AgentApiOutcome<BotTriggerSecretsReadResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "read_bot_trigger_secrets is not part of the api test double",
+        ))
+    }
+
     async fn delete_bot_trigger(
         &self,
         _params: BotTriggerDeleteParams,
@@ -3384,7 +3506,8 @@ fn test_auth_grant(grant_id: String, status: AuthGrantStatus) -> AuthGrantView {
         provider_kind: AuthProviderKind::StaticToken,
         exposure: AuthGrantExposure::Brokered,
         created_by: Attribution::Key {
-            prefix: "lsk_abcdefgh".into(),
+            key_id: "ci-bot".into(),
+            scope_kind: AccessScopeKind::Universe,
         },
         display_name: None,
         subject_hint: None,
@@ -4292,7 +4415,7 @@ fn deployment_api_key_put_params_redact_the_secret_in_debug_output() {
     let params = DeploymentApiKeyPutParams {
         scope: AccessScope::Deployment,
         key_id: "platform".to_owned(),
-        groups: None,
+        groups: ApiKeyGroups::All,
         assert_actor: true,
         display_name: "Platform".to_owned(),
         secret: "lsk_supplied_secret".to_owned(),
@@ -4300,4 +4423,177 @@ fn deployment_api_key_put_params_redact_the_secret_in_debug_output() {
     let debug = format!("{params:?}");
     assert!(debug.contains("platform"));
     assert!(!debug.contains("lsk_supplied_secret"));
+}
+
+#[test]
+fn api_key_groups_are_the_literal_all_or_a_non_empty_list() {
+    let all: ApiKeyGroups = serde_json::from_value(json!("all")).unwrap();
+    assert_eq!(all, ApiKeyGroups::All);
+    assert_eq!(serde_json::to_value(&all).unwrap(), json!("all"));
+
+    // A list is a set: stated order and repeats do not matter, and it is
+    // written back in the order a key view reports.
+    let listed: ApiKeyGroups =
+        serde_json::from_value(json!(["vfs", "session", "vfs", "blobs/put"])).unwrap();
+    assert_eq!(
+        listed,
+        [
+            MethodGroup::Session,
+            MethodGroup::BlobsPut,
+            MethodGroup::Vfs
+        ]
+        .into_iter()
+        .collect::<ApiKeyGroups>()
+    );
+    assert_eq!(
+        serde_json::to_value(&listed).unwrap(),
+        json!(["session", "blobs/put", "vfs"])
+    );
+
+    for refused in [
+        json!([]),
+        json!("ALL"),
+        json!("session"),
+        json!(null),
+        json!(true),
+        json!(["session", "everything"]),
+        json!({ "all": true }),
+    ] {
+        assert!(
+            serde_json::from_value::<ApiKeyGroups>(refused.clone()).is_err(),
+            "{refused}"
+        );
+    }
+}
+
+#[test]
+fn all_resolves_to_what_the_scope_allows_and_a_list_to_itself() {
+    let universe = AccessScope::Universe {
+        universe_id: uuid::Uuid::from_u128(7),
+    };
+    assert_eq!(
+        ApiKeyGroups::All.resolve(universe),
+        MethodGroup::allowed_in(universe)
+    );
+    assert_eq!(
+        ApiKeyGroups::All.resolve(AccessScope::Deployment),
+        MethodGroup::ALL.into_iter().collect()
+    );
+    let listed: ApiKeyGroups = [MethodGroup::Session].into_iter().collect();
+    assert_eq!(
+        listed.resolve(AccessScope::Deployment),
+        [MethodGroup::Session].into_iter().collect()
+    );
+}
+
+#[test]
+fn key_writes_require_groups() {
+    let scope = json!({ "kind": "deployment" });
+    // A request that leaves groups out is refused instead of being read as
+    // every group.
+    assert!(
+        serde_json::from_value::<DeploymentApiKeyCreateParams>(json!({
+            "scope": scope,
+            "displayName": "operator",
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<DeploymentApiKeyPutParams>(json!({
+            "scope": scope,
+            "keyId": "operator",
+            "displayName": "operator",
+            "secret": "lsk_supplied_secret",
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<DeploymentApiKeyCreateParams>(json!({
+            "scope": scope,
+            "displayName": "operator",
+            "groups": null,
+        }))
+        .is_err()
+    );
+    let create: DeploymentApiKeyCreateParams = serde_json::from_value(json!({
+        "scope": scope,
+        "displayName": "operator",
+        "groups": "all",
+    }))
+    .unwrap();
+    assert_eq!(create.groups, ApiKeyGroups::All);
+    assert_eq!(serde_json::to_value(&create).unwrap()["groups"], "all");
+}
+
+#[test]
+fn the_api_key_groups_schema_admits_all_or_a_list_of_groups() {
+    let mut generator = schemars::generate::SchemaSettings::draft07().into_generator();
+    let schema = <ApiKeyGroups as JsonSchema>::json_schema(&mut generator).to_value();
+    assert_eq!(
+        schema["anyOf"][0],
+        json!({ "type": "string", "const": "all" })
+    );
+    assert_eq!(schema["anyOf"][1]["type"], "array");
+    assert!(
+        schema["anyOf"][1]["items"]["$ref"]
+            .as_str()
+            .is_some_and(|reference| reference.ends_with("/MethodGroup"))
+    );
+    let params = generator
+        .root_schema_for::<DeploymentApiKeyPutParams>()
+        .to_value();
+    assert!(
+        params["required"]
+            .as_array()
+            .is_some_and(|required| required.contains(&json!("groups")))
+    );
+}
+
+#[test]
+fn an_environment_credential_source_is_a_grant_or_a_provider_credential() {
+    let bind = |source: Value| {
+        serde_json::from_value::<EnvironmentCredentialBindParams>(json!({
+            "environmentId": "build-box",
+            "envName": "TOKEN",
+            "source": source,
+        }))
+    };
+    for (wire, source) in [
+        (
+            json!({ "type": "authGrant", "grantId": "authgrant_repo" }),
+            EnvironmentCredentialSourceView::AuthGrant {
+                grant_id: "authgrant_repo".to_owned(),
+            },
+        ),
+        (
+            json!({ "type": "authProviderCredential", "providerId": "model:openai" }),
+            EnvironmentCredentialSourceView::AuthProviderCredential {
+                provider_id: "model:openai".to_owned(),
+            },
+        ),
+    ] {
+        assert_eq!(
+            bind(wire.clone()).expect("a bindable source").source,
+            source
+        );
+        assert_eq!(serde_json::to_value(&source).unwrap(), wire);
+    }
+
+    // A stored secret cannot be named: a bare secret id has no exposure to
+    // check, so a request that carries one is not a binding request.
+    assert!(bind(json!({ "type": "directSecret", "secretId": "authsec_1" })).is_err());
+
+    // The published schema offers exactly the two sources.
+    let mut generator = schemars::generate::SchemaSettings::draft07().into_generator();
+    let schema = generator
+        .root_schema_for::<EnvironmentCredentialSourceView>()
+        .to_value();
+    let mut types: Vec<&str> = schema["oneOf"]
+        .as_array()
+        .expect("one schema per source")
+        .iter()
+        .filter_map(|variant| variant["properties"]["type"]["const"].as_str())
+        .collect();
+    types.sort_unstable();
+    assert_eq!(types, ["authGrant", "authProviderCredential"]);
 }

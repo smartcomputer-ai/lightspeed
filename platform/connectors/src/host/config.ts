@@ -2,6 +2,7 @@ import type { ChannelProvider } from "@lightspeed-ai/sdk";
 import { parseAccountSelector, type AccountSelector } from "../core/identity.js";
 import { parseWhatsAppMediaLocatorKey } from "../providers/whatsapp/media.js";
 import { parsePositiveInteger } from "./rate-limit.js";
+import { parseTemporalConnection, type TemporalConnectionConfig } from "./temporal-connection.js";
 
 export const CHANNEL_PROVIDERS: readonly ChannelProvider[] = ["telegram", "whatsapp"];
 
@@ -14,7 +15,7 @@ export interface ConnectorHostConfig {
   /** Accounts to serve, or every discovered account when null. */
   accounts: AccountSelector[] | null;
   discoveryIntervalMs: number;
-  temporal: { address: string; namespace: string };
+  temporal: TemporalConnectionConfig;
   /** WhatsApp session state and media-locator key; required when WhatsApp is served. */
   whatsapp: { authDir: string; mediaLocatorKey: Uint8Array } | null;
   ingressMaxPerMinute: number;
@@ -42,10 +43,7 @@ export function parseHostConfig(env: NodeJS.ProcessEnv): ConnectorHostConfig {
       env.LIGHTSPEED_CONNECTOR_DISCOVERY_INTERVAL_MS,
       30_000,
     ),
-    temporal: {
-      address: env.TEMPORAL_ADDRESS ?? "localhost:7233",
-      namespace: env.TEMPORAL_NAMESPACE ?? "default",
-    },
+    temporal: parseTemporalConnection(env),
     whatsapp,
     ingressMaxPerMinute: parsePositiveInteger(env.LIGHTSPEED_CONNECTOR_INGRESS_MAX_PER_MINUTE, 120),
     health: {

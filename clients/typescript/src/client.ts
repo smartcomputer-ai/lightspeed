@@ -401,6 +401,12 @@ export class LightspeedClient extends LightspeedHelpers {
       }
     }
     if (!response.ok) {
+      // The gateway refuses a request without a valid key before it reads the body, so its
+      // 401 answers no request id. It is still the server's own typed error.
+      const refusal = response.status === 401 ? rpcErrorOf(body) : undefined;
+      if (refusal) {
+        throw new LightspeedRpcError(refusal);
+      }
       // A proxy's error page is not JSON, and the status is what explains it.
       const hint =
         response.status === 404 ? `: check that ${this.endpoint} is the gateway's /rpc URL` : "";
@@ -544,6 +550,17 @@ function appendHeaders(headers: Headers, values: HeadersInit | undefined): void 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The JSON-RPC error a response body carries, if it carries a well-formed one. */
+function rpcErrorOf(body: unknown): JsonRpcErrorPayload | undefined {
+  if (!isRecord(body) || !isRecord(body.error)) {
+    return undefined;
+  }
+  const { code, message } = body.error;
+  return typeof code === "number" && typeof message === "string"
+    ? (body.error as unknown as JsonRpcErrorPayload)
+    : undefined;
 }
 
 function errorMessage(error: unknown): string {

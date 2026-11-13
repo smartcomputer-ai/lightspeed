@@ -12,6 +12,14 @@ Session emission, workflow-tool, and code tool invocation protocol types.
 """
 
 
+AccessScopeKind: TypeAlias = Literal['deployment', 'universe']
+"""
+The kind of an [`AccessScope`]: the deployment, or a universe. Where a
+record already belongs to one universe this is enough to tell a universe
+key of that universe from a deployment key.
+"""
+
+
 class AttachmentSource(TypedDict):
     """
     Descriptive origin only; never an authority for resolving attachment bytes.
@@ -33,11 +41,16 @@ class AttributionActor(TypedDict):
 
 class AttributionKey(TypedDict):
     """
-    A key acting for itself, named by its display prefix.
+    A key acting for itself, named by its key id. A key id is unique
+    among the keys of one scope, so `scopeKind` says whether it names a
+    deployment key or a key of the universe the record belongs to. The
+    id survives a change of secret; the secret's display prefix does not
+    and is deliberately not recorded.
     """
 
+    keyId: str
     kind: Literal['key']
-    prefix: str
+    scopeKind: AccessScopeKind
 
 
 class AttributionLocal(TypedDict):

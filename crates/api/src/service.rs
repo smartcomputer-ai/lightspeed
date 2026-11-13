@@ -598,6 +598,11 @@ pub trait AgentApiService: Send + Sync {
         params: BotTriggerListParams,
     ) -> Result<AgentApiOutcome<BotTriggerListResponse>, AgentApiError>;
 
+    async fn read_bot_trigger_secrets(
+        &self,
+        params: BotTriggerSecretsReadParams,
+    ) -> Result<AgentApiOutcome<BotTriggerSecretsReadResponse>, AgentApiError>;
+
     async fn delete_bot_trigger(
         &self,
         params: BotTriggerDeleteParams,

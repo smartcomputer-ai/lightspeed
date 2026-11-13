@@ -270,9 +270,18 @@ export function externalEnvironmentRequestId(endpoint: string): string {
   return `external-${handle || "envd"}`;
 }
 
-const modelEndpointSchema = z.object({
+/// One configured request header, the engine's `RequestHeader`: a plain value
+/// every reader of its owner sees, or the token credential whose value the
+/// runtime attaches to its own request. The engine validates names and refuses
+/// a plain value under a name that carries a secret.
+const requestHeaderSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("literal"), value: z.string().max(4096) }),
+  z.object({ type: z.literal("credential"), grantId: z.string().trim().min(1).max(200) }),
+]);
+
+export const modelEndpointSchema = z.object({
   baseUrl: z.string().trim().url(),
-  headers: z.record(z.string(), z.string()).optional(),
+  headers: z.record(z.string().trim().min(1).max(128), requestHeaderSchema).optional(),
   apiKinds: z
     .array(z.enum(["openai:responses", "openai:completions", "openai:audio-transcriptions"]))
     .min(1)
@@ -302,7 +311,9 @@ const modelKeyPutSchema = z
 
 /// Coding-agent subscription credential paste: parsed and normalised
 /// here (vendor knowledge stays in Platform), then imported into the engine as
-/// an ordinary bearer grant with metadata. Encrypted on receipt, never read back.
+/// an ordinary bearer grant with metadata. Encrypted on receipt, never read
+/// back. The grant is retrievable: its only use is to be bound into the
+/// environment that runs the coding agent.
 const subscriptionImportSchema = z.object({
   provider: z.enum(["anthropic", "openAi"]),
   credential: z.string().min(1),
@@ -385,12 +396,15 @@ export function credentialReplaceParams(
   };
 }
 
+/// An environment secret exists to be handed to the processes of a machine in
+/// plain form, which the engine allows only for a retrievable credential.
 export function environmentSecretGrantParams(
   input: z.infer<typeof environmentSecretCreateSchema>,
 ): AuthGrantImportParams {
   return {
     grantId: input.grantId,
     providerId: ENVIRONMENT_SECRET_PROVIDER_ID,
+    exposure: "retrievable",
     displayName: input.displayName,
     token: input.value,
   };
@@ -1326,6 +1340,7 @@ export function gatewayRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const params: AuthGrantImportParams = {
         providerId: parsed.providerId,
+        exposure: "retrievable",
         token: parsed.secret,
         displayName: body.data.displayName,
         subjectHint: parsed.subjectHint,
@@ -1449,9 +1464,13 @@ export function gatewayRoutes(ctx: AppContext) {
         return body.response;
       }
       return withGateway(c, async () => {
+        // Retrievable, so the installation's short-lived tokens can be bound
+        // into environments. That is the way a machine gets GitHub access:
+        // the App's private key itself can never be bound.
         const params: AuthGitHubInstallationGrantParams = {
           providerId: c.req.param("providerId"),
           installationId,
+          exposure: "retrievable",
           displayName: body.data.displayName,
         };
         const client = engineClientFor(ctx, access);

@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use clap::{ArgGroup, Args, Subcommand, ValueEnum};
 
 use crate::api_client::HttpAgentApi;
+use crate::request_headers::request_headers_from_args;
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct AuthArgs {
@@ -39,7 +40,7 @@ enum AuthModelCommand {
     /// (stored encrypted), a credential obtained through sign-in (`--grant`,
     /// sent as a refreshed OAuth bearer token), or none (`--no-auth`).
     /// Repeating the command changes nothing.
-    Put(AuthModelPutArgs),
+    Put(Box<AuthModelPutArgs>),
     /// List stored model provider credentials.
     List(AuthModelListArgs),
     /// Remove a stored model provider credential.
@@ -74,9 +75,20 @@ struct AuthModelPutArgs {
     /// Supported API kind; repeat for multiple kinds. Requires --base-url.
     #[arg(long = "api-kind", requires = "base_url")]
     api_kinds: Vec<String>,
-    /// Non-secret extra header as NAME=VALUE; repeat as needed.
-    #[arg(long = "header", requires = "base_url")]
+    /// Extra request header with a plain, non-secret value, as NAME=VALUE.
+    /// Repeat for several. Every reader of the provider sees the value.
+    #[arg(long = "header", value_name = "NAME=VALUE", requires = "base_url")]
     headers: Vec<String>,
+    /// Extra request header carrying a saved static-token credential's token,
+    /// sent raw, as NAME=GRANT_ID. Repeat for several. Names that carry a
+    /// secret (`api-key`, `x-api-key`, `proxy-authorization`) are accepted
+    /// only this way.
+    #[arg(
+        long = "header-credential",
+        value_name = "NAME=GRANT_ID",
+        requires = "base_url"
+    )]
+    header_credentials: Vec<String>,
     /// Register a credentialless endpoint.
     #[arg(long, group = "api_key_source", requires = "base_url")]
     no_auth: bool,
@@ -293,6 +305,10 @@ struct AuthGithubInstallationGrantArgs {
     /// Optional display name.
     #[arg(long = "display-name")]
     display_name: Option<String>,
+    /// Let the installation's short-lived tokens be bound into environments
+    /// and leased to trusted services. Decided at creation.
+    #[arg(long)]
+    retrievable: bool,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -356,6 +372,11 @@ struct AuthGrantPutArgs {
     /// Expiry in unix milliseconds. Omit for a token that does not expire.
     #[arg(long = "expires-at-ms")]
     expires_at_ms: Option<i64>,
+    /// Let the plain token be bound into environments and leased to trusted
+    /// services. Without it the token stays inside the runtime. Decided at
+    /// creation and cannot be changed afterwards.
+    #[arg(long)]
+    retrievable: bool,
     /// Report what would change without changing it.
     #[arg(long = "dry-run")]
     dry_run: bool,
@@ -635,6 +656,10 @@ struct AuthLoginArgs {
     /// for the callback. Check progress with auth flow status polling.
     #[arg(long = "no-wait")]
     no_wait: bool,
+    /// Let the resulting credential's token be bound into environments and
+    /// leased to trusted services. Decided at creation.
+    #[arg(long)]
+    retrievable: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -681,7 +706,7 @@ pub(crate) async fn handle(args: AuthArgs) -> Result<()> {
 pub(crate) async fn model(args: AuthModelArgs) -> Result<()> {
     match args.command {
         AuthModelCommand::Read(args) => model_read(args).await,
-        AuthModelCommand::Put(args) => model_put(args).await,
+        AuthModelCommand::Put(args) => model_put(*args).await,
         AuthModelCommand::List(args) => model_list(args).await,
         AuthModelCommand::Remove(args) => model_remove(args).await,
     }
@@ -760,6 +785,15 @@ fn resolve_token(
     Ok(token)
 }
 
+/// Brokered unless the command asked for a retrievable credential.
+fn exposure(retrievable: bool) -> api::AuthGrantExposure {
+    if retrievable {
+        api::AuthGrantExposure::Retrievable
+    } else {
+        api::AuthGrantExposure::Brokered
+    }
+}
+
 async fn grant_put(args: AuthGrantPutArgs) -> Result<()> {
     let token = resolve_token(
         args.token_file.as_deref(),
@@ -770,7 +804,7 @@ async fn grant_put(args: AuthGrantPutArgs) -> Result<()> {
         .put_auth_grant(api::AuthGrantPutParams {
             grant_id: args.grant_id.clone(),
             provider_id: args.provider_id.clone(),
-            exposure: api::AuthGrantExposure::Brokered,
+            exposure: exposure(args.retrievable),
             token,
             display_name: args.display_name.clone(),
             subject_hint: args.subject_hint.clone(),
@@ -1032,7 +1066,7 @@ async fn login(args: AuthLoginArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url.clone());
     let started = api
         .start_auth_flow(api::AuthFlowStartParams {
-            exposure: api::AuthGrantExposure::Brokered,
+            exposure: exposure(args.retrievable),
             client_id: args.client_id.clone(),
             scopes: if args.scopes.is_empty() {
                 None
@@ -1168,16 +1202,7 @@ async fn model_put(args: AuthModelPutArgs) -> Result<()> {
             if args.api_kinds.is_empty() {
                 anyhow::bail!("--base-url requires at least one --api-kind");
             }
-            let headers = args
-                .headers
-                .iter()
-                .map(|header| {
-                    let (name, value) = header
-                        .split_once('=')
-                        .context("header must be NAME=VALUE")?;
-                    Ok((name.to_owned(), value.to_owned()))
-                })
-                .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
+            let headers = request_headers_from_args(&args.headers, &args.header_credentials)?;
             Ok(api::ModelEndpointConfig {
                 base_url: url.clone(),
                 headers,
@@ -1455,7 +1480,7 @@ async fn github_installation_grant(args: AuthGithubInstallationGrantArgs) -> Res
     let api = HttpAgentApi::new(args.api_url);
     let response = api
         .grant_github_installation(api::AuthGitHubInstallationGrantParams {
-            exposure: api::AuthGrantExposure::Brokered,
+            exposure: exposure(args.retrievable),
             provider_id: args.provider_id,
             installation_id: args.installation_id,
             grant_id: args.grant_id,
@@ -1494,6 +1519,61 @@ mod tests {
     struct GrantCommand {
         #[command(subcommand)]
         command: AuthGrantCommand,
+    }
+
+    #[derive(Parser)]
+    struct ModelCommand {
+        #[command(subcommand)]
+        command: AuthModelCommand,
+    }
+
+    #[test]
+    fn model_header_flags_build_literal_and_credential_headers() {
+        let parsed = ModelCommand::try_parse_from([
+            "models",
+            "put",
+            "router",
+            "--no-auth",
+            "--base-url",
+            "https://router.example/v1",
+            "--api-kind",
+            "openai:completions",
+            "--header",
+            "X-Title=Lightspeed",
+            "--header-credential",
+            "X-Api-Key=authgrant_router",
+        ])
+        .expect("parse");
+        let AuthModelCommand::Put(put) = parsed.command else {
+            panic!("expected put");
+        };
+        let headers =
+            request_headers_from_args(&put.headers, &put.header_credentials).expect("headers");
+        assert_eq!(
+            headers.get("X-Title"),
+            Some(&api::RequestHeader::Literal {
+                value: "Lightspeed".to_owned(),
+            })
+        );
+        assert_eq!(
+            headers.get("X-Api-Key"),
+            Some(&api::RequestHeader::Credential {
+                grant_id: "authgrant_router".to_owned(),
+            })
+        );
+
+        // Headers belong to an endpoint.
+        assert!(
+            ModelCommand::try_parse_from([
+                "models",
+                "put",
+                "router",
+                "--api-key-stdin",
+                "--header-credential",
+                "X-Api-Key=authgrant_router",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -1539,5 +1619,21 @@ mod tests {
             .is_err(),
             "token sources are exclusive"
         );
+    }
+
+    #[test]
+    fn a_credential_is_brokered_unless_declared_retrievable() {
+        let put = |extra: &[&str]| {
+            let mut argv = vec!["grants", "put", "repo-token", "--token-env", "REPO_TOKEN"];
+            argv.extend_from_slice(extra);
+            let AuthGrantCommand::Put(args) =
+                GrantCommand::try_parse_from(argv).expect("parse").command
+            else {
+                panic!("expected put");
+            };
+            exposure(args.retrievable)
+        };
+        assert_eq!(put(&[]), api::AuthGrantExposure::Brokered);
+        assert_eq!(put(&["--retrievable"]), api::AuthGrantExposure::Retrievable);
     }
 }

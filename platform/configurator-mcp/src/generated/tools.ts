@@ -4930,7 +4930,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/credentials/bind",
     "group": "environments",
     "summary": "Bind a credential into an environment",
-    "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
+    "description": "Maps an environment variable name to a retrievable credential grant or to a model API key provider's stored key. Commands in the environment receive the plain value, so a brokered grant and any other provider credential are refused. Requires configuring resources in the universe. The response exposes only the source handle, never secret material.",
     "paramsType": "EnvironmentCredentialBindParams",
     "resultType": "AgentApiOutcome<EnvironmentCredentialBindResponse>",
     "inputSchema": {
@@ -4956,6 +4956,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "EnvironmentCredentialSourceView": {
           "oneOf": [
             {
+              "description": "A credential grant. It must be retrievable: a bound value is handed\nto the commands of the machine in plain form, which is exactly what\na brokered grant promises never to do.",
               "properties": {
                 "grantId": {
                   "type": "string"
@@ -4972,6 +4973,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "object"
             },
             {
+              "description": "The stored API key of a model API key provider. No other provider\nkind can be bound; this is the one source whose plain value reaches\na machine without a retrievable grant.",
               "properties": {
                 "providerId": {
                   "type": "string"
@@ -4984,22 +4986,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "required": [
                 "type",
                 "providerId"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "secretId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "directSecret",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "secretId"
               ],
               "type": "object"
             }
@@ -5034,7 +5020,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/credentials/unbind",
     "group": "environments",
     "summary": "Unbind an environment credential",
-    "description": "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
+    "description": "Removes one variable-to-credential mapping without deleting the underlying grant or provider credential.",
     "paramsType": "EnvironmentCredentialUnbindParams",
     "resultType": "AgentApiOutcome<EnvironmentCredentialUnbindResponse>",
     "inputSchema": {
@@ -8427,45 +8413,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           ]
         },
-        "McpServerHeader": {
-          "description": "Value of one extra MCP request header.",
-          "oneOf": [
-            {
-              "description": "Sent as written. Not secret: reads return the value.",
-              "properties": {
-                "type": {
-                  "const": "literal",
-                  "type": "string"
-                },
-                "value": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "value"
-              ],
-              "type": "object"
-            },
-            {
-              "description": "The token of a static-token credential in this universe, resolved at\neach request and sent raw, without a scheme prefix.",
-              "properties": {
-                "grantId": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "credential",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "grantId"
-              ],
-              "type": "object"
-            }
-          ]
-        },
         "McpServerInput": {
           "additionalProperties": {
             "not": {}
@@ -8554,9 +8501,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             },
             "headers": {
               "additionalProperties": {
-                "$ref": "#/definitions/McpServerHeader"
+                "$ref": "#/definitions/RequestHeader"
               },
-              "description": "Extra request headers sent on every request to the server, alongside\nany `Authorization` the auth policy produces. Names are\ncase-insensitive and stored lowercased; transport headers,\n`authorization` and `x-lightspeed-*` are reserved. Requires `runtime`\nexecution.",
+              "description": "Extra request headers sent on every request to the server, alongside\nany `Authorization` the auth policy produces. Names are\ncase-insensitive and stored lowercased; transport headers,\n`authorization` and `x-lightspeed-*` are reserved. `api-key` and\n`x-api-key` carry a secret and accept only a `credential` value.\nRequires `runtime` execution.",
               "type": "object"
             },
             "serverId": {
@@ -8611,6 +8558,45 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "search"
           ],
           "type": "string"
+        },
+        "RequestHeader": {
+          "description": "Value of one configured request header, as an MCP server and a model\nprovider's endpoint both carry them. A name listed in\n[`CREDENTIAL_ONLY_HEADER_NAMES`] accepts only a `credential` value.",
+          "oneOf": [
+            {
+              "description": "Sent as written. Not secret: reads return the value.",
+              "properties": {
+                "type": {
+                  "const": "literal",
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "The token of a static-token credential in this universe, resolved at\neach request and sent raw, without a scheme prefix.",
+              "properties": {
+                "grantId": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "credential",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "grantId"
+              ],
+              "type": "object"
+            }
+          ]
         }
       }
     }
@@ -8745,7 +8731,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "auth/grants/import",
     "group": "auth",
     "summary": "Import a token credential",
-    "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
+    "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.",
     "paramsType": "AuthGrantImportParams",
     "resultType": "AgentApiOutcome<AuthGrantImportResponse>",
     "inputSchema": {
@@ -8816,11 +8802,19 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "type": "object",
       "definitions": {
         "AuthGrantExposure": {
-          "enum": [
-            "brokered",
-            "retrievable"
-          ],
-          "type": "string"
+          "description": "Where a credential's plain value may go, fixed when it is created.",
+          "oneOf": [
+            {
+              "const": "brokered",
+              "description": "The value stays inside the runtime, which attaches it to its own\noutbound requests (an MCP server, a model endpoint header).",
+              "type": "string"
+            },
+            {
+              "const": "retrievable",
+              "description": "The value may also be leased to a trusted service and bound into an\nenvironment, where commands receive it.",
+              "type": "string"
+            }
+          ]
         }
       }
     }
@@ -8925,7 +8919,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             }
           ],
           "default": "brokered",
-          "description": "Whether the token may be leased in plaintext. It cannot be changed\nafterwards."
+          "description": "Whether the plain token may be leased to a service or bound into an\nenvironment. It cannot be changed afterwards."
         },
         "grantId": {
           "type": "string"
@@ -8963,11 +8957,19 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "type": "object",
       "definitions": {
         "AuthGrantExposure": {
-          "enum": [
-            "brokered",
-            "retrievable"
-          ],
-          "type": "string"
+          "description": "Where a credential's plain value may go, fixed when it is created.",
+          "oneOf": [
+            {
+              "const": "brokered",
+              "description": "The value stays inside the runtime, which attaches it to its own\noutbound requests (an MCP server, a model endpoint header).",
+              "type": "string"
+            },
+            {
+              "const": "retrievable",
+              "description": "The value may also be leased to a trusted service and bound into an\nenvironment, where commands receive it.",
+              "type": "string"
+            }
+          ]
         }
       }
     }
@@ -9211,11 +9213,19 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "type": "object",
       "definitions": {
         "AuthGrantExposure": {
-          "enum": [
-            "brokered",
-            "retrievable"
-          ],
-          "type": "string"
+          "description": "Where a credential's plain value may go, fixed when it is created.",
+          "oneOf": [
+            {
+              "const": "brokered",
+              "description": "The value stays inside the runtime, which attaches it to its own\noutbound requests (an MCP server, a model endpoint header).",
+              "type": "string"
+            },
+            {
+              "const": "retrievable",
+              "description": "The value may also be leased to a trusted service and bound into an\nenvironment, where commands receive it.",
+              "type": "string"
+            }
+          ]
         }
       }
     }
@@ -9392,8 +9402,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             },
             "headers": {
               "additionalProperties": {
-                "type": "string"
+                "$ref": "#/definitions/RequestHeader"
               },
+              "description": "Extra request headers sent on every request to the endpoint, alongside\nthe provider's own credential. Names are case-insensitive and stored\nlowercased; transport headers and `authorization` are reserved.\n`api-key`, `x-api-key` and `proxy-authorization` carry a secret and\naccept only a `credential` value.",
               "type": "object"
             }
           },
@@ -9402,6 +9413,45 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "apiKinds"
           ],
           "type": "object"
+        },
+        "RequestHeader": {
+          "description": "Value of one configured request header, as an MCP server and a model\nprovider's endpoint both carry them. A name listed in\n[`CREDENTIAL_ONLY_HEADER_NAMES`] accepts only a `credential` value.",
+          "oneOf": [
+            {
+              "description": "Sent as written. Not secret: reads return the value.",
+              "properties": {
+                "type": {
+                  "const": "literal",
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "The token of a static-token credential in this universe, resolved at\neach request and sent raw, without a scheme prefix.",
+              "properties": {
+                "grantId": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "credential",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "grantId"
+              ],
+              "type": "object"
+            }
+          ]
         }
       }
     }
@@ -9560,8 +9610,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             },
             "headers": {
               "additionalProperties": {
-                "type": "string"
+                "$ref": "#/definitions/RequestHeader"
               },
+              "description": "Extra request headers sent on every request to the endpoint, alongside\nthe provider's own credential. Names are case-insensitive and stored\nlowercased; transport headers and `authorization` are reserved.\n`api-key`, `x-api-key` and `proxy-authorization` carry a secret and\naccept only a `credential` value.",
               "type": "object"
             }
           },
@@ -9570,6 +9621,45 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "apiKinds"
           ],
           "type": "object"
+        },
+        "RequestHeader": {
+          "description": "Value of one configured request header, as an MCP server and a model\nprovider's endpoint both carry them. A name listed in\n[`CREDENTIAL_ONLY_HEADER_NAMES`] accepts only a `credential` value.",
+          "oneOf": [
+            {
+              "description": "Sent as written. Not secret: reads return the value.",
+              "properties": {
+                "type": {
+                  "const": "literal",
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "The token of a static-token credential in this universe, resolved at\neach request and sent raw, without a scheme prefix.",
+              "properties": {
+                "grantId": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "credential",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "grantId"
+              ],
+              "type": "object"
+            }
+          ]
         }
       }
     }
@@ -9655,7 +9745,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "auth/github/installations/grant",
     "group": "auth",
     "summary": "Grant access to a GitHub App installation",
-    "description": "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
+    "description": "Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.",
     "paramsType": "AuthGitHubInstallationGrantParams",
     "resultType": "AgentApiOutcome<AuthGitHubInstallationGrantResponse>",
     "inputSchema": {
@@ -9696,11 +9786,19 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "type": "object",
       "definitions": {
         "AuthGrantExposure": {
-          "enum": [
-            "brokered",
-            "retrievable"
-          ],
-          "type": "string"
+          "description": "Where a credential's plain value may go, fixed when it is created.",
+          "oneOf": [
+            {
+              "const": "brokered",
+              "description": "The value stays inside the runtime, which attaches it to its own\noutbound requests (an MCP server, a model endpoint header).",
+              "type": "string"
+            },
+            {
+              "const": "retrievable",
+              "description": "The value may also be leased to a trusted service and bound into an\nenvironment, where commands receive it.",
+              "type": "string"
+            }
+          ]
         }
       }
     }
@@ -9710,7 +9808,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/create",
     "group": "bots",
     "summary": "Create a bot",
-    "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.",
+    "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.",
     "paramsType": "BotCreateParams",
     "resultType": "AgentApiOutcome<BotCreateResponse>",
     "inputSchema": {
@@ -10098,7 +10196,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ]
             },
             "pairingCode": {
-              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nchannel-facing views.",
+              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Absent keeps the\nstored code, so an edit never has to send it back.",
               "type": [
                 "string",
                 "null"
@@ -10838,7 +10936,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/triggers/put",
     "group": "bots",
     "summary": "Create or replace a trigger",
-    "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.",
+    "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.",
     "paramsType": "BotTriggerPutParams",
     "resultType": "AgentApiOutcome<BotTriggerPutResponse>",
     "inputSchema": {
@@ -11132,7 +11230,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ]
             },
             "pairingCode": {
-              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nchannel-facing views.",
+              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Absent keeps the\nstored code, so an edit never has to send it back.",
               "type": [
                 "string",
                 "null"
@@ -11574,7 +11672,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/triggers/read",
     "group": "bots",
     "summary": "Read a trigger",
-    "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.",
+    "description": "Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.",
     "paramsType": "BotTriggerReadParams",
     "resultType": "AgentApiOutcome<BotTriggerReadResponse>",
     "inputSchema": {
@@ -11607,7 +11705,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/triggers/list",
     "group": "bots",
     "summary": "List a bot's triggers",
-    "description": "Returns every trigger of the bot ordered by id, secrets included for bot-management callers.",
+    "description": "Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.",
     "paramsType": "BotTriggerListParams",
     "resultType": "AgentApiOutcome<BotTriggerListResponse>",
     "inputSchema": {
@@ -11623,6 +11721,39 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "type": "object",
       "definitions": {
         "BotId": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "lightspeed_bots_triggers_secrets_read",
+    "method": "bots/triggers/secrets/read",
+    "group": "bots",
+    "summary": "Read a trigger's secrets",
+    "description": "Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.",
+    "paramsType": "BotTriggerSecretsReadParams",
+    "resultType": "AgentApiOutcome<BotTriggerSecretsReadResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "botId": {
+          "$ref": "#/definitions/BotId"
+        },
+        "triggerId": {
+          "$ref": "#/definitions/BotTriggerId"
+        }
+      },
+      "required": [
+        "botId",
+        "triggerId"
+      ],
+      "type": "object",
+      "definitions": {
+        "BotId": {
+          "type": "string"
+        },
+        "BotTriggerId": {
           "type": "string"
         }
       }

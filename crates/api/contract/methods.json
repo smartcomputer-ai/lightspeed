@@ -704,7 +704,7 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
+      "description": "Maps an environment variable name to a retrievable credential grant or to a model API key provider's stored key. Commands in the environment receive the plain value, so a brokered grant and any other provider credential are refused. Requires configuring resources in the universe. The response exposes only the source handle, never secret material.",
       "group": "environments",
       "method": "environments/credentials/bind",
       "params": {
@@ -754,7 +754,7 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
+      "description": "Removes one variable-to-credential mapping without deleting the underlying grant or provider credential.",
       "group": "environments",
       "method": "environments/credentials/unbind",
       "params": {
@@ -2054,7 +2054,7 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
+      "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.",
       "group": "auth",
       "method": "auth/grants/import",
       "params": {
@@ -2503,7 +2503,7 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
+      "description": "Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.",
       "group": "auth",
       "method": "auth/github/installations/grant",
       "params": {
@@ -2528,7 +2528,7 @@
         "action": "createBot",
         "kind": "universe"
       },
-      "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.",
+      "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.",
       "group": "bots",
       "method": "bots/create",
       "params": {
@@ -2728,7 +2728,7 @@
         "action": "manageBot",
         "kind": "universe"
       },
-      "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.",
+      "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.",
       "group": "bots",
       "method": "bots/triggers/put",
       "params": {
@@ -2753,7 +2753,7 @@
         "action": "read",
         "kind": "universe"
       },
-      "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.",
+      "description": "Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.",
       "group": "bots",
       "method": "bots/triggers/read",
       "params": {
@@ -2778,7 +2778,7 @@
         "action": "read",
         "kind": "universe"
       },
-      "description": "Returns every trigger of the bot ordered by id, secrets included for bot-management callers.",
+      "description": "Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.",
       "group": "bots",
       "method": "bots/triggers/list",
       "params": {
@@ -2796,6 +2796,31 @@
       "role": "viewer",
       "scope": "universe",
       "summary": "List a bot's triggers",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "manageBot",
+        "kind": "universe"
+      },
+      "description": "Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.",
+      "group": "bots",
+      "method": "bots/triggers/secrets/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/BotTriggerSecretsReadParams"
+        },
+        "type": "BotTriggerSecretsReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfBotTriggerSecretsReadResponse"
+        },
+        "type": "AgentApiOutcome<BotTriggerSecretsReadResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Read a trigger's secrets",
       "target": null
     },
     {

@@ -10,6 +10,7 @@ mod mcp_cli;
 mod model_defaults_cli;
 mod output;
 mod profile_cli;
+mod request_headers;
 mod session_cli;
 mod session_resources;
 mod skills_cli;
@@ -728,11 +729,30 @@ mod tests {
             "GITHUB_TOKEN",
             "--grant",
             "authgrant_repo",
-            "--secret-id",
-            "secret_repo",
+            "--provider-id",
+            "openai",
         ])
         .expect_err("reject multiple credential sources");
         assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn env_credentials_bind_has_no_stored_secret_source() {
+        let error = Cli::try_parse_from([
+            "lightspeed",
+            "env",
+            "credentials",
+            "bind",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "local-host",
+            "--env-name",
+            "GITHUB_TOKEN",
+            "--secret-id",
+            "secret_repo",
+        ])
+        .expect_err("a stored secret is not a binding source");
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 
     #[test]

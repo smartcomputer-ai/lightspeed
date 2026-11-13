@@ -92,12 +92,17 @@ export function adminRoutes(store: DemoStore): Hono {
     const body = await readBody<{
       displayName?: string;
       scope?: { kind: "deployment" } | { kind: "universe"; universeId: string };
-      groups?: MethodGroup[];
+      groups?: MethodGroup[] | "all";
       assertActor?: boolean;
       keyId?: string;
     }>(c);
     const displayName = body.displayName?.trim();
     if (!displayName || !body.scope) return badRequest(c, "displayName and scope are required");
+    // A key's groups are always stated: a list, or `all`.
+    const groups = body.groups === "all" ? groupsFor(body.scope.kind) : body.groups;
+    if (!Array.isArray(groups) || groups.length === 0) {
+      return badRequest(c, "groups are required: a list of method groups, or \"all\"");
+    }
     const state = body.scope.kind === "universe" ? store.universes.get(body.scope.universeId) : undefined;
     if (body.scope.kind === "universe" && !state) return notFound(c, "universe not found");
     // A chosen id is taken while any key of the scope holds it, revoked or not.
@@ -106,8 +111,6 @@ export function adminRoutes(store: DemoStore): Hono {
     if (keyId && holder) return conflict(c, keyIdConflictMessage(keyId, holder.revokedAtMs != null));
     const secret = `lsk_${crypto.randomUUID().replaceAll("-", "")}`;
     const key = { keyId: keyId ?? allocatedKeyId(), keyPrefix: secret.slice(0, 12), displayName, createdAtMs: Date.now(), revokedAtMs: null, lastUsedAtMs: null };
-    const kind = body.scope.kind;
-    const groups = body.groups ?? groupsFor(kind);
     const assertActor = body.assertActor ?? false;
     if (state) {
       const apiKey: DeploymentApiKeyView = {

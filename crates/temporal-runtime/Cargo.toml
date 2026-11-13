@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 temporal-workflow = { path = "../temporal-workflow" }
 jsonschema = { version = "0.58", default-features = false }
-ipnet = "2"
 api = { path = "../api" }
 api-projection = { path = "../api-projection" }
 harness = { path = "../harness" }

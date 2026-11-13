@@ -90,7 +90,7 @@ pub(super) fn auth_provider_create_draft(
                 created_at_ms: now_ms,
             };
             let config = auth::AuthProviderConfig::ModelApiKey(auth::ModelApiKeyConfig {
-                endpoint: endpoint.map(model_endpoint_config),
+                endpoint: endpoint.map(model_endpoint_config).transpose()?,
             });
             (config, Some((secret_id, secret)))
         }
@@ -110,7 +110,7 @@ pub(super) fn auth_provider_create_draft(
             let config = auth::AuthProviderConfig::ModelOAuth(auth::ModelOAuthConfig {
                 grant_id,
                 audience,
-                endpoint: endpoint.map(model_endpoint_config),
+                endpoint: endpoint.map(model_endpoint_config).transpose()?,
             });
             (config, None)
         }
@@ -122,7 +122,7 @@ pub(super) fn auth_provider_create_draft(
             }
             (
                 auth::AuthProviderConfig::ModelEndpoint(auth::ModelEndpointOnlyConfig {
-                    endpoint: model_endpoint_config(endpoint),
+                    endpoint: model_endpoint_config(endpoint)?,
                 }),
                 None,
             )
@@ -189,18 +189,20 @@ pub(super) fn auth_provider_view(record: auth::AuthProviderRecord) -> api::AuthP
     }
 }
 
-fn model_endpoint_config(endpoint: api::ModelEndpointConfig) -> auth::ModelEndpointConfig {
-    auth::ModelEndpointConfig {
+fn model_endpoint_config(
+    endpoint: api::ModelEndpointConfig,
+) -> Result<auth::ModelEndpointConfig, AgentApiError> {
+    Ok(auth::ModelEndpointConfig {
         base_url: endpoint.base_url,
-        headers: endpoint.headers,
+        headers: request_headers_from_api(&auth::MODEL_ENDPOINT_HEADER_POLICY, endpoint.headers)?,
         api_kinds: endpoint.api_kinds,
-    }
+    })
 }
 
 fn model_endpoint_view(endpoint: auth::ModelEndpointConfig) -> api::ModelEndpointConfig {
     api::ModelEndpointConfig {
         base_url: endpoint.base_url,
-        headers: endpoint.headers,
+        headers: request_headers_view(endpoint.headers),
         api_kinds: endpoint.api_kinds,
     }
 }

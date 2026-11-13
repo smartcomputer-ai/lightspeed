@@ -227,7 +227,9 @@ function CreateKeyDialog({
   const [created, setCreated] = useState<DeploymentApiKeyCreateResponse | null>(null);
   const kind = scope === DEPLOYMENT ? "deployment" : "universe";
   const allowed = groupsFor(kind);
-  // Null means every group the scope allows, which a new key starts with.
+  // Null is the untouched form, which starts with every group of the scope
+  // ticked. What is ticked is what is sent: the key holds exactly the groups
+  // shown, and nothing is left for the server to fill in.
   const chosen = groups ?? new Set(allowed);
 
   const create = useMutation({
@@ -235,7 +237,7 @@ function CreateKeyDialog({
       api<DeploymentApiKeyCreateResponse>("POST", "/api/v1/admin/api-keys", {
         displayName: displayName.trim(),
         scope: kind === "deployment" ? { kind } : { kind, universeId: scope },
-        ...(groups ? { groups: allowed.filter((group) => groups.has(group)) } : {}),
+        groups: allowed.filter((group) => chosen.has(group)),
         assertActor,
         ...(keyId.trim() ? { keyId: keyId.trim() } : {}),
       }),

@@ -22,8 +22,7 @@ use temporal_runtime::{
     },
 };
 use temporal_workflow::{
-    AgentAdmissionFailureKind, AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE,
-    DEFAULT_TEMPORAL_TARGET, connect_temporal,
+    AgentAdmissionFailureKind, AgentSessionWorkflow, TemporalConnectionConfig, connect_temporal,
 };
 use temporalio_client::{Client, WorkflowQueryOptions, WorkflowTerminateOptions};
 
@@ -112,13 +111,9 @@ where
 {
     let task_queue = format!("lightspeed-agent-live-{}", uuid::Uuid::new_v4().simple());
     let session_id = SessionId::new(format!("session_live_{}", uuid::Uuid::new_v4().simple()));
-    let temporal_target =
-        env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-    let namespace =
-        env::var("TEMPORAL_NAMESPACE").unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
 
     let runtime = worker_runtime()?;
-    let client = connect_temporal(&temporal_target, &namespace).await?;
+    let client = connect_temporal(&TemporalConnectionConfig::from_env()?).await?;
     let activities = build_activities(client.clone(), task_queue.clone()).await?;
     let mut worker = sessions_worker(&runtime, client.clone(), task_queue.clone(), activities)?;
     let shutdown_worker = worker.shutdown_handle();

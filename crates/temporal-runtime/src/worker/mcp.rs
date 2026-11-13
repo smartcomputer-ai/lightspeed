@@ -1,15 +1,13 @@
 use std::{
     collections::HashMap,
-    str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
-use auth::{PrivateNetworkAccess, SecretValue};
+use auth::{PrivateNetworkAccess, PrivateNetworkList, SecretValue};
 use base64::Engine;
 use harness::RemoteMcpToolSpec;
-use ipnet::IpNet;
 use llm_runtime::{
     McpInventoryError, McpInventoryResolver, RuntimeMcpTool,
     secrets::{SecretResolveError, SecretResolver, resolve_mcp_bearer},
@@ -89,10 +87,11 @@ const MCP_FIND_TRUNCATED_NOTE: &str =
 type InventoryCacheKey = (String, u64, Option<Vec<String>>);
 type InventoryLocks = HashMap<InventoryCacheKey, Arc<Mutex<()>>>;
 
+/// The deployment's `LIGHTSPEED_MCP_PRIVATE_NETWORKS` list. Every outbound
+/// client that may leave the public internet takes its reach from here.
 #[derive(Clone, Debug, Default)]
 pub struct McpPrivateNetworkPolicy {
-    hosts: Arc<Vec<String>>,
-    networks: Arc<[IpNet]>,
+    list: PrivateNetworkList,
 }
 
 impl McpPrivateNetworkPolicy {
@@ -105,28 +104,14 @@ impl McpPrivateNetworkPolicy {
     }
 
     pub fn parse(value: Option<&str>) -> Result<Self, String> {
-        let mut hosts = Vec::new();
-        let mut networks = Vec::new();
-        for item in value
-            .unwrap_or_default()
-            .split(',')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        {
-            if let Ok(network) = IpNet::from_str(item) {
-                networks.push(network);
-            } else if item.contains('/') {
-                return Err(format!(
-                    "invalid CIDR in LIGHTSPEED_MCP_PRIVATE_NETWORKS: {item}"
-                ));
-            } else {
-                hosts.push(item.to_ascii_lowercase());
-            }
-        }
-        Ok(Self {
-            hosts: Arc::new(hosts),
-            networks: networks.into(),
-        })
+        PrivateNetworkList::parse(value.unwrap_or_default())
+            .map(|list| Self { list })
+            .map_err(|error| {
+                format!(
+                    "invalid CIDR in LIGHTSPEED_MCP_PRIVATE_NETWORKS: {}",
+                    error.item
+                )
+            })
     }
 
     /// What a request to `server_url` may reach beyond public addresses.
@@ -139,25 +124,18 @@ impl McpPrivateNetworkPolicy {
         if !record_opt_in {
             return PrivateNetworkAccess::None;
         }
-        let Ok(url) = Url::parse(server_url) else {
-            return PrivateNetworkAccess::None;
-        };
-        let Some(host) = url.host_str() else {
-            return PrivateNetworkAccess::None;
-        };
-        // A URL writes an IPv6 literal in brackets; the list does not.
-        let host = host
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .to_ascii_lowercase();
-        if self.hosts.contains(&host) {
-            return PrivateNetworkAccess::Any;
+        match Url::parse(server_url) {
+            Ok(url) => self.list.access_for(&url),
+            Err(_) => PrivateNetworkAccess::None,
         }
-        if self.networks.is_empty() {
-            PrivateNetworkAccess::None
-        } else {
-            PrivateNetworkAccess::Networks(self.networks.clone())
-        }
+    }
+
+    /// The HTTP client for MCP OAuth metadata, registration, exchange and
+    /// refresh. It judges each URL against the list on its own, because an
+    /// authorization server is a different host from the MCP server it
+    /// protects and neither is known when the client is built.
+    pub fn oauth_http_client(&self) -> auth::HttpOAuthMetadataClient {
+        auth::HttpOAuthMetadataClient::with_private_networks(self.list.clone())
     }
 }
 
@@ -1604,6 +1582,51 @@ mod tests {
             McpPrivateNetworkPolicy::default().access("http://10.20.4.8/mcp", true),
             PrivateNetworkAccess::None
         );
+    }
+
+    /// OAuth requests have no server record to opt in, and an authorization
+    /// server is its own host: the client takes the list and nothing else.
+    #[tokio::test(flavor = "current_thread")]
+    async fn oauth_client_reaches_private_hosts_only_through_the_list() {
+        async fn verdict(
+            client: &auth::HttpOAuthMetadataClient,
+            url: &str,
+        ) -> Result<(), auth::PinnedHttpError> {
+            client
+                .policy()
+                .client_for_url(&Url::parse(url).expect("url"))
+                .await
+                .map(|_| ())
+        }
+
+        let listed = McpPrivateNetworkPolicy::parse(Some("localhost,10.20.0.0/16"))
+            .expect("policy")
+            .oauth_http_client();
+        assert_eq!(verdict(&listed, "http://localhost:9/token").await, Ok(()));
+        assert_eq!(verdict(&listed, "http://10.20.4.8/token").await, Ok(()));
+        assert_eq!(
+            verdict(&listed, "https://127.0.0.1:9/token").await,
+            Err(auth::PinnedHttpError::NonPublicAddress)
+        );
+        assert_eq!(
+            verdict(&listed, "https://169.254.169.254/latest").await,
+            Err(auth::PinnedHttpError::NonPublicAddress)
+        );
+        assert_eq!(
+            verdict(&listed, "http://8.8.8.8/token").await,
+            Err(auth::PinnedHttpError::HttpsRequired)
+        );
+
+        let unlisted = McpPrivateNetworkPolicy::default().oauth_http_client();
+        assert_eq!(
+            verdict(&unlisted, "http://localhost:9/token").await,
+            Err(auth::PinnedHttpError::HttpsRequired)
+        );
+        assert_eq!(
+            verdict(&unlisted, "https://localhost:9/token").await,
+            Err(auth::PinnedHttpError::NonPublicAddress)
+        );
+        assert_eq!(verdict(&unlisted, "https://8.8.8.8/token").await, Ok(()));
     }
 
     #[tokio::test(flavor = "current_thread")]

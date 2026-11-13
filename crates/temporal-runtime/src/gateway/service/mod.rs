@@ -24,6 +24,7 @@ mod oauth_api;
 mod parse;
 mod profiles;
 mod pruned_runs;
+mod request_headers;
 mod transcriptions;
 pub(crate) use crate::environments::provider_controllers;
 mod run_events;
@@ -68,6 +69,7 @@ use oauth_api::{
 };
 use parse::*;
 use provider_controllers::{ProviderControllerConnector, WebSocketProviderControllerConnector};
+use request_headers::{request_headers_from_api, request_headers_view, validate_header_credential};
 #[cfg(test)]
 use skills::skill_list_response;
 #[cfg(test)]
@@ -81,7 +83,6 @@ use workflow::{
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    env,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -95,10 +96,9 @@ use api_projection::{
 use async_trait::async_trait;
 use auth::{
     AuthFlowStore, AuthGrantStore, AuthProviderStore, AuthTokenBroker, GitHubApiClient,
-    GitHubAppRuntime, GrantRefreshLock, HttpGitHubApiClient, HttpOAuthMetadataClient,
-    HttpOAuthTokenClient, McpOAuthDriver, OAuthClientStore, OAuthFlowService, OAuthMetadataClient,
-    OAuthRefreshRuntime, OAuthTokenClient, RegistryTokenBroker, SecretStore, StartAuthFlow,
-    TokenAudience,
+    GitHubAppRuntime, GrantRefreshLock, HttpGitHubApiClient, HttpOAuthTokenClient, McpOAuthDriver,
+    OAuthClientStore, OAuthFlowService, OAuthMetadataClient, OAuthRefreshRuntime, OAuthTokenClient,
+    RegistryTokenBroker, SecretStore, StartAuthFlow, TokenAudience,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use harness::{
@@ -144,8 +144,8 @@ use vfs::{
 
 use super::{
     AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind, AgentSessionArgs,
-    AgentSessionStatus, AgentSessionWorkflow, DEFAULT_TASK_QUEUE, DEFAULT_TEMPORAL_NAMESPACE,
-    DEFAULT_TEMPORAL_TARGET, connect_temporal, pg_store_from_env,
+    AgentSessionStatus, AgentSessionWorkflow, DEFAULT_TASK_QUEUE, TemporalConnectionConfig,
+    connect_temporal, pg_store_from_env,
 };
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -169,12 +169,6 @@ const MAX_RUN_TERMINAL_NOTIFICATION_TOKEN_BYTES: usize = 512;
 /// Default public base URL for the gateway-hosted OAuth callback; matches
 /// `DEFAULT_GATEWAY_BIND`. Hosted deployments must set the real public URL.
 pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://127.0.0.1:18080";
-
-fn env_flag(name: &str) -> bool {
-    env::var(name)
-        .ok()
-        .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
-}
 
 /// Caller-supplied metadata on sessions and environments shares one validator
 /// (bounds plus the reserved-prefix rule), so a session and the environment
@@ -635,16 +629,13 @@ impl GatewayAgentApiBuilder {
     }
 
     pub fn build(self) -> GatewayAgentApi {
-        let allow_private_mcp = env_flag("LIGHTSPEED_MCP_OAUTH_ALLOW_PRIVATE_NETWORKS");
         let mcp_private_networks = crate::worker::mcp::McpPrivateNetworkPolicy::from_env()
             .expect("parse LIGHTSPEED_MCP_PRIVATE_NETWORKS");
         let configurator_trusted_header = ConfiguratorTrustedHeaderPolicy::from_env()
             .expect("parse LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL");
-        let metadata_client = self.oauth_metadata_client.unwrap_or_else(|| {
-            Arc::new(HttpOAuthMetadataClient::with_private_networks(
-                allow_private_mcp,
-            ))
-        });
+        let metadata_client = self
+            .oauth_metadata_client
+            .unwrap_or_else(|| Arc::new(mcp_private_networks.oauth_http_client()));
         let token_client = self.oauth_token_client.unwrap_or_else(|| {
             Arc::new(
                 HttpOAuthTokenClient::new_with_mcp_http(metadata_client.clone())
@@ -826,12 +817,8 @@ impl GatewayAgentApi {
     }
 
     pub async fn from_env() -> anyhow::Result<Self> {
-        let temporal_target =
-            env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-        let namespace = env::var("TEMPORAL_NAMESPACE")
-            .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
         let task_queue = crate::config::task_queue_from_env()?;
-        let client = connect_temporal(&temporal_target, &namespace).await?;
+        let client = connect_temporal(&TemporalConnectionConfig::from_env()?).await?;
         let store = pg_store_from_env().await?;
         Ok(Self::builder(client, store)
             .with_task_queue(task_queue)
@@ -1707,7 +1694,8 @@ impl AgentApiService for GatewayAgentApi {
             .put_bot_trigger_record(&params.bot_id, params.trigger, params.expected_revision)
             .await?;
         Ok(AgentApiOutcome::new(BotTriggerPutResponse {
-            trigger: self.trigger_view(&record),
+            trigger: record.view(),
+            secrets: self.trigger_secrets_view(&record),
         }))
     }
 
@@ -1720,7 +1708,6 @@ impl AgentApiService for GatewayAgentApi {
             Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
         )
         .await?;
-        let can_manage = self.may_manage_bot(&params.bot_id).await?;
         let record = ::bots::BotTriggerStore::read_bot_trigger(
             self.store.as_ref(),
             &params.bot_id,
@@ -1729,11 +1716,7 @@ impl AgentApiService for GatewayAgentApi {
         .await
         .map_err(crate::bots::map_bot_error)?;
         Ok(AgentApiOutcome::new(BotTriggerReadResponse {
-            trigger: if can_manage {
-                self.trigger_view(&record)
-            } else {
-                record.view(true, None)
-            },
+            trigger: record.view(),
         }))
     }
 
@@ -1746,7 +1729,6 @@ impl AgentApiService for GatewayAgentApi {
             Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
         )
         .await?;
-        let can_manage = self.may_manage_bot(&params.bot_id).await?;
         ::bots::BotStore::read_bot(self.store.as_ref(), &params.bot_id)
             .await
             .map_err(crate::bots::map_bot_error)?;
@@ -1755,17 +1737,22 @@ impl AgentApiService for GatewayAgentApi {
                 .await
                 .map_err(crate::bots::map_bot_error)?;
         Ok(AgentApiOutcome::new(BotTriggerListResponse {
-            triggers: records
-                .iter()
-                .map(|record| {
-                    if can_manage {
-                        self.trigger_view(record)
-                    } else {
-                        record.view(true, None)
-                    }
-                })
-                .collect(),
+            triggers: records.iter().map(::bots::BotTriggerRecord::view).collect(),
         }))
+    }
+
+    async fn read_bot_trigger_secrets(
+        &self,
+        params: BotTriggerSecretsReadParams,
+    ) -> Result<AgentApiOutcome<BotTriggerSecretsReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_TRIGGERS_SECRETS_READ,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        self.read_bot_trigger_secrets_record(&params.bot_id, &params.trigger_id)
+            .await
+            .map(AgentApiOutcome::new)
     }
 
     async fn delete_bot_trigger(
@@ -1781,7 +1768,7 @@ impl AgentApiService for GatewayAgentApi {
             .delete_bot_trigger_record(&params.bot_id, &params.trigger_id)
             .await?;
         Ok(AgentApiOutcome::new(BotTriggerDeleteResponse {
-            trigger: self.trigger_view(&record),
+            trigger: record.view(),
         }))
     }
 
@@ -4028,16 +4015,12 @@ impl AgentApiService for GatewayAgentApi {
             None => None,
         };
         mcp_api::validate_mcp_server_credential(&record, grant.as_ref())?;
-        for (header, value) in &record.headers {
-            if let Some(grant_id) = value.grant_id() {
-                let grant = self
-                    .store
-                    .read_grant(grant_id)
-                    .await
-                    .map_err(map_auth_error)?;
-                mcp_api::validate_mcp_header_grant(&record, header, &grant)?;
-            }
-        }
+        self.validate_header_credentials(
+            &mcp::MCP_SERVER_HEADER_POLICY,
+            &record.server_url,
+            &record.headers,
+        )
+        .await?;
         let server = self
             .store
             .put_server(record, params.expected_revision)
@@ -4661,6 +4644,8 @@ impl AgentApiService for GatewayAgentApi {
                 )));
             }
         }
+        self.validate_model_endpoint_header_credentials(&draft.provider.config)
+            .await?;
         // The secret must exist before the provider row: auth_providers
         // carries a foreign key into auth_secrets.
         if let Some(secret) = &draft.secret {
@@ -4720,6 +4705,8 @@ impl AgentApiService for GatewayAgentApi {
                 )));
             }
         }
+        self.validate_model_endpoint_header_credentials(&draft.provider.config)
+            .await?;
         let current = match self.store.read_auth_provider(&provider_id).await {
             Ok(record) => Some(record),
             Err(auth::AuthRegistryError::ProviderNotFound { .. }) => None,
@@ -5012,6 +4999,42 @@ impl GatewayAgentApi {
 
     pub fn public_base_url(&self) -> &str {
         &self.public_base_url
+    }
+
+    /// Every credential a configured header names must be one a header may
+    /// carry to `target_url`; checked before the owner's row is written.
+    async fn validate_header_credentials(
+        &self,
+        policy: &auth::RequestHeaderPolicy,
+        target_url: &str,
+        headers: &auth::RequestHeaders,
+    ) -> Result<(), AgentApiError> {
+        for (header, value) in headers {
+            if let Some(grant_id) = value.grant_id() {
+                let grant = self
+                    .store
+                    .read_grant(grant_id)
+                    .await
+                    .map_err(map_auth_error)?;
+                validate_header_credential(policy, header, target_url, &grant)?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn validate_model_endpoint_header_credentials(
+        &self,
+        config: &auth::AuthProviderConfig,
+    ) -> Result<(), AgentApiError> {
+        let Some(endpoint) = config.model_endpoint() else {
+            return Ok(());
+        };
+        self.validate_header_credentials(
+            &auth::MODEL_ENDPOINT_HEADER_POLICY,
+            &endpoint.base_url,
+            &endpoint.headers,
+        )
+        .await
     }
 
     /// Load a GitHub App provider and sign its app JWT for control-plane

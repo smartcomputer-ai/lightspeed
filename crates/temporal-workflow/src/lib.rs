@@ -71,7 +71,13 @@ pub use config::{
 pub use rehydrate::{
     ReducedSession, RehydrateError, reduce_session_entries, reduce_session_entries_from,
 };
-pub use temporal_helpers::connect_temporal;
+pub use temporal_helpers::{
+    TEMPORAL_ADDRESS_ENV, TEMPORAL_API_KEY_ENV, TEMPORAL_API_KEY_FILE_ENV, TEMPORAL_NAMESPACE_ENV,
+    TEMPORAL_TLS_CLIENT_CERT_FILE_ENV, TEMPORAL_TLS_CLIENT_KEY_FILE_ENV, TEMPORAL_TLS_ENV,
+    TEMPORAL_TLS_SERVER_CA_FILE_ENV, TEMPORAL_TLS_SERVER_NAME_ENV, TemporalClientCertificate,
+    TemporalConfigError, TemporalConnectionConfig, TemporalConnectionSettings, TemporalTlsConfig,
+    connect_temporal,
+};
 pub use types::{
     AgentActiveRunSummary, AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind,
     AgentFinishedRunSummary, AgentQueuedRunSummary, AgentSessionArgs,

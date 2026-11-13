@@ -364,6 +364,28 @@ async def test_wrong_url_is_reported_with_a_hint_and_is_not_transient():
     assert (caught.value.status, caught.value.transient) == (404, False)
 
 
+async def test_the_gateways_401_is_the_servers_unauthenticated_error():
+    # No valid key: the gateway answers before reading the body, so there is no request ID.
+    refusal = {"id": None, "error": {
+        "code": -32001, "message": "request is not authenticated",
+        "data": {"kind": "unauthenticated", "message": "request is not authenticated"},
+    }}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(401, json=refusal))) as http:
+        client = AsyncLightspeedClient("http://lightspeed.local/rpc", http_client=http)
+        with pytest.raises(LightspeedRpcError) as caught:
+            await client.initialize()
+    assert (caught.value.kind, caught.value.code) == ("unauthenticated", -32001)
+
+
+async def test_a_401_that_is_not_the_gateways_is_reported_by_its_status():
+    page = httpx.Response(401, text="<html>Sign in</html>")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: page)) as http:
+        client = AsyncLightspeedClient("http://lightspeed.local/rpc", http_client=http)
+        with pytest.raises(LightspeedTransportError) as caught:
+            await client.initialize()
+    assert (caught.value.status, caught.value.transient) == (401, False)
+
+
 def test_error_kind_takes_the_servers_kind_over_the_code():
     assert rpc_error_kind(-32014) == "modelDefaultUnset"
     assert rpc_error_kind(-1) == "unknown"

@@ -702,6 +702,32 @@ describe("LightspeedClient", () => {
       });
     });
 
+    it("reports the gateway's 401 as the server's unauthenticated error", async () => {
+      // No valid key: the gateway answers before reading the body, so there is no request id.
+      const refusal = {
+        id: null,
+        error: {
+          code: -32001,
+          message: "request is not authenticated",
+          data: { kind: "unauthenticated", message: "request is not authenticated" },
+        },
+      };
+      const call = client((async () => Response.json(refusal, { status: 401 })) as typeof fetch)
+        .call("initialize", {});
+      await expect(call).rejects.toBeInstanceOf(LightspeedRpcError);
+      await expect(call).rejects.toMatchObject({ kind: "unauthenticated", code: -32001 });
+    });
+
+    it("reports a 401 that is not the gateway's by its status", async () => {
+      const call = client((async () => new Response("<html>Sign in</html>", { status: 401 })) as typeof fetch)
+        .call("initialize", {});
+      await expect(call).rejects.toMatchObject({
+        name: "LightspeedTransportError",
+        status: 401,
+        transient: false,
+      });
+    });
+
     it("points at the endpoint when the URL is wrong", async () => {
       const call = client((async () => new Response("", { status: 404 })) as typeof fetch).call("initialize", {});
       await expect(call).rejects.toMatchObject({

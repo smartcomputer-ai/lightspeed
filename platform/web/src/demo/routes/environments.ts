@@ -250,22 +250,23 @@ function parseCredentialSource(value: unknown): EnvironmentCredentialSource | nu
 }
 
 /// Whether the source resolves to something injectable right now: an active
-/// grant, or an active model provider row that holds a credential.
+/// retrievable grant, or an active model API key provider that holds a key.
 function credentialSourceAvailable(universe: UniverseState, source: EnvironmentCredentialSource): boolean {
   if (source.type === "authGrant") {
     return universe.secrets.grants.some(
-      (grant) => grant.grantId === source.grantId && grant.status === "active",
+      (grant) =>
+        grant.grantId === source.grantId
+        && grant.status === "active"
+        && grant.exposure === "retrievable",
     );
   }
-  if (source.type === "authProviderCredential") {
-    return universe.secrets.providers.some(
-      (provider) =>
-        provider.credentialId === source.providerId
-        && provider.status === "active"
-        && provider.hasCredential,
-    );
-  }
-  return true;
+  return universe.secrets.providers.some(
+    (provider) =>
+      provider.credentialId === source.providerId
+      && provider.status === "active"
+      && provider.hasCredential
+      && provider.config.type === "modelApiKey",
+  );
 }
 
 function locate(

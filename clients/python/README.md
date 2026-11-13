@@ -262,7 +262,7 @@ The package also exports what it knows about the API itself: `METHODS` and
 
 | Error | Meaning |
 | --- | --- |
-| `LightspeedRpcError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. |
+| `LightspeedRpcError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. A missing or invalid API key is `unauthenticated`, which the gateway answers with HTTP 401 before reading the request. |
 | `LightspeedTransportError` | The request failed or the response was unusable. `status` and `body` are set when there was a response, `__cause__` keeps the underlying failure, and `transient` says the same request may succeed later. |
 | `TimeoutError`, `asyncio.CancelledError` | Your own `asyncio.timeout` passed, or you cancelled the task. |
 

@@ -9,10 +9,12 @@
 //! directories only. The backslash is an ordinary character, as in names.
 //!
 //! The walk visits children in byte order of their names, depth first, so
-//! results are sorted by path. It always prunes VCS metadata directories and
-//! the daemon state directory; by default it respects `.gitignore`,
-//! `.ignore` and `.git/info/exclude` (in that ascending precedence, each
-//! level overriding its ancestors) and skips names starting with `.`.
+//! results are sorted by path. It always prunes VCS metadata directories,
+//! the daemon state directory and every other entry the confinement refuses
+//! (a kernel filesystem, the registration key); by default it respects
+//! `.gitignore`, `.ignore` and `.git/info/exclude` (in that ascending
+//! precedence, each level overriding its ancestors) and skips names starting
+//! with `.`.
 
 use std::{
     collections::HashSet,
@@ -33,6 +35,7 @@ use super::{
     confinement::{Confinement, Resolved},
     io_error,
     os::{self, Directory, EntryStat},
+    protected::ProtectedFiles,
 };
 
 /// Directories every walk prunes, whatever the filter says.
@@ -262,6 +265,8 @@ struct IgnoreLevel {
 /// it with [`Walker::next_event`] and may stop at any time.
 pub(crate) struct Walker {
     confinement: Arc<Confinement>,
+    /// The protected files as they were when the walk began.
+    protected: ProtectedFiles,
     filter: CompiledFilter,
     links: LinkMode,
     max_depth: Option<u32>,
@@ -289,6 +294,7 @@ impl Walker {
         let stat = EntryStat::of_directory(&directory).map_err(|error| io_error(error, subject))?;
         let base = segments_path(&root.segments);
         let mut walker = Self {
+            protected: confinement.protected_files(),
             confinement,
             max_depth: max_depth.or(filter.max_depth),
             filter,
@@ -408,7 +414,7 @@ impl Walker {
                 return self.skip_entry(path, Skip::Unreadable(error));
             }
         };
-        if self.confinement.is_state(&stat) {
+        if self.confinement.refuses(&self.protected, &stat) {
             return None;
         }
         let mut entry = Entry {
@@ -713,6 +719,65 @@ mod tests {
                 "src/keep.log",
                 "src/lib.rs",
             ]
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn walks_prune_the_registration_key_and_report_links_to_it_as_skipped() {
+        use std::os::unix::fs::symlink;
+
+        use crate::filesystem::Protected;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("root");
+        std::fs::create_dir_all(root.join("secrets")).unwrap();
+        std::fs::write(root.join("secrets/key"), "lsrk_secret").unwrap();
+        std::fs::write(root.join("secrets/notes"), "notes").unwrap();
+        std::fs::hard_link(root.join("secrets/key"), root.join("copy")).unwrap();
+        symlink("secrets/key", root.join("link")).unwrap();
+        let mut protected = Protected::default();
+        protected.refuse_file(&root.join("secrets/key"));
+        let confinement = Arc::new(
+            Confinement::protecting(
+                root.clone(),
+                root.parent().unwrap().join("state"),
+                protected,
+            )
+            .unwrap(),
+        );
+        let walk = |links: LinkMode| {
+            let resolved = confinement
+                .lookup(confinement.root_path(), Lookup::FOLLOW)
+                .unwrap();
+            let mut walker = Walker::new(
+                confinement.clone(),
+                &resolved,
+                CompiledFilter::everything(),
+                links,
+                None,
+                &"root",
+            )
+            .unwrap();
+            let mut seen = Vec::new();
+            while let Some(event) = walker.next_event() {
+                match event {
+                    Event::Entry(entry) => seen.push(entry.path.to_string()),
+                    Event::Yield => {}
+                    Event::Skip { path, reason, .. } => {
+                        assert!(matches!(reason, Skip::LinkOutsideRoot(_)), "{reason:?}");
+                        seen.push(format!("skip:{}", path.unwrap()));
+                    }
+                }
+            }
+            seen
+        };
+        // The key and its second name are pruned; a link to it is an
+        // ordinary entry until something follows it.
+        assert_eq!(walk(LinkMode::Report), ["link", "secrets", "secrets/notes"]);
+        assert_eq!(
+            walk(LinkMode::Follow),
+            ["skip:link", "secrets", "secrets/notes"]
         );
     }
 

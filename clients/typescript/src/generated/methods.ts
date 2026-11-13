@@ -117,6 +117,7 @@ export const METHODS = [
   "bots/triggers/put",
   "bots/triggers/read",
   "bots/triggers/list",
+  "bots/triggers/secrets/read",
   "bots/triggers/delete",
   "bots/events/admit",
   "bots/events/replay",
@@ -327,7 +328,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"configureResource","kind":"universe"},
     summary: "Bind a credential into an environment",
-    description: "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
+    description: "Maps an environment variable name to a retrievable credential grant or to a model API key provider's stored key. Commands in the environment receive the plain value, so a brokered grant and any other provider credential are refused. Requires configuring resources in the universe. The response exposes only the source handle, never secret material.",
   },
   "environments/credentials/list": {
     scope: "universe",
@@ -339,7 +340,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"configureResource","kind":"universe"},
     summary: "Unbind an environment credential",
-    description: "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
+    description: "Removes one variable-to-credential mapping without deleting the underlying grant or provider credential.",
   },
   "environments/create": {
     scope: "universe",
@@ -651,7 +652,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"configureResource","kind":"universe"},
     summary: "Import a token credential",
-    description: "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
+    description: "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.",
   },
   "auth/grants/lease": {
     scope: "service",
@@ -759,13 +760,13 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"configureResource","kind":"universe"},
     summary: "Grant access to a GitHub App installation",
-    description: "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
+    description: "Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.",
   },
   "bots/create": {
     scope: "universe",
     access: {"action":"createBot","kind":"universe"},
     summary: "Create a bot",
-    description: "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.",
+    description: "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.",
   },
   "bots/put": {
     scope: "universe",
@@ -813,19 +814,25 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"manageBot","kind":"universe"},
     summary: "Create or replace a trigger",
-    description: "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.",
+    description: "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.",
   },
   "bots/triggers/read": {
     scope: "universe",
     access: {"action":"read","kind":"universe"},
     summary: "Read a trigger",
-    description: "Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.",
+    description: "Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.",
   },
   "bots/triggers/list": {
     scope: "universe",
     access: {"action":"read","kind":"universe"},
     summary: "List a bot's triggers",
-    description: "Returns every trigger of the bot ordered by id, secrets included for bot-management callers.",
+    description: "Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.",
+  },
+  "bots/triggers/secrets/read": {
+    scope: "universe",
+    access: {"action":"manageBot","kind":"universe"},
+    summary: "Read a trigger's secrets",
+    description: "Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.",
   },
   "bots/triggers/delete": {
     scope: "universe",
@@ -1306,7 +1313,7 @@ export interface MethodMap {
   /**
    * Bind a credential into an environment
    *
-   * Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.
+   * Maps an environment variable name to a retrievable credential grant or to a model API key provider's stored key. Commands in the environment receive the plain value, so a brokered grant and any other provider credential are refused. Requires configuring resources in the universe. The response exposes only the source handle, never secret material.
    */
   "environments/credentials/bind": {
     params: Api.EnvironmentCredentialBindParams;
@@ -1324,7 +1331,7 @@ export interface MethodMap {
   /**
    * Unbind an environment credential
    *
-   * Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.
+   * Removes one variable-to-credential mapping without deleting the underlying grant or provider credential.
    */
   "environments/credentials/unbind": {
     params: Api.EnvironmentCredentialUnbindParams;
@@ -1792,7 +1799,7 @@ export interface MethodMap {
   /**
    * Import a token credential
    *
-   * Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.
+   * Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.
    */
   "auth/grants/import": {
     params: Api.AuthGrantImportParams;
@@ -1954,7 +1961,7 @@ export interface MethodMap {
   /**
    * Grant access to a GitHub App installation
    *
-   * Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.
+   * Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.
    */
   "auth/github/installations/grant": {
     params: Api.AuthGitHubInstallationGrantParams;
@@ -1963,7 +1970,7 @@ export interface MethodMap {
   /**
    * Create a bot
    *
-   * Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.
+   * Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.
    */
   "bots/create": {
     params: Api.BotCreateParams;
@@ -2035,7 +2042,7 @@ export interface MethodMap {
   /**
    * Create or replace a trigger
    *
-   * Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.
+   * Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.
    */
   "bots/triggers/put": {
     params: Api.BotTriggerPutParams;
@@ -2044,7 +2051,7 @@ export interface MethodMap {
   /**
    * Read a trigger
    *
-   * Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.
+   * Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.
    */
   "bots/triggers/read": {
     params: Api.BotTriggerReadParams;
@@ -2053,11 +2060,20 @@ export interface MethodMap {
   /**
    * List a bot's triggers
    *
-   * Returns every trigger of the bot ordered by id, secrets included for bot-management callers.
+   * Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.
    */
   "bots/triggers/list": {
     params: Api.BotTriggerListParams;
     result: Api.AgentApiOutcomeOfBotTriggerListResponse;
+  };
+  /**
+   * Read a trigger's secrets
+   *
+   * Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.
+   */
+  "bots/triggers/secrets/read": {
+    params: Api.BotTriggerSecretsReadParams;
+    result: Api.AgentApiOutcomeOfBotTriggerSecretsReadResponse;
   };
   /**
    * Delete a trigger

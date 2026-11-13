@@ -45,7 +45,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::DaemonConfig,
-    filesystem::{Confinement, FilesystemConfig, LocalFileSystem},
+    filesystem::{Confinement, FilesystemConfig, LocalFileSystem, Protected},
     jobs::{JobConfig, JobManager},
     process::{ProcessConfig, ProcessManager},
 };
@@ -134,8 +134,18 @@ impl DaemonRuntime {
         let instance_id = mint_instance_id()?;
         let capabilities = data_capabilities(&config);
         let limits = data_limits();
+        // File operations reach whatever the filesystem root holds, and
+        // the root is `/` unless configured: the kernel filesystems and the
+        // registration key are refused under any root.
+        let protected = Protected::for_daemon(
+            config
+                .registration
+                .as_ref()
+                .and_then(|registration| registration.registration_key_file.as_deref()),
+            &[config.fs_root.as_path(), config.cwd.as_path()],
+        );
         let confinement = Arc::new(
-            Confinement::new(config.fs_root.clone(), config.state_dir.clone())
+            Confinement::protecting(config.fs_root.clone(), config.state_dir.clone(), protected)
                 .map_err(|error| anyhow::anyhow!("filesystem confinement: {error}"))?,
         );
         let filesystem = LocalFileSystem::new(FilesystemConfig {
@@ -634,6 +644,62 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.kind(), ProtocolErrorKind::CapabilityUnavailable);
         assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_serving_daemon_keeps_its_registration_key_file_from_file_requests() {
+        let mut key_file = None;
+        let (_temp, runtime) = super::test_support::runtime_with(|config| {
+            let key = config.cwd.join("registration-key");
+            std::fs::write(&key, "lsrk_secret").expect("key");
+            let mut registration = config::RegistrationConfig::new(
+                "wss://gateway.example/environment-gateway/connect".to_owned(),
+                "https://gateway.example/.well-known/lightspeed-envd".to_owned(),
+            );
+            registration.registration_key_file = Some(key.clone());
+            config.registration = Some(registration);
+            key_file = Some(key);
+        });
+        let key_file = key_file.expect("configured");
+        for (method, params) in [
+            (
+                "fs/readFile",
+                json!({"path": environment_path(&key_file).unwrap(), "maxBytes": 1024}),
+            ),
+            (
+                "fs/getMetadata",
+                json!({"path": environment_path(&key_file).unwrap()}),
+            ),
+            (
+                "fs/remove",
+                json!({"path": environment_path(&key_file).unwrap()}),
+            ),
+        ] {
+            let error = handle_request(&runtime, &RequestContext::detached(), method, params)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(
+                    error.data,
+                    environment_protocol::error::ErrorData::PermissionDenied {
+                        reason: Some(environment_protocol::error::PermissionReason::DaemonState)
+                    }
+                ),
+                "{method}: {error}"
+            );
+        }
+        assert_eq!(std::fs::read(&key_file).expect("key"), b"lsrk_secret");
+        // The working directory around it is served as before.
+        let neighbour = runtime.config().cwd.join("notes");
+        std::fs::write(&neighbour, "notes").expect("notes");
+        let read = call(
+            &runtime,
+            "fs/readFile",
+            json!({"path": environment_path(&neighbour).unwrap(), "maxBytes": 1024}),
+        )
+        .await;
+        assert_eq!(read["fileSize"], 5);
     }
 
     #[tokio::test(flavor = "current_thread")]

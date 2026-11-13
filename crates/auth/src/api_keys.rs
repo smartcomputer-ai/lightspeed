@@ -17,7 +17,7 @@
 
 use std::collections::BTreeSet;
 
-use api::{AccessScope, Attribution, MethodGroup};
+use api::{AccessScope, ApiKeyGroups, Attribution, MethodGroup};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -83,12 +83,13 @@ pub const API_KEY_LAST_USED_RESOLUTION_MS: u64 = 60_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiKeyRecord {
-    /// The key's name among the keys of its scope. It addresses the key and
-    /// is kept when the secret is replaced.
+    /// The key's name among the keys of its scope. It addresses the key, is
+    /// kept when the secret is replaced, and is what the key's own requests
+    /// are attributed to.
     pub key_id: String,
     /// Display prefix of the current secret (`lsk_ab12cd34`): enough to
-    /// recognize which secret a key holds, and what requests are attributed
-    /// to. It changes with the secret.
+    /// recognize which secret a key holds. It changes with the secret, so no
+    /// record names a key by it.
     pub key_prefix: String,
     /// What the key reaches. A deployment key addresses a universe by header.
     pub scope: AccessScope,
@@ -110,8 +111,11 @@ pub struct ApiKeySpec {
     /// `None` has the server allocate an id.
     pub key_id: Option<String>,
     pub scope: AccessScope,
-    /// `None` grants every group the scope allows.
-    pub groups: Option<BTreeSet<MethodGroup>>,
+    /// The groups the key is given. There is no default: whoever makes a
+    /// key states them, and "every group the scope allows" is the explicit
+    /// [`ApiKeyGroups::All`], resolved when the key is built so the stored
+    /// set is always concrete.
+    pub groups: ApiKeyGroups,
     pub assert_actor: bool,
     pub created_by: Attribution,
     pub display_name: Option<String>,
@@ -148,7 +152,9 @@ pub enum ApiKeyError {
 
 /// Mint a new key secret. The secret is returned exactly once; only its hash
 /// and display prefix are meant to be persisted. Groups must be allowed in
-/// the key's scope: only a deployment key holds deployment groups.
+/// the key's scope: only a deployment key holds deployment groups. The
+/// record holds the concrete groups, with `all` resolved for the scope as
+/// this release defines it.
 pub fn mint_api_key(spec: ApiKeySpec, created_at_ms: u64) -> Result<MintedApiKey, ApiKeyError> {
     import_api_key(
         spec,
@@ -172,7 +178,7 @@ pub fn import_api_key(
         });
     }
     let allowed = MethodGroup::allowed_in(spec.scope);
-    let groups = spec.groups.unwrap_or_else(|| allowed.clone());
+    let groups: BTreeSet<MethodGroup> = spec.groups.resolve(spec.scope);
     if groups.is_empty() {
         return Err(ApiKeyError::Invalid {
             message: "a key needs at least one method group".into(),
@@ -224,11 +230,12 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
+    /// `None` asks for every group the scope allows.
     fn spec(scope: AccessScope, groups: Option<&[MethodGroup]>) -> ApiKeySpec {
         ApiKeySpec {
             key_id: None,
             scope,
-            groups: groups.map(|groups| groups.iter().copied().collect()),
+            groups: groups.map_or(ApiKeyGroups::All, |groups| groups.iter().copied().collect()),
             assert_actor: false,
             created_by: Attribution::Local,
             display_name: None,
@@ -305,18 +312,39 @@ mod tests {
     }
 
     #[test]
-    fn keys_without_groups_hold_every_group_their_scope_allows() {
+    fn all_is_stored_as_every_group_the_scope_allows() {
         let universe_key = mint_api_key(spec(universe(), None), 1).expect("mint");
         assert_eq!(
             universe_key.record.groups,
             MethodGroup::allowed_in(universe())
         );
-        let deployment_key = mint_api_key(spec(AccessScope::Deployment, None), 1).expect("mint");
         assert!(
-            deployment_key
+            universe_key
                 .record
                 .groups
-                .contains(&MethodGroup::DeploymentApiKeys)
+                .iter()
+                .all(|group| !group.is_deployment())
+        );
+        let deployment_key = mint_api_key(spec(AccessScope::Deployment, None), 1).expect("mint");
+        assert_eq!(
+            deployment_key.record.groups,
+            MethodGroup::ALL.into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn listed_groups_are_stored_exactly() {
+        let key = mint_api_key(
+            spec(
+                AccessScope::Deployment,
+                Some(&[MethodGroup::Session, MethodGroup::Models]),
+            ),
+            1,
+        )
+        .expect("mint");
+        assert_eq!(
+            key.record.groups,
+            BTreeSet::from([MethodGroup::Session, MethodGroup::Models])
         );
     }
 

@@ -11,6 +11,7 @@ import { TriggerKindPicker } from "@/components/bot/triggers";
 const mocks = vi.hoisted(() => ({
   api: vi.fn(),
   admin: true,
+  loading: false,
   features: { bots: true, channels: true } as Record<string, boolean>,
 }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -24,8 +25,9 @@ vi.mock("@/lib/universes", async (original) => {
   });
   return {
     ...await original<typeof import("@/lib/universes")>(),
-    useActiveUniverse: () => ({ universe: universe(), handle: "test", isLoading: false }),
-    useFeature: (feature: string) => mocks.features[feature],
+    useActiveUniverse: () => ({ universe: mocks.loading ? undefined : universe(), handle: "test", isLoading: mocks.loading }),
+    // As the real hook: before the universe loads, a feature is off.
+    useFeature: (feature: string) => !mocks.loading && mocks.features[feature],
   };
 });
 
@@ -35,6 +37,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
   mocks.admin = true;
+  mocks.loading = false;
   mocks.features = { bots: true, channels: true };
   mocks.api.mockReset().mockResolvedValue({});
   container = document.createElement("div");
@@ -57,7 +60,13 @@ it("shows a feature's page while it is on", async () => {
   expect(container.textContent).toBe("Bot list");
 });
 
-it("tells an admin where a switched-off feature comes back on", async () => {
+it("shows neither the page nor the note until the universe has loaded", async () => {
+  mocks.loading = true;
+  await render(<FeatureGate feature="bots"><p>Bot list</p></FeatureGate>);
+  expect(container.textContent).toBe("");
+});
+
+it("tells an admin where a switched-off feature is turned on", async () => {
   mocks.features = { bots: false, channels: false };
   await render(<FeatureGate feature="bots"><p>Bot list</p></FeatureGate>);
   expect(container.textContent).toContain("Bots are turned off in this universe");
@@ -65,12 +74,12 @@ it("tells an admin where a switched-off feature comes back on", async () => {
   expect(container.querySelector("a")?.getAttribute("href")).toBe("/u/test/settings/general");
 });
 
-it("tells a member an admin can turn it back on", async () => {
+it("tells a member an admin can turn it on", async () => {
   mocks.admin = false;
   mocks.features = { bots: true, channels: false };
   await render(<FeatureGate feature="channels"><p>Accounts</p></FeatureGate>);
   expect(container.textContent).toContain("Channels are turned off in this universe");
-  expect(container.textContent).toContain("A universe admin can turn them back on.");
+  expect(container.textContent).toContain("A universe admin can turn them on.");
   expect(container.querySelector("a")).toBeNull();
 });
 

@@ -9,7 +9,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use auth::{
     AuthBrokerError, AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore,
-    AuthRegistryError, AuthTokenBroker, SecretStore, TokenAudience, model_auth_provider_id,
+    AuthRegistryError, AuthTokenBroker, CredentialHeaderError, RequestHeaderValue, SecretStore,
+    TokenAudience, model_auth_provider_id,
 };
 use llm_runtime::provider_keys::{
     ModelProviderResolver, ProviderKeyError, ResolvedEndpoint, ResolvedModelProvider,
@@ -20,8 +21,8 @@ use llm_runtime::secrets::{
     SECRET_NAMESPACE_MCP_SERVER_HEADER, SecretRef, SecretResolveError, SecretResolver,
 };
 use mcp::{
-    McpRegistryError, McpRegistryStore, McpServerAuthPolicy, McpServerHeaderValue, McpServerId,
-    McpServerRecord, McpServerStatus,
+    McpRegistryError, McpRegistryStore, McpServerAuthPolicy, McpServerId, McpServerRecord,
+    McpServerStatus,
 };
 
 /// Dispatches on `SecretRef.namespace`: `mcp_server` loads the configured
@@ -153,8 +154,8 @@ impl SecretResolver for BrokerSecretResolver {
                 };
                 let server = self.live_server(secret_ref, server_id, audience).await?;
                 let grant_id = match server.headers.get(header) {
-                    Some(McpServerHeaderValue::Credential { grant_id }) => grant_id.clone(),
-                    Some(McpServerHeaderValue::Literal { .. }) => {
+                    Some(RequestHeaderValue::Credential { grant_id }) => grant_id.clone(),
+                    Some(RequestHeaderValue::Literal { .. }) => {
                         return Err(backend(format!(
                             "MCP header {header:?} is a plain value, not a credential"
                         )));
@@ -166,15 +167,19 @@ impl SecretResolver for BrokerSecretResolver {
                         });
                     }
                 };
-                let token = self
-                    .broker
-                    .bearer_token(
-                        &grant_id,
-                        &TokenAudience::McpResource(server.server_url.clone()),
-                    )
-                    .await
-                    .map_err(|error| broker_error_to_resolve_error(secret_ref, error))?;
-                Ok(ResolvedSecretValue::new(token.expose()))
+                let value = auth::resolve_credential_header(
+                    self.broker.as_ref(),
+                    &grant_id,
+                    &TokenAudience::McpResource(server.server_url.clone()),
+                )
+                .await
+                .map_err(|error| backend(format!("MCP header {header:?}: {error}")))?;
+                // A resolved header value is printable ASCII; this boundary
+                // carries it as text.
+                let token = value
+                    .to_str()
+                    .map_err(|_| backend(format!("MCP header {header:?} is not text")))?;
+                Ok(ResolvedSecretValue::new(token))
             }
             SECRET_NAMESPACE_ENV => self.env.resolve(secret_ref, audience).await,
             other => Err(SecretResolveError::UnsupportedNamespace {
@@ -190,10 +195,12 @@ impl SecretResolver for BrokerSecretResolver {
 /// is disabled, of the wrong kind, missing its credential, or bound to an
 /// unusable grant fails resolution instead of silently falling back.
 ///
-/// Two row kinds resolve: `model_api_key` reads the row's encrypted
-/// credential secret (sent in the provider's native key header), and
-/// `model_oauth` resolves the bound grant through the token broker (refresh
-/// included) and sends it as an OAuth bearer token.
+/// Two row kinds resolve a credential of their own: `model_api_key` reads the
+/// row's encrypted credential secret (sent in the provider's native key
+/// header), and `model_oauth` resolves the bound grant through the token
+/// broker (refresh included) and sends it as an OAuth bearer token. Any kind
+/// with an endpoint also resolves the endpoint's credential headers through
+/// the broker, at every request.
 pub struct StoredModelProviderResolver {
     providers: Arc<dyn AuthProviderStore>,
     secrets: Arc<dyn SecretStore>,
@@ -259,7 +266,9 @@ impl ModelProviderResolver for StoredModelProviderResolver {
                 })?;
                 Ok(Some(ResolvedModelProvider {
                     auth: Some(ResolvedProviderAuth::api_key(value.expose())),
-                    endpoint: resolve_endpoint(provider_id, config.endpoint.as_ref())?,
+                    endpoint: self
+                        .resolve_endpoint(provider_id, config.endpoint.as_ref())
+                        .await?,
                 }))
             }
             AuthProviderConfig::ModelOAuth(config) => {
@@ -283,12 +292,16 @@ impl ModelProviderResolver for StoredModelProviderResolver {
                     })?;
                 Ok(Some(ResolvedModelProvider {
                     auth: Some(ResolvedProviderAuth::bearer(token.expose())),
-                    endpoint: resolve_endpoint(provider_id, config.endpoint.as_ref())?,
+                    endpoint: self
+                        .resolve_endpoint(provider_id, config.endpoint.as_ref())
+                        .await?,
                 }))
             }
             AuthProviderConfig::ModelEndpoint(config) => Ok(Some(ResolvedModelProvider {
                 auth: None,
-                endpoint: resolve_endpoint(provider_id, Some(&config.endpoint))?,
+                endpoint: self
+                    .resolve_endpoint(provider_id, Some(&config.endpoint))
+                    .await?,
             })),
             other => Err(ProviderKeyError::NotUsable {
                 provider_id: provider_id.to_owned(),
@@ -301,23 +314,60 @@ impl ModelProviderResolver for StoredModelProviderResolver {
     }
 }
 
-fn resolve_endpoint(
-    provider_id: &str,
-    endpoint: Option<&auth::ModelEndpointConfig>,
-) -> Result<Option<ResolvedEndpoint>, ProviderKeyError> {
-    endpoint
-        .map(|endpoint| {
-            ResolvedEndpoint::new(
-                &endpoint.base_url,
-                &endpoint.headers,
-                endpoint.api_kinds.clone(),
-            )
-            .map_err(|error| ProviderKeyError::NotUsable {
-                provider_id: provider_id.to_owned(),
-                message: format!("invalid model endpoint: {error}"),
+impl StoredModelProviderResolver {
+    /// The provider's endpoint with its extra headers. A header that names a
+    /// credential is resolved now, beside the provider's own key, so every
+    /// request sends the credential's current token and a revoked or deleted
+    /// credential fails the request instead of sending a stale value.
+    async fn resolve_endpoint(
+        &self,
+        provider_id: &str,
+        endpoint: Option<&auth::ModelEndpointConfig>,
+    ) -> Result<Option<ResolvedEndpoint>, ProviderKeyError> {
+        let Some(endpoint) = endpoint else {
+            return Ok(None);
+        };
+        let invalid = |error: llm_clients::LlmApiError| ProviderKeyError::NotUsable {
+            provider_id: provider_id.to_owned(),
+            message: format!("invalid model endpoint: {error}"),
+        };
+        let literals = endpoint
+            .headers
+            .iter()
+            .filter_map(|(name, value)| match value {
+                RequestHeaderValue::Literal { value } => Some((name.clone(), value.clone())),
+                RequestHeaderValue::Credential { .. } => None,
             })
-        })
-        .transpose()
+            .collect();
+        let mut resolved =
+            ResolvedEndpoint::new(&endpoint.base_url, &literals, endpoint.api_kinds.clone())
+                .map_err(invalid)?;
+        // The token is sent to the endpoint, so a credential bound to an
+        // audience must cover the endpoint's base URL.
+        let audience = TokenAudience::ModelProvider(endpoint.base_url.clone());
+        for (name, value) in &endpoint.headers {
+            let RequestHeaderValue::Credential { grant_id } = value else {
+                continue;
+            };
+            let value = auth::resolve_credential_header(self.broker.as_ref(), grant_id, &audience)
+                .await
+                .map_err(|error| match error {
+                    CredentialHeaderError::Store { message } => ProviderKeyError::Backend {
+                        provider_id: provider_id.to_owned(),
+                        message,
+                    },
+                    other => ProviderKeyError::NotUsable {
+                        provider_id: provider_id.to_owned(),
+                        message: format!("model endpoint header {name:?}: {other}"),
+                    },
+                })?;
+            resolved.transport = resolved
+                .transport
+                .with_credential_header(name, value)
+                .map_err(invalid)?;
+        }
+        Ok(Some(resolved))
+    }
 }
 
 pub type StoredProviderKeyResolver = StoredModelProviderResolver;
@@ -697,13 +747,13 @@ mod tests {
             record.execution = mcp::McpExecution::Runtime;
             record.headers.insert(
                 "x-upstream-token".to_owned(),
-                McpServerHeaderValue::Credential {
+                RequestHeaderValue::Credential {
                     grant_id: AuthGrantId::new("authgrant_1"),
                 },
             );
             record.headers.insert(
                 "x-tenant".to_owned(),
-                McpServerHeaderValue::Literal {
+                RequestHeaderValue::Literal {
                     value: "acme".to_owned(),
                 },
             );
@@ -794,6 +844,38 @@ mod tests {
         assert!(matches!(revoked, SecretResolveError::Backend { .. }));
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_header_credential_that_is_not_a_header_value_is_refused_without_being_echoed() {
+        let fixture = resolver_with_grant(None).await;
+        add_crm_headers(&fixture).await;
+        fixture
+            .secrets
+            .delete_secret(&SecretId::new("authsec_1"))
+            .await
+            .expect("drop the valid token");
+        fixture
+            .secrets
+            .put_secret(PutSecretRecord {
+                secret_id: SecretId::new("authsec_1"),
+                secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
+                value: SecretValue::new("s3cr3t\nvalue"),
+                created_at_ms: 30,
+            })
+            .await
+            .expect("replace secret");
+
+        let error = fixture
+            .resolver
+            .resolve(
+                &mcp_header_ref("crm/x-upstream-token"),
+                Some("https://crm.example.com/mcp"),
+            )
+            .await
+            .expect_err("invalid header value");
+        assert!(matches!(error, SecretResolveError::Backend { .. }));
+        assert!(!error.to_string().contains("s3cr3t"));
+    }
+
     /// Broker over empty stores: good enough for the api-key paths, which
     /// never consult it.
     fn empty_broker() -> Arc<dyn AuthTokenBroker> {
@@ -872,7 +954,9 @@ mod tests {
                         base_url: "http://127.0.0.1:11434/v1".to_owned(),
                         headers: std::collections::BTreeMap::from([(
                             "x-client".to_owned(),
-                            "lightspeed".to_owned(),
+                            RequestHeaderValue::Literal {
+                                value: "lightspeed".to_owned(),
+                            },
                         )]),
                         api_kinds: vec!["openai:completions".to_owned()],
                     },
@@ -907,6 +991,157 @@ mod tests {
             "http://127.0.0.1:11434/v1/chat/completions"
         );
         assert!(!format!("{:?}", endpoint.transport).contains("lightspeed"));
+    }
+
+    /// A credentialless endpoint whose `x-api-key` header names a static
+    /// token, with the stores the test needs to change the token afterwards.
+    async fn endpoint_header_resolver(
+        grant_audience: Option<&str>,
+    ) -> (
+        StoredProviderKeyResolver,
+        Arc<InMemoryAuthGrantStore>,
+        Arc<InMemorySecretStore>,
+    ) {
+        let providers = Arc::new(auth::InMemoryAuthProviderStore::new());
+        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        let secrets = Arc::new(InMemorySecretStore::new());
+        grants
+            .create_grant(CreateAuthGrantRecord {
+                grant_id: AuthGrantId::new("authgrant_router"),
+                provider_id: "static".to_owned(),
+                provider_kind: AuthProviderKind::StaticToken,
+                exposure: auth::AuthGrantExposure::Brokered,
+                created_by: api::Attribution::Local,
+                display_name: None,
+                subject_hint: None,
+                scopes: Vec::new(),
+                audience: grant_audience.map(str::to_owned),
+                access_token_secret: Some(SecretId::new("authsec_router")),
+                refresh_token_secret: None,
+                oauth_client: None,
+                expires_at_ms: None,
+                status: AuthGrantStatus::Active,
+                metadata: serde_json::Value::Object(Default::default()),
+                created_at_ms: 10,
+            })
+            .await
+            .expect("create grant");
+        secrets
+            .put_secret(PutSecretRecord {
+                secret_id: SecretId::new("authsec_router"),
+                secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
+                value: SecretValue::new("router-token"),
+                created_at_ms: 10,
+            })
+            .await
+            .expect("put secret");
+        providers
+            .create_auth_provider(auth::CreateAuthProviderRecord {
+                provider_id: AuthProviderId::new(model_auth_provider_id("router")),
+                display_name: None,
+                config: AuthProviderConfig::ModelEndpoint(auth::ModelEndpointOnlyConfig {
+                    endpoint: auth::ModelEndpointConfig {
+                        base_url: "https://router.example/v1".to_owned(),
+                        headers: std::collections::BTreeMap::from([
+                            (
+                                "x-title".to_owned(),
+                                RequestHeaderValue::Literal {
+                                    value: "Lightspeed".to_owned(),
+                                },
+                            ),
+                            (
+                                "x-api-key".to_owned(),
+                                RequestHeaderValue::Credential {
+                                    grant_id: AuthGrantId::new("authgrant_router"),
+                                },
+                            ),
+                        ]),
+                        api_kinds: vec!["openai:completions".to_owned()],
+                    },
+                }),
+                credential_secret: None,
+                status: AuthProviderStatus::Active,
+                created_at_ms: 10,
+            })
+            .await
+            .expect("create provider");
+        let broker: Arc<dyn AuthTokenBroker> = Arc::new(RegistryTokenBroker::new(
+            grants.clone(),
+            secrets.clone(),
+            Arc::new(InMemoryGrantLocks::new()),
+        ));
+        (
+            StoredProviderKeyResolver::new(providers, secrets.clone(), broker),
+            grants,
+            secrets,
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn endpoint_credential_headers_resolve_beside_plain_ones() {
+        for grant_audience in [None, Some("https://router.example")] {
+            let (resolver, _grants, _secrets) = endpoint_header_resolver(grant_audience).await;
+
+            let provider = resolver
+                .resolve_model_provider("router")
+                .await
+                .expect("resolve")
+                .expect("provider");
+
+            assert!(provider.auth.is_none());
+            let endpoint = provider.endpoint.expect("endpoint");
+            assert!(endpoint.transport.has_header("x-title"));
+            assert!(endpoint.transport.has_header("x-api-key"));
+            assert!(!format!("{:?}", endpoint.transport).contains("router-token"));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn endpoint_credential_headers_fail_the_request_when_the_credential_cannot_be_used() {
+        // Revoked after the provider was configured.
+        let (resolver, grants, _secrets) = endpoint_header_resolver(None).await;
+        grants
+            .update_grant_status(
+                &AuthGrantId::new("authgrant_router"),
+                AuthGrantStatus::Revoked,
+                20,
+            )
+            .await
+            .expect("revoke grant");
+        assert!(matches!(
+            resolver.resolve_model_provider("router").await,
+            Err(ProviderKeyError::NotUsable { .. })
+        ));
+
+        // Bound to another host than the endpoint.
+        let (resolver, _grants, _secrets) =
+            endpoint_header_resolver(Some("https://other.example")).await;
+        assert!(matches!(
+            resolver.resolve_model_provider("router").await,
+            Err(ProviderKeyError::NotUsable { .. })
+        ));
+
+        // A token that is not a header value is refused without being echoed.
+        let (resolver, _grants, secrets) = endpoint_header_resolver(None).await;
+        secrets
+            .delete_secret(&SecretId::new("authsec_router"))
+            .await
+            .expect("drop the valid token");
+        secrets
+            .put_secret(PutSecretRecord {
+                secret_id: SecretId::new("authsec_router"),
+                secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
+                value: SecretValue::new("s3cr3t\nvalue"),
+                created_at_ms: 30,
+            })
+            .await
+            .expect("replace secret");
+        let error = resolver
+            .resolve_model_provider("router")
+            .await
+            .expect_err("invalid header value");
+        assert!(matches!(error, ProviderKeyError::NotUsable { .. }));
+        assert!(!error.to_string().contains("s3cr3t"));
     }
 
     #[tokio::test]

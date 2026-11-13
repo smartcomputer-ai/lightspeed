@@ -2583,3 +2583,62 @@ fn states_and_close_reasons_round_trip_their_stored_names() {
     }
     assert_eq!(EnvironmentState::parse("ready"), None);
 }
+
+#[test]
+fn only_retrievable_grants_may_be_bound_into_an_environment() {
+    let grant_id = AuthGrantId::new("authgrant_repo");
+    assert_eq!(
+        require_bindable_grant(&grant_id, AuthGrantExposure::Retrievable),
+        Ok(())
+    );
+    assert_eq!(
+        require_bindable_grant(&grant_id, AuthGrantExposure::Brokered),
+        Err(EnvironmentCredentialSourceRefusal::BrokeredGrant { grant_id })
+    );
+}
+
+#[test]
+fn only_a_model_api_key_provider_credential_may_be_bound_into_an_environment() {
+    let provider_id = AuthProviderId::new("model:openai");
+    assert_eq!(
+        require_bindable_provider(&provider_id, AuthProviderKind::ModelApiKey),
+        Ok(())
+    );
+
+    // A GitHub App's credential is its private key; the refusal names the
+    // grant to bind in its place.
+    let github = AuthProviderId::new("github");
+    assert_eq!(
+        require_bindable_provider(&github, AuthProviderKind::GitHubApp),
+        Err(EnvironmentCredentialSourceRefusal::GitHubAppProvider {
+            provider_id: github,
+        })
+    );
+
+    for kind in [
+        AuthProviderKind::StaticToken,
+        AuthProviderKind::McpOAuth,
+        AuthProviderKind::CustomOAuth,
+        AuthProviderKind::ModelOAuth,
+        AuthProviderKind::ModelEndpoint,
+    ] {
+        assert_eq!(
+            require_bindable_provider(&provider_id, kind),
+            Err(EnvironmentCredentialSourceRefusal::NotModelApiKeyProvider {
+                provider_id: provider_id.clone(),
+            }),
+            "{kind:?}"
+        );
+    }
+}
+
+#[test]
+fn a_stored_secret_is_not_a_credential_source() {
+    // Only grants and model provider keys can be bound; a bare secret id
+    // has no exposure rule to check and is not a source.
+    let error = serde_json::from_value::<EnvironmentCredentialSource>(serde_json::json!({
+        "type": "direct_secret",
+        "secret_id": "authsec_1",
+    }));
+    assert!(error.is_err());
+}

@@ -26,6 +26,11 @@ services; see [Configure a deployment](configuration.md).
   `environments`, `profiles`, and `deployment/api-keys` or
   `deployment/environment-providers` if you declare keys or enable providers.
   See [API keys and service access](../access-and-security/api-keys-and-service-access.md).
+- A key that holds `deployment/api-keys` can declare a key with any authority
+  and replace the secret of any key, so it is as powerful as the bootstrap
+  key whatever its other groups are. If your documents declare keys, keep the
+  applying key in the pipeline's secret store only; see
+  [Key management is full authority](../access-and-security/api-keys-and-service-access.md#key-management-is-full-authority).
 - Connect the CLI to the runtime with `LIGHTSPEED_API_URL` and
   `LIGHTSPEED_API_KEY`, or a saved connection.
 
@@ -43,6 +48,8 @@ handle: research
 credentials:
   - grantId: tracker-token
     displayName: Issue tracker
+    # Bound into build-box below, whose commands receive the plain token.
+    exposure: retrievable
     tokenFrom: { env: TRACKER_TOKEN }
 
 mcpServers:
@@ -125,6 +132,8 @@ An entry differs from the API input in these ways only:
 - `expectedRevision`, `dryRun` and `requestId` are not accepted. `apply`
   supplies them.
 - The universe and a key's `scope` are implied by the document.
+- A key's `groups` are written as a list, or as `groups: all`; see
+  [Declare a key's groups](#declare-a-keys-groups).
 - A profile's instructions are written as text, not as a blob reference.
 - An entry can live in a file of its own: `- file: profiles/reviewer.json`,
   relative to the document. A profile written by `lightspeed profile export`
@@ -132,6 +141,40 @@ An entry differs from the API input in these ways only:
 
 An unknown field is an error, at every level, so a misspelled field never
 silently does nothing.
+
+### Give a model endpoint or an MCP server a header
+
+A model provider's endpoint and an MCP server can each send extra headers,
+written the same way under `headers`. Each is a tagged value: a `literal`,
+which every reader of the provider or server sees, or a `credential`, which
+names a token credential whose current token the runtime sends and never
+returns. A header that carries a secret by convention (`api-key`, `x-api-key`,
+and on a model endpoint `proxy-authorization`) must be a `credential`; `diff`
+reports a literal under one of these names before anything is written:
+
+```yaml
+credentials:
+  - grantId: gateway-key
+    displayName: Model gateway
+    tokenFrom: { env: GATEWAY_KEY }
+
+providers:
+  - providerId: model:gateway
+    config:
+      type: modelEndpoint
+      endpoint:
+        baseUrl: https://models.example.com/v1
+        apiKinds: ["openai:completions"]
+        headers:
+          api-key: { type: credential, grantId: gateway-key }
+          x-title: { type: literal, value: Lightspeed }
+```
+
+The credential a header names is a reference like any other: it must be in the
+document or already in the universe, and `apply` writes credentials before the
+providers that use them. It can stay `brokered`, because the runtime attaches
+it to its own request. Header names are compared in lowercase, which is how the
+runtime stores them, so one header written in two spellings is an error.
 
 ### Validate a document as you write it
 
@@ -154,6 +197,33 @@ It belongs to the CLI version that printed it; regenerate it when you
 upgrade. An included file holds a single entry without the envelope, so the
 schema does not apply to it directly.
 
+### Declare a key's groups
+
+An `apiKeys` entry always states the key's `groups`. An entry without them is
+an error in `diff` and `apply`, before anything is read or written: nothing
+fills them in.
+
+```yaml
+apiKeys:
+  - keyId: release-bot
+    displayName: Release bot
+    groups: [session, profiles]
+    secretFrom: { env: RELEASE_BOT_KEY }
+```
+
+`groups: all` asks for every group the key's scope allows: the universe
+groups in a universe document, and the deployment groups as well in a
+deployment document. The runtime stores the resulting list with the key.
+`diff` compares that stored list with what `all` means in the release of the
+CLI you run. After an upgrade that adds a method group, a key declared with
+`all` therefore shows `groups` as a pending update, and the next `apply`
+gives the key the new group. A key declared with a list keeps exactly that
+list.
+
+`export` always writes the list a key holds, never `all`, so applying an
+exported document later does not widen a key. Write `all` yourself where you
+want a key to follow new releases.
+
 ### The deployment's own resources
 
 API keys with deployment scope go in a document of their own:
@@ -164,6 +234,7 @@ kind: deployment
 apiKeys:
   - keyId: platform
     displayName: Platform
+    groups: all
     assertActor: true
     secretFrom: { env: PLATFORM_API_KEY }
 ```
@@ -260,11 +331,25 @@ nothing at all:
 
 | Resource | Fixed |
 | --- | --- |
+| Credential | `exposure`; declare the credential under a new id. |
 | Registration key | `identityMode` |
 | API key | `assertActor` |
 | Environment | `source` |
 | A revoked key | Stays revoked; declare the key under a new id. |
 | A closed environment | Its id stays taken; declare the environment under a new id. |
+
+A credential's `exposure` says where its plain token may go. `brokered`, the
+default, keeps it inside the runtime, which attaches it to its own requests:
+an MCP server's credential or header, or a model endpoint's header, needs
+nothing more. `retrievable` also
+lets the token be bound into an environment and leased by trusted services.
+A document that binds a credential into an environment (`source: { type:
+authGrant }` in an environment's `credentials` list) must declare that
+credential `exposure: retrievable`, or name one that already is. Otherwise
+`diff` and `apply` stop before anything is written and name the binding and
+the credential. A provider's credential (`authProviderCredential`) can be
+bound only when the provider is a model API key provider; see
+[Environment credentials](../environments/credentials.md#choose-a-credential-source).
 
 `apply` never releases the daemon bound to a declared environment and never
 renames a universe. Both stay explicit commands:
@@ -375,5 +460,3 @@ be deployed in either order.
   document can only enable an existing one.
 - Credentials created through an OAuth sign-in cannot be declared. A document
   can refer to one by its `grantId`.
-- An environment credential that stores its secret directly on the binding
-  cannot be declared. Bind a credential or a provider credential by id.

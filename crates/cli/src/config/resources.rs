@@ -129,6 +129,12 @@ pub(crate) trait Resource: Send + Sync {
     fn normalize(&self, entry: Value) -> Result<Value>;
     /// Take over values the server filled in below the top level.
     fn adopt(&self, _entry: &mut Value, _live: &Value) {}
+    /// The entry as it is compared with the current state, where what an
+    /// entry states depends on what the document addresses. The entry
+    /// itself is what `apply` writes.
+    fn in_target(&self, _target: &Target, entry: &Value) -> Value {
+        entry.clone()
+    }
     /// An entry that declares the absence of the resource.
     fn declares_absence(&self, _entry: &Value) -> bool {
         false
@@ -263,6 +269,12 @@ impl Resource for Credentials {
     fn secret_field(&self) -> Option<&'static str> {
         Some("token")
     }
+    /// Exposure says where the plain token may go and is decided when the
+    /// credential is created; the runtime refuses to change it, so `apply`
+    /// reports the change as a conflict instead of attempting it.
+    fn fixed_fields(&self) -> &'static [&'static str] {
+        &["exposure"]
+    }
     fn server_filled(&self) -> &'static [&'static str] {
         &["providerId"]
     }
@@ -339,6 +351,34 @@ impl Resource for Credentials {
     }
 }
 
+// --- request headers ---------------------------------------------------------
+
+/// Brings the configured request headers of an entry into the form the
+/// runtime stores, for an MCP server and a model endpoint alike. Names are
+/// stored lowercased, so an entry is compared under the same spelling, and
+/// one header written in two cases would be two values for one name. A secret
+/// written as a literal is refused here as well as by the runtime, so `diff`
+/// reports it before `apply` has written anything.
+fn normalize_request_headers(headers: Option<&mut Value>, what: &str) -> Result<()> {
+    let Some(headers) = headers.and_then(Value::as_object_mut) else {
+        return Ok(());
+    };
+    let mut lowercased = Map::new();
+    for (name, value) in std::mem::take(headers) {
+        let lower = name.to_ascii_lowercase();
+        if value["type"] == "literal" && api::is_credential_only_header(&lower) {
+            bail!(
+                "{what} `{lower}` carries a secret: declare the value under `credentials` and write the header as {{ type: credential, grantId: ... }}"
+            );
+        }
+        if lowercased.insert(lower.clone(), value).is_some() {
+            bail!("{what} `{lower}` is given more than once; header names are case-insensitive");
+        }
+    }
+    *headers = lowercased;
+    Ok(())
+}
+
 // --- providers ---------------------------------------------------------------
 
 /// Model providers and GitHub Apps (`auth/providers/put`). A provider's
@@ -353,6 +393,25 @@ impl Providers {
         }
         if dry_run {
             params = with(params, "dryRun", json!(true));
+        }
+        params
+    }
+
+    /// The dry run that says whether the stored credential would be
+    /// replaced. The answer depends on the credential alone, and the runtime
+    /// checks every credential a header names even in a dry run. A document
+    /// may declare such a credential itself, and it is written only when the
+    /// plan is applied, so header credentials are left out of the question.
+    /// The reference check has already found each of them in the document or
+    /// in the target, and the runtime checks them when the provider is
+    /// written.
+    fn credential_probe(entry: &Value, credential: Option<&str>) -> Value {
+        let mut params = Self::params(entry, credential, true);
+        if let Some(headers) = params
+            .pointer_mut("/config/endpoint/headers")
+            .and_then(Value::as_object_mut)
+        {
+            headers.retain(|_, header| header["type"] != "credential");
         }
         params
     }
@@ -374,7 +433,12 @@ impl Resource for Providers {
     }
     fn normalize(&self, entry: Value) -> Result<Value> {
         let typed = strict::<api::AuthProviderPutParams>(entry)?;
-        Ok(without(typed, &["credential", "dryRun"]))
+        let mut entry = without(typed, &["credential", "dryRun"]);
+        normalize_request_headers(
+            entry.pointer_mut("/config/endpoint/headers"),
+            "endpoint header",
+        )?;
+        Ok(entry)
     }
     fn input_schema(&self, generator: &mut schemars::SchemaGenerator) -> Value {
         schema_of::<api::AuthProviderPutParams>(generator)
@@ -431,7 +495,7 @@ impl Resource for Providers {
         _live: &Live,
     ) -> Result<bool> {
         let response = target
-            .call("auth/providers/put", Self::params(entry, secret, true))
+            .call("auth/providers/put", Self::credential_probe(entry, secret))
             .await?;
         Ok(response["credentialReplaced"] == json!(true))
     }
@@ -526,7 +590,9 @@ impl Resource for McpServers {
         "serverId"
     }
     fn normalize(&self, entry: Value) -> Result<Value> {
-        strict::<api::McpServerInput>(entry)
+        let mut entry = strict::<api::McpServerInput>(entry)?;
+        normalize_request_headers(entry.get_mut("headers"), "MCP server header")?;
+        Ok(entry)
     }
     fn input_schema(&self, generator: &mut schemars::SchemaGenerator) -> Value {
         schema_of::<api::McpServerInput>(generator)
@@ -976,13 +1042,7 @@ impl Resource for EnvironmentCredentials {
         true
     }
     fn normalize(&self, entry: Value) -> Result<Value> {
-        let typed = strict::<api::EnvironmentCredentialBindParams>(entry)?;
-        if text(&typed["source"], "type") == Some("directSecret") {
-            bail!(
-                "a directly stored secret cannot be declared; bind a credential or a provider credential by id"
-            );
-        }
-        Ok(typed)
+        strict::<api::EnvironmentCredentialBindParams>(entry)
     }
     fn input_schema(&self, generator: &mut schemars::SchemaGenerator) -> Value {
         schema_of::<api::EnvironmentCredentialBindParams>(generator)
@@ -1020,7 +1080,7 @@ impl Resource for EnvironmentCredentials {
                             "envName": env_name,
                             "source": view["source"],
                         }),
-                        exportable: text(&view["source"], "type") != Some("directSecret"),
+                        exportable: true,
                         ..Live::default()
                     },
                 );
@@ -1184,6 +1244,31 @@ impl ApiKeys {
             json!({ "kind": "universe", "universeId": target.universe_id()? })
         })
     }
+
+    /// An entry with `groups: all` written out as the groups a key of the
+    /// document's scope may hold. A stored key holds a concrete set, so this
+    /// is the form the two are compared in: when a release adds a group, a
+    /// key declared with `all` shows `groups` as a pending change until
+    /// `apply` declares it again.
+    fn with_concrete_groups(entry: &Value, deployment: bool) -> Value {
+        if entry.get("groups") != Some(&json!(api::API_KEY_GROUPS_ALL)) {
+            return entry.clone();
+        }
+        // Which groups a universe key may hold does not depend on the
+        // universe.
+        let scope = if deployment {
+            api::AccessScope::Deployment
+        } else {
+            api::AccessScope::Universe {
+                universe_id: uuid::Uuid::nil(),
+            }
+        };
+        with(
+            entry.clone(),
+            "groups",
+            json!(api::ApiKeyGroups::All.resolve(scope)),
+        )
+    }
 }
 
 #[async_trait]
@@ -1200,12 +1285,15 @@ impl Resource for ApiKeys {
     fn fixed_fields(&self) -> &'static [&'static str] {
         &["assertActor"]
     }
-    fn server_filled(&self) -> &'static [&'static str] {
-        &["groups"]
-    }
     fn normalize(&self, entry: Value) -> Result<Value> {
         if entry.get("scope").is_some() {
             bail!("unknown field `scope`: a key's scope is the document it is declared in");
+        }
+        // A key's authority is always written down: nothing fills it in.
+        if entry.get("groups").is_none_or(Value::is_null) {
+            bail!(
+                "`groups` is missing: list the method groups the key may call, or write `groups: all` for every group its scope allows"
+            );
         }
         let placed = with(
             with(entry, "secret", json!("")),
@@ -1220,6 +1308,9 @@ impl Resource for ApiKeys {
     }
     fn undeclared_fields(&self) -> &'static [&'static str] {
         &["scope"]
+    }
+    fn in_target(&self, target: &Target, entry: &Value) -> Value {
+        Self::with_concrete_groups(entry, target.deployment)
     }
     async fn read(&self, target: &Target, _wanted: &Wanted) -> Result<BTreeMap<String, Live>> {
         let mut live = BTreeMap::new();
@@ -1321,6 +1412,159 @@ mod tests {
     }
 
     #[test]
+    fn an_mcp_server_header_is_compared_under_its_lowercase_name() {
+        let server = |headers: Value| {
+            McpServers.normalize(json!({
+                "serverId": "tracker",
+                "serverUrl": "https://tracker.example.com/mcp",
+                "defaultServerLabel": "tracker",
+                "headers": headers,
+            }))
+        };
+        // The stored names are lowercase, so the entry equals what a read
+        // returns and declaring it again changes nothing.
+        let entry = server(json!({
+            "X-Api-Key": { "type": "credential", "grantId": "tracker-token" },
+            "X-Tenant": { "type": "literal", "value": "acme" },
+        }))
+        .unwrap();
+        assert_eq!(
+            entry["headers"],
+            json!({
+                "x-api-key": { "type": "credential", "grantId": "tracker-token" },
+                "x-tenant": { "type": "literal", "value": "acme" },
+            })
+        );
+
+        let error = server(json!({
+            "X-Tenant": { "type": "literal", "value": "a" },
+            "x-tenant": { "type": "literal", "value": "b" },
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("x-tenant"), "{error}");
+
+        // A name that carries a secret takes a credential, in any spelling:
+        // a plain value would be returned to every reader of the server.
+        for name in ["api-key", "X-Api-Key"] {
+            let error = server(json!({ name: { "type": "literal", "value": "sk-plain" } }))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(&name.to_ascii_lowercase()), "{error}");
+            assert!(!error.contains("sk-plain"), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_provider_endpoint_header_is_typed_and_compared_under_its_lowercase_name() {
+        let provider = |headers: Value| {
+            Providers.normalize(json!({
+                "providerId": "model:router",
+                "config": {
+                    "type": "modelEndpoint",
+                    "endpoint": {
+                        "baseUrl": "https://router.example/v1",
+                        "apiKinds": ["openai:completions"],
+                        "headers": headers,
+                    },
+                },
+            }))
+        };
+        let entry = provider(json!({
+            "X-Api-Key": { "type": "credential", "grantId": "router-key" },
+            "x-title": { "type": "literal", "value": "Lightspeed" },
+        }))
+        .unwrap();
+        // The stored names are lowercase, so the entry equals what a read
+        // returns and declaring it again changes nothing.
+        assert_eq!(
+            entry["config"]["endpoint"]["headers"],
+            json!({
+                "x-api-key": { "type": "credential", "grantId": "router-key" },
+                "x-title": { "type": "literal", "value": "Lightspeed" },
+            })
+        );
+
+        // A header is a tagged value; a bare string names no value source.
+        provider(json!({ "x-title": "Lightspeed" })).unwrap_err();
+
+        let error = provider(json!({
+            "X-Title": { "type": "literal", "value": "a" },
+            "x-title": { "type": "literal", "value": "b" },
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("x-title"), "{error}");
+
+        // A name that carries a secret takes a credential, in any spelling.
+        for name in ["api-key", "X-Api-Key", "Proxy-Authorization"] {
+            let error = provider(json!({ name: { "type": "literal", "value": "sk-plain" } }))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(&name.to_ascii_lowercase()), "{error}");
+            assert!(!error.contains("sk-plain"), "{error}");
+            provider(json!({ name: { "type": "credential", "grantId": "router-key" } })).unwrap();
+        }
+
+        // A provider without an endpoint has no headers to bring into form.
+        Providers
+            .normalize(json!({ "providerId": "model:openai", "config": { "type": "modelApiKey" } }))
+            .unwrap();
+    }
+
+    #[test]
+    fn the_credential_comparison_leaves_out_header_credentials() {
+        // The document may declare `router-key` itself; it does not exist
+        // when the plan is made, and the runtime would refuse a dry run that
+        // names it.
+        let entry = Providers
+            .normalize(json!({
+                "providerId": "model:router",
+                "config": {
+                    "type": "modelApiKey",
+                    "endpoint": {
+                        "baseUrl": "https://router.example/v1",
+                        "apiKinds": ["openai:completions"],
+                        "headers": {
+                            "api-key": { "type": "credential", "grantId": "router-key" },
+                            "x-title": { "type": "literal", "value": "Lightspeed" },
+                        },
+                    },
+                },
+            }))
+            .unwrap();
+
+        let probe = Providers::credential_probe(&entry, Some("model-key"));
+        assert_eq!(probe["dryRun"], true);
+        assert_eq!(probe["credential"], "model-key");
+        assert_eq!(
+            probe["config"]["endpoint"]["headers"],
+            json!({ "x-title": { "type": "literal", "value": "Lightspeed" } })
+        );
+        // What is left is still a declaration the runtime accepts.
+        strict::<api::AuthProviderPutParams>(probe).unwrap();
+
+        // The write names every header.
+        let write = Providers::params(&entry, Some("model-key"), false);
+        assert_eq!(
+            write["config"]["endpoint"]["headers"]["api-key"],
+            json!({ "type": "credential", "grantId": "router-key" })
+        );
+        assert!(write.get("dryRun").is_none());
+
+        // A provider without an endpoint is asked as it is.
+        let bare = json!({ "providerId": "model:openai", "config": { "type": "modelApiKey" } });
+        assert_eq!(
+            Providers::credential_probe(&bare, None),
+            json!({
+                "providerId": "model:openai",
+                "config": { "type": "modelApiKey" },
+                "dryRun": true,
+            })
+        );
+    }
+
+    #[test]
     fn unknown_fields_are_refused_at_every_level() {
         let nested = Credentials
             .normalize(json!({ "grantId": "t", "displayNam": "typo" }))
@@ -1359,6 +1603,8 @@ mod tests {
         assert!(key.get("secret").is_none() && key.get("scope").is_none());
         assert_eq!(key["assertActor"], false);
 
+        // A binding names a credential or a model provider; a stored secret
+        // is not a source.
         assert!(
             EnvironmentCredentials
                 .normalize(json!({
@@ -1368,6 +1614,19 @@ mod tests {
                 }))
                 .is_err()
         );
+        for source in [
+            json!({ "type": "authGrant", "grantId": "repo-token" }),
+            json!({ "type": "authProviderCredential", "providerId": "model:openai" }),
+        ] {
+            let binding = EnvironmentCredentials
+                .normalize(json!({
+                    "environmentId": "build-box",
+                    "envName": "TOKEN",
+                    "source": source.clone(),
+                }))
+                .unwrap();
+            assert_eq!(binding["source"], source);
+        }
         assert!(
             Profiles
                 .normalize(json!({
@@ -1376,6 +1635,64 @@ mod tests {
                 }))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_key_always_states_its_groups() {
+        for unstated in [
+            json!({ "keyId": "k", "displayName": "K" }),
+            json!({ "keyId": "k", "displayName": "K", "groups": null }),
+        ] {
+            let error = ApiKeys.normalize(unstated).unwrap_err().to_string();
+            assert!(error.contains("`groups` is missing"), "{error}");
+        }
+        for refused in [json!([]), json!("everything"), json!(["session", "nope"])] {
+            assert!(
+                ApiKeys
+                    .normalize(json!({ "keyId": "k", "displayName": "K", "groups": refused }))
+                    .is_err(),
+                "{refused}"
+            );
+        }
+        // Nothing fills the groups in, so nothing is accepted in their place.
+        assert!(ApiKeys.server_filled().is_empty());
+
+        let all = ApiKeys
+            .normalize(json!({ "keyId": "k", "displayName": "K", "groups": "all" }))
+            .unwrap();
+        assert_eq!(all["groups"], "all");
+        // A list is a set, held in the order a key view reports it.
+        let listed = ApiKeys
+            .normalize(
+                json!({ "keyId": "k", "displayName": "K", "groups": ["profiles", "session", "profiles"] }),
+            )
+            .unwrap();
+        assert_eq!(listed["groups"], json!(["session", "profiles"]));
+    }
+
+    #[test]
+    fn all_is_compared_as_the_groups_the_documents_scope_allows() {
+        let all = ApiKeys
+            .normalize(json!({ "keyId": "k", "displayName": "K", "groups": "all" }))
+            .unwrap();
+        let universe = ApiKeys::with_concrete_groups(&all, false);
+        let deployment = ApiKeys::with_concrete_groups(&all, true);
+        let names = |entry: &Value| -> Vec<String> {
+            serde_json::from_value(entry["groups"].clone()).unwrap()
+        };
+        assert!(names(&universe).contains(&"session".to_owned()));
+        assert!(
+            names(&universe)
+                .iter()
+                .all(|group| !group.starts_with("deployment/"))
+        );
+        assert_eq!(names(&deployment).len(), api::MethodGroup::ALL.len());
+        // Only the groups change, and only when they are `all`.
+        assert_eq!(universe["displayName"], "K");
+        let listed = ApiKeys
+            .normalize(json!({ "keyId": "k", "displayName": "K", "groups": ["session"] }))
+            .unwrap();
+        assert_eq!(ApiKeys::with_concrete_groups(&listed, true), listed);
     }
 
     #[test]

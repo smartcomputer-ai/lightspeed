@@ -238,7 +238,7 @@ puts all of this together in a small working page.
 
 | Error | Meaning |
 | --- | --- |
-| `LightspeedRpcError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. |
+| `LightspeedRpcError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. A missing or invalid API key is `unauthenticated`, which the gateway answers with HTTP 401 before reading the request. |
 | `LightspeedTransportError` | The request failed or the response was unusable. `status` and `body` are set when there was a response, `cause` keeps the underlying failure, and `transient` says the same request may succeed later. |
 | The signal's reason | You aborted, or your timeout passed. Check `error.name` for `AbortError` or `TimeoutError`. |
 

@@ -124,6 +124,7 @@ handle: {handle}
 credentials:
   - grantId: tracker-token
     displayName: Issue tracker
+    exposure: retrievable
     tokenFrom: {{ env: LIVE_TRACKER_TOKEN }}
 providers:
   - providerId: model:primary
@@ -452,4 +453,124 @@ async fn a_deployment_key_is_declared_and_its_fixed_settings_are_a_conflict() {
         !exported.contains(&key_id),
         "a revoked key is not configuration"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires a running authenticated runtime; see the module documentation"]
+async fn a_provider_header_names_a_credential_the_same_document_adds() {
+    let live = Live::from_env();
+    let handle = format!(
+        "config-live-h-{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..10]
+    );
+    let file = live.path("headers.yaml");
+    let provider = |headers: &str| {
+        format!(
+            r#"  - providerId: model:gateway
+    config:
+      type: modelEndpoint
+      endpoint:
+        baseUrl: https://models.example.com/v1
+        apiKinds: ["openai:completions"]
+        headers:
+          x-title: {{ type: literal, value: Lightspeed }}
+{headers}"#
+        )
+    };
+    let document = |credentials: &str, headers: &str| {
+        format!(
+            "schemaVersion: 1\nkind: universe\nhandle: {handle}\n{credentials}providers:\n{}",
+            provider(headers)
+        )
+    };
+    let secrets = [("LIVE_GATEWAY_KEY", "gateway-secret-1")];
+    let file_arg = file.to_str().unwrap();
+
+    // The provider exists before any credential does.
+    std::fs::write(&file, document("", "")).unwrap();
+    let created = live.ok(&["config", "apply", "-f", file_arg], &[]);
+    assert!(
+        created.contains("created     providers/model:gateway"),
+        "{created}"
+    );
+
+    // A plain value under a name that carries a secret is refused while the
+    // document is checked: nothing is read or written.
+    std::fs::write(
+        &file,
+        document(
+            "",
+            "          Api-Key: { type: literal, value: gateway-secret-1 }\n",
+        ),
+    )
+    .unwrap();
+    let (status, plan) = live.diff_status(&file, &[]);
+    assert_eq!(status, Some(1), "{plan}");
+    assert!(!plan.contains("gateway-secret-1"), "{plan}");
+
+    // The document adds the credential and names it from the header of the
+    // provider that already exists. The credential is not in the universe
+    // while the plan is made; the plan still succeeds and orders the writes.
+    std::fs::write(
+        &file,
+        document(
+            "credentials:\n  - grantId: gateway-key\n    tokenFrom: { env: LIVE_GATEWAY_KEY }\n",
+            "          Api-Key: { type: credential, grantId: gateway-key }\n",
+        ),
+    )
+    .unwrap();
+    let (status, plan) = live.diff_status(&file, &secrets);
+    assert_eq!(status, Some(2), "{plan}");
+    assert!(
+        plan.contains("create      credentials/gateway-key"),
+        "{plan}"
+    );
+    assert!(
+        plan.contains("update      providers/model:gateway (config)"),
+        "{plan}"
+    );
+    let applied = live.ok(&["config", "apply", "-f", file_arg], &secrets);
+    assert!(!applied.contains("gateway-secret-1"), "{applied}");
+    let (status, plan) = live.diff_status(&file, &secrets);
+    assert_eq!(status, Some(0), "{plan}");
+
+    // What is stored names the credential under the lowercased header and
+    // holds no token, in a read and in an export.
+    let providers = live
+        .call_as(&handle, "auth/providers/list", json!({}))
+        .await;
+    assert_eq!(
+        providers["providers"][0]["config"]["endpoint"]["headers"],
+        json!({
+            "api-key": { "type": "credential", "grantId": "gateway-key" },
+            "x-title": { "type": "literal", "value": "Lightspeed" },
+        })
+    );
+    let exported = live.export(&handle);
+    assert_eq!(
+        exported["providers"][0]["config"]["endpoint"]["headers"]["api-key"],
+        json!({ "type": "credential", "grantId": "gateway-key" })
+    );
+    assert!(
+        !exported.to_string().contains("gateway-secret-1"),
+        "an export never holds a secret"
+    );
+
+    // A header that names a credential found nowhere is a dangling reference.
+    std::fs::write(
+        &file,
+        document(
+            "",
+            "          Api-Key: { type: credential, grantId: no-such-key }\n",
+        ),
+    )
+    .unwrap();
+    let (status, plan) = live.diff_status(&file, &[]);
+    assert_eq!(status, Some(1), "{plan}");
+    assert!(
+        plan.contains("providers/model:gateway refers to credentials/no-such-key"),
+        "{plan}"
+    );
+
+    live.delete_universe(&handle).await;
 }

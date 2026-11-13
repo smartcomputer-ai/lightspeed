@@ -20,11 +20,11 @@ use temporal_runtime::{
     DeploymentStores, UniverseRuntime,
     gateway::{
         GatewayDeploymentApi,
-        authentication::authenticate,
+        authentication::{authorize, resolve_caller},
         request_context::{RequestContext, with_request_context as calling},
     },
 };
-use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
+use temporal_workflow::{TemporalConnectionConfig, connect_temporal};
 use uuid::Uuid;
 
 fn deployment_caller() -> RequestContext {
@@ -52,14 +52,10 @@ async fn live_runtime() -> anyhow::Result<(Arc<UniverseRuntime>, sqlx::PgPool)> 
             "LIGHTSPEED_TEST_POSTGRES_URL or LIGHTSPEED_POSTGRES_URL must be set; run ./dev.sh infra and source scripts/dev/env.sh"
         );
     }
-    let temporal_target =
-        std::env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-    let namespace = std::env::var("TEMPORAL_NAMESPACE")
-        .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
     let stores = DeploymentStores::from_env().await?;
     let pool = stores.pool().clone();
     let runtime = Arc::new(UniverseRuntime::new(
-        connect_temporal(&temporal_target, &namespace).await?,
+        connect_temporal(&TemporalConnectionConfig::from_env()?).await?,
         format!("declared-keys-live-{}", Uuid::new_v4().simple()),
         Some("http://127.0.0.1:18080".to_owned()),
         stores,
@@ -92,7 +88,7 @@ async fn a_declared_api_key_answers_to_the_supplied_secret() -> anyhow::Result<(
                 operator.put_api_key(DeploymentApiKeyPutParams {
                     scope,
                     key_id: key_id.to_owned(),
-                    groups: Some(groups.to_vec()),
+                    groups: groups.iter().copied().collect(),
                     assert_actor,
                     display_name: "Release bot".to_owned(),
                     secret: secret.to_owned(),
@@ -103,7 +99,7 @@ async fn a_declared_api_key_answers_to_the_supplied_secret() -> anyhow::Result<(
         let reaches = async |secret: &str, method: &str| {
             let mut headers = HeaderMap::new();
             headers.insert("authorization", format!("Bearer {secret}").parse().unwrap());
-            authenticate(&keys, &headers, method, 1).await
+            authorize(resolve_caller(&keys, &headers, 1).await?, method)
         };
         let first = secret("lsk_", 1);
         let second = secret("lsk_", 2);
@@ -211,7 +207,7 @@ async fn a_declared_api_key_answers_to_the_supplied_secret() -> anyhow::Result<(
                 operator.create_api_key(DeploymentApiKeyCreateParams {
                     scope,
                     key_id: Some(key_id.to_owned()),
-                    groups: None,
+                    groups: api::ApiKeyGroups::All,
                     assert_actor: false,
                     display_name: "Generated".to_owned(),
                 }),

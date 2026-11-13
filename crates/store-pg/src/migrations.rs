@@ -22,6 +22,7 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "auth_clients",
     "auth_flows",
     "auth_grants",
+    "auth_provider_headers",
     "auth_providers",
     "auth_secrets",
     "bot_events",
@@ -150,9 +151,24 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "declared_registered_environments",
         sql: include_str!("../migrations/018_declared_registered_environments.sql"),
     },
+    EmbeddedMigration {
+        version: 19,
+        name: "environment_credential_sources",
+        sql: include_str!("../migrations/019_environment_credential_sources.sql"),
+    },
+    EmbeddedMigration {
+        version: 20,
+        name: "auth_provider_headers",
+        sql: include_str!("../migrations/020_auth_provider_headers.sql"),
+    },
+    EmbeddedMigration {
+        version: 21,
+        name: "api_key_attribution",
+        sql: include_str!("../migrations/021_api_key_attribution.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 18;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 21;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

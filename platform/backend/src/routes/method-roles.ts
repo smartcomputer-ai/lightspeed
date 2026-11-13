@@ -44,6 +44,7 @@ export const METHOD_ROLES: Readonly<Record<string, UniverseRole>> = {
   "bots/triggers/list": "viewer",
   "bots/triggers/put": "operator",
   "bots/triggers/read": "viewer",
+  "bots/triggers/secrets/read": "operator",
   "channels/accounts/create": "operator",
   "channels/accounts/delete": "operator",
   "channels/accounts/list": "viewer",

@@ -16,7 +16,7 @@ use temporal_runtime::{
         request_context::{RequestContext, with_request_context as calling},
     },
 };
-use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
+use temporal_workflow::{TemporalConnectionConfig, connect_temporal};
 use uuid::Uuid;
 
 fn deployment_caller() -> RequestContext {
@@ -34,14 +34,10 @@ async fn universes_are_addressed_by_uuid_or_handle() -> anyhow::Result<()> {
             "LIGHTSPEED_TEST_POSTGRES_URL or LIGHTSPEED_POSTGRES_URL must be set; run ./dev.sh infra and source scripts/dev/env.sh"
         );
     }
-    let temporal_target =
-        std::env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-    let namespace = std::env::var("TEMPORAL_NAMESPACE")
-        .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
     let stores = DeploymentStores::from_env().await?;
     let pool = stores.pool().clone();
     let runtime = Arc::new(UniverseRuntime::new(
-        connect_temporal(&temporal_target, &namespace).await?,
+        connect_temporal(&TemporalConnectionConfig::from_env()?).await?,
         format!("deployment-universes-live-{}", Uuid::new_v4().simple()),
         Some("http://127.0.0.1:18080".to_owned()),
         stores,

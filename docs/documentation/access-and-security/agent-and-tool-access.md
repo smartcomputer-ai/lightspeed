@@ -52,6 +52,12 @@ including its delegated descendants, and manages its own bot. It cannot
 control another bot's sessions or reconfigure that bot. A delegated session
 controls itself and its direct children, not its parent or siblings.
 
+Managing its own bot does not put trigger secrets into a bot's conversations.
+The trigger list a bot reads never holds a webhook ingest URL or a chat
+pairing code. The call that creates one returns it once, and only to the
+bot's Main conversation, so a conversation that serves one chat, key or event
+cannot be talked into revealing how to reach the bot.
+
 Consider this delegation tree:
 
 ```mermaid
@@ -110,6 +116,36 @@ share its real filesystem and the credentials injected into their processes.
 A private conversation does not make either resource private. The
 [environment credential guide](../environments/credentials.md) explains
 injection, renewal, and copies retained by running processes.
+
+An environment attachment's access level bounds the tools, not the files.
+**Read files** reaches everything the daemon's operating-system user can
+read under the daemon's filesystem root, which is the whole machine unless
+the daemon runs with a narrower root. File tools cannot reach the daemon's
+state directory, its registration key file, or, on Linux, the `/proc` and
+`/sys` filesystems, so reading files does not expose the daemon's identity
+or the environment variables of running processes. Any other secret stored
+as a file that user can open is readable, such as a cloud credential file or
+a service account token mounted into a pod. A session that may run commands
+can read all of it, those three places included. See
+[Choose the access level](../environments/using-environments.md#choose-the-access-level).
+
+A credential's exposure decides whether it can reach a machine at all. A
+brokered credential stays inside the runtime, which attaches it to its own
+requests to an MCP server or a model endpoint; it cannot be bound into an
+environment, so no process an agent starts receives it. Only a credential
+created as retrievable, or the API key of a model provider, can be bound.
+Treat a retrievable credential as readable by every session that may run
+commands in an environment it is bound to.
+
+## What the web app displays from agent output
+
+The web app renders replies, reasoning, and file and blob previews as
+Markdown. That text can come from a model, a tool result or a file, so it
+cannot make the browser contact another site just by being displayed. An image
+is shown only when it was recorded with the session or is stored in its
+files. An image that names any other address appears as a link with its alt
+text and the host it points to, and nothing is fetched until someone follows
+the link. Raw HTML in Markdown is shown as text.
 
 ## Approve and stop work explicitly
 

@@ -64,15 +64,15 @@ On the server host, configure the runtime stores and secrets as described in
 
 ```bash
 lightspeed-runtime migrate
-lightspeed-runtime api-key provision --name "Initial operator"
+lightspeed-runtime api-key provision --name "Initial operator" --all-groups
 ```
 
 From source, replace `lightspeed-runtime` with
-`cargo run -p temporal-runtime --`. The provision command prints JSON containing
-the secret; capture it securely. It creates a deployment key named `bootstrap`
-with every method group and no actor assertion. Choose another name with
-`--key-id`, and limit the key with repeated `--group`. No universe is needed
-yet.
+`cargo run -p temporal-runtime --`. The provision command prints JSON that
+contains the generated secret; capture it securely. It creates a deployment
+key with the id `bootstrap`, every method group and no actor assertion. Choose
+another id with `--key-id`. The groups are always stated: `--all-groups`, or
+repeated `--group` for a narrower key. No universe is needed yet.
 
 To supply the key from deployment secret configuration, set
 `LIGHTSPEED_BOOTSTRAP_API_KEY` for the provision command. Its format is `lsk_`
@@ -81,6 +81,8 @@ generate-secret` prints one. The command stores only its hash and metadata in
 the normal key store, and declares the key: repeating it with the same secret
 changes nothing, changed groups are applied, and a different secret replaces
 the previous one at once. A revoked key and a changed actor flag fail.
+The JSON printed for a supplied secret holds the key's id and prefix and what
+changed, and no `secret` field: the value you supplied is the secret.
 `--require-existing` only verifies that the supplied key exists as described.
 The runtime never authenticates directly against this environment variable,
 and ordinary server startup does not provision keys.
@@ -131,7 +133,9 @@ for old overrides there if the effective connection is unexpected.
 Saved connections live in `$XDG_CONFIG_HOME/lightspeed` or
 `$HOME/.config/lightspeed`. `LIGHTSPEED_CONFIG_DIR` overrides that directory.
 `connect status` groups the effective connection and key authority, followed by
-the selected universe's current handle and UUID. `universe status` shows just the
+the selected universe's current handle and UUID. The key is shown by its key
+id, which is what records attribute its requests to, and by the display prefix
+of the secret in use. `universe status` shows just the
 active universe. Both resolve the effective selection, including environment
 and command-line overrides or a universe bound by the server. Status reports
 when no universe is selected. A selection carries either the UUID or the
@@ -185,8 +189,25 @@ lightspeed model provider put my-provider \
   --api-key-env MY_PROVIDER_KEY
 ```
 
-Repeat `--api-kind` for multiple supported APIs and `--header NAME=VALUE` for
-non-secret headers. For a credentialless endpoint, use `--no-auth` instead of
+Repeat `--api-kind` for multiple supported APIs. An extra header is either
+`--header NAME=VALUE`, a plain value that every reader of the provider sees, or
+`--header-credential NAME=GRANT_ID`, which sends the current token of a saved
+token credential and never returns it. `api-key`, `x-api-key`, and
+`proxy-authorization` are accepted only as `--header-credential`.
+`lightspeed mcp server put` takes the same two flags for an MCP server's
+request headers, with the same rule for `api-key` and `x-api-key`:
+
+```bash
+lightspeed credential put gateway-key --token-env GATEWAY_KEY
+lightspeed model provider put my-provider \
+  --base-url https://provider.example/v1 \
+  --api-kind openai:completions \
+  --no-auth \
+  --header-credential api-key=gateway-key \
+  --header X-Title=Lightspeed
+```
+
+For a credentialless endpoint, use `--no-auth` instead of
 a key source. `put` declares the provider: repeating it changes nothing. The
 runtime validates endpoint configuration; its loopback URLs
 refer to the runtime host. Provider setup requires the `auth` group and model
@@ -320,7 +341,11 @@ secret replaces the previous one at once. See
 
 Create prints the secret once; use `--json` for machine-readable output. Add `--group auth` if the client needs
 to configure provider credentials, and other groups for the resources it
-manages. Omitting groups grants every group allowed by the chosen scope.
+manages. `create` and `put` require the groups: repeated `--group`, or
+`--all-groups` for every group the chosen scope allows. The key stores the
+resulting list, so a later release that adds a group does not widen it.
+A key with `deployment/api-keys` can make a key with any authority; see
+[Key management is full authority](../access-and-security/api-keys-and-service-access.md#key-management-is-full-authority).
 These are integration credentials, not personal Platform login tokens.
 
 To add Platform, give it its own deployment service key with the required
@@ -388,6 +413,14 @@ when it differs, and repeating the command changes nothing. `--dry-run`
 reports what would change. `credential replace` swaps only the token and
 keeps the settings. Both read the token from `--token-file`, `--token-env` or
 `--token-stdin`, never from the command line.
+
+A credential is brokered unless it is created with `--retrievable`: its token
+stays inside the runtime, which attaches it to its own requests. Pass
+`--retrievable` to `credential put`, `credential login` or
+`credential github installation grant` for a credential that will be
+[bound into an environment](../environments/credentials.md) or leased by a
+trusted service. The choice is fixed when the credential is created;
+declaring the same id with the other exposure is refused.
 
 A session's attached workspaces, MCP servers and environments are part of its
 configuration. To change them, read the configuration with

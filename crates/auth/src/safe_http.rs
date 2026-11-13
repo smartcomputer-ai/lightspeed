@@ -52,9 +52,97 @@ impl PrivateNetworkAccess {
     }
 }
 
+/// The deployment's list of private destinations: exact hostnames and address
+/// ranges, as one comma-separated setting spells them.
+///
+/// The list is the only thing that widens a pinned client beyond public
+/// HTTPS, so every outbound client that honours it reaches the same places.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PrivateNetworkList {
+    hosts: Arc<[String]>,
+    networks: Arc<[IpNet]>,
+}
+
+/// An entry that is written as a range but is not one.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid CIDR in private network list: {item}")]
+pub struct InvalidPrivateNetwork {
+    pub item: String,
+}
+
+impl PrivateNetworkList {
+    /// Parse comma-separated entries. An entry that parses as a CIDR range is
+    /// a network; anything else without a `/` is an exact hostname (an IP
+    /// literal without a prefix length is a hostname that names itself).
+    pub fn parse(value: &str) -> Result<Self, InvalidPrivateNetwork> {
+        let mut hosts = Vec::new();
+        let mut networks = Vec::new();
+        for item in value
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            if let Ok(network) = item.parse::<IpNet>() {
+                networks.push(network);
+            } else if item.contains('/') {
+                return Err(InvalidPrivateNetwork {
+                    item: item.to_owned(),
+                });
+            } else {
+                hosts.push(item.to_ascii_lowercase());
+            }
+        }
+        Ok(Self {
+            hosts: hosts.into(),
+            networks: networks.into(),
+        })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.hosts.is_empty() && self.networks.is_empty()
+    }
+
+    /// What a request to `url` may reach beyond public addresses.
+    ///
+    /// A listed host is trusted wherever it resolves. Any other host is held
+    /// to the listed networks, and that is decided on its resolved addresses
+    /// by the client that pins them: only there is a hostname's destination
+    /// known, and known to be the one the connection uses.
+    pub fn access_for(&self, url: &Url) -> PrivateNetworkAccess {
+        let Some(host) = url.host_str() else {
+            return PrivateNetworkAccess::None;
+        };
+        // A URL writes an IPv6 literal in brackets; the list does not.
+        let host = host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_ascii_lowercase();
+        if self.hosts.contains(&host) {
+            return PrivateNetworkAccess::Any;
+        }
+        if self.networks.is_empty() {
+            PrivateNetworkAccess::None
+        } else {
+            PrivateNetworkAccess::Networks(self.networks.clone())
+        }
+    }
+}
+
+/// How a pinned client decides private access for the URL in front of it.
+#[derive(Clone, Debug)]
+enum PrivateAccessRule {
+    /// One decision the caller made for every URL, redirects included.
+    Fixed(PrivateNetworkAccess),
+    /// Decided again for each URL from the deployment's list. A client that
+    /// talks to several hosts in one exchange needs this: an authorization
+    /// server is a different host from the resource it protects, and listing
+    /// one must not open the other.
+    Listed(PrivateNetworkList),
+}
+
 #[derive(Clone, Debug)]
 pub struct PinnedHttpPolicy {
-    private_access: PrivateNetworkAccess,
+    private_access: PrivateAccessRule,
     timeout: Duration,
     max_body_bytes: usize,
     max_header_bytes: usize,
@@ -64,7 +152,7 @@ pub struct PinnedHttpPolicy {
 impl PinnedHttpPolicy {
     pub fn public_only() -> Self {
         Self {
-            private_access: PrivateNetworkAccess::None,
+            private_access: PrivateAccessRule::Fixed(PrivateNetworkAccess::None),
             timeout: Duration::from_secs(30),
             max_body_bytes: DEFAULT_OAUTH_HTTP_MAX_BODY_BYTES,
             max_header_bytes: DEFAULT_OAUTH_HTTP_MAX_HEADER_BYTES,
@@ -72,12 +160,16 @@ impl PinnedHttpPolicy {
         }
     }
 
-    pub fn allowing_private_networks() -> Self {
-        Self::public_only().with_private_access(PrivateNetworkAccess::Any)
+    /// Apply one private-access decision to every URL this client reaches.
+    pub fn with_private_access(mut self, private_access: PrivateNetworkAccess) -> Self {
+        self.private_access = PrivateAccessRule::Fixed(private_access);
+        self
     }
 
-    pub fn with_private_access(mut self, private_access: PrivateNetworkAccess) -> Self {
-        self.private_access = private_access;
+    /// Decide private access per URL, redirect hops included, from the
+    /// deployment's list.
+    pub fn with_private_networks(mut self, private_networks: PrivateNetworkList) -> Self {
+        self.private_access = PrivateAccessRule::Listed(private_networks);
         self
     }
 
@@ -101,8 +193,16 @@ impl PinnedHttpPolicy {
         self
     }
 
+    fn private_access_for(&self, url: &Url) -> PrivateNetworkAccess {
+        match &self.private_access {
+            PrivateAccessRule::Fixed(access) => access.clone(),
+            PrivateAccessRule::Listed(list) => list.access_for(url),
+        }
+    }
+
     pub async fn client_for_url(&self, url: &Url) -> Result<reqwest::Client, PinnedHttpError> {
-        self.validate_scheme(url)?;
+        let private_access = self.private_access_for(url);
+        validate_scheme(url, &private_access)?;
         if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
             return Err(PinnedHttpError::InvalidUrl);
         }
@@ -127,7 +227,7 @@ impl PinnedHttpPolicy {
         let plaintext = url.scheme() == "http";
         let mut addresses = BTreeSet::new();
         for address in resolved {
-            let admitted = self.private_access.admits(address.ip());
+            let admitted = private_access.admits(address.ip());
             if !admitted && !is_public_network_ip(address.ip()) {
                 return Err(PinnedHttpError::NonPublicAddress);
             }
@@ -149,15 +249,6 @@ impl PinnedHttpPolicy {
             .resolve_to_addrs(host, &addresses)
             .build()
             .map_err(|_| PinnedHttpError::BuildClient)
-    }
-
-    fn validate_scheme(&self, url: &Url) -> Result<(), PinnedHttpError> {
-        match url.scheme() {
-            "https" => Ok(()),
-            "http" if self.private_access != PrivateNetworkAccess::None => Ok(()),
-            "http" => Err(PinnedHttpError::HttpsRequired),
-            _ => Err(PinnedHttpError::InvalidUrl),
-        }
     }
 
     async fn execute_oauth(
@@ -202,7 +293,7 @@ impl PinnedHttpPolicy {
                     let next_url = url
                         .join(location)
                         .map_err(|_| PinnedHttpError::InvalidRedirect)?;
-                    self.validate_scheme(&next_url)?;
+                    validate_scheme(&next_url, &self.private_access_for(&next_url))?;
                     let mut next = redirect_template.ok_or(PinnedHttpError::InvalidRedirect)?;
                     apply_redirect_method(response.status(), &mut next);
                     if !same_origin(&url, &next_url) {
@@ -276,6 +367,20 @@ impl OAuthHttpClient for PinnedHttpPolicy {
                 .await
                 .map_err(|error| Box::new(error) as OAuthHttpClientError)
         })
+    }
+}
+
+/// Plaintext is considered only where the URL has some private access; whether
+/// it is then allowed is decided per resolved address.
+fn validate_scheme(
+    url: &Url,
+    private_access: &PrivateNetworkAccess,
+) -> Result<(), PinnedHttpError> {
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" if *private_access != PrivateNetworkAccess::None => Ok(()),
+        "http" => Err(PinnedHttpError::HttpsRequired),
+        _ => Err(PinnedHttpError::InvalidUrl),
     }
 }
 
@@ -411,9 +516,10 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn development_policy_allows_loopback_http() {
+    async fn unrestricted_access_allows_loopback_http() {
         let url = Url::parse("http://127.0.0.1:9/oauth").unwrap();
-        PinnedHttpPolicy::allowing_private_networks()
+        PinnedHttpPolicy::public_only()
+            .with_private_access(PrivateNetworkAccess::Any)
             .client_for_url(&url)
             .await
             .expect("build pinned loopback client");
@@ -490,5 +596,102 @@ mod tests {
             verdict(&PinnedHttpPolicy::public_only(), "http://8.8.8.8/mcp").await,
             Err(PinnedHttpError::HttpsRequired)
         );
+    }
+
+    fn listed(entries: &str) -> PinnedHttpPolicy {
+        PinnedHttpPolicy::public_only()
+            .with_private_networks(PrivateNetworkList::parse(entries).expect("list"))
+    }
+
+    #[test]
+    fn list_separates_hostnames_from_ranges_and_rejects_malformed_ranges() {
+        let list =
+            PrivateNetworkList::parse(" MCP.internal , ::1,10.20.0.0/16,,fd00::/8 ").expect("list");
+        assert!(!list.is_empty());
+        let networks = PrivateNetworkAccess::Networks(
+            vec![
+                "10.20.0.0/16".parse::<IpNet>().unwrap(),
+                "fd00::/8".parse::<IpNet>().unwrap(),
+            ]
+            .into(),
+        );
+        let access = |url: &str| list.access_for(&Url::parse(url).unwrap());
+        assert_eq!(
+            access("https://mcp.INTERNAL/mcp"),
+            PrivateNetworkAccess::Any
+        );
+        assert_eq!(access("http://[::1]:9/mcp"), PrivateNetworkAccess::Any);
+        assert_eq!(access("https://login.internal/token"), networks);
+        assert_eq!(access("http://10.20.4.8/mcp"), networks);
+
+        assert_eq!(
+            PrivateNetworkList::parse("10.0.0.0/40"),
+            Err(InvalidPrivateNetwork {
+                item: "10.0.0.0/40".to_owned()
+            })
+        );
+        let empty = PrivateNetworkList::parse("").expect("empty list");
+        assert!(empty.is_empty());
+        assert_eq!(
+            empty.access_for(&Url::parse("http://localhost/mcp").unwrap()),
+            PrivateNetworkAccess::None
+        );
+    }
+
+    /// One exchange reaches several hosts, so listing one of them must not
+    /// open another that resolves to the same private address.
+    #[tokio::test(flavor = "current_thread")]
+    async fn listed_policy_decides_private_access_for_each_url() {
+        let policy = listed("localhost");
+        assert_eq!(verdict(&policy, "http://localhost:9/token").await, Ok(()));
+        assert_eq!(verdict(&policy, "https://localhost:9/token").await, Ok(()));
+        assert_eq!(
+            verdict(&policy, "https://127.0.0.1:9/token").await,
+            Err(PinnedHttpError::NonPublicAddress)
+        );
+        assert_eq!(
+            verdict(&policy, "http://127.0.0.1:9/token").await,
+            Err(PinnedHttpError::HttpsRequired)
+        );
+        assert_eq!(verdict(&policy, "https://8.8.8.8/token").await, Ok(()));
+        assert_eq!(
+            verdict(&policy, "http://8.8.8.8/token").await,
+            Err(PinnedHttpError::HttpsRequired)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn listed_policy_holds_unlisted_hosts_to_the_listed_ranges() {
+        let policy = listed("mcp.internal,10.0.0.0/8");
+        assert_eq!(verdict(&policy, "http://10.1.2.3/register").await, Ok(()));
+        assert_eq!(verdict(&policy, "https://10.1.2.3/register").await, Ok(()));
+        assert_eq!(
+            verdict(&policy, "https://192.168.1.1/register").await,
+            Err(PinnedHttpError::NonPublicAddress)
+        );
+        assert_eq!(
+            verdict(&policy, "https://169.254.169.254/latest").await,
+            Err(PinnedHttpError::NonPublicAddress)
+        );
+        // Plaintext toward a public address stays refused even though the
+        // list makes plaintext possible for the listed range.
+        assert_eq!(
+            verdict(&policy, "http://8.8.8.8/register").await,
+            Err(PinnedHttpError::HttpsRequired)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn empty_list_is_public_https_only() {
+        let policy = listed("");
+        assert_eq!(
+            verdict(&policy, "https://127.0.0.1/token").await,
+            Err(PinnedHttpError::NonPublicAddress)
+        );
+        assert_eq!(
+            verdict(&policy, "http://localhost/token").await,
+            Err(PinnedHttpError::HttpsRequired)
+        );
+        assert_eq!(verdict(&policy, "https://8.8.8.8/token").await, Ok(()));
     }
 }

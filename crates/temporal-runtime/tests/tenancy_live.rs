@@ -2,7 +2,7 @@
 
 mod support;
 
-use std::{env, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use api::{
     AgentApiErrorKind, AgentApiService, AgentProfileInput, ProfileCreateParams, ProfileDocument,
@@ -15,9 +15,7 @@ use temporal_runtime::{
     DeploymentStores, UniverseRuntime,
     worker::{WorkerActivities, sessions_worker, worker_runtime},
 };
-use temporal_workflow::{
-    AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal,
-};
+use temporal_workflow::{AgentSessionWorkflow, TemporalConnectionConfig, connect_temporal};
 use temporalio_client::{WorkflowQueryOptions, WorkflowTerminateOptions};
 
 /// Isolation: two universes served by ONE worker on ONE shared task
@@ -33,12 +31,8 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
     require_storage_live_env()?;
 
     let task_queue = format!("lightspeed-agent-live-{}", uuid::Uuid::new_v4().simple());
-    let temporal_target =
-        env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-    let namespace =
-        env::var("TEMPORAL_NAMESPACE").unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
     let runtime = worker_runtime()?;
-    let client = connect_temporal(&temporal_target, &namespace).await?;
+    let client = connect_temporal(&TemporalConnectionConfig::from_env()?).await?;
     let stores = DeploymentStores::from_env().await?;
     let universes = Arc::new(UniverseRuntime::new(
         client.clone(),

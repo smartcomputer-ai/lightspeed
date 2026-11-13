@@ -15,7 +15,10 @@ pub use catalog::{
 };
 pub use id::SkillId;
 pub use model::*;
-pub use parser::{SkillFrontmatter, SkillParseError, parse_skill_frontmatter};
+pub use parser::{
+    SKILL_DESCRIPTION_MAX_CHARS, SKILL_NAME_MAX_CHARS, SKILL_SHORT_DESCRIPTION_MAX_CHARS,
+    SkillFrontmatter, SkillParseError, parse_skill_frontmatter,
+};
 pub use vfs::{
     AttachedVfsSkillCatalogRoots, SkillVfsRootError, VfsSkillRootSpec,
     configured_vfs_skill_root_specs, resolve_attached_vfs_skill_roots,

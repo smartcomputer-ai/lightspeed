@@ -44,7 +44,7 @@ use temporal_runtime::{
     },
 };
 use temporal_workflow::{
-    DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET,
+    TemporalConnectionConfig,
     channels::{
         ACTIVITY_CONNECTOR_DELIVER_MESSAGE, ACTIVITY_CONNECTOR_MAINTAIN_TYPING,
         ACTIVITY_CONNECTOR_PREPARE_MEDIA,
@@ -154,12 +154,8 @@ where
         "lightspeed-channels-live-{}",
         uuid::Uuid::new_v4().simple()
     ));
-    let temporal_target =
-        std::env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-    let namespace = std::env::var("TEMPORAL_NAMESPACE")
-        .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
     let runtime = worker_runtime()?;
-    let client = connect_temporal(&temporal_target, &namespace).await?;
+    let client = connect_temporal(&TemporalConnectionConfig::from_env()?).await?;
     let api = Arc::new(
         GatewayAgentApi::builder(client.clone(), store.clone())
             .with_task_queue(queues.sessions.clone())
@@ -342,7 +338,10 @@ async fn create_bot_with_chat(
         })
         .await?
         .result;
-    let pairing_code = created.triggers[0].pairing_code.clone();
+    let pairing_code = created
+        .trigger_secrets
+        .get(trigger_id.as_str())
+        .and_then(|secrets| secrets.pairing_code.clone());
     Ok((bot_id, trigger_id, pairing_code))
 }
 

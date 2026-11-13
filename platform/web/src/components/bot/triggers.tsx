@@ -9,6 +9,7 @@ import {
   type BotTriggerDisabledReason,
   type BotTriggerInput,
   type BotTriggerRoute,
+  type BotTriggerSecrets,
   type BotTriggerView,
   type ChannelAccountListResponse,
   type ChannelAccountView,
@@ -77,12 +78,15 @@ export type TriggerKind = BotTriggerView["kind"];
 
 /// The universe's channel accounts, for the chat trigger picker and for
 /// naming accounts on saved triggers (the trigger carries only the id).
+/// With channels off the list is refused, so it is not asked for: a saved
+/// chat trigger then shows its account by id.
 export function useChannelAccounts(universeId: string, enabled = true) {
+  const channelsOn = useFeature("channels");
   return useQuery({
     queryKey: ["channel-accounts", universeId],
     queryFn: () =>
       api<ChannelAccountListResponse>("GET", `/api/v1/universes/${universeId}/channel-accounts`),
-    enabled,
+    enabled: enabled && channelsOn,
   });
 }
 
@@ -147,7 +151,6 @@ export function triggerInputOf(trigger: BotTriggerView): BotTriggerInput {
         access: trigger.access ?? {},
         pairing: trigger.pairing ?? "code",
         priority: trigger.priority ?? 100,
-        ...(trigger.pairingCode ? { pairingCode: trigger.pairingCode } : {}),
       };
   }
 }
@@ -481,14 +484,7 @@ function triggerUpdateBody(trigger: BotTriggerView, forms: TriggerForms, deliver
   }
   if (trigger.kind === "poll") return { ...base, kind: "poll", ...pollPayload(forms.poll) };
   if (trigger.kind === "bot") return { ...base, kind: "bot", ...inboxPayload(forms.inbox) };
-  if (trigger.kind === "chat") {
-    const { pairingCode: _existing, ...withoutCode } = base;
-    return {
-      ...withoutCode,
-      kind: "chat",
-      ...chatPayload(forms.chat, trigger.pairingCode),
-    } as BotTriggerInput;
-  }
+  if (trigger.kind === "chat") return { ...base, kind: "chat", ...chatPayload(forms.chat) } as BotTriggerInput;
   return { ...base, kind: "webhook", ...webhookPayload(forms.webhook) };
 }
 
@@ -670,9 +666,13 @@ const PLAIN_SAMPLE = {
   data: { message: "Hello from the bot page." },
 };
 
-export async function sendSampleWebhook(trigger: WebhookTrigger): Promise<void> {
+export async function sendSampleWebhook(
+  trigger: Pick<WebhookTrigger, "preset">,
+  ingestPath: string | null | undefined,
+): Promise<void> {
+  if (!ingestPath) throw new Error("This webhook has no ingest URL to post to.");
   const github = trigger.preset === "github";
-  const response = await fetch(ingestUrl(trigger), {
+  const response = await fetch(ingestUrl(ingestPath), {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -683,8 +683,40 @@ export async function sendSampleWebhook(trigger: WebhookTrigger): Promise<void> 
   if (!response.ok) throw new Error(`The webhook answered ${response.status}.`);
 }
 
-function ingestUrl(trigger: BotTriggerView): string {
-  return `${window.location.origin}${trigger.ingestPath ?? ""}`;
+export function ingestUrl(ingestPath: string): string {
+  return `${window.location.origin}${ingestPath}`;
+}
+
+/**
+ * A trigger's ingest path or pairing code. The trigger list never carries
+ * them, so they are asked for one trigger at a time and only on behalf of
+ * someone who may manage the bot (anyone else is refused). Keyed by revision:
+ * replacing a trigger, which is how a pairing code is rotated, reads again.
+ * Keyed by creation time too: a trigger deleted and created again under the
+ * same name starts over at revision 1 with a new URL token or code, and must
+ * not be shown what its predecessor held.
+ */
+export function triggerSecretsQuery(
+  universeId: string,
+  botId: string,
+  trigger: Pick<BotTriggerView, "triggerId" | "revision" | "createdAtMs">,
+) {
+  return {
+    queryKey: [
+      "bot-trigger-secrets",
+      universeId,
+      botId,
+      trigger.triggerId,
+      trigger.createdAtMs,
+      trigger.revision,
+    ] as const,
+    queryFn: () =>
+      api<BotTriggerSecrets>(
+        "GET",
+        `/api/v1/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}/secrets`,
+      ),
+    staleTime: Infinity,
+  };
 }
 
 function routeLabel(route: BotTriggerRoute | null | undefined): string {
@@ -806,7 +838,10 @@ export function TriggersSection({
   });
   const visibleTriggers = (triggers.data?.triggers ?? []).filter((trigger) => !hideKinds.includes(trigger.kind));
   const sample = useMutation({
-    mutationFn: sendSampleWebhook,
+    mutationFn: async (trigger: WebhookTrigger) => {
+      const secrets = await queryClient.fetchQuery(triggerSecretsQuery(universeId, botId, trigger));
+      await sendSampleWebhook(trigger, secrets.ingestPath);
+    },
     onSuccess: () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: ["bot-events", universeId, botId] }),
@@ -940,7 +975,7 @@ export function TriggersSection({
               ) : trigger.kind === "chat" ? (
                 <ChatRowDetail universeId={universeId} botId={botId} trigger={trigger} manage={manage} accounts={accountList} />
               ) : (
-                <WebhookRowDetail trigger={trigger} manage={manage} />
+                <WebhookRowDetail universeId={universeId} botId={botId} trigger={trigger} manage={manage} />
               )}
               </>
             )}
@@ -1199,25 +1234,34 @@ function PollRowDetail({ trigger }: { trigger: PollTrigger }) {
   );
 }
 
-function WebhookRowDetail({ trigger, manage }: { trigger: WebhookTrigger; manage: boolean }) {
+function WebhookRowDetail({
+  universeId,
+  botId,
+  trigger,
+  manage,
+}: {
+  universeId: string;
+  botId: string;
+  trigger: WebhookTrigger;
+  manage: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   const verification = trigger.verification ?? { scheme: "token" as const };
+  const secrets = useQuery({ ...triggerSecretsQuery(universeId, botId, trigger), enabled: manage });
+  const url = secrets.data?.ingestPath ? ingestUrl(secrets.data.ingestPath) : null;
   return (
     <>
-      {manage && (
+      {manage && url && (
         <div className="mt-1 flex min-w-0 max-w-full items-center gap-1 overflow-hidden">
-          <code
-            className="w-0 min-w-0 flex-1 truncate text-muted-foreground"
-            title={ingestUrl(trigger)}
-          >
-            {ingestUrl(trigger)}
+          <code className="w-0 min-w-0 flex-1 truncate text-muted-foreground" title={url}>
+            {url}
           </code>
           <Button
             variant="ghost"
             size="icon-xs"
             aria-label="Copy ingest URL"
             onClick={() => {
-              void navigator.clipboard.writeText(ingestUrl(trigger)).then(() => {
+              void navigator.clipboard.writeText(url).then(() => {
                 setCopied(true);
                 setTimeout(() => setCopied(false), 1_500);
               });
@@ -1226,6 +1270,12 @@ function WebhookRowDetail({ trigger, manage }: { trigger: WebhookTrigger; manage
             {copied ? <Check /> : <Copy />}
           </Button>
         </div>
+      )}
+      {manage && secrets.error && (
+        <p className="mt-1 text-destructive">Could not read the ingest URL: {secrets.error.message}</p>
+      )}
+      {!manage && (
+        <p className="mt-1 text-muted-foreground">Ingest URL shown to people who manage this bot.</p>
       )}
       <p className="mt-1 text-muted-foreground wrap-anywhere">
         {trigger.preset === "github" ? "GitHub · " : ""}
@@ -1289,6 +1339,11 @@ function ChatRowDetail({
 }) {
   const queryClient = useQueryClient();
   const [copied, setCopied] = useState(false);
+  const paired = (trigger.pairing ?? "code") === "code";
+  const secrets = useQuery({ ...triggerSecretsQuery(universeId, botId, trigger), enabled: manage && paired });
+  const pairingCode = secrets.data?.pairingCode ?? null;
+  // Rotating is the one edit that names a code; every other edit leaves it
+  // out and the stored code stays.
   const rotate = useMutation({
     mutationFn: () =>
       api("PUT", `/api/v1/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}`, {
@@ -1300,7 +1355,6 @@ function ChatRowDetail({
   const account = accounts.find((entry) => entry.accountId === trigger.accountId);
   const scope =
     trigger.matchScope === "direct" ? "direct chats" : trigger.matchScope === "group" ? "groups" : "direct chats and groups";
-  const paired = (trigger.pairing ?? "code") === "code";
   return (
     <>
       <p className="mt-1 text-muted-foreground wrap-anywhere">
@@ -1322,18 +1376,18 @@ function ChatRowDetail({
       </p>
       {!paired ? (
         <p className="mt-1 text-muted-foreground">Open: any conversation on the account connects without pairing.</p>
-      ) : manage && trigger.pairingCode ? (
+      ) : manage && pairingCode ? (
         <div className="mt-1 flex min-w-0 max-w-full items-center gap-1 overflow-hidden">
           <span className="shrink-0 text-muted-foreground">Pairing code</span>
-          <code className="min-w-0 truncate font-medium" title={trigger.pairingCode}>
-            {trigger.pairingCode}
+          <code className="min-w-0 truncate font-medium" title={pairingCode}>
+            {pairingCode}
           </code>
           <Button
             variant="ghost"
             size="icon-xs"
             aria-label="Copy pairing code"
             onClick={() => {
-              void navigator.clipboard.writeText(trigger.pairingCode ?? "").then(() => {
+              void navigator.clipboard.writeText(pairingCode).then(() => {
                 setCopied(true);
                 setTimeout(() => setCopied(false), 1_500);
               });
@@ -1353,6 +1407,10 @@ function ChatRowDetail({
           </Button>
           {rotate.error && <span className="text-destructive">{rotate.error.message}</span>}
         </div>
+      ) : manage && secrets.error ? (
+        <p className="mt-1 text-destructive">Could not read the pairing code: {secrets.error.message}</p>
+      ) : manage ? (
+        <p className="mt-1 text-muted-foreground">Pairing code required.</p>
       ) : (
         <p className="mt-1 text-muted-foreground">
           Pairing code required — shown to people who manage this bot.
@@ -1388,20 +1446,16 @@ function chatFormFromTrigger(trigger: ChatTrigger): ChatFormState {
 }
 
 /**
- * The chat-kind fields for create or update. `pairingCode` is carried
- * through only to keep an existing code; on create (or when pairing is
- * switched on) it is omitted and the server mints one.
+ * The chat-kind fields for create or update. The pairing code is never
+ * among them: the server mints one when pairing is required and none is
+ * stored, and keeps the stored one across every other edit.
  */
-export function chatSpecPayload(
-  form: Omit<ChatFormState, keyof DeliveryFormState>,
-  existingCode: string | null | undefined,
-): {
+export function chatSpecPayload(form: Omit<ChatFormState, keyof DeliveryFormState>): {
   accountId: string;
   matchScope: ChatScope | null;
   activation: ChatActivation;
   access: ChatAccess;
   pairing: ChatPairing;
-  pairingCode?: string;
   priority?: number;
 } {
   const prefixes = splitList(form.prefixesText);
@@ -1422,13 +1476,12 @@ export function chatSpecPayload(
       ...(controllers.length > 0 ? { controllers } : {}),
     },
     pairing: form.requirePairing ? "code" : "open",
-    ...(form.requirePairing && existingCode ? { pairingCode: existingCode } : {}),
     ...(form.priority.trim() ? { priority: Math.round(Number(form.priority)) } : {}),
   };
 }
 
-export function chatPayload(form: ChatFormState, existingCode: string | null | undefined) {
-  return { ...chatSpecPayload(form, existingCode), ...deliveryPayload(form) };
+export function chatPayload(form: ChatFormState) {
+  return { ...chatSpecPayload(form), ...deliveryPayload(form) };
 }
 
 export function chatFormProblem(form: ChatFormState): string | null {
@@ -2381,7 +2434,7 @@ export function triggerCreateBody(kind: TriggerKind, triggerId: string, forms: T
     case "bot":
       return { triggerId, kind, ...inboxPayload(forms.inbox) };
     case "chat":
-      return { triggerId, kind, ...chatPayload(forms.chat, undefined) };
+      return { triggerId, kind, ...chatPayload(forms.chat) };
   }
 }
 

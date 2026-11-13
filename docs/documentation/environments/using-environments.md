@@ -40,10 +40,11 @@ setup**.
 Each attached environment carries its own **Access**: **Read files**, **Edit
 files**, **Run commands**, or **Run durable jobs**, each including the levels
 before it. Enabling
-**Environments** in the profile or session editor also turns on **Prompt
-loading** and **Skill discovery**; adjust each independently. Existing
-configurations keep their saved settings; a machine that is not attached
-cannot be selected.
+**Environments** in the profile or session editor does not turn on **Prompt
+loading** or **Skill discovery**: each is a separate switch that starts off,
+so instructions and skills found on a machine are followed only once you ask
+for that. Existing configurations keep their saved settings; a machine that
+is not attached cannot be selected.
 
 For this first check, choose **Run commands**. You can leave **Environment
 selection tools** off because you selected the machine yourself. The editor
@@ -94,6 +95,24 @@ atomically. An edit or patch fails, instead of overwriting, when the file
 changed on the machine after the agent read it. File tools stay inside the
 daemon's filesystem root: a symlink is followed only while its target stays
 inside it.
+
+**Read files** is not limited to the working directory. It reaches every
+file the daemon's operating-system user can read under the daemon's
+filesystem root, which is the whole machine unless the daemon was started
+with a narrower root: other projects, home directories, configuration files,
+and any credential file that user can open. Three places are refused to file
+tools at every level and under any root:
+
+- the daemon's state directory, which holds its identity key;
+- the registration key file the daemon was started with and, when that file
+  sits in a volume mounted to hold it, the whole volume;
+- on Linux, the `/proc` and `/sys` filesystems, so the environment variables,
+  command lines, and memory of running processes cannot be read as files.
+
+A path there fails with a permission error, a listing leaves the entry out,
+and search, glob, and transfer skip it. The refusal covers file tools only. A
+session with **Run commands** starts processes as the daemon's user, and
+those can read all three.
 
 ```json
 {"features":{"environments":{"environments":[{"environmentId":"<environment-id>","default":true,"access":"read"}]}}}

@@ -20,8 +20,9 @@ const createSchema = z.object({
     z.object({ kind: z.literal("deployment") }),
     z.object({ kind: z.literal("universe"), universeId: z.string().uuid() }),
   ]),
-  /// Absent grants every group the scope allows; core validates the names.
-  groups: z.array(z.string().min(1).max(100)).max(32).optional(),
+  /// Always stated: the groups the key may call, or `all` for every group
+  /// its scope allows. Core validates the names and stores the resulting set.
+  groups: z.union([z.literal("all"), z.array(z.string().min(1).max(100)).min(1).max(32)]),
   assertActor: z.boolean().default(false),
   /// Absent has the runtime allocate one. Create only: an id never changes.
   keyId: chosenKeyIdSchema.optional(),
@@ -67,7 +68,7 @@ export function apiKeyAdminRoutes(ctx: AppContext) {
       const created = await createApiKey(c, deploymentClientFor(ctx), {
         scope,
         displayName: input.displayName,
-        ...(input.groups ? { groups: input.groups as MethodGroup[] } : {}),
+        groups: input.groups === "all" ? "all" : input.groups as MethodGroup[],
         assertActor: input.assertActor,
         ...(input.keyId ? { keyId: input.keyId } : {}),
       });

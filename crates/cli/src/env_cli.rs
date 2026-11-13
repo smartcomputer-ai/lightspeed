@@ -296,8 +296,8 @@ struct CredentialArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 enum CredentialCommand {
-    /// Supply an environment variable of the environment from a credential,
-    /// a provider credential or a stored secret.
+    /// Supply an environment variable of the environment from a retrievable
+    /// credential or from a model provider's API key.
     Bind(CredentialBindArgs),
     /// List the environment variables bound for an environment.
     List(CredentialListArgs),
@@ -320,12 +320,13 @@ struct CredentialBindArgs {
     common: CredentialListArgs,
     #[arg(long = "env-name")]
     env_name: String,
-    #[arg(long = "grant", conflicts_with_all = ["provider_id", "secret_id"])]
+    /// A credential created with retrievable exposure: commands on the
+    /// machine receive its plain value.
+    #[arg(long = "grant", conflicts_with = "provider_id")]
     grant_id: Option<String>,
-    #[arg(long = "provider-id", conflicts_with_all = ["grant_id", "secret_id"])]
+    /// A model API key provider, whose stored key is supplied.
+    #[arg(long = "provider-id", conflicts_with = "grant_id")]
     provider_id: Option<String>,
-    #[arg(long = "secret-id", conflicts_with_all = ["grant_id", "provider_id"])]
-    secret_id: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -616,17 +617,14 @@ async fn close(args: EnvironmentResourceArgs) -> Result<()> {
 async fn credentials(args: CredentialArgs) -> Result<()> {
     match args.command {
         CredentialCommand::Bind(args) => {
-            let source = match (args.grant_id, args.provider_id, args.secret_id) {
-                (Some(grant_id), None, None) => {
+            let source = match (args.grant_id, args.provider_id) {
+                (Some(grant_id), None) => {
                     api::EnvironmentCredentialSourceView::AuthGrant { grant_id }
                 }
-                (None, Some(provider_id), None) => {
+                (None, Some(provider_id)) => {
                     api::EnvironmentCredentialSourceView::AuthProviderCredential { provider_id }
                 }
-                (None, None, Some(secret_id)) => {
-                    api::EnvironmentCredentialSourceView::DirectSecret { secret_id }
-                }
-                _ => anyhow::bail!("specify exactly one credential source"),
+                _ => anyhow::bail!("specify exactly one of --grant and --provider-id"),
             };
             let response = HttpAgentApi::new(args.common.api_url)
                 .bind_environment_credential(api::EnvironmentCredentialBindParams {

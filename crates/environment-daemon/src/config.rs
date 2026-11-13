@@ -24,6 +24,12 @@ pub const ENV_PREFIX: &str = "LIGHTSPEED_ENVD_";
 /// Internal one-exec handoff for a registration key that configuration has
 /// already read and scrubbed. Never documented as operator configuration.
 pub(crate) const REEXEC_REGISTRATION_KEY_ENV: &str = "LIGHTSPEED_ENVD_REEXEC_REGISTRATION_KEY";
+/// Internal one-exec handoff of where the registration key was read from.
+/// A replacement is started without the key file option and never reads the
+/// file, but the file may still be there, and file operations must keep
+/// refusing it.
+pub(crate) const REEXEC_REGISTRATION_KEY_FILE_ENV: &str =
+    "LIGHTSPEED_ENVD_REEXEC_REGISTRATION_KEY_FILE";
 /// Set on the re-executed replacement after an automatic upgrade: the
 /// gateway protocol version the upgrade targeted. A later challenge naming
 /// that same version is refused instead of upgrading again.
@@ -97,6 +103,7 @@ pub struct DaemonArgs {
     pub registration_key: Option<String>,
 
     /// File holding the registration key; the safer form for sandboxes.
+    /// File operations never address it.
     #[arg(long, env = "LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE")]
     pub registration_key_file: Option<PathBuf>,
 
@@ -228,6 +235,10 @@ pub struct RegistrationConfig {
     /// Sent with `registration/register` until the first admission, then
     /// dropped (never handed to an upgraded replacement after that).
     pub registration_key: Option<SecretString>,
+    /// Absolute path the registration key was read from, when it came from
+    /// a file. Kept after the key itself is dropped: file operations never
+    /// address that file, for as long as it exists.
+    pub registration_key_file: Option<PathBuf>,
     /// Read by the gateway only at first admission.
     pub display_name: Option<DisplayName>,
     /// Read by the gateway only at first admission.
@@ -266,6 +277,7 @@ impl std::fmt::Debug for RegistrationConfig {
                 "registration_key",
                 &self.registration_key.as_ref().map(|_| "<redacted>"),
             )
+            .field("registration_key_file", &self.registration_key_file)
             .field("display_name", &self.display_name)
             .field("metadata", &self.metadata)
             .field("receipt_path", &self.receipt_path)
@@ -300,6 +312,7 @@ impl RegistrationConfig {
         Self {
             gateway_url,
             registration_key: None,
+            registration_key_file: None,
             display_name: None,
             metadata: Metadata::default(),
             receipt_path: None,
@@ -533,6 +546,10 @@ fn registration_config(
         })?),
         Err(_) => None,
     };
+    let key_file = protected_key_file(
+        registration_key_file.as_deref(),
+        std::env::var_os(REEXEC_REGISTRATION_KEY_FILE_ENV),
+    )?;
     let reexec_registration_key = std::env::var(REEXEC_REGISTRATION_KEY_ENV).ok();
     let registration_key = if let Some(key) = reexec_registration_key {
         Some(SecretString::new(key))
@@ -567,6 +584,7 @@ fn registration_config(
     let registration = RegistrationConfig {
         gateway_url,
         registration_key,
+        registration_key_file: key_file,
         display_name,
         metadata,
         receipt_path: registration_receipt,
@@ -579,6 +597,25 @@ fn registration_config(
     };
     registration.validate()?;
     Ok(registration)
+}
+
+/// Where the registration key file is, for the file operations to refuse:
+/// the configured path, else the one a replaced daemon handed over. Made
+/// absolute against the directory the daemon was started in and otherwise
+/// left as written, because the directory a link sits in can be the mount
+/// that holds the key.
+fn protected_key_file(
+    configured: Option<&Path>,
+    handed_over: Option<OsString>,
+) -> Result<Option<PathBuf>> {
+    match configured {
+        Some(path) => std::path::absolute(path)
+            .map(Some)
+            .with_context(|| format!("registration key file {}", path.display())),
+        None => Ok(handed_over
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())),
+    }
 }
 
 /// The state directory, created with native private permissions and canonical. A defaulted
@@ -696,6 +733,7 @@ fn forget_secret_env() {
         "LIGHTSPEED_ENVD_REGISTRATION_KEY",
         "LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE",
         REEXEC_REGISTRATION_KEY_ENV,
+        REEXEC_REGISTRATION_KEY_FILE_ENV,
         AUTO_UPGRADE_ATTEMPTED_ENV,
     ] {
         // SAFETY: called from configuration parsing on the main thread
@@ -823,7 +861,7 @@ mod tests {
         std::fs::write(&key_file, "lsrk_secret\n").expect("write key");
         let config = DaemonArgs {
             gateway_url: Some("wss://gateway.example/environment-gateway/connect".to_owned()),
-            registration_key_file: Some(key_file),
+            registration_key_file: Some(key_file.clone()),
             registration_name: Some("worker-1".to_owned()),
             registration_metadata: Some(r#"{"harbor.trialId":"t-1"}"#.to_owned()),
             ..args(&temp)
@@ -845,6 +883,11 @@ mod tests {
         );
         assert_eq!(registration.metadata.get("harbor.trialId"), Some("t-1"));
         assert!(!format!("{registration:?}").contains("lsrk_secret"));
+        assert_eq!(
+            registration.registration_key_file.as_deref(),
+            Some(key_file.as_path()),
+            "where the key was read from outlives the key"
+        );
 
         let both = DaemonArgs {
             gateway_url: Some("wss://gateway.example/environment-gateway/connect".to_owned()),
@@ -869,6 +912,31 @@ mod tests {
         }
         .into_config();
         assert!(reserved.is_err());
+    }
+
+    #[test]
+    fn the_key_file_location_is_absolute_and_survives_a_replacement() {
+        let cwd = std::env::current_dir().expect("cwd");
+        assert_eq!(
+            protected_key_file(Some(Path::new("secrets/key")), None).unwrap(),
+            Some(cwd.join("secrets/key"))
+        );
+        let absolute = cwd.join("mounted").join("key");
+        // A link in the path is kept as written: resolving it is left to
+        // the file operations, which also look at the directory it is in.
+        assert_eq!(
+            protected_key_file(Some(&absolute), Some(OsString::from("ignored"))).unwrap(),
+            Some(absolute.clone())
+        );
+        assert_eq!(
+            protected_key_file(None, Some(absolute.clone().into_os_string())).unwrap(),
+            Some(absolute)
+        );
+        assert_eq!(
+            protected_key_file(None, Some(OsString::from("relative/key"))).unwrap(),
+            None
+        );
+        assert_eq!(protected_key_file(None, None).unwrap(), None);
     }
 
     #[test]

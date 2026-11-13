@@ -22,8 +22,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDangerButton } from "@/components/confirm-danger-button";
+import { RequestHeaderEditor, useHeaderCredentials } from "@/components/request-headers";
+import {
+  MODEL_ENDPOINT_HEADER_OWNER,
+  requestHeaderRows,
+  requestHeadersInput,
+  requestHeaderSummary,
+  type RequestHeaderRow,
+} from "@/lib/request-headers";
 import { providerEndpoint } from "./use-model-providers";
 
 export type ModelKeyProvider = "openai" | "anthropic";
@@ -97,7 +104,7 @@ export function ModelApiKeyForm({
   const [displayName, setDisplayName] = useState("");
   const [key, setKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const [headers, setHeaders] = useState("");
+  const [headerRows, setHeaderRows] = useState<RequestHeaderRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const save = useMutation<SecretProvider, Error, void>({
@@ -105,7 +112,7 @@ export function ModelApiKeyForm({
       const endpoint = baseUrl.trim()
         ? {
             baseUrl: baseUrl.trim(),
-            headers: parseHeaders(headers),
+            headers: checkedEndpointHeaders(headerRows),
             apiKinds: ["openai:responses", "openai:completions"],
           }
         : undefined;
@@ -176,19 +183,15 @@ export function ModelApiKeyForm({
           </Field>
           {baseUrl.trim() && (
             <Field>
-              <FieldLabel htmlFor="model-key-headers">Extra headers</FieldLabel>
-              <Textarea
-                id="model-key-headers"
-                value={headers}
-                onChange={(event) => setHeaders(event.target.value)}
-                placeholder={
-                  "HTTP-Referer: https://example.com\nX-Title: Lightspeed"
-                }
-                className="font-mono"
+              <FieldLabel>Extra headers</FieldLabel>
+              <EndpointHeaders
+                universeId={universeId}
+                rows={headerRows}
+                onChange={(rows) => {
+                  setHeaderRows(rows);
+                  setError(null);
+                }}
               />
-              <FieldDescription>
-                One non-secret header per line. Authorization is reserved.
-              </FieldDescription>
             </Field>
           )}
         </>
@@ -345,10 +348,8 @@ export function OpenAiCompatibleForm({
     initialEndpoint?.baseUrl ?? initialPreset?.baseUrl ?? "",
   );
   const [key, setKey] = useState("");
-  const [headers, setHeaders] = useState(
-    Object.entries(initialEndpoint?.headers ?? {})
-      .map(([name, value]) => `${name}: ${value}`)
-      .join("\n"),
+  const [headerRows, setHeaderRows] = useState<RequestHeaderRow[]>(() =>
+    requestHeaderRows(initialEndpoint?.headers),
   );
   const [responses, setResponses] = useState(
     initialEndpoint?.apiKinds.includes("openai:responses") ?? false,
@@ -392,7 +393,7 @@ export function OpenAiCompatibleForm({
           ...(key ? { credential: key } : {}),
           endpoint: {
             baseUrl: baseUrl.trim(),
-            headers: parseHeaders(headers),
+            headers: checkedEndpointHeaders(headerRows),
             apiKinds,
           },
           replace,
@@ -522,16 +523,14 @@ export function OpenAiCompatibleForm({
       </Field>
       <Field>
         <FieldLabel>Extra headers</FieldLabel>
-        <Textarea
-          value={headers}
-          onChange={(event) => setHeaders(event.target.value)}
-          placeholder={"HTTP-Referer: https://example.com\nX-Title: Lightspeed"}
-          className="font-mono"
+        <EndpointHeaders
+          universeId={universeId}
+          rows={headerRows}
+          onChange={(rows) => {
+            setHeaderRows(rows);
+            setError(null);
+          }}
         />
-        <FieldDescription>
-          Non-secret headers only; Authorization, Host, and Content-Type are
-          reserved.
-        </FieldDescription>
       </Field>
       {error && <p className="text-sm text-destructive">{error}</p>}
       <DialogFooter>
@@ -821,20 +820,55 @@ function EndpointSummary({ endpoint }: { endpoint: ModelEndpointConfig }) {
       <dt className="text-muted-foreground">API kinds</dt>
       <dd>{endpoint.apiKinds.join(", ")}</dd>
       <dt className="text-muted-foreground">Extra headers</dt>
-      <dd>{Object.keys(endpoint.headers ?? {}).join(", ") || "None"}</dd>
+      <dd>
+        {Object.keys(endpoint.headers ?? {}).length === 0 ? "None" : (
+          <ul className="grid gap-0.5">
+            {Object.entries(endpoint.headers ?? {}).map(([name, header]) => (
+              <li key={name} className="break-all">
+                <span className="font-mono">{name}</span>
+                {": "}
+                <span className={header.type === "literal" ? "font-mono" : undefined}>
+                  {requestHeaderSummary(header)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </dd>
     </dl>
   );
 }
 
-function parseHeaders(value: string): Record<string, string> {
-  const headers: Record<string, string> = {};
-  for (const line of value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)) {
-    const separator = line.indexOf(":");
-    if (separator < 1) throw new Error(`invalid header line: ${line}`);
-    headers[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
-  }
-  return headers;
+/// A model endpoint's extra headers in the shared header editor, with the
+/// universe's token credentials to choose from.
+function EndpointHeaders({
+  universeId,
+  rows,
+  onChange,
+}: {
+  universeId: string;
+  rows: RequestHeaderRow[];
+  onChange: (rows: RequestHeaderRow[]) => void;
+}) {
+  const credentials = useHeaderCredentials(universeId);
+  return (
+    <RequestHeaderEditor
+      owner={MODEL_ENDPOINT_HEADER_OWNER}
+      rows={rows}
+      grants={credentials.grants}
+      loading={credentials.loading}
+      onChange={onChange}
+      description="Sent with every request to this endpoint, alongside the API key."
+      note="Authorization, Host, and Content-Type are reserved."
+      namePlaceholder="X-Title"
+    />
+  );
+}
+
+/// The header rows as the request sends them; an incomplete or refused row
+/// stops the save with the reason shown in the form.
+function checkedEndpointHeaders(rows: RequestHeaderRow[]) {
+  const input = requestHeadersInput(MODEL_ENDPOINT_HEADER_OWNER, rows);
+  if (input.error) throw new Error(input.error);
+  return input.headers;
 }

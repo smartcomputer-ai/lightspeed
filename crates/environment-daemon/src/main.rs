@@ -16,7 +16,10 @@ const WORKER_THREADS: usize = 2;
 fn main() -> ExitCode {
     // Configuration is read, and secret-bearing variables are removed from
     // the process environment, before the async runtime starts any thread.
-    let _ = dotenvy::dotenv();
+    // It comes from the arguments and the process environment only. No
+    // `.env` file is loaded: the daemon usually starts in or above the tree
+    // an agent writes to, and a file there must not choose its gateway,
+    // filesystem root or state directory at the next start.
     let args = DaemonArgs::parse();
     if args.print_build {
         return match serde_json::to_string(&environment_daemon::build_facts()) {

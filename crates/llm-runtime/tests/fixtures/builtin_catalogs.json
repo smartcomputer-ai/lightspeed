@@ -10,6 +10,7 @@
       "max_output_tokens": 4096,
       "model": "gpt-5.1",
       "parallel_tool_calls": true,
+      "store": false,
       "tool_choice": "auto",
       "tools": [
         {
@@ -494,6 +495,7 @@
       "max_output_tokens": 4096,
       "model": "gpt-5.1",
       "parallel_tool_calls": true,
+      "store": false,
       "tool_choice": "auto",
       "tools": [
         {
@@ -1159,6 +1161,7 @@
       "max_output_tokens": 4096,
       "model": "gpt-5.1",
       "parallel_tool_calls": true,
+      "store": false,
       "tool_choice": "auto",
       "tools": [
         {
@@ -1767,6 +1770,7 @@
       "max_output_tokens": 4096,
       "model": "gpt-5.1",
       "parallel_tool_calls": true,
+      "store": false,
       "tool_choice": "auto",
       "tools": [
         {
@@ -2498,6 +2502,7 @@
       "max_output_tokens": 4096,
       "model": "gpt-5.1",
       "parallel_tool_calls": true,
+      "store": false,
       "tool_choice": "auto",
       "tools": [
         {
@@ -2744,6 +2749,7 @@
       "max_output_tokens": 4096,
       "model": "gpt-5.1",
       "parallel_tool_calls": true,
+      "store": false,
       "tool_choice": "auto",
       "tools": [
         {

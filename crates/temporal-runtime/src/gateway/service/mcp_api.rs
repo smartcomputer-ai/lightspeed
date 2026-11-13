@@ -10,7 +10,7 @@ pub(super) fn put_mcp_server_record(
         }
         None => None,
     };
-    let headers = registry_headers(server.headers)?;
+    let headers = request_headers_from_api(&mcp::MCP_SERVER_HEADER_POLICY, server.headers)?;
     Ok(mcp::PutMcpServerRecord {
         server_id: parse_mcp_server_id(server.server_id)?,
         display_name: server.display_name,
@@ -32,82 +32,6 @@ pub(super) fn put_mcp_server_record(
     })
 }
 
-/// Lowercase each configured header name. Two input names that differ only
-/// by case are the same header and are refused rather than merged.
-fn registry_headers(
-    headers: BTreeMap<String, api::McpServerHeader>,
-) -> Result<mcp::McpServerHeaders, AgentApiError> {
-    let mut registry = mcp::McpServerHeaders::new();
-    for (name, value) in headers {
-        let normalized = mcp::normalize_mcp_server_header_name(&name).map_err(map_mcp_error)?;
-        let value = match value {
-            api::McpServerHeader::Literal { value } => mcp::McpServerHeaderValue::Literal { value },
-            api::McpServerHeader::Credential { grant_id } => {
-                mcp::McpServerHeaderValue::Credential {
-                    grant_id: parse_auth_grant_id(grant_id)?,
-                }
-            }
-        };
-        if registry.insert(normalized.clone(), value).is_some() {
-            return Err(AgentApiError::invalid_request(format!(
-                "duplicate MCP header {normalized:?}; header names are case-insensitive"
-            )));
-        }
-    }
-    Ok(registry)
-}
-
-fn api_headers(headers: mcp::McpServerHeaders) -> BTreeMap<String, api::McpServerHeader> {
-    headers
-        .into_iter()
-        .map(|(name, value)| {
-            let value = match value {
-                mcp::McpServerHeaderValue::Literal { value } => {
-                    api::McpServerHeader::Literal { value }
-                }
-                mcp::McpServerHeaderValue::Credential { grant_id } => {
-                    api::McpServerHeader::Credential {
-                        grant_id: grant_id.as_str().to_owned(),
-                    }
-                }
-            };
-            (name, value)
-        })
-        .collect()
-}
-
-/// A header credential must be an active static token whose audience, when
-/// set, covers the server URL. OAuth grants are refused: their access tokens
-/// would be sent raw to an arbitrary endpoint, and refresh stays out of header
-/// resolution.
-pub(super) fn validate_mcp_header_grant(
-    record: &mcp::PutMcpServerRecord,
-    header: &str,
-    grant: &auth::AuthGrantRecord,
-) -> Result<(), AgentApiError> {
-    if grant.status != auth::AuthGrantStatus::Active {
-        return Err(AgentApiError::rejected(format!(
-            "credential {} for MCP header {header:?} is not active: {:?}",
-            grant.grant_id, grant.status
-        )));
-    }
-    if grant.provider_kind != auth::AuthProviderKind::StaticToken {
-        return Err(AgentApiError::rejected(format!(
-            "credential {} for MCP header {header:?} must be a static token, not {:?}",
-            grant.grant_id, grant.provider_kind
-        )));
-    }
-    if let Some(audience) = &grant.audience
-        && !auth::audience_covers(audience, &record.server_url)
-    {
-        return Err(AgentApiError::rejected(format!(
-            "credential {} for MCP header {header:?} does not cover this MCP server's URL",
-            grant.grant_id
-        )));
-    }
-    Ok(())
-}
-
 pub(super) fn mcp_server_view(record: mcp::McpServerRecord) -> api::McpServerView {
     api::McpServerView {
         server_id: record.server_id.as_str().to_owned(),
@@ -127,7 +51,7 @@ pub(super) fn mcp_server_view(record: mcp::McpServerRecord) -> api::McpServerVie
             .map(|grant_id| api::McpServerCredential::AuthGrant {
                 grant_id: grant_id.as_str().to_owned(),
             }),
-        headers: api_headers(record.headers),
+        headers: request_headers_view(record.headers),
         status: api_status(record.status),
         revision: record.revision,
         created_at_ms: record.created_at_ms,

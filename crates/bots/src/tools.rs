@@ -32,7 +32,7 @@ pub const BOT_BRIEF_PUT_TOOL_ID: &str = "lightspeed.bots.brief.put.v1";
 pub const BOT_EMIT_TOOL_ID: &str = "lightspeed.bots.emit.v1";
 
 /// Declared-tool revision stamped on every session the controller creates.
-pub const BOT_TOOLS_REVISION: u32 = 12;
+pub const BOT_TOOLS_REVISION: u32 = 13;
 /// How long a joined `bot_*` call waits for the controller's reply.
 pub const BOT_TOOL_REPLY_DEADLINE_MS: u64 = 60_000;
 
@@ -77,9 +77,9 @@ pub static BOT_TOOL_DESCRIPTIONS: LazyLock<Value> = LazyLock::new(|| {
         "status":
             "Inspect this bot's state: enabled flag, run budget, sessions, coalescing buffers, active and recent deliveries.",
         "triggerPut":
-            "Create or update one of this bot's triggers by name. kind=schedule needs cron (5-field) or at (one-shot ISO instant) plus summary; kind=webhook returns an ingest URL to give to the sender; kind=poll checks a source every intervalMs and delivers only new items (cursorId for id-based dedupe, or watermarkField for ordered feeds). The poll source is url (HTTP JSON) or argv (run a command in environmentId, or in this bot's own environment when omitted; its stdout must be JSON). kind=bot is this bot's inbox for events other bots address to it (at most one; from lists the bot ids allowed, omit for any). kind=chat connects a messaging account (channelAccount is the account id from bot_trigger_list or the operator, e.g. tg-main): every message becomes an event in a session per conversation with message_send/edit/react tools; the returned pairingCode must be sent in the chat once to pair it. Filters and route keys are CEL over event, data, headers.",
+            "Create or update one of this bot's triggers by name. kind=schedule needs cron (5-field) or at (one-shot ISO instant) plus summary; kind=webhook is reached at an ingest URL the sender posts to; kind=poll checks a source every intervalMs and delivers only new items (cursorId for id-based dedupe, or watermarkField for ordered feeds). The poll source is url (HTTP JSON) or argv (run a command in environmentId, or in this bot's own environment when omitted; its stdout must be JSON). kind=bot is this bot's inbox for events other bots address to it (at most one; from lists the bot ids allowed, omit for any). kind=chat connects a messaging account (channelAccount is the account id from bot_trigger_list or the operator, e.g. tg-main): every message becomes an event in a session per conversation with message_send/edit/react tools; a conversation connects once someone sends the trigger's pairing code in it. Secrets: a new webhook's ingestUrl and a new chat trigger's pairingCode are returned once, by the call that creates them, and only in the bot's main session; bot_trigger_list and later calls never show them, and an operator reads them in the bot's trigger settings. Filters and route keys are CEL over event, data, headers.",
         "triggerDelete": "Delete one of this bot's triggers by name.",
-        "triggerList": "List this bot's configured triggers with their specs, filters, routing, and ingest URLs.",
+        "triggerList": "List this bot's configured triggers with their specs, filters, and routing. Ingest URLs and pairing codes are never listed.",
         "filterTest":
             "Evaluate a candidate CEL filter. With payload ({kind?, data?, headers?}) it tests that one document; without it, recent stored events, so a filter that is too loose can be tightened against real traffic (events a filter refused are never stored).",
         "eventList": "List recent events that arrived at this bot: #N, kind, source, and summary.",
@@ -1226,6 +1226,24 @@ mod tests {
                 .unwrap()
                 .contains("e.g. tg-main")
         );
+    }
+
+    #[test]
+    fn descriptions_promise_trigger_secrets_only_from_the_creating_put() {
+        let list = bot_tool_description("triggerList").unwrap();
+        assert!(list.contains("never listed"), "{list}");
+        let put = bot_tool_description("triggerPut").unwrap();
+        assert!(put.contains("returned once"), "{put}");
+        assert!(put.contains("main session"), "{put}");
+        // Nothing else a bot is told promises a secret.
+        for name in BOT_TOOL_DESCRIPTION_NAMES {
+            if name == "triggerPut" || name == "triggerList" {
+                continue;
+            }
+            let text = bot_tool_description(name).unwrap();
+            assert!(!text.contains("ingest URL"), "{name}");
+            assert!(!text.contains("pairing"), "{name}");
+        }
     }
 
     #[test]

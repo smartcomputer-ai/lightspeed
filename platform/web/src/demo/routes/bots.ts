@@ -38,7 +38,7 @@ import {
   steerRun,
   demoAccess,
 } from "../engine";
-import type { BotRecord, DemoStore, SessionRecord, UniverseState } from "../store";
+import type { BotRecord, DemoStore, SessionRecord, StoredBotTrigger, UniverseState } from "../store";
 import { sessionSummaryOf } from "../fixtures/builders";
 import { foldActivity } from "@/components/activity-dot";
 import { badRequest, conflict, intQuery, notFound, readBody, universeFor } from "./common";
@@ -813,10 +813,28 @@ function normalizeSessionCloseAfter(value: unknown): number | null {
   return value;
 }
 
-function webhookTokenOf(trigger: BotTriggerView | undefined): string | null {
+function webhookTokenOf(trigger: StoredBotTrigger | undefined): string | null {
   const path = trigger?.ingestPath;
   if (!path) return null;
   return path.slice(path.lastIndexOf("/") + 1) || null;
+}
+
+/// A trigger as every reader sees it: never with its ingest path or pairing
+/// code, like the core's trigger view.
+function triggerViewOf(stored: StoredBotTrigger): BotTriggerView {
+  const { ingestPath: _ingestPath, pairingCode: _pairingCode, ...view } = stored;
+  return view as BotTriggerView;
+}
+
+/// What only bot managers read, and what creating or replacing a trigger
+/// answers with beside the view (`bots/triggers/secrets/read`).
+function triggerSecretsOf(stored: StoredBotTrigger): { ingestPath?: string; pairingCode?: string } {
+  return {
+    ...(stored.ingestPath ? { ingestPath: stored.ingestPath } : {}),
+    ...(stored.kind === "chat" && stored.pairing !== "open" && stored.pairingCode
+      ? { pairingCode: stored.pairingCode }
+      : {}),
+  };
 }
 
 /// Reads one `BotTriggerInput` (the flattened core shape) into a stored
@@ -827,8 +845,8 @@ function normalizeTrigger(
   record: BotRecord,
   triggerId: string,
   body: Record<string, unknown>,
-  existing: BotTriggerView | undefined,
-): BotTriggerView {
+  existing: StoredBotTrigger | undefined,
+): StoredBotTrigger {
   if (!NAME_PATTERN.test(triggerId) || triggerId.length > 64) {
     throw new BotConfigError("validation failed: trigger ids are lowercase alphanumerics and dashes", 400);
   }
@@ -898,7 +916,7 @@ function normalizeTrigger(
           : { scheme: "token" },
         preset: body.preset === "github" ? "github" : null,
         ingestPath: `/hooks/bots/${universe.universe.lightspeedUniverseId}/${record.bot.botId}/${triggerId}/${token}`,
-      } as BotTriggerView;
+      } as StoredBotTrigger;
     }
     case "poll": {
       const source = asRecord(body.source);
@@ -939,6 +957,8 @@ function normalizeTrigger(
           : existing?.kind === "chat"
             ? (existing.pairing ?? "code")
             : "code";
+      // A write that names no code keeps the stored one; opening the
+      // connection drops it, so requiring pairing again mints a new one.
       const pairingCode =
         pairing === "code"
           ? (optionalString(body.pairingCode) ?? existing?.pairingCode ?? mintPairingCode())
@@ -958,7 +978,7 @@ function normalizeTrigger(
               ? (existing.priority ?? 100)
               : 100,
         pairingCode,
-      } as BotTriggerView;
+      } as StoredBotTrigger;
     }
   }
 }
@@ -1071,8 +1091,18 @@ export function botRoutes(store: DemoStore): Hono {
     if (!bot) return badRequest(c, "invalid body");
     const created = createBot(store, universe, bot, body.triggers);
     if (created instanceof BotConfigError) return configErrorResponse(c, created);
+    const triggers = [...created.record.triggers.values()];
+    const triggerSecrets = Object.fromEntries(
+      triggers
+        .map((trigger) => [trigger.triggerId, triggerSecretsOf(trigger)] as const)
+        .filter(([, secrets]) => Object.keys(secrets).length > 0),
+    );
     return c.json(
-      { bot: botViewOf(created.record), triggers: [...created.record.triggers.values()] },
+      {
+        bot: botViewOf(created.record),
+        triggers: triggers.map(triggerViewOf),
+        ...(Object.keys(triggerSecrets).length > 0 ? { triggerSecrets } : {}),
+      },
       201,
     );
   });
@@ -1155,9 +1185,9 @@ export function botRoutes(store: DemoStore): Hono {
   app.get("/:id/bots/:botId/triggers", (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
-    const triggers = [...found.record.triggers.values()].sort((left, right) =>
-      left.triggerId.localeCompare(right.triggerId),
-    );
+    const triggers = [...found.record.triggers.values()]
+      .sort((left, right) => left.triggerId.localeCompare(right.triggerId))
+      .map(triggerViewOf);
     return c.json({ triggers });
   });
 
@@ -1166,7 +1196,17 @@ export function botRoutes(store: DemoStore): Hono {
     if (!found) return notFound(c);
     const trigger = found.record.triggers.get(c.req.param("triggerId") ?? "");
     if (!trigger) return notFound(c);
-    return c.json({ trigger });
+    return c.json({ trigger: triggerViewOf(trigger) });
+  });
+
+  /// The ingest path or pairing code of one trigger, like the core's
+  /// `bots/triggers/secrets/read`; an empty object for a trigger with neither.
+  app.get("/:id/bots/:botId/triggers/:triggerId/secrets", (c) => {
+    const found = botFor(store, c);
+    if (!found) return notFound(c);
+    const trigger = found.record.triggers.get(c.req.param("triggerId") ?? "");
+    if (!trigger) return notFound(c);
+    return c.json(triggerSecretsOf(trigger));
   });
 
   /// Whole-document replace with an expected revision; an unknown id
@@ -1191,7 +1231,11 @@ export function botRoutes(store: DemoStore): Hono {
     try {
       const trigger = normalizeTrigger(universe, record, triggerId, input, existing);
       record.triggers.set(triggerId, trigger);
-      return c.json({ trigger });
+      const secrets = triggerSecretsOf(trigger);
+      return c.json({
+        trigger: triggerViewOf(trigger),
+        ...(Object.keys(secrets).length > 0 ? { secrets } : {}),
+      });
     } catch (error) {
       return configErrorResponse(c, error);
     }
@@ -1204,7 +1248,7 @@ export function botRoutes(store: DemoStore): Hono {
     const trigger = found.record.triggers.get(triggerId);
     if (!trigger) return notFound(c);
     found.record.triggers.delete(triggerId);
-    return c.json({ trigger });
+    return c.json({ trigger: triggerViewOf(trigger) });
   });
 
   /// Operator admit: `{ event: BotEventInput }`, answered 202.

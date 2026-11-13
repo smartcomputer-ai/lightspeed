@@ -34,7 +34,13 @@ export async function seedDevelopment(db: Db, env: ServerEnv): Promise<void> {
     organizationId = crypto.randomUUID();
     await db.transaction(async (tx) => {
       await tx.insert(schema.organization).values({ id: organizationId!, name: "Test", slug: handle, createdAt: new Date() });
-      await tx.insert(schema.universes).values({ organizationId: organizationId!, name: "Test", lightspeedUniverseId: testUniverseId });
+      // The launcher runs the bot and channel roles, so the fixture universe
+      // starts with both features on; a universe created in the app starts
+      // with them off.
+      await tx.insert(schema.universes).values({
+        organizationId: organizationId!, name: "Test", lightspeedUniverseId: testUniverseId,
+        features: { bots: true, channels: true },
+      });
     });
   }
   // The organization keeps a lookup cache of the runtime-owned handle.

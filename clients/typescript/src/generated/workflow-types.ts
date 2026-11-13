@@ -3,6 +3,12 @@
  * Do not edit by hand.
  */
 
+/**
+ * The kind of an [`AccessScope`]: the deployment, or a universe. Where a
+ * record already belongs to one universe this is enough to tell a universe
+ * key of that universe from a deployment key.
+ */
+export type AccessScopeKind = "deployment" | "universe";
 export type Attachment =
   | {
       data: MediaDescriptor;
@@ -26,8 +32,9 @@ export type Attribution =
       kind: "actor";
     }
   | {
+      keyId: string;
       kind: "key";
-      prefix: string;
+      scopeKind: AccessScopeKind;
     }
   | {
       kind: "local";

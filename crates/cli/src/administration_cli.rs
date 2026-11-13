@@ -219,6 +219,39 @@ impl KeyScopeArgs {
     }
 }
 
+/// The method groups a key is given. A key's authority is always stated:
+/// leaving both flags out is an error, never "everything".
+#[derive(Debug, Clone, Args)]
+struct KeyGroupArgs {
+    /// A method group the key may call (repeatable).
+    #[arg(
+        long = "group",
+        required_unless_present = "all_groups",
+        conflicts_with = "all_groups"
+    )]
+    groups: Vec<String>,
+    /// Every method group the key's scope allows in the runtime's release.
+    /// The key stores that set, so a later release does not widen it on its
+    /// own; declare the key again to give it groups added since.
+    #[arg(long)]
+    all_groups: bool,
+}
+
+impl KeyGroupArgs {
+    fn groups(&self) -> Result<api::ApiKeyGroups> {
+        if self.all_groups {
+            return Ok(api::ApiKeyGroups::All);
+        }
+        self.groups
+            .iter()
+            .map(|group| {
+                api::MethodGroup::parse(group)
+                    .with_context(|| format!("unknown method group {group}"))
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum ApiKeyCommand {
     /// List API keys with their scope, groups and the prefix of their
@@ -237,8 +270,8 @@ enum ApiKeyCommand {
         /// The key's id within its scope; allocated when omitted.
         #[arg(long = "id")]
         key_id: Option<String>,
-        #[arg(long = "group")]
-        groups: Vec<String>,
+        #[command(flatten)]
+        groups: KeyGroupArgs,
         #[arg(long)]
         assert_actor: bool,
     },
@@ -254,10 +287,8 @@ enum ApiKeyCommand {
         name: String,
         #[command(flatten)]
         scope: KeyScopeArgs,
-        /// A method group the key may call (repeatable); omitted grants
-        /// every group its scope allows.
-        #[arg(long = "group")]
-        groups: Vec<String>,
+        #[command(flatten)]
+        groups: KeyGroupArgs,
         #[arg(long)]
         assert_actor: bool,
         #[command(flatten)]
@@ -277,17 +308,6 @@ enum ApiKeyCommand {
         #[command(flatten)]
         scope: KeyScopeArgs,
     },
-}
-
-fn parse_groups(groups: &[String]) -> Result<Option<Vec<api::MethodGroup>>> {
-    if groups.is_empty() {
-        return Ok(None);
-    }
-    groups
-        .iter()
-        .map(|g| api::MethodGroup::parse(g).with_context(|| format!("unknown method group {g}")))
-        .collect::<Result<Vec<_>>>()
-        .map(Some)
 }
 
 pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
@@ -342,7 +362,7 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
                     api::DeploymentApiKeyCreateParams {
                         scope: scope.scope(&client).await?,
                         key_id,
-                        groups: parse_groups(&groups)?,
+                        groups: groups.groups()?,
                         assert_actor,
                         display_name: name,
                     },
@@ -368,7 +388,7 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
                     api::DeploymentApiKeyPutParams {
                         scope: scope.scope(&client).await?,
                         key_id,
-                        groups: parse_groups(&groups)?,
+                        groups: groups.groups()?,
                         assert_actor,
                         display_name: name,
                         secret: secret.read()?,

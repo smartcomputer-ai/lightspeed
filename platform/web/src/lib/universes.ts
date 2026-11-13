@@ -34,14 +34,16 @@ export function useActiveUniverse(): {
   };
 }
 
-/// Landing page inside a universe: its bots, or its sessions when bots are
-/// switched off.
+/// Landing page inside a universe: its bots while that feature is on, its
+/// sessions otherwise.
 export function universeHome(universe: { handle: string; features?: FeatureStates }): string {
-  return `/u/${universe.handle}/${universe.features?.bots === false ? "sessions" : "bots"}`;
+  return `/u/${universe.handle}/${universe.features?.bots ? "bots" : "sessions"}`;
 }
 
-/// Whether a feature is on in the active universe. Switched-off features
-/// are hidden, not enforced; before the universe loads, the default holds.
+/// Whether a feature is on in the active universe. The Platform refuses a
+/// switched-off feature's requests itself, so this only decides what to show
+/// and which requests are worth making; before the universe loads, the
+/// default holds.
 export function useFeature(feature: FeatureKey): boolean {
   const { universe } = useActiveUniverse();
   return universe?.features?.[feature] ?? FEATURES[feature].default;

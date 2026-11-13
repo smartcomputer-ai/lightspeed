@@ -16,45 +16,73 @@ pub struct EndpointOverride {
     headers: HeaderMap,
 }
 
+const ENDPOINT_HEADERS_MAX: usize = 32;
+const ENDPOINT_HEADER_VALUE_MAX_LEN: usize = 4096;
+
 impl EndpointOverride {
+    /// An endpoint with plain, non-secret extra headers.
     pub fn from_parts(
         base_url: &str,
         headers: &BTreeMap<String, String>,
     ) -> Result<Self, LlmApiError> {
         let base_url = normalize_base_url(base_url)?;
         validate_endpoint_url(&base_url)?;
-        if headers.len() > 32 {
-            return Err(ConfigurationError::new(
-                "endpoint headers must contain at most 32 entries",
-            )
+        let mut endpoint = Self {
+            base_url,
+            headers: HeaderMap::new(),
+        };
+        for (name, value) in headers {
+            // The parse error never echoes the value.
+            let parsed = HeaderValue::from_str(value).map_err(|error| {
+                ConfigurationError::new(format!("invalid endpoint header {name:?} value: {error}"))
+            })?;
+            endpoint.insert_header(name, parsed)?;
+        }
+        Ok(endpoint)
+    }
+
+    /// Adds a header whose value is a credential resolved for this request.
+    /// The value is marked sensitive here whatever the caller did, so the HTTP
+    /// stack keeps it out of its own debug output and compression tables.
+    pub fn with_credential_header(
+        mut self,
+        name: &str,
+        mut value: HeaderValue,
+    ) -> Result<Self, LlmApiError> {
+        value.set_sensitive(true);
+        self.insert_header(name, value)?;
+        Ok(self)
+    }
+
+    fn insert_header(&mut self, name: &str, value: HeaderValue) -> Result<(), LlmApiError> {
+        let name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+            ConfigurationError::new(format!("invalid endpoint header name {name:?}: {error}"))
+        })?;
+        if is_reserved_endpoint_header(&name) {
+            return Err(ConfigurationError::new(format!(
+                "endpoint header {name:?} is transport-owned and cannot be overridden"
+            ))
             .into());
         }
-        let mut parsed_headers = HeaderMap::new();
-        for (name, value) in headers {
-            let name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
-                ConfigurationError::new(format!("invalid endpoint header name {name:?}: {error}"))
-            })?;
-            if is_reserved_endpoint_header(&name) {
-                return Err(ConfigurationError::new(format!(
-                    "endpoint header {name:?} is transport-owned and cannot be overridden"
-                ))
-                .into());
-            }
-            if value.len() > 4096 {
-                return Err(ConfigurationError::new(format!(
-                    "endpoint header {name:?} exceeds the supported value length"
-                ))
-                .into());
-            }
-            let value = HeaderValue::from_str(value).map_err(|error| {
-                ConfigurationError::new(format!("invalid endpoint header value: {error}"))
-            })?;
-            parsed_headers.insert(name, value);
+        if value.len() > ENDPOINT_HEADER_VALUE_MAX_LEN {
+            return Err(ConfigurationError::new(format!(
+                "endpoint header {name:?} exceeds the supported value length"
+            ))
+            .into());
         }
-        Ok(Self {
-            base_url,
-            headers: parsed_headers,
-        })
+        if !self.headers.contains_key(&name) && self.headers.len() >= ENDPOINT_HEADERS_MAX {
+            return Err(ConfigurationError::new(format!(
+                "endpoint headers must contain at most {ENDPOINT_HEADERS_MAX} entries"
+            ))
+            .into());
+        }
+        self.headers.insert(name, value);
+        Ok(())
+    }
+
+    /// Whether the endpoint sends a header of this name. Values stay private.
+    pub fn has_header(&self, name: &str) -> bool {
+        self.headers.contains_key(name)
     }
 
     pub fn url(&self, path: &str) -> Result<Url, LlmApiError> {
@@ -349,5 +377,77 @@ mod tests {
         let debug = format!("{endpoint:?}");
         assert!(!debug.contains("sensitive-ish"));
         assert!(debug.contains("header_count"));
+    }
+
+    #[test]
+    fn credential_headers_are_sent_sensitive_beside_plain_ones() {
+        let endpoint = EndpointOverride::from_parts(
+            "https://router.example/v1",
+            &BTreeMap::from([("x-title".to_owned(), "Lightspeed".to_owned())]),
+        )
+        .expect("endpoint")
+        .with_credential_header("x-api-key", HeaderValue::from_static("router-token"))
+        .expect("credential header");
+
+        let plain = endpoint.headers.get("x-title").expect("plain header");
+        assert!(!plain.is_sensitive());
+        let credential = endpoint
+            .headers
+            .get("x-api-key")
+            .expect("credential header");
+        assert_eq!(credential, "router-token");
+        assert!(credential.is_sensitive());
+        assert!(!format!("{endpoint:?}").contains("router-token"));
+    }
+
+    #[test]
+    fn credential_headers_obey_the_transport_rules_without_echoing_the_value() {
+        let endpoint = || {
+            EndpointOverride::from_parts("https://router.example/v1", &BTreeMap::new())
+                .expect("endpoint")
+        };
+        // The transport owns Authorization whatever the value source.
+        assert!(matches!(
+            endpoint()
+                .with_credential_header("authorization", HeaderValue::from_static("router-token")),
+            Err(LlmApiError::Configuration(_))
+        ));
+        let long = HeaderValue::from_str(&"s3cr3t".repeat(ENDPOINT_HEADER_VALUE_MAX_LEN))
+            .expect("header value");
+        let error = endpoint()
+            .with_credential_header("x-api-key", long)
+            .expect_err("a token over the value limit");
+        assert!(matches!(error, LlmApiError::Configuration(_)));
+        assert!(!error.to_string().contains("s3cr3t"));
+
+        // A plain value that is not a header value is refused without being echoed.
+        let error = EndpointOverride::from_parts(
+            "https://router.example/v1",
+            &BTreeMap::from([("x-title".to_owned(), "s3cr3t\nvalue".to_owned())]),
+        )
+        .expect_err("a value with a line break is not a header value");
+        assert!(matches!(error, LlmApiError::Configuration(_)));
+        assert!(!error.to_string().contains("s3cr3t"));
+    }
+
+    #[test]
+    fn endpoint_headers_are_capped_across_both_sources() {
+        let plain = (0..ENDPOINT_HEADERS_MAX)
+            .map(|index| (format!("x-header-{index}"), "v".to_owned()))
+            .collect::<BTreeMap<_, _>>();
+        let full = EndpointOverride::from_parts("https://router.example/v1", &plain)
+            .expect("endpoint at the limit");
+        assert!(matches!(
+            full.clone()
+                .with_credential_header("x-api-key", HeaderValue::from_static("token")),
+            Err(LlmApiError::Configuration(_))
+        ));
+        // Replacing an existing name does not grow the set.
+        full.with_credential_header("x-header-0", HeaderValue::from_static("token"))
+            .expect("replace an existing header");
+
+        let mut crowded = plain;
+        crowded.insert("x-one-more".to_owned(), "v".to_owned());
+        assert!(EndpointOverride::from_parts("https://router.example/v1", &crowded).is_err());
     }
 }

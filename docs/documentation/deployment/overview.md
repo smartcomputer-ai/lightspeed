@@ -90,6 +90,20 @@ process. Other roles can have multiple workers. If you share a Temporal
 namespace between deployments, assign distinct session, bot, and channel task
 queues to each deployment.
 
+A deployment that does not use bots should not run them. Start the runtime
+without the `bots` and `channels` roles and leave the **Bots** and
+**Channels** switches off in every universe, which is how a new universe
+starts. An unset `LIGHTSPEED_ROLES` runs every role, so set it to the roles
+the deployment keeps: its current list without `bots` and `channels`, for
+example `LIGHTSPEED_ROLES=gateway,environment-gateway,sessions,code`. Keep
+`code` in an explicit list when sessions use Code Mode; that worker role runs
+its scripts. The two measures cover different callers. The switches make the
+Platform refuse bot and channel requests from every member of a universe.
+Leaving the roles out means nothing in the deployment runs a bot controller,
+a trigger or a chat conversation, whoever asked for one, including a holder of
+a runtime API key. Add the roles, and switch the features on per universe,
+when a team starts using bots.
+
 ## Persistence determines what survives
 
 The runtime database holds Lightspeed's session history and resource records;

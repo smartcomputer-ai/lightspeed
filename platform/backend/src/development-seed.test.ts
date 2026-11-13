@@ -57,7 +57,8 @@ it("creates Test with the admin and three credential logins as members of their 
   const values = (table: unknown) => state.inserts.filter((entry) => entry.table === table).map((entry) => entry.values);
   expect(values(schema.organization)).toMatchObject([{ name: "Test", slug: "test" }]);
   const organizationId = values(schema.organization)[0]!.id;
-  expect(values(schema.universes)).toMatchObject([{ organizationId, name: "Test" }]);
+  // The fixture universe exercises bots and channels, which are off by default.
+  expect(values(schema.universes)).toMatchObject([{ organizationId, name: "Test", features: { bots: true, channels: true } }]);
   expect(values(schema.user).map((user) => user.email)).toEqual([
     "operator@lightspeed.dev", "contributor@lightspeed.dev", "viewer@lightspeed.dev",
   ]);

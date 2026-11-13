@@ -2,7 +2,7 @@
 
 mod support;
 
-use std::{env, future::Future, sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use api::{
     AgentApiService, AgentProfileInput, ContextEntryKindView, InputItem, ProfileCreateParams,
@@ -29,8 +29,7 @@ use temporal_runtime::{
     worker::{ActivityState, SessionTools, WorkerActivities, sessions_worker, worker_runtime},
 };
 use temporal_workflow::{
-    AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, SubagentWaitPolicy,
-    connect_temporal,
+    AgentSessionWorkflow, SubagentWaitPolicy, TemporalConnectionConfig, connect_temporal,
 };
 use temporalio_client::{Client, WorkflowQueryOptions};
 use tools::{
@@ -672,13 +671,9 @@ where
 {
     let task_queue = format!("lightspeed-agent-live-{}", uuid::Uuid::new_v4().simple());
     let session_id = SessionId::new(format!("session_live_{}", uuid::Uuid::new_v4().simple()));
-    let temporal_target =
-        env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-    let namespace =
-        env::var("TEMPORAL_NAMESPACE").unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
 
     let runtime = worker_runtime()?;
-    let client = connect_temporal(&temporal_target, &namespace).await?;
+    let client = connect_temporal(&TemporalConnectionConfig::from_env()?).await?;
     let store = pg_store_from_env().await?;
     let model = support::live::openai_live_model();
     support::live::seed_agent_default(&store, &model).await?;

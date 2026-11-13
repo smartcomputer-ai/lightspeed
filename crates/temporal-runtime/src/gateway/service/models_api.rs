@@ -1233,7 +1233,20 @@ mod tests {
         let (base_url, server) = model_list_server().await;
         let endpoint = ModelEndpointConfig {
             base_url: base_url.clone(),
-            headers: BTreeMap::from([("x-client".to_owned(), "lightspeed".to_owned())]),
+            headers: BTreeMap::from([
+                (
+                    "x-client".to_owned(),
+                    auth::RequestHeaderValue::Literal {
+                        value: "lightspeed".to_owned(),
+                    },
+                ),
+                (
+                    "x-api-key".to_owned(),
+                    auth::RequestHeaderValue::Credential {
+                        grant_id: auth::AuthGrantId::new("authgrant_router"),
+                    },
+                ),
+            ]),
             api_kinds: vec![OPENAI_COMPLETIONS_API_KIND.to_owned()],
         };
         let providers = Arc::new(InMemoryAuthProviderStore::new());
@@ -1251,11 +1264,46 @@ mod tests {
             .await
             .expect("provider row");
         let secrets = Arc::new(InMemorySecretStore::new());
+        auth::SecretStore::put_secret(
+            secrets.as_ref(),
+            auth::PutSecretRecord {
+                secret_id: auth::SecretId::new("authsec_router"),
+                secret_kind: auth::SECRET_KIND_STATIC_TOKEN.to_owned(),
+                value: auth::SecretValue::new("router-token"),
+                created_at_ms: 1,
+            },
+        )
+        .await
+        .expect("header secret");
+        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        auth::AuthGrantStore::create_grant(
+            grants.as_ref(),
+            auth::CreateAuthGrantRecord {
+                grant_id: auth::AuthGrantId::new("authgrant_router"),
+                provider_id: "static".to_owned(),
+                provider_kind: AuthProviderKind::StaticToken,
+                exposure: auth::AuthGrantExposure::Brokered,
+                created_by: api::Attribution::Local,
+                display_name: None,
+                subject_hint: None,
+                scopes: Vec::new(),
+                audience: None,
+                access_token_secret: Some(auth::SecretId::new("authsec_router")),
+                refresh_token_secret: None,
+                oauth_client: None,
+                expires_at_ms: None,
+                status: auth::AuthGrantStatus::Active,
+                metadata: serde_json::Value::Object(Default::default()),
+                created_at_ms: 1,
+            },
+        )
+        .await
+        .expect("header grant");
         let resolver = crate::worker::StoredProviderKeyResolver::new(
             providers.clone(),
             secrets.clone(),
             Arc::new(RegistryTokenBroker::new(
-                Arc::new(InMemoryAuthGrantStore::new()),
+                grants,
                 secrets,
                 Arc::new(InMemoryGrantLocks::new()),
             )),
@@ -1288,6 +1336,8 @@ mod tests {
         let request = server.await.expect("server").to_ascii_lowercase();
         assert!(request.starts_with("get /v1/models http/1.1"));
         assert!(request.contains("x-client: lightspeed"));
+        // Discovery resolves the endpoint's credential header like a model call.
+        assert!(request.contains("x-api-key: router-token"));
         assert!(!request.contains("authorization:"));
     }
 }

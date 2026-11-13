@@ -79,9 +79,11 @@ Workspace access can be read-only or editable. Environment access can also
 allow processes and jobs. An MCP attachment can select a subset of the
 server's allowed tools. [Tools and MCP](tools-and-mcp.md) explains the choices.
 
-Enabling VFS or Environments in the form also turns on **Prompt loading** and
-**Skill discovery**. Adjust those switches separately when the agent should
-use files without loading instructions or skills from them. Both search
+Enabling VFS or Environments in the form grants access to the files or
+machines you attach and nothing more. **Prompt loading** and **Skill
+discovery** are separate switches in each section and start off: turn one on
+when the agent should follow instructions or skills found in those files,
+because whoever can write there then steers the agent. Both search
 conventional directories by default. Use **Customize roots** when a project
 keeps these sources elsewhere; see [Workspaces and skills](workspaces-and-skills.md).
 

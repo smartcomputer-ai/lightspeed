@@ -1371,7 +1371,9 @@ function seedIntegrations(universe: UniverseState): void {
       displayName: "acme-lightspeed-app · acme-dev",
       subjectHint: "acme-dev",
       status: "active",
-      exposure: "brokered",
+      // Bound into the build environments, which only a retrievable
+      // credential can be.
+      exposure: "retrievable",
       createdBy: { kind: "actor", id: "user-ada" },
       scopes: [],
       hasAccessToken: true,
@@ -4394,6 +4396,8 @@ export function seedSoftwareFactory(store: DemoStore): void {
     role: "admin",
     createdAt: agoIso(70 * DAY_MS),
     responder,
+    // Bots and channels are off in a new universe; this one is built on them.
+    features: { bots: true, channels: true },
   });
   seedMembers(store, universe);
   seedProfiles(universe);

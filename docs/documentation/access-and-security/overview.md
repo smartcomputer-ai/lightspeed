@@ -76,7 +76,9 @@ and explains what each check protects.
 Session and bot records identify their creator. Session events identify who
 requested a run, steering, or cancellation, and who decided a tool approval.
 An attribution can name an asserted actor, an API key, a local caller, or the
-runtime controller responsible for internal work.
+runtime controller responsible for internal work. An API key is named by its
+key id and by whether it is a deployment key or a key of that universe, so
+the record still names the same key after its secret is rotated.
 
 The Platform also keeps a durable access history for company admission and
 admin-status changes, emergency sign-ins, suspension, session revocation,

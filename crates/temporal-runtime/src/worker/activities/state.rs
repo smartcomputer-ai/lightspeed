@@ -509,8 +509,15 @@ fn stored_provider_key_resolver(
 }
 
 fn registry_token_broker(store: Arc<PgStore>) -> anyhow::Result<Arc<dyn AuthTokenBroker>> {
+    // MCP OAuth refreshes reach exactly what MCP discovery and tool calls may
+    // reach: public HTTPS plus the deployment's listed private destinations.
+    let oauth_http: Arc<dyn auth::OAuthMetadataClient> = Arc::new(
+        McpPrivateNetworkPolicy::from_env()
+            .map_err(anyhow::Error::msg)?
+            .oauth_http_client(),
+    );
     let token_client: Arc<dyn auth::OAuthTokenClient> = Arc::new(
-        HttpOAuthTokenClient::new()
+        HttpOAuthTokenClient::new_with_mcp_http(oauth_http)
             .map_err(|error| anyhow::anyhow!("construct oauth token client: {error}"))?,
     );
     let github_api: Arc<dyn auth::GitHubApiClient> = Arc::new(
