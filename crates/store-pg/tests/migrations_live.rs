@@ -109,9 +109,8 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
         return Err(format!("unexpected migrated status: {status:?}"));
     }
 
-    // The environment baseline is folded into one migration; the ledger
-    // ends at revision 21.
-    if REQUIRED_SCHEMA_REVISION != 21 {
+    // Include the declared universe configuration migration in the acceptance ledger.
+    if REQUIRED_SCHEMA_REVISION != 22 {
         return Err(format!(
             "unexpected required schema revision {REQUIRED_SCHEMA_REVISION}"
         ));
