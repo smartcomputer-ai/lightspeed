@@ -139,6 +139,7 @@ export const METHODS = [
   "deployment/universes/create",
   "deployment/universes/list",
   "deployment/universes/read",
+  "deployment/universes/configuration/put",
   "deployment/universes/handle/put",
   "deployment/universes/delete",
   "deployment/api-keys/create",
@@ -959,6 +960,12 @@ export const METHOD_INFO = {
     access: {"kind":"deployment"},
     summary: "Read a universe",
     description: "Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.",
+  },
+  "deployment/universes/configuration/put": {
+    scope: "deployment",
+    access: {"kind":"deployment"},
+    summary: "Declare universe presentation and access",
+    description: "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged.",
   },
   "deployment/universes/handle/put": {
     scope: "deployment",
@@ -2262,6 +2269,15 @@ export interface MethodMap {
    */
   "deployment/universes/read": {
     params: Api.DeploymentUniverseReadParams;
+    result: Api.AgentApiOutcomeOfDeploymentUniverseReadResponse;
+  };
+  /**
+   * Declare universe presentation and access
+   *
+   * Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged.
+   */
+  "deployment/universes/configuration/put": {
+    params: Api.DeploymentUniverseConfigurationPutParams;
     result: Api.AgentApiOutcomeOfDeploymentUniverseReadResponse;
   };
   /**

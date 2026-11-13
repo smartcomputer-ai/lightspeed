@@ -304,7 +304,7 @@ fn saved_resolved(name: &str, saved: &SavedConnection) -> Result<ResolvedConnect
 pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnection> {
     let client = HttpAgentApi::with_connection(connection.clone());
     let response: api::InitializeResponse = client
-        .request(api::METHOD_INITIALIZE, api::InitializeParams::default())
+        .request_connection(api::METHOD_INITIALIZE, api::InitializeParams::default())
         .await?
         .result;
     if response.caller.single != connection.secret.is_none() {
@@ -747,6 +747,39 @@ pub fn select_universe(connection: &ResolvedConnection, id: String) -> Result<()
         .universe = Some(id.clone());
     save_at(&dir, &config)?;
     Ok(())
+}
+
+/// Retry discovery only. The deadline also bounds an in-flight HTTP request.
+pub async fn resolve_wait(
+    name: Option<&str>,
+    url: Option<&str>,
+    universe: Option<&str>,
+    seconds: Option<u64>,
+) -> Result<ResolvedConnection> {
+    let Some(seconds) = seconds else {
+        return resolve(name, url, universe).await;
+    };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            bail!("Runtime did not become available within {seconds} seconds");
+        }
+        match tokio::time::timeout_at(deadline, resolve(name, url, universe)).await {
+            Ok(Ok(connection)) => return Ok(connection),
+            Ok(Err(error)) if error.is::<crate::api_client::StartupUnavailable>() => {}
+            Ok(Err(error)) => return Err(error),
+            Err(_) => bail!("Runtime did not become available within {seconds} seconds"),
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            bail!("Runtime did not become available within {seconds} seconds");
+        }
+        tokio::time::sleep_until(std::cmp::min(
+            deadline,
+            now + std::time::Duration::from_secs(1),
+        ))
+        .await;
+    }
 }
 
 #[cfg(test)]

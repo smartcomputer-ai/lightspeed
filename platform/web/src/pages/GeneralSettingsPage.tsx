@@ -152,6 +152,7 @@ export function HandleCard({ universe }: { universe: Universe }) {
 function RenameCard({ universe }: { universe: Universe }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(universe.name);
+  const managed = universe.runtimeConfiguration?.displayName !== undefined;
 
   const rename = useMutation({
     mutationFn: () =>
@@ -161,7 +162,7 @@ function RenameCard({ universe }: { universe: Universe }) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    rename.mutate();
+    if (!managed) rename.mutate();
   };
 
   return (
@@ -169,7 +170,7 @@ function RenameCard({ universe }: { universe: Universe }) {
       <CardHeader>
         <CardTitle>Name</CardTitle>
         <CardDescription>
-          The display name shown in the switcher. Changing it does not change the handle.
+          {managed ? "Managed by the universe configuration. Update displayName in its document to rename it." : "The display name shown in the switcher. Changing it does not change the handle."}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -178,6 +179,7 @@ function RenameCard({ universe }: { universe: Universe }) {
             <FieldLabel htmlFor="universe-name">Display name</FieldLabel>
             <Input
               id="universe-name"
+              disabled={managed}
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
@@ -185,7 +187,7 @@ function RenameCard({ universe }: { universe: Universe }) {
           </Field>
           <Button
             type="submit"
-            disabled={rename.isPending || name.trim() === universe.name || !name.trim()}
+            disabled={managed || rename.isPending || name.trim() === universe.name || !name.trim()}
           >
             {rename.isPending ? "Saving…" : "Save"}
           </Button>

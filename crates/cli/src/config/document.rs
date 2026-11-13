@@ -36,6 +36,12 @@ pub(crate) struct UniverseDocument {
     /// The universe's deployment-unique name.
     pub handle: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub members: Option<Vec<api::DeclaredUniverseMember>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory_group_mappings: Option<Vec<api::UniverseDirectoryGroupMapping>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credentials: Option<Vec<Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub providers: Option<Vec<Value>>,
@@ -328,6 +334,16 @@ impl Format {
             Self::Yaml => serde_yaml::to_string(value)?,
             Self::Json => format!("{}\n", serde_json::to_string_pretty(value)?),
         })
+    }
+}
+
+impl UniverseDocument {
+    pub(crate) fn configuration(&self) -> api::UniverseConfiguration {
+        api::UniverseConfiguration {
+            display_name: self.display_name.clone(),
+            members: self.members.clone(),
+            directory_group_mappings: self.directory_group_mappings.clone(),
+        }
     }
 }
 

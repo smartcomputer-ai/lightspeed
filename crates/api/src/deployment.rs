@@ -18,6 +18,8 @@ pub const METHOD_DEPLOYMENT_UNIVERSES_CREATE: &str = "deployment/universes/creat
 pub const METHOD_DEPLOYMENT_UNIVERSES_LIST: &str = "deployment/universes/list";
 pub const METHOD_DEPLOYMENT_UNIVERSES_READ: &str = "deployment/universes/read";
 pub const METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT: &str = "deployment/universes/handle/put";
+pub const METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT: &str =
+    "deployment/universes/configuration/put";
 pub const METHOD_DEPLOYMENT_UNIVERSES_DELETE: &str = "deployment/universes/delete";
 pub const METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST: &str =
     "deployment/environment-provider-bindings/list";
@@ -94,6 +96,8 @@ pub fn is_deployment_method(method: &str) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentUniverseView {
+    #[serde(flatten)]
+    pub configuration: crate::UniverseConfiguration,
     pub universe_id: String,
     /// The universe's deployment-unique name. Requests may address the
     /// universe by it wherever they may by UUID.
@@ -164,6 +168,15 @@ pub struct DeploymentUniverseHandlePutParams {
     /// The new handle: 1-63 lowercase letters, digits and hyphens, starting
     /// and ending with a letter or digit, and not in the form of a UUID.
     pub handle: String,
+}
+
+/// Patch desired Platform configuration. Absent fields retain their values.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DeploymentUniverseConfigurationPutParams {
+    pub universe: String,
+    #[serde(flatten)]
+    pub configuration: crate::UniverseConfiguration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -651,6 +664,11 @@ pub trait DeploymentApiService: Send + Sync {
         params: DeploymentUniverseReadParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError>;
 
+    async fn put_universe_configuration(
+        &self,
+        params: DeploymentUniverseConfigurationPutParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError>;
+
     async fn put_universe_handle(
         &self,
         params: DeploymentUniverseHandlePutParams,
@@ -815,6 +833,8 @@ deployment_api_methods! {
         ["List universes", "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_READ => read_universe(DeploymentUniverseReadParams) -> DeploymentUniverseReadResponse =>
         ["Read a universe", "Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage."], access: MethodAccess::Deployment,
+    METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT => put_universe_configuration(DeploymentUniverseConfigurationPutParams) -> DeploymentUniverseReadResponse =>
+        ["Declare universe presentation and access", "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT => put_universe_handle(DeploymentUniverseHandlePutParams) -> DeploymentUniverseReadResponse =>
         ["Rename a universe", "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_DELETE => delete_universe(DeploymentUniverseDeleteParams) -> DeploymentUniverseDeleteResponse =>

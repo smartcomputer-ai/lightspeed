@@ -40,6 +40,7 @@ mod sessions;
 mod skills;
 mod storage;
 mod transcriptions;
+mod universe_configuration;
 mod views;
 
 pub use access::*;
@@ -66,6 +67,7 @@ pub use sessions::*;
 pub use skills::*;
 pub use storage::*;
 pub use transcriptions::*;
+pub use universe_configuration::*;
 pub use views::*;
 
 #[cfg(test)]

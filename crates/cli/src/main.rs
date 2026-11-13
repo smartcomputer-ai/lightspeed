@@ -110,10 +110,15 @@ async fn main() -> Result<()> {
             _ => unreachable!("only these commands have offline forms"),
         };
     }
-    let active = connection::resolve(
+    let wait = match &cli.command {
+        Command::Config(args) => args.wait_seconds(),
+        _ => None,
+    };
+    let active = connection::resolve_wait(
         cli.connection.as_deref(),
         cli.api_url.as_deref(),
         cli.universe.as_deref(),
+        wait,
     )
     .await?;
     connection::ACTIVE

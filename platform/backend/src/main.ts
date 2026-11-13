@@ -1,3 +1,4 @@
+import { startDeclaredUniverseSync } from "./declared-universes.js";
 import { serve } from "@hono/node-server";
 import { createDb, migrateDb } from "@lightspeed-ai/platform-db";
 import { buildApp } from "./api.js";
@@ -15,7 +16,9 @@ await bootstrapAdmin(db, env);
 await seedDevelopment(db, env);
 
 const auth = createAuth(db, env);
-const app = buildApp({ db, pool, auth, env });
+const context = { db, pool, auth, env };
+const app = buildApp(context);
+const stopUniverseSync = startDeclaredUniverseSync(context);
 
 const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
   console.log(`[main] Lightspeed platform listening on :${info.port}`);
@@ -24,6 +27,7 @@ const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
     console.log(`[main] ${signal} — shutting down`);
+    stopUniverseSync();
     server.close(() => {
       void pool.end().finally(() => process.exit(0));
     });

@@ -107,7 +107,7 @@ export function createAuth(db: Db, env: ServerEnv) {
             const admitted = await admitCompanyIdentity(db, oidc, identity, access);
             if (!admitted) return null;
             state.identity = admitted;
-            return { ...identity, email: identity.email as string, name: typeof identity.name === "string" ? identity.name : identity.email as string, emailVerified: false };
+            return { ...identity, email: identity.email as string, name: typeof identity.name === "string" ? identity.name : identity.email as string, emailVerified: identity.email_verified === true };
           } catch {
             return null;
           }

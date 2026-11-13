@@ -1350,30 +1350,6 @@ class DeploymentUniverseReadParams(TypedDict):
     """
 
 
-class DeploymentUniverseView(TypedDict):
-    """
-    Per-universe stats view. Counts are cheap aggregates computed at read
-    time, not maintained counters — approximate under concurrent writes.
-    """
-
-    blobBytes: int
-    createdAtMs: int
-    handle: str
-    """
-    The universe's deployment-unique name. Requests may address the
-    universe by it wherever they may by UUID.
-    """
-    lastActivityAtMs: NotRequired[int | None]
-    """
-    Most recent session activity (`max(sessions.updated_at_ms)`); absent
-    when the universe has no sessions.
-    """
-    profiles: int
-    sessions: int
-    universeId: str
-    workspaces: int
-
-
 EnvironmentAccess: TypeAlias = Literal['read', 'edit', 'exec', 'jobs']
 """
 Per-attachment environment access, an ordered ladder: `edit` adds file
@@ -3831,6 +3807,9 @@ may do and which role a gate built on the contract should require.
 """
 
 
+UniverseMemberRole: TypeAlias = Literal['viewer', 'contributor', 'operator', 'admin']
+
+
 class VfsPromptsConfig(TypedDict):
     roots: NotRequired[list[str] | None]
     """
@@ -5129,6 +5108,16 @@ class ContextReplaceResult(TypedDict):
     status: ContextReplaceStatus
 
 
+class DeclaredUniverseMember(TypedDict):
+    email: NotRequired[str | None]
+    """
+    Select by verified email, or by issuer and subject, never both.
+    """
+    issuer: NotRequired[str | None]
+    role: UniverseMemberRole
+    subject: NotRequired[str | None]
+
+
 class DeploymentApiKeyCreateParams(TypedDict):
     assertActor: NotRequired[bool]
     """
@@ -5250,22 +5239,6 @@ class DeploymentProviderBindingDeleteResponse(TypedDict):
 
 class DeploymentProviderBindingPutResponse(TypedDict):
     binding: EnvironmentProviderBindingView
-
-
-class DeploymentUniverseCreateResponse(TypedDict):
-    created: bool
-    """
-    False when the universe already existed (create is idempotent).
-    """
-    universe: DeploymentUniverseView
-
-
-class DeploymentUniverseListResponse(TypedDict):
-    universes: NotRequired[list[DeploymentUniverseView]]
-
-
-class DeploymentUniverseReadResponse(TypedDict):
-    universe: DeploymentUniverseView
 
 
 class EnvironmentCreateParams(TypedDict):
@@ -6216,6 +6189,12 @@ class TranscriptionView(TypedDict):
     transcriptionId: str
 
 
+class UniverseDirectoryGroupMapping(TypedDict):
+    group: str
+    issuer: str
+    role: UniverseMemberRole
+
+
 class VfsFeature(TypedDict):
     """
     Grants the session virtual filesystem. Workspace attachments declare the
@@ -7042,6 +7021,66 @@ class DeploymentApiKeyRevokeResponse(TypedDict):
     apiKey: DeploymentApiKeyView
 
 
+class DeploymentUniverseConfigurationPutParams(TypedDict):
+    """
+    Patch desired Platform configuration. Absent fields retain their values.
+    """
+
+    directoryGroupMappings: NotRequired[list[UniverseDirectoryGroupMapping] | None]
+    """
+    Exact issuer-qualified directory groups. Omit to leave unchanged;
+    an empty list clears declared group grants.
+    """
+    displayName: NotRequired[str | None]
+    """
+    Runtime-owned name. Named universes are adopted automatically by Platform.
+    """
+    members: NotRequired[list[DeclaredUniverseMember] | None]
+    """
+    Declared grants, independent of manual memberships. Omit to leave unmanaged;
+    an empty list clears declared members. Email selectors require verified email.
+    """
+    universe: str
+
+
+class DeploymentUniverseView(TypedDict):
+    """
+    Per-universe stats view. Counts are cheap aggregates computed at read
+    time, not maintained counters — approximate under concurrent writes.
+    """
+
+    blobBytes: int
+    createdAtMs: int
+    directoryGroupMappings: NotRequired[list[UniverseDirectoryGroupMapping] | None]
+    """
+    Exact issuer-qualified directory groups. Omit to leave unchanged;
+    an empty list clears declared group grants.
+    """
+    displayName: NotRequired[str | None]
+    """
+    Runtime-owned name. Named universes are adopted automatically by Platform.
+    """
+    handle: str
+    """
+    The universe's deployment-unique name. Requests may address the
+    universe by it wherever they may by UUID.
+    """
+    lastActivityAtMs: NotRequired[int | None]
+    """
+    Most recent session activity (`max(sessions.updated_at_ms)`); absent
+    when the universe has no sessions.
+    """
+    members: NotRequired[list[DeclaredUniverseMember] | None]
+    """
+    Declared grants, independent of manual memberships. Omit to leave unmanaged;
+    an empty list clears declared members. Email selectors require verified email.
+    """
+    profiles: int
+    sessions: int
+    universeId: str
+    workspaces: int
+
+
 class EnvironmentCloseResponse(TypedDict):
     environment: EnvironmentView
 
@@ -7548,6 +7587,22 @@ class ContextAppendResult(TypedDict):
     failure: NotRequired[InputAdmissionFailureView | None]
     key: str
     status: ContextAppendStatus
+
+
+class DeploymentUniverseCreateResponse(TypedDict):
+    created: bool
+    """
+    False when the universe already existed (create is idempotent).
+    """
+    universe: DeploymentUniverseView
+
+
+class DeploymentUniverseListResponse(TypedDict):
+    universes: NotRequired[list[DeploymentUniverseView]]
+
+
+class DeploymentUniverseReadResponse(TypedDict):
+    universe: DeploymentUniverseView
 
 
 class InlineAgentProfile(TypedDict):

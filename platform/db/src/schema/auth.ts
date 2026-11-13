@@ -6,6 +6,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
@@ -27,6 +28,7 @@ export const user = pgTable("user", {
   identitySource: text("identity_source").default("local").notNull(),
   oidcIssuer: text("oidc_issuer"),
   oidcSubject: text("oidc_subject"),
+  directoryGroups: jsonb("directory_groups").$type<string[]>().default([]).notNull(),
   companyAdmitted: boolean("company_admitted").default(false).notNull(),
   providerCheckedAt: timestamp("provider_checked_at", { withTimezone: true }),
   emergencyAdmin: boolean("emergency_admin").default(false).notNull(),
