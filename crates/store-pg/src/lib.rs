@@ -310,8 +310,8 @@ pub use channels::list_channel_accounts_all;
 pub use deployment::{
     UNIVERSE_HANDLE_MAX_LEN, UniverseStats, create_universe, create_universe_with_handle,
     default_universe_handle, delete_universe, is_valid_universe_handle, list_universe_object_keys,
-    list_universe_session_ids, list_universe_stats, put_universe_handle, read_universe_stats,
-    resolve_universe_reference,
+    list_universe_session_ids, list_universe_stats, put_universe_configuration,
+    put_universe_handle, read_universe_stats, resolve_universe_reference,
 };
 pub use environment::{
     list_revoked_environment_routes, list_universes_with_environment_work,

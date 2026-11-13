@@ -92,6 +92,7 @@ export async function api<T>(method: string, path: string, body?: unknown, signa
 }
 
 export interface Universe {
+  runtimeConfiguration?: Omit<import("@lightspeed-ai/sdk").DeploymentUniverseConfigurationPutParams, "universe">;
   icon?: UniverseIconName;
   iconColor?: UniverseIconColor;
   id: string;

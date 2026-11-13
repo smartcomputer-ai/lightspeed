@@ -141,6 +141,7 @@ METHODS = (
     'deployment/universes/create',
     'deployment/universes/list',
     'deployment/universes/read',
+    'deployment/universes/configuration/put',
     'deployment/universes/handle/put',
     'deployment/universes/delete',
     'deployment/api-keys/create',
@@ -300,6 +301,7 @@ METHOD_INFO = {
     'deployment/universes/create': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Create a universe', 'description': 'Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.'},
     'deployment/universes/list': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'List universes', 'description': 'Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.'},
     'deployment/universes/read': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Read a universe', 'description': 'Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.'},
+    'deployment/universes/configuration/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Declare universe presentation and access', 'description': 'Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged.'},
     'deployment/universes/handle/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Rename a universe', 'description': "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe."},
     'deployment/universes/delete': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Purge a universe', 'description': 'Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.'},
     'deployment/api-keys/create': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Create a scoped API key', 'description': 'Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.'},
@@ -771,6 +773,9 @@ class GeneratedClient:
                    *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentUniverseListResponse: ...
     @overload
     async def call(self, method: Literal['deployment/universes/read'], params: Api.DeploymentUniverseReadParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentUniverseReadResponse: ...
+    @overload
+    async def call(self, method: Literal['deployment/universes/configuration/put'], params: Api.DeploymentUniverseConfigurationPutParams,
                    *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentUniverseReadResponse: ...
     @overload
     async def call(self, method: Literal['deployment/universes/handle/put'], params: Api.DeploymentUniverseHandlePutParams,

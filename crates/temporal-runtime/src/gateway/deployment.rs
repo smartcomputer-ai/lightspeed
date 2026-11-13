@@ -490,6 +490,33 @@ impl DeploymentApiService for GatewayDeploymentApi {
         .await
     }
 
+    async fn put_universe_configuration(
+        &self,
+        params: api::DeploymentUniverseConfigurationPutParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
+        self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT, async {
+            params
+                .configuration
+                .validate()
+                .map_err(AgentApiError::invalid_request)?;
+            let id = self.resolve_universe(&params.universe).await?;
+            if !store_pg::put_universe_configuration(self.pool(), id, &params.configuration)
+                .await
+                .map_err(map_store_error)?
+            {
+                return Err(AgentApiError::not_found("universe no longer exists"));
+            }
+            let universe = self
+                .read_universe_view(id)
+                .await?
+                .ok_or_else(|| AgentApiError::not_found("universe no longer exists"))?;
+            Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
+                universe,
+            }))
+        })
+        .await
+    }
+
     async fn put_universe_handle(
         &self,
         params: api::DeploymentUniverseHandlePutParams,
@@ -788,6 +815,7 @@ fn parse_environment_provider_id(value: String) -> Result<EnvironmentProviderId,
 
 fn universe_view(stats: store_pg::UniverseStats) -> DeploymentUniverseView {
     DeploymentUniverseView {
+        configuration: stats.configuration,
         universe_id: stats.universe_id.to_string(),
         handle: stats.handle,
         created_at_ms: u64::try_from(stats.created_at_ms).unwrap_or(0),

@@ -169,6 +169,10 @@ pub(crate) fn document_schema() -> Value {
         .map(|resource| (resource.section().to_owned(), list_of(resource.section())))
         .collect();
 
+    let configuration = schema_of::<api::UniverseConfiguration>(&mut generator);
+    if let Some(properties) = configuration.get("properties").and_then(Value::as_object) {
+        universe_sections.extend(properties.clone());
+    }
     let envelope = |kind: &str,
                     description: &str,
                     required: &[&str],
@@ -264,6 +268,11 @@ mod tests {
 schemaVersion: 1
 kind: universe
 handle: research
+displayName: Research
+members:
+  - { issuer: https://identity.example.com, subject: owner, role: admin }
+directoryGroupMappings:
+  - { issuer: https://identity.example.com, group: readers, role: viewer }
 credentials:
   - grantId: tracker-token
     displayName: Issue tracker

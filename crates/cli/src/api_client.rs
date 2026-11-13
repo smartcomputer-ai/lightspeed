@@ -642,6 +642,21 @@ impl HttpAgentApi {
         P: Serialize,
         R: DeserializeOwned,
     {
+        self.request_connection(method, params)
+            .await
+            .map_err(|error| match error.downcast::<AgentApiError>() {
+                Ok(error) => error,
+                Err(error) => AgentApiError::internal(error.to_string()),
+            })
+    }
+
+    /// Retains typed transport failures for bounded startup retries. Ordinary API
+    /// calls still expose the public error contract and are never retried here.
+    pub(crate) async fn request_connection<P: Serialize, R: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: P,
+    ) -> anyhow::Result<AgentApiOutcome<R>> {
         let id = RequestId::Number(self.next_id.fetch_add(1, Ordering::Relaxed));
         let request = JsonRpcRequest {
             id,
@@ -661,19 +676,32 @@ impl HttpAgentApi {
             .json(&request)
             .send()
             .await
-            .map_err(|error| AgentApiError::internal(format!("runtime unavailable: {error}")))?;
+            .map_err(|error| {
+                if error.is_connect() || error.is_timeout() {
+                    anyhow::Error::new(StartupUnavailable)
+                } else {
+                    anyhow::Error::new(AgentApiError::internal(format!(
+                        "runtime unavailable: {error}"
+                    )))
+                }
+            })?;
         let status = response.status();
+        if matches!(status.as_u16(), 502..=504) {
+            return Err(StartupUnavailable.into());
+        }
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(AgentApiError::new(
                 AgentApiErrorKind::Unauthenticated,
                 "runtime rejected the API key; verify the connection or replace a revoked key",
-            ));
+            )
+            .into());
         }
         if status == reqwest::StatusCode::FORBIDDEN {
             return Err(AgentApiError::new(
                 AgentApiErrorKind::Forbidden,
                 "key scope or method groups do not permit this operation",
-            ));
+            )
+            .into());
         }
         let response = response
             .error_for_status()
@@ -682,13 +710,13 @@ impl HttpAgentApi {
             .await
             .map_err(|error| AgentApiError::internal(format!("invalid API response: {error}")))?;
         if let Some(error) = response.error {
-            return Err(agent_error_from_json_rpc(error));
+            return Err(agent_error_from_json_rpc(error).into());
         }
         let value = response
             .result
             .ok_or_else(|| AgentApiError::internal("JSON-RPC response missing result"))?;
         serde_json::from_value::<AgentApiOutcome<R>>(value)
-            .map_err(|error| AgentApiError::internal(format!("invalid API result: {error}")))
+            .map_err(|error| AgentApiError::internal(format!("invalid API result: {error}")).into())
     }
 }
 
@@ -710,3 +738,12 @@ fn agent_error_from_json_rpc(error: api::JsonRpcError) -> AgentApiError {
     };
     AgentApiError::new(kind, error.message)
 }
+
+#[derive(Debug)]
+pub(crate) struct StartupUnavailable;
+impl std::fmt::Display for StartupUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Runtime connection is temporarily unavailable")
+    }
+}
+impl std::error::Error for StartupUnavailable {}

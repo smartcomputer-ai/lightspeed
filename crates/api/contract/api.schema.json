@@ -8878,6 +8878,37 @@
       ],
       "type": "object"
     },
+    "DeclaredUniverseMember": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "description": "Select by verified email, or by issuer and subject, never both.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "issuer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "$ref": "#/definitions/UniverseMemberRole"
+        },
+        "subject": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "role"
+      ],
+      "type": "object"
+    },
     "DeletedSessionView": {
       "properties": {
         "deletedAtMs": {
@@ -9567,6 +9598,45 @@
       ],
       "type": "object"
     },
+    "DeploymentUniverseConfigurationPutParams": {
+      "description": "Patch desired Platform configuration. Absent fields retain their values.",
+      "properties": {
+        "directoryGroupMappings": {
+          "description": "Exact issuer-qualified directory groups. Omit to leave unchanged;\nan empty list clears declared group grants.",
+          "items": {
+            "$ref": "#/definitions/UniverseDirectoryGroupMapping"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "displayName": {
+          "description": "Runtime-owned name. Named universes are adopted automatically by Platform.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "members": {
+          "description": "Declared grants, independent of manual memberships. Omit to leave unmanaged;\nan empty list clears declared members. Email selectors require verified email.",
+          "items": {
+            "$ref": "#/definitions/DeclaredUniverseMember"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "universe": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "type": "object"
+    },
     "DeploymentUniverseCreateParams": {
       "properties": {
         "handle": {
@@ -9708,6 +9778,23 @@
           "minimum": 0,
           "type": "integer"
         },
+        "directoryGroupMappings": {
+          "description": "Exact issuer-qualified directory groups. Omit to leave unchanged;\nan empty list clears declared group grants.",
+          "items": {
+            "$ref": "#/definitions/UniverseDirectoryGroupMapping"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "displayName": {
+          "description": "Runtime-owned name. Named universes are adopted automatically by Platform.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "handle": {
           "description": "The universe's deployment-unique name. Requests may address the\nuniverse by it wherever they may by UUID.",
           "type": "string"
@@ -9718,6 +9805,16 @@
           "minimum": 0,
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "members": {
+          "description": "Declared grants, independent of manual memberships. Omit to leave unmanaged;\nan empty list clears declared members. Email selectors require verified email.",
+          "items": {
+            "$ref": "#/definitions/DeclaredUniverseMember"
+          },
+          "type": [
+            "array",
             "null"
           ]
         },
@@ -19234,6 +19331,35 @@
           "type": "string"
         }
       ]
+    },
+    "UniverseDirectoryGroupMapping": {
+      "additionalProperties": false,
+      "properties": {
+        "group": {
+          "type": "string"
+        },
+        "issuer": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/definitions/UniverseMemberRole"
+        }
+      },
+      "required": [
+        "issuer",
+        "group",
+        "role"
+      ],
+      "type": "object"
+    },
+    "UniverseMemberRole": {
+      "enum": [
+        "viewer",
+        "contributor",
+        "operator",
+        "admin"
+      ],
+      "type": "string"
     },
     "VfsFeature": {
       "additionalProperties": false,

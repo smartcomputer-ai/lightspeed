@@ -13,6 +13,7 @@ let keys: Awaited<ReturnType<typeof generateKeyPair>>;
 let wrongKeys: Awaited<ReturnType<typeof generateKeyPair>>;
 let fixture: Awaited<ReturnType<typeof identityFixture>>;
 let fetchMock: ReturnType<typeof vi.fn>;
+let providerFetch: typeof fetch;
 
 beforeAll(async () => {
   keys = await generateKeyPair("RS256");
@@ -44,6 +45,7 @@ beforeAll(async () => {
     return Response.json({ token_type: "Bearer", access_token: accessToken, refresh_token: "synthetic-refresh-secret",
       expires_in: 300, ...(attempt.missingToken ? {} : { id_token: idToken }) });
   });
+  providerFetch = fetchMock.getMockImplementation() as typeof fetch;
   vi.stubGlobal("fetch", fetchMock);
   fixture = await identityFixture();
 }, 30000);
@@ -53,6 +55,7 @@ beforeEach(async () => {
   await fixture.postgres.exec('DELETE FROM "session"; DELETE FROM "identity_audit"; DELETE FROM "user" WHERE identity_source = \'company\';');
   tokens.clear();
   fetchMock.mockClear();
+  fetchMock.mockImplementation(providerFetch);
 });
 
 async function login(claims: JWTPayload = {}, options: { missingToken?: boolean; wrongSignature?: boolean; state?: string; accessClaims?: JWTPayload; wrongAccessSignature?: boolean } = {}, target = fixture) {
@@ -289,4 +292,25 @@ it("keeps emergency access working during provider failure and can turn password
     body: JSON.stringify({ email: identityEnv.adminEmail, password: identityEnv.adminPassword }),
   }));
   expect(response.status).toBe(401);
+});
+
+it("applies declared directory roles from verified login claims and removes them on the next login", async () => {
+  const orgId = crypto.randomUUID();
+  await fixture.db.insert(schema.organization).values({ id: orgId, name: "Declared", slug: "declared-access", createdAt: new Date() });
+  const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: orgId, lightspeedUniverseId: crypto.randomUUID(), name: "Declared", runtimeConfiguration: {
+    displayName: "Declared", directoryGroupMappings: [{ issuer, group: "research-admins", role: "admin" }],
+  } }).returning();
+  try {
+    const { cookie } = await login({ groups: ["lightspeed-users", "research-admins"] });
+    const list = await fixture.request("/api/v1/universes", undefined, cookie);
+    expect(await list.json()).toEqual([expect.objectContaining({ id: universe!.id, role: "admin" })]);
+    expect((await fixture.request(`/api/v1/universes/${universe!.id}/members`, undefined, cookie)).status).toBe(200);
+    expect(await fixture.db.select().from(schema.member).where(eq(schema.member.organizationId, orgId))).toEqual([]);
+    expect((await fixture.request(`/api/v1/universes/${universe!.id}`, { name: "Local edit" }, cookie, "PATCH")).status).toBe(409);
+    await login({ groups: ["lightspeed-users"] });
+    expect(await (await fixture.request("/api/v1/universes", undefined, cookie)).json()).toEqual([]);
+    expect((await fixture.request(`/api/v1/universes/${universe!.id}/members`, undefined, cookie)).status).toBe(404);
+  } finally {
+    await fixture.db.delete(schema.organization).where(eq(schema.organization.id, orgId));
+  }
 });

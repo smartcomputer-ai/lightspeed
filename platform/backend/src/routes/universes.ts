@@ -1,3 +1,4 @@
+import { declaredRole } from "../declared-universes.js";
 import { syncUniverseHandles, requireAvailableCachedHandle } from "../universe-handles.js";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -31,7 +32,9 @@ type UniverseRow = typeof universes.$inferSelect;
 /// A universe as the API shows it: its row, where features are what is on
 /// now (defaults and requirements applied), not the stored switches.
 function universeView(row: UniverseRow, handle: string | null, role: UniverseRole | string | null) {
-  return { ...row, features: effectiveFeatures(row.features), handle, role };
+  const runtimeConfiguration = role === "admin" ? row.runtimeConfiguration :
+    (row.runtimeConfiguration?.displayName ? { displayName: row.runtimeConfiguration.displayName } : {});
+  return { ...row, runtimeConfiguration, features: effectiveFeatures(row.features), handle, role };
 }
 
 /// A universe the signed-in user may address, and as whom.
@@ -67,7 +70,7 @@ async function universeForSession(
     .from(member)
     .where(and(eq(member.organizationId, row.universe.organizationId), eq(member.userId, session.user.id)))
     .limit(1);
-  const role = isPlatformAdmin(session) ? "admin" : universeRoleSchema.safeParse(membership?.role).data;
+  const role = isPlatformAdmin(session) ? "admin" : await declaredRole(ctx, session.user.id, row.universe.runtimeConfiguration, membership?.role);
   if (!role) {
     return null;
   }
@@ -155,15 +158,18 @@ export function universeRoutes(ctx: AppContext) {
         .from(universes)
         .innerJoin(organization, eq(organization.id, universes.organizationId))
         .leftJoin(member, and(eq(member.organizationId, universes.organizationId), eq(member.userId, session.user.id)));
-      return c.json(rows.map((r) => universeView(r.universe, r.handle, r.role)));
+      return c.json(rows.map((r) => universeView(r.universe, r.handle, r.universe.runtimeConfiguration?.displayName ? "admin" : r.role)));
     }
     const rows = await ctx.db
       .select({ universe: universes, handle: organization.slug, role: member.role })
       .from(universes)
       .innerJoin(organization, eq(organization.id, universes.organizationId))
-      .innerJoin(member, eq(member.organizationId, universes.organizationId))
-      .where(eq(member.userId, session.user.id));
-    return c.json(rows.map((r) => universeView(r.universe, r.handle, r.role)));
+      .leftJoin(member, and(eq(member.organizationId, universes.organizationId), eq(member.userId, session.user.id)));
+    const visible = await Promise.all(rows.map(async row => {
+      const role = await declaredRole(ctx, session.user.id, row.universe.runtimeConfiguration, row.role);
+      return role ? universeView(row.universe, row.handle, role) : null;
+    }));
+    return c.json(visible.filter(row => row !== null));
   }));
 
   app.post("/sync-handles", (c) => {
@@ -462,6 +468,9 @@ export function universeRoutes(ctx: AppContext) {
     // Display name lives on both rows (the organization is the sign-in face
     // of the universe); runtime owns the handle and this route cannot edit it. Feature
     // switches merge into what the universe stored.
+    if (body.data.name && access.universe.runtimeConfiguration?.displayName !== undefined) {
+      return c.json({ error: "This universe name is managed by Runtime configuration. Update displayName in its document." }, 409);
+    }
     const { features, ...fields } = body.data;
     const updated = await ctx.db.transaction(async (tx) => {
       if (fields.name) {

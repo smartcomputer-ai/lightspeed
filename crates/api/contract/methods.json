@@ -3345,6 +3345,30 @@
       "access": {
         "kind": "deployment"
       },
+      "description": "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged.",
+      "group": "deployment/universes",
+      "method": "deployment/universes/configuration/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/DeploymentUniverseConfigurationPutParams"
+        },
+        "type": "DeploymentUniverseConfigurationPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentUniverseReadResponse"
+        },
+        "type": "AgentApiOutcome<DeploymentUniverseReadResponse>"
+      },
+      "role": null,
+      "scope": "deployment",
+      "summary": "Declare universe presentation and access",
+      "target": null
+    },
+    {
+      "access": {
+        "kind": "deployment"
+      },
       "description": "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.",
       "group": "deployment/universes",
       "method": "deployment/universes/handle/put",

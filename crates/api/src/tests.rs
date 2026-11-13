@@ -3890,6 +3890,7 @@ struct TestDeploymentService;
 
 fn test_deployment_universe(universe_id: &str) -> DeploymentUniverseView {
     DeploymentUniverseView {
+        configuration: UniverseConfiguration::default(),
         universe_id: universe_id.to_owned(),
         handle: "acme".to_owned(),
         created_at_ms: 10,
@@ -3958,6 +3959,17 @@ impl DeploymentApiService for TestDeploymentService {
     ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
             universe: test_deployment_universe(&params.universe),
+        }))
+    }
+
+    async fn put_universe_configuration(
+        &self,
+        params: DeploymentUniverseConfigurationPutParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
+        let mut universe = test_deployment_universe(&params.universe);
+        universe.configuration = params.configuration;
+        Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
+            universe,
         }))
     }
 
@@ -4260,6 +4272,19 @@ async fn dispatch_deployment_json_rpc_routes_universe_lifecycle() {
     .await;
     let result = rename.result.expect("result");
     assert_eq!(result["result"]["universe"]["handle"], json!("acme-labs"));
+    let response = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
+        JsonRpcRequest {
+            id: RequestId::Number(51),
+            method: METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT.to_owned(),
+            params: Some(json!({"universe":"acme", "displayName":"Acme", "members":[]})),
+        },
+    )
+    .await;
+    assert!(response.error.is_none());
+    let result = response.result.unwrap();
+    assert_eq!(result["result"]["universe"]["displayName"], "Acme");
+    assert_eq!(result["result"]["universe"]["members"], json!([]));
 }
 
 #[tokio::test(flavor = "current_thread")]

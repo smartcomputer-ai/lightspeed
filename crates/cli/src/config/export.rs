@@ -51,6 +51,8 @@ impl Serialize for Ordered {
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Exported {
+    #[serde(flatten)]
+    configuration: api::UniverseConfiguration,
     schema_version: u32,
     kind: Option<Kind>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,6 +112,17 @@ pub(crate) async fn universe(base: &ResolvedConnection, universe: &str) -> Resul
         schema_version: SCHEMA_VERSION,
         kind: Some(Kind::Universe),
         handle: Some(handle),
+        configuration: api::UniverseConfiguration {
+            display_name: read["universe"]["displayName"].as_str().map(str::to_owned),
+            members: read["universe"]
+                .get("members")
+                .map(|v| serde_json::from_value(v.clone()))
+                .transpose()?,
+            directory_group_mappings: read["universe"]
+                .get("directoryGroupMappings")
+                .map(|v| serde_json::from_value(v.clone()))
+                .transpose()?,
+        },
         ..Exported::default()
     };
     read_sections(&target, &universe_resources(), &mut exported).await?;

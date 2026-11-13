@@ -457,6 +457,37 @@
       ],
       "type": "object"
     },
+    "DeclaredUniverseMember": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "description": "Select by verified email, or by issuer and subject, never both.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "issuer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "$ref": "#/definitions/UniverseMemberRole"
+        },
+        "subject": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "role"
+      ],
+      "type": "object"
+    },
     "DeploymentDocument": {
       "additionalProperties": false,
       "description": "Resources that belong to the deployment and not to one universe.",
@@ -1934,6 +1965,26 @@
         }
       ]
     },
+    "UniverseDirectoryGroupMapping": {
+      "additionalProperties": false,
+      "properties": {
+        "group": {
+          "type": "string"
+        },
+        "issuer": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/definitions/UniverseMemberRole"
+        }
+      },
+      "required": [
+        "issuer",
+        "group",
+        "role"
+      ],
+      "type": "object"
+    },
     "UniverseDocument": {
       "additionalProperties": false,
       "description": "The configuration of one universe. A section left out is not managed by the document.",
@@ -1963,6 +2014,23 @@
             ]
           },
           "type": "array"
+        },
+        "directoryGroupMappings": {
+          "description": "Exact issuer-qualified directory groups. Omit to leave unchanged;\nan empty list clears declared group grants.",
+          "items": {
+            "$ref": "#/definitions/UniverseDirectoryGroupMapping"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "displayName": {
+          "description": "Runtime-owned name. Named universes are adopted automatically by Platform.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "environmentProviders": {
           "items": {
@@ -2010,6 +2078,16 @@
             ]
           },
           "type": "array"
+        },
+        "members": {
+          "description": "Declared grants, independent of manual memberships. Omit to leave unmanaged;\nan empty list clears declared members. Email selectors require verified email.",
+          "items": {
+            "$ref": "#/definitions/DeclaredUniverseMember"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "modelDefaults": {
           "additionalProperties": false,
@@ -2088,6 +2166,15 @@
         "handle"
       ],
       "type": "object"
+    },
+    "UniverseMemberRole": {
+      "enum": [
+        "viewer",
+        "contributor",
+        "operator",
+        "admin"
+      ],
+      "type": "string"
     },
     "VfsFeature": {
       "additionalProperties": false,

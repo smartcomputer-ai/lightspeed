@@ -32,6 +32,8 @@ export const universes = pgTable("universes", {
     .references(() => organization.id, { onDelete: "cascade" }),
   lightspeedUniverseId: uuid("lightspeed_universe_id").notNull().unique(),
   name: text("name").notNull(),
+  /// Last successful Runtime projection; declarations never replace manual members.
+  runtimeConfiguration: jsonb("runtime_configuration").$type<Record<string, unknown>>().default({}).notNull(),
   icon: text("icon").default("orbit").notNull(),
   iconColor: text("icon_color").default("default").notNull(),
   /// Gateway RPC endpoint; null = the deployment default from env.

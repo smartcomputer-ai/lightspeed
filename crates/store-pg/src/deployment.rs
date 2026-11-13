@@ -13,6 +13,7 @@ use crate::PgStoreError;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UniverseStats {
+    pub configuration: api::UniverseConfiguration,
     pub universe_id: Uuid,
     pub handle: String,
     pub created_at_ms: i64,
@@ -29,6 +30,8 @@ const UNIVERSE_STATS_SELECT: &str = r#"
     SELECT
         u.universe_id,
         u.handle,
+        u.display_name,
+        u.platform_access,
         u.created_at_ms,
         (SELECT max(s.updated_at_ms) FROM sessions s
             WHERE s.universe_id = u.universe_id AND s.deleted_at_ms IS NULL) AS last_activity_at_ms,
@@ -212,6 +215,11 @@ pub async fn delete_universe(pool: &PgPool, universe_id: Uuid) -> Result<bool, P
 
 fn universe_stats_from_row(row: &sqlx::postgres::PgRow) -> Result<UniverseStats, PgStoreError> {
     Ok(UniverseStats {
+        configuration: api::UniverseConfiguration {
+            display_name: row.try_get("display_name")?,
+            ..serde_json::from_value(row.try_get("platform_access")?)
+                .map_err(|e| sqlx::Error::Decode(Box::new(e)))?
+        },
         universe_id: row.try_get("universe_id")?,
         handle: row.try_get("handle")?,
         created_at_ms: row.try_get("created_at_ms")?,
@@ -226,6 +234,24 @@ fn universe_stats_from_row(row: &sqlx::postgres::PgRow) -> Result<UniverseStats,
 /// Counts and sums are non-negative by construction; clamp rather than fail.
 fn count_to_u64(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)
+}
+
+/// Atomically patch declared Platform configuration without overwriting omitted fields.
+pub async fn put_universe_configuration(
+    pool: &PgPool,
+    id: Uuid,
+    config: &api::UniverseConfiguration,
+) -> Result<bool, PgStoreError> {
+    let mut access = serde_json::Map::new();
+    if let Some(members) = &config.members {
+        access.insert("members".into(), serde_json::json!(members));
+    }
+    if let Some(groups) = &config.directory_group_mappings {
+        access.insert("directoryGroupMappings".into(), serde_json::json!(groups));
+    }
+    let result = sqlx::query("UPDATE universes SET display_name = COALESCE($2, display_name), platform_access = platform_access || $3 WHERE universe_id = $1")
+        .bind(id).bind(&config.display_name).bind(serde_json::Value::Object(access)).execute(pool).await?;
+    Ok(result.rows_affected() != 0)
 }
 
 #[cfg(test)]

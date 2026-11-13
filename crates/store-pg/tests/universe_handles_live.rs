@@ -93,6 +93,58 @@ async fn exercise(pool: &sqlx::PgPool) {
     assert_eq!(handle(pool, fresh_id).await, "fresh");
     assert_eq!(resolve(pool, "fresh").await, Some(fresh_id));
 
+    // Declaration updates are partial and preserve unrelated sections and tenants.
+    let configuration = api::UniverseConfiguration {
+        display_name: Some("Fresh universe".into()),
+        members: Some(vec![api::DeclaredUniverseMember {
+            email: None,
+            issuer: Some("https://id.example".into()),
+            subject: Some("owner".into()),
+            role: api::UniverseMemberRole::Admin,
+        }]),
+        directory_group_mappings: None,
+    };
+    assert!(
+        store_pg::put_universe_configuration(pool, fresh_id, &configuration)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        store_pg::read_universe_stats(pool, fresh_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .configuration,
+        configuration
+    );
+    let clear = api::UniverseConfiguration {
+        members: Some(vec![]),
+        ..Default::default()
+    };
+    for _ in 0..2 {
+        assert!(
+            store_pg::put_universe_configuration(pool, fresh_id, &clear)
+                .await
+                .unwrap()
+        );
+    }
+    let actual = store_pg::read_universe_stats(pool, fresh_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .configuration;
+    assert_eq!(actual.display_name, configuration.display_name);
+    assert_eq!(actual.members, Some(vec![]));
+    assert_eq!(actual.directory_group_mappings, None);
+    assert_eq!(
+        store_pg::read_universe_stats(pool, id)
+            .await
+            .unwrap()
+            .unwrap()
+            .configuration,
+        api::UniverseConfiguration::default()
+    );
+
     // Handles are unique across universes, at creation and on rename.
     let error = store_pg::create_universe_with_handle(pool, Uuid::new_v4(), Some("fresh"))
         .await

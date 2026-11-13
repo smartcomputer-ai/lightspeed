@@ -114,6 +114,9 @@ pub(crate) struct Step {
 /// What a step needs to be carried out.
 #[derive(Clone, Debug)]
 enum Work {
+    ConfigureUniverse {
+        configuration: Value,
+    },
     CreateUniverse {
         handle: String,
     },
@@ -195,6 +198,10 @@ impl DocumentPlan {
 /// its input type. Needs no connection.
 #[cfg(test)]
 pub(crate) fn check_universe(document: &super::document::UniverseDocument) -> Result<()> {
+    document
+        .configuration()
+        .validate()
+        .map_err(anyhow::Error::msg)?;
     let sections = universe_sections(document)?;
     for resource in universe_resources() {
         if let Some(raw) = sections.get(resource.section()) {
@@ -225,6 +232,14 @@ pub(crate) async fn plan(
         }
     };
 
+    let configuration = match &loaded.document {
+        Document::Universe(document) => {
+            let configuration = document.configuration();
+            configuration.validate().map_err(anyhow::Error::msg)?;
+            serde_json::to_value(configuration)?
+        }
+        _ => json!({}),
+    };
     // Phase 1: every entry is checked before anything is read or written.
     let mut entries: BTreeMap<&'static str, Vec<Entry>> = BTreeMap::new();
     for resource in &resources {
@@ -275,6 +290,42 @@ pub(crate) async fn plan(
         step.work = Some(Work::CreateUniverse {
             handle: handle.clone(),
         });
+        steps.push(step);
+    }
+
+    if configuration
+        .as_object()
+        .is_some_and(|fields| !fields.is_empty())
+    {
+        let current = if target.exists() {
+            target
+                .call("deployment/universes/read", json!({"universe": handle}))
+                .await?["universe"]
+                .clone()
+        } else {
+            json!({})
+        };
+        let fields: Vec<String> = configuration
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(field, value)| current.get(*field) != Some(*value))
+            .map(|(field, _)| field.clone())
+            .collect();
+        let mut step = Step::new(
+            &subject,
+            "universeConfiguration",
+            handle.as_deref().unwrap_or_default(),
+            if fields.is_empty() {
+                Action::Unchanged
+            } else {
+                Action::Update
+            },
+        );
+        if !fields.is_empty() {
+            step.fields = fields;
+            step.work = Some(Work::ConfigureUniverse { configuration });
+        }
         steps.push(step);
     }
 
@@ -358,6 +409,13 @@ pub(crate) async fn apply(plan: &mut DocumentPlan) -> Result<()> {
             continue;
         };
         let result = match work {
+            Work::ConfigureUniverse { mut configuration } => {
+                configuration["universe"] = json!(plan.target.universe_id);
+                plan.target
+                    .call("deployment/universes/configuration/put", configuration)
+                    .await
+                    .map(drop)
+            }
             Work::CreateUniverse { handle } => create_universe(&mut plan.target, &handle).await,
             Work::Write {
                 resource,

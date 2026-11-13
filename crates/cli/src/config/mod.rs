@@ -40,13 +40,19 @@ enum ConfigCommand {
     Diff(DocumentArgs),
     /// Make universes match configuration documents. Safe to repeat: a
     /// document that already matches changes nothing.
-    Apply(DocumentArgs),
+    Apply(ApplyArgs),
     /// Print the JSON Schema of a configuration document, for editors and
     /// other tools to validate against. Contacts no runtime.
     Schema,
 }
 
 impl ConfigArgs {
+    pub(crate) fn wait_seconds(&self) -> Option<u64> {
+        match &self.command {
+            ConfigCommand::Apply(args) => args.wait,
+            _ => None,
+        }
+    }
     /// Whether the command runs without a runtime connection.
     pub(crate) fn offline(&self) -> bool {
         matches!(self.command, ConfigCommand::Schema)
@@ -74,6 +80,15 @@ pub(crate) struct DocumentArgs {
     /// Print one JSON object per resource instead of lines for people.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub(crate) struct ApplyArgs {
+    #[command(flatten)]
+    document: DocumentArgs,
+    /// Wait up to this many seconds for Runtime startup (60 when no value is given).
+    #[arg(long, num_args = 0..=1, default_missing_value = "60", value_parser = clap::value_parser!(u64).range(1..=3600))]
+    wait: Option<u64>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -138,7 +153,8 @@ async fn diff(args: DocumentArgs) -> Result<()> {
 
 /// `lightspeed config apply`: every document is planned before anything is
 /// written, so a document that cannot be applied changes nothing.
-async fn apply(args: DocumentArgs) -> Result<()> {
+async fn apply(args: ApplyArgs) -> Result<()> {
+    let args = args.document;
     let mut plans = plan_all(&args.files).await?;
     if plans.iter().any(DocumentPlan::has_conflicts) {
         report(&plans, args.json)?;

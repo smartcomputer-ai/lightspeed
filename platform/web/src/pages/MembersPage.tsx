@@ -3,7 +3,7 @@ import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2 } from "lucide-react";
-import { api, type Member } from "@/api";
+import { api, type Member, type Universe } from "@/api";
 import { UNIVERSE_ROLES, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import {
   AlertDialog,
@@ -61,7 +61,7 @@ export function MembersPage({ admin: _admin }: { admin: boolean }) {
     return <UniverseNotFound handle={handle} />;
   }
 
-  return <MemberList universeId={universe.id} writable={permissions.can("manageAccess")} />;
+  return <MemberList universeId={universe.id} configuration={universe.runtimeConfiguration} writable={permissions.can("manageAccess")} />;
 }
 
 /// What each role adds, in one line.
@@ -78,7 +78,7 @@ function roleSelectItems() {
   ));
 }
 
-function MemberList({ universeId, writable }: { universeId: string; writable: boolean }) {
+function MemberList({ universeId, writable, configuration }: { universeId: string; writable: boolean; configuration?: Universe["runtimeConfiguration"] }) {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
@@ -112,6 +112,17 @@ function MemberList({ universeId, writable }: { universeId: string; writable: bo
           ) : undefined
         }
       />
+      {writable && ((configuration?.members?.length ?? 0) + (configuration?.directoryGroupMappings?.length ?? 0) > 0) && (
+        <TableCard className="mb-6">
+          <div className="p-4"><h2 className="font-medium">Declared access</h2><p className="text-sm text-muted-foreground">Managed by the universe configuration. These grants apply alongside manual memberships below.</p></div>
+          <Table><TableHeader><TableRow><TableHead>Identity</TableHead><TableHead>Issuer</TableHead><TableHead>Role</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {(configuration?.members ?? []).map((member, index) => <TableRow key={`member-${index}`}><TableCell>{member.email ?? member.subject}</TableCell><TableCell>{member.issuer ?? "Verified email"}</TableCell><TableCell>{member.role}</TableCell></TableRow>)}
+              {(configuration?.directoryGroupMappings ?? []).map((mapping, index) => <TableRow key={`group-${index}`}><TableCell>Group: {mapping.group}</TableCell><TableCell>{mapping.issuer}</TableCell><TableCell>{mapping.role}</TableCell></TableRow>)}
+            </TableBody>
+          </Table>
+        </TableCard>
+      )}
       {members.isLoading && <LoadingNote />}
       {remove.error && <p className="mb-3 text-sm text-destructive">{remove.error.message}</p>}
       {members.error && <ReadError error={members.error} loading={!members.data} />}

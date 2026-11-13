@@ -1769,6 +1769,19 @@ Returns one deployment tenant summary, addressed by UUID or handle, with aggrega
 - Params: `DeploymentUniverseReadParams`
 - Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
 
+### `deployment/universes/configuration/put`
+
+**Declare universe presentation and access**
+
+Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged.
+
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/universes`
+- Role: `none`
+- Target: `none`
+- Params: `DeploymentUniverseConfigurationPutParams`
+- Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
+
 ### `deployment/universes/handle/put`
 
 **Rename a universe**

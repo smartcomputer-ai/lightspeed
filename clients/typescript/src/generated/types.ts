@@ -1129,6 +1129,7 @@ export type MethodGroup =
   | "auth/lease"
   | "deployment/environment-providers"
   | "deployment/channels";
+export type UniverseMemberRole = "viewer" | "contributor" | "operator" | "admin";
 /**
  * Why an environment is closing or closed.
  */
@@ -3878,6 +3879,15 @@ export interface DeploymentUniverseView {
   blobBytes: number;
   createdAtMs: number;
   /**
+   * Exact issuer-qualified directory groups. Omit to leave unchanged;
+   * an empty list clears declared group grants.
+   */
+  directoryGroupMappings?: UniverseDirectoryGroupMapping[] | null;
+  /**
+   * Runtime-owned name. Named universes are adopted automatically by Platform.
+   */
+  displayName?: string | null;
+  /**
    * The universe's deployment-unique name. Requests may address the
    * universe by it wherever they may by UUID.
    */
@@ -3887,10 +3897,29 @@ export interface DeploymentUniverseView {
    * when the universe has no sessions.
    */
   lastActivityAtMs?: number | null;
+  /**
+   * Declared grants, independent of manual memberships. Omit to leave unmanaged;
+   * an empty list clears declared members. Email selectors require verified email.
+   */
+  members?: DeclaredUniverseMember[] | null;
   profiles: number;
   sessions: number;
   universeId: string;
   workspaces: number;
+}
+export interface UniverseDirectoryGroupMapping {
+  group: string;
+  issuer: string;
+  role: UniverseMemberRole;
+}
+export interface DeclaredUniverseMember {
+  /**
+   * Select by verified email, or by issuer and subject, never both.
+   */
+  email?: string | null;
+  issuer?: string | null;
+  role: UniverseMemberRole;
+  subject?: string | null;
 }
 export interface AgentApiOutcomeOfDeploymentUniverseDeleteResponse {
   notifications?: AgentNotification[];
@@ -5802,6 +5831,26 @@ export interface DeploymentSessionPurgeParams {
   /**
    * The universe's UUID or handle.
    */
+  universe: string;
+}
+/**
+ * Patch desired Platform configuration. Absent fields retain their values.
+ */
+export interface DeploymentUniverseConfigurationPutParams {
+  /**
+   * Exact issuer-qualified directory groups. Omit to leave unchanged;
+   * an empty list clears declared group grants.
+   */
+  directoryGroupMappings?: UniverseDirectoryGroupMapping[] | null;
+  /**
+   * Runtime-owned name. Named universes are adopted automatically by Platform.
+   */
+  displayName?: string | null;
+  /**
+   * Declared grants, independent of manual memberships. Omit to leave unmanaged;
+   * an empty list clears declared members. Email selectors require verified email.
+   */
+  members?: DeclaredUniverseMember[] | null;
   universe: string;
 }
 export interface DeploymentUniverseCreateParams {

@@ -28,6 +28,15 @@ impl Runtime {
     }
 
     fn with_groups(scope: Value, single: bool, groups: Value) -> Self {
+        Self::with_startup_statuses(scope, single, groups, vec![])
+    }
+
+    fn with_startup_statuses(
+        scope: Value,
+        single: bool,
+        groups: Value,
+        statuses: Vec<u16>,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("local HTTP fixture must bind");
         listener.set_nonblocking(true).unwrap();
         let endpoint = format!("http://{}/rpc", listener.local_addr().unwrap());
@@ -40,6 +49,7 @@ impl Runtime {
                 {"universeId":"00000000-0000-0000-0000-000000000001","handle":"one","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0},
                 {"universeId":"00000000-0000-0000-0000-000000000002","handle":"u-000000000002","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0}
             ]);
+            let mut statuses = statuses.into_iter();
             while !done.load(Ordering::Relaxed) {
                 let (mut stream, _) = match listener.accept() {
                     Ok(pair) => pair,
@@ -81,6 +91,12 @@ impl Runtime {
                 };
                 let method = body["method"].as_str().unwrap();
                 recorded.lock().unwrap().push((method.into(), headers));
+                if method == "initialize"
+                    && let Some(status) = statuses.next()
+                {
+                    write!(stream, "HTTP/1.1 {status} Refused\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                    continue;
+                }
                 let result = match method {
                     "initialize" => {
                         json!({"protocolVersion":"test", "serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "capabilities":{"notifications":false,"historyRead":true,"eventLog":true,"localExecution":false}, "caller":{"scope":scope,"single":single,"keyId":if single {Value::Null} else {json!("fixture-key")},"keyPrefix":if single {Value::Null} else {json!("lsk_fixture")},"groups":groups}})
@@ -104,6 +120,30 @@ impl Runtime {
                         universe["handle"] = body["params"]["handle"].clone();
                         json!({"universe":universe})
                     }
+                    "deployment/universes/configuration/put" => {
+                        let named = &body["params"]["universe"];
+                        let universe = universes
+                            .as_array_mut()
+                            .unwrap()
+                            .iter_mut()
+                            .find(|u| u["universeId"] == *named || u["handle"] == *named)
+                            .unwrap();
+                        for field in ["displayName", "members", "directoryGroupMappings"] {
+                            if let Some(value) = body["params"].get(field) {
+                                universe[field] = value.clone();
+                            }
+                        }
+                        json!({"universe": universe})
+                    }
+                    "auth/grants/list" => json!({"grants":[]}),
+                    "auth/providers/list" => json!({"providers":[]}),
+                    "models/defaults/read" => json!({"defaults":{}}),
+                    "mcp/servers/list" => json!({"servers":[]}),
+                    "environments/provider-bindings/list" => json!({"bindings":[]}),
+                    "environments/registration-keys/list" => json!({"registrationKeys":[]}),
+                    "environments/list" => json!({"environments":[]}),
+                    "profiles/list" => json!({"profiles":[]}),
+                    "deployment/api-keys/list" => json!({"apiKeys":[]}),
                     "models/list" => json!({"models":[],"providers":[]}),
                     _ => panic!("unexpected method {method}"),
                 };
@@ -645,4 +685,166 @@ fn a_named_handle_is_sent_as_given_and_only_a_saved_selection_becomes_a_uuid() {
         listed["activeUniverseId"],
         "00000000-0000-0000-0000-000000000002"
     );
+}
+
+#[test]
+fn config_wait_retries_startup_and_applies_declarations_idempotently() {
+    let runtime = Runtime::with_startup_statuses(
+        json!({"kind":"deployment"}),
+        false,
+        json!(["deployment/universes"]),
+        vec![503],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("universe.yaml"), "schemaVersion: 1\nkind: universe\nhandle: one\ndisplayName: Research\nmembers: []\ndirectoryGroupMappings:\n  - issuer: https://id.example\n    group: readers\n    role: viewer\n").unwrap();
+    let env = [
+        ("LIGHTSPEED_API_URL", runtime.endpoint.as_str()),
+        ("LIGHTSPEED_API_KEY", "lsk_fixture"),
+    ];
+    let output = cli_env(
+        dir.path(),
+        &["config", "apply", "--wait", "5", "-f", "universe.yaml"],
+        None,
+        &env,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let calls = runtime.requests.lock().unwrap().clone();
+    assert_eq!(calls.iter().filter(|(m, _)| m == "initialize").count(), 2);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(m, _)| m == "deployment/universes/configuration/put")
+            .count(),
+        1
+    );
+    let output = cli_env(
+        dir.path(),
+        &["config", "diff", "-f", "universe.yaml"],
+        None,
+        &env,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("unchanged"));
+    let exported = cli_env(
+        dir.path(),
+        &["--universe", "one", "config", "export", "--format", "json"],
+        None,
+        &env,
+    );
+    assert!(
+        exported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&exported.stderr)
+    );
+    let exported: Value = serde_json::from_slice(&exported.stdout).unwrap();
+    assert_eq!(exported["displayName"], "Research");
+    assert_eq!(exported["members"], json!([]));
+    assert_eq!(exported["directoryGroupMappings"][0]["group"], "readers");
+    std::fs::write(
+        dir.path().join("exported.json"),
+        serde_json::to_vec(&exported).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        cli_env(
+            dir.path(),
+            &["config", "diff", "-f", "exported.json"],
+            None,
+            &env
+        )
+        .status
+        .success()
+    );
+
+    std::fs::write(
+        dir.path().join("universe.yaml"),
+        "schemaVersion: 1\nkind: universe\nhandle: one\n",
+    )
+    .unwrap();
+    assert!(
+        cli_env(
+            dir.path(),
+            &["config", "apply", "-f", "universe.yaml"],
+            None,
+            &env
+        )
+        .status
+        .success()
+    );
+    assert_eq!(
+        runtime
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, _)| m == "deployment/universes/configuration/put")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn config_wait_does_not_retry_authentication_or_wait_without_the_flag() {
+    for (status, wait) in [(401, true), (403, true), (503, false)] {
+        let runtime = Runtime::with_startup_statuses(
+            json!({"kind":"deployment"}),
+            false,
+            json!(["deployment/universes"]),
+            vec![status],
+        );
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("universe.yaml"),
+            "schemaVersion: 1\nkind: universe\nhandle: one\n",
+        )
+        .unwrap();
+        let args = if wait {
+            vec!["config", "apply", "--wait", "5", "-f", "universe.yaml"]
+        } else {
+            vec!["config", "apply", "-f", "universe.yaml"]
+        };
+        let output = cli_env(
+            dir.path(),
+            &args,
+            None,
+            &[
+                ("LIGHTSPEED_API_URL", &runtime.endpoint),
+                ("LIGHTSPEED_API_KEY", "lsk_fixture"),
+            ],
+        );
+        assert!(!output.status.success());
+        assert_eq!(runtime.requests.lock().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn config_wait_has_a_bounded_deadline() {
+    let runtime = Runtime::with_startup_statuses(
+        json!({"kind":"deployment"}),
+        false,
+        json!(["deployment/universes"]),
+        vec![503; 20],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let start = std::time::Instant::now();
+    let output = cli_env(
+        dir.path(),
+        &["config", "apply", "--wait=1", "-f", "unused.yaml"],
+        None,
+        &[
+            ("LIGHTSPEED_API_URL", &runtime.endpoint),
+            ("LIGHTSPEED_API_KEY", "lsk_fixture"),
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("within 1 seconds"));
+    assert!(start.elapsed() < Duration::from_secs(4));
 }

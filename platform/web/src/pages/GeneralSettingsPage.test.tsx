@@ -133,3 +133,12 @@ it("restores an archived universe without a confirmation", async () => {
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/v1/universes/platform-id", { status: "active" }));
   expect(location()).toBe("/u/factory/settings/general");
 });
+
+
+it("shows a Runtime-managed name without offering a conflicting local edit", async () => {
+  universe.runtimeConfiguration = { displayName: "Factory" };
+  await show();
+  expect(container.querySelector<HTMLInputElement>("#universe-name")?.disabled).toBe(true);
+  expect(container.textContent).toContain("Managed by the universe configuration");
+  expect(mocks.api.mock.calls.some(([method]) => method === "PATCH")).toBe(false);
+});
