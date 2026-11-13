@@ -1616,7 +1616,7 @@ export function SessionDetail({
   const managerLabel = controlledSessionOwnerLabel(integration);
   const owningBotId = controlledSessionBotId(integration, session.data?.metadata);
   // With bots switched off, a bot's session reads as controlled, with no way
-  // into the hidden bot page.
+  // into the hidden bot page and no roster to name its peers.
   const botsOn = useFeature("bots");
   const owningBotHref = owningBotId && botsOn
     ? `/u/${handle}/bots/${encodeURIComponent(owningBotId)}/chat/${encodeURIComponent(sessionId)}`
@@ -1626,7 +1626,7 @@ export function SessionDetail({
   const botDirectory = useQuery({
     queryKey: ["bots", universeId],
     queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
-    enabled: owningBotId !== null,
+    enabled: owningBotId !== null && botsOn,
     staleTime: 60_000,
     retry: false,
   });

@@ -267,6 +267,7 @@ handle: research
 credentials:
   - grantId: tracker-token
     displayName: Issue tracker
+    exposure: retrievable
     tokenFrom: { env: TRACKER_TOKEN }
 providers:
   - providerId: model:primary
@@ -277,7 +278,12 @@ providers:
   - providerId: model:local
     config:
       type: modelEndpoint
-      endpoint: { baseUrl: "http://127.0.0.1:11434/v1", apiKinds: ["openai:completions"] }
+      endpoint:
+        baseUrl: "http://127.0.0.1:11434/v1"
+        apiKinds: ["openai:completions"]
+        headers:
+          x-title: { type: literal, value: Lightspeed }
+          x-api-key: { type: credential, grantId: tracker-token }
 modelDefaults:
   agentRun: { providerId: primary, apiKind: "openai:completions", model: large-1 }
   speechToText: null
@@ -366,10 +372,48 @@ apiKeys:
             "kind": "deployment",
             "apiKeys": [{
                 "keyId": "platform", "displayName": "Platform", "assertActor": true,
+                "groups": "all",
                 "secretFrom": { "env": "PLATFORM_API_KEY" },
             }],
         });
         assert_eq!(errors(&deployment), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_key_states_its_groups_as_a_list_or_all() {
+        let schema = document_schema();
+        let key = &schema["definitions"]["ApiKeysEntry"];
+        assert!(
+            key["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("groups"))
+        );
+        let with_groups =
+            |groups: Value| edited(|document| document["apiKeys"][0]["groups"] = groups);
+        for valid in [json!("all"), json!(["session"])] {
+            let document = with_groups(valid.clone());
+            assert_eq!(errors(&document), Vec::<String>::new(), "{valid}");
+            assert!(accepted_by_the_commands(document), "{valid}");
+        }
+        let unstated = edited(|document| {
+            document["apiKeys"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("groups");
+        });
+        for (what, document) in [
+            ("a key without groups", unstated),
+            ("another word than all", with_groups(json!("everything"))),
+            ("an unknown group", with_groups(json!(["session", "nope"]))),
+            ("groups that are neither", with_groups(json!(true))),
+        ] {
+            assert!(!errors(&document).is_empty(), "the schema accepts {what}");
+            assert!(
+                !accepted_by_the_commands(document),
+                "the commands accept {what}"
+            );
+        }
     }
 
     #[test]
@@ -411,6 +455,14 @@ apiKeys:
             (
                 "a field apply supplies",
                 edited(|document| document["mcpServers"][0]["expectedRevision"] = json!(3)),
+            ),
+            (
+                // A header always says where its value comes from.
+                "an endpoint header written as a bare string",
+                edited(|document| {
+                    document["providers"][1]["config"]["endpoint"]["headers"]["x-title"] =
+                        json!("Lightspeed")
+                }),
             ),
             (
                 "a scope on a key",

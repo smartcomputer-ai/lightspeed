@@ -5,21 +5,21 @@
 //! enum at the store boundary, so consumers never touch raw JSON. The
 //! load-bearing credential reference (for GitHub Apps: the private key) is a
 //! typed field; `store-pg` backs it with a foreign key into
-//! `auth_secrets`.
+//! `auth_secrets`. A model endpoint's extra request headers are the shared
+//! configured request headers of [`crate::headers`]: a header holds a plain
+//! value or names the credential whose token is sent, and `store-pg` keeps
+//! them in a child table so a credential in use by a header cannot be deleted.
 
 use async_trait::async_trait;
 use std::collections::{BTreeMap, BTreeSet};
 
-use reqwest::{
-    Url,
-    header::{HeaderName, HeaderValue},
-};
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AuthGrantId, AuthProviderId, AuthProviderKind, AuthRegistryError, SecretId,
-    validate_audience_url, validate_nonempty_optional, validate_nonnegative_i64,
-    validate_token_component,
+    AuthGrantId, AuthProviderId, AuthProviderKind, AuthRegistryError, RequestHeaderError,
+    RequestHeaderPolicy, RequestHeaders, SecretId, validate_audience_url,
+    validate_nonempty_optional, validate_nonnegative_i64, validate_token_component,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,16 +83,46 @@ pub struct ModelOAuthConfig {
     pub endpoint: Option<ModelEndpointConfig>,
 }
 
-/// An OpenAI-compatible endpoint and its non-secret transport metadata.
-/// Credentials remain in the provider row's encrypted secret or OAuth grant.
+/// An OpenAI-compatible endpoint and its transport metadata. The provider's
+/// own credential remains in the provider row's encrypted secret or OAuth
+/// grant; a header that carries a secret names a credential instead of
+/// holding the value.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ModelEndpointConfig {
     pub base_url: String,
+    /// Extra request headers sent on every request to the endpoint, keyed by
+    /// lowercased header name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub headers: BTreeMap<String, String>,
+    pub headers: RequestHeaders,
     /// Explicitly admitted Lightspeed API kinds. Empty lists are rejected.
     pub api_kinds: Vec<String>,
+}
+
+/// What a model endpoint adds to the shared header rules: the names the
+/// transport or the provider's own credential set. Configured headers never
+/// override them, whatever their value source.
+pub const MODEL_ENDPOINT_HEADER_POLICY: RequestHeaderPolicy = RequestHeaderPolicy {
+    owner: "model endpoint",
+    target: "the endpoint's base URL",
+    reserved_names: &[
+        "authorization",
+        "connection",
+        "content-type",
+        "cookie",
+        "host",
+        "set-cookie",
+        "transfer-encoding",
+    ],
+    reserved_prefixes: &[],
+};
+
+impl From<RequestHeaderError> for AuthRegistryError {
+    fn from(error: RequestHeaderError) -> Self {
+        Self::InvalidInput {
+            message: error.to_string(),
+        }
+    }
 }
 
 /// Credentialless OpenAI-compatible endpoint, primarily for loopback
@@ -129,6 +159,25 @@ impl AuthProviderConfig {
         serde_json::from_value(value.clone()).map_err(|error| AuthRegistryError::Store {
             message: format!("decode auth provider config: {error}"),
         })
+    }
+
+    /// The model endpoint this configuration carries, if any.
+    pub fn model_endpoint(&self) -> Option<&ModelEndpointConfig> {
+        match self {
+            Self::GitHubApp(_) => None,
+            Self::ModelApiKey(config) => config.endpoint.as_ref(),
+            Self::ModelOAuth(config) => config.endpoint.as_ref(),
+            Self::ModelEndpoint(config) => Some(&config.endpoint),
+        }
+    }
+
+    pub fn model_endpoint_mut(&mut self) -> Option<&mut ModelEndpointConfig> {
+        match self {
+            Self::GitHubApp(_) => None,
+            Self::ModelApiKey(config) => config.endpoint.as_mut(),
+            Self::ModelOAuth(config) => config.endpoint.as_mut(),
+            Self::ModelEndpoint(config) => Some(&mut config.endpoint),
+        }
     }
 
     pub fn validate(&self) -> Result<(), AuthRegistryError> {
@@ -230,35 +279,7 @@ fn validate_model_endpoint(endpoint: &ModelEndpointConfig) -> Result<(), AuthReg
             });
         }
     }
-    if endpoint.headers.len() > 32 {
-        return Err(AuthRegistryError::InvalidInput {
-            message: "model endpoint headers must contain at most 32 entries".to_owned(),
-        });
-    }
-    for (name, value) in &endpoint.headers {
-        if name.len() > 128 || value.len() > 4096 {
-            return Err(AuthRegistryError::InvalidInput {
-                message: format!(
-                    "model endpoint header {name:?} exceeds the supported name or value length"
-                ),
-            });
-        }
-        let parsed_name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
-            AuthRegistryError::InvalidInput {
-                message: format!("model endpoint header name {name:?} is invalid"),
-            }
-        })?;
-        if is_reserved_model_header(&parsed_name) {
-            return Err(AuthRegistryError::InvalidInput {
-                message: format!(
-                    "model endpoint header {name:?} is transport-owned and cannot be overridden"
-                ),
-            });
-        }
-        HeaderValue::from_str(value).map_err(|_| AuthRegistryError::InvalidInput {
-            message: format!("model endpoint header {name:?} has an invalid value"),
-        })?;
-    }
+    MODEL_ENDPOINT_HEADER_POLICY.validate(&endpoint.headers)?;
     Ok(())
 }
 
@@ -274,19 +295,6 @@ fn is_loopback_host(host: Option<&str>) -> bool {
         || host
             .parse::<std::net::IpAddr>()
             .is_ok_and(|address| address.is_loopback())
-}
-
-fn is_reserved_model_header(name: &HeaderName) -> bool {
-    matches!(
-        name.as_str(),
-        "authorization"
-            | "content-type"
-            | "host"
-            | "cookie"
-            | "set-cookie"
-            | "connection"
-            | "transfer-encoding"
-    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -426,7 +434,10 @@ pub trait AuthProviderStore: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DEFAULT_GITHUB_API_BASE_URL;
+    use crate::{
+        DEFAULT_GITHUB_API_BASE_URL, REQUEST_HEADER_VALUE_MAX_LEN, REQUEST_HEADERS_MAX,
+        RequestHeaderValue,
+    };
 
     fn github_config() -> AuthProviderConfig {
         AuthProviderConfig::GitHubApp(GitHubAppConfig {
@@ -594,10 +605,22 @@ mod tests {
         assert_eq!(decoded, config);
     }
 
+    fn literal(value: &str) -> RequestHeaderValue {
+        RequestHeaderValue::Literal {
+            value: value.to_owned(),
+        }
+    }
+
+    fn credential(grant_id: &str) -> RequestHeaderValue {
+        RequestHeaderValue::Credential {
+            grant_id: AuthGrantId::new(grant_id),
+        }
+    }
+
     fn endpoint(base_url: &str) -> ModelEndpointConfig {
         ModelEndpointConfig {
             base_url: base_url.to_owned(),
-            headers: BTreeMap::from([("x-title".to_owned(), "Lightspeed".to_owned())]),
+            headers: BTreeMap::from([("x-title".to_owned(), literal("Lightspeed"))]),
             api_kinds: vec!["openai:completions".to_owned()],
         }
     }
@@ -620,11 +643,170 @@ mod tests {
             );
         }
 
-        let mut reserved = endpoint("https://router.example/v1");
-        reserved
+        // Transport-owned names are refused whatever the value source.
+        for value in [literal("secret"), credential("authgrant_1")] {
+            let mut reserved = endpoint("https://router.example/v1");
+            reserved.headers.insert("authorization".to_owned(), value);
+            assert!(matches!(
+                validate_model_endpoint(&reserved),
+                Err(AuthRegistryError::InvalidInput { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn secret_bearing_header_names_accept_only_a_credential() {
+        for name in ["api-key", "x-api-key", "proxy-authorization"] {
+            let mut plain = endpoint("https://router.example/v1");
+            plain.headers.insert(name.to_owned(), literal("sk-plain"));
+            assert!(
+                matches!(
+                    validate_model_endpoint(&plain),
+                    Err(AuthRegistryError::InvalidInput { .. })
+                ),
+                "{name} must not accept a literal"
+            );
+
+            let mut referenced = endpoint("https://router.example/v1");
+            referenced
+                .headers
+                .insert(name.to_owned(), credential("authgrant_1"));
+            validate_model_endpoint(&referenced)
+                .unwrap_or_else(|error| panic!("{name} accepts a credential: {error}"));
+        }
+
+        // Any other name takes either source.
+        let mut other = endpoint("https://router.example/v1");
+        other
             .headers
-            .insert("Authorization".to_owned(), "secret".to_owned());
-        assert!(validate_model_endpoint(&reserved).is_err());
+            .insert("x-tenant-token".to_owned(), credential("authgrant_1"));
+        validate_model_endpoint(&other).expect("credential under an ordinary name");
+    }
+
+    #[test]
+    fn header_names_are_lowercase_and_normalize() {
+        assert_eq!(
+            MODEL_ENDPOINT_HEADER_POLICY
+                .normalize_name("X-Api-Key")
+                .expect("valid"),
+            "x-api-key"
+        );
+        // The endpoint's own reserved names, in any spelling.
+        for reserved in [
+            "Authorization",
+            "Content-Type",
+            "Host",
+            "Cookie",
+            "Set-Cookie",
+        ] {
+            assert!(
+                matches!(
+                    MODEL_ENDPOINT_HEADER_POLICY.normalize_name(reserved),
+                    Err(RequestHeaderError::Reserved { .. })
+                ),
+                "{reserved}"
+            );
+        }
+        // MCP protocol headers mean nothing to a model endpoint.
+        assert!(
+            MODEL_ENDPOINT_HEADER_POLICY
+                .normalize_name("Mcp-Session-Id")
+                .is_ok()
+        );
+
+        let mut mixed_case = endpoint("https://router.example/v1");
+        mixed_case
+            .headers
+            .insert("X-Title".to_owned(), literal("Lightspeed"));
+        assert!(matches!(
+            validate_model_endpoint(&mixed_case),
+            Err(AuthRegistryError::InvalidInput { .. })
+        ));
+    }
+
+    #[test]
+    fn headers_reject_invalid_literal_values_and_excess_entries() {
+        let mut invalid = endpoint("https://router.example/v1");
+        invalid
+            .headers
+            .insert("x-tenant".to_owned(), literal("line\nbreak"));
+        assert!(validate_model_endpoint(&invalid).is_err());
+
+        let mut long = endpoint("https://router.example/v1");
+        long.headers.insert(
+            "x-tenant".to_owned(),
+            literal(&"v".repeat(REQUEST_HEADER_VALUE_MAX_LEN + 1)),
+        );
+        assert!(validate_model_endpoint(&long).is_err());
+
+        let mut crowded = endpoint("https://router.example/v1");
+        crowded.headers.clear();
+        for index in 0..=REQUEST_HEADERS_MAX {
+            crowded
+                .headers
+                .insert(format!("x-header-{index}"), literal("v"));
+        }
+        assert!(validate_model_endpoint(&crowded).is_err());
+    }
+
+    #[test]
+    fn header_values_round_trip_through_tagged_json() {
+        let mut config = endpoint("https://router.example/v1");
+        config
+            .headers
+            .insert("x-api-key".to_owned(), credential("authgrant_1"));
+
+        let json = serde_json::to_value(&config).expect("encode endpoint");
+        assert_eq!(
+            json["headers"]["x-title"],
+            serde_json::json!({ "type": "literal", "value": "Lightspeed" })
+        );
+        assert_eq!(
+            json["headers"]["x-api-key"],
+            serde_json::json!({ "type": "credential", "grant_id": "authgrant_1" })
+        );
+        assert_eq!(
+            serde_json::from_value::<ModelEndpointConfig>(json).expect("decode endpoint"),
+            config
+        );
+    }
+
+    #[test]
+    fn model_endpoint_accessors_reach_every_model_kind() {
+        let endpoint = endpoint("https://router.example/v1");
+        let mut configs = [
+            AuthProviderConfig::ModelApiKey(ModelApiKeyConfig {
+                endpoint: Some(endpoint.clone()),
+            }),
+            AuthProviderConfig::ModelOAuth(ModelOAuthConfig {
+                grant_id: AuthGrantId::new("authgrant_1"),
+                audience: None,
+                endpoint: Some(endpoint.clone()),
+            }),
+            AuthProviderConfig::ModelEndpoint(ModelEndpointOnlyConfig {
+                endpoint: endpoint.clone(),
+            }),
+        ];
+        for config in &mut configs {
+            assert_eq!(config.model_endpoint(), Some(&endpoint));
+            config
+                .model_endpoint_mut()
+                .expect("endpoint")
+                .headers
+                .clear();
+            assert!(
+                config
+                    .model_endpoint()
+                    .expect("endpoint")
+                    .headers
+                    .is_empty()
+            );
+        }
+        assert_eq!(github_config().model_endpoint(), None);
+        assert_eq!(
+            AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default()).model_endpoint(),
+            None
+        );
     }
 
     #[test]

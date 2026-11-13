@@ -1,9 +1,8 @@
-use std::collections::BTreeMap;
-
 use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
 
 use crate::api_client::HttpAgentApi;
+use crate::request_headers::request_headers_from_args;
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct McpArgs {
@@ -154,11 +153,14 @@ struct McpServerPutArgs {
     #[arg(long = "oauth-authorization-server")]
     oauth_authorization_server: Option<String>,
     /// Extra request header with a plain, non-secret value, as NAME=VALUE.
-    /// Repeat for several. Requires runtime execution.
+    /// Repeat for several. Every reader of the server sees the value.
+    /// Requires runtime execution.
     #[arg(long = "header", value_name = "NAME=VALUE")]
     headers: Vec<String>,
-    /// Extra request header carrying a saved credential's token, sent raw, as
-    /// NAME=GRANT_ID. Repeat for several. Requires runtime execution.
+    /// Extra request header carrying a saved static-token credential's token,
+    /// sent raw, as NAME=GRANT_ID. Repeat for several. Names that carry a
+    /// secret (`api-key`, `x-api-key`) are accepted only this way. Requires
+    /// runtime execution.
     #[arg(long = "header-credential", value_name = "NAME=GRANT_ID")]
     header_credentials: Vec<String>,
     /// Remote MCP endpoint URL.
@@ -534,52 +536,9 @@ async fn server_login(args: McpServerLoginArgs) -> Result<()> {
     }
 }
 
-/// `--header` and `--header-credential` values as the server's header map.
-/// Names are sent as given; the server lowercases them and refuses duplicates.
-fn headers_from_args(
-    literals: &[String],
-    credentials: &[String],
-) -> Result<BTreeMap<String, api::McpServerHeader>> {
-    let mut headers = BTreeMap::new();
-    let entries = literals
-        .iter()
-        .map(|entry| (entry, "--header", false))
-        .chain(
-            credentials
-                .iter()
-                .map(|entry| (entry, "--header-credential", true)),
-        );
-    for (entry, flag, credential) in entries {
-        let Some((name, value)) = entry.split_once('=') else {
-            anyhow::bail!("{flag} expects NAME=VALUE, got {entry:?}");
-        };
-        let name = name.trim();
-        if name.is_empty() {
-            anyhow::bail!("{flag} needs a header name: {entry:?}");
-        }
-        let header = if credential {
-            api::McpServerHeader::Credential {
-                grant_id: value.trim().to_owned(),
-            }
-        } else {
-            api::McpServerHeader::Literal {
-                value: value.to_owned(),
-            }
-        };
-        if headers
-            .keys()
-            .any(|existing: &String| existing.eq_ignore_ascii_case(name))
-        {
-            anyhow::bail!("header {name:?} is given more than once");
-        }
-        headers.insert(name.to_owned(), header);
-    }
-    Ok(headers)
-}
-
 async fn server_put(args: McpServerPutArgs) -> Result<()> {
     let auth_policy = auth_policy_from_args(&args)?;
-    let headers = headers_from_args(&args.headers, &args.header_credentials)?;
+    let headers = request_headers_from_args(&args.headers, &args.header_credentials)?;
     let required_auth = matches!(
         auth_policy,
         api::McpServerAuthPolicy::RequiredBearer | api::McpServerAuthPolicy::RequiredOAuth { .. }
@@ -778,31 +737,19 @@ mod tests {
         ])
         .expect("parse")
         .put;
-        let headers = headers_from_args(&put.headers, &put.header_credentials).expect("headers");
+        let headers =
+            request_headers_from_args(&put.headers, &put.header_credentials).expect("headers");
         assert_eq!(
             headers.get("X-Upstream-Url"),
-            Some(&api::McpServerHeader::Literal {
+            Some(&api::RequestHeader::Literal {
                 value: "https://tracker.example.com/?a=b".to_owned()
             })
         );
         assert_eq!(
             headers.get("X-Upstream-Token"),
-            Some(&api::McpServerHeader::Credential {
+            Some(&api::RequestHeader::Credential {
                 grant_id: "authgrant_upstream".to_owned()
             })
-        );
-    }
-
-    #[test]
-    fn header_flags_refuse_malformed_and_repeated_names() {
-        assert!(headers_from_args(&["no-equals".to_owned()], &[]).is_err());
-        assert!(headers_from_args(&["=value".to_owned()], &[]).is_err());
-        assert!(
-            headers_from_args(
-                &["X-Tenant=a".to_owned()],
-                &["x-tenant=authgrant_1".to_owned()]
-            )
-            .is_err()
         );
     }
 }

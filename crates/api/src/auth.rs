@@ -28,11 +28,16 @@ pub enum AuthGrantStatus {
     Failed,
 }
 
+/// Where a credential's plain value may go, fixed when it is created.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum AuthGrantExposure {
+    /// The value stays inside the runtime, which attaches it to its own
+    /// outbound requests (an MCP server, a model endpoint header).
     #[default]
     Brokered,
+    /// The value may also be leased to a trusted service and bound into an
+    /// environment, where commands receive it.
     Retrievable,
 }
 
@@ -207,8 +212,8 @@ pub struct AuthGrantPutParams {
     /// changed afterwards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
-    /// Whether the token may be leased in plaintext. It cannot be changed
-    /// afterwards.
+    /// Whether the plain token may be leased to a service or bound into an
+    /// environment. It cannot be changed afterwards.
     #[serde(default)]
     pub exposure: AuthGrantExposure,
     pub token: String,
@@ -523,8 +528,13 @@ pub enum AuthProviderConfigView {
 #[serde(rename_all = "camelCase")]
 pub struct ModelEndpointConfig {
     pub base_url: String,
+    /// Extra request headers sent on every request to the endpoint, alongside
+    /// the provider's own credential. Names are case-insensitive and stored
+    /// lowercased; transport headers and `authorization` are reserved.
+    /// `api-key`, `x-api-key` and `proxy-authorization` carry a secret and
+    /// accept only a `credential` value.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub headers: BTreeMap<String, String>,
+    pub headers: BTreeMap<String, RequestHeader>,
     pub api_kinds: Vec<String>,
 }
 

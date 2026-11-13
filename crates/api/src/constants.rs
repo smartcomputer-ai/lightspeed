@@ -160,6 +160,7 @@ pub const METHOD_BOTS_SESSIONS_ROTATE: &str = "bots/sessions/rotate";
 pub const METHOD_BOTS_TRIGGERS_PUT: &str = "bots/triggers/put";
 pub const METHOD_BOTS_TRIGGERS_READ: &str = "bots/triggers/read";
 pub const METHOD_BOTS_TRIGGERS_LIST: &str = "bots/triggers/list";
+pub const METHOD_BOTS_TRIGGERS_SECRETS_READ: &str = "bots/triggers/secrets/read";
 pub const METHOD_BOTS_TRIGGERS_DELETE: &str = "bots/triggers/delete";
 pub const METHOD_BOTS_EVENTS_ADMIT: &str = "bots/events/admit";
 pub const METHOD_BOTS_EVENTS_REPLAY: &str = "bots/events/replay";

@@ -648,7 +648,7 @@ pub async fn handle(
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!(
-                    "Connection: {}\n  Runtime: {}\n  Mode: {}\n\nAPI key:\n  Prefix: {}\n  Scope: {}\n  Groups: {}\n",
+                    "Connection: {}\n  Runtime: {}\n  Mode: {}\n\nAPI key:\n  Key ID: {}\n  Prefix: {}\n  Scope: {}\n  Groups: {}\n",
                     c.name.as_deref().unwrap_or("environment"),
                     c.endpoint,
                     if caller.single {
@@ -656,6 +656,7 @@ pub async fn handle(
                     } else {
                         "authenticated"
                     },
+                    caller.key_id.as_deref().unwrap_or("none"),
                     caller.key_prefix.as_deref().unwrap_or("none"),
                     match caller.scope {
                         AccessScope::Deployment => "deployment".to_owned(),
@@ -760,6 +761,7 @@ mod tests {
             caller: Some(CallerAccess {
                 scope,
                 single,
+                key_id: None,
                 key_prefix: None,
                 groups: vec![],
             }),

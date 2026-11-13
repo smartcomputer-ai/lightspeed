@@ -34,6 +34,21 @@ Three rules apply to all of them:
   running as the daemon's user can still read it, so grant **Run commands**
   only where that is acceptable.
 
+File tools reach every file the daemon's user can read under the daemon's
+filesystem root, which is the whole pod or VM by default. They never reach
+the state directory, the registration key file, or the `/proc` and `/sys`
+filesystems; every other file is readable by a session with **Read files**.
+So keep other secrets off the machine. In Kubernetes, set
+`automountServiceAccountToken: false`, as the manifests below do: a pod
+otherwise carries a token for the cluster API in a file under
+`/var/run/secrets`, which a session could read like any other file. Mount a
+token only into pods whose agents are meant to call the cluster API, with a
+service account bound to the least that needs.
+
+The daemon takes its settings from its process environment and command line
+only. It loads no `.env` file, so nothing an agent writes into the working
+directory changes how the daemon starts next time.
+
 ## Prepare the key and the gateway URL
 
 Mint one registration key per group of daemons. For a StatefulSet of three
@@ -57,7 +72,10 @@ kubectl -n lightspeed-runners create secret generic lightspeed-envd-key \
 ```
 
 The daemon sends the key only until its first admission, so leaving the
-Secret mounted is harmless. Rotate the key with
+Secret mounted does not affect it. File tools never read the key file, and
+they refuse the whole volume when the key is mounted in a directory of its
+own, as in the manifests below, so mount nothing else there. A session that
+may run commands on the machine can still read the key. Rotate the key with
 `lightspeed environment registration-key rotate KEY_ID` when the secret
 leaks; admitted daemons keep reconnecting with their identities.
 
@@ -148,6 +166,8 @@ spec:
       labels:
         app: lightspeed-runner
     spec:
+      # No Kubernetes API token in the pod: file tools could read it.
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
       securityContext:
         runAsNonRoot: true
@@ -358,6 +378,7 @@ spec:
       labels:
         app: lightspeed-sandbox
     spec:
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
       securityContext:
         runAsNonRoot: true

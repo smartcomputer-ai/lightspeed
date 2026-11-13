@@ -365,7 +365,10 @@ durable session event stream.
 `LightspeedRpcError` preserves `code`, `message`, `kind`, and structured `data`.
 Inspect those fields for conflicts, rejected operations, missing records, or
 an environment that is not ready. Every `kind` is camelCase, such as `invalidRequest`
-or `notFound`. `LightspeedTransportError` reports failures such as HTTP errors, invalid
+or `notFound`. A missing or invalid API key is the kind `unauthenticated`. The gateway
+answers it with HTTP 401 before reading the request body, and the client turns that
+response into the same `LightspeedRpcError`; a program that calls `/rpc` without the
+client must check the HTTP status as well as the JSON-RPC error. `LightspeedTransportError` reports failures such as HTTP errors, invalid
 responses, or network interruption. Its `transient` flag says the same request may
 succeed later, and `cause` keeps the underlying failure. A transport failure after
 submission can leave acceptance unknown; reconcile with stable IDs before retrying

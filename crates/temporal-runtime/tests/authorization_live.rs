@@ -74,7 +74,10 @@ async fn issue(
         ApiKeySpec {
             key_id: None,
             scope,
-            groups: groups.map(|groups| groups.iter().copied().collect()),
+            // `None` asks for every group the scope allows.
+            groups: groups.map_or(api::ApiKeyGroups::All, |groups| {
+                groups.iter().copied().collect()
+            }),
             assert_actor,
             created_by: Attribution::Local,
             display_name: Some("authorization live".into()),
@@ -175,6 +178,23 @@ async fn keys_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
         )?);
         let (endpoint, server) = serve(runtime).await?;
         let outcome = async {
+            // A request that presents no valid key is answered 401 from its
+            // headers alone. Its body was not read, so the JSON-RPC error
+            // answers no request id.
+            let read = json!({"id":1,"method":"session/read","params":{"sessionId":"any"}});
+            for bearer in [None, Some(format!("lsk_{}", "0".repeat(48)))] {
+                let mut request = reqwest::Client::new().post(&endpoint).json(&read);
+                if let Some(bearer) = &bearer {
+                    request = request.bearer_auth(bearer);
+                }
+                let response = request.send().await?;
+                assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED, "{bearer:?}");
+                assert_eq!(response.headers()["www-authenticate"], "Bearer");
+                let refusal: Value = response.json().await?;
+                assert!(refusal["id"].is_null(), "{refusal}");
+                assert_eq!(kind(&refusal), "unauthenticated");
+            }
+
             let alice = platform.as_actor("alice");
             let bob = platform.as_actor("bob");
             let suffix = Uuid::new_v4().simple().to_string();
@@ -199,8 +219,10 @@ async fn keys_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
             let own = success(rpc(&endpoint, &developer, "session/start", json!({})).await);
             let own = own["session"]["id"].as_str().unwrap().to_owned();
             let read = success(rpc(&endpoint, &developer, "session/read", json!({"sessionId": own})).await);
-            assert_eq!(read["session"]["access"]["createdBy"]["kind"], "key");
-            assert_eq!(read["session"]["access"]["createdBy"]["prefix"], universe_key.record.key_prefix.as_str());
+            assert_eq!(
+                read["session"]["access"]["createdBy"],
+                json!({"kind": "key", "keyId": universe_key.record.key_id.as_str(), "scopeKind": "universe"})
+            );
 
             // Lists filter by each session's root, in one pageable query. An
             // actor sees what it created and what is shared, and no one else's

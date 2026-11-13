@@ -3,6 +3,7 @@ import type { SessionEventsPage, SessionRunView } from "@/api";
 import { emptyTranscript, type TranscriptState } from "./transcript";
 import { TranscriptWindow } from "./transcript-window";
 import { isTransientReadError } from "@/lib/read-errors";
+import { readResponseBody } from "@/lib/response-body";
 
 export interface SessionTail {
   transcript: TranscriptState;
@@ -209,13 +210,18 @@ async function fetchEvents(universeId: string, sessionId: string, after: number,
 
 async function readPage<T>(url: string, signal: AbortSignal): Promise<T> {
   const res = await fetch(url, { credentials: "same-origin", signal });
-  if (!res.ok) throw new SessionReadHttpError(res.status);
-  return res.json() as Promise<T>;
+  const answer = await readResponseBody(res);
+  if (!res.ok) throw new SessionReadHttpError(res.status, answer.kind === "text" ? answer.text : undefined);
+  // A page is always a JSON object. Anything else under a success status came
+  // from something in front of the API and is reported, not read as a page.
+  if (answer.kind === "text") throw new SessionReadHttpError(res.status, `not JSON: ${answer.text}`);
+  if (answer.kind === "empty") throw new SessionReadHttpError(res.status, "empty response");
+  return answer.value as T;
 }
 
 class SessionReadHttpError extends Error {
-  constructor(readonly status: number) {
-    super(`Reading session history failed (${status})`);
+  constructor(readonly status: number, detail?: string) {
+    super(`Reading session history failed (${status})${detail ? `: ${detail}` : ""}`);
   }
 }
 

@@ -101,6 +101,7 @@ mod broker;
 mod flow;
 mod github;
 mod grants;
+mod headers;
 mod locks;
 mod mcp_oauth;
 mod memory;
@@ -132,6 +133,11 @@ pub use grants::{
     AuthGrantExposure, AuthGrantRecord, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
     AuthProviderKind, CreateAuthGrantRecord, ListAuthGrants, TokenCredentialUpdate,
 };
+pub use headers::{
+    CredentialHeaderError, HeaderCredentialError, REQUEST_HEADER_NAME_MAX_LEN,
+    REQUEST_HEADER_VALUE_MAX_LEN, REQUEST_HEADERS_MAX, RequestHeaderError, RequestHeaderPolicy,
+    RequestHeaderValue, RequestHeaders, credential_header_value, resolve_credential_header,
+};
 pub use locks::{GrantLockGuard, GrantRefreshLock, InMemoryGrantLocks};
 pub use mcp_oauth::{
     CimdConfig, HttpOAuthMetadataClient, McpOAuthChallenge, McpOAuthDriver, McpOAuthError,
@@ -153,13 +159,13 @@ pub use oauth::{
 };
 pub use providers::{
     AuthProviderConfig, AuthProviderRecord, AuthProviderStatus, AuthProviderStore,
-    CreateAuthProviderRecord, GitHubAppConfig, ModelApiKeyConfig, ModelEndpointConfig,
-    ModelEndpointOnlyConfig, ModelOAuthConfig, model_auth_provider_id,
+    CreateAuthProviderRecord, GitHubAppConfig, MODEL_ENDPOINT_HEADER_POLICY, ModelApiKeyConfig,
+    ModelEndpointConfig, ModelEndpointOnlyConfig, ModelOAuthConfig, model_auth_provider_id,
 };
 pub use safe_http::{
     DEFAULT_OAUTH_HTTP_MAX_BODY_BYTES, DEFAULT_OAUTH_HTTP_MAX_HEADER_BYTES,
-    DEFAULT_OAUTH_HTTP_MAX_REDIRECTS, PinnedHttpError, PinnedHttpPolicy, PrivateNetworkAccess,
-    is_public_network_ip,
+    DEFAULT_OAUTH_HTTP_MAX_REDIRECTS, InvalidPrivateNetwork, PinnedHttpError, PinnedHttpPolicy,
+    PrivateNetworkAccess, PrivateNetworkList, is_public_network_ip,
 };
 pub use secrets::{
     PutSecretRecord, SECRET_KIND_MODEL_API_KEY, SECRET_KIND_STATIC_TOKEN, SecretRecordMeta,

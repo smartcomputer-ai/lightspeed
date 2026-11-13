@@ -22,8 +22,8 @@ use thiserror::Error;
 use crate::{
     AuthProviderKind, AuthRegistryError, CreateOAuthClientRecord, OAuthClientId, OAuthClientRecord,
     OAuthClientStore, OAuthTokenError, OAuthTokenGrant, OAuthTokenRequest, OAuthTokenResponse,
-    PinnedHttpPolicy, PutSecretRecord, SECRET_KIND_OAUTH_CLIENT_SECRET, SecretId, SecretStore,
-    SecretValue, TokenEndpointAuthMethod, random_auth_id,
+    PinnedHttpPolicy, PrivateNetworkList, PutSecretRecord, SECRET_KIND_OAUTH_CLIENT_SECRET,
+    SecretId, SecretStore, SecretValue, TokenEndpointAuthMethod, random_auth_id,
 };
 
 pub use rmcp::transport::auth::OAuthHttpClient as OAuthMetadataClient;
@@ -137,13 +137,12 @@ impl HttpOAuthMetadataClient {
         })
     }
 
-    pub fn with_private_networks(allow_private_networks: bool) -> Self {
+    /// A client that reaches public HTTPS endpoints plus the deployment's
+    /// listed private destinations. Metadata, registration, exchange and
+    /// refresh each name their own URL, and each URL is judged on its own.
+    pub fn with_private_networks(private_networks: PrivateNetworkList) -> Self {
         Self {
-            policy: if allow_private_networks {
-                PinnedHttpPolicy::allowing_private_networks()
-            } else {
-                PinnedHttpPolicy::public_only()
-            },
+            policy: PinnedHttpPolicy::public_only().with_private_networks(private_networks),
         }
     }
 
@@ -1097,6 +1096,76 @@ mod tests {
             driver.discover_protected_resource(&target()).await,
             Err(McpOAuthError::InvalidIssuer { .. })
         ));
+    }
+
+    /// The real client is asked for a loopback server the list does not name.
+    /// The refusal has to come from the address check, before a connection is
+    /// opened, or the list would not bound what OAuth discovery can probe.
+    #[tokio::test(flavor = "current_thread")]
+    async fn unlisted_private_server_is_refused_before_any_connection() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fixture");
+        let port = listener.local_addr().expect("fixture address").port();
+        let http = HttpOAuthMetadataClient::with_private_networks(
+            crate::PrivateNetworkList::parse("10.0.0.0/8,mcp.internal").expect("list"),
+        );
+        let driver = McpOAuthDriver::new(
+            Arc::new(InMemoryOAuthClientStore::new()),
+            Arc::new(InMemorySecretStore::new()),
+            Arc::new(http),
+        );
+        let target = McpOAuthTarget {
+            server_url: format!("http://127.0.0.1:{port}/mcp"),
+            ..target()
+        };
+
+        driver
+            .discover_protected_resource(&target)
+            .await
+            .expect_err("an unlisted private server is out of reach");
+        let connection =
+            tokio::time::timeout(std::time::Duration::from_millis(50), listener.accept()).await;
+        assert!(connection.is_err(), "no connection may be attempted");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn client_judges_each_oauth_endpoint_by_its_own_host() {
+        async fn verdict(
+            http: &HttpOAuthMetadataClient,
+            url: &str,
+        ) -> Result<(), crate::PinnedHttpError> {
+            http.policy()
+                .client_for_url(&reqwest::Url::parse(url).expect("url"))
+                .await
+                .map(|_| ())
+        }
+
+        // The MCP server is listed; an authorization server on another
+        // private host is not, and being named by a listed server's metadata
+        // does not make it reachable.
+        let http = HttpOAuthMetadataClient::with_private_networks(
+            crate::PrivateNetworkList::parse("localhost").expect("list"),
+        );
+        assert_eq!(verdict(&http, "http://localhost:9/mcp").await, Ok(()));
+        assert_eq!(
+            verdict(&http, "https://127.0.0.1:9/token").await,
+            Err(crate::PinnedHttpError::NonPublicAddress)
+        );
+        assert_eq!(
+            verdict(&http, "http://127.0.0.1:9/token").await,
+            Err(crate::PinnedHttpError::HttpsRequired)
+        );
+
+        let public_only = HttpOAuthMetadataClient::new().expect("client");
+        assert_eq!(
+            verdict(&public_only, "http://localhost:9/mcp").await,
+            Err(crate::PinnedHttpError::HttpsRequired)
+        );
+        assert_eq!(
+            verdict(&public_only, "https://localhost:9/mcp").await,
+            Err(crate::PinnedHttpError::NonPublicAddress)
+        );
     }
 
     fn token_request() -> OAuthTokenRequest {

@@ -2658,13 +2658,13 @@ async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
     input.execution = mcp::McpExecution::Runtime;
     input.headers.insert(
         "x-upstream-url".to_owned(),
-        mcp::McpServerHeaderValue::Literal {
+        auth::RequestHeaderValue::Literal {
             value: "https://tracker.example.com".to_owned(),
         },
     );
     input.headers.insert(
         "x-upstream-token".to_owned(),
-        mcp::McpServerHeaderValue::Credential {
+        auth::RequestHeaderValue::Credential {
             grant_id: grant_id.clone(),
         },
     );
@@ -2690,7 +2690,7 @@ async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
     let mut unknown = input.clone();
     unknown.headers.insert(
         "x-other-token".to_owned(),
-        mcp::McpServerHeaderValue::Credential {
+        auth::RequestHeaderValue::Credential {
             grant_id: AuthGrantId::new("authgrant_missing"),
         },
     );
@@ -2702,6 +2702,18 @@ async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
         store.read_server(&server_id).await.expect("unchanged"),
         created
     );
+
+    // The table itself refuses a plain value under a name that carries a
+    // secret, whatever wrote the row.
+    let plain_secret = sqlx::query(
+        "INSERT INTO mcp_server_headers (universe_id, server_id, name, literal_value)
+         VALUES ($1, $2, 'x-api-key', 'sk-plain')",
+    )
+    .bind(store.config().universe_id)
+    .bind(server_id.as_str())
+    .execute(store.pool())
+    .await;
+    assert!(plain_secret.is_err());
 
     // Replacement replaces the header set.
     let mut replacement = input;
@@ -3232,6 +3244,187 @@ async fn pg_live_auth_providers_crud_and_credential_fk() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_auth_provider_headers_round_trip_and_hold_their_credentials() {
+    use auth::{
+        AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore,
+        CreateAuthProviderRecord, ModelEndpointConfig, ModelEndpointOnlyConfig, RequestHeaderValue,
+    };
+
+    let store = live_store("auth-provider-headers", 1024).await;
+    let provider_id = AuthProviderId::new("model:router");
+
+    store
+        .put_secret(PutSecretRecord {
+            secret_id: SecretId::new("authsec_router"),
+            secret_kind: SECRET_KIND_STATIC_TOKEN.to_owned(),
+            value: SecretValue::new("router-token"),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("store header secret");
+    let grant_id = AuthGrantId::new("authgrant_router");
+    store
+        .create_grant(CreateAuthGrantRecord {
+            grant_id: grant_id.clone(),
+            provider_id: "static".to_owned(),
+            provider_kind: AuthProviderKind::StaticToken,
+            exposure: auth::AuthGrantExposure::Brokered,
+            created_by: api::Attribution::Local,
+            display_name: Some("Router".to_owned()),
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: None,
+            access_token_secret: Some(SecretId::new("authsec_router")),
+            refresh_token_secret: None,
+            oauth_client: None,
+            expires_at_ms: None,
+            status: AuthGrantStatus::Active,
+            metadata: serde_json::Value::Object(Default::default()),
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create header grant");
+
+    let endpoint = |headers| {
+        AuthProviderConfig::ModelEndpoint(ModelEndpointOnlyConfig {
+            endpoint: ModelEndpointConfig {
+                base_url: "https://router.example/v1".to_owned(),
+                headers,
+                api_kinds: vec!["openai:completions".to_owned()],
+            },
+        })
+    };
+    let literal = (
+        "x-title".to_owned(),
+        RequestHeaderValue::Literal {
+            value: "Lightspeed".to_owned(),
+        },
+    );
+    let credential = (
+        "x-api-key".to_owned(),
+        RequestHeaderValue::Credential {
+            grant_id: grant_id.clone(),
+        },
+    );
+    let config = endpoint([literal.clone(), credential.clone()].into());
+    let created = store
+        .create_auth_provider(CreateAuthProviderRecord {
+            provider_id: provider_id.clone(),
+            display_name: Some("Router".to_owned()),
+            config: config.clone(),
+            credential_secret: None,
+            status: AuthProviderStatus::Active,
+            created_at_ms: 10,
+        })
+        .await
+        .expect("create provider with headers");
+    assert_eq!(created.config, config);
+    assert_eq!(
+        store.read_auth_provider(&provider_id).await.expect("read"),
+        created
+    );
+    assert_eq!(
+        store.list_auth_providers().await.expect("list"),
+        vec![created.clone()]
+    );
+
+    // Headers are rows; the stored document carries none, so a credential
+    // reference is always held by the foreign key.
+    let document: serde_json::Value = sqlx::query_scalar(
+        "SELECT config_json FROM auth_providers WHERE universe_id = $1 AND provider_id = $2",
+    )
+    .bind(store.config().universe_id)
+    .bind(provider_id.as_str())
+    .fetch_one(store.pool())
+    .await
+    .expect("read stored document");
+    assert!(document["endpoint"].get("headers").is_none());
+
+    // A credential held by a header cannot be deleted.
+    assert!(
+        store.delete_grant(&grant_id).await.is_err(),
+        "a credential referenced by a header must not be deletable"
+    );
+
+    // A header naming a credential that does not exist is refused whole.
+    let mut unknown = created.clone();
+    unknown.config = endpoint(
+        [
+            literal.clone(),
+            credential,
+            (
+                "x-other-token".to_owned(),
+                RequestHeaderValue::Credential {
+                    grant_id: AuthGrantId::new("authgrant_missing"),
+                },
+            ),
+        ]
+        .into(),
+    );
+    unknown.updated_at_ms = 15;
+    assert!(matches!(
+        store.replace_auth_provider(unknown, None).await,
+        Err(AuthRegistryError::InvalidInput { .. })
+    ));
+    assert_eq!(
+        store
+            .read_auth_provider(&provider_id)
+            .await
+            .expect("unchanged"),
+        created
+    );
+
+    // The table itself refuses a plain value under a name that carries a
+    // secret, whatever wrote the row.
+    let plain_secret = sqlx::query(
+        "INSERT INTO auth_provider_headers (universe_id, provider_id, name, literal_value)
+         VALUES ($1, $2, 'api-key', 'sk-plain')",
+    )
+    .bind(store.config().universe_id)
+    .bind(provider_id.as_str())
+    .execute(store.pool())
+    .await;
+    assert!(plain_secret.is_err());
+
+    // Replacement replaces the header set.
+    let mut replacement = created.clone();
+    replacement.config = endpoint([literal].into());
+    replacement.updated_at_ms = 20;
+    let replaced = store
+        .replace_auth_provider(replacement, None)
+        .await
+        .expect("replace headers")
+        .expect("guard matches");
+    assert_eq!(
+        replaced
+            .config
+            .model_endpoint()
+            .expect("endpoint")
+            .headers
+            .keys()
+            .collect::<Vec<_>>(),
+        vec!["x-title"]
+    );
+
+    // With no header holding it, the credential can go; deleting the provider
+    // removes its headers.
+    store.delete_grant(&grant_id).await.expect("delete grant");
+    let deleted = store
+        .delete_auth_provider(&provider_id)
+        .await
+        .expect("delete");
+    assert_eq!(deleted, replaced);
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM auth_provider_headers WHERE universe_id = $1")
+            .bind(store.config().universe_id)
+            .fetch_one(store.pool())
+            .await
+            .expect("count header rows");
+    assert_eq!(remaining, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_grant_metadata_round_trips() {
     let store = live_store("grant-metadata", 1024).await;
     let grant_id = AuthGrantId::new("authgrant_install_live");
@@ -3309,7 +3502,8 @@ async fn pg_live_environment_credentials_round_trip() {
         .expect("create environment");
 
     // Subscription credentials are ordinary static_token grants carrying
-    // metadata, so exercise two stored-secret grants.
+    // metadata, so exercise two stored-secret grants. They are retrievable,
+    // as every grant bound into an environment is.
     for (grant_id, kind, provider) in [
         ("authgrant_codex", AuthProviderKind::StaticToken, "openai"),
         (
@@ -3323,7 +3517,7 @@ async fn pg_live_environment_credentials_round_trip() {
                 grant_id: AuthGrantId::new(grant_id),
                 provider_id: provider.to_owned(),
                 provider_kind: kind,
-                exposure: auth::AuthGrantExposure::Brokered,
+                exposure: auth::AuthGrantExposure::Retrievable,
                 created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
@@ -3474,12 +3668,34 @@ async fn pg_live_universe_delete_removes_registered_environments_and_credential_
         })
         .await
         .expect("put secret");
+    let grant_id = AuthGrantId::new("authgrant_pod_token");
+    store
+        .create_grant(CreateAuthGrantRecord {
+            grant_id: grant_id.clone(),
+            provider_id: "static".to_owned(),
+            provider_kind: AuthProviderKind::StaticToken,
+            exposure: auth::AuthGrantExposure::Retrievable,
+            created_by: api::Attribution::Local,
+            display_name: None,
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: None,
+            access_token_secret: Some(secret_id),
+            refresh_token_secret: None,
+            oauth_client: None,
+            expires_at_ms: None,
+            status: AuthGrantStatus::Active,
+            metadata: serde_json::json!({}),
+            created_at_ms: 3,
+        })
+        .await
+        .expect("create grant");
     store
         .bind_credential(PutEnvironmentCredential {
             environment_id: environment_id.clone(),
             env_name: "POD_TOKEN".to_owned(),
-            source: EnvironmentCredentialSource::DirectSecret {
-                secret_id: secret_id.clone(),
+            source: EnvironmentCredentialSource::AuthGrant {
+                grant_id: grant_id.clone(),
             },
             created_at_ms: 4,
         })
@@ -3488,7 +3704,7 @@ async fn pg_live_universe_delete_removes_registered_environments_and_credential_
 
     // Outside a universe delete the references still hold.
     assert!(matches!(
-        store.delete_secret(&secret_id).await,
+        store.delete_grant(&grant_id).await,
         Err(AuthRegistryError::Store { .. })
     ));
     assert_eq!(
@@ -3514,6 +3730,7 @@ async fn pg_live_universe_delete_removes_registered_environments_and_credential_
         "environment_registration_keys",
         "environment_registration_key_secrets",
         "environment_credentials",
+        "auth_grants",
         "auth_secrets",
     ] {
         let remaining: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
@@ -3744,7 +3961,7 @@ fn put_mcp_server(server_id: &str, status: McpServerStatus) -> PutMcpServerRecor
         allow_private_network: false,
         auth_policy: McpServerAuthPolicy::None,
         auth_grant_id: None,
-        headers: mcp::McpServerHeaders::new(),
+        headers: auth::RequestHeaders::new(),
         status,
         now_ms: 10,
     }

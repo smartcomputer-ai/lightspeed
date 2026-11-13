@@ -13,7 +13,10 @@ import type { AppContext, ApiVariables } from "../context.js";
 import { engineClientFor, withGateway } from "./gateway.js";
 import { universeForSession } from "./universes.js";
 
-// The runtime enforces current user permissions and redacts trigger secrets.
+// The member gate holds every call to the role its method needs. A trigger as
+// it is read or listed never carries its secrets (a webhook's ingest path, a
+// chat trigger's pairing code): those come from their own method, which needs
+// the operator role, and from the answer to creating or replacing a trigger.
 
 async function jsonBody(c: {
   req: { json: () => Promise<unknown> };
@@ -176,6 +179,24 @@ export function botRoutes(ctx: AppContext) {
       return c.json({
         trigger: trigger,
       });
+    });
+  });
+
+  /// The ingest path of a webhook trigger or the pairing code of a chat
+  /// trigger, for members who may manage the bot; both absent for a trigger
+  /// that has neither.
+  app.get("/:id/bots/:botId/triggers/:triggerId/secrets", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) {
+      return c.json({ error: "not found" }, 404);
+    }
+    return withGateway(c, async () => {
+      const client = engineClientFor(ctx, access);
+      const response = await client.call("bots/triggers/secrets/read", {
+        botId: c.req.param("botId"),
+        triggerId: c.req.param("triggerId"),
+      });
+      return c.json(response.result);
     });
   });
 

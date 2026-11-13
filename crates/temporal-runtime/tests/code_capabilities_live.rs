@@ -268,10 +268,7 @@ where
     let _ = dotenvy::dotenv();
     require_storage_live_env()?;
     let client = temporal_workflow::connect_temporal(
-        &std::env::var("TEMPORAL_ADDRESS")
-            .unwrap_or_else(|_| temporal_workflow::DEFAULT_TEMPORAL_TARGET.into()),
-        &std::env::var("TEMPORAL_NAMESPACE")
-            .unwrap_or_else(|_| temporal_workflow::DEFAULT_TEMPORAL_NAMESPACE.into()),
+        &temporal_workflow::TemporalConnectionConfig::from_env()?,
     )
     .await?;
     let universe = uuid::Uuid::new_v4();

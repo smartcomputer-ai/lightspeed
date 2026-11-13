@@ -38,6 +38,14 @@ deployment.
 """
 
 
+AccessScopeKind: TypeAlias = Literal['deployment', 'universe']
+"""
+The kind of an [`AccessScope`]: the deployment, or a universe. Where a
+record already belongs to one universe this is enough to tell a universe
+key of that universe from a deployment key.
+"""
+
+
 AgentApiErrorKind: TypeAlias = (
     Literal['invalidRequest', 'notFound', 'conflict', 'audioBlobTooLarge', 'internal']
     | Literal['rejected']
@@ -116,11 +124,16 @@ class AttributionActor(TypedDict):
 
 class AttributionKey(TypedDict):
     """
-    A key acting for itself, named by its display prefix.
+    A key acting for itself, named by its key id. A key id is unique
+    among the keys of one scope, so `scopeKind` says whether it names a
+    deployment key or a key of the universe the record belongs to. The
+    id survives a change of secret; the secret's display prefix does not
+    and is deliberately not recorded.
     """
 
+    keyId: str
     kind: Literal['key']
-    prefix: str
+    scopeKind: AccessScopeKind
 
 
 class AttributionLocal(TypedDict):
@@ -197,6 +210,9 @@ class AuthGitHubInstallationListParams(TypedDict):
 
 
 AuthGrantExposure: TypeAlias = Literal['brokered', 'retrievable']
+"""
+Where a credential's plain value may go, fixed when it is created.
+"""
 
 
 class AuthGrantImportParams(TypedDict):
@@ -262,8 +278,8 @@ class AuthGrantPutParams(TypedDict):
     """
     exposure: NotRequired[AuthGrantExposure]
     """
-    Whether the token may be leased in plaintext. It cannot be changed
-    afterwards.
+    Whether the plain token may be leased to a service or bound into an
+    environment. It cannot be changed afterwards.
     """
     grantId: str
     metadata: NotRequired[Any]
@@ -588,6 +604,48 @@ BotTriggerRoute: TypeAlias = (
 Which session a trigger's events are delivered to; absent means the
 bot's main session.
 """
+
+
+class BotTriggerSecretsReadParams(TypedDict):
+    botId: BotId
+    triggerId: BotTriggerId
+
+
+class BotTriggerSecretsReadResponse(TypedDict):
+    """
+    The secrets of one trigger; both fields are absent for a trigger that
+    has none.
+    """
+
+    ingestPath: NotRequired[str | None]
+    """
+    Webhook triggers: the ingest path including its URL token.
+    """
+    pairingCode: NotRequired[str | None]
+    """
+    Chat triggers with `pairing: code`: the code a conversation sends
+    once to connect.
+    """
+
+
+class BotTriggerSecretsView(TypedDict):
+    """
+    What lets an outsider reach a trigger: whoever holds the ingest path can
+    post events to the bot, and whoever holds the pairing code can connect a
+    conversation to it. Kept apart from [`BotTriggerView`] so that reading or
+    listing triggers never discloses either; only bot-management methods
+    return this.
+    """
+
+    ingestPath: NotRequired[str | None]
+    """
+    Webhook triggers: the ingest path including its URL token.
+    """
+    pairingCode: NotRequired[str | None]
+    """
+    Chat triggers with `pairing: code`: the code a conversation sends
+    once to connect.
+    """
 
 
 BotWhenBusy: TypeAlias = Literal['queue', 'steer', 'append']
@@ -1375,24 +1433,30 @@ class EnvironmentCredentialListParams(TypedDict):
 
 
 class EnvironmentCredentialSourceViewAuthGrant(TypedDict):
+    """
+    A credential grant. It must be retrievable: a bound value is handed
+    to the commands of the machine in plain form, which is exactly what
+    a brokered grant promises never to do.
+    """
+
     grantId: str
     type: Literal['authGrant']
 
 
 class EnvironmentCredentialSourceViewAuthProviderCredential(TypedDict):
+    """
+    The stored API key of a model API key provider. No other provider
+    kind can be bound; this is the one source whose plain value reaches
+    a machine without a retrievable grant.
+    """
+
     providerId: str
     type: Literal['authProviderCredential']
-
-
-class EnvironmentCredentialSourceViewDirectSecret(TypedDict):
-    secretId: str
-    type: Literal['directSecret']
 
 
 EnvironmentCredentialSourceView: TypeAlias = (
     EnvironmentCredentialSourceViewAuthGrant
     | EnvironmentCredentialSourceViewAuthProviderCredential
-    | EnvironmentCredentialSourceViewDirectSecret
 )
 
 
@@ -2141,31 +2205,6 @@ class McpServerDeleteParams(TypedDict):
     serverId: str
 
 
-class McpServerHeaderLiteral(TypedDict):
-    """
-    Sent as written. Not secret: reads return the value.
-    """
-
-    type: Literal['literal']
-    value: str
-
-
-class McpServerHeaderCredential(TypedDict):
-    """
-    The token of a static-token credential in this universe, resolved at
-    each request and sent raw, without a scheme prefix.
-    """
-
-    grantId: str
-    type: Literal['credential']
-
-
-McpServerHeader: TypeAlias = McpServerHeaderLiteral | McpServerHeaderCredential
-"""
-Value of one extra MCP request header.
-"""
-
-
 class McpServerReadParams(TypedDict):
     serverId: str
 
@@ -2338,12 +2377,6 @@ class ModelDefaultsReadParams(TypedDict):
 
 class ModelDefaultsResponse(TypedDict):
     defaults: ModelDefaults
-
-
-class ModelEndpointConfig(TypedDict):
-    apiKinds: list[str]
-    baseUrl: str
-    headers: NotRequired[dict[str, str]]
 
 
 class ModelListParams(TypedDict):
@@ -2620,6 +2653,33 @@ can run again with its side effects, and the transcript shows at most one run.
 
 
 RemoteMcpExposure: TypeAlias = Literal['inject', 'search']
+
+
+class RequestHeaderLiteral(TypedDict):
+    """
+    Sent as written. Not secret: reads return the value.
+    """
+
+    type: Literal['literal']
+    value: str
+
+
+class RequestHeaderCredential(TypedDict):
+    """
+    The token of a static-token credential in this universe, resolved at
+    each request and sent raw, without a scheme prefix.
+    """
+
+    grantId: str
+    type: Literal['credential']
+
+
+RequestHeader: TypeAlias = RequestHeaderLiteral | RequestHeaderCredential
+"""
+Value of one configured request header, as an MCP server and a model
+provider's endpoint both carry them. A name listed in
+[`CREDENTIAL_ONLY_HEADER_NAMES`] accepts only a `credential` value.
+"""
 
 
 class RunCancelParams(TypedDict):
@@ -4130,6 +4190,12 @@ class AgentProfileSummary(TypedDict):
     updatedAtMs: int
 
 
+ApiKeyGroups: TypeAlias = Literal['all'] | list[MethodGroup]
+"""
+The method groups a key is created or declared with: the literal `all`, which is every group the key's scope allows, or a non-empty list of groups.
+"""
+
+
 class ApprovalDecisionFailure(TypedDict):
     kind: ApprovalDecisionFailureKind
     message: str
@@ -4230,139 +4296,6 @@ class AuthGrantView(TypedDict):
     scopes: NotRequired[list[str]]
     status: AuthGrantStatus
     subjectHint: NotRequired[str | None]
-    updatedAtMs: int
-
-
-class AuthProviderConfigInputModelApiKey(TypedDict):
-    """
-    Stored model provider API key; the key arrives via `credential` and is
-    encrypted on receipt.
-    """
-
-    endpoint: NotRequired[ModelEndpointConfig | None]
-    type: Literal['modelApiKey']
-
-
-class AuthProviderConfigInputModelOAuth(TypedDict):
-    """
-    Bind an existing auth grant as a model provider credential. No
-    `credential` is accepted; the grant's tokens stay in the grant store.
-    """
-
-    audience: NotRequired[str | None]
-    endpoint: NotRequired[ModelEndpointConfig | None]
-    grantId: str
-    type: Literal['modelOAuth']
-
-
-class AuthProviderConfigInputModelEndpoint(TypedDict):
-    """
-    Register an endpoint that requires no provider credential.
-    """
-
-    endpoint: ModelEndpointConfig
-    type: Literal['modelEndpoint']
-
-
-AuthProviderConfigInput: TypeAlias = (
-    AuthProviderConfigInputGithubApp
-    | AuthProviderConfigInputModelApiKey
-    | AuthProviderConfigInputModelOAuth
-    | AuthProviderConfigInputModelEndpoint
-)
-
-
-class AuthProviderConfigViewModelApiKey(TypedDict):
-    """
-    Stored model provider API key (`model:<provider_id>` rows). The key itself
-    is the provider credential and never appears in views.
-    """
-
-    endpoint: NotRequired[ModelEndpointConfig | None]
-    type: Literal['modelApiKey']
-
-
-class AuthProviderConfigViewModelOAuth(TypedDict):
-    """
-    OAuth-grant-backed model provider credential: provider calls send the
-    bound grant's access token as an OAuth bearer token.
-    """
-
-    audience: NotRequired[str | None]
-    endpoint: NotRequired[ModelEndpointConfig | None]
-    grantId: str
-    type: Literal['modelOAuth']
-
-
-class AuthProviderConfigViewModelEndpoint(TypedDict):
-    """
-    Credentialless OpenAI-compatible endpoint.
-    """
-
-    endpoint: ModelEndpointConfig
-    type: Literal['modelEndpoint']
-
-
-AuthProviderConfigView: TypeAlias = (
-    AuthProviderConfigViewGithubApp
-    | AuthProviderConfigViewModelApiKey
-    | AuthProviderConfigViewModelOAuth
-    | AuthProviderConfigViewModelEndpoint
-)
-"""
-Non-secret, provider-specific configuration. New providers add a
-variant, not a table.
-"""
-
-
-class AuthProviderCreateParams(TypedDict):
-    """
-    Register an auth provider. `credential` (for GitHub Apps: the private
-    key PEM) is the third deliberate inbound-plaintext path: it is encrypted
-    on receipt and never returned by any method. `Debug` output redacts it;
-    request logging must never echo these params.
-    """
-
-    config: AuthProviderConfigInput
-    credential: NotRequired[str | None]
-    displayName: NotRequired[str | None]
-    providerId: NotRequired[str | None]
-
-
-class AuthProviderPutParams(TypedDict):
-    """
-    Declare a provider: its id, its configuration and its credential. A
-    provider that is missing is created. One that exists is rewritten in place
-    as if it were created again under the same id, where it differs: the new
-    settings are validated before anything changes, so a rejected declaration
-    leaves the provider as it was, and sessions and environment variables
-    referencing the id keep working throughout. Declaring it again changes
-    nothing. `credential` is encrypted on receipt and never returned; `Debug`
-    output redacts it.
-    """
-
-    config: AuthProviderConfigInput
-    credential: NotRequired[str | None]
-    """
-    The provider's credential, for the kinds that take one. Absent leaves
-    the provider without a credential.
-    """
-    displayName: NotRequired[str | None]
-    dryRun: NotRequired[bool]
-    """
-    Report what the declaration would do without doing it.
-    """
-    providerId: str
-
-
-class AuthProviderView(TypedDict):
-    config: AuthProviderConfigView
-    createdAtMs: int
-    displayName: NotRequired[str | None]
-    hasCredential: bool
-    providerId: str
-    providerKind: AuthProviderKind
-    status: AuthProviderStatus
     updatedAtMs: int
 
 
@@ -4628,8 +4561,8 @@ class BotTriggerInputSchedule(TypedDict):
     pairingCode: NotRequired[str | None]
     """
     Chat triggers with `pairing: code`: set a specific pairing code
-    (8–64 chars) instead of the server-minted one. Never returned to
-    channel-facing views.
+    (8–64 chars) instead of the server-minted one. Absent keeps the
+    stored code, so an edit never has to send it back.
     """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
@@ -4675,8 +4608,8 @@ class BotTriggerInputWebhook(TypedDict):
     pairingCode: NotRequired[str | None]
     """
     Chat triggers with `pairing: code`: set a specific pairing code
-    (8–64 chars) instead of the server-minted one. Never returned to
-    channel-facing views.
+    (8–64 chars) instead of the server-minted one. Absent keeps the
+    stored code, so an edit never has to send it back.
     """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
@@ -4708,8 +4641,8 @@ class BotTriggerInputPoll(TypedDict):
     pairingCode: NotRequired[str | None]
     """
     Chat triggers with `pairing: code`: set a specific pairing code
-    (8–64 chars) instead of the server-minted one. Never returned to
-    channel-facing views.
+    (8–64 chars) instead of the server-minted one. Absent keeps the
+    stored code, so an edit never has to send it back.
     """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
@@ -4771,22 +4704,12 @@ class BotTriggerViewSchedule(TypedDict):
     CEL over `{event, data, headers}`; a non-matching event is refused
     and never stored. Fails closed.
     """
-    ingestPath: NotRequired[str | None]
-    """
-    Webhook triggers: the ingest path including its URL token, for
-    bot-management callers only.
-    """
     lastFilterError: NotRequired[str | None]
     """
     Last runtime failure of the CEL filter (the event was refused);
     cleared by the next match.
     """
     lastFilterErrorAtMs: NotRequired[int | None]
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: the code, for bot-management
-    callers only.
-    """
     revision: int
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
@@ -4840,22 +4763,12 @@ class BotTriggerViewWebhook(TypedDict):
     CEL over `{event, data, headers}`; a non-matching event is refused
     and never stored. Fails closed.
     """
-    ingestPath: NotRequired[str | None]
-    """
-    Webhook triggers: the ingest path including its URL token, for
-    bot-management callers only.
-    """
     lastFilterError: NotRequired[str | None]
     """
     Last runtime failure of the CEL filter (the event was refused);
     cleared by the next match.
     """
     lastFilterErrorAtMs: NotRequired[int | None]
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: the code, for bot-management
-    callers only.
-    """
     revision: int
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
@@ -4895,22 +4808,12 @@ class BotTriggerViewPoll(TypedDict):
     CEL over `{event, data, headers}`; a non-matching event is refused
     and never stored. Fails closed.
     """
-    ingestPath: NotRequired[str | None]
-    """
-    Webhook triggers: the ingest path including its URL token, for
-    bot-management callers only.
-    """
     lastFilterError: NotRequired[str | None]
     """
     Last runtime failure of the CEL filter (the event was refused);
     cleared by the next match.
     """
     lastFilterErrorAtMs: NotRequired[int | None]
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: the code, for bot-management
-    callers only.
-    """
     revision: int
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
@@ -4944,10 +4847,8 @@ BotTriggerViewBot = TypedDict(
         'disabledReason': NotRequired[BotTriggerDisabledReason | None],
         'enabled': NotRequired[bool],
         'filter': NotRequired[str | None],
-        'ingestPath': NotRequired[str | None],
         'lastFilterError': NotRequired[str | None],
         'lastFilterErrorAtMs': NotRequired[int | None],
-        'pairingCode': NotRequired[str | None],
         'revision': int,
         'route': NotRequired[BotTriggerRoute | None],
         'sessionCloseAfterMs': NotRequired[int | None],
@@ -5037,10 +4938,16 @@ class CallerAccess(TypedDict):
     The method groups the caller may call. A request without a key holds
     every group. `initialize` belongs to no group and is always allowed.
     """
+    keyId: NotRequired[str | None]
+    """
+    The calling key's id, unique among the keys of `scope`. It is what
+    records attribute the key's own requests to. Absent for a request
+    without a key, such as local development.
+    """
     keyPrefix: NotRequired[str | None]
     """
-    Display prefix of the calling key; absent for a request without a
-    key, such as local development.
+    Display prefix of the calling key's current secret; absent for a
+    request without a key, such as local development.
     """
     scope: AccessScope
     """
@@ -5233,10 +5140,10 @@ class DeploymentApiKeyCreateParams(TypedDict):
     """
     Human-readable purpose shown in key-management interfaces.
     """
-    groups: NotRequired[list[MethodGroup] | None]
+    groups: ApiKeyGroups
     """
-    The method groups the key may call; absent grants every group its
-    scope allows.
+    The method groups the key may call: a non-empty list, or `"all"` for
+    every group its scope allows. The key stores the resulting set.
     """
     keyId: NotRequired[str | None]
     """
@@ -5266,10 +5173,12 @@ class DeploymentApiKeyPutParams(TypedDict):
     """
     Human-readable purpose shown in key-management interfaces.
     """
-    groups: NotRequired[list[MethodGroup] | None]
+    groups: ApiKeyGroups
     """
-    The method groups the key may call; absent grants every group its
-    scope allows. An existing key's groups are replaced by these.
+    The method groups the key may call: a non-empty list, or `"all"` for
+    every group its scope allows. An existing key's groups are replaced
+    by these, and `"all"` is resolved again on every call, so repeating a
+    declaration after an upgrade gives the key the groups added since.
     """
     keyId: str
     """
@@ -5773,13 +5682,14 @@ class McpServerInput(TypedDict):
     displayName: NotRequired[str | None]
     execution: NotRequired[RemoteMcpExecution]
     exposure: NotRequired[RemoteMcpExposure]
-    headers: NotRequired[dict[str, McpServerHeader]]
+    headers: NotRequired[dict[str, RequestHeader]]
     """
     Extra request headers sent on every request to the server, alongside
     any `Authorization` the auth policy produces. Names are
     case-insensitive and stored lowercased; transport headers,
-    `authorization` and `x-lightspeed-*` are reserved. Requires `runtime`
-    execution.
+    `authorization` and `x-lightspeed-*` are reserved. `api-key` and
+    `x-api-key` carry a secret and accept only a `credential` value.
+    Requires `runtime` execution.
     """
     serverId: str
     serverUrl: str
@@ -5846,7 +5756,7 @@ class McpServerView(TypedDict):
     displayName: NotRequired[str | None]
     execution: RemoteMcpExecution
     exposure: RemoteMcpExposure
-    headers: NotRequired[dict[str, McpServerHeader]]
+    headers: NotRequired[dict[str, RequestHeader]]
     """
     Extra request headers, keyed by lowercased name. Credential headers
     show only the credential id; the token is never returned.
@@ -5874,6 +5784,19 @@ MethodAccess: TypeAlias = (
     | MethodAccessService
     | MethodAccessDeployment
 )
+
+
+class ModelEndpointConfig(TypedDict):
+    apiKinds: list[str]
+    baseUrl: str
+    headers: NotRequired[dict[str, RequestHeader]]
+    """
+    Extra request headers sent on every request to the endpoint, alongside
+    the provider's own credential. Names are case-insensitive and stored
+    lowercased; transport headers and `authorization` are reserved.
+    `api-key`, `x-api-key` and `proxy-authorization` carry a secret and
+    accept only a `credential` value.
+    """
 
 
 class ModelListResponse(TypedDict):
@@ -6445,37 +6368,137 @@ class AuthGrantRevokeResponse(TypedDict):
     grant: AuthGrantView
 
 
-class AuthProviderCreateResponse(TypedDict):
-    provider: AuthProviderView
-
-
-class AuthProviderDeleteResponse(TypedDict):
-    provider: AuthProviderView
-
-
-class AuthProviderListResponse(TypedDict):
-    providers: NotRequired[list[AuthProviderView]]
-
-
-class AuthProviderPutResponse(TypedDict):
-    created: bool
+class AuthProviderConfigInputModelApiKey(TypedDict):
     """
-    False when the provider already existed.
-    """
-    credentialReplaced: bool
-    """
-    True when an existing provider held a different credential, or gained
-    or lost one.
-    """
-    provider: AuthProviderView
-    """
-    The provider as declared: as it is now, or as it would be for a dry
-    run.
+    Stored model provider API key; the key arrives via `credential` and is
+    encrypted on receipt.
     """
 
+    endpoint: NotRequired[ModelEndpointConfig | None]
+    type: Literal['modelApiKey']
 
-class AuthProviderReadResponse(TypedDict):
-    provider: AuthProviderView
+
+class AuthProviderConfigInputModelOAuth(TypedDict):
+    """
+    Bind an existing auth grant as a model provider credential. No
+    `credential` is accepted; the grant's tokens stay in the grant store.
+    """
+
+    audience: NotRequired[str | None]
+    endpoint: NotRequired[ModelEndpointConfig | None]
+    grantId: str
+    type: Literal['modelOAuth']
+
+
+class AuthProviderConfigInputModelEndpoint(TypedDict):
+    """
+    Register an endpoint that requires no provider credential.
+    """
+
+    endpoint: ModelEndpointConfig
+    type: Literal['modelEndpoint']
+
+
+AuthProviderConfigInput: TypeAlias = (
+    AuthProviderConfigInputGithubApp
+    | AuthProviderConfigInputModelApiKey
+    | AuthProviderConfigInputModelOAuth
+    | AuthProviderConfigInputModelEndpoint
+)
+
+
+class AuthProviderConfigViewModelApiKey(TypedDict):
+    """
+    Stored model provider API key (`model:<provider_id>` rows). The key itself
+    is the provider credential and never appears in views.
+    """
+
+    endpoint: NotRequired[ModelEndpointConfig | None]
+    type: Literal['modelApiKey']
+
+
+class AuthProviderConfigViewModelOAuth(TypedDict):
+    """
+    OAuth-grant-backed model provider credential: provider calls send the
+    bound grant's access token as an OAuth bearer token.
+    """
+
+    audience: NotRequired[str | None]
+    endpoint: NotRequired[ModelEndpointConfig | None]
+    grantId: str
+    type: Literal['modelOAuth']
+
+
+class AuthProviderConfigViewModelEndpoint(TypedDict):
+    """
+    Credentialless OpenAI-compatible endpoint.
+    """
+
+    endpoint: ModelEndpointConfig
+    type: Literal['modelEndpoint']
+
+
+AuthProviderConfigView: TypeAlias = (
+    AuthProviderConfigViewGithubApp
+    | AuthProviderConfigViewModelApiKey
+    | AuthProviderConfigViewModelOAuth
+    | AuthProviderConfigViewModelEndpoint
+)
+"""
+Non-secret, provider-specific configuration. New providers add a
+variant, not a table.
+"""
+
+
+class AuthProviderCreateParams(TypedDict):
+    """
+    Register an auth provider. `credential` (for GitHub Apps: the private
+    key PEM) is the third deliberate inbound-plaintext path: it is encrypted
+    on receipt and never returned by any method. `Debug` output redacts it;
+    request logging must never echo these params.
+    """
+
+    config: AuthProviderConfigInput
+    credential: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    providerId: NotRequired[str | None]
+
+
+class AuthProviderPutParams(TypedDict):
+    """
+    Declare a provider: its id, its configuration and its credential. A
+    provider that is missing is created. One that exists is rewritten in place
+    as if it were created again under the same id, where it differs: the new
+    settings are validated before anything changes, so a rejected declaration
+    leaves the provider as it was, and sessions and environment variables
+    referencing the id keep working throughout. Declaring it again changes
+    nothing. `credential` is encrypted on receipt and never returned; `Debug`
+    output redacts it.
+    """
+
+    config: AuthProviderConfigInput
+    credential: NotRequired[str | None]
+    """
+    The provider's credential, for the kinds that take one. Absent leaves
+    the provider without a credential.
+    """
+    displayName: NotRequired[str | None]
+    dryRun: NotRequired[bool]
+    """
+    Report what the declaration would do without doing it.
+    """
+    providerId: str
+
+
+class AuthProviderView(TypedDict):
+    config: AuthProviderConfigView
+    createdAtMs: int
+    displayName: NotRequired[str | None]
+    hasCredential: bool
+    providerId: str
+    providerKind: AuthProviderKind
+    status: AuthProviderStatus
+    updatedAtMs: int
 
 
 class BotCloseResponse(TypedDict):
@@ -6690,8 +6713,8 @@ class BotTriggerInputChat(TypedDict):
     pairingCode: NotRequired[str | None]
     """
     Chat triggers with `pairing: code`: set a specific pairing code
-    (8–64 chars) instead of the server-minted one. Never returned to
-    channel-facing views.
+    (8–64 chars) instead of the server-minted one. Absent keeps the
+    stored code, so an edit never has to send it back.
     """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
@@ -6763,22 +6786,12 @@ class BotTriggerViewChat(TypedDict):
     CEL over `{event, data, headers}`; a non-matching event is refused
     and never stored. Fails closed.
     """
-    ingestPath: NotRequired[str | None]
-    """
-    Webhook triggers: the ingest path including its URL token, for
-    bot-management callers only.
-    """
     lastFilterError: NotRequired[str | None]
     """
     Last runtime failure of the CEL filter (the event was refused);
     cleared by the next match.
     """
     lastFilterErrorAtMs: NotRequired[int | None]
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: the code, for bot-management
-    callers only.
-    """
     revision: int
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
@@ -7454,6 +7467,39 @@ class AgentProfileInput(TypedDict):
     """
 
 
+class AuthProviderCreateResponse(TypedDict):
+    provider: AuthProviderView
+
+
+class AuthProviderDeleteResponse(TypedDict):
+    provider: AuthProviderView
+
+
+class AuthProviderListResponse(TypedDict):
+    providers: NotRequired[list[AuthProviderView]]
+
+
+class AuthProviderPutResponse(TypedDict):
+    created: bool
+    """
+    False when the provider already existed.
+    """
+    credentialReplaced: bool
+    """
+    True when an existing provider held a different credential, or gained
+    or lost one.
+    """
+    provider: AuthProviderView
+    """
+    The provider as declared: as it is now, or as it would be for a dry
+    run.
+    """
+
+
+class AuthProviderReadResponse(TypedDict):
+    provider: AuthProviderView
+
+
 class BotCreateParams(TypedDict):
     bot: BotInput
     triggers: NotRequired[list[BotTriggerInput]]
@@ -7465,6 +7511,11 @@ class BotCreateParams(TypedDict):
 
 class BotCreateResponse(TypedDict):
     bot: BotView
+    triggerSecrets: NotRequired[dict[str, BotTriggerSecretsView]]
+    """
+    Secrets of the triggers created with the bot, by trigger id; a
+    trigger that has none is left out.
+    """
     triggers: NotRequired[list[BotTriggerView]]
 
 
@@ -7481,6 +7532,10 @@ class BotTriggerListResponse(TypedDict):
 
 
 class BotTriggerPutResponse(TypedDict):
+    secrets: NotRequired[BotTriggerSecretsView]
+    """
+    The trigger's secrets as stored after this write, minted or kept.
+    """
     trigger: BotTriggerView
 
 
@@ -7981,6 +8036,11 @@ class AgentApiOutcomeOfBotTriggerPutResponse(TypedDict):
 class AgentApiOutcomeOfBotTriggerReadResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: BotTriggerReadResponse
+
+
+class AgentApiOutcomeOfBotTriggerSecretsReadResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: BotTriggerSecretsReadResponse
 
 
 class AgentApiOutcomeOfChannelAccountCreateResponse(TypedDict):

@@ -58,6 +58,12 @@ The minimum is `LIGHTSPEED_API_URL`; WhatsApp additionally needs
 `LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR` and
 `LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY`.
 
+The Temporal connection (`src/host/temporal-connection.ts`) reads
+`TEMPORAL_ADDRESS` and `TEMPORAL_NAMESPACE` and, for a frontend that requires
+them, the `TEMPORAL_TLS*`, `TEMPORAL_API_KEY`, and `TEMPORAL_API_KEY_FILE`
+settings. The runtime reads the same variables with the same rules; the
+reference's "Temporal connection security" section lists them.
+
 ```bash
 npm run test --workspace @lightspeed-ai/connectors
 npm run typecheck --workspace @lightspeed-ai/connectors

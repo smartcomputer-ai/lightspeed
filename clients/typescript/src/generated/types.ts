@@ -20,6 +20,12 @@ export type AccessScope =
       kind: "universe";
       universeId: string;
     };
+/**
+ * The kind of an [`AccessScope`]: the deployment, or a universe. Where a
+ * record already belongs to one universe this is enough to tell a universe
+ * key of that universe from a deployment key.
+ */
+export type AccessScopeKind = "deployment" | "universe";
 export type ToolKindView =
   | {
       settings: unknown;
@@ -111,8 +117,9 @@ export type Attribution =
       kind: "actor";
     }
   | {
+      keyId: string;
       kind: "key";
-      prefix: string;
+      scopeKind: AccessScopeKind;
     }
   | {
       kind: "local";
@@ -823,6 +830,9 @@ export type AuthProviderKind =
   | "modelEndpoint";
 export type TokenEndpointAuthMethod = "clientSecretBasic" | "clientSecretPost" | "none";
 export type AuthFlowStatus = "pending" | "completed" | "failed" | "expired";
+/**
+ * Where a credential's plain value may go, fixed when it is created.
+ */
 export type AuthGrantExposure = "brokered" | "retrievable";
 export type AuthGrantStatus = "active" | "needsReauth" | "revoked" | "failed";
 /**
@@ -848,6 +858,20 @@ export type AuthProviderConfigView =
   | {
       endpoint: ModelEndpointConfig;
       type: "modelEndpoint";
+    };
+/**
+ * Value of one configured request header, as an MCP server and a model
+ * provider's endpoint both carry them. A name listed in
+ * [`CREDENTIAL_ONLY_HEADER_NAMES`] accepts only a `credential` value.
+ */
+export type RequestHeader =
+  | {
+      type: "literal";
+      value: string;
+    }
+  | {
+      grantId: string;
+      type: "credential";
     };
 export type AuthProviderStatus = "active" | "needsConfiguration" | "disabled";
 export type BotId = string;
@@ -875,21 +899,11 @@ export type BotTriggerView = {
    */
   filter?: string | null;
   /**
-   * Webhook triggers: the ingest path including its URL token, for
-   * bot-management callers only.
-   */
-  ingestPath?: string | null;
-  /**
    * Last runtime failure of the CEL filter (the event was refused);
    * cleared by the next match.
    */
   lastFilterError?: string | null;
   lastFilterErrorAtMs?: number | null;
-  /**
-   * Chat triggers with `pairing: code`: the code, for bot-management
-   * callers only.
-   */
-  pairingCode?: string | null;
   revision: number;
   route?: BotTriggerRoute | null;
   /**
@@ -1221,10 +1235,6 @@ export type EnvironmentCredentialSourceView =
   | {
       providerId: string;
       type: "authProviderCredential";
-    }
-  | {
-      secretId: string;
-      type: "directSecret";
     };
 /**
  * How a job's root process ended.
@@ -1304,18 +1314,6 @@ export type McpServerCredential = {
  */
 export type RemoteMcpExecution = "provider" | "runtime";
 export type RemoteMcpExposure = "inject" | "search";
-/**
- * Value of one extra MCP request header.
- */
-export type McpServerHeader =
-  | {
-      type: "literal";
-      value: string;
-    }
-  | {
-      grantId: string;
-      type: "credential";
-    };
 export type McpServerStatus = "active" | "needsAuthConfig" | "unverified" | "disabled";
 /**
  * The result of one live MCP `tools/list` exchange. Operational connection
@@ -1385,6 +1383,10 @@ export type TranscriptionFailureKind =
   "invalidAudio" | "configuration" | "provider" | "timeout" | "internal";
 export type TranscriptionStatus =
   "pending" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
+/**
+ * The method groups a key is created or declared with: the literal `all`, which is every group the key's scope allows, or a non-empty list of groups.
+ */
+export type ApiKeyGroups = "all" | MethodGroup[];
 export type AuthProviderConfigInput =
   | {
       apiBaseUrl?: string | null;
@@ -1420,8 +1422,8 @@ export type BotTriggerInput = {
   filter?: string | null;
   /**
    * Chat triggers with `pairing: code`: set a specific pairing code
-   * (8–64 chars) instead of the server-minted one. Never returned to
-   * channel-facing views.
+   * (8–64 chars) instead of the server-minted one. Absent keeps the
+   * stored code, so an edit never has to send it back.
    */
   pairingCode?: string | null;
   route?: BotTriggerRoute | null;
@@ -2735,8 +2737,15 @@ export interface AuthProviderView {
 export interface ModelEndpointConfig {
   apiKinds: string[];
   baseUrl: string;
+  /**
+   * Extra request headers sent on every request to the endpoint, alongside
+   * the provider's own credential. Names are case-insensitive and stored
+   * lowercased; transport headers and `authorization` are reserved.
+   * `api-key`, `x-api-key` and `proxy-authorization` carry a secret and
+   * accept only a `credential` value.
+   */
   headers?: {
-    [k: string]: string;
+    [k: string]: RequestHeader;
   };
 }
 export interface AgentApiOutcomeOfAuthProviderDeleteResponse {
@@ -2897,7 +2906,32 @@ export interface AgentApiOutcomeOfBotCreateResponse {
 }
 export interface BotCreateResponse {
   bot: BotView;
+  /**
+   * Secrets of the triggers created with the bot, by trigger id; a
+   * trigger that has none is left out.
+   */
+  triggerSecrets?: {
+    [k: string]: BotTriggerSecretsView;
+  };
   triggers?: BotTriggerView[];
+}
+/**
+ * What lets an outsider reach a trigger: whoever holds the ingest path can
+ * post events to the bot, and whoever holds the pairing code can connect a
+ * conversation to it. Kept apart from [`BotTriggerView`] so that reading or
+ * listing triggers never discloses either; only bot-management methods
+ * return this.
+ */
+export interface BotTriggerSecretsView {
+  /**
+   * Webhook triggers: the ingest path including its URL token.
+   */
+  ingestPath?: string | null;
+  /**
+   * Chat triggers with `pairing: code`: the code a conversation sends
+   * once to connect.
+   */
+  pairingCode?: string | null;
 }
 /**
  * Coalescing window: events sharing a route flush as one delivery.
@@ -3390,6 +3424,10 @@ export interface AgentApiOutcomeOfBotTriggerPutResponse {
   result: BotTriggerPutResponse;
 }
 export interface BotTriggerPutResponse {
+  /**
+   * The trigger's secrets as stored after this write, minted or kept.
+   */
+  secrets?: BotTriggerSecretsView;
   trigger: BotTriggerView;
 }
 export interface AgentApiOutcomeOfBotTriggerReadResponse {
@@ -3398,6 +3436,25 @@ export interface AgentApiOutcomeOfBotTriggerReadResponse {
 }
 export interface BotTriggerReadResponse {
   trigger: BotTriggerView;
+}
+export interface AgentApiOutcomeOfBotTriggerSecretsReadResponse {
+  notifications?: AgentNotification[];
+  result: BotTriggerSecretsReadResponse;
+}
+/**
+ * The secrets of one trigger; both fields are absent for a trigger that
+ * has none.
+ */
+export interface BotTriggerSecretsReadResponse {
+  /**
+   * Webhook triggers: the ingest path including its URL token.
+   */
+  ingestPath?: string | null;
+  /**
+   * Chat triggers with `pairing: code`: the code a conversation sends
+   * once to connect.
+   */
+  pairingCode?: string | null;
 }
 export interface AgentApiOutcomeOfChannelAccountCreateResponse {
   notifications?: AgentNotification[];
@@ -4380,8 +4437,14 @@ export interface CallerAccess {
    */
   groups: MethodGroup[];
   /**
-   * Display prefix of the calling key; absent for a request without a
-   * key, such as local development.
+   * The calling key's id, unique among the keys of `scope`. It is what
+   * records attribute the key's own requests to. Absent for a request
+   * without a key, such as local development.
+   */
+  keyId?: string | null;
+  /**
+   * Display prefix of the calling key's current secret; absent for a
+   * request without a key, such as local development.
    */
   keyPrefix?: string | null;
   /**
@@ -4477,7 +4540,7 @@ export interface McpServerView {
    * show only the credential id; the token is never returned.
    */
   headers?: {
-    [k: string]: McpServerHeader;
+    [k: string]: RequestHeader;
   };
   revision: number;
   serverId: string;
@@ -5173,8 +5236,8 @@ export interface AuthGrantPutParams {
    */
   expiresAtMs?: number | null;
   /**
-   * Whether the token may be leased in plaintext. It cannot be changed
-   * afterwards.
+   * Whether the plain token may be leased to a service or bound into an
+   * environment. It cannot be changed afterwards.
    */
   exposure?: AuthGrantExposure & string;
   grantId: string;
@@ -5431,6 +5494,10 @@ export interface BotTriggerReadParams {
   botId: BotId;
   triggerId: BotTriggerId;
 }
+export interface BotTriggerSecretsReadParams {
+  botId: BotId;
+  triggerId: BotTriggerId;
+}
 export interface ChannelAccountCreateParams {
   account: ChannelAccountInput;
 }
@@ -5583,10 +5650,10 @@ export interface DeploymentApiKeyCreateParams {
    */
   displayName: string;
   /**
-   * The method groups the key may call; absent grants every group its
-   * scope allows.
+   * The method groups the key may call: a non-empty list, or `"all"` for
+   * every group its scope allows. The key stores the resulting set.
    */
-  groups?: MethodGroup[] | null;
+  groups: ApiKeyGroups;
   /**
    * The key's id: 1-128 ASCII letters, digits, underscores, hyphens, dots
    * or colons, starting with a letter or digit, and not yet used by a key
@@ -5620,10 +5687,12 @@ export interface DeploymentApiKeyPutParams {
    */
   displayName: string;
   /**
-   * The method groups the key may call; absent grants every group its
-   * scope allows. An existing key's groups are replaced by these.
+   * The method groups the key may call: a non-empty list, or `"all"` for
+   * every group its scope allows. An existing key's groups are replaced
+   * by these, and `"all"` is resolved again on every call, so repeating a
+   * declaration after an upgrade gives the key the groups added since.
    */
-  groups?: MethodGroup[] | null;
+  groups: ApiKeyGroups;
   /**
    * The key's id within its scope: 1-128 ASCII letters, digits,
    * underscores, hyphens, dots or colons, starting with a letter or digit.
@@ -6188,11 +6257,12 @@ export interface McpServerInput {
    * Extra request headers sent on every request to the server, alongside
    * any `Authorization` the auth policy produces. Names are
    * case-insensitive and stored lowercased; transport headers,
-   * `authorization` and `x-lightspeed-*` are reserved. Requires `runtime`
-   * execution.
+   * `authorization` and `x-lightspeed-*` are reserved. `api-key` and
+   * `x-api-key` carry a secret and accept only a `credential` value.
+   * Requires `runtime` execution.
    */
   headers?: {
-    [k: string]: McpServerHeader;
+    [k: string]: RequestHeader;
   };
   serverId: string;
   serverUrl: string;

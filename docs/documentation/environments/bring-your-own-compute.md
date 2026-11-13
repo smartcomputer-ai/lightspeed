@@ -52,11 +52,15 @@ cd "$HOME/lightspeed-machine"
 umask 077
 ```
 
-The daemon loads a `.env` from its process working directory or ancestors at
-startup. Check that those locations contain only configuration intended for
-this daemon. The `--cwd` option below controls where agent commands start; it
-does not change the daemon's initial `.env` lookup. The commands also inherit
-the daemon user's process environment.
+The daemon takes its settings from its command line and its process
+environment only. It does not load a `.env` file, so a file an agent writes
+into the working tree cannot change where the daemon connects or what it
+serves at the next start. To keep settings in a file, have the service
+manager read it, as the systemd unit in
+[Run registered daemons](registered-daemons.md#run-a-systemd-unit-on-a-vm)
+does. The `--cwd` option below controls where agent commands start. The
+commands also inherit the daemon user's process environment, without the
+daemon's own `LIGHTSPEED_ENVD_*` variables.
 
 ## Admit the machine to a universe
 

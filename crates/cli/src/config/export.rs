@@ -171,6 +171,10 @@ async fn read_sections(
 }
 
 /// List the credential bindings of each exported environment under it.
+///
+/// A binding the runtime would refuse to write is left out, so the exported
+/// document can be applied: `diff` and `apply` refuse a whole document that
+/// declares one.
 async fn attach_credentials(
     target: &Target,
     environment_ids: Vec<String>,
@@ -180,6 +184,15 @@ async fn attach_credentials(
         .read(target, &Wanted::only(environment_ids))
         .await
         .context("read environment credentials")?;
+    // Read only when a binding names a provider's credential.
+    let provider_kinds = if bindings
+        .values()
+        .any(|binding| binding.entry["source"]["providerId"].is_string())
+    {
+        provider_kinds(target).await?
+    } else {
+        BTreeMap::new()
+    };
     for environment in environments {
         let Some(id) = environment.value["environmentId"].as_str() else {
             continue;
@@ -187,6 +200,7 @@ async fn attach_credentials(
         let credentials: Vec<Value> = bindings
             .values()
             .filter(|binding| binding.exportable && binding.entry["environmentId"] == json!(id))
+            .filter(|binding| declarable_source(&binding.entry["source"], &provider_kinds))
             .map(|binding| {
                 json!({ "envName": binding.entry["envName"], "source": binding.entry["source"] })
             })
@@ -196,6 +210,39 @@ async fn attach_credentials(
         }
     }
     Ok(())
+}
+
+/// The kind of every provider, by id.
+async fn provider_kinds(target: &Target) -> Result<BTreeMap<String, String>> {
+    let response = target
+        .call("auth/providers/list", json!({}))
+        .await
+        .context("read providers")?;
+    Ok(response["providers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|provider| {
+            Some((
+                provider["providerId"].as_str()?.to_owned(),
+                provider["providerKind"].as_str()?.to_owned(),
+            ))
+        })
+        .collect())
+}
+
+/// Whether a document may declare a binding with this source. The one
+/// provider credential that can be bound is a model provider's API key. A
+/// binding to any other provider's credential can only be left over from
+/// before that rule; the runtime refuses it when it is resolved, and it is
+/// state to remove, not configuration to carry into a document.
+fn declarable_source(source: &Value, provider_kinds: &BTreeMap<String, String>) -> bool {
+    match source["providerId"].as_str() {
+        Some(provider_id) => provider_kinds
+            .get(provider_id)
+            .is_none_or(|kind| kind == "modelApiKey"),
+        None => true,
+    }
 }
 
 fn ordered(resource: &dyn Resource, entries: Vec<(String, Value)>) -> Vec<Ordered> {
@@ -298,7 +345,7 @@ fn include_path(file: &Path, document_dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::resources::{McpServers, RegistrationKeys};
+    use crate::config::resources::{ApiKeys, McpServers, RegistrationKeys};
 
     #[test]
     fn an_exported_entry_states_only_what_differs_from_the_defaults() {
@@ -355,6 +402,67 @@ mod tests {
             json!({ "env": "CI_RUNNERS_REGISTRATION_KEY" })
         );
         assert!(entry.get("secret").is_none());
+    }
+
+    #[test]
+    fn an_exported_key_lists_the_groups_it_holds() {
+        // Every group a universe key may hold today. The export still names
+        // them one by one: `all` is a choice someone writes, because applying
+        // it after an upgrade gives the key the groups added since.
+        let held: Vec<api::MethodGroup> =
+            api::MethodGroup::allowed_in(api::AccessScope::Universe {
+                universe_id: uuid::Uuid::nil(),
+            })
+            .into_iter()
+            .collect();
+        let live = Live {
+            entry: json!({
+                "keyId": "release-bot",
+                "displayName": "Release bot",
+                "groups": held,
+                "assertActor": false,
+            }),
+            has_secret: true,
+            exportable: true,
+            ..Live::default()
+        };
+        let entry = export_entry(&ApiKeys, "release-bot", &live);
+        assert_eq!(
+            entry,
+            json!({
+                "keyId": "release-bot",
+                "displayName": "Release bot",
+                "groups": held,
+                "secretFrom": { "env": "RELEASE_BOT_API_KEY" },
+            })
+        );
+        // The exported entry declares the key as it is: nothing to change.
+        let mut declared = entry.clone();
+        declared.as_object_mut().unwrap().remove("secretFrom");
+        let declared = ApiKeys.normalize(declared).unwrap();
+        assert!(crate::config::plan::changed_fields(&ApiKeys, &declared, &live.entry).is_empty());
+    }
+
+    #[test]
+    fn a_binding_the_runtime_would_refuse_is_not_exported() {
+        let kinds = BTreeMap::from([
+            ("model:openai".to_owned(), "modelApiKey".to_owned()),
+            ("github:app".to_owned(), "gitHubApp".to_owned()),
+            ("model:router".to_owned(), "modelEndpoint".to_owned()),
+        ]);
+        let provider = |id: &str| json!({ "type": "authProviderCredential", "providerId": id });
+
+        assert!(declarable_source(&provider("model:openai"), &kinds));
+        // Left over from before only a model provider's key could be bound.
+        assert!(!declarable_source(&provider("github:app"), &kinds));
+        assert!(!declarable_source(&provider("model:router"), &kinds));
+        // A provider the list does not name is not judged here.
+        assert!(declarable_source(&provider("unknown"), &kinds));
+        // A credential is bound by id, whatever provider issued it.
+        assert!(declarable_source(
+            &json!({ "type": "authGrant", "grantId": "repo-token" }),
+            &kinds
+        ));
     }
 
     #[test]

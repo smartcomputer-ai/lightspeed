@@ -46,6 +46,8 @@ beforeEach(() => {
     }
     if (path.endsWith("/secrets")) return { providers: [legacy], grants: [subscription] };
     if (path.endsWith("/integrations/subscriptions")) return [subscription];
+    // The endpoint header editor offers the universe's token credentials.
+    if (path.endsWith("/auth-grants")) return [];
     if (path.endsWith("/integrations/model-keys")) return { ...legacy, providerId: "openai", credentialId: "model:openai", usableForModels: true };
     if (path.endsWith("/models")) {
       if (discoveryFails) throw new Error("discovery unavailable");

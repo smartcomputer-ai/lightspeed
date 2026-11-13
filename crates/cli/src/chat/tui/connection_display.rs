@@ -144,6 +144,7 @@ mod tests {
             caller: Some(api::CallerAccess {
                 scope: api::AccessScope::Deployment,
                 single: false,
+                key_id: None,
                 key_prefix: None,
                 groups: vec![],
             }),

@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError } from "@/api";
+import { groupsFor } from "@/lib/method-groups";
 import { AdminApiKeysPage } from "./AdminApiKeysPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
@@ -91,10 +92,37 @@ it("mints a universe key with only universe groups, then shows its secret once",
   });
   await act(async () => document.querySelector<HTMLFormElement>('[role="dialog"] form')!.requestSubmit());
   await settle();
+  // The request names every group that was ticked; none is left to the server.
   expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/admin/api-keys", {
-    displayName: "Agent", scope: { kind: "universe", universeId: "platform-universe" }, assertActor: false,
+    displayName: "Agent", scope: { kind: "universe", universeId: "platform-universe" }, groups: groupsFor("universe"), assertActor: false,
   });
+  expect(groupsFor("universe").some((group) => group.startsWith("deployment/"))).toBe(false);
   expect(document.querySelector<HTMLInputElement>("#api-key-secret")?.value).toBe("lsk_new_secret");
+});
+
+it("sends only the groups left ticked", async () => {
+  await act(async () => root.render(<QueryClientProvider client={client}><AdminApiKeysPage /></QueryClientProvider>));
+  await settle();
+  await act(async () => button("Create key")!.click());
+  await settle();
+  const name = document.querySelector<HTMLInputElement>("#admin-key-name")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(name, "Narrow");
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  // Base UI keeps the id on a hidden input beside the visible checkbox.
+  const checkbox = (group: string) =>
+    document.getElementById(`admin-key-group-${group}`)!.parentElement!.querySelector<HTMLElement>('[role="checkbox"]')!;
+  expect(checkbox("deployment/api-keys").getAttribute("aria-checked")).toBe("true");
+  await act(async () => checkbox("deployment/api-keys").click());
+  await settle();
+  expect(checkbox("deployment/api-keys").getAttribute("aria-checked")).toBe("false");
+  await act(async () => document.querySelector<HTMLFormElement>('[role="dialog"] form')!.requestSubmit());
+  await settle();
+  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/admin/api-keys", {
+    displayName: "Narrow", scope: { kind: "deployment" },
+    groups: groupsFor("deployment").filter((group) => group !== "deployment/api-keys"), assertActor: false,
+  });
 });
 
 it("mints a key under a chosen id, and reopens the id field when that id is taken", async () => {
@@ -132,7 +160,7 @@ it("mints a key under a chosen id, and reopens the id field when that id is take
   expect(dialogText()).toContain("Key ID gate");
   await submit();
   expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/admin/api-keys", {
-    displayName: "Gate", scope: { kind: "deployment" }, assertActor: false, keyId: "gate",
+    displayName: "Gate", scope: { kind: "deployment" }, groups: groupsFor("deployment"), assertActor: false, keyId: "gate",
   });
   expect(document.querySelector<HTMLInputElement>("#api-key-secret")?.value).toBe("lsk_new_secret");
 });

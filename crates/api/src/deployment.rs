@@ -8,6 +8,7 @@
 //! deployment key holding the method's group reaches them.
 
 use super::*;
+use std::collections::BTreeSet;
 
 /// Method-name prefix that marks the deployment scope. Dispatch keys off this
 /// mechanically, so the scope of every method is visible in its name.
@@ -210,6 +211,107 @@ pub struct DeploymentApiKeyView {
     pub last_used_at_ms: Option<u64>,
 }
 
+/// The literal that asks for every method group a key's scope allows.
+pub const API_KEY_GROUPS_ALL: &str = "all";
+
+/// The method groups a key is created or declared with: the literal `"all"`,
+/// or a non-empty list of groups.
+///
+/// A key's authority is always stated. `"all"` is every group the key's
+/// scope allows in the release that writes the key; the stored key holds
+/// that concrete set, so a later release that adds a group never widens it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ApiKeyGroups {
+    /// Every group the key's scope allows.
+    All,
+    /// Exactly these groups.
+    Listed(BTreeSet<MethodGroup>),
+}
+
+impl ApiKeyGroups {
+    /// The concrete groups a key of `scope` holds.
+    pub fn resolve(&self, scope: AccessScope) -> BTreeSet<MethodGroup> {
+        match self {
+            Self::All => MethodGroup::allowed_in(scope),
+            Self::Listed(groups) => groups.clone(),
+        }
+    }
+}
+
+impl FromIterator<MethodGroup> for ApiKeyGroups {
+    fn from_iter<I: IntoIterator<Item = MethodGroup>>(groups: I) -> Self {
+        Self::Listed(groups.into_iter().collect())
+    }
+}
+
+impl Serialize for ApiKeyGroups {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::All => serializer.serialize_str(API_KEY_GROUPS_ALL),
+            Self::Listed(groups) => groups.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ApiKeyGroups {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct GroupsVisitor;
+
+        impl<'de> de::Visitor<'de> for GroupsVisitor {
+            type Value = ApiKeyGroups;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("\"all\" or a non-empty list of method groups")
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                if value == API_KEY_GROUPS_ALL {
+                    Ok(ApiKeyGroups::All)
+                } else {
+                    Err(E::invalid_value(de::Unexpected::Str(value), &self))
+                }
+            }
+
+            fn visit_seq<A: de::SeqAccess<'de>>(
+                self,
+                mut sequence: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut groups = BTreeSet::new();
+                while let Some(group) = sequence.next_element::<MethodGroup>()? {
+                    groups.insert(group);
+                }
+                if groups.is_empty() {
+                    return Err(de::Error::invalid_length(0, &self));
+                }
+                Ok(ApiKeyGroups::Listed(groups))
+            }
+        }
+
+        deserializer.deserialize_any(GroupsVisitor)
+    }
+}
+
+impl JsonSchema for ApiKeyGroups {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ApiKeyGroups".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let group = generator.subschema_for::<MethodGroup>();
+        // The list is refused when empty. The schema leaves that to the
+        // description because a minimum length turns the generated client
+        // type into a tuple that an ordinary array does not satisfy.
+        schemars::json_schema!({
+            "description": "The method groups a key is created or declared with: the literal \
+                `all`, which is every group the key's scope allows, or a non-empty list of groups.",
+            "anyOf": [
+                { "type": "string", "const": API_KEY_GROUPS_ALL },
+                { "type": "array", "items": group, "uniqueItems": true }
+            ]
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeploymentApiKeyCreateParams {
@@ -221,10 +323,9 @@ pub struct DeploymentApiKeyCreateParams {
     /// of this scope. Omit it to have one allocated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_id: Option<String>,
-    /// The method groups the key may call; absent grants every group its
-    /// scope allows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub groups: Option<Vec<MethodGroup>>,
+    /// The method groups the key may call: a non-empty list, or `"all"` for
+    /// every group its scope allows. The key stores the resulting set.
+    pub groups: ApiKeyGroups,
     /// Whether the key may name the actor a request acts for with the
     /// `x-lightspeed-actor` header. Give it only to a gate that authenticates
     /// people, such as the Platform. It cannot be changed afterwards.
@@ -244,10 +345,11 @@ pub struct DeploymentApiKeyPutParams {
     /// The key's id within its scope: 1-128 ASCII letters, digits,
     /// underscores, hyphens, dots or colons, starting with a letter or digit.
     pub key_id: String,
-    /// The method groups the key may call; absent grants every group its
-    /// scope allows. An existing key's groups are replaced by these.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub groups: Option<Vec<MethodGroup>>,
+    /// The method groups the key may call: a non-empty list, or `"all"` for
+    /// every group its scope allows. An existing key's groups are replaced
+    /// by these, and `"all"` is resolved again on every call, so repeating a
+    /// declaration after an upgrade gives the key the groups added since.
+    pub groups: ApiKeyGroups,
     /// Whether the key may name the actor a request acts for. It cannot be
     /// changed afterwards.
     #[serde(default)]

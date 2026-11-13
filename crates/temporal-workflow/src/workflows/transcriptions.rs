@@ -184,4 +184,28 @@ mod tests {
         assert_ne!(transcription_id(&a, "one"), transcription_id(&b, "one"));
         assert_ne!(transcription_id(&a, "one"), transcription_id(&a, "two"));
     }
+
+    /// A key that transcribes for itself owns the request by its key id, so
+    /// a retry after its secret was replaced finds the same transcription. A
+    /// deployment key and a universe key may share an id and stay distinct.
+    #[test]
+    fn a_keys_identity_is_its_key_id_and_scope_kind() {
+        let universe = api::AccessScope::Universe {
+            universe_id: uuid::Uuid::from_u128(1),
+        };
+        let universe_key = Attribution::key("ci", universe);
+        let deployment_key = Attribution::key("ci", api::AccessScope::Deployment);
+        assert_eq!(
+            transcription_id(&universe_key, "one"),
+            transcription_id(&Attribution::key("ci", universe), "one")
+        );
+        assert_ne!(
+            transcription_id(&universe_key, "one"),
+            transcription_id(&deployment_key, "one")
+        );
+        assert_ne!(
+            transcription_id(&universe_key, "one"),
+            transcription_id(&Attribution::key("other", universe), "one")
+        );
+    }
 }

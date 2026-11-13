@@ -22,15 +22,21 @@ import type {
   SessionEventsReadResponse,
   ToolCallDisplayView,
 } from "@lightspeed-ai/sdk";
+import type { RequestHeader } from "@/lib/request-headers";
+import { failureText, notJsonText, readResponseBody } from "@/lib/response-body";
 
 /// Thin fetch wrapper for /api/v1 (cookie-authenticated, same origin).
 
+/// `body` is the parsed JSON answer, `null` when there was none, or the
+/// shortened text of an answer that was not JSON. `message` replaces the text
+/// derived from a JSON error body.
 export class ApiError extends Error {
   constructor(
     public status: number,
     public body: unknown,
+    message?: string,
   ) {
-    super(extractMessage(body) ?? `API error ${status}`);
+    super(message ?? extractMessage(body) ?? `API error ${status}`);
   }
 }
 
@@ -67,15 +73,22 @@ export async function api<T>(method: string, path: string, body?: unknown, signa
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: "same-origin",
   });
-  const text = await res.text();
-  const json: unknown = text ? JSON.parse(text) : null;
+  const answer = await readResponseBody(res);
   if (!res.ok) {
     if (res.status === 401 && !window.location.pathname.endsWith("/login")) {
       window.location.assign(`${import.meta.env.BASE_URL}login?expired=1`);
     }
-    throw new ApiError(res.status, json);
+    // Text instead of JSON comes from something in front of the API, such as
+    // a proxy reporting a timeout. Its words are the only explanation there is.
+    if (answer.kind === "text") throw new ApiError(res.status, answer.text, failureText(res.status, answer.text));
+    throw new ApiError(res.status, answer.kind === "json" ? answer.value : null);
   }
-  return json as T;
+  // A success status with a body that is not JSON did not come from the API
+  // (a sign-in page, the application shell). Returning it would fail later,
+  // in the caller, with an error that names neither the status nor the text.
+  if (answer.kind === "text") throw new ApiError(res.status, answer.text, notJsonText(res.status, answer.text));
+  // No content, as a 204 has: there is nothing to return.
+  return (answer.kind === "json" ? answer.value : null) as T;
 }
 
 export interface Universe {
@@ -282,7 +295,9 @@ export interface SecretProvider {
 
 export interface ModelEndpointConfig {
   baseUrl: string;
-  headers?: Record<string, string>;
+  /// Extra request headers keyed by lowercased name. A plain value is returned
+  /// to every reader; a credential header shows only its grant id.
+  headers?: Record<string, RequestHeader>;
   apiKinds: Array<"openai:responses" | "openai:completions" | "openai:audio-transcriptions">;
 }
 
@@ -325,10 +340,6 @@ export interface GitHubIntegration {
   grants: SecretGrant[];
 }
 
-export type McpServerHeader =
-  | { type: "literal"; value: string }
-  | { type: "credential"; grantId: string };
-
 /// Engine MCP server record (mcp/servers/list view). The optional credential
 /// is a non-secret universe-owned grant reference; token material is never returned.
 export interface McpServer {
@@ -347,7 +358,7 @@ export interface McpServer {
   credential?: { type: "authGrant"; grantId: string } | null;
   /// Extra request headers keyed by lowercased name. A credential header shows
   /// only its grant id; the token is never returned.
-  headers?: Record<string, McpServerHeader> | null;
+  headers?: Record<string, RequestHeader> | null;
   status: "active" | "needsAuthConfig" | "unverified" | "disabled";
   revision: number;
   createdAtMs: number;
@@ -684,6 +695,17 @@ export type {
 } from "@lightspeed-ai/sdk";
 
 import type { BotView } from "@lightspeed-ai/sdk";
+
+/// What lets an outsider reach a trigger. Never part of a trigger as it is
+/// read or listed: members who may manage the bot read it from
+/// `GET .../triggers/:triggerId/secrets`, and creating or replacing a trigger
+/// answers with it beside the trigger.
+export interface BotTriggerSecrets {
+  /// Webhook triggers: the ingest path including its URL token.
+  ingestPath?: string | null;
+  /// Chat triggers with `pairing: code`: the code a conversation sends once.
+  pairingCode?: string | null;
+}
 
 export function botLabel(bot: Pick<BotView, "botId" | "displayName">): string {
   return bot.displayName ?? bot.botId;

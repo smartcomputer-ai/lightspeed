@@ -628,8 +628,8 @@ pub struct BotTriggerInput {
     #[serde(flatten)]
     pub document: BotTriggerDocument,
     /// Chat triggers with `pairing: code`: set a specific pairing code
-    /// (8–64 chars) instead of the server-minted one. Never returned to
-    /// channel-facing views.
+    /// (8–64 chars) instead of the server-minted one. Absent keeps the
+    /// stored code, so an edit never has to send it back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pairing_code: Option<String>,
 }
@@ -672,16 +672,32 @@ pub struct BotTriggerView {
     /// serializes under that key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_state: Option<PollCursorState>,
-    /// Webhook triggers: the ingest path including its URL token, for
-    /// bot-management callers only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ingest_path: Option<String>,
-    /// Chat triggers with `pairing: code`: the code, for bot-management
-    /// callers only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pairing_code: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+/// What lets an outsider reach a trigger: whoever holds the ingest path can
+/// post events to the bot, and whoever holds the pairing code can connect a
+/// conversation to it. Kept apart from [`BotTriggerView`] so that reading or
+/// listing triggers never discloses either; only bot-management methods
+/// return this.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BotTriggerSecretsView {
+    /// Webhook triggers: the ingest path including its URL token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ingest_path: Option<String>,
+    /// Chat triggers with `pairing: code`: the code a conversation sends
+    /// once to connect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pairing_code: Option<String>,
+}
+
+impl BotTriggerSecretsView {
+    /// A schedule, poll, inbox, or open chat trigger has neither secret.
+    pub fn is_empty(&self) -> bool {
+        self.ingest_path.is_none() && self.pairing_code.is_none()
+    }
 }
 
 // ── Events ──────────────────────────────────────────────────────────────────
@@ -1035,6 +1051,10 @@ pub struct BotCreateResponse {
     pub bot: BotView,
     #[serde(default)]
     pub triggers: Vec<BotTriggerView>,
+    /// Secrets of the triggers created with the bot, by trigger id; a
+    /// trigger that has none is left out.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub trigger_secrets: BTreeMap<String, BotTriggerSecretsView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1151,6 +1171,9 @@ pub struct BotTriggerPutParams {
 #[serde(rename_all = "camelCase")]
 pub struct BotTriggerPutResponse {
     pub trigger: BotTriggerView,
+    /// The trigger's secrets as stored after this write, minted or kept.
+    #[serde(default, skip_serializing_if = "BotTriggerSecretsView::is_empty")]
+    pub secrets: BotTriggerSecretsView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1164,6 +1187,22 @@ pub struct BotTriggerReadParams {
 #[serde(rename_all = "camelCase")]
 pub struct BotTriggerReadResponse {
     pub trigger: BotTriggerView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BotTriggerSecretsReadParams {
+    pub bot_id: BotId,
+    pub trigger_id: BotTriggerId,
+}
+
+/// The secrets of one trigger; both fields are absent for a trigger that
+/// has none.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BotTriggerSecretsReadResponse {
+    #[serde(flatten)]
+    pub secrets: BotTriggerSecretsView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1291,4 +1330,232 @@ pub struct BotFilterTestResponse {
     pub errors: u32,
     #[serde(default)]
     pub results: Vec<BotFilterTestResult>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn definition(name: &str) -> Value {
+        let schema =
+            crate::schema_export::export_schemas().schema_bundle["definitions"][name].clone();
+        assert!(schema.is_object(), "the schema bundle defines no {name}");
+        schema
+    }
+
+    /// Every property a schema definition declares, however deep, so a
+    /// secret cannot hide in a flattened or nested part of a view.
+    fn property_names(schema: &Value, names: &mut Vec<String>) {
+        match schema {
+            Value::Object(object) => {
+                if let Some(Value::Object(properties)) = object.get("properties") {
+                    names.extend(properties.keys().cloned());
+                }
+                for value in object.values() {
+                    property_names(value, names);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    property_names(item, names);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn a_trigger_view_declares_no_secret() {
+        let schema = definition("BotTriggerView");
+        let mut names = Vec::new();
+        property_names(&schema, &mut names);
+        assert!(names.iter().any(|name| name == "triggerId"), "{names:?}");
+        for secret in ["ingestPath", "pairingCode", "webhookToken"] {
+            assert!(
+                !names.iter().any(|name| name == secret),
+                "BotTriggerView must not declare {secret}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_bot_management_methods_return_trigger_secrets() {
+        // Reading is open to every reader, so its responses carry no secret
+        // type at all.
+        for response in [
+            "BotTriggerReadResponse",
+            "BotTriggerListResponse",
+            "BotTriggerDeleteResponse",
+        ] {
+            let text = definition(response).to_string();
+            assert!(!text.contains("BotTriggerSecretsView"), "{response}");
+            assert!(!text.contains("ingestPath"), "{response}");
+            assert!(!text.contains("pairingCode"), "{response}");
+        }
+        for (method, role) in [
+            (crate::METHOD_BOTS_TRIGGERS_READ, RecommendedRole::Viewer),
+            (crate::METHOD_BOTS_TRIGGERS_LIST, RecommendedRole::Viewer),
+            (
+                crate::METHOD_BOTS_TRIGGERS_SECRETS_READ,
+                RecommendedRole::Operator,
+            ),
+            (crate::METHOD_BOTS_TRIGGERS_PUT, RecommendedRole::Operator),
+            (crate::METHOD_BOTS_CREATE, RecommendedRole::Operator),
+        ] {
+            assert_eq!(
+                method_access(method).and_then(MethodAccess::recommended_role),
+                Some(role),
+                "{method}"
+            );
+        }
+        assert_eq!(
+            method_access(crate::METHOD_BOTS_TRIGGERS_SECRETS_READ),
+            Some(MethodAccess::Universe(UniverseAction::ManageBot))
+        );
+        assert_eq!(
+            MethodGroup::of(crate::METHOD_BOTS_TRIGGERS_SECRETS_READ),
+            Some(MethodGroup::Bots)
+        );
+    }
+
+    #[test]
+    fn trigger_secrets_read_flat_and_omit_what_a_trigger_lacks() {
+        let webhook = BotTriggerSecretsReadResponse {
+            secrets: BotTriggerSecretsView {
+                ingest_path: Some("/hooks/bots/u/triage/github/tok".to_owned()),
+                pairing_code: None,
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(&webhook).unwrap(),
+            json!({ "ingestPath": "/hooks/bots/u/triage/github/tok" })
+        );
+        let chat: BotTriggerSecretsReadResponse =
+            serde_json::from_value(json!({ "pairingCode": "ABCDEFGH2345" })).unwrap();
+        assert_eq!(chat.secrets.pairing_code.as_deref(), Some("ABCDEFGH2345"));
+        assert!(chat.secrets.ingest_path.is_none());
+        let none = BotTriggerSecretsReadResponse::default();
+        assert!(none.secrets.is_empty());
+        assert_eq!(serde_json::to_value(&none).unwrap(), json!({}));
+
+        let schema = definition("BotTriggerSecretsReadResponse");
+        let mut names = Vec::new();
+        property_names(&schema, &mut names);
+        names.sort();
+        assert_eq!(names, ["ingestPath", "pairingCode"]);
+    }
+
+    fn webhook_view() -> BotTriggerView {
+        BotTriggerView {
+            bot_id: BotId::new("triage"),
+            trigger_id: BotTriggerId::new("github"),
+            revision: 1,
+            document: BotTriggerDocument {
+                spec: BotTriggerSpec::Webhook {
+                    verification: WebhookVerification::Token,
+                    preset: None,
+                },
+                filter: None,
+                route: None,
+                coalesce: None,
+                deliver: None,
+                session_close_after_ms: None,
+                enabled: true,
+            },
+            disabled_reason: None,
+            disabled_at_ms: None,
+            last_filter_error: None,
+            last_filter_error_at_ms: None,
+            cursor_state: None,
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        }
+    }
+
+    #[test]
+    fn a_trigger_view_ignores_secrets_it_is_handed_and_never_writes_them() {
+        // A payload in the shape an earlier server sent decodes without the
+        // two values, so no client keeps or echoes them through this type.
+        let mut wire = serde_json::to_value(webhook_view()).unwrap();
+        wire["ingestPath"] = json!("/hooks/bots/u/triage/github/tok");
+        wire["pairingCode"] = json!("ABCDEFGH2345");
+        let view: BotTriggerView = serde_json::from_value(wire).unwrap();
+        assert_eq!(view, webhook_view());
+        let written = serde_json::to_string(&view).unwrap();
+        assert!(!written.contains("/hooks/"), "{written}");
+        assert!(!written.contains("ABCDEFGH2345"), "{written}");
+    }
+
+    #[test]
+    fn writes_answer_with_secrets_beside_the_view_and_omit_them_when_there_are_none() {
+        let secrets = BotTriggerSecretsView {
+            ingest_path: Some("/hooks/bots/u/triage/github/tok".to_owned()),
+            pairing_code: None,
+        };
+        let put = serde_json::to_value(BotTriggerPutResponse {
+            trigger: webhook_view(),
+            secrets: secrets.clone(),
+        })
+        .unwrap();
+        assert_eq!(
+            put["secrets"],
+            json!({ "ingestPath": "/hooks/bots/u/triage/github/tok" })
+        );
+        assert!(!put["trigger"].to_string().contains("/hooks/"), "{put}");
+        let bare = serde_json::to_value(BotTriggerPutResponse {
+            trigger: webhook_view(),
+            secrets: BotTriggerSecretsView::default(),
+        })
+        .unwrap();
+        assert!(bare.get("secrets").is_none(), "{bare}");
+        let decoded: BotTriggerPutResponse = serde_json::from_value(bare).unwrap();
+        assert!(decoded.secrets.is_empty());
+
+        // `bots/create` keys the secrets by trigger id and leaves the field
+        // out when no created trigger has one.
+        let mut created = serde_json::to_value(BotCreateResponse {
+            bot: serde_json::from_value(json!({
+                "botId": "triage",
+                "revision": 1,
+                "profileId": "default",
+                "eventSeq": 0,
+                "createdAtMs": 1,
+                "updatedAtMs": 2,
+            }))
+            .unwrap(),
+            triggers: vec![webhook_view()],
+            trigger_secrets: BTreeMap::from([("github".to_owned(), secrets)]),
+        })
+        .unwrap();
+        assert_eq!(
+            created["triggerSecrets"],
+            json!({ "github": { "ingestPath": "/hooks/bots/u/triage/github/tok" } })
+        );
+        assert!(
+            !created["triggers"].to_string().contains("/hooks/"),
+            "{created}"
+        );
+        created.as_object_mut().unwrap().remove("triggerSecrets");
+        let decoded: BotCreateResponse = serde_json::from_value(created).unwrap();
+        assert!(decoded.trigger_secrets.is_empty());
+        assert!(
+            serde_json::to_value(&decoded)
+                .unwrap()
+                .get("triggerSecrets")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_trigger_secrets_request_names_the_bot_and_the_trigger() {
+        let params: BotTriggerSecretsReadParams =
+            serde_json::from_value(json!({ "botId": "triage", "triggerId": "github" })).unwrap();
+        assert_eq!(params.bot_id, BotId::new("triage"));
+        assert_eq!(params.trigger_id, BotTriggerId::new("github"));
+        assert!(
+            serde_json::from_value::<BotTriggerSecretsReadParams>(json!({ "botId": "triage" }))
+                .is_err()
+        );
+    }
 }

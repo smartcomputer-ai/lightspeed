@@ -18,7 +18,7 @@
 use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use async_trait::async_trait;
-use auth::{AuthGrantId, AuthProviderId, SecretId, SecretValue};
+use auth::{AuthGrantExposure, AuthGrantId, AuthProviderId, AuthProviderKind, SecretValue};
 pub use environment_protocol::{
     control::target::{PowerState, TargetPhase},
     idle::IdlePolicy,
@@ -2465,9 +2465,77 @@ impl PutEnvironmentCredential {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EnvironmentCredentialSource {
+    /// A retrievable credential grant; the broker mints or returns its
+    /// token for the machine's commands.
     AuthGrant { grant_id: AuthGrantId },
+    /// The stored API key of a model API key provider.
     AuthProviderCredential { provider_id: AuthProviderId },
-    DirectSecret { secret_id: SecretId },
+}
+
+/// Why a credential source may not supply a variable of an environment.
+///
+/// A bound value is handed to the commands of the machine in plain form, so
+/// binding is a way to read a credential. The sources that may be bound are
+/// therefore the ones whose plain value is already meant to leave the
+/// runtime: retrievable grants, and the API key of a model provider.
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum EnvironmentCredentialSourceRefusal {
+    #[error(
+        "credential {grant_id} is brokered, so its value never leaves the runtime and it cannot be bound into an environment; create a credential with retrievable exposure and bind that one"
+    )]
+    BrokeredGrant { grant_id: AuthGrantId },
+
+    #[error(
+        "provider {provider_id} is a GitHub App, whose private key cannot be bound into an environment; bind a retrievable GitHub App installation grant instead, which supplies a short-lived installation token"
+    )]
+    GitHubAppProvider { provider_id: AuthProviderId },
+
+    #[error(
+        "provider {provider_id} is not a model API key provider; only the stored API key of a model provider can be bound into an environment"
+    )]
+    NotModelApiKeyProvider { provider_id: AuthProviderId },
+}
+
+/// A grant may be bound into an environment only when it is retrievable.
+/// Checked when the binding is made and again each time it is resolved, so
+/// a binding that predates the rule is refused too.
+pub fn require_bindable_grant(
+    grant_id: &AuthGrantId,
+    exposure: AuthGrantExposure,
+) -> Result<(), EnvironmentCredentialSourceRefusal> {
+    match exposure {
+        AuthGrantExposure::Retrievable => Ok(()),
+        AuthGrantExposure::Brokered => Err(EnvironmentCredentialSourceRefusal::BrokeredGrant {
+            grant_id: grant_id.clone(),
+        }),
+    }
+}
+
+/// A provider's stored credential may be bound into an environment only
+/// when the provider is a model API key provider. This is the one source
+/// whose plain value reaches a machine without a retrievable grant: the key
+/// exists to call the model provider, and commands on the machine make the
+/// same calls. Any other provider credential is long-lived authority to
+/// mint tokens (a GitHub App private key) and stays in the runtime.
+pub fn require_bindable_provider(
+    provider_id: &AuthProviderId,
+    provider_kind: AuthProviderKind,
+) -> Result<(), EnvironmentCredentialSourceRefusal> {
+    match provider_kind {
+        AuthProviderKind::ModelApiKey => Ok(()),
+        AuthProviderKind::GitHubApp => Err(EnvironmentCredentialSourceRefusal::GitHubAppProvider {
+            provider_id: provider_id.clone(),
+        }),
+        AuthProviderKind::StaticToken
+        | AuthProviderKind::McpOAuth
+        | AuthProviderKind::CustomOAuth
+        | AuthProviderKind::ModelOAuth
+        | AuthProviderKind::ModelEndpoint => {
+            Err(EnvironmentCredentialSourceRefusal::NotModelApiKeyProvider {
+                provider_id: provider_id.clone(),
+            })
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

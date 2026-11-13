@@ -96,6 +96,8 @@ handle: research
 credentials:
   - grantId: tracker-token
     displayName: Issue tracker
+    # Bound into build-box below, so its plain token reaches that machine.
+    exposure: retrievable
     tokenFrom: { env: TRACKER_TOKEN }
 
 # auth/providers/put — model providers and GitHub Apps.
@@ -253,9 +255,11 @@ Two fields need care because their wire form is not portable:
   (`{ type: textRef, blobRef }`). A blob reference means nothing in another
   universe, so `export` writes the text and a document carries
   `{ type: text, text }`.
-- An environment credential bound to a secret stored directly on the binding
-  (`directSecret`) cannot be expressed. A document binds credentials and
-  provider credentials by id (`authGrant`, `authProviderCredential`).
+- An environment credential names what it binds by id: a credential
+  (`authGrant`) or a model API key provider (`authProviderCredential`). A
+  bound credential must be retrievable, and its `exposure` is a fixed field:
+  `apply` refuses to change it and refuses a document that binds a brokered
+  credential, before anything is written.
 
 ### A deployment document
 
@@ -274,9 +278,21 @@ apiKeys:
     secretFrom: { env: PLATFORM_API_KEY }
 ```
 
+A key's `groups` are required. They are a list, as above, or `groups: all`
+for every group the document's scope allows:
+
+```yaml
+apiKeys:
+  - keyId: operator
+    displayName: Operator
+    groups: all
+    secretFrom: { env: OPERATOR_API_KEY }
+```
+
 The first key cannot be declared this way: nothing can authenticate before
 it exists. `lightspeed-runtime api-key provision` declares it on the server
-host from `LIGHTSPEED_BOOTSTRAP_API_KEY`, with the same semantics.
+host from `LIGHTSPEED_BOOTSTRAP_API_KEY`, with the same semantics. Its output
+names the key and what changed, and never repeats the supplied secret.
 Deployment environment providers (`deployment/environment-providers/put`)
 join this document later.
 
@@ -528,10 +544,17 @@ is a separate, later question.
 ### Runtime
 
 - None outstanding. `lightspeed-runtime api-key provision` accepts `--key-id`
-  and `--group`, so a pipeline can supply a narrowly scoped key from its
-  secret store. `apply` needs `deployment/universes`,
-  `deployment/environment-providers`, `deployment/api-keys`, `auth`, `models`,
-  `profiles`, `mcp` and `environments`, and no actor assertion.
+  and requires the key's groups (`--group`, repeated, or `--all-groups`), so a
+  pipeline can supply its key from its secret store. `apply` needs
+  `deployment/universes`, `deployment/environment-providers`,
+  `deployment/api-keys`, `auth`, `models`, `profiles`, `mcp` and
+  `environments`, and no actor assertion.
+- The pipeline's key is not narrowly scoped, whatever groups it lists. A key
+  that holds `deployment/api-keys` can declare a key with any scope, any
+  groups and actor assertion, and can replace the secret of any existing key.
+  It is equivalent to the bootstrap key and belongs only in the pipeline's
+  secret store. No rule in the runtime restricts what such a key may declare;
+  a pipeline that does not declare keys should use a key without this group.
 
 ### Release
 
@@ -571,9 +594,16 @@ Built as proposed, with these additions and deviations:
   contrast, stops at that resource and leaves earlier writes in place.
 - **Server-filled fields.** A field the server fills in when the input
   leaves it out (`providerId` of a credential, a registration key's
-  disconnect grace, a key's default groups) is not compared unless the
-  document states it. `export` leaves it out again when it holds the
-  server's default.
+  disconnect grace) is not compared unless the document states it. `export`
+  leaves it out again when it holds the server's default.
+- **A key's groups are never filled in.** An `apiKeys` entry states its
+  `groups` as a list or as `all`; an entry without them fails in `diff` and
+  `apply` before anything is read. A stored key holds a concrete list, so
+  `all` is compared after writing it out as the groups the document's scope
+  allows in the CLI's release: a release that adds a group shows a key
+  declared with `all` as a pending update. `export` writes the concrete list
+  and never `all`, which keeps `export` followed by `apply` a no-op and never
+  widens a key through a round trip.
 - **An environment's idle policy is part of `source`**, as in the API's
   view. The whole `source` is fixed after creation.
 - **An environment's `credentials` list is owned.** A binding missing from

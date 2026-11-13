@@ -53,7 +53,9 @@ pub struct ResolvedProviderAuth {
     pub scheme: ProviderAuthScheme,
 }
 
-/// Validated per-provider endpoint plus its admitted API kinds.
+/// Validated per-provider endpoint plus its admitted API kinds. Built with the
+/// endpoint's plain headers; headers that carry a credential are added to
+/// `transport` one by one once their tokens are resolved.
 #[derive(Clone, Debug)]
 pub struct ResolvedEndpoint {
     pub transport: EndpointOverride,

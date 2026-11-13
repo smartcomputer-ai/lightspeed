@@ -34,10 +34,14 @@ Before starting the application, provide:
   providers you plan to use.
 
 Use infrastructure addresses that resolve and are reachable inside Docker.
-`localhost` in a container refers to that container. The runtime's current
-Temporal configuration exposes an address and namespace; it does not configure
-Temporal API-key or client-certificate authentication. This recipe assumes a
-private Temporal frontend compatible with that connection.
+`localhost` in a container refers to that container. This recipe assumes a
+Temporal frontend on a private network that accepts unencrypted connections
+without a credential, so it sets only an address and a namespace. If your
+Temporal service requires TLS, a client certificate, or an API key, add the
+settings from
+[Secure the Temporal connection](configuration.md#secure-the-temporal-connection)
+to `runtime.env`, and mount the certificate and key files it names into the
+runtime container.
 
 The development launcher's Temporal service uses a development-server
 configuration. Provision the durable infrastructure above separately for this
@@ -166,6 +170,12 @@ LIGHTSPEED_ROLES=gateway,environment-gateway,sessions,bots,channels
 LIGHTSPEED_LOG_FORMAT=json
 ```
 
+This `LIGHTSPEED_ROLES` value includes the `bots` and `channels` roles, which
+suits an installation that uses bots and chat channels. If yours does not,
+remove those two roles from the list and leave the **Bots** and **Channels**
+switches off in each universe; see
+[Runtime roles and scaling](overview.md#runtime-roles-and-scaling).
+
 A database URL has the form
 `postgres://USER:PASSWORD@HOST:5432/lightspeed`; URL-encode special characters
 in credentials. Supply the connection options required by your PostgreSQL
@@ -240,12 +250,13 @@ Create the Platform's key against the migrated database:
 ```bash
 docker run --rm --network lightspeed --env-file runtime.env \
   "lightspeed-runtime:$LIGHTSPEED_RELEASE_ID" api-key create \
-  --deployment --assert-actor --name Platform
+  --deployment --assert-actor --all-groups --name Platform
 ```
 
 Copy the printed `secret` into `LIGHTSPEED_PLATFORM_API_KEY` in `platform.env`
-and store it securely; the command prints it only once. Omitting `--group`
-grants every group allowed by the deployment scope. This key authorizes the
+and store it securely; the command prints it only once. A key's groups are
+always stated: `--all-groups` grants every group allowed by the deployment
+scope, and repeated `--group` grants a chosen list. This key authorizes the
 Platform's runtime calls; the first Platform administrator is a separate login
 created from the email and password above. See
 [API keys and service access](../access-and-security/api-keys-and-service-access.md)
@@ -370,7 +381,7 @@ docker logs --tail 100 lightspeed-platform
 
 | Symptom | What to inspect |
 | --- | --- |
-| Runtime exits before serving health | Database connectivity, migration ledger, required settings, or Temporal address/namespace |
+| Runtime exits before serving health | Database connectivity, migration ledger, required settings, or Temporal address, namespace, and TLS or API key settings |
 | Platform health never succeeds | Platform database permissions/migrations and required authentication settings |
 | Sign-in redirects or origin checks fail | Public base URL, HTTPS, and proxy host/scheme forwarding |
 | A universe cannot be created | Platform administrator role, runtime connectivity, and a Platform deployment key with `deployment/universes` access |

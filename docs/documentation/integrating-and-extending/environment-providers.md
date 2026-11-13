@@ -323,7 +323,11 @@ lists them.
   path inside it.
 - Run the daemon as a user whose permissions fit the work. Commands run as
   that user, and the filesystem root is a boundary for data operations only,
-  not for commands.
+  not for commands. Data operations reach every file that user can read
+  under the root, except the state directory and, on Linux, the `/proc` and
+  `/sys` filesystems.
+- Pass every setting through the daemon's process environment or command
+  line. The daemon does not load a `.env` file.
 
 A passive daemon reached through your data route holds no registration
 identity, so cloning a golden snapshot of such a target cannot duplicate a

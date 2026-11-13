@@ -24,7 +24,7 @@ pub struct McpServerView {
     /// Extra request headers, keyed by lowercased name. Credential headers
     /// show only the credential id; the token is never returned.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub headers: BTreeMap<String, McpServerHeader>,
+    pub headers: BTreeMap<String, RequestHeader>,
     pub status: McpServerStatus,
     pub revision: u64,
     pub created_at_ms: i64,
@@ -197,21 +197,6 @@ pub enum McpServerCredential {
     AuthGrant { grant_id: String },
 }
 
-/// Value of one extra MCP request header.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum McpServerHeader {
-    /// Sent as written. Not secret: reads return the value.
-    Literal { value: String },
-    /// The token of a static-token credential in this universe, resolved at
-    /// each request and sent raw, without a scheme prefix.
-    Credential { grant_id: String },
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum McpServerStatus {
@@ -254,10 +239,11 @@ pub struct McpServerInput {
     /// Extra request headers sent on every request to the server, alongside
     /// any `Authorization` the auth policy produces. Names are
     /// case-insensitive and stored lowercased; transport headers,
-    /// `authorization` and `x-lightspeed-*` are reserved. Requires `runtime`
-    /// execution.
+    /// `authorization` and `x-lightspeed-*` are reserved. `api-key` and
+    /// `x-api-key` carry a secret and accept only a `credential` value.
+    /// Requires `runtime` execution.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub headers: BTreeMap<String, McpServerHeader>,
+    pub headers: BTreeMap<String, RequestHeader>,
     #[serde(default)]
     pub status: McpServerStatus,
 }

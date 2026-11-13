@@ -151,8 +151,14 @@ both need the intended route.
 The base URL includes the API path when the service requires it. The client
 appends the appropriate Responses or Chat Completions path. Hosted endpoint
 validation requires HTTPS except for loopback and rejects embedded credentials,
-queries, and fragments. Extra headers are non-secret settings and cannot
-replace reserved authentication or transport headers.
+queries, and fragments. Each extra header is a tagged value: `{"type":
+"literal", "value": "..."}` for a plain setting that reads return, or
+`{"type": "credential", "grantId": "..."}` for the token of a static-token
+credential, which the runtime resolves for each request and never returns.
+`api-key`, `x-api-key`, and `proxy-authorization` accept only the credential
+form. Extra headers cannot replace `Authorization` or the transport's own
+headers. This is the `RequestHeader` type of the API, which the `headers` of
+an MCP server use as well.
 
 For an authenticated endpoint, use the API's `modelApiKey` configuration and
 credential field, or configure it through the Platform. Keep the secret out

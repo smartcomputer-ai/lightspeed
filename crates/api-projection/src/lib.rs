@@ -2004,7 +2004,13 @@ fn promise_source_to_api(source: &harness::PromiseSource) -> api::PromiseSourceK
 fn attribution(value: Option<&harness::Attribution>) -> Option<api::Attribution> {
     Some(match value?.clone() {
         harness::Attribution::Actor { id } => api::Attribution::Actor { id },
-        harness::Attribution::Key { prefix } => api::Attribution::Key { prefix },
+        harness::Attribution::Key { key_id, scope_kind } => api::Attribution::Key {
+            key_id,
+            scope_kind: match scope_kind {
+                harness::AttributedKeyScope::Deployment => api::AccessScopeKind::Deployment,
+                harness::AttributedKeyScope::Universe => api::AccessScopeKind::Universe,
+            },
+        },
         harness::Attribution::Local => api::Attribution::Local,
         harness::Attribution::Internal { component, cause } => {
             api::Attribution::Internal { component, cause }
@@ -3508,6 +3514,60 @@ mod tests {
     };
 
     use super::*;
+
+    /// The harness keeps its own mirror of the public attribution. Each
+    /// variant must project to its public counterpart and to the same JSON.
+    #[test]
+    fn recorded_attributions_project_to_the_public_shape() {
+        assert_eq!(attribution(None), None);
+        for (recorded, public) in [
+            (
+                harness::Attribution::Actor {
+                    id: "user-1".into(),
+                },
+                api::Attribution::Actor {
+                    id: "user-1".into(),
+                },
+            ),
+            (
+                harness::Attribution::Key {
+                    key_id: "ci-bot".into(),
+                    scope_kind: harness::AttributedKeyScope::Universe,
+                },
+                api::Attribution::Key {
+                    key_id: "ci-bot".into(),
+                    scope_kind: api::AccessScopeKind::Universe,
+                },
+            ),
+            (
+                harness::Attribution::Key {
+                    key_id: "platform".into(),
+                    scope_kind: harness::AttributedKeyScope::Deployment,
+                },
+                api::Attribution::Key {
+                    key_id: "platform".into(),
+                    scope_kind: api::AccessScopeKind::Deployment,
+                },
+            ),
+            (harness::Attribution::Local, api::Attribution::Local),
+            (
+                harness::Attribution::Internal {
+                    component: "controller".into(),
+                    cause: "bot".into(),
+                },
+                api::Attribution::Internal {
+                    component: "controller".into(),
+                    cause: "bot".into(),
+                },
+            ),
+        ] {
+            assert_eq!(attribution(Some(&recorded)), Some(public.clone()));
+            assert_eq!(
+                serde_json::to_value(&recorded).unwrap(),
+                serde_json::to_value(&public).unwrap()
+            );
+        }
+    }
 
     #[test]
     fn compaction_projection_preserves_requested_policy_and_reports_signed_transition() {

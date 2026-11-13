@@ -83,17 +83,21 @@ opens the first settings page the caller may see. Models holds model provider ke
 compatible endpoints and coding-agent subscriptions. Credentials lists reusable
 tokens, environment secrets, GitHub App installations and custom OAuth grants;
 model and MCP server logins stay on their own pages, while credential pickers
-still offer every grant. Credentials, Channels and Templates are for Operators
+still offer every grant, except that the environment picker offers only
+retrievable ones. Credentials, Channels and Templates are for Operators
 and Admins; API keys and General are for Admins.
 
 **Features.** A universe admin switches parts of the product on or off under
-General → Features; today Bots and Channels, where Channels need Bots. The
-registry is `FEATURES` in `platform/shared`, and a universe stores only the
-switches set away from their default (`universes.features`). The universe list
-carries each feature's effective state, and the web hides a switched-off
-feature's pages, menu items and choices. Switching off hides; it does not
-enforce: the API stays open, and what already runs, such as a bot answering on
-its channels, keeps running.
+General → Features; today Bots and Channels, where Channels need Bots. Both
+start off. The registry is `FEATURES` in `platform/shared`, and a universe
+stores only the switches set away from their default (`universes.features`).
+The universe list carries each feature's effective state, and the web hides a
+switched-off feature's pages, menu items and choices. The backend enforces the
+switch in the member gate: a member's `bots/*` or `channels/*` call is refused
+with a 403 while its feature is off, whatever their role. The switch covers
+what members do through the Platform. What already runs, such as a bot
+answering on its channels, keeps running, and a holder of a runtime key is
+bound by that key's groups, not by the switch.
 
 ## People, universes and access
 

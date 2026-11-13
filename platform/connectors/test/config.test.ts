@@ -17,7 +17,7 @@ describe("connector host configuration", () => {
       providers: ["telegram", "whatsapp"],
       accounts: null,
       discoveryIntervalMs: 30_000,
-      temporal: { address: "localhost:7233", namespace: "default" },
+      temporal: { address: "localhost:7233", namespace: "default", tls: null, apiKey: null },
       ingressMaxPerMinute: 120,
       health: { host: "0.0.0.0", port: 8_090 },
       metrics: { host: "0.0.0.0", port: 9_090 },
@@ -48,7 +48,37 @@ describe("connector host configuration", () => {
     ]);
     expect(telegramOnly.discoveryIntervalMs).toBe(5_000);
     expect(telegramOnly.health.port).toBe(0);
-    expect(telegramOnly.temporal).toEqual({ address: "temporal:7233", namespace: "prod" });
+    expect(telegramOnly.temporal).toEqual({
+      address: "temporal:7233",
+      namespace: "prod",
+      tls: null,
+      apiKey: null,
+    });
+  });
+
+  it("reads the Temporal TLS and API key settings into the host configuration", () => {
+    const config = parseHostConfig({
+      LIGHTSPEED_CONNECTOR_API_KEY: "lsk_test_connector",
+      LIGHTSPEED_API_URL: "http://core/rpc",
+      LIGHTSPEED_CONNECTOR_PROVIDERS: "telegram",
+      TEMPORAL_ADDRESS: "temporal.internal:7233",
+      TEMPORAL_TLS_SERVER_CA_FILE: "/etc/temporal/ca.pem",
+      TEMPORAL_API_KEY_FILE: "/run/secrets/temporal-api-key",
+    });
+    expect(config.temporal).toEqual({
+      address: "temporal.internal:7233",
+      namespace: "default",
+      tls: { serverCaFile: "/etc/temporal/ca.pem", serverName: null, clientCertificate: null },
+      apiKey: { file: "/run/secrets/temporal-api-key" },
+    });
+    expect(() =>
+      parseHostConfig({
+        LIGHTSPEED_CONNECTOR_API_KEY: "lsk_test_connector",
+        LIGHTSPEED_API_URL: "http://core/rpc",
+        LIGHTSPEED_CONNECTOR_PROVIDERS: "telegram",
+        TEMPORAL_TLS_CLIENT_CERT_FILE: "/etc/temporal/client.pem",
+      }),
+    ).toThrow("TEMPORAL_TLS_CLIENT_CERT_FILE is set without TEMPORAL_TLS_CLIENT_KEY_FILE");
   });
 
   it("requires the core endpoint and rejects unknown providers", () => {

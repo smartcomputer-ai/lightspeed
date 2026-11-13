@@ -153,7 +153,7 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
     <>
       <PageHeader
         title="Credentials"
-        description="Reusable tokens and secrets owned by this universe. Environments, MCP servers and bot triggers reference them without exposing their values; retrievable credentials may be leased by trusted services."
+        description="Reusable tokens and secrets owned by this universe. A brokered credential never leaves Lightspeed, which attaches it to its own requests to MCP servers. A retrievable credential can also be assigned to an environment, whose processes receive its value, and leased by trusted services."
         actions={
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button />}>
@@ -188,8 +188,9 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
       )}
       {inventory.data && reusable.length === 0 && (
         <EmptyState icon={LockKeyhole} title="No credentials yet">
-          Tokens, environment secrets and GitHub App installations live here, bound to
-          environments, MCP servers and bot triggers without exposing their values.
+          Tokens, environment secrets and GitHub App installations live here, for MCP servers,
+          bot triggers and environments to reference. Values are never shown again; an
+          environment's processes receive the ones assigned to it.
         </EmptyState>
       )}
       {grants.length > 0 && (
@@ -592,8 +593,8 @@ function PasteCredentialDialog({
             </Select>
             <FieldDescription>
               {kind === "environment"
-                ? "Stores an opaque value for injection into an environment variable. Multiline values such as SSH private keys are preserved."
-                : "Creates a revocable token that MCP servers, bots or environments can reference, as a bearer token or in a header of their own."}
+                ? "Stores an opaque value for injection into an environment variable; processes in that environment receive it. Multiline values such as SSH private keys are preserved."
+                : "Creates a revocable token that MCP servers and bots can reference, as a bearer token or in a header of their own, and that a model provider can send in an extra header. Make it retrievable to assign it to an environment too."}
             </FieldDescription>
           </Field>
           {kind === "token" && (
@@ -602,14 +603,15 @@ function PasteCredentialDialog({
                 <Checkbox
                   checked={retrievable}
                   onCheckedChange={(checked) => setRetrievable(checked === true)}
-                  aria-label="Allow trusted services to retrieve this credential"
+                  aria-label="Allow environments and trusted services to retrieve this credential"
                 />
                 <span className="grid gap-1">
-                  <span className="text-sm font-medium">Retrievable by trusted services</span>
+                  <span className="text-sm font-medium">Retrievable by environments and trusted services</span>
                   <span className="text-xs text-muted-foreground">
-                    Required for Bot webhook signatures and authenticated HTTP polls. Trusted
-                    service workers can lease the plaintext into memory; every lease is audited.
-                    This choice cannot be changed later.
+                    Required to assign the token to an environment, whose processes receive the
+                    plaintext, and for Bot webhook signatures and authenticated HTTP polls, where
+                    trusted service workers lease it into memory; every lease is audited. This
+                    choice cannot be changed later.
                   </span>
                 </span>
               </label>

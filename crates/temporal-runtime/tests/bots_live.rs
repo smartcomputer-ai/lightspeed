@@ -42,7 +42,7 @@ use temporal_runtime::{
         sessions_worker, worker_runtime,
     },
 };
-use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
+use temporal_workflow::{TemporalConnectionConfig, connect_temporal};
 use temporalio_client::{Client, WorkflowDescribeOptions, WorkflowTerminateOptions};
 
 const WAIT: Duration = Duration::from_secs(90);
@@ -68,12 +68,8 @@ where
         "lightspeed-bots-live-{}",
         uuid::Uuid::new_v4().simple()
     ));
-    let temporal_target =
-        std::env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-    let namespace = std::env::var("TEMPORAL_NAMESPACE")
-        .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
     let runtime = worker_runtime()?;
-    let client = connect_temporal(&temporal_target, &namespace).await?;
+    let client = connect_temporal(&TemporalConnectionConfig::from_env()?).await?;
 
     let builder = GatewayAgentApi::builder(client.clone(), store.clone())
         .with_task_queue(queues.sessions.clone())
@@ -504,16 +500,41 @@ async fn bots_live_hmac_webhook_verifies_without_a_caller() -> anyhow::Result<()
             }],
         )
         .await?;
-        let trigger = api
-            .read_bot_trigger(api::BotTriggerReadParams {
+        let ingest_path = api
+            .read_bot_trigger_secrets(api::BotTriggerSecretsReadParams {
                 bot_id: bot_id.clone(),
                 trigger_id: trigger_id.clone(),
             })
             .await?
             .result
-            .trigger;
-        let ingest_path = trigger.ingest_path.expect("webhook ingest path");
+            .secrets
+            .ingest_path
+            .expect("webhook ingest path");
         let token = ingest_path.rsplit('/').next().expect("token").to_owned();
+        // Reading or listing the trigger never discloses the URL token.
+        let read = api
+            .read_bot_trigger(api::BotTriggerReadParams {
+                bot_id: bot_id.clone(),
+                trigger_id: trigger_id.clone(),
+            })
+            .await?
+            .result;
+        let listed = api
+            .list_bot_triggers(api::BotTriggerListParams {
+                bot_id: bot_id.clone(),
+            })
+            .await?
+            .result;
+        for view in [
+            serde_json::to_string(&read)?,
+            serde_json::to_string(&listed)?,
+        ] {
+            assert!(!view.contains(&token), "trigger view holds the URL token");
+            assert!(
+                !view.contains("/hooks/"),
+                "trigger view holds the ingest path"
+            );
+        }
 
         // The public ingest route has no caller: run it outside the test's
         // request context, exactly as the HTTP edge does. The stored trigger,
@@ -602,15 +623,16 @@ async fn bots_live_webhook_trigger_coalesces_events() -> anyhow::Result<()> {
             }],
         )
         .await?;
-        let trigger = api
-            .read_bot_trigger(api::BotTriggerReadParams {
+        let ingest_path = api
+            .read_bot_trigger_secrets(api::BotTriggerSecretsReadParams {
                 bot_id: bot_id.clone(),
                 trigger_id: trigger_id.clone(),
             })
             .await?
             .result
-            .trigger;
-        let ingest_path = trigger.ingest_path.expect("webhook ingest path");
+            .secrets
+            .ingest_path
+            .expect("webhook ingest path");
         let token = ingest_path.rsplit('/').next().expect("token").to_owned();
 
         for index in 0..3 {

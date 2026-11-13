@@ -36,7 +36,7 @@ export function navItemVisible(
   can: (action: PermissionAction) => boolean,
   features: FeatureStates | undefined,
 ): boolean {
-  return can(item.action) && (!item.feature || features?.[item.feature] !== false);
+  return can(item.action) && (!item.feature || features?.[item.feature] === true);
 }
 
 export interface UniverseNavGroup {

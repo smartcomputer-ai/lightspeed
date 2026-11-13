@@ -342,12 +342,15 @@ it.each([false, true])("preserves the default choice when removing another envir
   expect(error).toBeNull();
 });
 
-it("enables environments with an empty attachment list and places selection after discovery", async () => {
+const switchState = (name: string) =>
+  container.querySelector(`[role="switch"][aria-label="${name}"]`)?.getAttribute("aria-checked");
+
+it("enables environments with an empty attachment list, sourcing nothing, and places selection after discovery", async () => {
   await setup({});
   await toggle("Enable Environments");
-  expect(current).toEqual({ features: { environments: {
-    environments: [], prompts: {}, skills: {},
-  } } });
+  expect(current).toEqual({ features: { environments: { environments: [] } } });
+  expect(switchState("Environment prompt loading")).toBe("false");
+  expect(switchState("Environment skill discovery")).toBe("false");
   const text = container.textContent!;
   expect(text.indexOf("Environment selection tools")).toBeGreaterThan(text.indexOf("Skill discovery"));
   expect(container.textContent).toContain("No environments attached.");
@@ -355,14 +358,30 @@ it("enables environments with an empty attachment list and places selection afte
   expect(current ?? {}).not.toHaveProperty("features.environments");
 });
 
-it("enables VFS with an empty attachment list and source discovery", async () => {
+it("enables VFS with an empty attachment list, sourcing nothing", async () => {
   await setup({});
   await toggle("Enable Virtual File System: Files, Instructions, Skills");
-  expect(current).toEqual({ features: { vfs: { workspaces: [], prompts: {}, skills: {} } } });
-  expect(container.querySelector('[aria-label="VFS prompt loading"]')?.getAttribute("aria-checked")).toBe("true");
-  expect(container.querySelector('[aria-label="VFS skill discovery"]')?.getAttribute("aria-checked")).toBe("true");
+  expect(current).toEqual({ features: { vfs: { workspaces: [] } } });
+  expect(switchState("VFS prompt loading")).toBe("false");
+  expect(switchState("VFS skill discovery")).toBe("false");
   await toggle("Enable Virtual File System: Files, Instructions, Skills");
   expect(current ?? {}).not.toHaveProperty("features.vfs");
+});
+
+it.each([
+  ["Enable Virtual File System: Files, Instructions, Skills", "vfs", "VFS"],
+  ["Enable Environments", "environments", "Environment"],
+])("sources prompts and skills only once each is switched on (%s)", async (featureSwitch, feature, domain) => {
+  await setup({});
+  await toggle(featureSwitch);
+  await toggle(`${domain} prompt loading`);
+  expect(current).toHaveProperty(`features.${feature}.prompts`, {});
+  expect(current).not.toHaveProperty(`features.${feature}.skills`);
+  await toggle(`${domain} skill discovery`);
+  expect(current).toHaveProperty(`features.${feature}.skills`, {});
+  expect(switchState(`${domain} prompt loading`)).toBe("true");
+  expect(switchState(`${domain} skill discovery`)).toBe("true");
+  expect(error).toBeNull();
 });
 
 it("enables Web with search and page fetching", async () => {

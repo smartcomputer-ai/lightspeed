@@ -62,6 +62,15 @@ def _input_items(value: str | list[InputItem]) -> list[InputItem]:
     return value
 
 
+def _is_rpc_error(value: Any) -> bool:
+    """Whether `value` is a JSON-RPC error object with an integer code and a message."""
+    return (
+        isinstance(value, dict)
+        and type(value.get("code")) is int
+        and isinstance(value.get("message"), str)
+    )
+
+
 async def _retry_read[T](read: Callable[[], Awaitable[T]], deadline: float) -> T:
     for attempt in range(_WAIT_READ_ATTEMPTS):
         try:
@@ -198,6 +207,10 @@ class AsyncLightspeedClient(GeneratedClient):
                 ) from error
             body = response.text
         if not response.is_success:
+            # The gateway refuses a request without a valid key before it reads the body, so its
+            # 401 answers no request ID. It is still the server's own typed error.
+            if response.status_code == 401 and isinstance(body, dict) and _is_rpc_error(body.get("error")):
+                raise LightspeedRpcError(body["error"])
             hint = f": check that {self._endpoint!s} is the gateway's /rpc URL" if response.status_code == 404 else ""
             raise LightspeedTransportError(
                 f"Lightspeed API request failed with HTTP {response.status_code}{hint}",
@@ -209,11 +222,7 @@ class AsyncLightspeedClient(GeneratedClient):
             raise LightspeedTransportError("Lightspeed API response id did not match the request id", body=body)
         rpc_error = body.get("error")
         if rpc_error:
-            if (
-                not isinstance(rpc_error, dict)
-                or type(rpc_error.get("code")) is not int
-                or not isinstance(rpc_error.get("message"), str)
-            ):
+            if not _is_rpc_error(rpc_error):
                 raise LightspeedTransportError("Lightspeed API response had an invalid error", body=body)
             raise LightspeedRpcError(rpc_error)
         result = body.get("result")

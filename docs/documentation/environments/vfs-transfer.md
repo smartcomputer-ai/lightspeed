@@ -90,8 +90,9 @@ describes content reuse and workspace publication.
 
 A capture copies the whole selected tree, including hidden entries and paths
 that `.gitignore` excludes. Version-control metadata directories (`.git`,
-`.hg`, `.svn`, and `.jj`) and the daemon's own state directory are never
-captured. A symlink whose target stays inside the selected tree is captured as
+`.hg`, `.svn`, and `.jj`), the daemon's own state directory, its
+registration key file, and on Linux the `/proc` and `/sys` filesystems are
+never captured. A symlink whose target stays inside the selected tree is captured as
 the file or directory it points to. A link that leaves the selection, a
 symlink cycle, or a special file such as a FIFO or device fails the capture.
 Names that are not UTF-8 are skipped and counted in the result.
@@ -147,8 +148,10 @@ define those request fields and responses.
 
 Every transfer path follows the daemon's one confinement rule: it must lie
 inside the daemon's filesystem root, a symlink is followed only while its
-target stays inside the root, and the daemon's state directory is never
-addressed. Replacement uses atomic filesystem operations on Linux and macOS;
+target stays inside the root, and the daemon's state directory, its
+registration key file, and on Linux the `/proc` and `/sys` filesystems are
+never addressed. A capture or replacement whose tree contains the state
+directory or the key file is refused. Replacement uses atomic filesystem operations on Linux and macOS;
 unsupported filesystems fail instead of exposing a partly replaced tree.
 Windows execution support is not implemented. Platform-specific details live
 beside the

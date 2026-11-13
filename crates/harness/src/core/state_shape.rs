@@ -244,7 +244,8 @@ fn approvals() -> BTreeMap<ApprovalId, ApprovalRecord> {
         (
             provider_continuation(),
             Attribution::Key {
-                prefix: "ls_abc".to_owned(),
+                key_id: "ci-bot".to_owned(),
+                scope_kind: AttributedKeyScope::Universe,
             },
         ),
         (

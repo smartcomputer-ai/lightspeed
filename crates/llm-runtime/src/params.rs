@@ -41,6 +41,9 @@ pub struct OpenAiResponsesParams {
     pub metadata: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parallel_tool_calls: Option<bool>,
+    /// Whether the provider keeps the response. Unset sends `false`: requests
+    /// are self-contained, and a stored request cannot repeat a compaction
+    /// item. Sessions never set this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

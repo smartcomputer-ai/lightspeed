@@ -9,7 +9,9 @@ pub enum AgentApiErrorKind {
     /// The request was understood and the caller may make it, but current
     /// state or policy refuses it. Never an authorization decision.
     Rejected,
-    /// No valid credential was presented.
+    /// No valid credential was presented. An authenticated gateway decides
+    /// this from the request headers and answers HTTP 401 without reading
+    /// the request body, so the error answers no request id.
     Unauthenticated,
     /// The authenticated caller lacks permission for this operation or target.
     Forbidden,
@@ -414,11 +416,11 @@ api_methods! {
     METHOD_SESSION_ENVIRONMENTS_DEACTIVATE => deactivate_session_environment(SessionEnvironmentDeactivateParams) -> SessionEnvironmentDeactivateResponse =>
         ["Deactivate the session environment", "Clears active environment selection without changing or closing the universe environment."], access: MethodAccess::Universe(UniverseAction::ConfigureSession),
     METHOD_ENVIRONMENTS_CREDENTIALS_BIND => bind_environment_credential(EnvironmentCredentialBindParams) -> EnvironmentCredentialBindResponse =>
-        ["Bind a credential into an environment", "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Bind a credential into an environment", "Maps an environment variable name to a retrievable credential grant or to a model API key provider's stored key. Commands in the environment receive the plain value, so a brokered grant and any other provider credential are refused. Requires configuring resources in the universe. The response exposes only the source handle, never secret material."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_CREDENTIALS_LIST => list_environment_credentials(EnvironmentCredentialListParams) -> EnvironmentCredentialListResponse =>
         ["List environment credential bindings", "Returns variable names and credential source handles for a universe environment; resolved secret values are never returned."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND => unbind_environment_credential(EnvironmentCredentialUnbindParams) -> EnvironmentCredentialUnbindResponse =>
-        ["Unbind an environment credential", "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Unbind an environment credential", "Removes one variable-to-credential mapping without deleting the underlying grant or provider credential."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_CREATE => create_environment(EnvironmentCreateParams) -> EnvironmentCreateResponse =>
         ["Create an environment", "Creates a provisioned environment, attributed to the caller, from a template of a provider enabled for the universe. Idempotent per requestId: same inputs, same environment; others conflict. Provisioning until the target's first envd handshake, then open; idle overrides the template default."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_READ => read_environment(EnvironmentReadParams) -> EnvironmentReadResponse =>
@@ -522,7 +524,7 @@ api_methods! {
     METHOD_MCP_SERVERS_DELETE => delete_mcp_server(McpServerDeleteParams) -> McpServerDeleteResponse =>
         ["Delete an MCP server record", "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GRANTS_IMPORT => import_auth_grant(AuthGrantImportParams) -> AuthGrantImportResponse =>
-        ["Import a token credential", "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Import a token credential", "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GRANTS_LEASE => lease_auth_grant(AuthGrantLeaseParams) -> AuthGrantLeaseResponse =>
         ["Lease a retrievable authentication grant", "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads."], access: MethodAccess::Service,
     METHOD_AUTH_GRANTS_READ => read_auth_grant(AuthGrantReadParams) -> AuthGrantReadResponse =>
@@ -558,9 +560,9 @@ api_methods! {
     METHOD_AUTH_GITHUB_INSTALLATIONS_LIST => list_github_installations(AuthGitHubInstallationListParams) -> AuthGitHubInstallationListResponse =>
         ["List GitHub App installations", "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT => grant_github_installation(AuthGitHubInstallationGrantParams) -> AuthGitHubInstallationGrantResponse =>
-        ["Grant access to a GitHub App installation", "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Grant access to a GitHub App installation", "Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_BOTS_CREATE => create_bot(BotCreateParams) -> BotCreateResponse =>
-        ["Create a bot", "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back."], access: MethodAccess::Universe(UniverseAction::CreateBot),
+        ["Create a bot", "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id."], access: MethodAccess::Universe(UniverseAction::CreateBot),
     METHOD_BOTS_PUT => put_bot(BotPutParams) -> BotPutResponse =>
         ["Create or replace a bot document", "Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits."], access: MethodAccess::Universe(UniverseAction::ManageBot),
     METHOD_BOTS_READ => read_bot(BotReadParams) -> BotReadResponse =>
@@ -576,11 +578,13 @@ api_methods! {
     METHOD_BOTS_SESSIONS_ROTATE => rotate_bot_session(BotSessionRotateParams) -> BotSessionRotateResponse =>
         ["Rotate a bot session", "Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow."], access: MethodAccess::Universe(UniverseAction::ManageBot),
     METHOD_BOTS_TRIGGERS_PUT => put_bot_trigger(BotTriggerPutParams) -> BotTriggerPutResponse =>
-        ["Create or replace a trigger", "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token."], access: MethodAccess::Universe(UniverseAction::ManageBot),
+        ["Create or replace a trigger", "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view."], access: MethodAccess::Universe(UniverseAction::ManageBot),
     METHOD_BOTS_TRIGGERS_READ => read_bot_trigger(BotTriggerReadParams) -> BotTriggerReadResponse =>
-        ["Read a trigger", "Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers."], access: MethodAccess::Universe(UniverseAction::Read),
+        ["Read a trigger", "Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_BOTS_TRIGGERS_LIST => list_bot_triggers(BotTriggerListParams) -> BotTriggerListResponse =>
-        ["List a bot's triggers", "Returns every trigger of the bot ordered by id, secrets included for bot-management callers."], access: MethodAccess::Universe(UniverseAction::Read),
+        ["List a bot's triggers", "Returns every trigger of the bot ordered by id, without ingest paths or pairing codes."], access: MethodAccess::Universe(UniverseAction::Read),
+    METHOD_BOTS_TRIGGERS_SECRETS_READ => read_bot_trigger_secrets(BotTriggerSecretsReadParams) -> BotTriggerSecretsReadResponse =>
+        ["Read a trigger's secrets", "Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger."], access: MethodAccess::Universe(UniverseAction::ManageBot),
     METHOD_BOTS_TRIGGERS_DELETE => delete_bot_trigger(BotTriggerDeleteParams) -> BotTriggerDeleteResponse =>
         ["Delete a trigger", "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history."], access: MethodAccess::Universe(UniverseAction::ManageBot),
     METHOD_BOTS_EVENTS_ADMIT => admit_bot_event(BotEventAdmitParams) -> BotEventAdmitResponse =>

@@ -6,6 +6,7 @@ import {
   gitHubAppProviderId,
   mcpOAuthFlowCompletionError,
   mcpServerInputWithOAuthGrant,
+  modelEndpointSchema,
   modelProviderCredentialId,
   modelProviderCredentialView,
   sessionCreateSchema,
@@ -44,6 +45,36 @@ describe("model provider credential ids", () => {
   });
 });
 
+describe("model endpoint headers", () => {
+  const endpoint = (headers: unknown) => ({
+    baseUrl: "https://router.example/v1",
+    apiKinds: ["openai:completions"],
+    headers,
+  });
+
+  it("accepts a plain value or a credential reference per header", () => {
+    const headers = {
+      "x-title": { type: "literal", value: "Lightspeed" },
+      "x-api-key": { type: "credential", grantId: "authgrant_router" },
+    };
+    expect(modelEndpointSchema.parse(endpoint(headers)).headers).toEqual(headers);
+    expect(modelEndpointSchema.parse(endpoint(undefined)).headers).toBeUndefined();
+  });
+
+  it("refuses a header that does not say where its value comes from", () => {
+    for (const header of [
+      "Lightspeed",
+      { value: "Lightspeed" },
+      { type: "credential" },
+      { type: "credential", grantId: " " },
+      { type: "secret", value: "sk-plain" },
+    ]) {
+      expect(modelEndpointSchema.safeParse(endpoint({ "x-title": header })).success).toBe(false);
+    }
+    expect(modelEndpointSchema.safeParse(endpoint({ "": { type: "literal", value: "v" } })).success).toBe(false);
+  });
+});
+
 describe("custom access credential ids", () => {
   it("explains that revoked ids are terminal", () => {
     expect(credentialIdConflictMessage("deploy-token", "revoked")).toContain(
@@ -71,9 +102,14 @@ describe("environment secrets", () => {
     ).toEqual({
       grantId: "px-dev-ssh-key",
       providerId: "environment-secret",
+      exposure: "retrievable",
       displayName: "px-dev SSH key",
       token: privateKey,
     });
+  });
+
+  it("are retrievable, because an environment receives their plain value", () => {
+    expect(environmentSecretGrantParams({ value: "v" }).exposure).toBe("retrievable");
   });
 });
 

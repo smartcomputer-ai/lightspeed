@@ -61,8 +61,9 @@ export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
   );
 }
 
-/// What this universe shows. A switched-off feature leaves the app, not the
-/// runtime: what already runs keeps running.
+/// What this universe offers its members. A switched-off feature is hidden
+/// and its requests are refused; the runtime is not told, so what already
+/// runs keeps running.
 function FeaturesCard({ universe }: { universe: Universe }) {
   const queryClient = useQueryClient();
   const change = useMutation({
@@ -75,8 +76,9 @@ function FeaturesCard({ universe }: { universe: Universe }) {
       <CardHeader>
         <CardTitle>Features</CardTitle>
         <CardDescription>
-          Turning a feature off hides it for everyone in this universe. What already runs keeps
-          running: a bot keeps answering on its channels.
+          A feature that is off is hidden and unavailable to everyone in this universe. Turning one
+          off does not stop what already runs: a bot keeps answering on its channels until it is
+          paused or closed.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">

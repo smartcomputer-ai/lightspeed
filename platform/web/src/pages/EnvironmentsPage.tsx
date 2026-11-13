@@ -61,6 +61,7 @@ import { EnvironmentPowerControls } from "@/components/environment/power-control
 import { IdlePolicyFields, idlePolicyProblem, idleStagesFor } from "@/components/environment/idle-policy-fields";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";
 import {
+  brokeredCredentialNote,
   environmentCredentialAvailable,
   environmentCredentialOptions,
   environmentCredentialSourceFromValue,
@@ -517,8 +518,9 @@ function EnvironmentCredentials({
       {unbind.error && <p className="mt-3 text-sm text-destructive">{unbind.error.message}</p>}
       {secrets && environmentCredentialOptions(secrets).length === 0 && (
         <p className="mt-3 text-xs text-muted-foreground">
-          Add an environment secret or access credential on the Credentials page, or a model
-          provider API key on the Models page, first.
+          Add an environment secret or a retrievable credential on the Credentials page, or a
+          model provider API key on the Models page, first.
+          {brokeredCredentialNote(secrets) && <> {brokeredCredentialNote(secrets)}</>}
         </p>
       )}
       {credentials.data && rows.length === 0 && (
@@ -713,8 +715,12 @@ function AssignCredentialDialog({
               </Select>
               <FieldDescription>
                 Environment secrets and access grants are resolved at runtime; provider API keys
-                use their stored value directly.
+                use their stored value directly. Processes in this environment receive the plain
+                value.
               </FieldDescription>
+              {brokeredCredentialNote(secrets) && (
+                <FieldDescription>{brokeredCredentialNote(secrets)}</FieldDescription>
+              )}
             </Field>
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>

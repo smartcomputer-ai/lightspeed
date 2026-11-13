@@ -74,7 +74,10 @@ async fn exercise(pool: &sqlx::PgPool) {
         |key_id: Option<&str>, scope, groups: Option<&[MethodGroup]>, assert_actor| ApiKeySpec {
             key_id: key_id.map(str::to_owned),
             scope,
-            groups: groups.map(|groups| groups.iter().copied().collect()),
+            // `None` asks for every group the scope allows.
+            groups: groups.map_or(api::ApiKeyGroups::All, |groups| {
+                groups.iter().copied().collect()
+            }),
             assert_actor,
             created_by: Attribution::Actor {
                 id: "operator".into(),

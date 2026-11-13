@@ -20,9 +20,7 @@ use temporal_runtime::{
     gateway::request_context::{RequestContext, with_request_context},
     worker::{WorkerActivities, sessions_worker, worker_runtime},
 };
-use temporal_workflow::{
-    AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal,
-};
+use temporal_workflow::{AgentSessionWorkflow, TemporalConnectionConfig, connect_temporal};
 use temporalio_client::WorkflowTerminateOptions;
 
 const RUN_BUDGET: Duration = Duration::from_secs(120);
@@ -42,12 +40,8 @@ async fn temporal_live_anthropic_run_learns_capacity_and_switches_models() -> an
     );
 
     let task_queue = format!("lightspeed-agent-live-{}", uuid::Uuid::new_v4().simple());
-    let temporal_target =
-        env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-    let namespace =
-        env::var("TEMPORAL_NAMESPACE").unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
     let runtime = worker_runtime()?;
-    let client = connect_temporal(&temporal_target, &namespace).await?;
+    let client = connect_temporal(&TemporalConnectionConfig::from_env()?).await?;
     let universes = Arc::new(UniverseRuntime::new(
         client.clone(),
         task_queue.clone(),

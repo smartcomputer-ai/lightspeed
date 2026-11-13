@@ -46,8 +46,8 @@ function setup(platformRole: string | undefined) {
 it("is for platform admins only", async () => {
   const { request, calls } = setup(undefined);
   expect((await request("GET", "/api-keys")).status).toBe(403);
-  expect((await request("POST", "/api-keys", { displayName: "x", scope: { kind: "deployment" } })).status).toBe(403);
-  expect((await request("POST", "/api-keys", { displayName: "x", scope: { kind: "deployment" }, keyId: "gate" })).status).toBe(403);
+  expect((await request("POST", "/api-keys", { displayName: "x", scope: { kind: "deployment" }, groups: "all" })).status).toBe(403);
+  expect((await request("POST", "/api-keys", { displayName: "x", scope: { kind: "deployment" }, groups: "all", keyId: "gate" })).status).toBe(403);
   expect((await request("DELETE", "/api-keys/connector")).status).toBe(403);
   expect((await request("POST", "/api-keys/connector/rotate")).status).toBe(403);
   expect(calls).toEqual([]);
@@ -73,27 +73,38 @@ it("mints a key for a Platform universe with chosen groups, through the deployme
 
 it("mints a deployment key that may assert actors, and lists and revokes keys", async () => {
   const { request, calls } = setup("admin");
-  expect((await request("POST", "/api-keys", { displayName: "Gate", scope: { kind: "deployment" }, assertActor: true })).status).toBe(201);
-  expect(calls[0]!.params).toEqual({ scope: { kind: "deployment" }, displayName: "Gate", assertActor: true });
+  expect((await request("POST", "/api-keys", { displayName: "Gate", scope: { kind: "deployment" }, groups: "all", assertActor: true })).status).toBe(201);
+  expect(calls[0]!.params).toEqual({ scope: { kind: "deployment" }, displayName: "Gate", groups: "all", assertActor: true });
   expect(await (await request("GET", "/api-keys")).json()).toEqual([{ keyId: "connector", keyPrefix: "lsk_abcdefgh" }]);
   expect((await request("DELETE", "/api-keys/connector")).status).toBe(200);
   expect(calls.map((call) => call.method)).toEqual(["deployment/api-keys/create", "deployment/api-keys/list", "deployment/api-keys/revoke"]);
   expect(calls[2]!.params).toEqual({ scope: { kind: "deployment" }, keyId: "connector" });
 });
 
+it("refuses a key whose groups are not stated, before the runtime is asked anything", async () => {
+  const { request, calls, audit } = setup("admin");
+  const key = { displayName: "Gate", scope: { kind: "deployment" } };
+  // Leaving the groups out never means every group.
+  for (const groups of [undefined, null, [], "everything", "ALL", [""]]) {
+    expect((await request("POST", "/api-keys", { ...key, groups })).status, JSON.stringify(groups)).toBe(400);
+  }
+  expect(calls).toEqual([]);
+  expect(audit).not.toHaveBeenCalled();
+});
+
 it("mints a key under the id its creator chose, in the chosen scope", async () => {
   const { request, calls, audit } = setup("admin");
-  const response = await request("POST", "/api-keys", { displayName: "Gate", scope: { kind: "deployment" }, keyId: " gate " });
+  const response = await request("POST", "/api-keys", { displayName: "Gate", scope: { kind: "deployment" }, groups: ["session"], keyId: " gate " });
   expect(response.status).toBe(201);
   expect(calls).toHaveLength(1);
-  expect(calls[0]!.params).toEqual({ scope: { kind: "deployment" }, displayName: "Gate", assertActor: false, keyId: "gate" });
+  expect(calls[0]!.params).toEqual({ scope: { kind: "deployment" }, displayName: "Gate", groups: ["session"], assertActor: false, keyId: "gate" });
   expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "key.create", targetId: "gate" }));
 });
 
 it("refuses a chosen id that a key of the scope already holds", async () => {
   const { request, calls, audit } = setup("admin");
   const response = await request("POST", "/api-keys", {
-    displayName: "Connector", scope: { kind: "universe", universeId: universe.id }, keyId: "connector",
+    displayName: "Connector", scope: { kind: "universe", universeId: universe.id }, groups: ["session"], keyId: "connector",
   });
   expect(response.status).toBe(409);
   expect(await response.json()).toEqual({
@@ -103,7 +114,7 @@ it("refuses a chosen id that a key of the scope already holds", async () => {
   expect(calls.map((call) => call.method)).toEqual(["deployment/api-keys/create", "deployment/api-keys/list"]);
   expect(calls[1]!.params).toEqual({ scope: { kind: "universe", universeId: universe.lightspeedUniverseId } });
   expect(audit).not.toHaveBeenCalled();
-  expect((await request("POST", "/api-keys", { displayName: "x", scope: { kind: "deployment" }, keyId: "k".repeat(129) })).status).toBe(400);
+  expect((await request("POST", "/api-keys", { displayName: "x", scope: { kind: "deployment" }, groups: ["session"], keyId: "k".repeat(129) })).status).toBe(400);
   expect(calls).toHaveLength(2);
 });
 

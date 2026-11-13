@@ -2694,6 +2694,8 @@ export function seedPersonalAssistant(store: DemoStore): void {
     role: "admin",
     createdAt: agoIso(5 * 7 * DAY_MS),
     responder,
+    // Bots and channels are off in a new universe; this one is built on them.
+    features: { bots: true, channels: true },
   });
   seedMembers(store, universe);
   seedProfiles(universe);

@@ -17,6 +17,7 @@ import { readChannelsStatus } from "../channels-status.js";
 import type { AppContext, ApiVariables } from "../context.js";
 import { parseBody } from "../http.js";
 import { isPlatformAdmin } from "../context.js";
+import { featureRefusal } from "../runtime-client.js";
 import { engineClientFor, deploymentClientFor, withGateway } from "./gateway.js";
 import { universeForSession } from "./universes.js";
 
@@ -84,6 +85,12 @@ export function channelUniverseRoutes(ctx: AppContext) {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
+    }
+    // Connector health is the Platform's own data: no gated call stands in
+    // front of it, so the switch is asked here.
+    const off = featureRefusal(access.universe.features, "channels");
+    if (off) {
+      return c.json({ error: off.message }, off.status);
     }
     const statuses = await readChannelsStatus(ctx.env.channelsHealthUrls);
     return c.json({
@@ -156,6 +163,13 @@ export function channelUniverseRoutes(ctx: AppContext) {
         } as ChannelAccountCreateParams);
         return c.json(response.result, 201);
       });
+    }
+
+    // Refused here, before the token is sent to Telegram or stored as a
+    // credential: with Channels off, the account could not be created.
+    const off = featureRefusal(access.universe.features, "channels");
+    if (off) {
+      return c.json({ error: off.message }, off.status);
     }
 
     let identity;

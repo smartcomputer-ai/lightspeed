@@ -7,12 +7,15 @@
 //! directory descriptor. A symlink is followed only while its target stays
 //! inside the root; a link that leaves it is refused the same way. A path
 //! that names the daemon state directory, or passes through or below it, is
-//! `permissionDenied` (`daemonState`).
+//! `permissionDenied` (`daemonState`). So is a path that reaches a kernel
+//! filesystem or the registration key (see [`Protected`]): to a caller they
+//! are the daemon's own, like its state.
 //!
 //! The state directory is recognized by its identity (device and inode),
 //! never by name: every entry a lookup meets is compared with it, so another
 //! spelling on a case-insensitive filesystem, a bind mount or a link cannot
-//! reach it.
+//! reach it. The protected locations are recognized the same way, by device
+//! or by the identity of the file a path names now.
 
 use std::{
     collections::VecDeque,
@@ -28,13 +31,15 @@ use environment_protocol::{
 use super::{
     io_error,
     os::{DEFAULT_DIRECTORY_MODE, Directory, EntryStat, SELF},
+    protected::{Protected, ProtectedFiles},
 };
 
 /// Most symlinks one resolution follows before it is a loop.
 const MAX_SYMLINK_FOLLOWS: u32 = 40;
 
-/// The filesystem root, its directory descriptor and the daemon state
-/// directory. Built once per daemon and shared by every manager.
+/// The filesystem root, its directory descriptor, the daemon state
+/// directory and the other locations file operations never reach. Built
+/// once per daemon and shared by every manager.
 #[derive(Debug)]
 pub struct Confinement {
     root: PathBuf,
@@ -45,6 +50,8 @@ pub struct Confinement {
     state_identity: Identity,
     /// Device and inode of each of its ancestors, its parent first.
     state_ancestors: Vec<Identity>,
+    /// Kernel filesystems and the registration key.
+    protected: Protected,
     /// Keep native state identity pinned against rename/replacement while served.
     #[cfg(windows)]
     _state_directory: Directory,
@@ -150,7 +157,17 @@ impl Confinement {
     }
     /// `root` is canonicalized and opened. `state_dir` is created (private)
     /// when missing and canonicalized; it must not be the root itself.
+    /// Nothing else is refused: a serving daemon uses [`Self::protecting`].
     pub fn new(root: PathBuf, state_dir: PathBuf) -> Result<Self, ProtocolError> {
+        Self::protecting(root, state_dir, Protected::default())
+    }
+
+    /// [`Self::new`], also refusing every location in `protected`.
+    pub fn protecting(
+        root: PathBuf,
+        state_dir: PathBuf,
+        protected: Protected,
+    ) -> Result<Self, ProtocolError> {
         let root = root
             .canonicalize()
             .map_err(|error| io_error(error, root.display()))?;
@@ -239,6 +256,7 @@ impl Confinement {
             state_dir,
             state_identity,
             state_ancestors,
+            protected,
             #[cfg(windows)]
             _state_directory: state_directory,
         })
@@ -287,9 +305,7 @@ impl Confinement {
             .open_directory()
             .map_err(|error| io_error(error, path))?;
         let stat = EntryStat::of_directory(&directory).map_err(|error| io_error(error, path))?;
-        if self.is_state(&stat) {
-            return Err(daemon_state(path));
-        }
+        self.admit(&self.protected_files(), &stat, path)?;
         // CreateProcess consumes an ordinary DOS path, whereas the native
         // resolver can encounter literal names through reparse targets. Reject
         // names DOS would normalize (such as trailing dots) before spawning.
@@ -386,14 +402,51 @@ impl Confinement {
         self.state_ancestors.first() == Some(&directory.identity())
     }
 
-    /// Refuse an operation whose subject contains the state directory.
+    /// The protected files as they are now. One lookup, walk or listing
+    /// identifies them once, as it starts.
+    pub(crate) fn protected_files(&self) -> ProtectedFiles {
+        self.protected.files_now()
+    }
+
+    /// The entry is one no path addresses: the state directory, an entry of
+    /// a refused filesystem, or one of `files`. Walks prune such an entry
+    /// and listings leave it out.
+    pub(crate) fn refuses(&self, files: &ProtectedFiles, stat: &EntryStat) -> bool {
+        self.is_state(stat) || self.protected.covers(files, stat)
+    }
+
+    /// Refuse a lookup that met an entry no path addresses.
+    fn admit(
+        &self,
+        files: &ProtectedFiles,
+        stat: &EntryStat,
+        subject: &dyn std::fmt::Display,
+    ) -> Result<(), ProtocolError> {
+        if self.is_state(stat) {
+            return Err(daemon_state(subject));
+        }
+        if self.protected.covers(files, stat) {
+            return Err(protected_location(subject));
+        }
+        Ok(())
+    }
+
+    /// Refuse an operation whose subject contains the state directory or a
+    /// protected file: once the directory around one is moved, no rule
+    /// would find it again.
     pub(crate) fn refuse_containing_state(
         &self,
         resolved: &Resolved,
         subject: &dyn std::fmt::Display,
     ) -> Result<(), ProtocolError> {
-        if resolved.stat.is_some_and(|stat| self.contains_state(&stat)) {
+        let Some(stat) = resolved.stat else {
+            return Ok(());
+        };
+        if self.contains_state(&stat) {
             return Err(daemon_state(subject));
+        }
+        if stat.is_dir() && self.protected.holds_file(&stat) {
+            return Err(protected_location(subject));
         }
         Ok(())
     }
@@ -424,6 +477,7 @@ impl Confinement {
         subject: &dyn std::fmt::Display,
     ) -> Result<Resolved, ProtocolError> {
         let io = |error| io_error(error, subject);
+        let files = self.protected_files();
         let mut stack = vec![self.root_directory.try_clone().map_err(io)?];
         let mut segments: Vec<OsString> = Vec::new();
         let mut created = Vec::new();
@@ -469,9 +523,7 @@ impl Confinement {
                 }
                 Err(error) => return Err(io(error)),
             };
-            if self.is_state(&stat) {
-                return Err(daemon_state(subject));
-            }
+            self.admit(&files, &stat, subject)?;
             if stat.kind == environment_protocol::data::fs::FileKind::Symlink
                 && (!last || lookup.follow_final)
             {
@@ -528,9 +580,7 @@ impl Confinement {
         // directory reached through `..` or a link ending in one.
         let current = stack.pop().expect("the root stays on the stack");
         let stat = EntryStat::of_directory(&current).map_err(io)?;
-        if self.is_state(&stat) {
-            return Err(daemon_state(subject));
-        }
+        self.admit(&files, &stat, subject)?;
         match (stack.pop(), segments.last()) {
             (Some(parent), Some(name)) => Ok(Resolved {
                 parent,
@@ -587,6 +637,19 @@ pub(crate) fn daemon_state(subject: &dyn std::fmt::Display) -> ProtocolError {
     ProtocolError::permission_denied(
         Some(PermissionReason::DaemonState),
         format!("{subject} addresses the daemon state directory"),
+    )
+}
+
+/// A kernel filesystem or the registration key. Reported under the reason
+/// of the daemon's own state: to a caller it is the same kind of refusal,
+/// and one reason keeps the protocol as it is.
+fn protected_location(subject: &dyn std::fmt::Display) -> ProtocolError {
+    ProtocolError::permission_denied(
+        Some(PermissionReason::DaemonState),
+        format!(
+            "{subject} addresses a kernel filesystem or the daemon's registration key, \
+             which file operations never reach"
+        ),
     )
 }
 
@@ -774,6 +837,192 @@ mod tests {
                 ancestor == "moved/state"
             );
         }
+    }
+
+    /// A root with a key file beside the sources, refused by its path.
+    fn key_fixture() -> (tempfile::TempDir, PathBuf, Confinement) {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("root");
+        std::fs::create_dir_all(root.join("secrets")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("secrets/key"), "lsrk_secret").unwrap();
+        std::fs::write(root.join("secrets/notes"), "notes").unwrap();
+        let mut protected = Protected::default();
+        protected.refuse_file(&root.join("secrets/key"));
+        let state = root.parent().unwrap().join("state");
+        let confinement = Confinement::protecting(root.clone(), state, protected).unwrap();
+        (temp, root, confinement)
+    }
+
+    fn refused(confinement: &Confinement, root: &Path, subject: &str) {
+        let error = confinement.resolve(&path(root, subject)).unwrap_err();
+        assert_eq!(
+            permission_reason(&error),
+            Some(PermissionReason::DaemonState),
+            "{subject}"
+        );
+    }
+
+    #[test]
+    fn a_refused_filesystem_is_never_addressed_under_any_root() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        // `/dev` stands in for a kernel filesystem: a mount of its own on
+        // every Unix, reachable without privileges.
+        assert_ne!(
+            std::fs::metadata("/dev").unwrap().dev(),
+            std::fs::metadata(&base).unwrap().dev(),
+            "this test needs /dev to be a filesystem of its own"
+        );
+        std::fs::write(base.join("file"), "file").unwrap();
+        symlink("/dev/null", base.join("link")).unwrap();
+        symlink("/dev", base.join("directory-link")).unwrap();
+        let mut protected = Protected::default();
+        protected.refuse_filesystem_at(Path::new("/dev")).unwrap();
+        let confinement =
+            Confinement::protecting("/".into(), base.join("state"), protected).unwrap();
+
+        let slash = Path::new("");
+        let workspace = base.to_str().unwrap().trim_start_matches('/').to_owned();
+        for subject in [
+            "dev".to_owned(),
+            "dev/null".to_owned(),
+            format!("{workspace}/link"),
+            format!("{workspace}/directory-link"),
+            format!("{workspace}/directory-link/null"),
+        ] {
+            refused(&confinement, slash, &subject);
+        }
+        // A missing name there is refused at the mount, not reported missing.
+        let error = confinement
+            .lookup(
+                &path(slash, "dev/absent"),
+                Lookup::FOLLOW.allowing_missing(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            permission_reason(&error),
+            Some(PermissionReason::DaemonState)
+        );
+        // The link itself is an ordinary entry of the workspace.
+        let link = confinement
+            .lookup(&path(&base, "link"), Lookup::NO_FOLLOW)
+            .unwrap();
+        assert_eq!(
+            link.stat.unwrap().kind,
+            environment_protocol::data::fs::FileKind::Symlink
+        );
+        assert_eq!(
+            confinement.resolve(&path(&base, "file")).unwrap(),
+            base.join("file")
+        );
+        // The same root without the rule reaches the device directory.
+        let open = Confinement::new("/".into(), base.join("state")).unwrap();
+        assert!(open.resolve(&path(slash, "dev/null")).is_ok());
+    }
+
+    #[test]
+    fn the_registration_key_is_refused_under_every_name_that_reaches_it() {
+        let (_temp, root, confinement) = key_fixture();
+        symlink("secrets/key", root.join("link")).unwrap();
+        symlink("secrets", root.join("directory-link")).unwrap();
+        std::fs::hard_link(root.join("secrets/key"), root.join("src/copy")).unwrap();
+        symlink("../secrets/key", root.join("src/up")).unwrap();
+        for subject in [
+            "secrets/key",
+            "link",
+            "directory-link/key",
+            "src/copy",
+            "src/up",
+        ] {
+            refused(&confinement, &root, subject);
+        }
+        // Where the filesystem folds case (APFS), another spelling reaches
+        // the same file; elsewhere it is missing.
+        match confinement.resolve(&path(&root, "SECRETS/KEY")) {
+            Err(error) if error.kind() == ProtocolErrorKind::NotFound => {}
+            Err(error) => assert_eq!(
+                permission_reason(&error),
+                Some(PermissionReason::DaemonState)
+            ),
+            Ok(resolved) => panic!("another spelling resolved to {}", resolved.display()),
+        }
+        // Its neighbours and the directory itself stay addressable.
+        assert_eq!(
+            confinement.resolve(&path(&root, "secrets/notes")).unwrap(),
+            root.join("secrets/notes")
+        );
+        assert!(
+            confinement
+                .resolve_directory(&path(&root, "secrets"))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_replaced_key_moves_the_rule_to_the_new_file() {
+        let (_temp, root, confinement) = key_fixture();
+        std::fs::hard_link(root.join("secrets/key"), root.join("src/old")).unwrap();
+        refused(&confinement, &root, "src/old");
+        // Rotation as a writer does it: a new file renamed over the path.
+        std::fs::write(root.join("secrets/next"), "lsrk_rotated").unwrap();
+        std::fs::rename(root.join("secrets/next"), root.join("secrets/key")).unwrap();
+        refused(&confinement, &root, "secrets/key");
+        // No inode was recorded: the file that is no longer the key is an
+        // ordinary file again.
+        assert_eq!(
+            confinement.resolve(&path(&root, "src/old")).unwrap(),
+            root.join("src/old")
+        );
+        // With the key gone nothing is refused, and a key written there
+        // later is refused again.
+        std::fs::remove_file(root.join("secrets/key")).unwrap();
+        let missing = confinement
+            .resolve(&path(&root, "secrets/key"))
+            .unwrap_err();
+        assert_eq!(missing.kind(), ProtocolErrorKind::NotFound);
+        std::fs::write(root.join("secrets/key"), "lsrk_again").unwrap();
+        refused(&confinement, &root, "secrets/key");
+    }
+
+    #[test]
+    fn a_directory_holding_the_key_is_refused_like_one_holding_state() {
+        let (_temp, root, confinement) = key_fixture();
+        for (subject, holds) in [("secrets", true), ("src", false)] {
+            let resolved = confinement
+                .lookup(&path(&root, subject), Lookup::NO_FOLLOW)
+                .unwrap();
+            let refusal = confinement.refuse_containing_state(&resolved, &subject);
+            assert_eq!(refusal.is_err(), holds, "{subject}");
+            if let Err(error) = refusal {
+                assert_eq!(
+                    permission_reason(&error),
+                    Some(PermissionReason::DaemonState)
+                );
+            }
+        }
+        let whole = confinement
+            .lookup(confinement.root_path(), Lookup::NO_FOLLOW)
+            .unwrap();
+        assert!(
+            confinement
+                .refuse_containing_state(&whole, &"root")
+                .is_err()
+        );
+        // A missing destination holds nothing.
+        let absent = confinement
+            .lookup(
+                &path(&root, "src/absent"),
+                Lookup::NO_FOLLOW.allowing_missing(),
+            )
+            .unwrap();
+        assert!(
+            confinement
+                .refuse_containing_state(&absent, &"absent")
+                .is_ok()
+        );
     }
 
     #[test]

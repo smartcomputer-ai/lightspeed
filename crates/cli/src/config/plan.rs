@@ -294,6 +294,7 @@ pub(crate) async fn plan(
         &subject, &resources, &entries, &defined, &target, &mut state,
     )
     .await?;
+    check_bound_credentials(&subject, &entries, &state)?;
 
     // Phase 3.
     for (index, resource) in resources.iter().enumerate() {
@@ -594,7 +595,17 @@ fn references(section: &str, entry: &Value) -> Vec<(&'static str, String)> {
         }
     };
     match section {
-        "providers" => add("credentials", &entry["config"]["grantId"]),
+        "providers" => {
+            add("credentials", &entry["config"]["grantId"]);
+            // An endpoint header may carry a credential's token.
+            for header in entry["config"]["endpoint"]["headers"]
+                .as_object()
+                .into_iter()
+                .flatten()
+            {
+                add("credentials", &header.1["grantId"]);
+            }
+        }
         "mcpServers" => {
             add("credentials", &entry["credential"]["grantId"]);
             for header in entry["headers"].as_object().into_iter().flatten() {
@@ -677,6 +688,111 @@ async fn check_references(
     Ok(())
 }
 
+/// What a document binds into an environment must be something the runtime
+/// will bind: commands on the machine receive the plain value, so a
+/// credential has to be retrievable, and the only provider credential that
+/// may be bound is a model provider's API key. The runtime refuses anything
+/// else when the binding is written; this refuses the document before
+/// anything is written. Runs after the references are resolved, so a
+/// credential or provider that is only in the target has been read.
+fn check_bound_credentials(
+    subject: &str,
+    entries: &BTreeMap<&'static str, Vec<Entry>>,
+    state: &BTreeMap<&'static str, BTreeMap<String, Live>>,
+) -> Result<()> {
+    let declared = |section: &str, id: &str| -> Option<&Value> {
+        entries
+            .get(section)
+            .and_then(|declared| declared.iter().find(|entry| entry.id == id))
+            .map(|entry| &entry.body)
+    };
+    let stored = |section: &str, id: &str| -> Option<&Value> {
+        state
+            .get(section)
+            .and_then(|live| live.get(id))
+            .map(|live| &live.entry)
+    };
+    // The resource as the document declares it, or else as it is now.
+    let resource = |section: &str, id: &str| declared(section, id).or_else(|| stored(section, id));
+    let mut refused = Vec::new();
+    for binding in entries
+        .get("environments.credentials")
+        .into_iter()
+        .flatten()
+    {
+        let source = &binding.body["source"];
+        if let Some(grant_id) = source["grantId"].as_str()
+            && let Some(fix) = brokered_binding_fix(
+                grant_id,
+                declared("credentials", grant_id),
+                stored("credentials", grant_id),
+            )
+        {
+            refused.push(format!(
+                "environments.credentials/{} binds credentials/{grant_id}, {fix}",
+                binding.id
+            ));
+        }
+        if let Some(provider_id) = source["providerId"].as_str()
+            && let Some(kind) = resource("providers", provider_id)
+                .and_then(|provider| provider["config"]["type"].as_str())
+            && kind != "modelApiKey"
+        {
+            let fix = if kind == "githubApp" {
+                "is a GitHub App, whose private key cannot be bound. Bind a retrievable GitHub App installation credential instead, which supplies a short-lived installation token"
+            } else {
+                "is not a model API key provider. Only a model provider's stored API key can be bound"
+            };
+            refused.push(format!(
+                "environments.credentials/{} binds the credential of providers/{provider_id}, which {fix}",
+                binding.id
+            ));
+        }
+    }
+    if !refused.is_empty() {
+        bail!(
+            "{subject}: credentials that cannot be bound into an environment, nothing was written:\n  {}",
+            refused.join("\n  ")
+        );
+    }
+    Ok(())
+}
+
+/// Why a bound credential cannot be bound and what to write instead, or
+/// `None` when it can. Exposure is fixed once a credential exists, so the fix
+/// depends on what is stored: a credential that is already retrievable (an
+/// upgrade makes every bound credential so) only needs the document to say
+/// it, while a stored brokered one cannot be turned and needs a new id.
+fn brokered_binding_fix(
+    grant_id: &str,
+    declared: Option<&Value>,
+    stored: Option<&Value>,
+) -> Option<String> {
+    const BROKERED: &str = "which is brokered: its value never leaves the runtime";
+    const NEW_ID: &str = "Exposure cannot change once a credential exists, so declare a retrievable credential under a new id and bind that one";
+    fn exposure(credential: Option<&Value>) -> Option<&str> {
+        credential.and_then(|credential| credential["exposure"].as_str())
+    }
+    match (exposure(declared), exposure(stored)) {
+        (Some("brokered"), Some("retrievable")) => Some(format!(
+            "which the document declares as brokered although it is stored as retrievable. Add `exposure: retrievable` to credentials/{grant_id}: that states what is stored, and no new id is needed"
+        )),
+        (Some("brokered"), Some(_)) => Some(format!(
+            "{BROKERED}. {NEW_ID}, with `exposure: retrievable`"
+        )),
+        (Some("brokered"), None) => Some(format!(
+            "{BROKERED}. Declare the credential with `exposure: retrievable`"
+        )),
+        // Declared retrievable: a stored brokered one is reported as a
+        // conflict on the credential itself.
+        (Some(_), _) => None,
+        (None, Some("brokered")) => Some(format!(
+            "{BROKERED}. {NEW_ID}, with `exposure: retrievable`"
+        )),
+        (None, _) => None,
+    }
+}
+
 /// Phase 3 for one entry.
 async fn plan_entry(
     subject: &str,
@@ -710,16 +826,33 @@ async fn plan_entry(
             Step::new(subject, section, &entry.id, Action::Conflict).with_message(reason.clone())
         );
     }
-    let fields = changed_fields(resource, &entry.body, &live.entry);
+    let fields = changed_fields(
+        resource,
+        &resource.in_target(target, &entry.body),
+        &live.entry,
+    );
     if let Some(fixed) = fields
         .iter()
         .find(|field| resource.fixed_fields().contains(&field.as_str()))
     {
-        return Ok(
-            Step::new(subject, section, &entry.id, Action::Conflict).with_message(format!(
+        // Naming the stored value shows the way out that needs no new id:
+        // a document that merely leaves the field out, or states the value
+        // the resource had before an upgrade changed it, only has to say
+        // what is stored.
+        let message = match live.entry.get(fixed.as_str()) {
+            Some(Value::Null) | None => format!(
                 "`{fixed}` cannot be changed once the resource exists; declare it under a new id"
-            )),
-        );
+            ),
+            Some(stored) => {
+                let stored = stored
+                    .as_str()
+                    .map_or_else(|| stored.to_string(), str::to_owned);
+                format!(
+                    "`{fixed}` cannot be changed once the resource exists, and it is stored as `{stored}`; state that value, or declare the resource under a new id"
+                )
+            }
+        };
+        return Ok(Step::new(subject, section, &entry.id, Action::Conflict).with_message(message));
     }
     let secret_replaced = if resource.secret_field().is_some() {
         resource
@@ -872,6 +1005,98 @@ mod tests {
         );
     }
 
+    /// A document's target, for what depends only on whether it is the
+    /// deployment. Nothing is sent.
+    fn target(deployment: bool) -> Target {
+        Target {
+            api: HttpAgentApi::new(""),
+            universe_id: (!deployment).then(|| uuid::Uuid::nil().to_string()),
+            deployment,
+        }
+    }
+
+    fn key_view(groups: Value) -> Value {
+        json!({ "keyId": "release-bot", "displayName": "Release bot", "groups": groups, "assertActor": false })
+    }
+
+    #[test]
+    fn a_key_without_groups_is_refused_before_anything_is_read() {
+        let error = format!(
+            "{:#}",
+            entries(
+                &ApiKeys,
+                json!([{ "keyId": "release-bot", "displayName": "Release bot", "secretFrom": { "env": "K" } }]),
+            )
+            .err()
+            .expect("groups are required")
+        );
+        assert!(error.contains("apiKeys/release-bot"), "{error}");
+        assert!(error.contains("`groups` is missing"), "{error}");
+    }
+
+    #[test]
+    fn a_key_declared_with_all_is_compared_with_the_groups_its_scope_allows() {
+        let declared = |groups: Value| {
+            entries(
+                &ApiKeys,
+                json!([{ "keyId": "release-bot", "displayName": "Release bot", "groups": groups, "secretFrom": { "env": "K" } }]),
+            )
+            .unwrap()
+            .remove(0)
+            .body
+        };
+        let all = declared(json!("all"));
+        for deployment in [false, true] {
+            let target = target(deployment);
+            let scope = if deployment {
+                api::AccessScope::Deployment
+            } else {
+                api::AccessScope::Universe {
+                    universe_id: uuid::Uuid::nil(),
+                }
+            };
+            let allowed: Vec<api::MethodGroup> =
+                api::MethodGroup::allowed_in(scope).into_iter().collect();
+
+            // The stored key holds everything its scope allows: as declared.
+            let current = key_view(json!(allowed));
+            assert!(
+                changed_fields(&ApiKeys, &ApiKeys.in_target(&target, &all), &current).is_empty()
+            );
+
+            // A key stored before a group existed lacks it, which shows as a
+            // change to make and is never taken as already granted.
+            let earlier = key_view(json!(allowed[..allowed.len() - 1]));
+            assert_eq!(
+                changed_fields(&ApiKeys, &ApiKeys.in_target(&target, &all), &earlier),
+                ["groups"]
+            );
+        }
+
+        // A list is compared as written, whatever order it was written in.
+        let listed = declared(json!(["profiles", "session"]));
+        let target = target(false);
+        assert!(
+            changed_fields(
+                &ApiKeys,
+                &ApiKeys.in_target(&target, &listed),
+                &key_view(json!(["session", "profiles"]))
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            changed_fields(
+                &ApiKeys,
+                &ApiKeys.in_target(&target, &listed),
+                &key_view(json!(["session", "profiles", "models"]))
+            ),
+            ["groups"]
+        );
+        // What is written is the declaration itself, so the runtime decides
+        // what `all` holds.
+        assert_eq!(all["groups"], "all");
+    }
+
     #[test]
     fn model_defaults_and_environment_credentials_become_entries() {
         let document: super::super::document::UniverseDocument = serde_json::from_value(json!({
@@ -916,6 +1141,35 @@ mod tests {
             references("environments", &environments[0].body),
             [("registrationKeys", "runners".to_owned())]
         );
+        // A provider refers to the credential it signs in with and to every
+        // credential one of its endpoint headers carries; a plain header
+        // refers to nothing.
+        let providers = entries(
+            &Providers,
+            json!([{
+                "providerId": "model:router",
+                "config": {
+                    "type": "modelOAuth",
+                    "grantId": "router-sign-in",
+                    "endpoint": {
+                        "baseUrl": "https://router.example/v1",
+                        "apiKinds": ["openai:completions"],
+                        "headers": {
+                            "X-Api-Key": { "type": "credential", "grantId": "router-key" },
+                            "x-title": { "type": "literal", "value": "Lightspeed" }
+                        }
+                    }
+                }
+            }]),
+        )
+        .unwrap();
+        assert_eq!(
+            references("providers", &providers[0].body),
+            [
+                ("credentials", "router-sign-in".to_owned()),
+                ("credentials", "router-key".to_owned())
+            ]
+        );
         assert_eq!(
             references("environments.credentials", &bindings[0].body),
             [("credentials", "tracker-token".to_owned())]
@@ -936,5 +1190,223 @@ mod tests {
         let conflict = Step::new("universe research", "apiKeys", "bot", Action::Conflict)
             .with_message("is revoked");
         assert_eq!(conflict.line(), "  conflict    apiKeys/bot: is revoked");
+    }
+
+    fn checked(
+        section: &'static str,
+        resource: &dyn Resource,
+        raw: Value,
+    ) -> (&'static str, Vec<Entry>) {
+        (section, entries(resource, raw).unwrap())
+    }
+
+    fn live(entry: Value) -> Live {
+        Live {
+            entry,
+            ..Live::default()
+        }
+    }
+
+    fn bound(source: Value) -> (&'static str, Vec<Entry>) {
+        checked(
+            "environments.credentials",
+            &EnvironmentCredentials,
+            json!([{ "environmentId": "build-box", "envName": "TOKEN", "source": source }]),
+        )
+    }
+
+    #[test]
+    fn a_document_cannot_bind_a_brokered_credential_into_an_environment() {
+        let binding = || bound(json!({ "type": "authGrant", "grantId": "repo-token" }));
+        let declared = |exposure: &str| {
+            checked(
+                "credentials",
+                &Credentials,
+                json!([{ "grantId": "repo-token", "exposure": exposure, "tokenFrom": { "env": "T" } }]),
+            )
+        };
+
+        // Declared in the same document.
+        let retrievable = BTreeMap::from([declared("retrievable"), binding()]);
+        check_bound_credentials("universe demo", &retrievable, &BTreeMap::new()).unwrap();
+        let brokered = BTreeMap::from([declared("brokered"), binding()]);
+        let error = check_bound_credentials("universe demo", &brokered, &BTreeMap::new())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("environments.credentials/build-box/TOKEN"),
+            "{error}"
+        );
+        assert!(error.contains("credentials/repo-token"), "{error}");
+        assert!(error.contains("`exposure: retrievable`"), "{error}");
+
+        // A credential that leaves exposure out is brokered.
+        let defaulted = BTreeMap::from([
+            checked(
+                "credentials",
+                &Credentials,
+                json!([{ "grantId": "repo-token", "tokenFrom": { "env": "T" } }]),
+            ),
+            binding(),
+        ]);
+        assert!(check_bound_credentials("universe demo", &defaulted, &BTreeMap::new()).is_err());
+
+        // Only in the target: judged as it is stored.
+        let only_binding = BTreeMap::from([binding()]);
+        let stored = |exposure: &str| {
+            BTreeMap::from([(
+                "credentials",
+                BTreeMap::from([(
+                    "repo-token".to_owned(),
+                    live(json!({ "grantId": "repo-token", "exposure": exposure })),
+                )]),
+            )])
+        };
+        check_bound_credentials("universe demo", &only_binding, &stored("retrievable")).unwrap();
+        assert!(
+            check_bound_credentials("universe demo", &only_binding, &stored("brokered")).is_err()
+        );
+    }
+
+    #[test]
+    fn the_fix_for_a_brokered_binding_depends_on_what_is_stored() {
+        let brokered = json!({ "grantId": "repo-token", "exposure": "brokered" });
+        let retrievable = json!({ "grantId": "repo-token", "exposure": "retrievable" });
+        let fix = |declared: Option<&Value>, stored: Option<&Value>| {
+            brokered_binding_fix("repo-token", declared, stored)
+        };
+
+        // Stored as retrievable, as every bound credential is after an
+        // upgrade: the document only has to say so.
+        let stated = fix(Some(&brokered), Some(&retrievable)).unwrap();
+        assert!(
+            stated.contains("Add `exposure: retrievable` to credentials/repo-token"),
+            "{stated}"
+        );
+        assert!(stated.contains("no new id is needed"), "{stated}");
+
+        // Stored as brokered: exposure cannot be turned, declared or not.
+        for declared in [Some(&brokered), None] {
+            let replaced = fix(declared, Some(&brokered)).unwrap();
+            assert!(replaced.contains("under a new id"), "{replaced}");
+        }
+
+        // Not stored yet: the document decides, and nothing needs a new id.
+        let created = fix(Some(&brokered), None).unwrap();
+        assert!(created.contains("`exposure: retrievable`"), "{created}");
+        assert!(!created.contains("new id"), "{created}");
+
+        // Nothing to fix. A stored brokered credential declared retrievable
+        // is the credential's own conflict, and a stored view that is not a
+        // token credential is left to the runtime.
+        assert_eq!(fix(Some(&retrievable), Some(&retrievable)), None);
+        assert_eq!(fix(Some(&retrievable), Some(&brokered)), None);
+        assert_eq!(fix(Some(&retrievable), None), None);
+        assert_eq!(fix(None, Some(&retrievable)), None);
+        assert_eq!(fix(None, Some(&Value::Null)), None);
+        assert_eq!(fix(None, None), None);
+    }
+
+    #[test]
+    fn a_document_binds_a_provider_credential_only_from_a_model_api_key_provider() {
+        let provider = |config: Value| {
+            BTreeMap::from([(
+                "providers",
+                BTreeMap::from([(
+                    "p".to_owned(),
+                    live(json!({ "providerId": "p", "config": config })),
+                )]),
+            )])
+        };
+        let binding = BTreeMap::from([bound(
+            json!({ "type": "authProviderCredential", "providerId": "p" }),
+        )]);
+
+        check_bound_credentials(
+            "universe demo",
+            &binding,
+            &provider(json!({ "type": "modelApiKey" })),
+        )
+        .unwrap();
+
+        let github = check_bound_credentials(
+            "universe demo",
+            &binding,
+            &provider(json!({ "type": "githubApp", "appId": "1" })),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(github.contains("providers/p"), "{github}");
+        assert!(
+            github.contains("GitHub App installation credential"),
+            "{github}"
+        );
+
+        assert!(
+            check_bound_credentials(
+                "universe demo",
+                &binding,
+                &provider(json!({ "type": "modelOAuth", "grantId": "g" })),
+            )
+            .is_err()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_credentials_exposure_cannot_be_changed_by_apply() {
+        let declared = entries(
+            &Credentials,
+            json!([{ "grantId": "repo-token", "exposure": "retrievable", "tokenFrom": { "env": "T" } }]),
+        )
+        .unwrap()
+        .remove(0);
+        let stored = live(json!({ "grantId": "repo-token", "exposure": "brokered" }));
+
+        // Refused while planning: nothing is sent, not even the comparison
+        // of the token.
+        let step = plan_entry(
+            "universe demo",
+            0,
+            &Credentials,
+            &target(false),
+            &declared,
+            Some("token".to_owned()),
+            Some(&stored),
+        )
+        .await
+        .unwrap();
+        assert_eq!(step.action, Action::Conflict);
+        let message = step.message.expect("the conflict says why");
+        assert!(
+            message.contains("`exposure` cannot be changed"),
+            "{message}"
+        );
+        assert!(message.contains("stored as `brokered`"), "{message}");
+
+        // A document written before bound credentials became retrievable
+        // leaves exposure out. The conflict names the stored value, which is
+        // all the document has to state.
+        let outdated = entries(
+            &Credentials,
+            json!([{ "grantId": "repo-token", "tokenFrom": { "env": "T" } }]),
+        )
+        .unwrap()
+        .remove(0);
+        let upgraded = live(json!({ "grantId": "repo-token", "exposure": "retrievable" }));
+        let step = plan_entry(
+            "universe demo",
+            0,
+            &Credentials,
+            &target(false),
+            &outdated,
+            Some("token".to_owned()),
+            Some(&upgraded),
+        )
+        .await
+        .unwrap();
+        assert_eq!(step.action, Action::Conflict);
+        let message = step.message.expect("the conflict says why");
+        assert!(message.contains("stored as `retrievable`"), "{message}");
+        assert!(message.contains("state that value"), "{message}");
     }
 }

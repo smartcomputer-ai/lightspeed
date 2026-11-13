@@ -1,6 +1,6 @@
 /// In-memory state behind the browser demo. Fixtures fill it at boot, the
 /// stub routes read and mutate it, and nothing survives a reload.
-import { effectiveFeatures, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor } from "@lightspeed-ai/platform-shared";
+import { effectiveFeatures, mergeFeatureOverrides, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor } from "@lightspeed-ai/platform-shared";
 import type {
   BlobContent,
   ChannelsStatus,
@@ -113,11 +113,21 @@ export interface WorkspaceRecord {
   manifest: WorkspaceTree["manifest"];
 }
 
+/// A trigger as the demo keeps it: the core view plus the secrets the core
+/// stores beside it. The bot routes serve the view without them and the
+/// secrets from their own route, like the core does.
+export type StoredBotTrigger = BotTriggerView & {
+  /// Webhook triggers: the ingest path including its URL token.
+  ingestPath?: string | null;
+  /// Chat triggers with `pairing: code`.
+  pairingCode?: string | null;
+};
+
 export interface BotRecord {
   /// Core wire shape; `eventSeq` is recomputed from `events` when served.
   bot: BotView;
   /// Keyed by `triggerId`.
-  triggers: Map<string, BotTriggerView>;
+  triggers: Map<string, StoredBotTrigger>;
   /// Newest last; `seq` is the bot's #N.
   events: BotEventView[];
   /// The controller's live snapshot (core wire shape).
@@ -171,6 +181,10 @@ export interface UniverseInit {
   role?: UniverseRole | null;
   createdAt?: string;
   responder?: DemoResponder;
+  /// Feature switches to start with. A universe created in the demo has
+  /// none, like a new one on the Platform; the seeded universes switch on
+  /// what their story shows.
+  features?: FeatureOverrides;
 }
 
 export const DEFAULT_INSTRUCTIONS = "You are a helpful assistant.";
@@ -253,9 +267,9 @@ export class DemoStore {
         status: "active",
         createdAt,
         role,
-        features: effectiveFeatures({}),
+        features: effectiveFeatures(init.features),
       },
-      featureOverrides: {},
+      featureOverrides: mergeFeatureOverrides({}, init.features ?? {}),
       members: [],
       apiKeys: [],
       profiles: new Map(),

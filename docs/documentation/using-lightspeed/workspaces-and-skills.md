@@ -43,10 +43,11 @@ whole workspace. Uploaded binary files can be previewed where supported and
 downloaded without converting them to text.
 
 In a profile's **Virtual File System: Files, Instructions, Skills** section,
-enabling VFS turns on **Prompt loading** and **Skill discovery**. Choose **Add
-workspace** under **Workspace attachments** and configure its path and access.
-You can adjust the two discovery switches independently; existing profiles
-keep their saved settings.
+enable VFS, choose **Add workspace** under **Workspace attachments** and
+configure its path and access. That gives the agent the files. **Prompt
+loading** and **Skill discovery** are separate switches that start off; turn
+each on when the agent should take instructions or skills from the attached
+workspaces. Existing profiles keep their saved settings.
 
 | Setting | Meaning |
 | --- | --- |
@@ -113,8 +114,8 @@ Use "Acorn 1.2" as the release name. Preserve uncertainty in the source:
 an absent compatibility statement is not evidence of compatibility.
 ```
 
-Open the release-editor profile and check that **Prompt loading** is enabled
-under **Virtual File System**. Its default roots are `.agents/prompts` and
+Open the release-editor profile and turn on **Prompt loading** under
+**Virtual File System**. Its default roots are `.agents/prompts` and
 `.lightspeed/prompts` beneath each workspace attachment. Save, then create a
 new session or apply the updated setup to an existing idle session.
 
@@ -167,7 +168,7 @@ Ask before editing either file.
 *The walkthrough's skill file, entered in demo mode. The file tree shows its
 workspace-relative path; the instructions use session paths under `/workspace`.*
 
-Check that **Skill discovery** is enabled under **Virtual File System**.
+Turn on **Skill discovery** under **Virtual File System**.
 The default roots include `.lightspeed/skills`, so no override is needed for
 this example. Keep the workspace attached, save the profile, and start a
 session. The resulting workspace layout is:
@@ -186,9 +187,26 @@ release-notes/
 ```
 
 The filename must be `SKILL.md`. Both `name` and `description` are required
-frontmatter fields. Multiline YAML descriptions are supported. Discovery checks
+frontmatter fields; `short_description` is optional. Discovery checks
 skill directories immediately inside each root, so place `release-review`
 directly under `.lightspeed/skills` as shown.
+
+The catalog fields have fixed limits, counted in characters:
+
+| Field | Limit |
+| --- | --- |
+| `name` | 128 |
+| `description` | 2,048 |
+| `short_description` | 256 |
+
+Multiline YAML descriptions are supported, and each field is read as a single
+line: every run of spaces, tabs, and line breaks becomes one space, so a catalog
+entry is always the skill's name, description, and path on three lines. The
+limits apply to the text after that. A field that is over its limit, or that
+contains any other control character, makes that skill invalid: it is left out
+of the catalog with a warning that names the file, and the other skills in the
+root still load. The same rules apply to skills discovered on a machine. The
+body of `SKILL.md` below the frontmatter is not limited.
 
 Now send:
 
@@ -348,7 +366,7 @@ Use a snapshot when the task must keep reading a fixed version.
 | A file exists in the browser but the agent cannot find it | Combine its workspace-relative path with the attachment's session path, and check the current session setup. |
 | A write fails despite edit tools | Check attachment access and whether the target is a snapshot. Read-only attachments remain read-only. |
 | Prompt files have no effect | Enable Prompt loading, check the default or overridden roots inside attachments, use direct .md or .txt files, and start the next run after the update. |
-| A skill is absent from the catalog | Enable Skill discovery and check the default or overridden root, direct child directory, exact `SKILL.md` name, and required frontmatter. |
+| A skill is absent from the catalog | Enable Skill discovery and check the default or overridden root, direct child directory, exact `SKILL.md` name, required frontmatter, and the [field limits](#add-a-skill). The skill listing's warnings name each file that was left out and why. |
 | A discovered skill has not affected the answer | Inspect whether the agent read it, or select it with `/skill` in the chat TUI. Discovery alone loads only its catalog entry. |
 | Saving reports a revision conflict | Reload and reconcile with the intervening edit; do not assume the save was merged. |
 

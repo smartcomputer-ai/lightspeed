@@ -64,8 +64,13 @@ pub struct CallerAccess {
     pub scope: AccessScope,
     /// True only for explicitly unauthenticated local development access.
     pub single: bool,
-    /// Display prefix of the calling key; absent for a request without a
-    /// key, such as local development.
+    /// The calling key's id, unique among the keys of `scope`. It is what
+    /// records attribute the key's own requests to. Absent for a request
+    /// without a key, such as local development.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
+    /// Display prefix of the calling key's current secret; absent for a
+    /// request without a key, such as local development.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_prefix: Option<String>,
     /// The method groups the caller may call. A request without a key holds

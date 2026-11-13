@@ -100,12 +100,13 @@ impl GatewayDeploymentApi {
     }
 
     /// What a created or declared key is called and may do, once its name is
-    /// present and its universe is known to exist.
+    /// present and its universe is known to exist. The caller always states
+    /// the groups; `all` is resolved when the key is built.
     async fn api_key_spec(
         &self,
         scope: AccessScope,
         key_id: Option<String>,
-        groups: Option<Vec<api::MethodGroup>>,
+        groups: api::ApiKeyGroups,
         assert_actor: bool,
         display_name: &str,
     ) -> Result<auth::ApiKeySpec, AgentApiError> {
@@ -121,7 +122,7 @@ impl GatewayDeploymentApi {
         Ok(auth::ApiKeySpec {
             key_id,
             scope,
-            groups: groups.map(|groups| groups.into_iter().collect()),
+            groups,
             assert_actor,
             created_by: super::request_context::request_context()?.attribution(),
             display_name: Some(display_name.to_owned()),

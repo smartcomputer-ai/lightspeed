@@ -114,8 +114,8 @@ pub trait BotStore: Send + Sync {
 
 // ── Triggers ────────────────────────────────────────────────────────────────
 
-/// Server-minted trigger secrets, kept beside the document and shown only
-/// to managing principals.
+/// Trigger secrets, kept beside the document and returned only by
+/// bot-management methods, never in a trigger view.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BotTriggerSecrets {
     /// Webhook triggers: the URL path token (24 random bytes, hex).
@@ -156,10 +156,10 @@ impl BotTriggerRecord {
         matches!(self.kind(), BotTriggerKind::Schedule | BotTriggerKind::Poll)
     }
 
-    /// The wire view. `redact` hides the ingest path and pairing code
-    /// (channel-facing views); `ingest_path` is the webhook route when
-    /// the caller can build one.
-    pub fn view(&self, redact: bool, ingest_path: Option<String>) -> BotTriggerView {
+    /// The wire view. It never carries the trigger's secrets: reading a
+    /// trigger is open to every reader, and the ingest path and pairing
+    /// code let their holder reach the bot.
+    pub fn view(&self) -> BotTriggerView {
         BotTriggerView {
             bot_id: self.bot_id.clone(),
             trigger_id: self.trigger_id.clone(),
@@ -170,12 +170,6 @@ impl BotTriggerRecord {
             last_filter_error: self.last_filter_error.clone(),
             last_filter_error_at_ms: self.last_filter_error_at_ms,
             cursor_state: self.cursor.clone(),
-            ingest_path: if redact { None } else { ingest_path },
-            pairing_code: if redact {
-                None
-            } else {
-                self.secrets.pairing_code.clone()
-            },
             created_at_ms: self.created_at_ms,
             updated_at_ms: self.updated_at_ms,
         }

@@ -8,8 +8,8 @@ use temporal_runtime::{
     },
     gateway::{
         DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_TEMPORAL_NAMESPACE,
-        DEFAULT_TEMPORAL_TARGET, GatewayRoutes, GatewayState, gateway_router,
-        prewarm_single_universe, registration,
+        DEFAULT_TEMPORAL_TARGET, GatewayRoutes, GatewayState, TemporalConnectionSettings,
+        gateway_router, prewarm_single_universe, registration,
     },
     roles::{Role, RoleSet},
     universe::UniverseRuntime,
@@ -79,6 +79,32 @@ enum UniverseCommand {
     List,
 }
 
+/// The method groups a key is given. A key's authority is always stated on
+/// the command line: leaving both flags out is an error, never "everything".
+#[derive(Clone, Debug, Args)]
+struct KeyGroupArgs {
+    /// A method group the key may call (repeatable).
+    #[arg(
+        long = "group",
+        required_unless_present = "all_groups",
+        conflicts_with = "all_groups"
+    )]
+    groups: Vec<String>,
+    /// Every method group the key's scope allows in this release. The key
+    /// stores that set, so a later release does not widen it on its own.
+    #[arg(long)]
+    all_groups: bool,
+}
+
+impl KeyGroupArgs {
+    fn groups(&self) -> anyhow::Result<api::ApiKeyGroups> {
+        if self.all_groups {
+            return Ok(api::ApiKeyGroups::All);
+        }
+        parse_groups(&self.groups).map(api::ApiKeyGroups::Listed)
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum ApiKeyCommand {
     /// Declare a deployment key from the host, where no key is needed to
@@ -87,17 +113,16 @@ enum ApiKeyCommand {
     /// the key of this id answers to it with these groups; repeating the
     /// command changes nothing, and a different secret replaces the previous
     /// one at once. Without the variable a new key is generated, which fails
-    /// if the id is taken. Prints the credential as JSON; store it securely.
+    /// if the id is taken. Prints the key as JSON, with the secret only when
+    /// this command generated it; store that secret securely.
     Provision {
         /// The key's id among deployment keys.
         #[arg(long, default_value = "bootstrap")]
         key_id: String,
         #[arg(long, default_value = "Deployment bootstrap")]
         name: String,
-        /// A method group the key may call (repeatable); omitted grants
-        /// every group a deployment key may hold.
-        #[arg(long = "group")]
-        groups: Vec<String>,
+        #[command(flatten)]
+        groups: KeyGroupArgs,
         #[arg(long)]
         assert_actor: bool,
         /// Check that the supplied key exists exactly as described, without
@@ -122,10 +147,8 @@ enum ApiKeyCommand {
         key_id: Option<String>,
         #[arg(long)]
         name: Option<String>,
-        /// A method group the key may call (repeatable); omitted grants
-        /// every group the scope allows.
-        #[arg(long = "group")]
-        groups: Vec<String>,
+        #[command(flatten)]
+        groups: KeyGroupArgs,
         /// Let the key name the actor a request acts for.
         #[arg(long)]
         assert_actor: bool,
@@ -139,6 +162,8 @@ enum ApiKeyCommand {
         /// Keys of this name that are still active are revoked first.
         #[arg(long, default_value = "Local development launcher")]
         name: String,
+        #[command(flatten)]
+        groups: KeyGroupArgs,
     },
     #[command(about = "List API keys (secrets are never stored)")]
     List,
@@ -194,6 +219,37 @@ struct RunArgs {
     #[arg(long, env = "TEMPORAL_NAMESPACE", default_value = DEFAULT_TEMPORAL_NAMESPACE)]
     namespace: String,
 
+    /// Connect to Temporal over TLS: true or false. Unset, TLS is on when
+    /// another TLS setting or an API key is given, or the address is an
+    /// https:// URL.
+    #[arg(long, env = "TEMPORAL_TLS", value_name = "BOOL")]
+    temporal_tls: Option<String>,
+
+    /// PEM file of the CA that issued the Temporal server certificate.
+    /// Without it the operating system's trusted roots are used.
+    #[arg(long, env = "TEMPORAL_TLS_SERVER_CA_FILE", value_name = "PATH")]
+    temporal_tls_server_ca_file: Option<String>,
+
+    /// Name to verify the Temporal server certificate against instead of
+    /// the host in the address.
+    #[arg(long, env = "TEMPORAL_TLS_SERVER_NAME", value_name = "NAME")]
+    temporal_tls_server_name: Option<String>,
+
+    /// PEM file of the client certificate presented to Temporal. Needs
+    /// the key file too.
+    #[arg(long, env = "TEMPORAL_TLS_CLIENT_CERT_FILE", value_name = "PATH")]
+    temporal_tls_client_cert_file: Option<String>,
+
+    /// PEM file of the client certificate's private key.
+    #[arg(long, env = "TEMPORAL_TLS_CLIENT_KEY_FILE", value_name = "PATH")]
+    temporal_tls_client_key_file: Option<String>,
+
+    /// File holding the Temporal API key. The key itself can be given in
+    /// TEMPORAL_API_KEY instead; it has no flag, so that it never shows in
+    /// a process listing.
+    #[arg(long, env = "TEMPORAL_API_KEY_FILE", value_name = "PATH")]
+    temporal_api_key_file: Option<String>,
+
     #[arg(
         long,
         env = "LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES",
@@ -221,6 +277,23 @@ struct RunArgs {
 impl RunArgs {
     fn roles(&self) -> anyhow::Result<RoleSet> {
         RoleSet::parse(self.roles.as_deref().unwrap_or("")).map_err(|error| anyhow::anyhow!(error))
+    }
+
+    /// The Temporal connection these arguments describe. Every flag already
+    /// carries its environment variable; `api_key` is the one setting read
+    /// from the environment alone.
+    fn temporal_settings(&self, api_key: Option<String>) -> TemporalConnectionSettings {
+        TemporalConnectionSettings {
+            address: Some(self.temporal_target.clone()),
+            namespace: Some(self.namespace.clone()),
+            tls: self.temporal_tls.clone(),
+            tls_server_ca_file: self.temporal_tls_server_ca_file.clone(),
+            tls_server_name: self.temporal_tls_server_name.clone(),
+            tls_client_cert_file: self.temporal_tls_client_cert_file.clone(),
+            tls_client_key_file: self.temporal_tls_client_key_file.clone(),
+            api_key,
+            api_key_file: self.temporal_api_key_file.clone(),
+        }
     }
 
     fn task_queues(&self) -> anyhow::Result<TaskQueues> {
@@ -402,9 +475,7 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
             let spec = auth::ApiKeySpec {
                 key_id: Some(key_id),
                 scope: api::AccessScope::Deployment,
-                groups: (!groups.is_empty())
-                    .then(|| parse_groups(&groups))
-                    .transpose()?,
+                groups: groups.groups()?,
                 assert_actor,
                 created_by: host("api-key provision"),
                 display_name: Some(name),
@@ -413,15 +484,24 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
             if require_existing && supplied.is_none() {
                 anyhow::bail!("--require-existing needs LIGHTSPEED_BOOTSTRAP_API_KEY");
             }
-            let (key, record, created, secret_replaced) = match supplied {
+            let provisioned = match supplied {
                 Some(secret) => {
                     let key = auth::import_api_key(spec, now_ms, secret.trim())?;
                     if require_existing {
-                        let record = api_keys.verify_api_key(&key).await?;
-                        (key, record, false, false)
+                        ProvisionedKey {
+                            record: api_keys.verify_api_key(&key).await?,
+                            generated_secret: None,
+                            created: false,
+                            secret_replaced: false,
+                        }
                     } else {
                         let put = api_keys.put_api_key(&key).await?;
-                        (key, put.record, put.created, put.secret_replaced)
+                        ProvisionedKey {
+                            record: put.record,
+                            generated_secret: None,
+                            created: put.created,
+                            secret_replaced: put.secret_replaced,
+                        }
                     }
                 }
                 // A generated secret makes a new key and never replaces the
@@ -432,20 +512,15 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                             "{error}; set LIGHTSPEED_BOOTSTRAP_API_KEY to declare an existing key, or rotate it"
                         )
                     })?;
-                    let record = key.record.clone();
-                    (key, record, true, false)
+                    ProvisionedKey {
+                        record: key.record.clone(),
+                        generated_secret: Some(key.secret),
+                        created: true,
+                        secret_replaced: false,
+                    }
                 }
             };
-            println!(
-                "{}",
-                serde_json::json!({
-                    "keyId": record.key_id,
-                    "keyPrefix": record.key_prefix,
-                    "secret": key.secret.expose(),
-                    "created": created,
-                    "secretReplaced": secret_replaced,
-                })
-            );
+            println!("{}", provisioned.output());
             Ok(())
         }
         ApiKeyCommand::Create {
@@ -467,9 +542,7 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                 }
                 None => api::AccessScope::Deployment,
             };
-            let groups = (!groups.is_empty())
-                .then(|| parse_groups(&groups))
-                .transpose()?;
+            let groups = groups.groups()?;
             let minted = mint(
                 &api_keys,
                 auth::ApiKeySpec {
@@ -490,7 +563,12 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
             println!("secret: {}", minted.secret.expose());
             Ok(())
         }
-        ApiKeyCommand::Bootstrap { universe_id, name } => {
+        ApiKeyCommand::Bootstrap {
+            universe_id,
+            name,
+            groups,
+        } => {
+            let groups = groups.groups()?;
             stores.store_for(universe_id).ensure_universe().await?;
             // One local stack at a time: retire keys from previous launcher
             // runs without ever persisting their secrets.
@@ -511,7 +589,7 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                 auth::ApiKeySpec {
                     key_id: None,
                     scope: api::AccessScope::Deployment,
-                    groups: None,
+                    groups,
                     assert_actor: true,
                     created_by: host("api-key bootstrap"),
                     display_name: Some(name),
@@ -592,6 +670,33 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
     }
 }
 
+/// What `api-key provision` did, and the secret only when the command made
+/// it.
+struct ProvisionedKey {
+    record: auth::ApiKeyRecord,
+    /// `None` when the caller supplied the secret: they hold it already, and
+    /// repeating it would copy it into the output of every start-up job and
+    /// whatever collects that output.
+    generated_secret: Option<auth::SecretValue>,
+    created: bool,
+    secret_replaced: bool,
+}
+
+impl ProvisionedKey {
+    fn output(&self) -> serde_json::Value {
+        let mut output = serde_json::json!({
+            "keyId": self.record.key_id,
+            "keyPrefix": self.record.key_prefix,
+            "created": self.created,
+            "secretReplaced": self.secret_replaced,
+        });
+        if let Some(secret) = &self.generated_secret {
+            output["secret"] = serde_json::Value::String(secret.expose().to_owned());
+        }
+        output
+    }
+}
+
 /// The scope a host command addresses a key in: a universe, or the
 /// deployment when none is named.
 fn key_scope(universe_id: Option<uuid::Uuid>) -> api::AccessScope {
@@ -641,8 +746,10 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     let task_queues = args.task_queues()?;
     let mode = gateway_auth_mode_from_env()?;
     let runtime = worker::worker_runtime()?;
-    let client =
-        temporal_runtime::gateway::connect_temporal(&args.temporal_target, &args.namespace).await?;
+    let temporal = args
+        .temporal_settings(TemporalConnectionSettings::from_env()?.api_key)
+        .resolve()?;
+    let client = temporal_runtime::gateway::connect_temporal(&temporal).await?;
     let stores = DeploymentStores::from_env()
         .await?
         .with_blob_cache(temporal_runtime::config::blob_cache_from_env()?);
@@ -678,7 +785,10 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
         target: "temporal_runtime",
         roles = %roles,
         temporal_target = %args.temporal_target,
-        namespace = %args.namespace,
+        namespace = %temporal.namespace(),
+        temporal_tls = temporal.tls().is_some(),
+        temporal_client_certificate = temporal.uses_client_certificate(),
+        temporal_api_key = temporal.uses_api_key(),
         sessions_queue = %task_queues.sessions,
         bots_queue = %task_queues.bots,
         channels_queue = %task_queues.channels,
@@ -922,6 +1032,7 @@ fn init_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use temporal_runtime::gateway::TemporalConfigError;
 
     #[tokio::test(flavor = "current_thread")]
     async fn sigterm_starts_graceful_shutdown() {
@@ -951,6 +1062,101 @@ mod tests {
         let error = Cli::try_parse_from(["lightspeed-runtime", "--task-types", "workflows"])
             .expect_err("removed polling override must be rejected");
         assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn temporal_flags_describe_one_connection() {
+        let cli = Cli::try_parse_from([
+            "lightspeed-runtime",
+            "--temporal-target",
+            "temporal.internal:7233",
+            "--namespace",
+            "lightspeed",
+            "--temporal-tls",
+            "true",
+            "--temporal-tls-server-ca-file",
+            "/etc/temporal/ca.pem",
+            "--temporal-tls-server-name",
+            "frontend.temporal.internal",
+            "--temporal-tls-client-cert-file",
+            "/etc/temporal/client.pem",
+            "--temporal-tls-client-key-file",
+            "/etc/temporal/client.key",
+            "--temporal-api-key-file",
+            "/run/secrets/temporal-api-key",
+        ])
+        .expect("parse Temporal connection flags");
+        let config = cli
+            .run
+            .temporal_settings(None)
+            .resolve()
+            .expect("consistent Temporal settings");
+
+        assert_eq!(config.target().as_str(), "https://temporal.internal:7233/");
+        assert_eq!(config.namespace(), "lightspeed");
+        let tls = config.tls().expect("TLS is on");
+        assert_eq!(
+            tls.server_ca_file.as_deref(),
+            Some(std::path::Path::new("/etc/temporal/ca.pem"))
+        );
+        assert_eq!(
+            tls.server_name.as_deref(),
+            Some("frontend.temporal.internal")
+        );
+        assert!(config.uses_client_certificate());
+        assert!(config.uses_api_key());
+    }
+
+    #[test]
+    fn inconsistent_temporal_settings_fail_before_connecting() {
+        // Every flag is given, blank where unset, so the variables of the
+        // shell that runs the test cannot leak into the parse.
+        let parse = |tls: &str, cert: &str, key: &str| {
+            Cli::try_parse_from([
+                "lightspeed-runtime",
+                "--temporal-target",
+                "temporal.internal:7233",
+                "--namespace",
+                "lightspeed",
+                "--temporal-tls",
+                tls,
+                "--temporal-tls-server-ca-file",
+                "",
+                "--temporal-tls-server-name",
+                "",
+                "--temporal-tls-client-cert-file",
+                cert,
+                "--temporal-tls-client-key-file",
+                key,
+                "--temporal-api-key-file",
+                "",
+            ])
+            .expect("parse Temporal connection flags")
+            .run
+        };
+
+        assert!(matches!(
+            parse("", "/etc/temporal/client.pem", "")
+                .temporal_settings(None)
+                .resolve(),
+            Err(TemporalConfigError::IncompleteClientCertificate { .. })
+        ));
+        assert!(matches!(
+            parse("sometimes", "", "").temporal_settings(None).resolve(),
+            Err(TemporalConfigError::InvalidTlsSwitch)
+        ));
+        assert!(matches!(
+            parse("", "", "")
+                .temporal_settings(Some("key-1".to_owned()))
+                .resolve(),
+            Ok(config) if config.tls().is_some() && config.uses_api_key()
+        ));
+        let plain = parse("", "", "")
+            .temporal_settings(None)
+            .resolve()
+            .expect("no TLS setting");
+        assert!(plain.tls().is_none());
+        assert_eq!(plain.target().as_str(), "http://temporal.internal:7233/");
     }
 
     #[test]
@@ -1052,23 +1258,127 @@ mod tests {
         };
         assert!(assert_actor);
         assert_eq!(
-            parse_groups(&groups).unwrap(),
+            groups.groups().unwrap(),
             [
                 api::MethodGroup::ChannelsInbound,
                 api::MethodGroup::DeploymentChannels
             ]
             .into_iter()
-            .collect()
+            .collect::<api::ApiKeyGroups>()
         );
         assert!(parse_groups(&["identity".into()]).is_err());
+    }
+
+    /// The groups of each key-making command, or the parse error.
+    fn key_groups(command: &[&str]) -> Result<api::ApiKeyGroups, clap::Error> {
+        let arguments = ["server", "api-key"].iter().chain(command).copied();
+        let groups = match Cli::try_parse_from(arguments)?.command {
+            Some(Command::ApiKey(
+                ApiKeyCommand::Provision { groups, .. }
+                | ApiKeyCommand::Create { groups, .. }
+                | ApiKeyCommand::Bootstrap { groups, .. },
+            )) => groups,
+            other => panic!("expected a command that makes a key, got {other:?}"),
+        };
+        Ok(groups.groups().expect("known groups"))
+    }
+
+    #[test]
+    fn every_key_making_command_states_its_groups() {
+        let id = "00000000-0000-4000-8000-000000000001";
+        for command in [
+            vec!["provision"],
+            vec!["create", "--deployment"],
+            vec!["create", "--universe-id", id],
+            vec!["bootstrap", "--universe-id", id],
+        ] {
+            // Leaving the groups out is an error, never every group.
+            let missing = key_groups(&command).unwrap_err();
+            assert_eq!(
+                missing.kind(),
+                clap::error::ErrorKind::MissingRequiredArgument,
+                "{command:?}"
+            );
+
+            let mut all = command.clone();
+            all.push("--all-groups");
+            assert_eq!(key_groups(&all).unwrap(), api::ApiKeyGroups::All);
+
+            let mut listed = command.clone();
+            listed.extend(["--group", "session", "--group", "models"]);
+            assert_eq!(
+                key_groups(&listed).unwrap(),
+                [api::MethodGroup::Session, api::MethodGroup::Models]
+                    .into_iter()
+                    .collect::<api::ApiKeyGroups>()
+            );
+
+            let mut both = listed.clone();
+            both.push("--all-groups");
+            assert_eq!(
+                key_groups(&both).unwrap_err().kind(),
+                clap::error::ErrorKind::ArgumentConflict,
+                "{command:?}"
+            );
+        }
+    }
+
+    fn provisioned(generated_secret: Option<&str>) -> ProvisionedKey {
+        let key = auth::import_api_key(
+            auth::ApiKeySpec {
+                key_id: Some("bootstrap".into()),
+                scope: api::AccessScope::Deployment,
+                groups: api::ApiKeyGroups::All,
+                assert_actor: false,
+                created_by: api::Attribution::Local,
+                display_name: None,
+            },
+            1,
+            &format!("lsk_{}", "A".repeat(43)),
+        )
+        .unwrap();
+        ProvisionedKey {
+            record: key.record,
+            generated_secret: generated_secret.map(auth::SecretValue::from),
+            created: generated_secret.is_some(),
+            secret_replaced: false,
+        }
+    }
+
+    #[test]
+    fn provision_prints_a_secret_only_when_it_generated_one() {
+        let supplied = provisioned(None).output();
+        assert!(supplied.get("secret").is_none());
+        assert_eq!(supplied["keyId"], "bootstrap");
+        assert_eq!(supplied["created"], false);
+        assert_eq!(supplied["secretReplaced"], false);
+        assert!(
+            supplied["keyPrefix"]
+                .as_str()
+                .is_some_and(|prefix| prefix.len() == auth::API_KEY_DISPLAY_PREFIX_LEN)
+        );
+        // Nothing in the output of a supplied key is the secret itself.
+        assert!(!supplied.to_string().contains(&"A".repeat(43)));
+
+        let generated = provisioned(Some("lsk_generated")).output();
+        assert_eq!(generated["secret"], "lsk_generated");
+        assert_eq!(generated["created"], true);
     }
 
     #[test]
     fn bootstrap_and_universe_creation_need_no_identity() {
         let id = "00000000-0000-4000-8000-000000000001";
-        assert!(Cli::try_parse_from(["server", "api-key", "bootstrap"]).is_err());
+        assert!(Cli::try_parse_from(["server", "api-key", "bootstrap", "--all-groups"]).is_err());
         assert!(
-            Cli::try_parse_from(["server", "api-key", "bootstrap", "--universe-id", id]).is_ok()
+            Cli::try_parse_from([
+                "server",
+                "api-key",
+                "bootstrap",
+                "--universe-id",
+                id,
+                "--all-groups"
+            ])
+            .is_ok()
         );
         assert!(Cli::try_parse_from(["server", "universe", "create"]).is_ok());
         assert!(Cli::try_parse_from(["server", "identity", "development"]).is_err());

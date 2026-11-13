@@ -380,7 +380,7 @@ Clears active environment selection without changing or closing the universe env
 
 **Bind a credential into an environment**
 
-Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.
+Maps an environment variable name to a retrievable credential grant or to a model API key provider's stored key. Commands in the environment receive the plain value, so a brokered grant and any other provider credential are refused. Requires configuring resources in the universe. The response exposes only the source handle, never secret material.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
@@ -406,7 +406,7 @@ Returns variable names and credential source handles for a universe environment;
 
 **Unbind an environment credential**
 
-Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.
+Removes one variable-to-credential mapping without deleting the underlying grant or provider credential.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
@@ -1082,7 +1082,7 @@ Deletes the catalog document. Existing session configs that reference it are not
 
 **Import a token credential**
 
-Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.
+Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
@@ -1322,7 +1322,7 @@ Uses the registered GitHub App provider credential to query accessible installat
 
 **Grant access to a GitHub App installation**
 
-Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.
+Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
@@ -1335,7 +1335,7 @@ Creates or refreshes a universe auth grant for one accessible installation. The 
 
 **Create a bot**
 
-Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.
+Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.
 
 - Access: `{"kind":"universe","action":"createBot"}`
 - Group: `bots`
@@ -1439,7 +1439,7 @@ Asks the controller to close one of the bot's sessions at its next idle boundary
 
 **Create or replace a trigger**
 
-Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.
+Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.
 
 - Access: `{"kind":"universe","action":"manageBot"}`
 - Group: `bots`
@@ -1452,7 +1452,7 @@ Validates the trigger document (CEL parses, grants exist, one inbox per bot, cha
 
 **Read a trigger**
 
-Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.
+Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `bots`
@@ -1465,7 +1465,7 @@ Returns one trigger with its incidents and cursor; the ingest path and pairing c
 
 **List a bot's triggers**
 
-Returns every trigger of the bot ordered by id, secrets included for bot-management callers.
+Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `bots`
@@ -1473,6 +1473,19 @@ Returns every trigger of the bot ordered by id, secrets included for bot-managem
 - Target: `none`
 - Params: `BotTriggerListParams`
 - Result: `AgentApiOutcome<BotTriggerListResponse>`
+
+### `bots/triggers/secrets/read`
+
+**Read a trigger's secrets**
+
+Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.
+
+- Access: `{"kind":"universe","action":"manageBot"}`
+- Group: `bots`
+- Role: `operator`
+- Target: `none`
+- Params: `BotTriggerSecretsReadParams`
+- Result: `AgentApiOutcome<BotTriggerSecretsReadResponse>`
 
 ### `bots/triggers/delete`
 

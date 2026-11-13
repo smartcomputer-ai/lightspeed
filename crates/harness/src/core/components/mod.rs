@@ -24,7 +24,7 @@ pub mod turn;
 pub mod workflow_tool;
 
 pub use approval::*;
-pub use attribution::Attribution;
+pub use attribution::{AttributedKeyScope, Attribution};
 pub use code_tool::*;
 pub use command::*;
 pub use config::*;

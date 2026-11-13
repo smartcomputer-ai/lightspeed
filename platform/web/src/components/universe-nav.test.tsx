@@ -8,10 +8,11 @@ import { PermissionIdentityProvider, type PermissionAction } from "@/lib/permiss
 import { SettingsIndexRedirect, settingsIndexPath } from "./universe-nav";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
+const ALL_ON = vi.hoisted(() => ({ bots: true, channels: true }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", async (original) => ({
   ...await original<typeof import("@/lib/universes")>(),
-  useActiveUniverse: () => ({ universe: { id: "universe", handle: "test", name: "Test", role: mocks.role }, handle: "test", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "universe", handle: "test", name: "Test", role: mocks.role, features: ALL_ON }, handle: "test", isLoading: false }),
 }));
 
 const ROLE_ACTIONS: Record<string, PermissionAction[]> = {
@@ -28,7 +29,14 @@ const DESTINATIONS: [string, string][] = [
 ];
 
 it.each(DESTINATIONS)("resolves bare settings for a %s to %s", (role, path) => {
-  expect(settingsIndexPath({ handle: "test" }, (action) => ROLE_ACTIONS[role]!.includes(action))).toBe(path);
+  expect(settingsIndexPath({ handle: "test", features: ALL_ON }, (action) => ROLE_ACTIONS[role]!.includes(action))).toBe(path);
+});
+
+it("treats a universe that names no feature states as having every feature off", () => {
+  const operator = (action: PermissionAction) => ROLE_ACTIONS.operator!.includes(action);
+  expect(settingsIndexPath({ handle: "test" }, operator)).toBe("/u/test/settings/templates");
+  const viewer = (action: PermissionAction) => ROLE_ACTIONS.viewer!.includes(action);
+  expect(settingsIndexPath({ handle: "test" }, viewer)).toBe("/u/test/sessions");
 });
 
 it("skips a switched-off settings page, and lands on sessions when bots are off", () => {

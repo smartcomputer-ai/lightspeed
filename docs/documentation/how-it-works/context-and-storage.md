@@ -80,6 +80,11 @@ the provider's call. If a provider refuses a combination, the run fails as
 `requestRejected` with the provider's message, and the session stays open so the
 user can switch back.
 
+Because each request carries its whole input, nothing depends on the provider
+keeping a copy. OpenAI Responses requests are sent with `store: false`, which
+asks the provider not to keep the response for later retrieval. No session or
+profile setting turns storage on.
+
 Durable model selection contains the provider ID, API kind, and model name.
 The endpoint, authentication, and transport headers are resolved outside the
 harness immediately before provider I/O. This allows credentials to change

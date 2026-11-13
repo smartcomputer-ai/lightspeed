@@ -45,7 +45,7 @@ If the runtime exits before serving, check the error against these dependencies:
 | --- | --- |
 | PostgreSQL connection | The runtime database URL, credentials, network path, and required connection options. Container-local `localhost` is not the database host. With workload identity, the error names the stage: the token file, the Entra exchange with its `AADSTS` code, or the login, where the URL user must be the identity's name and that role must exist. |
 | Schema verification | Use the deployed release's `schema-version` diagnostic. The runtime never migrates implicitly; follow the explicit migration procedure. |
-| Temporal connection | The frontend address and an existing namespace, reachable from the process. |
+| Temporal connection | The frontend address and an existing namespace, reachable from the process. A `TEMPORAL_…` variable named in the error is a setting that contradicts another or a certificate, key, or API key file that cannot be used. A handshake or certificate error means the server certificate does not chain to `TEMPORAL_TLS_SERVER_CA_FILE` (or the system roots) or does not name the host dialed; a frontend that expects TLS or a credential and gets neither usually closes the connection or answers that the caller is unauthenticated. See [Secure the Temporal connection](configuration.md#secure-the-temporal-connection). |
 | Object-store configuration | S3 requires a bucket; `LIGHTSPEED_OBJECT_STORE_BACKEND=azure` requires account, container, and exactly one access key or SAS token, or `LIGHTSPEED_OBJECT_STORE_AZURE_AUTH_MODE=workload_identity` with `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and an absolute `AZURE_FEDERATED_TOKEN_FILE`. Check for settings mixed between backends and use the intended endpoint. |
 | Role or environment routing | Valid roles and the internal environment gateway URL/token on every process without that role. |
 | Secret configuration | A base64 master key decoding to 32 bytes, matching the stored encrypted state. |
@@ -80,7 +80,10 @@ audience appears absent. See [People and roles](../access-and-security/people-an
 for the permission matrix.
 
 For runtime errors, verify the endpoint, key status, key scope, and allowed
-method groups. The Platform needs a deployment key allowed to assert actors.
+method groups. An HTTP 401 from `/rpc` means the request presented no valid key:
+the key is missing, malformed, unknown, or revoked. A key that is valid but not
+allowed to make the call is refused with a `forbidden` JSON-RPC error instead.
+The Platform needs a deployment key allowed to assert actors.
 It sends the runtime universe UUID, not the handle shown in the browser URL.
 A direct universe key must omit `x-lightspeed-universe`; a deployment key must
 send it for universe methods and omit it for deployment methods. See
@@ -176,8 +179,10 @@ server's private-network opt-in and the runtime's host/CIDR allowlist. An
 "outbound hostname resolved to a forbidden address" failure means neither the
 server's hostname nor an address it resolves to is covered by
 `LIGHTSPEED_MCP_PRIVATE_NETWORKS`; every resolved address must fall inside a
-listed range unless the hostname itself is listed. OAuth
-network permission is separate. Provider-hosted execution requires the model
+listed range unless the hostname itself is listed. An OAuth sign-in uses the
+same list and checks each endpoint by its own host, so the same failure during
+sign-in usually means the authorization server is not listed even though the MCP
+server is. Provider-hosted execution requires the model
 provider to reach the MCP endpoint, which is a different network path from
 the runtime reaching it. [Tools and MCP](../using-lightspeed/tools-and-mcp.md)
 explains execution modes and discovery behavior.

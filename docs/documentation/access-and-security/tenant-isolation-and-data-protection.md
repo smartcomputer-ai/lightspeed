@@ -88,12 +88,19 @@ enter Lightspeed. Sharing an environment also shares access to credentials
 injected into processes on that environment. Keeping a session private does
 not narrow the external permissions of those credentials.
 
-Bot trigger metadata also carries access material. Current trigger read and
-list responses include bearer webhook ingest paths and chat pairing codes,
-and the Platform permits those methods from Viewer upward. Treat those values
-as available to universe members; they are not restricted to bot managers.
-See [Bots and triggers](../using-lightspeed/bots-and-triggers.md) for trigger
-setup and the separate HMAC and pairing mechanisms.
+A bot trigger also holds access material: a webhook's ingest path is a bearer
+value, and a chat trigger's pairing code connects a conversation. Trigger read
+and list responses, which the Platform permits from Viewer upward, never
+include either. They are returned only by bot-management methods, which the
+Platform holds to Operator: `bots/triggers/secrets/read`, and the answers to
+creating a bot with triggers or creating or replacing a trigger. A universe
+API key with the `bots` group can call all of these, since key groups do not
+tell reading from managing; give that group only to keys that may manage
+bots. One value can still reach every member: a bot allowed to change its own
+triggers is told the ingest URL or pairing code of a trigger it creates, once,
+in its Main conversation, and bot conversations are readable by the whole
+universe. See [Bots and triggers](../using-lightspeed/bots-and-triggers.md) for
+trigger setup and the separate HMAC and pairing mechanisms.
 
 ## Machines, files, and external services
 
