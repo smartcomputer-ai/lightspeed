@@ -48,6 +48,7 @@ impl ResourceAccess {
 
 #[derive(Clone)]
 pub struct PgAccessStore {
+    changes: std::sync::Arc<crate::changes::ChangeBus>,
     pub(crate) pool: PgPool,
 }
 
@@ -167,8 +168,25 @@ fn content_table(resource: &ResourceRef) -> (&'static str, &'static str) {
 }
 
 impl PgAccessStore {
+    pub fn with_changes(mut self, changes: std::sync::Arc<crate::changes::ChangeBus>) -> Self {
+        self.changes = changes;
+        self
+    }
+
+    fn publish_sessions(&self, universe: Uuid, rows: Vec<(String, i64)>) {
+        for (id, revision) in rows {
+            let mut change =
+                crate::changes::Change::new(universe, crate::changes::ChangeKind::Session, id);
+            change.rev = u64::try_from(revision).ok();
+            self.changes.publish(change);
+        }
+    }
+
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            changes: Default::default(),
+        }
     }
 
     /// Whether the resource exists in the universe.
@@ -205,18 +223,28 @@ impl PgAccessStore {
         visibility: Option<Visibility>,
         bot: Option<&str>,
     ) -> Result<(), AccessStoreError> {
-        sqlx::query(
-            "UPDATE sessions SET created_by = $3, visibility = $4, bot_id = $5
-             WHERE deleted_at_ms IS NULL AND universe_id = $1 AND session_id = $2 AND created_by IS NULL",
+        let rows = sqlx::query_as::<_, (String, i64)>(
+            "WITH changed AS (UPDATE sessions SET created_by = $3, visibility = $4, bot_id = $5, revision=revision+1
+             WHERE deleted_at_ms IS NULL AND universe_id = $1 AND session_id = $2 AND created_by IS NULL RETURNING session_id,revision),
+             children AS (UPDATE sessions SET revision=revision+1 WHERE universe_id=$1 AND origin_root_session_id IN (SELECT session_id FROM changed) AND deleted_at_ms IS NULL RETURNING session_id,revision)
+             SELECT * FROM changed UNION ALL SELECT * FROM children",
         )
         .bind(universe)
         .bind(session)
         .bind(json!(created_by))
         .bind(visibility.map(Visibility::as_str))
         .bind(bot)
-        .execute(&self.pool)
+        .fetch_all(&self.pool)
         .await
         .map_err(error)?;
+        self.publish_sessions(universe, rows);
+        if let Some(bot) = bot {
+            self.changes.publish(crate::changes::Change::new(
+                universe,
+                crate::changes::ChangeKind::Bot,
+                bot,
+            ));
+        }
         Ok(())
     }
 
@@ -236,6 +264,11 @@ impl PgAccessStore {
         .execute(&self.pool)
         .await
         .map_err(error)?;
+        self.changes.publish(crate::changes::Change::new(
+            universe,
+            crate::changes::ChangeKind::Bot,
+            bot,
+        ));
         Ok(())
     }
 
@@ -303,18 +336,21 @@ impl PgAccessStore {
         universe: Uuid,
         session: &str,
     ) -> Result<bool, AccessStoreError> {
-        Ok(sqlx::query(
-            "UPDATE sessions SET visibility = 'universe'
+        let rows = sqlx::query_as::<_, (String, i64)>(
+            "WITH changed AS (UPDATE sessions SET visibility = 'universe', revision=revision+1
              WHERE deleted_at_ms IS NULL AND universe_id = $1 AND session_id = $2 AND origin_root_session_id IS NULL
-               AND bot_id IS NULL AND COALESCE(visibility, 'restricted') = 'restricted'",
+               AND bot_id IS NULL AND COALESCE(visibility, 'restricted') = 'restricted' RETURNING session_id,revision),
+             children AS (UPDATE sessions SET revision=revision+1 WHERE universe_id=$1 AND origin_root_session_id IN (SELECT session_id FROM changed) AND deleted_at_ms IS NULL RETURNING session_id,revision)
+             SELECT * FROM changed UNION ALL SELECT * FROM children",
         )
         .bind(universe)
         .bind(session)
-        .execute(&self.pool)
+        .fetch_all(&self.pool)
         .await
-        .map_err(error)?
-        .rows_affected()
-            == 1)
+        .map_err(error)?;
+        let changed = !rows.is_empty();
+        self.publish_sessions(universe, rows);
+        Ok(changed)
     }
 
     /// The retention tree determines cascade deletion targets. It is broader

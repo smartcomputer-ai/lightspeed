@@ -1,10 +1,11 @@
 # P202 — Session and bot summaries with a change signal
 
-**Status:** Proposed, 2026-11-13. Not started. Decided: PostgreSQL
-`LISTEN`/`NOTIFY` is the first transport for the change signal, and the
-session summary holds the fields listed under
-[Session summary](#session-summary), including attachments. Step-by-step
-phases of a run are deferred.
+**Status:** Implemented and functionally validated locally, 2026-11-13.
+PostgreSQL `LISTEN`/`NOTIFY` is the first transport. Session activity and
+persistent display details share `session_summary`; `sessions` keeps the
+catalog, lifecycle and log head. Bot controller status lives directly on
+`bots`. Existing sessions do not require historical summary backfill.
+Step-by-step phases remain deferred.
 
 Provides the server data asked for in
 [#149](https://github.com/smartcomputer-ai/lightspeed/issues/149) and removes
@@ -19,14 +20,15 @@ stream that pushes these changes to browsers is
    doing and why, how its last run ended, its latest message, and what is
    attached. No follow-up read per row.
 2. Any process that commits a change tells every gateway process, so the
-   gateway stops polling PostgreSQL and Temporal to find out.
+   gateway wakes promptly instead of relying on its polling interval. Recovery
+   timers remain in place.
 
 The two parts change the same store functions, and the row revision added for
 the first is what readers compare after the second wakes them. They are one
 piece of work. The signal lands first because it needs no migration and no
 contract change.
 
-## Current state
+## Starting point
 
 - **Nothing is pushed.** `session/events/read` with `waitMs` re-reads
   PostgreSQL every 250 ms or less (`read_session_events` in
@@ -90,8 +92,8 @@ Three rules make the signal safe to lose:
 
 ### Transport
 
-PostgreSQL `LISTEN`/`NOTIFY`, behind a small trait with a second,
-in-process implementation for single-process runs and tests. Every runtime
+PostgreSQL `LISTEN`/`NOTIFY`, behind a small `ChangeBus` with a local-only
+mode for tests. Every runtime
 process already connects to PostgreSQL, so this adds no infrastructure and
 no replica discovery.
 
@@ -135,8 +137,9 @@ holding the batch:
   sees these payloads.
 - **Size.** An entry is roughly 100 bytes, so one payload holds about 60 to
   70 changes. A batch above 7,500 bytes is sent as several notifications.
-- **Volume.** At most one notification per 20 ms per publishing process,
-  however many rows changed in that window.
+- **Volume.** A publishing process coalesces changes for up to 20 ms,
+  merging the maximum `seq` and `rev` independently. Large batches split
+  into several notifications; bounded queues limit memory during outages.
 - **Versioning.** A receiver that cannot parse a payload, or sees an
   unknown `v`, wakes every waiter. Mixed versions during a rolling upgrade
   therefore stay correct.
@@ -149,9 +152,10 @@ locally at once, without waiting for the batch.
 
 ### Subscribing
 
-Each process with the `gateway` or `environment-gateway` role holds one
-listening connection (`sqlx::postgres::PgListener`) and an in-process
-registry of waiters keyed by `(universe, kind, id)` and by universe. When
+Each runtime process holds one listening connection
+(`sqlx::postgres::PgListener`) shared by its roles. An in-process registry
+keys row waiters by `(universe, kind, id)`; a broadcast feed serves broader
+subscribers, which filter by universe and kind. When
 the listener reconnects it wakes every waiter, since signals may have been
 missed.
 
@@ -164,9 +168,9 @@ session-mode pooler. A transaction-mode pooler such as PgBouncer drops it.
 The runtime already has this requirement: the CAS sweep leader and
 migrations take session-level advisory locks (`CasSweepLeader` in
 `crates/store-pg/src/cas_sweep.rs`). The number of listening connections is
-one per gateway process, independent of the number of users. The listener
-must be built through the same connection path as the pool so that Azure
-workload-identity authentication applies; verify this during implementation.
+one per runtime process, independent of the number of users. The listener
+uses `PgListener::connect_with` on the deployment pool so that the pool’s
+Azure workload-identity credential refresh applies on reconnect too.
 
 ### What changes for readers
 
@@ -176,9 +180,10 @@ workload-identity authentication applies; verify this during implementation.
   signal. They keep the 500 ms timer as the fallback, because an admission
   that is refused is reported through workflow status without an append and
   therefore produces no signal.
-- **Environment signals.** `nudge_work` and `revoke` also publish an
-  `environment` signal, so an API-only gateway process reaches the process
-  that runs the reconciler and holds the routes.
+- **Environment signals.** Committed environment changes publish an
+  `environment` signal, so API-only gateways reach reconcilers and route
+  holders in other processes. A route holder rechecks committed state before
+  revoking a route; an invalidation alone is not a revocation command.
 
 ## Part 2: summaries
 
@@ -198,7 +203,7 @@ summary is a display hint.
 | `revision` | every change to what a list shows | Bumped when any field in this table, the lifecycle status, name, metadata, retention or access changes. An append that changes none of them moves `updatedAtMs` and leaves `revision` alone. |
 | `activity` | unchanged | idle, working, waiting. Waiting keeps its meaning: an approval is pending. |
 | `activityPhase` | `tool.batch_parked` and `tool.batch_unparked` | `awaiting` while the active run is parked on promises (a sub-agent, a timer, external work). Absent otherwise. Today such a run reads as working for as long as it is parked. |
-| `activitySinceMs` | already stored as `session_activity.since_ms` | When the current activity or phase began. |
+| `activitySinceMs` | `session_summary.since_ms` | When the current activity or phase began. |
 | `lastRun` | run terminal events | `{ runId, status, failureKind?, finishedAtMs }`. A failed last run is the list's error state. Today a failed run and a finished one both read as idle. |
 | `executionFailure` | recorded by the reaper and by `session/read`; see [Stopped execution](#stopped-execution) | Same values as on the session read. |
 | `lastMessagePreview`, `lastMessageRole`, `lastMessageAtMs`, `lastMessageOrigin` | `contextEntriesApplied` entries of kind message, role user or assistant | One plain line of at most 200 characters, reduced as the web's reference implementation does. |
@@ -229,9 +234,8 @@ user or assistant:
 
 An assistant message is recorded when the model's turn completes, so the
 preview is always a whole message and never partial output. It changes at
-most once per turn, not per tool call. A client can tell the final answer
-from an interim message without another field: the session is idle,
-`lastRun` completed, and `lastMessageRole` is assistant.
+most once per turn, not per tool call. It is the latest eligible message, not a guaranteed final answer:
+a completed run can end without a new assistant message.
 
 **Who sent it** is told by two fields, both copied from the entry:
 
@@ -295,7 +299,10 @@ of only logging it:
   recorded, so opening the session corrects the list at once.
 - The projection clears it when a run starts, a run ends or the session
   closes. Other appends, such as the reaper's own promise repairs, leave it.
-- The write bumps `revision` and publishes a `session` signal.
+- The write bumps `revision` and publishes a `session` signal. A failure
+  observation is conditional on the revision read before querying Temporal.
+  A confirmed restart clears the failure and advances the revision even if
+  no failure was recorded, preventing an older observation from restoring it.
 
 It is store metadata like the display name, not an event. An idle session
 whose execution has stopped is still reported only by `session/read`,
@@ -303,41 +310,62 @@ because the reaper does not check sessions without a run.
 
 ### Storage
 
-- `sessions.revision bigint`: bumped by the append only when the projection
-  changed something a list shows, and by every other write to the row or to
-  the two tables below.
-- `session_activity` gains a nullable `phase`, and `since_ms` is reset when
-  the phase changes. It keeps its current lifetime: a row only while the
-  session is not idle, which the bot roster query relies on.
-- New `session_summary`, keyed by `(universe_id, session_id)`, holding the
-  last-run, last-message, active-environment, attachment and
-  execution-failure fields. It is written only when one of them changes, as
-  `write_activity` does today, so an ordinary append does not rewrite it.
+- `sessions.revision bigint` advances when list-visible state changes. Log-only
+  appends advance `head_seq` and `updated_at_ms` without changing revision.
+  Access and retention changes also invalidate descendants that inherit them.
+- `session_summary`, keyed by `(universe_id, session_id)`, holds activity,
+  phase and `since_ms` in columns and the remaining display details in JSON.
+  It replaces `session_activity` and persists while idle. Idle has a null
+  phase and activity start time. Bot queries filter activity explicitly;
+  a partial index covers non-idle summaries.
+- A summary is written only when its projected fields change, in the same
+  transaction as the events. Appends whose kinds cannot affect the projection
+  skip reading the summary. Lists join one summary row without replaying history.
+  Mutators lock the catalog first, then read the summary in a separate statement:
+  a locking query that waits can otherwise pair the updated catalog with a stale
+  summary snapshot. Ordinary appends and clone opening events share one write path.
+- Bot controller facts are stored in `bots.controller_status_json`, with an
+  observation timestamp that rejects older writes. There is no `bot_status`
+  table.
 
-The fork and clone path (`append_events_in_tx`) runs the same projection.
-Today it skips the activity write.
+Keeping session display details apart avoids widening the catalog row updated
+on every append. Activity does not need its own table. Bot rows do not change
+for each internal session event, so their small controller projection stays on
+the bot itself.
 
-This is schema revision 23: raise `REQUIRED_SCHEMA_REVISION` and
-`LIGHTSPEED_SCHEMA_REVISION` together and run
-`scripts/release/verify-metadata.sh`. There is no backfill; an existing
-session gains its summary with its next event.
+History forks replay the inherited prefix through the branch point, rather
+than copying the source's current summary. Config-only clones project their
+fresh opening events. Both paths use the same pure projection as ordinary
+appends and the in-memory store. Execution failures are observations, not
+replayed event state, and are not inherited by forks.
+
+This is schema revision 23. The migration carries existing sparse activity
+rows into `session_summary` and removes `session_activity`; it does not backfill
+historical messages or attachments. Greenfield operation is the supported scope
+of this implementation. `REQUIRED_SCHEMA_REVISION` and
+`LIGHTSPEED_SCHEMA_REVISION` advance together.
 
 ### Bots
 
 Activity and pending work are already derived in SQL and stay that way. Add
 what PostgreSQL cannot see today:
 
-- **`bot_status` row**, written by a controller activity only on rare
+- **Controller facts on `bots`**, written by an activity only on rare
   transitions: setup status, budget exhausted or reset, last error set or
   cleared, closing and closed. Idle and delivering remain derived from
-  `bot_events` and `session_activity`, so an ordinary delivery adds no
-  activity call. The controller change must be replay-safe for running
-  controller workflows.
+  `bot_events` and `session_summary`, so an ordinary delivery adds no status
+  activity. The additional activity changes workflow history; deployment
+  follows the repository's new-namespace policy for breaking workflow changes.
 - **`BotListItem.status`**, computed by the roster query with the
   vocabulary the UI draws: `closed`, `paused`, `attention`, `budget`,
   `waiting`, `working`, `idle`. `bots/read` returns it too.
 - **Session counts** on `BotListItem` (`openSessionCount`,
   `activeSessionCount`), from `sessions.bot_id` and the origin root index.
+
+Status precedence is closed/closing, paused, waiting for approval, controller
+error or degraded setup, budget exhausted with pending work, working, then
+idle. An error on the last bot event produces attention only when no new work
+is pending or running. Session counts exclude deleted sessions.
 
 With these, `bots/list` and `bots/read` need no Temporal query.
 `bots/state/read` keeps its controller query for the detail page.
@@ -347,7 +375,7 @@ With these, `bots/list` and `bots/read` need no Temporal query.
 | Kind | Published after |
 | --- | --- |
 | `session` | An append on either path, create, rename, metadata, retention, creator stamp, share, a recorded execution failure, soft delete, purge. |
-| `bot` | Bot put, close and delete; trigger writes; a bot event insert or outcome; a `bot_status` write; an activity change of a session in the bot's tree. |
+| `bot` | Bot put, close and delete; trigger writes; a bot event insert or outcome; a controller-status write; an activity change of a session in the bot's tree. |
 | `environment` | Create, update, connect, disconnect, release, close. Not the periodic liveness stamp. |
 
 ## Rejected
@@ -380,7 +408,7 @@ With these, `bots/list` and `bots/read` need no Temporal query.
 2. Convert the gateway waits. Route `EnvironmentSignals` through the signal.
 3. `sessions.revision`, the summary projection, migration, in-memory
    parity, API fields. Regenerate the contract and every consumer.
-4. `bot_status`, roster fields, and the `bot` and `environment` signals.
+4. Controller-status columns on `bots`, roster fields, and the `bot` and `environment` signals.
 
 ## Tests
 
@@ -399,8 +427,7 @@ With these, `bots/list` and `bots/read` need no Temporal query.
   publisher disabled every reader still completes on its fallback timer.
 - **Long-poll:** a parked reader returns promptly after an append made by
   another process.
-- **Performance, with the #121 harness:** idle readers issue close to no
-  SQL, and rapid-loop throughput and drain time do not regress. The earlier
+- **Performance, with the #121 harness:** idle readers use the five-second fallback instead of 250 ms polling, and rapid-loop throughput and drain time do not regress. The earlier
   reader fast-path prototype lengthened drains, so compare both.
 - **Contract:** the regenerated contract and clients carry the new fields.
 
@@ -420,17 +447,32 @@ Deferred, with the reason:
   that a run is active or that an approval is pending.
 - **`botId` on the row.** The UI derives it from the session id.
 
-## Open questions
+## Resolved choices and validation
 
-- **Phase name.** Confirm `awaiting` with the UI, and that a run parked on
-  promises stays `working` in the top-level `activity`, where waiting means
-  "needs a person".
-- **Idle sessions with a stopped execution.** Should the reaper also check
-  open sessions without a run, so the list and the read always agree?
-- **Long assistant messages that open with code.** The 256-character
-  `preview` can be empty after reduction when a message starts with a long
-  code block. Is leaving the previous preview acceptable there?
-- **Forks and clones.** Does a fork start with an empty summary, or copy
-  its source's summary at the branch point?
-- **Child counts.** Does a session row need a sub-agent count, or does the
-  UI keep deriving it from `session/list` with `parent`?
+- Promise parks use phase `awaiting` while activity stays `working`; `waiting`
+  continues to mean a pending approval.
+- The reaper keeps its existing scope of sessions with active or queued runs.
+  Reads can discover stopped idle executions.
+- Empty, code-only or unavailable message text retains the entire previous
+  preview tuple, including role, origin and timestamp.
+- Forks project the branch prefix; clones start with their opening configuration.
+- Session child counts remain deferred; existing parent-scoped listing suffices.
+
+Implementation is present for the signal bus, store mutation publishers,
+reader wakeups, shared summary projection, failure observations, bot roster
+status, API fields and generated clients. Local PostgreSQL tests cover summary
+replay and in-memory parity, branch behavior, failure races, cross-connection
+notifications, inherited access/retention and bot counts. The existing lifecycle,
+access and bot-store suites pass with the consolidated schema. Workspace Clippy (all targets, warnings denied), the affected Rust library
+suites, contract freshness, consumer type checks/tests/builds, release metadata
+and documentation checks pass. Local Temporal tests verify cross-connection
+long-poll wakeups, fallback without publishing, execution-failure persistence,
+bot delivery and budget parking. A terminated PostgreSQL listener reconnects
+and resets its waiters. The full #121 throughput/drain benchmark has not been
+run; no capacity or throughput improvement is claimed.
+
+The session-store consistency review added regressions for summary reads after
+lock contention, no-op name/metadata updates, unopened-child cleanup and bot
+invalidation, and gaps inside fork history. Cleanup preserves dependent children;
+head-only reads avoid loading the display projection. Bot invalidation targets
+are captured before commit, and publication itself performs no database reads.

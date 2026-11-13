@@ -15,8 +15,8 @@ use harness::{
         DeleteClosedSessionsResult, ListSessions, ReadRunRecordEntries, ReadSessionEventRange,
         ReadSessionEvents, RetentionRootCursor, SessionCheckpoint, SessionLifecycleStatus,
         SessionListCursor, SessionListPage, SessionOrigin, SessionPage, SessionRecord,
-        SessionStore, SessionStoreError, apply_lifecycle_projection, check_origin_limits,
-        event_blob_roots, largest_safe_fork_seq, lifecycle_at_fork, validate_fork_point,
+        SessionStore, SessionStoreError, check_origin_limits, event_blob_roots,
+        largest_safe_fork_seq, lifecycle_at_fork, validate_fork_point,
     },
 };
 use sqlx::{Postgres, Row, Transaction};
@@ -32,6 +32,7 @@ use crate::{
 
 const SESSION_COLUMNS: &str = r#"
     session_id,
+    revision,
     display_name,
     metadata_json,
     lifecycle_status,
@@ -51,9 +52,9 @@ const SESSION_COLUMNS: &str = r#"
     updated_at_ms
 "#;
 
-/// What session `sessions` is doing now, from its activity row; none reads
-/// as idle.
-const SESSION_ACTIVITY: &str = "(SELECT a.activity FROM session_activity a WHERE a.universe_id = sessions.universe_id AND a.session_id = sessions.session_id) AS activity";
+/// Persistent display projection; an absent row has the empty, idle defaults.
+const SESSION_SUMMARY: &str = "(SELECT to_jsonb(ss) FROM session_summary ss WHERE ss.universe_id = sessions.universe_id AND ss.session_id = sessions.session_id) AS summary_row";
+const NO_SUMMARY: &str = "NULL::jsonb AS summary_row";
 
 impl PgStore {
     async fn append_inner(
@@ -65,27 +66,17 @@ impl PgStore {
             .begin()
             .await
             .map_err(|error| session_sql_error("begin append transaction", error))?;
-        let query = format!(
-            r#"
-            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
-            FROM sessions
-            WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
-            FOR UPDATE
-            "#,
-        );
-        let row = sqlx::query(sqlx::AssertSqlSafe(query))
-            .bind(self.config.universe_id)
-            .bind(request.session_id.as_str())
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(|error| session_sql_error("load session for append", error))?;
-
-        let Some(row) = row else {
-            return Err(SessionStoreError::SessionNotFound {
-                session_id: request.session_id,
-            });
-        };
-        let mut record = session_record_from_row(&row)?;
+        let needs_summary = request
+            .events
+            .iter()
+            .any(|entry| harness::storage::summary::affects_projection(entry.event.kind.as_str()));
+        let mut record = lock_session_catalog(
+            &mut tx,
+            self.config.universe_id,
+            &request.session_id,
+            "lock session for append",
+        )
+        .await?;
         let actual_head = record.head.clone();
         if request.expected_head != actual_head {
             return Err(SessionStoreError::ExpectedHeadMismatch {
@@ -95,93 +86,42 @@ impl PgStore {
             });
         }
 
-        let mut head = actual_head;
-        let mut committed = Vec::with_capacity(request.events.len());
-        let mut embedded = EmbeddedBlobRefs::default();
-        for event in request.events {
-            let next_seq = EventSeq::new(
-                head.as_ref()
-                    .map_or(1, |position| position.seq.as_u64().saturating_add(1)),
-            );
-            let position = SessionPosition { seq: next_seq };
-            let entry = StoredSessionEntry {
-                position: position.clone(),
-                observed_at_ms: event.observed_at_ms,
-                joins: event.joins,
-                event: event.event,
-            };
-            let entry_json =
-                serde_json::to_value(&entry).map_err(|error| SessionStoreError::Store {
-                    message: format!("serialize session entry: {error}"),
-                })?;
-            embedded.observe(&entry.event)?;
-            sqlx::query(
-                r#"
-                INSERT INTO session_events (universe_id, session_id, entry_json)
-                VALUES ($1, $2, $3)
-                "#,
-            )
-            .bind(self.config.universe_id)
-            .bind(request.session_id.as_str())
-            .bind(entry_json)
-            .execute(&mut *tx)
-            .await
-            .map_err(|error| session_sql_error("insert session event", error))?;
-
-            head = Some(position);
-            committed.push(entry);
+        if needs_summary {
+            load_summary_in_tx(&mut tx, self.config.universe_id, &mut record).await?;
         }
-        embedded
-            .record_roots(&mut tx, self.config.universe_id, &request.session_id)
-            .await?;
+        let revision_before = record.revision;
+        let bot_activity_before = (record.activity, record.lifecycle_status);
+        let closed_before = record.closed_at_ms;
+        let (record, committed) =
+            append_events_in_tx(&mut tx, self.config.universe_id, record, request.events).await?;
 
-        if let Some(last) = committed.last() {
-            record.updated_at_ms = last.observed_at_ms;
-            let activity_before = record.activity;
-            for entry in &committed {
-                apply_lifecycle_projection(&mut record, entry);
-            }
-            if record.activity != activity_before {
-                write_activity(
-                    &mut tx,
-                    self.config.universe_id,
-                    &request.session_id,
-                    record.activity,
-                    last.observed_at_ms,
-                )
-                .await?;
-            }
-            sqlx::query(
-                r#"
-                UPDATE sessions
-                SET head_seq = $3,
-                    updated_at_ms = $4,
-                    lifecycle_status = $5,
-                    closed_at_seq = $6,
-                    lifecycle_controlled = $7,
-                    closed_at_ms = $8
-                WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
-                "#,
-            )
-            .bind(self.config.universe_id)
-            .bind(request.session_id.as_str())
-            .bind(event_seq_to_i64(last.position.seq)?)
-            .bind(u64_to_i64(last.observed_at_ms, "updated_at_ms")?)
-            .bind(session_lifecycle_status_str(record.lifecycle_status))
-            .bind(optional_event_seq_to_i64(
-                record.closed_at_seq,
-                "closed_at_seq",
-            )?)
-            .bind(record.lifecycle_controlled)
-            .bind(optional_u64_to_i64(record.closed_at_ms, "closed_at_ms")?)
-            .execute(&mut *tx)
-            .await
-            .map_err(|error| session_sql_error("update session head", error))?;
-        }
-
+        let descendants = if closed_before != record.closed_at_ms {
+            bump_retention_descendants(&mut tx, self.config.universe_id, &record).await?
+        } else {
+            Vec::new()
+        };
+        let bot_id = if bot_activity_before != (record.activity, record.lifecycle_status) {
+            session_bot_in_tx(&mut tx, self.config.universe_id, &record.session_id).await?
+        } else {
+            None
+        };
         tx.commit()
             .await
             .map_err(|error| session_sql_error("commit append transaction", error))?;
+        self.publish_session_revisions(descendants);
+        if let Some(last) = committed.last() {
+            let mut change = crate::changes::Change::new(
+                self.config.universe_id,
+                crate::changes::ChangeKind::Session,
+                request.session_id.as_str(),
+            );
+            change.seq = Some(last.position.seq.as_u64());
+            change.rev = (record.revision != revision_before).then_some(record.revision);
+            self.changes.publish(change);
+        }
+        if let Some(bot_id) = bot_id {
+            self.changed(crate::changes::ChangeKind::Bot, bot_id);
+        }
         Ok(AppendSessionEventsResult { entries: committed })
     }
 
@@ -206,12 +146,17 @@ impl PgStore {
                     ),
                 });
             }
-            after = page
-                .last()
-                .expect("page checked non-empty")
-                .position
-                .seq
-                .as_u64();
+            for entry in &page {
+                let expected = after.saturating_add(1);
+                if entry.position.seq.as_u64() != expected {
+                    return Err(SessionStoreError::Store {
+                        message: format!(
+                            "session {session_id} effective log has a gap at seq {expected}"
+                        ),
+                    });
+                }
+                after = entry.position.seq.as_u64();
+            }
             entries.extend(page);
         }
         Ok(entries)
@@ -441,10 +386,9 @@ impl PgStore {
             .join(", ");
         let query = format!(
             r#"
-            SELECT {session_columns}, sa.activity, {summary_columns}
+            SELECT {session_columns}, to_jsonb(ss) AS summary_row, {summary_columns}
             FROM sessions s
-            LEFT JOIN session_activity sa
-                ON sa.universe_id = s.universe_id AND sa.session_id = s.session_id
+            LEFT JOIN session_summary ss ON ss.universe_id = s.universe_id AND ss.session_id = s.session_id
             {root_join}
             WHERE s.universe_id = $1 AND s.deleted_at_ms IS NULL
               AND ($2::bigint IS NULL OR (s.updated_at_ms, s.session_id) < ($2, $3))
@@ -559,7 +503,7 @@ impl SessionStore for PgStore {
             // Lock retention ownership first, matching cascade deletion.
             // The child row is then the root-limit reservation: count and
             // insert in this transaction so concurrent spawns serialize.
-            lock_session(
+            lock_session_catalog(
                 &mut tx,
                 self.config.universe_id,
                 &retention_root_session_id,
@@ -567,7 +511,7 @@ impl SessionStore for PgStore {
             )
             .await?;
             if origin.root_session_id != retention_root_session_id {
-                lock_session(
+                lock_session_catalog(
                     &mut tx,
                     self.config.universe_id,
                     &origin.root_session_id,
@@ -578,7 +522,7 @@ impl SessionStore for PgStore {
             if origin.parent_session_id != retention_root_session_id
                 && origin.parent_session_id != origin.root_session_id
             {
-                lock_session(
+                lock_session_catalog(
                     &mut tx,
                     self.config.universe_id,
                     &origin.parent_session_id,
@@ -625,7 +569,7 @@ impl SessionStore for PgStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10)
             ON CONFLICT (universe_id, session_id) DO NOTHING
-            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
+            RETURNING {SESSION_COLUMNS}, {SESSION_SUMMARY}
             "#,
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(query))
@@ -652,9 +596,18 @@ impl SessionStore for PgStore {
             });
         };
         let record = session_record_from_row(&row)?;
+        let bot_id = if record.origin.is_some() {
+            session_bot_in_tx(&mut tx, self.config.universe_id, &record.session_id).await?
+        } else {
+            None
+        };
         tx.commit()
             .await
             .map_err(|error| session_sql_error("commit create session", error))?;
+        self.publish_session(&record, None);
+        if let Some(bot_id) = bot_id {
+            self.changed(crate::changes::ChangeKind::Bot, bot_id);
+        }
         Ok(record)
     }
 
@@ -664,7 +617,7 @@ impl SessionStore for PgStore {
     ) -> Result<Option<SessionRecord>, SessionStoreError> {
         let query = format!(
             r#"
-            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
+            SELECT {SESSION_COLUMNS}, {SESSION_SUMMARY}
             FROM sessions
             WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
             "#,
@@ -701,28 +654,31 @@ impl SessionStore for PgStore {
         session_id: &SessionId,
         display_name: Option<String>,
     ) -> Result<SessionRecord, SessionStoreError> {
-        let query = format!(
-            r#"
-            UPDATE sessions
-            SET display_name = $3
-            WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
-            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
-            "#,
-        );
-        let row = sqlx::query(sqlx::AssertSqlSafe(query))
-            .bind(self.config.universe_id)
-            .bind(session_id.as_str())
-            .bind(display_name.as_deref())
-            .fetch_optional(&self.pool)
+        let mut tx = self
+            .pool
+            .begin()
             .await
-            .map_err(|error| session_sql_error("set session display name", error))?;
-
-        let Some(row) = row else {
-            return Err(SessionStoreError::SessionNotFound {
-                session_id: session_id.clone(),
-            });
-        };
-        session_record_from_row(&row)
+            .map_err(|error| session_sql_error("begin session name transaction", error))?;
+        let mut record = lock_session(
+            &mut tx,
+            self.config.universe_id,
+            session_id,
+            "lock session for name",
+        )
+        .await?;
+        if record.display_name == display_name {
+            return Ok(record);
+        }
+        sqlx::query("UPDATE sessions SET display_name=$3, revision=revision+1 WHERE universe_id=$1 AND session_id=$2")
+            .bind(self.config.universe_id).bind(session_id.as_str()).bind(display_name.as_deref())
+            .execute(&mut *tx).await.map_err(|error| session_sql_error("set session name", error))?;
+        record.display_name = display_name;
+        record.revision += 1;
+        tx.commit()
+            .await
+            .map_err(|error| session_sql_error("commit session name", error))?;
+        self.publish_session(&record, None);
+        Ok(record)
     }
 
     async fn set_session_metadata(
@@ -730,28 +686,31 @@ impl SessionStore for PgStore {
         session_id: &SessionId,
         metadata: BTreeMap<String, String>,
     ) -> Result<SessionRecord, SessionStoreError> {
-        let query = format!(
-            r#"
-            UPDATE sessions
-            SET metadata_json = $3
-            WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
-            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
-            "#,
-        );
-        let row = sqlx::query(sqlx::AssertSqlSafe(query))
-            .bind(self.config.universe_id)
-            .bind(session_id.as_str())
-            .bind(metadata_json(&metadata)?)
-            .fetch_optional(&self.pool)
+        let mut tx = self
+            .pool
+            .begin()
             .await
-            .map_err(|error| session_sql_error("set session metadata", error))?;
-
-        let Some(row) = row else {
-            return Err(SessionStoreError::SessionNotFound {
-                session_id: session_id.clone(),
-            });
-        };
-        session_record_from_row(&row)
+            .map_err(|error| session_sql_error("begin session metadata transaction", error))?;
+        let mut record = lock_session(
+            &mut tx,
+            self.config.universe_id,
+            session_id,
+            "lock session for metadata",
+        )
+        .await?;
+        if record.metadata == metadata {
+            return Ok(record);
+        }
+        sqlx::query("UPDATE sessions SET metadata_json=$3, revision=revision+1 WHERE universe_id=$1 AND session_id=$2")
+            .bind(self.config.universe_id).bind(session_id.as_str()).bind(metadata_json(&metadata)?)
+            .execute(&mut *tx).await.map_err(|error| session_sql_error("set session metadata", error))?;
+        record.metadata = metadata;
+        record.revision += 1;
+        tx.commit()
+            .await
+            .map_err(|error| session_sql_error("commit session metadata", error))?;
+        self.publish_session(&record, None);
+        Ok(record)
     }
 
     async fn set_session_retention(
@@ -782,12 +741,15 @@ impl SessionStore for PgStore {
                 retention_root_session_id: record.retention_root_session_id,
             });
         }
+        if record.delete_after_close_ms == delete_after_close_ms {
+            return Ok(record);
+        }
         let query = format!(
             r#"
             UPDATE sessions
-            SET delete_after_close_ms = $3
+            SET delete_after_close_ms = $3, revision=revision+1
             WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
-            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
+            RETURNING {SESSION_COLUMNS}, {SESSION_SUMMARY}
             "#,
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(query))
@@ -801,9 +763,13 @@ impl SessionStore for PgStore {
             .await
             .map_err(|error| session_sql_error("set session retention", error))?;
         let record = session_record_from_row(&row)?;
+        let descendants =
+            bump_retention_descendants(&mut tx, self.config.universe_id, &record).await?;
         tx.commit()
             .await
             .map_err(|error| session_sql_error("commit retention transaction", error))?;
+        self.publish_session(&record, None);
+        self.publish_session_revisions(descendants);
         Ok(record)
     }
 
@@ -818,7 +784,7 @@ impl SessionStore for PgStore {
         }
         let query = format!(
             r#"
-            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
+            SELECT {SESSION_COLUMNS}, {SESSION_SUMMARY}
             FROM sessions
             WHERE universe_id = $1 AND deleted_at_ms IS NULL
               AND retention_root_session_id = session_id
@@ -851,17 +817,71 @@ impl SessionStore for PgStore {
         &self,
         session_id: &SessionId,
     ) -> Result<bool, SessionStoreError> {
-        let discarded = sqlx::query(
-            "DELETE FROM sessions
-             WHERE universe_id = $1 AND session_id = $2
-               AND lifecycle_status = 'new' AND head_seq IS NULL",
+        let Some(snapshot) = self.load_session(session_id).await? else {
+            return Ok(false);
+        };
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| session_sql_error("begin discard session", error))?;
+        // Serialize with child creation using the same root-first lock order as deletion.
+        let root = match lock_session_catalog(
+            &mut tx,
+            self.config.universe_id,
+            &snapshot.retention_root_session_id,
+            "lock discard root",
         )
-        .bind(self.config.universe_id)
-        .bind(session_id.as_str())
-        .execute(&self.pool)
         .await
-        .map_err(|error| session_sql_error("discard unopened session", error))?;
-        Ok(discarded.rows_affected() > 0)
+        {
+            Ok(root) => root,
+            Err(SessionStoreError::SessionNotFound { .. }) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        let record = if root.session_id == *session_id {
+            root
+        } else {
+            match lock_session_catalog(
+                &mut tx,
+                self.config.universe_id,
+                session_id,
+                "lock discarded session",
+            )
+            .await
+            {
+                Ok(record) => record,
+                Err(SessionStoreError::SessionNotFound { .. }) => return Ok(false),
+                Err(error) => return Err(error),
+            }
+        };
+        if record.lifecycle_status != SessionLifecycleStatus::New || record.head.is_some() {
+            return Ok(false);
+        }
+        let has_children: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE universe_id=$1
+             AND (origin_parent_session_id=$2 OR (source_session_id=$2 AND source_seq IS NOT NULL)))"
+        ).bind(self.config.universe_id).bind(session_id.as_str()).fetch_one(&mut *tx).await
+            .map_err(|error| session_sql_error("check discarded session children", error))?;
+        if has_children {
+            return Ok(false);
+        }
+        let bot_id = session_bot_in_tx(&mut tx, self.config.universe_id, session_id).await?;
+        sqlx::query("DELETE FROM sessions WHERE universe_id=$1 AND session_id=$2")
+            .bind(self.config.universe_id)
+            .bind(session_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| session_sql_error("discard unopened session", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| session_sql_error("commit discarded session", error))?;
+        let mut discarded = record;
+        discarded.revision += 1;
+        self.publish_session(&discarded, None);
+        if let Some(bot_id) = bot_id {
+            self.changed(crate::changes::ChangeKind::Bot, bot_id);
+        }
+        Ok(true)
     }
 
     async fn delete_closed_sessions(
@@ -886,7 +906,7 @@ impl SessionStore for PgStore {
             .await
             .map_err(|error| session_sql_error("begin clone transaction", error))?;
 
-        let source = lock_session(
+        let source = lock_session_catalog(
             &mut tx,
             self.config.universe_id,
             &request.source_session_id,
@@ -911,7 +931,7 @@ impl SessionStore for PgStore {
             )
             VALUES ($1, $2, $3, NULL, $2, $4, $4)
             ON CONFLICT (universe_id, session_id) DO NOTHING
-            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
+            RETURNING {SESSION_COLUMNS}, {SESSION_SUMMARY}
             "#,
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(query))
@@ -939,6 +959,7 @@ impl SessionStore for PgStore {
         tx.commit()
             .await
             .map_err(|error| session_sql_error("commit clone transaction", error))?;
+        self.publish_session(&record, record.head.as_ref().map(|head| head.seq.as_u64()));
         Ok(record)
     }
 
@@ -983,7 +1004,7 @@ impl SessionStore for PgStore {
             .begin()
             .await
             .map_err(|error| session_sql_error("begin fork transaction", error))?;
-        let retention_root = lock_session(
+        let retention_root = lock_session_catalog(
             &mut tx,
             self.config.universe_id,
             &source_record.retention_root_session_id,
@@ -993,7 +1014,7 @@ impl SessionStore for PgStore {
         let source = if source_record.session_id == retention_root.session_id {
             retention_root
         } else {
-            lock_session(
+            lock_session_catalog(
                 &mut tx,
                 self.config.universe_id,
                 &request.source_session_id,
@@ -1047,7 +1068,7 @@ impl SessionStore for PgStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
             ON CONFLICT (universe_id, session_id) DO NOTHING
-            RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
+            RETURNING {SESSION_COLUMNS}, {SESSION_SUMMARY}
             "#,
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(query))
@@ -1071,10 +1092,19 @@ impl SessionStore for PgStore {
                 session_id: request.session_id,
             });
         };
-        let record = session_record_from_row(&row)?;
+        let mut record = session_record_from_row(&row)?;
+        for entry in source_entries
+            .iter()
+            .filter(|entry| entry.position.seq <= request.source_seq)
+        {
+            project_summary_in_tx(&mut tx, self.config.universe_id, &mut record, entry).await?;
+        }
+        write_summary(&mut tx, self.config.universe_id, &record).await?;
+        write_session_projection(&mut tx, self.config.universe_id, &record).await?;
         tx.commit()
             .await
             .map_err(|error| session_sql_error("commit fork transaction", error))?;
+        self.publish_session(&record, record.head.as_ref().map(|head| head.seq.as_u64()));
         Ok(record)
     }
 
@@ -1086,6 +1116,51 @@ impl SessionStore for PgStore {
             .map_or(0, |head| head.seq.as_u64());
         let entries = self.read_effective_events_through(session_id, head).await?;
         Ok(largest_safe_fork_seq(&entries, head))
+    }
+
+    async fn record_execution_failure(
+        &self,
+        session_id: &SessionId,
+        expected_revision: Option<u64>,
+        failure: Option<harness::storage::summary::ExecutionFailure>,
+        at_ms: u64,
+    ) -> Result<bool, SessionStoreError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| session_sql_error("begin execution observation", error))?;
+        let mut record = lock_session(
+            &mut tx,
+            self.config.universe_id,
+            session_id,
+            "lock execution observation",
+        )
+        .await?;
+        if record.lifecycle_status == SessionLifecycleStatus::Closed
+            || expected_revision.is_some_and(|rev| rev != record.revision)
+        {
+            return Ok(false);
+        }
+        if failure.is_some() && failure == record.summary.execution_failure {
+            return Ok(false);
+        }
+        record.summary.execution_failure = failure;
+        record.summary.execution_failure_at_ms = failure.map(|_| at_ms);
+        record.revision += 1;
+        write_summary(&mut tx, self.config.universe_id, &record).await?;
+        sqlx::query("UPDATE sessions SET revision=$3 WHERE universe_id=$1 AND session_id=$2")
+            .bind(self.config.universe_id)
+            .bind(session_id.as_str())
+            .bind(u64_to_i64(record.revision, "revision")?)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| session_sql_error("update execution observation", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| session_sql_error("commit execution observation", error))?;
+        self.publish_session(&record, None);
+        Ok(true)
     }
 
     async fn append(
@@ -1287,7 +1362,7 @@ impl SessionStore for PgStore {
             .begin()
             .await
             .map_err(|e| session_sql_error("begin checkpoint transaction", e))?;
-        lock_session(
+        lock_session_catalog(
             &mut tx,
             self.config.universe_id,
             &checkpoint.session_id,
@@ -1361,9 +1436,11 @@ impl SessionStore for PgStore {
         &self,
         session_id: &SessionId,
     ) -> Result<Option<SessionPosition>, SessionStoreError> {
-        self.load_session(session_id)
-            .await
-            .map(|record| record.and_then(|record| record.head))
+        let head = sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT head_seq FROM sessions WHERE universe_id=$1 AND session_id=$2 AND deleted_at_ms IS NULL"
+        ).bind(self.config.universe_id).bind(session_id.as_str()).fetch_optional(&self.pool).await
+            .map_err(|error| session_sql_error("read session head", error))?;
+        session_position_from_i64(head.flatten())
     }
 }
 
@@ -1454,15 +1531,10 @@ fn session_record_from_row(
     let lifecycle_controlled = row
         .try_get::<bool, _>("lifecycle_controlled")
         .map_err(|error| session_sql_error("decode lifecycle_controlled", error))?;
-    let activity = match row
-        .try_get::<Option<String>, _>("activity")
-        .map_err(|error| session_sql_error("decode session activity", error))?
-        .as_deref()
-    {
-        Some("working") => SessionActivity::Working,
-        Some("waiting") => SessionActivity::Waiting,
-        _ => SessionActivity::Idle,
-    };
+    let (activity, summary) = decode_summary(
+        row.try_get("summary_row")
+            .map_err(|error| session_sql_error("decode session summary", error))?,
+    )?;
     let head_seq = row
         .try_get::<Option<i64>, _>("head_seq")
         .map_err(|error| session_sql_error("decode session head", error))?;
@@ -1496,6 +1568,13 @@ fn session_record_from_row(
     let origin = session_origin_from_row(row)?;
 
     Ok(SessionRecord {
+        revision: i64_to_u64(
+            row.try_get("revision")
+                .map_err(|e| session_sql_error("decode revision", e))?,
+            "revision",
+        )
+        .map_err(|message| SessionStoreError::Store { message })?,
+        summary,
         session_id,
         display_name,
         metadata,
@@ -1514,6 +1593,29 @@ fn session_record_from_row(
         created_at_ms,
         updated_at_ms,
     })
+}
+
+fn decode_summary(
+    value: Option<serde_json::Value>,
+) -> Result<(SessionActivity, harness::storage::summary::SessionSummary), SessionStoreError> {
+    #[derive(Default, serde::Deserialize)]
+    struct SummaryRow {
+        activity: SessionActivity,
+        phase: Option<String>,
+        since_ms: Option<u64>,
+        summary_json: harness::storage::summary::SessionSummary,
+    }
+    let stored: SummaryRow = value
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| SessionStoreError::Store {
+            message: format!("decode summary: {error}"),
+        })?
+        .unwrap_or_default();
+    let mut summary = stored.summary_json;
+    summary.activity_phase = stored.phase;
+    summary.activity_since_ms = stored.since_ms;
+    Ok((stored.activity, summary))
 }
 
 /// Metadata maps travel as jsonb objects; the column keeps a
@@ -1657,7 +1759,38 @@ fn session_entry_from_row(
     })
 }
 
+/// Lock the catalog first, then read the summary from a fresh statement snapshot.
+/// A SELECT FOR UPDATE can wait for a newer catalog row while its subqueries
+/// still see the old summary; using that pair would lose committed display state.
 async fn lock_session(
+    tx: &mut Transaction<'_, Postgres>,
+    universe_id: Uuid,
+    session_id: &SessionId,
+    action: &'static str,
+) -> Result<SessionRecord, SessionStoreError> {
+    let mut record = lock_session_catalog(tx, universe_id, session_id, action).await?;
+    load_summary_in_tx(tx, universe_id, &mut record).await?;
+    Ok(record)
+}
+
+async fn load_summary_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    universe_id: Uuid,
+    record: &mut SessionRecord,
+) -> Result<(), SessionStoreError> {
+    let value = sqlx::query_scalar(
+        "SELECT to_jsonb(ss) FROM session_summary ss WHERE universe_id=$1 AND session_id=$2",
+    )
+    .bind(universe_id)
+    .bind(record.session_id.as_str())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|error| session_sql_error("load locked session summary", error))?;
+    (record.activity, record.summary) = decode_summary(value)?;
+    Ok(())
+}
+
+async fn lock_session_catalog(
     tx: &mut Transaction<'_, Postgres>,
     universe_id: Uuid,
     session_id: &SessionId,
@@ -1665,7 +1798,7 @@ async fn lock_session(
 ) -> Result<SessionRecord, SessionStoreError> {
     let query = format!(
         r#"
-        SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
+        SELECT {SESSION_COLUMNS}, {NO_SUMMARY}
         FROM sessions
         WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
         FOR UPDATE
@@ -1691,6 +1824,7 @@ async fn append_events_in_tx(
     mut record: SessionRecord,
     events: Vec<UncommittedStoredEvent>,
 ) -> Result<(SessionRecord, Vec<StoredSessionEntry>), SessionStoreError> {
+    let projection_before = (record.activity, record.summary.clone());
     let mut committed = Vec::with_capacity(events.len());
     let mut embedded = EmbeddedBlobRefs::default();
     for event in events {
@@ -1726,43 +1860,53 @@ async fn append_events_in_tx(
         .map_err(|error| session_sql_error("insert session event", error))?;
         record.head = Some(position);
         record.updated_at_ms = entry.observed_at_ms;
-        apply_lifecycle_projection(&mut record, &entry);
         committed.push(entry);
     }
     embedded
         .record_roots(tx, universe_id, &record.session_id)
         .await?;
 
-    if let Some(last) = committed.last() {
-        sqlx::query(
-            r#"
-            UPDATE sessions
-            SET head_seq = $3,
-                updated_at_ms = $4,
-                lifecycle_status = $5,
-                closed_at_seq = $6,
-                lifecycle_controlled = $7,
-                closed_at_ms = $8
-            WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
-            "#,
-        )
-        .bind(universe_id)
-        .bind(record.session_id.as_str())
-        .bind(event_seq_to_i64(last.position.seq)?)
-        .bind(u64_to_i64(last.observed_at_ms, "updated_at_ms")?)
-        .bind(session_lifecycle_status_str(record.lifecycle_status))
-        .bind(optional_event_seq_to_i64(
-            record.closed_at_seq,
-            "closed_at_seq",
-        )?)
-        .bind(record.lifecycle_controlled)
-        .bind(optional_u64_to_i64(record.closed_at_ms, "closed_at_ms")?)
-        .execute(&mut **tx)
-        .await
-        .map_err(|error| session_sql_error("update session head", error))?;
+    if !committed.is_empty() {
+        for entry in &committed {
+            project_summary_in_tx(tx, universe_id, &mut record, entry).await?;
+        }
+        if (record.activity, &record.summary) != (projection_before.0, &projection_before.1) {
+            write_summary(tx, universe_id, &record).await?;
+        }
+        write_session_projection(tx, universe_id, &record).await?;
     }
-
     Ok((record, committed))
+}
+
+async fn write_session_projection(
+    tx: &mut Transaction<'_, Postgres>,
+    universe_id: Uuid,
+    record: &SessionRecord,
+) -> Result<(), SessionStoreError> {
+    sqlx::query(
+        "UPDATE sessions SET head_seq=$3, updated_at_ms=$4, lifecycle_status=$5,
+            closed_at_seq=$6, lifecycle_controlled=$7, closed_at_ms=$8, revision=$9
+         WHERE universe_id=$1 AND session_id=$2 AND deleted_at_ms IS NULL",
+    )
+    .bind(universe_id)
+    .bind(record.session_id.as_str())
+    .bind(optional_event_seq_to_i64(
+        record.head.as_ref().map(|head| head.seq),
+        "head_seq",
+    )?)
+    .bind(u64_to_i64(record.updated_at_ms, "updated_at_ms")?)
+    .bind(session_lifecycle_status_str(record.lifecycle_status))
+    .bind(optional_event_seq_to_i64(
+        record.closed_at_seq,
+        "closed_at_seq",
+    )?)
+    .bind(record.lifecycle_controlled)
+    .bind(optional_u64_to_i64(record.closed_at_ms, "closed_at_ms")?)
+    .bind(u64_to_i64(record.revision, "revision")?)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| session_sql_error("write session projection", error))?;
+    Ok(())
 }
 
 /// Distinct typed refs in an append. The store derives FK-backed roots inside
@@ -1839,46 +1983,6 @@ impl EmbeddedBlobRefs {
     }
 }
 
-/// Keeps a session's activity row in step with its projection: a row while
-/// it works or waits, none while idle.
-async fn write_activity(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    universe_id: uuid::Uuid,
-    session_id: &SessionId,
-    activity: SessionActivity,
-    at_ms: u64,
-) -> Result<(), SessionStoreError> {
-    let value = match activity {
-        SessionActivity::Idle => {
-            sqlx::query("DELETE FROM session_activity WHERE universe_id = $1 AND session_id = $2")
-                .bind(universe_id)
-                .bind(session_id.as_str())
-                .execute(&mut **tx)
-                .await
-                .map_err(|error| session_sql_error("clear session activity", error))?;
-            return Ok(());
-        }
-        SessionActivity::Working => "working",
-        SessionActivity::Waiting => "waiting",
-    };
-    sqlx::query(
-        r#"
-        INSERT INTO session_activity (universe_id, session_id, activity, since_ms)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (universe_id, session_id)
-        DO UPDATE SET activity = EXCLUDED.activity, since_ms = EXCLUDED.since_ms
-        "#,
-    )
-    .bind(universe_id)
-    .bind(session_id.as_str())
-    .bind(value)
-    .bind(u64_to_i64(at_ms, "activity since_ms")?)
-    .execute(&mut **tx)
-    .await
-    .map_err(|error| session_sql_error("write session activity", error))?;
-    Ok(())
-}
-
 impl PgStore {
     pub async fn session_is_deleted(&self, session_id: &str) -> Result<bool, SessionStoreError> {
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE universe_id=$1 AND session_id=$2 AND deleted_at_ms IS NOT NULL)")
@@ -1930,7 +2034,7 @@ impl PgStore {
         // Match creation/deletion lock order, including a still-visible ancestor.
         sqlx::query("SELECT session_id FROM sessions WHERE universe_id=$1 AND session_id=(SELECT retention_root_session_id FROM sessions WHERE universe_id=$1 AND session_id=$2) FOR UPDATE")
             .bind(self.config.universe_id).bind(session_id).fetch_optional(&mut *tx).await?;
-        let rows: Vec<(String, Option<i64>)> = sqlx::query_as(r#"
+        let rows: Vec<(String, Option<i64>, i64)> = sqlx::query_as(r#"
             WITH RECURSIVE tree(session_id) AS (
                 SELECT session_id FROM sessions WHERE universe_id=$1 AND session_id=$2
                 UNION
@@ -1939,23 +2043,28 @@ impl PgStore {
                   OR child.origin_parent_session_id=parent.session_id
                 WHERE child.universe_id=$1
             )
-            SELECT session_id, deleted_at_ms FROM sessions WHERE universe_id=$1 AND session_id IN (SELECT session_id FROM tree)
+            SELECT session_id, deleted_at_ms, revision FROM sessions WHERE universe_id=$1 AND session_id IN (SELECT session_id FROM tree)
             ORDER BY session_id FOR UPDATE
         "#).bind(self.config.universe_id).bind(session_id).fetch_all(&mut *tx).await?;
-        for (id, deleted_at) in &rows {
+        for (id, deleted_at, _) in &rows {
             if deleted_at.is_none() {
                 return Err(PurgeSessionError::NotDeleted {
                     session_id: id.clone(),
                 });
             }
         }
-        let ids: Vec<String> = rows.into_iter().map(|(id, _)| id).collect();
+        let ids: Vec<String> = rows.iter().map(|(id, _, _)| id.clone()).collect();
         sqlx::query("DELETE FROM sessions WHERE universe_id=$1 AND session_id=ANY($2)")
             .bind(self.config.universe_id)
             .bind(&ids)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
+        self.publish_session_revisions(
+            rows.into_iter()
+                .map(|(id, _, revision)| (id, revision.saturating_add(1)))
+                .collect(),
+        );
         Ok(ids)
     }
 }
@@ -2042,7 +2151,7 @@ impl PgStore {
         };
         let query = format!(
             r#"
-            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
+            SELECT {SESSION_COLUMNS}, {NO_SUMMARY}
             FROM sessions
             WHERE universe_id = $1 AND session_id = ANY($2) AND (NOT $3 OR deleted_at_ms IS NULL)
             ORDER BY session_id
@@ -2099,9 +2208,10 @@ impl PgStore {
         sqlx::query("UPDATE sessions SET source_session_id = NULL WHERE universe_id=$1 AND source_session_id=ANY($2) AND source_seq IS NULL")
             .bind(self.config.universe_id).bind(&selected_ids).execute(&mut *tx).await
             .map_err(|error| session_sql_error("detach deleted clone sources", error))?;
+        let bot_ids: Vec<String> = sqlx::query_scalar("SELECT DISTINCT COALESCE(r.bot_id,s.bot_id) FROM sessions s LEFT JOIN sessions r ON r.universe_id=s.universe_id AND r.session_id=COALESCE(s.origin_root_session_id,s.session_id) WHERE s.universe_id=$1 AND s.session_id=ANY($2) AND COALESCE(r.bot_id,s.bot_id) IS NOT NULL").bind(self.config.universe_id).bind(&selected_ids).fetch_all(&mut *tx).await.map_err(|error| session_sql_error("read deleted bot owners", error))?;
         if soft_delete {
             sqlx::query(
-                "UPDATE sessions SET deleted_at_ms = $3 WHERE universe_id = $1 AND session_id = ANY($2) AND deleted_at_ms IS NULL",
+                "UPDATE sessions SET deleted_at_ms = $3, revision=revision+1 WHERE universe_id = $1 AND session_id = ANY($2) AND deleted_at_ms IS NULL",
             )
             .bind(self.config.universe_id)
             .bind(&selected_ids)
@@ -2127,9 +2237,134 @@ impl PgStore {
             .map_err(|error| SessionStoreError::Store {
                 message: format!("decode deleted session id: {error}"),
             })?;
+        for record in &records {
+            let mut record = record.clone();
+            record.revision += 1;
+            self.publish_session(&record, None);
+        }
+        for id in bot_ids {
+            self.changed(crate::changes::ChangeKind::Bot, id);
+        }
         Ok(DeleteClosedSessionsResult {
             target,
             deleted_session_ids,
         })
+    }
+}
+
+async fn project_summary_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    universe_id: Uuid,
+    record: &mut SessionRecord,
+    entry: &StoredSessionEntry,
+) -> Result<(), SessionStoreError> {
+    let mut texts = BTreeMap::new();
+    for message in harness::storage::summary::message_entries(entry) {
+        if !harness::storage::summary::is_user_text(&message) {
+            continue;
+        }
+        let blob_ref = &message.content.content_ref;
+        let prefix: Option<Vec<u8>> = sqlx::query_scalar(
+            "SELECT substring(inline_bytes FROM 1 FOR 4096) FROM cas_blobs WHERE universe_id=$1 AND blob_ref=$2 AND inline_bytes IS NOT NULL",
+        ).bind(universe_id).bind(blob_ref.as_str()).fetch_optional(&mut **tx).await
+            .map_err(|error| session_sql_error("read message preview", error))?;
+        if let Some(prefix) = prefix {
+            let length =
+                std::str::from_utf8(&prefix).map_or_else(|error| error.valid_up_to(), str::len);
+            texts.insert(
+                blob_ref.clone(),
+                String::from_utf8_lossy(&prefix[..length]).into_owned(),
+            );
+        }
+    }
+    harness::storage::summary::project_summary(record, entry, |message| {
+        texts.get(&message.content.content_ref).cloned()
+    });
+    Ok(())
+}
+
+async fn write_summary(
+    tx: &mut Transaction<'_, Postgres>,
+    universe: Uuid,
+    record: &SessionRecord,
+) -> Result<(), SessionStoreError> {
+    let mut json =
+        serde_json::to_value(&record.summary).map_err(|error| SessionStoreError::Store {
+            message: error.to_string(),
+        })?;
+    // Queryable activity fields have columns; the JSON holds the remaining display details.
+    if let Some(fields) = json.as_object_mut() {
+        fields.remove("activity_phase");
+        fields.remove("activity_since_ms");
+    }
+    let activity = match record.activity {
+        SessionActivity::Idle => "idle",
+        SessionActivity::Working => "working",
+        SessionActivity::Waiting => "waiting",
+    };
+    sqlx::query(
+        "INSERT INTO session_summary (universe_id, session_id, activity, phase, since_ms, summary_json)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (universe_id,session_id) DO UPDATE
+         SET activity=EXCLUDED.activity, phase=EXCLUDED.phase, since_ms=EXCLUDED.since_ms, summary_json=EXCLUDED.summary_json
+         WHERE (session_summary.activity,session_summary.phase,session_summary.since_ms,session_summary.summary_json)
+            IS DISTINCT FROM (EXCLUDED.activity,EXCLUDED.phase,EXCLUDED.since_ms,EXCLUDED.summary_json)")
+        .bind(universe).bind(record.session_id.as_str()).bind(activity)
+        .bind(record.summary.activity_phase.as_deref())
+        .bind(optional_u64_to_i64(record.summary.activity_since_ms, "activity since_ms")?)
+        .bind(json).execute(&mut **tx).await
+        .map_err(|error| session_sql_error("write session summary", error))?;
+    Ok(())
+}
+
+impl PgStore {
+    fn publish_session(&self, record: &SessionRecord, seq: Option<u64>) {
+        let mut change = crate::changes::Change::new(
+            self.config.universe_id,
+            crate::changes::ChangeKind::Session,
+            record.session_id.as_str(),
+        );
+        change.seq = seq;
+        change.rev = Some(record.revision);
+        self.changes.publish(change);
+    }
+}
+
+/// Capture the invalidation target before committing or deleting the row.
+async fn session_bot_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    universe_id: Uuid,
+    session_id: &SessionId,
+) -> Result<Option<String>, SessionStoreError> {
+    sqlx::query_scalar(
+        "SELECT COALESCE(r.bot_id,s.bot_id) FROM sessions s LEFT JOIN sessions r
+         ON r.universe_id=s.universe_id AND r.session_id=COALESCE(s.origin_root_session_id,s.session_id)
+         WHERE s.universe_id=$1 AND s.session_id=$2"
+    ).bind(universe_id).bind(session_id.as_str()).fetch_one(&mut **tx).await
+        .map_err(|error| session_sql_error("read session bot owner", error))
+}
+
+async fn bump_retention_descendants(
+    tx: &mut Transaction<'_, Postgres>,
+    universe: Uuid,
+    record: &SessionRecord,
+) -> Result<Vec<(String, i64)>, SessionStoreError> {
+    if record.retention_root_session_id != record.session_id {
+        return Ok(Vec::new());
+    }
+    sqlx::query_as("UPDATE sessions SET revision=revision+1 WHERE universe_id=$1 AND retention_root_session_id=$2 AND session_id<>$2 AND deleted_at_ms IS NULL RETURNING session_id,revision")
+        .bind(universe).bind(record.session_id.as_str()).fetch_all(&mut **tx).await.map_err(|error| session_sql_error("invalidate inherited retention", error))
+}
+impl PgStore {
+    fn publish_session_revisions(&self, rows: Vec<(String, i64)>) {
+        for (id, revision) in rows {
+            let mut change = crate::changes::Change::new(
+                self.config.universe_id,
+                crate::changes::ChangeKind::Session,
+                id,
+            );
+            change.rev = u64::try_from(revision).ok();
+            self.changes.publish(change);
+        }
     }
 }

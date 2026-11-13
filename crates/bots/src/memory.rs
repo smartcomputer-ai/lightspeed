@@ -204,6 +204,21 @@ impl BotStore for InMemoryBotStore {
             .bots
             .values()
             .map(|bot| BotRosterRow {
+                status: crate::BotStatusProjection {
+                    setup: api::BotSetupStatus::Ready,
+                    ..Default::default()
+                }
+                .list_status(
+                    bot,
+                    api::SessionActivity::Idle,
+                    state
+                        .events_of(&bot.bot_id)
+                        .filter(|event| event.is_pending())
+                        .count() as u64,
+                    state.last_event_of(&bot.bot_id).as_ref(),
+                ),
+                open_session_count: 0,
+                active_session_count: 0,
                 bot: bot.clone(),
                 trigger_count: u32::try_from(state.triggers_of(&bot.bot_id).count())
                     .unwrap_or(u32::MAX),

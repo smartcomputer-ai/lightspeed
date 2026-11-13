@@ -28,10 +28,20 @@ pub const ACTIVITY_BOT_PUBLISH_DIRECTORY: &str = "BotActivities::publish_directo
 pub const ACTIVITY_BOT_ADMIT_SCHEDULE_EVENT: &str = "BotActivities::admit_schedule_event";
 pub const ACTIVITY_BOT_POLL_TRIGGER: &str = "BotActivities::poll_trigger";
 
+pub const ACTIVITY_BOT_RECORD_STATUS: &str = "BotActivities::record_status";
+
 pub struct BotActivities;
 
 #[activities]
 impl BotActivities {
+    #[activity(name = ACTIVITY_BOT_RECORD_STATUS)]
+    pub async fn record_status(
+        _ctx: ActivityContext,
+        _request: BotRecordStatusRequest,
+    ) -> Result<(), ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
     /// Create or reconcile a controlled session of the bot (profile, brief,
     /// `bot_*` tools, carried tools, lifecycle controller).
     #[activity(name = ACTIVITY_BOT_ENSURE_SESSION)]

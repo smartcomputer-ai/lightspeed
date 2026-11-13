@@ -1075,6 +1075,8 @@ export type BotEventOutcome =
   | "steered"
   | "appended"
   | "archived";
+export type BotListStatus =
+  "closed" | "paused" | "waiting" | "attention" | "budget" | "working" | "idle";
 export type BotControllerStatus =
   | "initializing"
   | "degraded"
@@ -3198,6 +3200,7 @@ export interface BotListResponse {
  */
 export interface BotListItem {
   access: ResourceAccessSummary;
+  activeSessionCount?: number;
   /**
    * What the bot's sessions are doing now: waiting when one waits for an
    * approval, else working when one is running, else idle.
@@ -3244,6 +3247,7 @@ export interface BotListItem {
    */
   eventSeq: number;
   lastEvent?: BotEventView | null;
+  openSessionCount?: number;
   /**
    * Events whose delivery has not finished.
    */
@@ -3265,6 +3269,10 @@ export interface BotListItem {
    * (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
    */
   selfConfig?: boolean;
+  /**
+   * Display precedence: closed, paused, waiting, attention, budget, working, idle.
+   */
+  status?: BotListStatus & string;
   triggerCount: number;
   updatedAtMs: number;
 }
@@ -3285,6 +3293,7 @@ export interface BotReadResponse {
    */
   access: ResourceAccessSummary;
   bot: BotView;
+  status?: BotListStatus & string;
 }
 export interface AgentApiOutcomeOfBotSessionRotateResponse {
   notifications?: AgentNotification[];
@@ -3373,6 +3382,9 @@ export interface BotSessionSnapshot {
   lastActiveAtMs?: number | null;
   sessionId: string;
 }
+/**
+ * Display fields materialized with the session log.
+ */
 export interface SessionSummaryView {
   /**
    * The audience of the session's root: whether it is shared with the
@@ -3380,14 +3392,54 @@ export interface SessionSummaryView {
    */
   access: ResourceAccessSummary;
   /**
+   * Environment selected by the session event log.
+   */
+  activeEnvironmentId?: string | null;
+  /**
    * What the session is doing now: idle, working on a run, or waiting for
    * an approval.
    */
   activity: SessionActivity;
+  /**
+   * Open vocabulary: awaiting while a run is parked on promises. Approval waiting remains in activity.
+   */
+  activityPhase?: string | null;
+  /**
+   * When the current non-idle activity or phase began; absent while idle.
+   */
+  activitySinceMs?: number | null;
+  /**
+   * Attached catalog resource ids, grouped by kind.
+   */
+  attachments?: SessionAttachmentsView;
   closedAtMs?: number | null;
   createdAtMs: number;
   displayName?: string | null;
+  /**
+   * Last observed stopped workflow execution, cleared on recovery.
+   */
+  executionFailure?: SessionExecutionFailureView | null;
   id: string;
+  /**
+   * Observation time when the preview message entered the event log.
+   */
+  lastMessageAtMs?: number | null;
+  /**
+   * Application-supplied display provenance of the preview message; not authenticated identity.
+   */
+  lastMessageOrigin?: string | null;
+  /**
+   * Latest nonempty user or assistant message reduced to one plain line of at most 200 Unicode characters.
+   */
+  lastMessagePreview?: string | null;
+  /**
+   * Role of the message represented by lastMessagePreview.
+   */
+  lastMessageRole?: ContextMessageRoleView | null;
+  /**
+   * Most recent terminal run, independent of the current activity.
+   */
+  lastRun?: SessionLastRunView | null;
   /**
    * True only when the session's integration names a lifecycle controller.
    */
@@ -3404,7 +3456,22 @@ export interface SessionSummaryView {
    */
   origin?: SessionOriginView | null;
   retention: SessionRetentionView;
+  /**
+   * Monotonic revision of visible summary fields; log-only appends do not advance it.
+   */
+  revision?: number;
   updatedAtMs: number;
+}
+export interface SessionAttachmentsView {
+  environments?: string[];
+  mcpServers?: string[];
+  workspaces?: string[];
+}
+export interface SessionLastRunView {
+  failureKind?: RunFailureKindView | null;
+  finishedAtMs: number;
+  runId: string;
+  status: RunStatus;
 }
 export interface AgentApiOutcomeOfBotTriggerDeleteResponse {
   notifications?: AgentNotification[];

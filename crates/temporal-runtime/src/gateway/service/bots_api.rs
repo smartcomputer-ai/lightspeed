@@ -906,6 +906,9 @@ impl GatewayAgentApi {
             bots: rows
                 .into_iter()
                 .map(|(row, access)| BotListItem {
+                    status: row.status,
+                    open_session_count: row.open_session_count,
+                    active_session_count: row.active_session_count,
                     bot: row.bot.view(),
                     access,
                     trigger_count: row.trigger_count,

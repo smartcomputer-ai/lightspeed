@@ -505,6 +505,11 @@ class BotListParams(TypedDict):
     """
 
 
+BotListStatus: TypeAlias = Literal[
+    'closed', 'paused', 'waiting', 'attention', 'budget', 'working', 'idle'
+]
+
+
 class BotReadParams(TypedDict):
     botId: BotId
 
@@ -2787,6 +2792,12 @@ a closed session is idle.
 """
 
 
+class SessionAttachmentsView(TypedDict):
+    environments: NotRequired[list[str]]
+    mcpServers: NotRequired[list[str]]
+    workspaces: NotRequired[list[str]]
+
+
 class SessionCloseParams(TypedDict):
     force: NotRequired[bool]
     """
@@ -3333,6 +3344,13 @@ class SessionJobSummaryView(TypedDict):
     """
     Set when Lightspeed stopped the running job.
     """
+
+
+class SessionLastRunView(TypedDict):
+    failureKind: NotRequired[RunFailureKindView | None]
+    finishedAtMs: int
+    runId: str
+    status: RunStatus
 
 
 SessionLifecycleStatus: TypeAlias = Literal['new', 'open', 'closed']
@@ -6063,20 +6081,64 @@ class SessionShareResponse(TypedDict):
 
 
 class SessionSummaryView(TypedDict):
+    """
+    Display fields materialized with the session log.
+    """
+
     access: ResourceAccessSummary
     """
     The audience of the session's root: whether it is shared with the
     universe, and who created it.
+    """
+    activeEnvironmentId: NotRequired[str | None]
+    """
+    Environment selected by the session event log.
     """
     activity: SessionActivity
     """
     What the session is doing now: idle, working on a run, or waiting for
     an approval.
     """
+    activityPhase: NotRequired[str | None]
+    """
+    Open vocabulary: awaiting while a run is parked on promises. Approval waiting remains in activity.
+    """
+    activitySinceMs: NotRequired[int | None]
+    """
+    When the current non-idle activity or phase began; absent while idle.
+    """
+    attachments: NotRequired[SessionAttachmentsView]
+    """
+    Attached catalog resource ids, grouped by kind.
+    """
     closedAtMs: NotRequired[int | None]
     createdAtMs: int
     displayName: NotRequired[str | None]
+    executionFailure: NotRequired[SessionExecutionFailureView | None]
+    """
+    Last observed stopped workflow execution, cleared on recovery.
+    """
     id: str
+    lastMessageAtMs: NotRequired[int | None]
+    """
+    Observation time when the preview message entered the event log.
+    """
+    lastMessageOrigin: NotRequired[str | None]
+    """
+    Application-supplied display provenance of the preview message; not authenticated identity.
+    """
+    lastMessagePreview: NotRequired[str | None]
+    """
+    Latest nonempty user or assistant message reduced to one plain line of at most 200 Unicode characters.
+    """
+    lastMessageRole: NotRequired[ContextMessageRoleView | None]
+    """
+    Role of the message represented by lastMessagePreview.
+    """
+    lastRun: NotRequired[SessionLastRunView | None]
+    """
+    Most recent terminal run, independent of the current activity.
+    """
     lifecycleControlled: bool
     """
     True only when the session's integration names a lifecycle controller.
@@ -6091,6 +6153,10 @@ class SessionSummaryView(TypedDict):
     Sub-agent lineage; absent for root sessions.
     """
     retention: SessionRetentionView
+    revision: NotRequired[int]
+    """
+    Monotonic revision of visible summary fields; log-only appends do not advance it.
+    """
     updatedAtMs: int
 
 
@@ -6574,6 +6640,7 @@ class BotListItem(TypedDict):
     """
 
     access: ResourceAccessSummary
+    activeSessionCount: NotRequired[int]
     activity: SessionActivity
     """
     What the bot's sessions are doing now: waiting when one waits for an
@@ -6620,6 +6687,7 @@ class BotListItem(TypedDict):
     Highest `#N` admitted so far.
     """
     lastEvent: NotRequired[BotEventView | None]
+    openSessionCount: NotRequired[int]
     pendingCount: int
     """
     Events whose delivery has not finished.
@@ -6641,6 +6709,10 @@ class BotListItem(TypedDict):
     Capability grant: the mutating self-configuration tools
     (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
     """
+    status: NotRequired[BotListStatus]
+    """
+    Display precedence: closed, paused, waiting, attention, budget, working, idle.
+    """
     triggerCount: int
     updatedAtMs: int
 
@@ -6659,6 +6731,7 @@ class BotReadResponse(TypedDict):
     The bot's audience, always the universe, and who created it.
     """
     bot: BotView
+    status: NotRequired[BotListStatus]
 
 
 class BotStateView(TypedDict):

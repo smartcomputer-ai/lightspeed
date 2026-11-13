@@ -8,6 +8,7 @@
 pub mod blob_roots;
 pub mod blobs;
 pub mod session;
+pub mod summary;
 
 pub use crate::session::{
     SessionEntry, StoredSessionEntry, UncommittedSessionEvent, UncommittedStoredEvent,

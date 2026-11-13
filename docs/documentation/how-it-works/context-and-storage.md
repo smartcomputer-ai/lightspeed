@@ -382,6 +382,33 @@ running, and reports `executionFailure` if not. If Temporal cannot answer, the r
 logs a warning and reports stored state, so a session can read as healthy during an
 outage.
 
+`session/list` reads a small projection maintained in the event append
+transaction. `sessions` holds the catalog, lifecycle, log head and visible
+revision. `session_summary` holds activity and its start time, the last run,
+a bounded message preview, selected environment and attachment IDs. The summary
+persists when idle; lists do not replay events or load message blobs. A history
+fork projects its inherited prefix, while a configuration clone starts from its
+own opening events.
+
+The list revision advances for visible changes, including name, metadata,
+access and retention changes; log-only appends advance only the event head and
+append timestamp. Execution failures are stored observations: the reaper and
+session reads record them conditionally, and a confirmed restart or later run
+transition clears them. A delayed failure observation cannot overwrite a newer
+revision. These observations are not part of deterministic event replay.
+
+After a committed change, the store publishes an identifier-only invalidation.
+Runtime processes share these through PostgreSQL `LISTEN`/`NOTIFY`. Waiters
+subscribe before reading and retain fallback timers because notifications can
+be lost. Event long-polls fall back after five seconds; command waits retain
+500 ms checks for workflow refusals that produce no event. Each runtime process
+uses one listening connection, requiring a direct database connection or a
+session-mode pooler.
+
+Bot lists combine controller facts stored on `bots` with session activity and
+pending bot events. `bots/list` and `bots/read` do not query Temporal;
+`bots/state/read` still queries the controller for its detailed state.
+
 Run summaries come from reduced state for the last 256 finished runs and from the
 log for older ones. `session/runs/read` projects one run from its events. A run past
 the server's detail limit keeps its opening and its latest whole turns and sets

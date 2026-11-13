@@ -1815,8 +1815,18 @@ pub async fn repair_registered_connections(
 pub async fn run_registered_sweep(runtime: Arc<UniverseRuntime>) {
     let mut interval = tokio::time::interval(REGISTERED_SWEEP_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut changes = runtime.stores().changes().subscribe_all();
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = interval.tick() => {},
+            change = changes.recv() => {
+                if matches!(change, Ok(Some(ref change)) if change.kind != store_pg::changes::ChangeKind::Environment) { continue; }
+                if let Err(error) = revoke_ended_routes(&runtime).await {
+                    tracing::warn!(%error, "route revalidation after change failed");
+                }
+                continue;
+            }
+        }
         let universes = match store_pg::list_universes_with_registered_environments(
             runtime.stores().pool(),
         )

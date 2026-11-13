@@ -7,6 +7,9 @@ use temporalio_client::WorkflowIdReusePolicy;
 // boundary small lets the same recovery logic run against scripted offline I/O.
 #[async_trait]
 trait SessionLifecycleIo: Sync {
+    fn subscribe(&self, _session_id: &SessionId) -> Option<tokio::sync::watch::Receiver<u64>> {
+        None
+    }
     async fn load(&self, session_id: &SessionId) -> Result<LoadedSession, AgentApiError>;
     async fn is_running(&self, session_id: &SessionId) -> Result<bool, AgentApiError>;
     async fn retry_setup(&self, session_id: &SessionId) -> Result<(), AgentApiError>;
@@ -31,6 +34,13 @@ trait SessionLifecycleIo: Sync {
 
 #[async_trait]
 impl SessionLifecycleIo for GatewayAgentApi {
+    fn subscribe(&self, session_id: &SessionId) -> Option<tokio::sync::watch::Receiver<u64>> {
+        Some(self.store.changes().subscribe(
+            self.universe_id(),
+            store_pg::changes::ChangeKind::Session,
+            session_id.as_str(),
+        ))
+    }
     async fn load(&self, session_id: &SessionId) -> Result<LoadedSession, AgentApiError> {
         self.load_session_state(session_id).await
     }
@@ -107,7 +117,13 @@ impl SessionLifecycleIo for GatewayAgentApi {
             .map_err(map_workflow_start_error);
         match started {
             Err(error) if !matches!(error.kind, AgentApiErrorKind::Conflict) => Err(error),
-            _ => Ok(()),
+            _ => {
+                self.store
+                    .record_execution_failure(session_id, None, None, now_ms()?.max(0) as u64)
+                    .await
+                    .map_err(map_session_store_error)?;
+                Ok(())
+            }
         }
     }
 }
@@ -278,6 +294,7 @@ impl<T: SessionLifecycleIo> SessionLifecycle<'_, T> {
         session_id: &SessionId,
     ) -> Result<LoadedSession, AgentApiError> {
         let started = Instant::now();
+        let mut changes = self.io.subscribe(session_id);
         loop {
             if started.elapsed() > self.operation_timeout {
                 return Err(AgentApiError::operation_pending(format!(
@@ -296,7 +313,12 @@ impl<T: SessionLifecycleIo> SessionLifecycle<'_, T> {
                     return self.io.load(session_id).await;
                 }
             }
-            tokio::time::sleep(self.poll_interval).await;
+            match &mut changes {
+                Some(changes) => {
+                    store_pg::changes::wait_for_change(changes, self.poll_interval).await
+                }
+                None => tokio::time::sleep(self.poll_interval).await,
+            }
         }
     }
 
@@ -784,6 +806,11 @@ impl GatewayAgentApi {
             Err(error) => return Err(map_workflow_interaction_error(error)),
         }
         let started = Instant::now();
+        let mut changes = self.store.changes().subscribe(
+            self.universe_id(),
+            store_pg::changes::ChangeKind::Session,
+            session_id.as_str(),
+        );
         loop {
             if started.elapsed() > self.operation_timeout {
                 return Err(AgentApiError::operation_pending(format!(
@@ -812,7 +839,7 @@ impl GatewayAgentApi {
                     return Err(AgentApiError::internal(error));
                 }
             }
-            tokio::time::sleep(self.poll_interval).await;
+            store_pg::changes::wait_for_change(&mut changes, self.poll_interval).await;
         }
     }
 }
@@ -976,6 +1003,8 @@ mod tests {
         Box::new(LoadedSession {
             state,
             record: harness::storage::SessionRecord {
+                revision: 1,
+                summary: Default::default(),
                 session_id: session_id.clone(),
                 display_name: None,
                 metadata: BTreeMap::new(),

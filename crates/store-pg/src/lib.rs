@@ -11,6 +11,7 @@ mod blob;
 mod blob_cache;
 mod bots;
 mod cas_sweep;
+pub mod changes;
 mod channels;
 mod deployment;
 mod environment;
@@ -162,6 +163,7 @@ pub struct PgStore {
     pub(crate) object_store: Option<Arc<dyn ObjectStore>>,
     pub(crate) config: PgStoreConfig,
     pub(crate) blob_cache: Option<Arc<BlobCache>>,
+    pub(crate) changes: Arc<changes::ChangeBus>,
 }
 
 #[derive(Debug, Error)]
@@ -215,12 +217,27 @@ pub enum PgStoreError {
 }
 
 impl PgStore {
+    pub fn with_changes(mut self, changes: Arc<changes::ChangeBus>) -> Self {
+        self.changes = changes;
+        self
+    }
+
+    pub fn changes(&self) -> &Arc<changes::ChangeBus> {
+        &self.changes
+    }
+
+    pub(crate) fn changed(&self, kind: changes::ChangeKind, id: impl Into<String>) {
+        self.changes
+            .publish(changes::Change::new(self.config.universe_id, kind, id));
+    }
+
     pub fn new(pool: PgPool, config: PgStoreConfig) -> Self {
         Self {
             pool,
             object_store: None,
             config,
             blob_cache: None,
+            changes: Arc::new(changes::ChangeBus::default()),
         }
     }
 
@@ -234,6 +251,7 @@ impl PgStore {
             object_store: Some(object_store),
             config,
             blob_cache: None,
+            changes: Arc::new(changes::ChangeBus::default()),
         }
     }
 

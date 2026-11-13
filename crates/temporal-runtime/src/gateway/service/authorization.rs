@@ -188,6 +188,7 @@ impl GatewayAgentApi {
 
     pub(crate) fn access_store(&self) -> store_pg::PgAccessStore {
         store_pg::PgAccessStore::new(self.store.pool().clone())
+            .with_changes(self.store.changes().clone())
     }
 
     /// The caller's context, which must address this universe-bound service.

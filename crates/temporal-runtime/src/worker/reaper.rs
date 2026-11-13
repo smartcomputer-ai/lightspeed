@@ -929,10 +929,44 @@ async fn reap_session(
         }
     };
     if let Some(run_id) = active_or_queued_run(&state) {
+        let observation = match sessions.load_session(session_id).await {
+            Ok(Some(record)) => record,
+            Ok(None) => return,
+            Err(error) => {
+                stats.errors += 1;
+                tracing::warn!(%error, "could not read execution observation revision");
+                return;
+            }
+        };
+        use harness::storage::summary::ExecutionFailure;
         let temporal_status = match workflows.workflow_status(universe_id, session_id).await {
-            SessionWorkflowStatus::Running => None,
-            SessionWorkflowStatus::Terminal(status) => Some(format!("{status:?}")),
-            SessionWorkflowStatus::NotFound => Some("not_found".to_owned()),
+            SessionWorkflowStatus::Running => {
+                if observation.summary.execution_failure.is_some()
+                    && let Err(error) = sessions
+                        .record_execution_failure(
+                            session_id,
+                            Some(observation.revision),
+                            None,
+                            now_ms,
+                        )
+                        .await
+                {
+                    stats.errors += 1;
+                    tracing::warn!(%error, "could not clear recovered execution");
+                }
+                None
+            }
+            SessionWorkflowStatus::Terminal(status) => Some((
+                format!("{status:?}"),
+                match status {
+                    WorkflowExecutionStatus::Failed => ExecutionFailure::Failed,
+                    WorkflowExecutionStatus::TimedOut => ExecutionFailure::TimedOut,
+                    _ => ExecutionFailure::Terminated,
+                },
+            )),
+            SessionWorkflowStatus::NotFound => {
+                Some(("not_found".to_owned(), ExecutionFailure::Missing))
+            }
             SessionWorkflowStatus::Unavailable(error) => {
                 stats.workflow_status_errors += 1;
                 tracing::warn!(
@@ -947,7 +981,7 @@ async fn reap_session(
                 None
             }
         };
-        if let Some(temporal_status) = temporal_status {
+        if let Some((temporal_status, failure)) = temporal_status {
             // A stopped execution writes nothing more, so this read sees its
             // final log. A run that ended, or a close that landed, between the
             // first read and the describe is an ordinary exit.
@@ -964,6 +998,18 @@ async fn reap_session(
             };
             if let Some(run_id) = active_or_queued_run(&state) {
                 stats.stale_active_projections += 1;
+                if let Err(error) = sessions
+                    .record_execution_failure(
+                        session_id,
+                        Some(observation.revision),
+                        Some(failure),
+                        now_ms,
+                    )
+                    .await
+                {
+                    stats.errors += 1;
+                    tracing::warn!(%error, "could not record stopped execution");
+                }
                 tracing::error!(
                     target: "temporal_runtime",
                     event = "stale_active_projection",
@@ -1620,7 +1666,7 @@ mod tests {
         let session_id = session_with_active_run(&store, "stale").await;
         let workflows = FakeWorkflows {
             statuses: BTreeMap::from([(
-                session_id,
+                session_id.clone(),
                 SessionWorkflowStatus::Terminal(WorkflowExecutionStatus::Failed),
             )]),
             ..FakeWorkflows::default()
@@ -1628,6 +1674,20 @@ mod tests {
         let stats = reap(&store, &workflows, &mut SignalledRepairs::default(), 10).await;
         assert_eq!(stats.stale_active_projections, 1);
         assert_eq!(stats.workflow_status_errors, 0);
+        let observed = store.load_session(&session_id).await.unwrap().unwrap();
+        assert_eq!(
+            observed.summary.execution_failure,
+            Some(harness::storage::summary::ExecutionFailure::Failed)
+        );
+        let recovered = FakeWorkflows {
+            statuses: BTreeMap::from([(session_id.clone(), SessionWorkflowStatus::Running)]),
+            ..FakeWorkflows::default()
+        };
+        let stats = reap(&store, &recovered, &mut SignalledRepairs::default(), 20).await;
+        assert_eq!(stats.errors, 0);
+        let recovered = store.load_session(&session_id).await.unwrap().unwrap();
+        assert_eq!(recovered.summary.execution_failure, None);
+        assert!(recovered.revision > observed.revision);
     }
 
     /// Finishes the session between the reaper's read and its describe, as a

@@ -235,6 +235,13 @@ pub struct BotView {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BotListItem {
+    /// Display precedence: closed, paused, waiting, attention, budget, working, idle.
+    #[serde(default)]
+    pub status: BotListStatus,
+    #[serde(default)]
+    pub open_session_count: u64,
+    #[serde(default)]
+    pub active_session_count: u64,
     #[serde(flatten)]
     pub bot: BotView,
     pub access: ResourceAccessSummary,
@@ -1082,6 +1089,8 @@ pub struct BotReadParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BotReadResponse {
+    #[serde(default)]
+    pub status: BotListStatus,
     pub bot: BotView,
     /// The bot's audience, always the universe, and who created it.
     pub access: ResourceAccessSummary,
@@ -1558,4 +1567,17 @@ mod tests {
                 .is_err()
         );
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum BotListStatus {
+    Closed,
+    Paused,
+    Waiting,
+    Attention,
+    Budget,
+    Working,
+    #[default]
+    Idle,
 }

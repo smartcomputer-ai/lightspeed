@@ -845,6 +845,8 @@ mod tests {
     #[test]
     fn session_line_shows_metadata_or_dash() {
         let mut session = api::SessionSummaryView {
+            revision: 0,
+            details: Default::default(),
             id: "s1".to_owned(),
             display_name: None,
             metadata: BTreeMap::new(),

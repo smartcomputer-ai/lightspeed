@@ -439,3 +439,11 @@ pub enum BotPollFireResult {
         reason: String,
     },
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BotRecordStatusRequest {
+    pub universe_id: Uuid,
+    pub bot_id: BotId,
+    pub status: bots::BotStatusProjection,
+    pub observed_at_ms: i64,
+}

@@ -3505,6 +3505,52 @@ fn llm_usage_to_api(usage: &harness::LlmUsage) -> LlmUsageView {
     }
 }
 
+/// Convert the store display projection without reading payload blobs.
+pub fn session_summary_details(
+    summary: &harness::storage::summary::SessionSummary,
+) -> api::SessionSummaryDetails {
+    api::SessionSummaryDetails {
+        activity_phase: summary.activity_phase.clone(),
+        activity_since_ms: summary.activity_since_ms,
+        last_run: summary
+            .last_run
+            .as_ref()
+            .map(|run| api::SessionLastRunView {
+                run_id: api_run_id(run.run_id),
+                status: core_run_status_to_api_status(run.status),
+                failure_kind: run.failure_kind.clone().map(run_failure_kind_to_api),
+                finished_at_ms: run.finished_at_ms,
+            }),
+        execution_failure: summary.execution_failure.map(|failure| match failure {
+            harness::storage::summary::ExecutionFailure::Failed => {
+                api::SessionExecutionFailureView::Failed
+            }
+            harness::storage::summary::ExecutionFailure::Terminated => {
+                api::SessionExecutionFailureView::Terminated
+            }
+            harness::storage::summary::ExecutionFailure::TimedOut => {
+                api::SessionExecutionFailureView::TimedOut
+            }
+            harness::storage::summary::ExecutionFailure::Missing => {
+                api::SessionExecutionFailureView::Missing
+            }
+        }),
+        last_message_preview: summary.last_message_preview.clone(),
+        last_message_role: summary
+            .last_message_role
+            .as_ref()
+            .map(context_message_role_to_api),
+        last_message_at_ms: summary.last_message_at_ms,
+        last_message_origin: summary.last_message_origin.clone(),
+        active_environment_id: summary.active_environment_id.clone(),
+        attachments: api::SessionAttachmentsView {
+            workspaces: summary.attachments.workspaces.clone(),
+            environments: summary.attachments.environments.clone(),
+            mcp_servers: summary.attachments.mcp_servers.clone(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use harness::{
@@ -4472,6 +4518,8 @@ mod tests {
         let session_id = SessionId::new("integrated-session");
         let state = CoreAgentState::new();
         let record = SessionRecord {
+            revision: 1,
+            summary: Default::default(),
             metadata: Default::default(),
             session_id: session_id.clone(),
             display_name: None,
