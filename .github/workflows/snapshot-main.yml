@@ -184,7 +184,13 @@ jobs:
           mkdir image-check
           docker cp "$container_id:/usr/local/bin/lightspeed-runtime" image-check/lightspeed-runtime
           cmp dist/bin/lightspeed-runtime image-check/lightspeed-runtime
+          docker cp "$container_id:/usr/local/bin/lightspeed" image-check/lightspeed
+          cmp dist/bin/lightspeed image-check/lightspeed
           docker run --rm "$RUNTIME_IMAGE" --version | grep -F "$EXPECTED_SHA"
+          # The CLI runs as the image's user, with no home directory and no
+          # connection, and is the same release as the server.
+          docker run --rm --entrypoint /usr/local/bin/lightspeed "$RUNTIME_IMAGE" --version | grep -F "$EXPECTED_SHA"
+          docker run --rm --entrypoint /usr/local/bin/lightspeed "$RUNTIME_IMAGE" config schema > /dev/null
           scripts/release/smoke-images.sh
       - name: Stage Linux build for assembly
         run: |

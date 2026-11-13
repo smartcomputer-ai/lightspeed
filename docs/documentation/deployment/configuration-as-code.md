@@ -202,7 +202,9 @@ lightspeed config apply -f config/
 ```
 
 `-f` takes files or directories. A directory is read recursively; every YAML
-or JSON file in it that has a `kind` is a document.
+or JSON file in it that has a `kind` is a document. Files and directories
+whose name starts with a dot are skipped, which is also what makes a mounted
+ConfigMap or Secret read correctly.
 
 `apply` works in four steps and writes only in the last one:
 
@@ -303,14 +305,61 @@ exported file.
 
 ## Run it from a pipeline
 
-`apply` is safe to run on every deployment and on a schedule. A typical
-arrangement in Kubernetes:
+`apply` is safe to run on every deployment and on a schedule. The runtime
+image contains the `lightspeed` CLI of the same release at
+`/usr/local/bin/lightspeed`, so a job needs no other image and always matches
+the runtime it talks to. A typical arrangement in Kubernetes:
 
 - Render the documents into a ConfigMap and the secrets into a Secret.
 - Run `lightspeed config apply -f /config` as a Job whose name includes a hash of
   the documents, so a changed document triggers a new run.
 - Run `lightspeed config diff -f config/` in merge requests against the target
   deployment to show reviewers what would change.
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lightspeed-config-3f9a1c   # include a hash of the documents
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: apply
+          image: <the runtime image of your release>
+          command: ["/usr/local/bin/lightspeed", "config", "apply", "-f", "/config"]
+          env:
+            - name: LIGHTSPEED_API_URL
+              value: http://lightspeed-runtime:18080/rpc
+            - name: LIGHTSPEED_API_KEY
+              valueFrom:
+                secretKeyRef: { name: lightspeed-config, key: api-key }
+            - name: TRACKER_TOKEN
+              valueFrom:
+                secretKeyRef: { name: lightspeed-config, key: tracker-token }
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: lightspeed-config }
+```
+
+The job takes its connection from `LIGHTSPEED_API_URL` and
+`LIGHTSPEED_API_KEY`. It needs no home directory and no saved connection, and
+it writes nothing to the container's filesystem, so a read-only root
+filesystem works.
+
+Documents and secrets can come from mounted volumes. A secret source of the
+form `{ file: /var/run/secrets/tracker/token }` reads a mounted Secret, as
+`{ env: … }` reads one injected as a variable. The image runs as user and
+group 65532: files mounted with the default mode are readable; if you
+restrict a Secret's mode, set the pod's `fsGroup` to 65532 and use mode
+`0440`. Give it a deployment key
+limited to the groups listed under [Before you start](#before-you-start).
+The image's default command is still the server, so name the CLI as the
+job's `command`.
 
 Declare a registration key before the daemons that hold its secret start: a
 daemon whose key the runtime does not know exits. An orchestrator that

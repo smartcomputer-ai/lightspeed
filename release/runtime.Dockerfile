@@ -12,5 +12,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY dist/bin/lightspeed-runtime /usr/local/bin/lightspeed-runtime
+# The CLI of the same release, for jobs that administer the runtime from
+# inside the cluster, such as `lightspeed config apply`. A job names it as
+# its command; the image's entrypoint stays the server.
+COPY dist/bin/lightspeed /usr/local/bin/lightspeed
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/lightspeed-runtime"]
