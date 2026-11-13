@@ -1,11 +1,12 @@
 # P199 — Declarative universe configuration
 
-**Status:** Slices 1 and 2 implemented, 2026-11-12: the document format,
-`export`, `diff` and `apply` in the CLI, for universe and deployment
-documents and every section in the resource table. See
+**Status:** Implemented, 2026-11-13: the document format and
+`config export`, `config diff`, `config apply` and `config schema` in the
+CLI, for universe and deployment documents and every section in the resource
+table, and the CLI in the runtime image. See
 [Implementation](#implementation) for what was built, where it differs from
-the proposal, and the test results. Not started: the Platform step, the CLI
-image, and `--prune`.
+the proposal, and the test results. Deferred: Platform adoption of a declared
+universe, and `--prune`.
 
 ## Goal
 
@@ -534,8 +535,11 @@ is a separate, later question.
 
 ### Release
 
-- The release builds the `lightspeed` binary but no container image contains
-  it. Publish one so a cluster job can run `apply`.
+- The runtime image contains the `lightspeed` binary next to the server, at
+  `/usr/local/bin/lightspeed`. A cluster job runs `config apply` from it by
+  naming the CLI as its command. A separate image was considered and not
+  chosen: every image has to be mirrored and approved on a locked-down
+  cluster, and a job that uses the runtime image always matches its version.
 
 ## Deployment integration
 
@@ -630,7 +634,9 @@ Not built:
 3. **Platform organization** creation and naming. Deferred (decided
    2026-11-12): a Platform admin adopts a declared universe once in the web
    app. See [Platform](#platform).
-4. **The CLI image.**
+4. **The CLI image.** Done: the runtime image contains the `lightspeed` CLI
+   of the same release, so a job reuses an image the cluster already has.
+   No separate image is published.
 
 ## Later
 

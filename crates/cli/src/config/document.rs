@@ -136,7 +136,15 @@ fn collect_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     let entries = std::fs::read_dir(directory)
         .with_context(|| format!("read directory {}", directory.display()))?;
     for entry in entries {
-        let path = entry?.path();
+        let entry = entry?;
+        // Hidden entries are not configuration. A mounted Kubernetes
+        // ConfigMap or Secret keeps its files in hidden directories
+        // (`..data`, `..<timestamp>`) and links to them from the top level,
+        // so following those would read every document more than once.
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
         if path.is_dir() {
             collect_files(&path, files)?;
         } else if is_document_file(&path) {
@@ -369,6 +377,43 @@ mod tests {
         assert!(
             universe.credentials.is_none(),
             "absent sections stay absent"
+        );
+    }
+
+    /// A ConfigMap volume: the files live in a timestamped hidden directory,
+    /// `..data` links to it, and each visible name links through `..data`.
+    #[cfg(unix)]
+    #[test]
+    fn a_mounted_configmap_is_read_once_through_its_visible_names() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let mount = directory.path().join("config");
+        let revision = mount.join("..2026_11_13_08_00_00.1234");
+        std::fs::create_dir_all(&revision).unwrap();
+        std::fs::write(
+            revision.join("research.yaml"),
+            "schemaVersion: 1\nkind: universe\nhandle: research\nprofiles:\n  - file: reviewer.json\n",
+        )
+        .unwrap();
+        std::fs::write(
+            revision.join("reviewer.json"),
+            r#"{"profileId":"reviewer"}"#,
+        )
+        .unwrap();
+        symlink("..2026_11_13_08_00_00.1234", mount.join("..data")).unwrap();
+        symlink("..data/research.yaml", mount.join("research.yaml")).unwrap();
+        symlink("..data/reviewer.json", mount.join("reviewer.json")).unwrap();
+
+        let documents = load(std::slice::from_ref(&mount)).unwrap();
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].path, mount.join("research.yaml"));
+        let Document::Universe(universe) = &documents[0].document else {
+            panic!("expected a universe document");
+        };
+        // An include next to the document resolves through the mount too.
+        assert_eq!(
+            universe.profiles.as_ref().unwrap()[0]["profileId"],
+            "reviewer"
         );
     }
 

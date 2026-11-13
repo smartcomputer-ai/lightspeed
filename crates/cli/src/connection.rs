@@ -372,7 +372,13 @@ pub async fn resolve(
     url: Option<&str>,
     universe: Option<&str>,
 ) -> Result<ResolvedConnection> {
-    let config = load_at(&config_dir()?)?;
+    let config = match config_dir() {
+        Ok(dir) => load_at(&dir)?,
+        // Nowhere to keep saved connections, as in a container that sets no
+        // home directory: the connection then comes from the environment.
+        Err(_) if name.is_none() => Connections::default(),
+        Err(error) => return Err(error),
+    };
     let selected = name.or(config.selected.as_deref());
     let saved = selected
         .map(|n| {

@@ -1406,3 +1406,42 @@ fn the_document_schema_is_printed_without_a_connection() {
     assert_eq!(schema["title"], "Lightspeed configuration document");
     assert!(schema["definitions"]["UniverseDocument"].is_object());
 }
+
+/// A job in a container has no home directory and no saved connection: the
+/// endpoint and key come from the environment alone.
+#[test]
+fn a_connection_from_the_environment_needs_no_home_directory() {
+    let runtime = document_runtime();
+    let directory = runtime.directory.path();
+    std::fs::write(
+        directory.join("research.yaml"),
+        "schemaVersion: 1\nkind: universe\nhandle: research\nmcpServers:\n  - serverId: tracker\n    serverUrl: https://tracker.example.com/mcp\n    defaultServerLabel: tracker\n",
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_lightspeed"))
+            .current_dir(directory)
+            .args(args)
+            .env_clear()
+            .env("LIGHTSPEED_API_URL", &runtime.endpoint)
+            .env("LIGHTSPEED_API_KEY", "lsk_fixture")
+            .output()
+            .unwrap()
+    };
+    let applied = run(&["config", "apply", "-f", "research.yaml"]);
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    assert!(String::from_utf8_lossy(&applied.stdout).contains("created     mcpServers/tracker"));
+
+    // A saved connection still needs somewhere to be saved.
+    let named = run(&["--connection", "production", "universe", "list"]);
+    assert!(!named.status.success());
+    assert!(
+        String::from_utf8_lossy(&named.stderr).contains("LIGHTSPEED_CONFIG_DIR or HOME"),
+        "{}",
+        String::from_utf8_lossy(&named.stderr)
+    );
+}
