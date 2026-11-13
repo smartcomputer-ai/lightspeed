@@ -2452,6 +2452,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfUniverseWatchResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/UniverseWatchResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfVfsSnapshotCommitResponse": {
       "properties": {
         "notifications": {
@@ -2573,6 +2590,166 @@
     },
     "AgentNotification": {
       "oneOf": [
+        {
+          "properties": {
+            "method": {
+              "const": "session/changed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "session": {
+                  "$ref": "#/definitions/SessionSummaryView"
+                }
+              },
+              "required": [
+                "session"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "session/removed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "sessionId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sessionId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "bots/changed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "bot": {
+                  "$ref": "#/definitions/BotListItem"
+                }
+              },
+              "required": [
+                "bot"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "bots/removed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "botId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "botId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "environments/changed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "environment": {
+                  "$ref": "#/definitions/EnvironmentView"
+                }
+              },
+              "required": [
+                "environment"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "environments/removed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "environmentId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "environmentId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "watch/reset",
+              "type": "string"
+            },
+            "params": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
         {
           "properties": {
             "method": {
@@ -13214,7 +13391,7 @@
       ]
     },
     "MethodGroup": {
-      "description": "The methods a key may call, by group. Every public method but\n`initialize` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
+      "description": "The methods a key may call, by group. Every public method but\n`initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
       "oneOf": [
         {
           "enum": [
@@ -19559,6 +19736,35 @@
       ],
       "type": "string"
     },
+    "UniverseWatchParams": {
+      "additionalProperties": false,
+      "properties": {
+        "kinds": {
+          "default": [
+            "session",
+            "bot",
+            "environment"
+          ],
+          "description": "Collections to watch; omission selects all three. Must be nonempty.",
+          "items": {
+            "$ref": "#/definitions/WatchKind"
+          },
+          "type": "array"
+        },
+        "visibleTo": {
+          "description": "Restrict session rows to shared sessions and sessions created by this actor,\nas on session/list. Includes delegated children through their root's access.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "UniverseWatchResponse": {
+      "description": "Final response when a watch reaches its lifetime. Reconnect and refetch on\nwatch/reset; notifications are lossy hints and have no durable resume cursor.",
+      "type": "object"
+    },
     "VfsFeature": {
       "additionalProperties": false,
       "description": "Grants the session virtual filesystem. Workspace attachments declare the\nsession-visible namespace and the VFS catalog is surfaced. The file tool\nsurface is derived from the attachments: any attachment installs the read\ntools, any `edit` attachment adds the write tools, and with the\nenvironments feature granted the matching transfer tools appear. `{}`\ngrants a VFS with no attachments, no tools, and no sourcing.",
@@ -19922,6 +20128,15 @@
       "enum": [
         "universe",
         "restricted"
+      ],
+      "type": "string"
+    },
+    "WatchKind": {
+      "description": "Collections whose list rows can be watched. Each requires its existing API-key group.",
+      "enum": [
+        "session",
+        "bot",
+        "environment"
       ],
       "type": "string"
     },

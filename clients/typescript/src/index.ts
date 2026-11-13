@@ -5,6 +5,7 @@ export {
   generateSubmissionId,
 } from "./client.js";
 export type {
+  WatchOptions,
   AwaitRunOptions,
   AwaitRunResult,
   CallOptions,
@@ -35,3 +36,5 @@ export type {
   NotificationMethod,
 } from "./generated/methods.js";
 export type * from "./generated/types.js";
+
+export { readEventStream } from "./event-stream.js";

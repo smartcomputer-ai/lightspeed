@@ -87,6 +87,15 @@ impl PgStore {
         created_by: Option<&str>,
         bot_id: Option<&str>,
     ) -> Result<Vec<(BotRosterRow, api::ResourceAccessSummary)>, BotError> {
+        self.bot_roster_by_ids(created_by, bot_id.map(|id| vec![id.to_owned()]).as_deref()).await
+    }
+
+    /// The same roster projection as bots/list, restricted to changed ids.
+    pub async fn bot_roster_by_ids(
+        &self,
+        created_by: Option<&str>,
+        ids: Option<&[String]>,
+    ) -> Result<Vec<(BotRosterRow, api::ResourceAccessSummary)>, BotError> {
         let last_event_columns = prefixed_event_columns("le", ROSTER_EVENT_PREFIX);
         let event_columns = event_columns();
         let created_by_match = crate::access::actor_match("b.created_by", 2);
@@ -139,14 +148,14 @@ impl PgStore {
                   AND s.deleted_at_ms IS NULL
                   AND COALESCE(r.bot_id, s.bot_id) = b.bot_id
             ) act ON true
-            WHERE b.universe_id = $1 AND ($2::text IS NULL OR {created_by_match}) AND ($3::text IS NULL OR b.bot_id=$3)
+            WHERE b.universe_id = $1 AND ($2::text IS NULL OR {created_by_match}) AND ($3::text[] IS NULL OR b.bot_id=ANY($3))
             ORDER BY b.bot_id
             "#
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(created_by)
-            .bind(bot_id)
+            .bind(ids)
             .fetch_all(&self.pool)
             .await
             .map_err(|error| bot_sql_error("list bot roster", error))?;

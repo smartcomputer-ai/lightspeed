@@ -5,6 +5,7 @@ pub(crate) mod auth_api;
 pub(crate) mod authorization;
 mod blobs;
 mod bots_api;
+pub(super) use bots_api::bot_list_item;
 mod catalogs;
 pub(crate) mod channels_api;
 mod common;
@@ -202,7 +203,7 @@ fn session_retention_view(
     }
 }
 
-fn session_summary_view(
+pub(super) fn session_summary_view(
     record: harness::storage::SessionRecord,
     root: &harness::storage::SessionRecord,
     access: ResourceAccessSummary,

@@ -202,3 +202,5 @@ pub const REGISTRATION_KEY_SECRET_PREFIX: &str = "lsrk_";
 /// encoded as base64url without padding, whether the runtime generated it or
 /// a caller supplied it.
 pub const KEY_SECRET_RANDOM_BYTES: usize = 32;
+
+pub const METHOD_UNIVERSE_WATCH: &str = "universe/watch";

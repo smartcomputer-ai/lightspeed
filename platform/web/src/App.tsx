@@ -1,3 +1,4 @@
+import { UniverseWatchProvider } from "@/lib/universe-watch";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -96,7 +97,7 @@ export function App() {
       <Route element={
         <UserPreferencesProvider userId={user.id}>
           <PermissionIdentityProvider userId={user.id} platformAdmin={admin}>
-            <AppShell user={user} admin={admin} />
+            <UniverseWatchProvider><AppShell user={user} admin={admin} /></UniverseWatchProvider>
           </PermissionIdentityProvider>
         </UserPreferencesProvider>
       }>

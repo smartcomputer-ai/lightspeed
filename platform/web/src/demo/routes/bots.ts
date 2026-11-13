@@ -146,7 +146,7 @@ function botSessionsOf(universe: UniverseState, record: BotRecord): SessionSumma
   return [...own, ...descendants];
 }
 
-function listItemOf(universe: UniverseState, record: BotRecord): BotListItem {
+export function listItemOf(universe: UniverseState, record: BotRecord): BotListItem {
   return {
     ...botViewOf(record),
     access: demoAccess(),

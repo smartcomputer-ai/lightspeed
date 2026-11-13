@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import inspect
-from collections.abc import Awaitable, Callable
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable
 from itertools import count
 from types import TracebackType
-from typing import Any, Self, TypedDict
+from typing import Any, Self, TypedDict, cast
 from uuid import uuid4
 
 import httpx
@@ -15,6 +16,8 @@ from ._generated import METHOD_INFO, GeneratedClient
 from ._options import UNSET, HeaderProvider, HeadersInput, Unset
 from .errors import LightspeedRpcError, LightspeedTransportError
 from .types import (
+    AgentNotification,
+    UniverseWatchParams,
     BlobPutParams,
     EventCursor,
     InputItem,
@@ -163,12 +166,7 @@ class AsyncLightspeedClient(GeneratedClient):
             headers=self._headers, request_id=self._request_id, http_client=self._http_client,
         )
 
-    async def _invoke(
-        self, method: str, params: dict[str, Any], headers: HeadersInput | None = None
-    ) -> dict[str, Any]:
-        if method not in METHOD_INFO:
-            raise ValueError(f"Unknown Lightspeed method {method!r}")
-        request_id = self._request_id()
+    async def _request_headers(self, headers: HeadersInput | None = None) -> httpx.Headers:
         request_headers = httpx.Headers({"content-type": "application/json", "accept": "application/json"})
         if self._api_key is not None:
             request_headers["authorization"] = f"Bearer {self._api_key}"
@@ -183,6 +181,17 @@ class AsyncLightspeedClient(GeneratedClient):
             request_headers.update(defaults)
         if headers is not None:
             request_headers.update(headers)
+        return request_headers
+
+    async def _invoke(
+        self, method: str, params: dict[str, Any], headers: HeadersInput | None = None
+    ) -> dict[str, Any]:
+        if method not in METHOD_INFO:
+            raise ValueError(f"Unknown Lightspeed method {method!r}")
+        if METHOD_INFO[method]["streaming"]:
+            raise ValueError("Use watch() for universe/watch")
+        request_id = self._request_id()
+        request_headers = await self._request_headers(headers)
         try:
             request = self._http_client.build_request(
                 "POST", self._endpoint, headers=request_headers,
@@ -229,6 +238,78 @@ class AsyncLightspeedClient(GeneratedClient):
         if not isinstance(result, dict):
             raise LightspeedTransportError("Lightspeed API response was missing its outcome object", body=body)
         return result
+
+    async def watch(
+        self, params: UniverseWatchParams | None = None, *,
+        headers: HeadersInput | None = None, reconnect: bool = True,
+    ) -> AsyncIterator[AgentNotification]:
+        """Watch list rows. Refetch on watch/reset and periodically; there is no resume cursor.
+
+        Reconnects on stream completion and transient transport errors. Cancel
+        the task or close the iterator to release the connection.
+        """
+        attempts = 0
+        while True:
+            request_id = self._request_id()
+            request_headers = await self._request_headers(headers)
+            request_headers["accept"] = "text/event-stream"
+            try:
+                async with self._http_client.stream(
+                    "POST", self._endpoint, headers=request_headers,
+                    json={"id": request_id, "method": "universe/watch", "params": params or {}},
+                    timeout=httpx.Timeout(60.0, read=45.0),
+                ) as response:
+                    if not response.is_success or not response.headers.get("content-type", "").startswith("text/event-stream"):
+                        await response.aread()
+                        try:
+                            body = response.json()
+                        except ValueError:
+                            body = None
+                        if isinstance(body, dict) and _is_rpc_error(body.get("error")):
+                            raise LightspeedRpcError(body["error"])
+                        raise LightspeedTransportError("Watch response was not an event stream", status=response.status_code)
+                    data: list[str] = []
+                    size = 0
+                    async for line in response.aiter_lines():
+                        if line == "":
+                            if not data:
+                                continue
+                            try:
+                                message = json.loads("\n".join(data))
+                            except ValueError as error:
+                                raise LightspeedTransportError("Invalid watch event") from error
+                            data = []
+                            size = 0
+                            if not isinstance(message, dict):
+                                raise LightspeedTransportError("Invalid watch event")
+                            if _is_rpc_error(message.get("error")):
+                                raise LightspeedRpcError(message["error"])
+                            if "result" in message:
+                                if message.get("id") != request_id:
+                                    raise LightspeedTransportError("Watch response id did not match")
+                                break
+                            if message.get("method") not in cast(list[str], METHOD_INFO["universe/watch"]["notifications"]):
+                                raise LightspeedTransportError("Unknown watch notification")
+                            attempts = 0
+                            yield cast(AgentNotification, message)
+                        elif line == "data" or line.startswith("data:"):
+                            field = line[5:] if line.startswith("data:") else ""
+                            if field.startswith(" "):
+                                field = field[1:]
+                            data.append(field)
+                            size += len(field)
+                        if size + len(line) > 2 * 1024 * 1024:
+                            raise LightspeedTransportError("Watch event exceeded its size limit")
+            except httpx.RequestError:
+                if not reconnect:
+                    raise
+            except LightspeedTransportError as error:
+                if not reconnect or not error.transient:
+                    raise
+            if not reconnect:
+                return
+            await asyncio.sleep(min(30.0, 2.0 ** min(attempts, 5)))
+            attempts += 1
 
     async def start_run(
         self,

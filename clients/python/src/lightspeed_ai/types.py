@@ -60,14 +60,46 @@ AgentApiErrorKind: TypeAlias = (
 )
 
 
-class Params4(TypedDict):
+class Params1(TypedDict):
+    sessionId: str
+
+
+class AgentNotificationSessionRemoved(TypedDict):
+    method: Literal['session/removed']
+    params: Params1
+
+
+class Params3(TypedDict):
+    botId: str
+
+
+class AgentNotificationBotsRemoved(TypedDict):
+    method: Literal['bots/removed']
+    params: Params3
+
+
+class Params5(TypedDict):
+    environmentId: str
+
+
+class AgentNotificationEnvironmentsRemoved(TypedDict):
+    method: Literal['environments/removed']
+    params: Params5
+
+
+class AgentNotificationWatchReset(TypedDict):
+    method: Literal['watch/reset']
+    params: dict[str, Any]
+
+
+class Params10(TypedDict):
     message: str
     sessionId: NotRequired[str | None]
 
 
 class AgentNotificationError(TypedDict):
     method: Literal['error']
-    params: Params4
+    params: Params10
 
 
 ApprovalDecisionFailureKind: TypeAlias = (
@@ -2286,7 +2318,7 @@ MethodGroup: TypeAlias = (
 )
 """
 The methods a key may call, by group. Every public method but
-`initialize` belongs to exactly one group, derived from its name, so a
+`initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a
 new method never changes what an existing key reaches beyond its group.
 """
 
@@ -3828,6 +3860,13 @@ may do and which role a gate built on the contract should require.
 UniverseMemberRole: TypeAlias = Literal['viewer', 'contributor', 'operator', 'admin']
 
 
+class UniverseWatchResponse(TypedDict):
+    """
+    Final response when a watch reaches its lifetime. Reconnect and refetch on
+    watch/reset; notifications are lossy hints and have no durable resume cursor.
+    """
+
+
 class VfsPromptsConfig(TypedDict):
     roots: NotRequired[list[str] | None]
     """
@@ -3927,6 +3966,12 @@ Visibility: TypeAlias = Literal['universe', 'restricted']
 """
 Who sees a root's tree. Sessions start unshared (`restricted`) and are
 shared with the universe once, one way; everything else is shared.
+"""
+
+
+WatchKind: TypeAlias = Literal['session', 'bot', 'environment']
+"""
+Collections whose list rows can be watched. Each requires its existing API-key group.
 """
 
 
@@ -6261,6 +6306,18 @@ class UniverseDirectoryGroupMapping(TypedDict):
     role: UniverseMemberRole
 
 
+class UniverseWatchParams(TypedDict):
+    kinds: NotRequired[list[WatchKind]]
+    """
+    Collections to watch; omission selects all three. Must be nonempty.
+    """
+    visibleTo: NotRequired[str | None]
+    """
+    Restrict session rows to shared sessions and sessions created by this actor,
+    as on session/list. Includes delegated children through their root's access.
+    """
+
+
 class VfsFeature(TypedDict):
     """
     Grants the session virtual filesystem. Workspace attachments declare the
@@ -6359,6 +6416,24 @@ class WorkflowToolDefinitionInput(TypedDict):
     The workflow-tool namespace: what invocations and bindings are keyed on. The
     registry identity the model sees through `activeTools` is `tool.name`.
     """
+
+
+class Params(TypedDict):
+    session: SessionSummaryView
+
+
+class AgentNotificationSessionChanged(TypedDict):
+    method: Literal['session/changed']
+    params: Params
+
+
+class Params4(TypedDict):
+    environment: EnvironmentView
+
+
+class AgentNotificationEnvironmentsChanged(TypedDict):
+    method: Literal['environments/changed']
+    params: Params4
 
 
 class AuthClientCreateResponse(TypedDict):
@@ -7527,13 +7602,22 @@ class WorkflowToolDeclarationInput(TypedDict):
     target: WorkflowToolTargetInput
 
 
-class Params1(TypedDict):
+class Params2(TypedDict):
+    bot: BotListItem
+
+
+class AgentNotificationBotsChanged(TypedDict):
+    method: Literal['bots/changed']
+    params: Params2
+
+
+class Params7(TypedDict):
     event: SessionEventView
 
 
 class AgentNotificationSessionEvent(TypedDict):
     method: Literal['session/event']
-    params: Params1
+    params: Params7
 
 
 class AgentProfile(TypedDict):
@@ -7892,32 +7976,39 @@ class SessionView(TypedDict):
     updatedAtMs: int
 
 
-class Params(TypedDict):
+class Params6(TypedDict):
     session: SessionView
 
 
 class AgentNotificationSessionStarted(TypedDict):
     method: Literal['session/started']
-    params: Params
+    params: Params6
 
 
-class Params2(TypedDict):
+class Params8(TypedDict):
     run: RunView
     sessionId: str
 
 
 class AgentNotificationSessionRunsStarted(TypedDict):
     method: Literal['session/runs/started']
-    params: Params2
+    params: Params8
 
 
 class AgentNotificationSessionRunsCompleted(TypedDict):
     method: Literal['session/runs/completed']
-    params: Params2
+    params: Params8
 
 
 AgentNotification: TypeAlias = (
-    AgentNotificationSessionStarted
+    AgentNotificationSessionChanged
+    | AgentNotificationSessionRemoved
+    | AgentNotificationBotsChanged
+    | AgentNotificationBotsRemoved
+    | AgentNotificationEnvironmentsChanged
+    | AgentNotificationEnvironmentsRemoved
+    | AgentNotificationWatchReset
+    | AgentNotificationSessionStarted
     | AgentNotificationSessionEvent
     | AgentNotificationSessionRunsStarted
     | AgentNotificationSessionRunsCompleted
@@ -8639,6 +8730,11 @@ class AgentApiOutcomeOfSkillListResponse(TypedDict):
 class AgentApiOutcomeOfTranscriptionResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: TranscriptionResponse
+
+
+class AgentApiOutcomeOfUniverseWatchResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: UniverseWatchResponse
 
 
 class AgentApiOutcomeOfVfsSnapshotCommitResponse(TypedDict):

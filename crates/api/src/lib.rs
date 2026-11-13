@@ -42,6 +42,7 @@ mod storage;
 mod transcriptions;
 mod universe_configuration;
 mod views;
+mod watch;
 
 pub use access::*;
 pub use auth::*;
@@ -69,6 +70,7 @@ pub use storage::*;
 pub use transcriptions::*;
 pub use universe_configuration::*;
 pub use views::*;
+pub use watch::*;
 
 #[cfg(test)]
 mod tests;

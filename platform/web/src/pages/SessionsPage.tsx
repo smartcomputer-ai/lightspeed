@@ -1,3 +1,4 @@
+import { useWatchConnected } from "@/lib/universe-watch";
 import { DeleteSessionDialog } from "@/components/session/delete-session-dialog";
 import { useSessionCompaction } from "@/lib/sessions/compaction";
 import { useDictationAvailability } from "@/lib/use-dictation";
@@ -222,6 +223,7 @@ function SessionList({
   const filterEntries = Object.entries(metadataFilter);
   const [preferences, setPreferences] = useState(() => readSessionListPreferences(universeId));
   const { showClosed, showSubagents, showControlledSessions, showSessionIds, metadataKeys } = preferences;
+  const watchConnected = useWatchConnected(universeId);
   const listQuery = new URLSearchParams({ limit: "50" });
   if (!showClosed) listQuery.set("closed", "false");
   if (!showControlledSessions) listQuery.set("lifecycleControlled", "false");
@@ -242,7 +244,7 @@ function SessionList({
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     // Sessions can be created by runtime workflows (not only by this browser),
     // so frontend mutation invalidation alone cannot keep this list current.
-    refetchInterval: SESSION_LIST_REFRESH_MS,
+    refetchInterval: watchConnected ? 60_000 : SESSION_LIST_REFRESH_MS,
     refetchIntervalInBackground: false,
   });
   const [createOpen, setCreateOpen] = useCreateParam("session");
@@ -856,6 +858,8 @@ function SessionListItem({
       <span className="flex min-w-0 items-center gap-2">
         {depth > 0 && <span className="shrink-0 text-muted-foreground">↳</span>}
         <ActivityDot activity={session.activity} quiet />
+        {(session.executionFailure || session.lastRun?.status === "failed") && <Badge variant="destructive">Failed</Badge>}
+        {session.activityPhase === "awaiting" && <Badge variant="outline">Awaiting</Badge>}
         <span className="min-w-0 flex-1 truncate font-medium" title={displayName ? undefined : session.id}>
           {displayName || session.id}
         </span>
@@ -898,6 +902,7 @@ function SessionListItem({
           {key}={value}
         </span>
       ))}
+      {session.lastMessagePreview && <span className="block truncate text-xs text-muted-foreground" title={session.lastMessagePreview}>{session.lastMessagePreview}</span>}
     </>
   );
   const rowClass = cn(

@@ -319,6 +319,35 @@ struct SessionSegment {
 }
 
 impl PgStore {
+    /// List projections for a bounded set of changed ids. Resolve inherited
+    /// retention and control in this query, alongside the same access columns
+    /// as session/list. Returned records are for display, not mutation.
+    pub async fn session_summaries_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<(SessionRecord, api::ResourceAccessSummary)>, SessionStoreError> {
+        let columns = SESSION_COLUMNS.split(',').map(str::trim)
+            .filter(|column| !column.is_empty())
+            .map(|column| match column {
+                "delete_after_close_ms" | "delete_at_ms" | "lifecycle_controlled" =>
+                    format!("CASE WHEN r.session_id IS NULL THEN s.{column} ELSE r.{column} END AS {column}"),
+                _ => format!("s.{column}"),
+            }).collect::<Vec<_>>().join(", ");
+        let access = crate::access::session_summary_columns();
+        let root = crate::access::SESSION_ROOT_JOIN;
+        let query = format!("SELECT {columns}, to_jsonb(ss) AS summary_row, {access}
+            FROM sessions s
+            LEFT JOIN session_summary ss ON ss.universe_id=s.universe_id AND ss.session_id=s.session_id
+            {root}
+            WHERE s.universe_id=$1 AND s.session_id=ANY($2) AND s.deleted_at_ms IS NULL");
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(self.config.universe_id).bind(ids).fetch_all(&self.pool).await
+            .map_err(|e| session_sql_error("load changed session summaries", e))?;
+        rows.iter().map(|row| Ok((session_record_from_row(row)?,
+            crate::access::summary_from_row(row).map_err(|e| SessionStoreError::Store { message: e.to_string() })?
+        ))).collect()
+    }
+
     /// `list_sessions` narrowed by the audience of each session's root, with
     /// the access summary each view carries.
     pub async fn list_sessions_for(

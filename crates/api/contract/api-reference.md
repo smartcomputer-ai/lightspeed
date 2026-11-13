@@ -6,6 +6,22 @@ A key calls a method when it holds the method's group. Role and target are metad
 
 ## Universe methods
 
+### `universe/watch`
+
+**Watch universe list changes**
+
+Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Each requested kind requires its own API-key group. Includes sub-agents; visibleTo restricts session access as on session/list.
+
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `none`
+- Role: `viewer`
+- Target: `none`
+- Params: `UniverseWatchParams`
+- Result: `AgentApiOutcome<UniverseWatchResponse>`
+
+- Transport: `text/event-stream`
+- Notifications: session/changed, session/removed, bots/changed, bots/removed, environments/changed, environments/removed, watch/reset
+
 ### `vfs/workspaces/files/read`
 
 **Read a workspace file**

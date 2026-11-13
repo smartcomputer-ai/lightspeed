@@ -801,6 +801,7 @@ macro_rules! deployment_api_methods {
                 $(
                     MethodSpec {
                         method: $method_const,
+                        notifications: &[],
                         scope: ($access).scope(),
                         access: $access,
                         summary: $summary,

@@ -133,7 +133,7 @@ pub fn initialize_response(caller: CallerAccess) -> api::AgentApiOutcome<api::In
             },
         },
         capabilities: ServerCapabilities {
-            notifications: false,
+            notifications: true,
             history_read: true,
             event_log: true,
             local_execution: false,

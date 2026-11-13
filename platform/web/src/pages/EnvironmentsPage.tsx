@@ -1,3 +1,4 @@
+import { useWatchConnected } from "@/lib/universe-watch";
 import { useActionPermissions } from "@/lib/permissions";
 import { ResourceIdentityCell, ResourceRow, ResourceStatus, ResourceTable, ResourceValue } from "@/components/resource-table";
 import { ResourceActions, ResourceDetail, ResourceDetailsDialog, ResourceDetailsGrid } from "@/components/resource-details-dialog";
@@ -99,6 +100,7 @@ export function EnvironmentsPage({ admin: _admin }: { admin: boolean }) {
 const REFRESH_MS = 10_000;
 
 function EnvironmentList({ universeId }: { universeId: string }) {
+  const watchConnected = useWatchConnected(universeId);
   const writable = useActionPermissions(universeId).can("configureResource");
   const [showClosed, setShowClosed] = useState(false);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string | null>(null);
@@ -121,7 +123,7 @@ function EnvironmentList({ universeId }: { universeId: string }) {
       api<EnvironmentPage>("GET", environmentPagePath(universeId, { includeClosed: showClosed, after: pageParam })),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.nextAfter ?? undefined,
-    refetchInterval: (query) =>
+    refetchInterval: (query) => watchConnected ? 60_000 :
       query.state.data?.pages.some((page) =>
         page.environments.some((environment) => ["provisioning", "closing"].includes(environment.state)))
         ? REFRESH_MS

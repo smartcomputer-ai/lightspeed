@@ -123,6 +123,7 @@ export const METHOD_ROLES: Readonly<Record<string, UniverseRole>> = {
   "transcriptions/cancel": "contributor",
   "transcriptions/read": "viewer",
   "transcriptions/start": "contributor",
+  "universe/watch": "viewer",
   "vfs/snapshots/commit": "contributor",
   "vfs/snapshots/read": "viewer",
   "vfs/workspaces/create": "operator",

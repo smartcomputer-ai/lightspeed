@@ -3,6 +3,7 @@
 pub mod authentication;
 pub mod deployment;
 mod enforcement;
+mod watch;
 pub mod http;
 pub mod registration;
 pub mod request_context;

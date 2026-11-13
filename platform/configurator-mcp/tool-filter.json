@@ -3,6 +3,7 @@
     "session/start": ["integration"]
   },
   "excludeMethods": [
+    "universe/watch",
     "environments/jobs/create",
     "environments/jobs/read",
     "environments/jobs/cancel",

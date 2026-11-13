@@ -69,7 +69,7 @@ impl AccessScopeKind {
 }
 
 /// The methods a key may call, by group. Every public method but
-/// `initialize` belongs to exactly one group, derived from its name, so a
+/// `initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a
 /// new method never changes what an existing key reaches beyond its group.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
@@ -203,7 +203,7 @@ impl MethodGroup {
 
     /// The group a method belongs to, from its name. `None` for
     /// `initialize`, which every key may call, and for names outside the
-    /// contract.
+    /// contract. `universe/watch` checks the group of each requested kind.
     pub fn of(method: &str) -> Option<MethodGroup> {
         let group = |prefix: &str| method.starts_with(prefix);
         Some(if method == "blobs/put" {
@@ -690,7 +690,7 @@ mod tests {
     fn every_method_belongs_to_a_group_of_its_scope() {
         for spec in crate::schema_export::full_method_manifest() {
             let group = MethodGroup::of(spec.method);
-            if spec.method == METHOD_INITIALIZE {
+            if matches!(spec.method, METHOD_INITIALIZE | METHOD_UNIVERSE_WATCH) {
                 assert_eq!(group, None);
                 continue;
             }
