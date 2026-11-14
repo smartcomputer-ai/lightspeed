@@ -5,14 +5,14 @@ import { activeEnvironmentItems, sessionResourceItems } from "./session-resource
 
 it("lists Code mode as a resource only when code mode is enabled", () => {
   const labels = (features: unknown) =>
-    sessionResourceItems({ resources: sessionResources({ features }, null), slug: "demo" }).map((item) => item.label);
+    sessionResourceItems({ resources: sessionResources({ features }, null), handle: "demo" }).map((item) => item.label);
 
   expect(labels({ codeMode: {} })).toContain("Code mode: Code mode");
   expect(labels({})).not.toContain("Code mode: Code mode");
 });
 
 it("shows resources on the page, each with its details, and an absence only in the strip", () => {
-  const items = sessionResourceItems({ resources: sessionResources({ features: { codeMode: {}, environments: {} } }, null), slug: "demo" });
+  const items = sessionResourceItems({ resources: sessionResources({ features: { codeMode: {}, environments: {} } }, null), handle: "demo" });
   const codeMode = items.find((item) => item.label === "Code mode: Code mode")!;
   expect(codeMode.places).toEqual(["header", "strip"]);
   expect(codeMode.details).toBeDefined();

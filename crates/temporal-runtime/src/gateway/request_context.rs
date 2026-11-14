@@ -9,7 +9,11 @@ use tracing::Instrument as _;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyContext {
     pub scope: AccessScope,
-    /// Non-secret display prefix, for attribution and logs.
+    /// The key's id, unique among the keys of `scope`. It outlives the
+    /// key's secret, so attribution and logs name the key by it.
+    pub key_id: String,
+    /// Non-secret display prefix of the secret the request presented. It
+    /// changes whenever the secret is replaced, so nothing durable holds it.
     pub prefix: String,
     pub groups: BTreeSet<MethodGroup>,
 }
@@ -54,25 +58,27 @@ impl RequestContext {
             Some(key) => CallerAccess {
                 scope: key.scope,
                 single: false,
+                key_id: Some(key.key_id.clone()),
                 key_prefix: Some(key.prefix.clone()),
                 groups: key.groups.iter().copied().collect(),
             },
             None => CallerAccess {
                 scope: self.scope,
                 single: true,
+                key_id: None,
                 key_prefix: None,
                 groups: MethodGroup::ALL.to_vec(),
             },
         }
     }
 
-    /// Who this request acts as: its actor, else its key, else local.
+    /// Who this request acts as: its actor, else its key, else local. A
+    /// key is named by its id and its own scope, whichever universe the
+    /// request addresses.
     pub fn attribution(&self) -> Attribution {
         match (&self.actor, &self.key) {
             (Some(id), _) => Attribution::Actor { id: id.clone() },
-            (None, Some(key)) => Attribution::Key {
-                prefix: key.prefix.clone(),
-            },
+            (None, Some(key)) => Attribution::key(key.key_id.clone(), key.scope),
             (None, None) => Attribution::Local,
         }
     }
@@ -86,7 +92,8 @@ tokio::task_local! {
 pub async fn with_request_context<F: Future>(context: RequestContext, future: F) -> F::Output {
     let span = tracing::info_span!("request_authority",
         actor = ?context.actor,
-        key = ?context.key.as_ref().map(|key| &key.prefix),
+        key_id = ?context.key.as_ref().map(|key| &key.key_id),
+        key_scope = ?context.key.as_ref().map(|key| key.scope.kind().as_str()),
         scope = ?context.scope);
     REQUEST_CONTEXT
         .scope(context, future)
@@ -126,7 +133,7 @@ pub fn initialize_response(caller: CallerAccess) -> api::AgentApiOutcome<api::In
             },
         },
         capabilities: ServerCapabilities {
-            notifications: false,
+            notifications: true,
             history_read: true,
             event_log: true,
             local_execution: false,
@@ -151,6 +158,7 @@ mod tests {
             scope: AccessScope::Deployment,
             key: Some(KeyContext {
                 scope: AccessScope::Deployment,
+                key_id: format!("key-{id}"),
                 prefix: format!("lsk_{id}"),
                 groups: Default::default(),
             }),
@@ -192,6 +200,7 @@ mod tests {
             },
             key: Some(KeyContext {
                 scope: AccessScope::Deployment,
+                key_id: "platform".into(),
                 prefix: "lsk_abcdefgh".into(),
                 groups: groups.iter().copied().collect(),
             }),
@@ -234,11 +243,13 @@ mod tests {
             CallerAccess {
                 scope: AccessScope::Deployment,
                 single: false,
+                key_id: Some("platform".into()),
                 key_prefix: Some("lsk_abcdefgh".into()),
                 groups: vec![MethodGroup::BlobsPut, MethodGroup::ChannelsInbound],
             }
         );
         let local = RequestContext::local(AccessScope::Deployment).caller_access();
+        assert_eq!(local.key_id, None);
         assert_eq!(local.key_prefix, None);
         assert_eq!(local.groups, MethodGroup::ALL.to_vec());
     }
@@ -251,15 +262,52 @@ mod tests {
                 id: "user-1".into()
             }
         );
+        // The key is a deployment key acting in a universe: it is named by
+        // its own scope, not by the universe the request addresses.
         assert_eq!(
             keyed(&[], None).attribution(),
             Attribution::Key {
-                prefix: "lsk_abcdefgh".into()
+                key_id: "platform".into(),
+                scope_kind: api::AccessScopeKind::Deployment,
             }
         );
         assert_eq!(
             RequestContext::local(AccessScope::Deployment).attribution(),
             Attribution::Local
+        );
+    }
+
+    #[test]
+    fn a_key_is_attributed_the_same_before_and_after_its_secret_is_replaced() {
+        let universe = AccessScope::Universe {
+            universe_id: Uuid::from_u128(1),
+        };
+        let holding = |prefix: &str| RequestContext {
+            scope: universe,
+            key: Some(KeyContext {
+                scope: universe,
+                key_id: "ci-bot".into(),
+                prefix: prefix.into(),
+                groups: Default::default(),
+            }),
+            actor: None,
+        };
+        let before = holding("lsk_abcdefgh").attribution();
+        assert_eq!(
+            before,
+            Attribution::Key {
+                key_id: "ci-bot".into(),
+                scope_kind: api::AccessScopeKind::Universe,
+            }
+        );
+        assert_eq!(holding("lsk_ijklmnop").attribution(), before);
+        // The prefix is still what `initialize` reports for the secret in use.
+        assert_eq!(
+            holding("lsk_ijklmnop")
+                .caller_access()
+                .key_prefix
+                .as_deref(),
+            Some("lsk_ijklmnop")
         );
     }
 }

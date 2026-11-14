@@ -24,6 +24,7 @@ mod constants;
 mod deployment;
 mod environments;
 mod handshake;
+mod headers;
 mod ids;
 mod mcp;
 mod model;
@@ -39,7 +40,9 @@ mod sessions;
 mod skills;
 mod storage;
 mod transcriptions;
+mod universe_configuration;
 mod views;
+mod watch;
 
 pub use access::*;
 pub use auth::*;
@@ -49,6 +52,7 @@ pub use constants::*;
 pub use deployment::*;
 pub use environments::*;
 pub use handshake::*;
+pub use headers::*;
 pub use ids::*;
 pub use mcp::*;
 pub use model::*;
@@ -64,7 +68,9 @@ pub use sessions::*;
 pub use skills::*;
 pub use storage::*;
 pub use transcriptions::*;
+pub use universe_configuration::*;
 pub use views::*;
+pub use watch::*;
 
 #[cfg(test)]
 mod tests;

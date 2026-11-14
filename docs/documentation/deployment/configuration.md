@@ -48,7 +48,7 @@ state and routing:
 | Setting group | What must agree |
 | --- | --- |
 | Runtime storage | Runtime PostgreSQL database and selected blob backend, including object bucket/prefix where configured. |
-| Temporal | Frontend address, namespace, and the session, bot, and channel task-queue names. |
+| Temporal | Frontend address, namespace, TLS and credential settings, and the session, bot, and channel task-queue names. |
 | Secrets | The master key used to encrypt and resolve stored credentials. |
 | Environment routing | The one environment gateway's internal URL and shared routing token. |
 | Provider transport | Required deployment fallbacks and network access for the roles performing discovery or generation. |
@@ -63,6 +63,51 @@ variables independently. A deployment-specific `LIGHTSPEED_TASK_QUEUE` does
 not change `LIGHTSPEED_TASK_QUEUE_BOTS` or
 `LIGHTSPEED_TASK_QUEUE_CHANNELS`. Keep the connector host in the matching
 Temporal namespace too.
+
+## Secure the Temporal connection
+
+Every runtime process and the connector host open their own connection to the
+Temporal frontend. Workflow inputs and results travel over it, including
+prompts and tool output, and whoever can reach the frontend can start, signal,
+and read workflows in the namespace. With only `TEMPORAL_ADDRESS` and
+`TEMPORAL_NAMESPACE` set, that connection is unencrypted and carries no
+credential. Use that only for a frontend on a private network that nothing
+else can reach.
+
+For any other frontend, give both processes the same settings:
+
+```dotenv
+TEMPORAL_ADDRESS=temporal.internal.example:7233
+TEMPORAL_NAMESPACE=lightspeed
+TEMPORAL_TLS=true
+TEMPORAL_TLS_SERVER_CA_FILE=/etc/lightspeed/temporal/ca.pem
+TEMPORAL_TLS_CLIENT_CERT_FILE=/etc/lightspeed/temporal/client.pem
+TEMPORAL_TLS_CLIENT_KEY_FILE=/etc/lightspeed/temporal/client.key
+```
+
+- **Server verification.** With TLS on, the server certificate must chain to
+  the CA file, or to the operating system's trusted roots when no CA file is
+  set, and must name the host in `TEMPORAL_ADDRESS`. Set
+  `TEMPORAL_TLS_SERVER_NAME` when the certificate names a different host than
+  the address the process dials.
+- **Client certificate.** A frontend that requires mutual TLS gets the
+  certificate and private key from the two client files. Both are needed.
+- **API key.** A frontend that authenticates with API keys, such as a managed
+  Temporal service, gets `TEMPORAL_API_KEY`, or `TEMPORAL_API_KEY_FILE` to read
+  the key from a mounted secret. Setting a key turns TLS on; no CA file is
+  needed when the service's certificate is publicly trusted. A client
+  certificate and an API key can be combined when the frontend asks for both.
+
+Supply the private key and the API key from your secret manager and mount the
+files read-only. They are read when a process connects, so restart the runtime
+processes and the connector host after rotating one. A setting that
+contradicts another, or a file that is missing or holds the wrong kind of
+content, stops the process at startup with an error that names the variable.
+The [environment-variable reference](../reference/environment-variables.md#temporal-connection-security)
+lists each setting and the rule that decides whether TLS is on.
+
+Custom workers that run your own workflow tools connect with your Temporal
+client configuration, not with these variables. Give them equivalent settings.
 
 ## Distinguish public URLs from internal routes
 
@@ -295,7 +340,9 @@ or [Incus VMs](../environments/incus-vms.md) for complete procedures.
 ### Chat connectors
 
 The connector host uses `LIGHTSPEED_CONNECTOR_API_KEY` against an authenticated
-runtime and the deployment's Temporal namespace. Its deployment-scoped key needs
+runtime and the deployment's Temporal namespace, reached with the same
+`TEMPORAL_*` settings as the runtime
+([Secure the Temporal connection](#secure-the-temporal-connection)). Its deployment-scoped key needs
 the `deployment/channels`, `auth/lease`, `channels/inbound`, and `blobs/put`
 method groups for account discovery, credential leasing, inbound admission,
 and attachment uploads. Provider bot tokens are leased from core rather than
@@ -317,9 +364,11 @@ If running several hosts, give them nonoverlapping account selections. See
 
 An agent's runtime MCP connection is a stored universe resource. To reach a
 private endpoint, both the server record's `allowPrivateNetwork` and the
-deployment's `LIGHTSPEED_MCP_PRIVATE_NETWORKS` must permit it. OAuth metadata
-and token requests have a separate private-network setting. Permitting OAuth
-traffic does not authorize tool discovery or execution.
+deployment's `LIGHTSPEED_MCP_PRIVATE_NETWORKS` must permit it. OAuth metadata,
+client registration, and token requests use the same list, decided for each
+endpoint by its own host: list an internal authorization server as well as
+the MCP server it protects. Without an entry, OAuth traffic is public HTTPS
+only.
 
 Configurator is a separately deployed MCP server that manages Lightspeed. Its
 mode must match its upstream gateway, and a non-loopback listener requires an

@@ -96,10 +96,10 @@ impl DeploymentClients {
             am::Client::new(am::Config::from_env_allow_missing_key())
                 .map_err(|error| anyhow::anyhow!("construct Anthropic client: {error}"))?,
         );
-        let allow_private_mcp = std::env::var("LIGHTSPEED_MCP_OAUTH_ALLOW_PRIVATE_NETWORKS")
-            .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "on"));
         let oauth_metadata: Arc<dyn auth::OAuthMetadataClient> = Arc::new(
-            auth::HttpOAuthMetadataClient::with_private_networks(allow_private_mcp),
+            crate::worker::mcp::McpPrivateNetworkPolicy::from_env()
+                .map_err(anyhow::Error::msg)?
+                .oauth_http_client(),
         );
         let oauth_token: Arc<dyn OAuthTokenClient> = Arc::new(
             HttpOAuthTokenClient::new_with_mcp_http(oauth_metadata.clone())
@@ -269,14 +269,20 @@ impl UniverseRuntime {
         Ok(state)
     }
 
-    /// Run the one active environment reconciler (environment-gateway
-    /// role): the work loop and the display sweep, concurrently. Provider
-    /// calls are idempotent per owner, so a process restart resumes every
-    /// scheduled row.
+    /// Run the lifecycle and display loops under independent deployment
+    /// leadership locks. Provider calls remain idempotent per owner.
     pub async fn run_environment_reconciler(self: Arc<Self>) {
         tokio::join!(
-            self.clone().run_environment_work_loop(),
-            self.run_environment_display_loop(),
+            crate::gateway::replica::run_as_leader(
+                self.stores.pool(),
+                store_pg::RuntimeLoop::EnvironmentLifecycle,
+                || self.clone().run_environment_work_loop(),
+            ),
+            crate::gateway::replica::run_as_leader(
+                self.stores.pool(),
+                store_pg::RuntimeLoop::EnvironmentDisplaySweep,
+                || self.clone().run_environment_display_loop(),
+            ),
         );
     }
 
@@ -290,11 +296,16 @@ impl UniverseRuntime {
         let mut interval = tokio::time::interval(WORK_TICK);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let work = ProviderWork::default();
+        let _cancel_work = work.cancel_on_drop();
+        let mut changes = self.stores.changes().subscribe_all();
         let mut failures = crate::gateway::ReconcileFailureLog::default();
         loop {
             tokio::select! {
                 _ = interval.tick() => {}
                 _ = self.environment_signals.work_nudged() => {}
+                change = changes.recv() => {
+                    if matches!(change, Ok(Some(ref change)) if change.kind != store_pg::changes::ChangeKind::Environment) { continue; }
+                }
             }
             let now = clock_ms();
             let universe_ids = match store_pg::list_universes_with_environment_work(
@@ -396,7 +407,7 @@ impl UniverseRuntime {
                     continue;
                 }
             };
-            for (universe_id, _slug) in universes {
+            for (universe_id, _handle) in universes {
                 let state = match self.state_for(universe_id, false).await {
                     Ok(state) => state,
                     Err(error) => {

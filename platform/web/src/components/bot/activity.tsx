@@ -65,7 +65,7 @@ export function matchesOutcomeFilter(
  */
 export function BotActivity({
   universeId,
-  slug,
+  handle,
   bot,
   state,
   stateError,
@@ -73,7 +73,7 @@ export function BotActivity({
   invoke,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   bot: BotView;
   state?: BotStateView;
   stateError?: string;
@@ -84,7 +84,7 @@ export function BotActivity({
   const [eventOpen, setEventOpen] = useState(false);
   const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>("all");
   const [search, setSearch] = useState("");
-  const base = `/u/${slug}/bots/${bot.botId}`;
+  const base = `/u/${handle}/bots/${bot.botId}`;
   const controller = state?.controller ?? undefined;
   const pages = useInfiniteQuery({
     queryKey: ["bot-events", universeId, bot.botId],

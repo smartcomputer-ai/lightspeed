@@ -87,12 +87,22 @@ pub fn export_schemas() -> ExportedSchemas {
             spec.result_type
         )
         .expect("write string");
+        if !spec.notifications.is_empty() {
+            writeln!(
+                api_reference,
+                "- Transport: `text/event-stream`\n- Notifications: {}\n",
+                spec.notifications.join(", ")
+            )
+            .expect("write string");
+        }
         let schemas = (spec.register_schemas)(&mut generator);
         let params_schema = serde_json::to_value(&schemas.params).expect("schema serializes");
         let result_schema = serde_json::to_value(&schemas.result).expect("schema serializes");
         methods.push(json!({
             "method": spec.method,
             "scope": spec.scope.as_str(),
+            "streaming": !spec.notifications.is_empty(),
+            "notifications": spec.notifications,
             "access": spec.access,
             "group": group,
             "role": role,
@@ -104,6 +114,8 @@ pub fn export_schemas() -> ExportedSchemas {
         }));
         openrpc_methods.push(json!({
             "name": spec.method,
+            "x-lightspeed-streaming": !spec.notifications.is_empty(),
+            "x-lightspeed-notifications": spec.notifications,
             "x-lightspeed-access": spec.access,
             "x-lightspeed-group": group,
             "x-lightspeed-role": role,
@@ -155,7 +167,11 @@ pub fn export_schemas() -> ExportedSchemas {
             "description":
                 "JSON-RPC 2.0 over HTTP POST /rpc. Results are wrapped in the \
                  AgentApiOutcome envelope; session events are consumed via \
-                 session/events/read cursor pagination.",
+                 session/events/read cursor pagination. An authenticated \
+                 gateway answers a request without a valid API key with HTTP \
+                 401 and a JSON-RPC error whose id is null, before it reads \
+                 the request body. An error decided for a request that was \
+                 read is a JSON-RPC error for that request's id.",
         },
         "methods": openrpc_methods,
         "components": { "schemas": schema_bundle["definitions"].clone() },
@@ -205,13 +221,20 @@ mod tests {
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 143);
+        assert_eq!(total, 150);
+        let streaming: Vec<_> = manifest
+            .iter()
+            .filter(|spec| !spec.notifications.is_empty())
+            .collect();
+        assert_eq!(streaming.len(), 1);
+        assert_eq!(streaming[0].method, crate::METHOD_UNIVERSE_WATCH);
+        assert_eq!(streaming[0].notifications, crate::WATCH_NOTIFICATIONS);
         assert_eq!(
             manifest
                 .iter()
                 .filter(|spec| spec.scope == crate::MethodScope::Deployment)
                 .count(),
-            19
+            21
         );
     }
 

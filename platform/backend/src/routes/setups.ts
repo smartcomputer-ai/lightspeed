@@ -274,9 +274,11 @@ export async function ensureCredential(
   choice: KeyChoice,
   audit: { actorId: string; universeId: string },
 ): Promise<UniverseSetupState> {
-  const keys = (await deployment.call("deployment/api-keys/list", {
-    scope: { kind: "universe", universeId: universe.lightspeedUniverseId },
-  })).result.apiKeys ?? [];
+  const scope = { kind: "universe" as const, universeId: universe.lightspeedUniverseId };
+  const keys = (await deployment.call("deployment/api-keys/list", { scope })).result.apiKeys ?? [];
+  // The installation holds one particular secret, so it knows its key by that
+  // secret's prefix: once the key is rotated elsewhere the stored credential
+  // is dead, and the prefix no longer matching says so.
   const live = (prefix: string | undefined) =>
     prefix ? keys.find((key) => key.keyPrefix === prefix && key.revokedAtMs == null) : undefined;
   const current = live(state.keyPrefix);
@@ -291,8 +293,8 @@ export async function ensureCredential(
       await client.call("auth/grants/revoke", { grantId: state.grantId });
     }
     if (current && minted && current.keyPrefix !== keeping) {
-      await deployment.call("deployment/api-keys/revoke", { keyPrefix: current.keyPrefix });
-      await auditIdentity(ctx.db, { ...audit, action: "key.revoke", targetId: current.keyPrefix });
+      await deployment.call("deployment/api-keys/revoke", { scope, keyId: current.keyId });
+      await auditIdentity(ctx.db, { ...audit, action: "key.revoke", targetId: current.keyId });
     }
   };
 
@@ -310,16 +312,16 @@ export async function ensureCredential(
       }
       await retire();
       const created = await deployment.call("deployment/api-keys/create", {
-        scope: { kind: "universe", universeId: universe.lightspeedUniverseId },
+        scope,
         displayName: KEY_DISPLAY_NAME,
         groups,
         assertActor: false,
       });
-      await auditIdentity(ctx.db, { ...audit, action: "key.create", targetId: created.result.apiKey.keyPrefix });
+      await auditIdentity(ctx.db, { ...audit, action: "key.create", targetId: created.result.apiKey.keyId, details: { keyPrefix: created.result.apiKey.keyPrefix } });
       const grantId = await importGrant(client, created.result.secret, mcpUrl).catch(async (error: unknown) => {
         await deployment
-          .call("deployment/api-keys/revoke", { keyPrefix: created.result.apiKey.keyPrefix })
-          .then(() => auditIdentity(ctx.db, { ...audit, action: "key.revoke", targetId: created.result.apiKey.keyPrefix }))
+          .call("deployment/api-keys/revoke", { scope, keyId: created.result.apiKey.keyId })
+          .then(() => auditIdentity(ctx.db, { ...audit, action: "key.revoke", targetId: created.result.apiKey.keyId }))
           .catch(() => undefined);
         throw error;
       });

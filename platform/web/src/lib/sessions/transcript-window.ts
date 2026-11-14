@@ -52,6 +52,7 @@ export class TranscriptWindow {
       queuedRuns: live.queuedRuns,
       runPhases: live.runPhases,
       runBySubmission: live.runBySubmission,
+      steeringBySubmission: live.steeringBySubmission,
       runRevision: live.runRevision,
       closed: live.closed,
       compaction,

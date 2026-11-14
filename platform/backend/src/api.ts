@@ -1,3 +1,4 @@
+import { declaredRole } from "./declared-universes.js";
 import { sessionAdminRoutes } from "./routes/session-admin.js";
 import { withGateway } from "./routes/gateway.js";
 import { Hono } from "hono";
@@ -63,7 +64,11 @@ export function buildApp(ctx: AppContext) {
         .from(schema.member)
         .where(and(eq(schema.member.userId, session.user.id), eq(schema.member.role, "admin")))
         .limit(1);
-      if (!adminOf) return c.json({ error: "universe admin required" }, 403);
+      if (!adminOf) {
+        const universes = await ctx.db.select().from(schema.universes);
+        const roles = await Promise.all(universes.map(u => declaredRole(ctx, session.user.id, u.runtimeConfiguration)));
+        if (!roles.includes("admin")) return c.json({ error: "universe admin required" }, 403);
+      }
     }
     const rows = await ctx.db
       .select({

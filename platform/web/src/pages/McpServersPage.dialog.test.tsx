@@ -9,7 +9,7 @@ import { McpServersPage, mcpConnectionSummary } from "./McpServersPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, slug: "test", name: "Test" }, slug: "test", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, handle: "test", name: "Test" }, handle: "test", isLoading: false }) }));
 // Every select becomes a native control named by its trigger; jsdom cannot lay out the popup.
 vi.mock("@/components/ui/select", async () => {
   const React = await import("react");
@@ -242,6 +242,28 @@ it("edits request headers as plain values and credentials and shows only credent
   const row = container.querySelector("tbody tr")!;
   expect(row.textContent).toContain("Request headers");
   expect(row.textContent).not.toContain("No authentication");
+});
+
+it("steers a header that carries a secret to a credential", async () => {
+  servers = [{ ...saved, status: "active" }];
+  await show();
+  await click(container.querySelector<HTMLButtonElement>('[aria-label="Details for Research tools"]'));
+  await click(button("Edit server"));
+  await click(field('[aria-label="Customize connection options"]') as HTMLButtonElement);
+
+  await click(button("Add header"));
+  await type('[aria-label="Header 1 name"]', "X-Tenant");
+  expect(dialog().textContent).not.toContain("This header carries a secret.");
+  await type('[aria-label="Header 1 name"]', "X-Api-Key");
+  await type('[aria-label="Header 1 value"]', "sk-plain");
+  // A plain value would be shown to everyone who can read the server.
+  expect(dialog().textContent).toContain("This header carries a secret.");
+  await click(button("Save"));
+  expect(dialog().textContent).toContain("The header X-Api-Key carries a secret.");
+  expect(mocks.api.mock.calls.some(([method]) => method === "PUT")).toBe(false);
+
+  await choose("Header 1 source", "credential");
+  expect(dialog().textContent).not.toContain("This header carries a secret.");
 });
 
 it("refuses request headers when the model provider connects", async () => {

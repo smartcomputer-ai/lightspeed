@@ -148,3 +148,29 @@ release boundary with `scripts/release/verify-metadata.sh`.
 - Add or update tests for behavioral changes. For deterministic harness changes,
   include replay coverage or vectors where appropriate.
 - When asked for repository line counts, use `cloc $(git ls-files)`.
+
+## GitHub Issues
+
+A triaged issue has an issue type and exactly one area label. An issue without
+an area label has not been triaged yet.
+
+- **Type** is GitHub's native issue type, not a label: `Bug`, `Feature`, or
+  `Task`.
+- **Area** names where the fix lands, not who asked for it:
+  - `area:runtime` — the Rust side: API, sessions, bots, MCP, environments,
+    workflows.
+  - `area:web` — Platform web UI and backend, including the demo.
+  - `area:sdk` — TypeScript and Python clients, the CLI, config documents.
+  - `area:ops` — deployment, releases, CI, packaging, the website.
+- **`security`** is added next to the area for security-relevant work.
+- **Priority** is `now` (blocks a client, or gets more expensive later; keep
+  this list short) or `next`. No priority label means backlog. Set or change
+  priority only when asked.
+- **Assignee** is whoever holds the next step; reassign when that changes.
+- **Titles** name the feature and the outcome, such as "Workspaces: show upload
+  progress". Do not prefix them with a discipline such as UI or DevOps.
+- **Bodies** follow Problem / Proposal / Pointer, where Pointer names the
+  files or symbols involved.
+
+Every other label (`engineer`, `developer`, `shepherd`, and their variants)
+authorizes or routes automation. Never add or remove one unless asked.

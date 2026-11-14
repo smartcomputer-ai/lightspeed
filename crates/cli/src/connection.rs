@@ -39,14 +39,18 @@ pub struct ResolvedConnection {
     pub name: Option<String>,
     pub endpoint: String,
     pub secret: Option<String>,
+    /// The universe a deployment key addresses, as its UUID or its handle.
+    /// A saved selection is always the UUID; a handle here was named for
+    /// this invocation and is sent as given, for the runtime to resolve.
     pub universe: Option<String>,
     pub caller: Option<CallerAccess>,
 }
 
 impl ResolvedConnection {
-    /// The universe requests actually address, including server-bound keys
-    /// and single mode even when no local selection was saved.
-    pub fn active_universe_id(&self) -> Option<String> {
+    /// The universe requests actually address, as a UUID or a handle,
+    /// including server-bound keys and single mode even when no local
+    /// selection was saved.
+    pub fn active_universe(&self) -> Option<String> {
         match self.caller.as_ref().map(|caller| caller.scope) {
             Some(AccessScope::Universe { universe_id }) => Some(universe_id.to_string()),
             _ => self.universe.clone(),
@@ -77,7 +81,7 @@ impl ResolvedConnection {
             }
             if self.universe.is_none() {
                 bail!(
-                    "select a universe with `lightspeed universe use <uuid-or-slug>` or --universe"
+                    "select a universe with `lightspeed universe use <uuid-or-handle>` or --universe"
                 );
             }
         }
@@ -91,64 +95,73 @@ impl ResolvedConnection {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UniverseStatus {
+    /// Both are known once the universe has been read. Otherwise only the
+    /// one the selection carries is, and the reason says why.
     pub universe_id: Option<String>,
-    pub slug: Option<String>,
+    pub handle: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub slug_unavailable_reason: Option<String>,
+    pub unavailable_reason: Option<String>,
 }
 
 impl UniverseStatus {
     pub fn print(&self, heading: &str) {
         println!("{heading}:");
-        match &self.universe_id {
-            None => println!("  None selected. Use `lightspeed universe use <slug-or-uuid>`."),
-            Some(id) => {
-                match &self.slug_unavailable_reason {
-                    Some(reason) => println!("  Slug: unavailable ({reason})"),
-                    None => println!("  Slug: {}", self.slug.as_deref().unwrap_or("(no slug)")),
-                }
-                println!("  UUID: {id}");
-            }
+        if self.universe_id.is_none() && self.handle.is_none() {
+            println!("  None selected. Use `lightspeed universe use <handle-or-uuid>`.");
+            return;
         }
+        let shown = |value: &Option<String>| match (value, &self.unavailable_reason) {
+            (Some(value), _) => value.clone(),
+            (None, reason) => format!("unavailable ({})", reason.as_deref().unwrap_or("not read")),
+        };
+        println!("  Handle: {}", shown(&self.handle));
+        println!("  UUID: {}", shown(&self.universe_id));
     }
 }
 
-/// Status must remain useful for restricted keys and stale selections. Fetch
-/// the slug only when permitted, and distinguish unnamed from unavailable.
+/// Status must remain useful for restricted keys and stale selections. The
+/// selection supplies its own half of the identity; the other half is read
+/// only when permitted, with the reason given when it could not be.
 pub async fn universe_status(connection: &ResolvedConnection) -> Result<UniverseStatus> {
     let caller = connection
         .caller
         .as_ref()
         .context("connection has not been verified")?;
     let mut status = UniverseStatus {
-        universe_id: connection.active_universe_id(),
-        slug: None,
-        slug_unavailable_reason: None,
+        universe_id: None,
+        handle: None,
+        unavailable_reason: None,
     };
-    let Some(id) = &status.universe_id else {
+    let Some(selected) = connection.active_universe() else {
         return Ok(status);
     };
+    if Uuid::parse_str(&selected).is_ok() {
+        status.universe_id = Some(selected.clone());
+    } else {
+        status.handle = Some(selected.clone());
+    }
     if !caller.single
         && (caller.scope != AccessScope::Deployment
             || !caller
                 .groups
                 .contains(&api::MethodGroup::DeploymentUniverses))
     {
-        status.slug_unavailable_reason =
+        status.unavailable_reason =
             Some("requires a deployment key with deployment/universes permission".into());
         return Ok(status);
     }
     let response = HttpAgentApi::with_connection(connection.clone())
         .request::<_, api::DeploymentUniverseReadResponse>(
             api::METHOD_DEPLOYMENT_UNIVERSES_READ,
-            api::DeploymentUniverseReadParams {
-                universe_id: id.clone(),
-            },
+            api::DeploymentUniverseReadParams { universe: selected },
         )
         .await;
     match response {
-        Ok(response) => status.slug = response.result.universe.slug,
-        Err(error) => status.slug_unavailable_reason = Some(error.to_string()),
+        Ok(response) => {
+            status.universe_id = Some(response.result.universe.universe_id);
+            status.handle = Some(response.result.universe.handle);
+        }
+        Err(error) => status.unavailable_reason = Some(error.to_string()),
     }
     Ok(status)
 }
@@ -291,55 +304,65 @@ fn saved_resolved(name: &str, saved: &SavedConnection) -> Result<ResolvedConnect
 pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnection> {
     let client = HttpAgentApi::with_connection(connection.clone());
     let response: api::InitializeResponse = client
-        .request(api::METHOD_INITIALIZE, api::InitializeParams::default())
+        .request_connection(api::METHOD_INITIALIZE, api::InitializeParams::default())
         .await?
         .result;
     if response.caller.single != connection.secret.is_none() {
         bail!("runtime authentication does not match the configured connection");
     }
-    connection.caller = Some(response.caller);
-    if let Some(selected) = connection.universe.clone() {
-        connection.universe = Some(resolve_universe(&connection, &selected).await?);
+    // A deployment key's selection is sent as given, UUID or handle, and the
+    // runtime resolves it; only a bound connection is checked here.
+    if let (Some(selected), AccessScope::Universe { universe_id }) =
+        (&connection.universe, response.caller.scope)
+    {
+        connection.universe = Some(bound_universe(universe_id, selected)?);
     }
+    connection.caller = Some(response.caller);
     Ok(connection)
 }
 
+/// A connection bound to one universe accepts only that universe's UUID.
+fn bound_universe(universe_id: Uuid, selected: &str) -> Result<String> {
+    if selected != universe_id.to_string() {
+        bail!(
+            "this connection is bound to universe {universe_id}; switching universes requires a deployment key"
+        );
+    }
+    Ok(universe_id.to_string())
+}
+
+/// The UUID of the universe a UUID or handle names, for a selection that is
+/// saved: stored as the UUID, a later rename cannot move it to another
+/// universe. Resolving a handle needs permission to read universes, which a
+/// per-invocation selection does not.
 pub async fn resolve_universe(connection: &ResolvedConnection, selected: &str) -> Result<String> {
     let caller = connection
         .caller
         .as_ref()
         .context("connection has not been verified")?;
     if let AccessScope::Universe { universe_id } = caller.scope {
-        if selected != universe_id.to_string() {
-            bail!(
-                "this connection is bound to universe {universe_id}; switching universes requires a deployment key"
-            );
-        }
-        return Ok(universe_id.to_string());
+        return bound_universe(universe_id, selected);
     }
     if let Ok(id) = Uuid::parse_str(selected) {
         return Ok(id.to_string());
     }
-    let client = HttpAgentApi::with_connection(connection.clone());
-    let response: api::DeploymentUniverseListResponse = client
-        .request(
-            api::METHOD_DEPLOYMENT_UNIVERSES_LIST,
-            api::DeploymentUniverseListParams {},
+    let response: api::DeploymentUniverseReadResponse = HttpAgentApi::with_connection(
+        connection.clone(),
+    )
+    .request(
+        api::METHOD_DEPLOYMENT_UNIVERSES_READ,
+        api::DeploymentUniverseReadParams {
+            universe: selected.to_owned(),
+        },
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "cannot resolve universe {selected} to save it; use its UUID, or pass --universe {selected} on each command if this key cannot read universes"
         )
-        .await?
-        .result;
-    let matches: Vec<_> = response
-        .universes
-        .iter()
-        .filter(|u| u.slug.as_deref() == Some(selected))
-        .collect();
-    match matches.as_slice() {
-        [universe] => Ok(universe.universe_id.clone()),
-        [] => bail!(
-            "unknown universe {selected}; use an explicit UUID if this key cannot list universes"
-        ),
-        _ => bail!("ambiguous universe slug {selected}; use its UUID"),
-    }
+    })?
+    .result;
+    Ok(response.universe.universe_id)
 }
 
 /// Explicit connection selection is an atomic choice of endpoint and credential.
@@ -349,7 +372,13 @@ pub async fn resolve(
     url: Option<&str>,
     universe: Option<&str>,
 ) -> Result<ResolvedConnection> {
-    let config = load_at(&config_dir()?)?;
+    let config = match config_dir() {
+        Ok(dir) => load_at(&dir)?,
+        // Nowhere to keep saved connections, as in a container that sets no
+        // home directory: the connection then comes from the environment.
+        Err(_) if name.is_none() => Connections::default(),
+        Err(error) => return Err(error),
+    };
     let selected = name.or(config.selected.as_deref());
     let saved = selected
         .map(|n| {
@@ -542,6 +571,10 @@ pub async fn handle(
                 caller: None,
             })
             .await?;
+            let universe = match &verified.universe {
+                Some(selected) => Some(resolve_universe(&verified, selected).await?),
+                None => None,
+            };
             let mut file = api_key_file.map(std::fs::canonicalize).transpose()?;
             let owned = file.is_none() && verified.secret.is_some();
             if owned {
@@ -556,7 +589,7 @@ pub async fn handle(
                     single,
                     credential_file: file,
                     owned_credential: owned,
-                    universe: verified.universe,
+                    universe,
                 },
             );
             save_at(&dir, &config)?;
@@ -615,7 +648,7 @@ pub async fn handle(
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!(
-                    "Connection: {}\n  Runtime: {}\n  Mode: {}\n\nAPI key:\n  Prefix: {}\n  Scope: {}\n  Groups: {}\n",
+                    "Connection: {}\n  Runtime: {}\n  Mode: {}\n\nAPI key:\n  Key ID: {}\n  Prefix: {}\n  Scope: {}\n  Groups: {}\n",
                     c.name.as_deref().unwrap_or("environment"),
                     c.endpoint,
                     if caller.single {
@@ -623,6 +656,7 @@ pub async fn handle(
                     } else {
                         "authenticated"
                     },
+                    caller.key_id.as_deref().unwrap_or("none"),
                     caller.key_prefix.as_deref().unwrap_or("none"),
                     match caller.scope {
                         AccessScope::Deployment => "deployment".to_owned(),
@@ -715,6 +749,39 @@ pub fn select_universe(connection: &ResolvedConnection, id: String) -> Result<()
     Ok(())
 }
 
+/// Retry discovery only. The deadline also bounds an in-flight HTTP request.
+pub async fn resolve_wait(
+    name: Option<&str>,
+    url: Option<&str>,
+    universe: Option<&str>,
+    seconds: Option<u64>,
+) -> Result<ResolvedConnection> {
+    let Some(seconds) = seconds else {
+        return resolve(name, url, universe).await;
+    };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            bail!("Runtime did not become available within {seconds} seconds");
+        }
+        match tokio::time::timeout_at(deadline, resolve(name, url, universe)).await {
+            Ok(Ok(connection)) => return Ok(connection),
+            Ok(Err(error)) if error.is::<crate::api_client::StartupUnavailable>() => {}
+            Ok(Err(error)) => return Err(error),
+            Err(_) => bail!("Runtime did not become available within {seconds} seconds"),
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            bail!("Runtime did not become available within {seconds} seconds");
+        }
+        tokio::time::sleep_until(std::cmp::min(
+            deadline,
+            now + std::time::Duration::from_secs(1),
+        ))
+        .await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -727,6 +794,7 @@ mod tests {
             caller: Some(CallerAccess {
                 scope,
                 single,
+                key_id: None,
                 key_prefix: None,
                 groups: vec![],
             }),

@@ -102,12 +102,12 @@ export function CenteredNote({ children }: { children: ReactNode }) {
   );
 }
 
-/// Universe route guard result: loading, or the slug doesn't resolve.
-export function UniverseNotFound({ slug }: { slug: string | undefined }) {
+/// Universe route guard result: loading, or the handle doesn't resolve.
+export function UniverseNotFound({ handle }: { handle: string | undefined }) {
   return (
     <CenteredNote>
       <span>
-        Universe <span className="font-medium text-foreground">{slug}</span> was not
+        Universe <span className="font-medium text-foreground">{handle}</span> was not
         found, or you are not a member.
       </span>
     </CenteredNote>

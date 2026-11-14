@@ -18,7 +18,7 @@ import type {
 } from "@/api";
 import type { MethodGroup } from "@lightspeed-ai/sdk";
 import { base64ToText, universeApiKey, type DemoStore, type UniverseState } from "../store";
-import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
+import { badRequest, conflict, notFound, parseRequestHeaders, readBody, universeFor } from "./common";
 
 const MODEL_PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ENDPOINT_API_KINDS = new Set<string>(["openai:responses", "openai:completions"]);
@@ -251,12 +251,9 @@ function parseEndpoint(value: unknown): ModelEndpointConfig | { error: string } 
     : [];
   if (apiKinds.length === 0) return { error: "endpoint needs at least one API kind" };
   if (new Set(apiKinds).size !== apiKinds.length) return { error: "API kinds must be unique" };
-  const headers: Record<string, string> = {};
-  if (isRecord(value.headers)) {
-    for (const [name, header] of Object.entries(value.headers)) {
-      if (typeof header === "string") headers[name] = header;
-    }
-  }
+  const parsedHeaders = parseRequestHeaders(value.headers, "model endpoint");
+  if ("error" in parsedHeaders) return parsedHeaders;
+  const headers = parsedHeaders.headers;
   return { baseUrl: baseUrl ?? "", apiKinds, ...(Object.keys(headers).length > 0 ? { headers } : {}) };
 }
 
@@ -532,6 +529,7 @@ export function secretRoutes(store: DemoStore): Hono {
       grantId,
       providerId: ENVIRONMENT_SECRET_PROVIDER_ID,
       providerKind: "staticToken",
+      exposure: "retrievable",
       displayName: optionalString(body.displayName),
     });
     return c.json(grant, 201);
@@ -650,6 +648,7 @@ export function secretRoutes(store: DemoStore): Hono {
       const grant = mintGrant(store, universe, {
         providerId: app.providerId,
         providerKind: "gitHubApp",
+        exposure: "retrievable",
         displayName: optionalString(body.displayName) ?? (login ? `GitHub: ${login}` : null),
         subjectHint: login,
         expiresAtMs: Date.now() + 3_600_000,
@@ -685,6 +684,7 @@ export function secretRoutes(store: DemoStore): Hono {
     const grant = mintGrant(store, universe, {
       providerId: parsed.providerId,
       providerKind: "staticToken",
+      exposure: "retrievable",
       displayName: optionalString(body.displayName),
       subjectHint: parsed.subjectHint,
       expiresAtMs: parsed.expiresAtMs,

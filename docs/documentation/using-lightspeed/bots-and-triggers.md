@@ -19,6 +19,15 @@ can invoke an existing bot. The deployment must run the bot controller role
 as well as the gateway and session workers;
 the local full stack includes it.
 
+Bots are a feature each universe switches on. A new universe starts with
+**Bots** and **Channels** off: a universe Admin turns them on under
+**Settings → General → Features**, and Channels need Bots. While a switch is
+off, the Platform hides the feature's pages and refuses its requests from
+every member, Admins included. The switch governs what people do through the
+Platform. It does not stop a bot that is already running, and a caller holding
+a runtime API key is governed by that key's method groups instead. Pause or
+close bots before switching the feature off if they should stop.
+
 ## Create the bot and send its first event
 
 1. Open **Bots → New bot** and choose **Blank**.
@@ -37,7 +46,11 @@ the local full stack includes it.
    `release-reviewer`. The wizard otherwise creates a profile for the bot.
 5. Leave **Other bots** disabled. Under **Guardrails**, set a daily run limit
    such as `20` and turn off **Can change its own brief and triggers** for this
-   fixed setup. Blank bots enable that permission by default.
+   fixed setup. Blank bots enable that permission by default. A bot that lists
+   its triggers never sees their ingest URLs or pairing codes. It is told one
+   only once, in the result of the call that creates the webhook or the pairing
+   code, and only in its Main conversation: a conversation routed per chat,
+   key or event is never told. Operators read the values on the trigger row.
 6. Choose **Create bot** and wait for Main to become ready. The web app asks
    the new bot to introduce itself when its conversation is ready.
 
@@ -64,9 +77,22 @@ Bots, their conversations, and their sub-agents are always shared with the
 universe. Every member can inspect them. Contributors and above can invoke a
 bot and control work in its conversations; Operators and Admins can configure
 it, manage triggers, replay events, reset conversations, and close or delete
-the bot. Current trigger-read responses include webhook ingest paths and chat
-pairing codes, and every member can call those reads. These bearer values are
-not restricted to bot managers even when the UI hides management controls.
+the bot.
+
+A trigger has two values that let an outsider reach the bot: a webhook's ingest
+URL, whose token admits events, and a chat trigger's pairing code, which
+connects a conversation. Neither is part of a trigger as members read or list
+it. Operators and Admins read them on the trigger row, which asks for them
+through a separate bot-management method (`bots/triggers/secrets/read`), and
+creating or replacing a trigger answers with them. Viewers and Contributors
+see that a trigger exists and how it is configured, not these values.
+
+There is one exception. A bot that may change its own triggers is told the
+ingest URL or pairing code of a trigger it creates, once, in its Main
+conversation. That tool result stays in the conversation, and every member can
+read a bot's conversations. Create webhook and paired chat triggers yourself,
+or turn off **Can change its own brief and triggers**, when members below
+Operator must not learn these values.
 
 The bot executes for the universe. Removing its creator's membership prevents
 that person's subsequent Platform requests but does not stop the bot or work
@@ -100,9 +126,12 @@ work wait, while a schedule produces new bot events.
 ## Receive a webhook
 
 Add a **Webhook** trigger when another system can POST an event. The trigger
-row supplies an ingest URL that already identifies the bot and trigger.
+row supplies an ingest URL that already identifies the bot and trigger; it is
+shown to Operators and Admins only.
 The default **URL token only** verification makes that URL a bearer secret:
-keep it in the sending system's protected webhook configuration.
+keep it in the sending system's protected webhook configuration. The token
+stays the same when the trigger is edited; to replace it, delete the trigger
+and create a new one.
 
 For a small generic test, copy the URL and send:
 
@@ -126,7 +155,8 @@ deliberately repeat an already stored event, use Activity's replay action.
 
 The other verification choices are **HMAC-SHA256 signature** and **GitHub
 (signed)**. Create a token on **Credentials** with **Retrievable by
-trusted services** enabled, then enter its ID in **Credential grant ID**.
+environments and trusted services** enabled, then enter its ID in
+**Credential grant ID**.
 The GitHub preset uses GitHub's signature format and delivery ID, maps events to kinds such as
 `issues.opened` and `pull_request.opened`, and can route by issue or pull
 request. Configure the sender to use the matching verification scheme.
@@ -144,10 +174,11 @@ polls compare against that cursor. For example, a URL returning
 `id` for unseen-item detection. Add a new ID in the source to verify that the
 next poll produces an event.
 
-A URL poll reaches public addresses over HTTPS and does not follow redirects;
-hosts on the deployment's private-network list (`LIGHTSPEED_MCP_PRIVATE_NETWORKS`)
-may also use HTTP. For an authenticated endpoint, enter the ID of a credential
-with **Retrievable by trusted services** enabled. If that credential is bound to
+A URL poll reaches public addresses over HTTPS and does not follow redirects.
+A destination on the deployment's private-network list
+(`LIGHTSPEED_MCP_PRIVATE_NETWORKS`), listed by hostname or by the address range
+it resolves into, is also reachable and may use HTTP. For an authenticated endpoint, enter the ID of a credential
+with **Retrievable by environments and trusted services** enabled. If that credential is bound to
 an audience, the audience must cover the poll URL.
 
 An execution poll needs an existing, lasting execution environment and a

@@ -69,7 +69,7 @@ import {
 import { TELEGRAM_ACCOUNT_ID, WHATSAPP_ACCOUNT_ID } from "./platform";
 
 export const TECHNICAL_SUPPORT_UNIVERSE_ID = "22222222-2222-4222-8222-222222222222";
-export const TECHNICAL_SUPPORT_SLUG = "technical-support";
+export const TECHNICAL_SUPPORT_HANDLE = "technical-support";
 const LIGHTSPEED_UNIVERSE_ID = "0000b0b0-0000-4000-8000-0000000b0b0b";
 
 const PROFILE = {
@@ -2315,7 +2315,7 @@ const responder: DemoResponder = (input, context) => {
 export function seedTechnicalSupport(store: DemoStore): void {
   const universe = store.addUniverse({
     id: TECHNICAL_SUPPORT_UNIVERSE_ID,
-    slug: TECHNICAL_SUPPORT_SLUG,
+    handle: TECHNICAL_SUPPORT_HANDLE,
     name: "Technical Support",
     icon: "support",
     iconColor: "amber",
@@ -2323,6 +2323,8 @@ export function seedTechnicalSupport(store: DemoStore): void {
     role: "admin",
     createdAt: agoIso(49 * DAY_MS),
     responder,
+    // Bots and channels are off in a new universe; this one is built on them.
+    features: { bots: true, channels: true },
   });
   seedMembers(store, universe);
   seedProfiles(universe);

@@ -8,8 +8,8 @@ use temporal_runtime::{
     },
     gateway::{
         DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_TEMPORAL_NAMESPACE,
-        DEFAULT_TEMPORAL_TARGET, GatewayRoutes, GatewayState, gateway_router,
-        prewarm_single_universe, registration,
+        DEFAULT_TEMPORAL_TARGET, GatewayRoutes, GatewayState, TemporalConnectionSettings,
+        gateway_router, prewarm_single_universe, registration, replica::GatewayReplica,
     },
     roles::{Role, RoleSet},
     universe::UniverseRuntime,
@@ -70,29 +70,65 @@ enum UniverseCommand {
     Create {
         #[arg(long)]
         universe_id: Option<uuid::Uuid>,
+        /// The new universe's handle; derived from the id when omitted. An
+        /// existing universe keeps the handle it has.
         #[arg(long)]
-        slug: Option<String>,
+        handle: Option<String>,
     },
     #[command(about = "List universes")]
     List,
 }
 
+/// The method groups a key is given. A key's authority is always stated on
+/// the command line: leaving both flags out is an error, never "everything".
+#[derive(Clone, Debug, Args)]
+struct KeyGroupArgs {
+    /// A method group the key may call (repeatable).
+    #[arg(
+        long = "group",
+        required_unless_present = "all_groups",
+        conflicts_with = "all_groups"
+    )]
+    groups: Vec<String>,
+    /// Every method group the key's scope allows in this release. The key
+    /// stores that set, so a later release does not widen it on its own.
+    #[arg(long)]
+    all_groups: bool,
+}
+
+impl KeyGroupArgs {
+    fn groups(&self) -> anyhow::Result<api::ApiKeyGroups> {
+        if self.all_groups {
+            return Ok(api::ApiKeyGroups::All);
+        }
+        parse_groups(&self.groups).map(api::ApiKeyGroups::Listed)
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum ApiKeyCommand {
-    /// Provision a deployment administrator key; reuse validates authority by default.
-    /// Reads LIGHTSPEED_BOOTSTRAP_API_KEY when set, otherwise generates a key.
-    /// Prints the credential as JSON; store it securely.
+    /// Declare a deployment key from the host, where no key is needed to
+    /// authenticate: the way the first key of a deployment comes to exist.
+    /// Reads the secret from LIGHTSPEED_BOOTSTRAP_API_KEY, so that afterwards
+    /// the key of this id answers to it with these groups; repeating the
+    /// command changes nothing, and a different secret replaces the previous
+    /// one at once. Without the variable a new key is generated, which fails
+    /// if the id is taken. Prints the key as JSON, with the secret only when
+    /// this command generated it; store that secret securely.
     Provision {
+        /// The key's id among deployment keys.
+        #[arg(long, default_value = "bootstrap")]
+        key_id: String,
         #[arg(long, default_value = "Deployment bootstrap")]
         name: String,
+        #[command(flatten)]
+        groups: KeyGroupArgs,
         #[arg(long)]
         assert_actor: bool,
-        /// Require the supplied key to already exist in the store.
+        /// Check that the supplied key exists exactly as described, without
+        /// creating or changing anything.
         #[arg(long)]
         require_existing: bool,
-        /// Refresh an active key's method groups; scope and actor authority must match.
-        #[arg(long)]
-        refresh_groups: bool,
     },
     #[command(about = "Mint an API key; the secret prints exactly once")]
     Create {
@@ -106,12 +142,13 @@ enum ApiKeyCommand {
         /// A deployment key, which names a universe per request by header.
         #[arg(long)]
         deployment: bool,
+        /// The key's id within its scope; allocated when omitted.
+        #[arg(long)]
+        key_id: Option<String>,
         #[arg(long)]
         name: Option<String>,
-        /// A method group the key may call (repeatable); omitted grants
-        /// every group the scope allows.
-        #[arg(long = "group")]
-        groups: Vec<String>,
+        #[command(flatten)]
+        groups: KeyGroupArgs,
         /// Let the key name the actor a request acts for.
         #[arg(long)]
         assert_actor: bool,
@@ -125,20 +162,33 @@ enum ApiKeyCommand {
         /// Keys of this name that are still active are revoked first.
         #[arg(long, default_value = "Local development launcher")]
         name: String,
+        #[command(flatten)]
+        groups: KeyGroupArgs,
     },
-    #[command(about = "List API keys (prefixes only; secrets are never stored)")]
+    #[command(about = "List API keys (secrets are never stored)")]
     List,
-    /// Replace an active key secret immediately; prints the new secret once.
-    Rotate { key_prefix: String },
-    #[command(about = "Revoke an API key by its display prefix")]
-    Revoke { key_prefix: String },
+    /// Replace an active key's secret with a generated one immediately;
+    /// prints the new secret once.
+    Rotate {
+        key_id: String,
+        /// The universe the key belongs to; omit for a deployment key.
+        #[arg(long)]
+        universe_id: Option<uuid::Uuid>,
+    },
+    #[command(about = "Revoke an API key")]
+    Revoke {
+        key_id: String,
+        /// The universe the key belongs to; omit for a deployment key.
+        #[arg(long)]
+        universe_id: Option<uuid::Uuid>,
+    },
 }
 
 #[derive(Clone, Debug, Args)]
 struct RunArgs {
     /// Roles this process runs: a comma-separated subset of gateway,
-    /// environment-gateway, sessions, bots, channels, code (default: all). Run
-    /// exactly one environment-gateway process per deployment.
+    /// environment-gateway, sessions, bots, channels, code (default: all).
+    /// Environment gateway replicas advertise their own direct peer URLs.
     #[arg(long, env = "LIGHTSPEED_ROLES")]
     roles: Option<String>,
 
@@ -169,6 +219,37 @@ struct RunArgs {
     #[arg(long, env = "TEMPORAL_NAMESPACE", default_value = DEFAULT_TEMPORAL_NAMESPACE)]
     namespace: String,
 
+    /// Connect to Temporal over TLS: true or false. Unset, TLS is on when
+    /// another TLS setting or an API key is given, or the address is an
+    /// https:// URL.
+    #[arg(long, env = "TEMPORAL_TLS", value_name = "BOOL")]
+    temporal_tls: Option<String>,
+
+    /// PEM file of the CA that issued the Temporal server certificate.
+    /// Without it the operating system's trusted roots are used.
+    #[arg(long, env = "TEMPORAL_TLS_SERVER_CA_FILE", value_name = "PATH")]
+    temporal_tls_server_ca_file: Option<String>,
+
+    /// Name to verify the Temporal server certificate against instead of
+    /// the host in the address.
+    #[arg(long, env = "TEMPORAL_TLS_SERVER_NAME", value_name = "NAME")]
+    temporal_tls_server_name: Option<String>,
+
+    /// PEM file of the client certificate presented to Temporal. Needs
+    /// the key file too.
+    #[arg(long, env = "TEMPORAL_TLS_CLIENT_CERT_FILE", value_name = "PATH")]
+    temporal_tls_client_cert_file: Option<String>,
+
+    /// PEM file of the client certificate's private key.
+    #[arg(long, env = "TEMPORAL_TLS_CLIENT_KEY_FILE", value_name = "PATH")]
+    temporal_tls_client_key_file: Option<String>,
+
+    /// File holding the Temporal API key. The key itself can be given in
+    /// TEMPORAL_API_KEY instead; it has no flag, so that it never shows in
+    /// a process listing.
+    #[arg(long, env = "TEMPORAL_API_KEY_FILE", value_name = "PATH")]
+    temporal_api_key_file: Option<String>,
+
     #[arg(
         long,
         env = "LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES",
@@ -196,6 +277,23 @@ struct RunArgs {
 impl RunArgs {
     fn roles(&self) -> anyhow::Result<RoleSet> {
         RoleSet::parse(self.roles.as_deref().unwrap_or("")).map_err(|error| anyhow::anyhow!(error))
+    }
+
+    /// The Temporal connection these arguments describe. Every flag already
+    /// carries its environment variable; `api_key` is the one setting read
+    /// from the environment alone.
+    fn temporal_settings(&self, api_key: Option<String>) -> TemporalConnectionSettings {
+        TemporalConnectionSettings {
+            address: Some(self.temporal_target.clone()),
+            namespace: Some(self.namespace.clone()),
+            tls: self.temporal_tls.clone(),
+            tls_server_ca_file: self.temporal_tls_server_ca_file.clone(),
+            tls_server_name: self.temporal_tls_server_name.clone(),
+            tls_client_cert_file: self.temporal_tls_client_cert_file.clone(),
+            tls_client_key_file: self.temporal_tls_client_key_file.clone(),
+            api_key,
+            api_key_file: self.temporal_api_key_file.clone(),
+        }
     }
 
     fn task_queues(&self) -> anyhow::Result<TaskQueues> {
@@ -323,27 +421,33 @@ async fn run_cas_sweep(dry_run: bool) -> anyhow::Result<()> {
 async fn run_universe_command(command: UniverseCommand) -> anyhow::Result<()> {
     let stores = DeploymentStores::from_env().await?;
     match command {
-        UniverseCommand::Create { universe_id, slug } => {
+        UniverseCommand::Create {
+            universe_id,
+            handle,
+        } => {
             let universe_id = universe_id.unwrap_or_else(uuid::Uuid::new_v4);
+            if let Some(handle) = &handle
+                && !store_pg::is_valid_universe_handle(handle)
+            {
+                anyhow::bail!(
+                    "invalid handle {handle}: use 1-63 lowercase letters, digits and hyphens, starting and ending with a letter or digit, and not a UUID"
+                );
+            }
             stores
-                .store_for_with_slug(universe_id, slug)
+                .store_for_with_handle(universe_id, handle)
                 .ensure_universe()
                 .await?;
             println!("universe_id: {universe_id}");
             if let Some(universe) =
                 store_pg::read_universe_stats(stores.pool(), universe_id).await?
-                && let Some(slug) = universe.slug
             {
-                println!("slug: {slug}");
+                println!("handle: {}", universe.handle);
             }
             Ok(())
         }
         UniverseCommand::List => {
-            for (universe_id, slug) in store_pg::list_universes(stores.pool()).await? {
-                match slug {
-                    Some(slug) => println!("{universe_id}  {slug}"),
-                    None => println!("{universe_id}"),
-                }
+            for (universe_id, handle) in store_pg::list_universes(stores.pool()).await? {
+                println!("{universe_id}  {handle}");
             }
             Ok(())
         }
@@ -362,14 +466,16 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
     };
     match command {
         ApiKeyCommand::Provision {
+            key_id,
             name,
+            groups,
             assert_actor,
             require_existing,
-            refresh_groups,
         } => {
             let spec = auth::ApiKeySpec {
+                key_id: Some(key_id),
                 scope: api::AccessScope::Deployment,
-                groups: None,
+                groups: groups.groups()?,
                 assert_actor,
                 created_by: host("api-key provision"),
                 display_name: Some(name),
@@ -378,21 +484,48 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
             if require_existing && supplied.is_none() {
                 anyhow::bail!("--require-existing needs LIGHTSPEED_BOOTSTRAP_API_KEY");
             }
-            let key = match supplied {
-                Some(secret) => auth::import_api_key(spec, now_ms, secret.trim())?,
-                None => auth::mint_api_key(spec, now_ms)?,
+            let provisioned = match supplied {
+                Some(secret) => {
+                    let key = auth::import_api_key(spec, now_ms, secret.trim())?;
+                    if require_existing {
+                        ProvisionedKey {
+                            record: api_keys.verify_api_key(&key).await?,
+                            generated_secret: None,
+                            created: false,
+                            secret_replaced: false,
+                        }
+                    } else {
+                        let put = api_keys.put_api_key(&key).await?;
+                        ProvisionedKey {
+                            record: put.record,
+                            generated_secret: None,
+                            created: put.created,
+                            secret_replaced: put.secret_replaced,
+                        }
+                    }
+                }
+                // A generated secret makes a new key and never replaces the
+                // secret of one that exists.
+                None => {
+                    let key = mint(&api_keys, spec, now_ms).await.map_err(|error| {
+                        anyhow::anyhow!(
+                            "{error}; set LIGHTSPEED_BOOTSTRAP_API_KEY to declare an existing key, or rotate it"
+                        )
+                    })?;
+                    ProvisionedKey {
+                        record: key.record.clone(),
+                        generated_secret: Some(key.secret),
+                        created: true,
+                        secret_replaced: false,
+                    }
+                }
             };
-            let record = api_keys
-                .provision_api_key(&key, require_existing, refresh_groups)
-                .await?;
-            println!(
-                "{}",
-                serde_json::json!({ "keyPrefix": record.key_prefix, "secret": key.secret.expose() })
-            );
+            println!("{}", provisioned.output());
             Ok(())
         }
         ApiKeyCommand::Create {
             universe_id,
+            key_id,
             name,
             groups,
             assert_actor,
@@ -409,12 +542,11 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                 }
                 None => api::AccessScope::Deployment,
             };
-            let groups = (!groups.is_empty())
-                .then(|| parse_groups(&groups))
-                .transpose()?;
+            let groups = groups.groups()?;
             let minted = mint(
                 &api_keys,
                 auth::ApiKeySpec {
+                    key_id,
                     scope,
                     groups,
                     assert_actor,
@@ -424,13 +556,19 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                 now_ms,
             )
             .await?;
+            println!("key_id: {}", minted.record.key_id);
             println!("key_prefix: {}", minted.record.key_prefix);
             println!("scope: {}", serde_json::to_string(&scope)?);
             // The one and only time the secret leaves the process.
             println!("secret: {}", minted.secret.expose());
             Ok(())
         }
-        ApiKeyCommand::Bootstrap { universe_id, name } => {
+        ApiKeyCommand::Bootstrap {
+            universe_id,
+            name,
+            groups,
+        } => {
+            let groups = groups.groups()?;
             stores.store_for(universe_id).ensure_universe().await?;
             // One local stack at a time: retire keys from previous launcher
             // runs without ever persisting their secrets.
@@ -442,15 +580,16 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                     && previous.revoked_at_ms.is_none()
                 {
                     api_keys
-                        .revoke_api_key(&previous.key_prefix, now_ms)
+                        .revoke_api_key(previous.scope, &previous.key_id, now_ms)
                         .await?;
                 }
             }
             let minted = mint(
                 &api_keys,
                 auth::ApiKeySpec {
+                    key_id: None,
                     scope: api::AccessScope::Deployment,
-                    groups: None,
+                    groups,
                     assert_actor: true,
                     created_by: host("api-key bootstrap"),
                     display_name: Some(name),
@@ -462,6 +601,7 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                 "{}",
                 serde_json::json!({
                     "universeId": universe_id,
+                    "keyId": minted.record.key_id,
                     "keyPrefix": minted.record.key_prefix,
                     "secret": minted.secret.expose(),
                 })
@@ -482,7 +622,8 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                     .collect::<Vec<_>>()
                     .join(",");
                 println!(
-                    "{}  {}  {}  {}{}  {}",
+                    "{}  {}  {}  {}  {}{}  {}",
+                    record.key_id,
                     record.key_prefix,
                     serde_json::to_string(&record.scope)?,
                     status,
@@ -493,30 +634,75 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        ApiKeyCommand::Rotate { key_prefix } => {
+        ApiKeyCommand::Rotate {
+            key_id,
+            universe_id,
+        } => {
             let key = api_keys
-                .rotate_api_key(&key_prefix)
+                .rotate_api_key(key_scope(universe_id), &key_id)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("no active api key with prefix {key_prefix}"))?;
+                .ok_or_else(|| anyhow::anyhow!("no active api key {key_id} in that scope"))?;
             println!(
                 "{}",
-                serde_json::json!({ "keyPrefix": key.record.key_prefix, "secret": key.secret.expose() })
+                serde_json::json!({
+                    "keyId": key.record.key_id,
+                    "keyPrefix": key.record.key_prefix,
+                    "secret": key.secret.expose(),
+                })
             );
             Ok(())
         }
-        ApiKeyCommand::Revoke { key_prefix } => {
+        ApiKeyCommand::Revoke {
+            key_id,
+            universe_id,
+        } => {
             if api_keys
-                .revoke_api_key(&key_prefix, now_ms)
+                .revoke_api_key(key_scope(universe_id), &key_id, now_ms)
                 .await?
                 .is_some()
             {
-                println!("revoked: {key_prefix}");
+                println!("revoked: {key_id}");
                 Ok(())
             } else {
-                anyhow::bail!("no api key with prefix {key_prefix}")
+                anyhow::bail!("no api key {key_id} in that scope")
             }
         }
     }
+}
+
+/// What `api-key provision` did, and the secret only when the command made
+/// it.
+struct ProvisionedKey {
+    record: auth::ApiKeyRecord,
+    /// `None` when the caller supplied the secret: they hold it already, and
+    /// repeating it would copy it into the output of every start-up job and
+    /// whatever collects that output.
+    generated_secret: Option<auth::SecretValue>,
+    created: bool,
+    secret_replaced: bool,
+}
+
+impl ProvisionedKey {
+    fn output(&self) -> serde_json::Value {
+        let mut output = serde_json::json!({
+            "keyId": self.record.key_id,
+            "keyPrefix": self.record.key_prefix,
+            "created": self.created,
+            "secretReplaced": self.secret_replaced,
+        });
+        if let Some(secret) = &self.generated_secret {
+            output["secret"] = serde_json::Value::String(secret.expose().to_owned());
+        }
+        output
+    }
+}
+
+/// The scope a host command addresses a key in: a universe, or the
+/// deployment when none is named.
+fn key_scope(universe_id: Option<uuid::Uuid>) -> api::AccessScope {
+    universe_id.map_or(api::AccessScope::Deployment, |universe_id| {
+        api::AccessScope::Universe { universe_id }
+    })
 }
 
 fn parse_groups(names: &[String]) -> anyhow::Result<std::collections::BTreeSet<api::MethodGroup>> {
@@ -560,8 +746,10 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     let task_queues = args.task_queues()?;
     let mode = gateway_auth_mode_from_env()?;
     let runtime = worker::worker_runtime()?;
-    let client =
-        temporal_runtime::gateway::connect_temporal(&args.temporal_target, &args.namespace).await?;
+    let temporal = args
+        .temporal_settings(TemporalConnectionSettings::from_env()?.api_key)
+        .resolve()?;
+    let client = temporal_runtime::gateway::connect_temporal(&temporal).await?;
     let stores = DeploymentStores::from_env()
         .await?
         .with_blob_cache(temporal_runtime::config::blob_cache_from_env()?);
@@ -593,11 +781,42 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     );
     prewarm_single_universe(&mode, &universes).await?;
 
+    // Bind before publishing this instance's address. No connections are
+    // accepted until its lease and the role workers have been initialized.
+    let listener = if roles.serves_http() {
+        Some(tokio::net::TcpListener::bind(args.bind).await?)
+    } else {
+        None
+    };
+    let gateway_state = if roles.serves_http() {
+        let mut state = GatewayState::multi(mode, universes.clone(), public_base_url)
+            .with_registration_origins(registration_origins);
+        if roles.has(Role::EnvironmentGateway) {
+            let peer_url = GatewayReplica::peer_url_from_env()?;
+            let instance_roles: Vec<_> =
+                roles.iter().map(|role| role.as_str().to_owned()).collect();
+            let replica = GatewayReplica::register(
+                universes.stores().pool(),
+                &instance_roles,
+                peer_url.as_deref(),
+            )
+            .await?;
+            tracing::info!(instance = %replica.instance_id(), peer_url = ?replica.peer_url(), "environment gateway instance registered");
+            state = state.with_replica(replica);
+        }
+        Some(Arc::new(state))
+    } else {
+        None
+    };
+
     tracing::info!(
         target: "temporal_runtime",
         roles = %roles,
         temporal_target = %args.temporal_target,
-        namespace = %args.namespace,
+        namespace = %temporal.namespace(),
+        temporal_tls = temporal.tls().is_some(),
+        temporal_client_certificate = temporal.uses_client_certificate(),
+        temporal_api_key = temporal.uses_api_key(),
         sessions_queue = %task_queues.sessions,
         bots_queue = %task_queues.bots,
         channels_queue = %task_queues.channels,
@@ -609,14 +828,12 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     let mut workers: Vec<(Role, temporalio_sdk::Worker)> = Vec::new();
 
     if roles.has(Role::EnvironmentGateway) {
-        // Before the listener accepts connections: this process held every
-        // registered connection the rows still call connected.
-        let repaired = registration::repair_registered_connections(&universes).await?;
-        tracing::info!(
-            target: "temporal_runtime",
-            repaired,
-            "registered environments marked disconnected until their daemons reconnect"
-        );
+        let state = gateway_state
+            .as_ref()
+            .expect("environment role has an HTTP listener");
+        background.push(tokio::spawn(
+            state.replica().clone().maintain(state.clone()),
+        ));
         background.push(tokio::spawn(universes.clone().run_environment_reconciler()));
         background.push(tokio::spawn(registration::run_registered_sweep(
             universes.clone(),
@@ -706,17 +923,12 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     }
 
     let gateway_future: std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>>>> =
-        if roles.serves_http() {
+        if let (Some(state), Some(listener)) = (gateway_state.clone(), listener) {
             let routes = GatewayRoutes {
                 api: roles.has(Role::Gateway),
                 environment: roles.has(Role::EnvironmentGateway),
             };
-            let gateway_state = Arc::new(
-                GatewayState::multi(mode, universes, public_base_url)
-                    .with_registration_origins(registration_origins),
-            );
-            let app = gateway_router(gateway_state, args.max_request_body_bytes, routes);
-            let listener = tokio::net::TcpListener::bind(args.bind).await?;
+            let app = gateway_router(state.clone(), args.max_request_body_bytes, routes);
             tracing::info!(
                 target: "temporal_runtime",
                 bind = %args.bind,
@@ -725,9 +937,32 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
                 "gateway listening"
             );
             Box::pin(async move {
-                axum::serve(listener, app)
-                    .with_graceful_shutdown(shutdown_signal())
-                    .await?;
+                use std::future::IntoFuture as _;
+                let (stop_http, http_stopped) = tokio::sync::oneshot::channel();
+                let server = axum::serve(listener, app)
+                    .with_graceful_shutdown(async {
+                        let _ = http_stopped.await;
+                    })
+                    .into_future();
+                tokio::pin!(server);
+                let lease_lost = tokio::select! {
+                    result = server.as_mut() => return result.map_err(anyhow::Error::from),
+                    _ = shutdown_signal() => false,
+                    _ = state.replica().stopped(), if routes.environment => true,
+                };
+                if routes.environment {
+                    // Keep the listener running so readiness probes and
+                    // already-issued daemon dial-backs can finish during drain.
+                    tokio::select! {
+                        result = server.as_mut() => return result.map_err(anyhow::Error::from),
+                        _ = state.replica().drain(&state) => {},
+                    }
+                }
+                let _ = stop_http.send(());
+                tokio::time::timeout(Duration::from_secs(5), server.as_mut())
+                    .await
+                    .map_err(|_| anyhow::anyhow!("gateway HTTP shutdown exceeded 5 seconds"))??;
+                anyhow::ensure!(!lease_lost, "environment gateway instance lease expired");
                 Ok(())
             })
         } else {
@@ -744,41 +979,42 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
         }
     };
 
-    if worker_futures.is_empty() {
-        let result = gateway_future.await;
-        stop_background(&background);
-        return result;
-    }
-
-    let workers_future = futures::future::select_all(worker_futures);
-    tokio::pin!(workers_future);
-    tokio::select! {
+    let result = if worker_futures.is_empty() {
+        gateway_future.await
+    } else {
+        let workers_future = futures::future::select_all(worker_futures);
+        tokio::pin!(workers_future);
+        tokio::select! {
         (worker_result, _index, remaining) = workers_future.as_mut() => {
-            stop_background(&background);
             for shutdown in shutdowns {
                 shutdown();
             }
             let _ = tokio::time::timeout(Duration::from_secs(10), futures::future::join_all(remaining)).await;
             match worker_result {
-                (role, Ok(())) => anyhow::bail!("{role} worker stopped while the process was still running"),
+                (role, Ok(())) => Err(anyhow::anyhow!("{role} worker stopped while the process was still running")),
                 (role, Err(error)) => Err(anyhow::Error::from(error).context(format!("{role} worker failed"))),
             }
         }
         gateway_result = gateway_future.as_mut() => {
-            stop_background(&background);
             for shutdown in shutdowns {
                 shutdown();
             }
-            tokio::time::timeout(Duration::from_secs(10), async {
+            let workers_stopped = tokio::time::timeout(Duration::from_secs(10), async {
                 let (_first, _index, remaining) = workers_future.as_mut().await;
                 futures::future::join_all(remaining).await;
             })
             .await
-            .map_err(|_| anyhow::anyhow!("Temporal workers did not shut down within 10 seconds"))?;
-            gateway_result?;
-            Ok(())
+            .map_err(|_| anyhow::anyhow!("Temporal workers did not shut down within 10 seconds"));
+            gateway_result.and(workers_stopped)
         }
+        }
+    };
+    if let Some(state) = gateway_state.filter(|_| roles.has(Role::EnvironmentGateway)) {
+        state.replica().drain(&state).await;
+        state.replica().unregister(universes.stores().pool()).await;
     }
+    stop_background(&background);
+    result
 }
 
 /// Resolves on SIGINT from a terminal or SIGTERM from a process manager such as
@@ -841,6 +1077,7 @@ fn init_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use temporal_runtime::gateway::TemporalConfigError;
 
     #[tokio::test(flavor = "current_thread")]
     async fn sigterm_starts_graceful_shutdown() {
@@ -870,6 +1107,101 @@ mod tests {
         let error = Cli::try_parse_from(["lightspeed-runtime", "--task-types", "workflows"])
             .expect_err("removed polling override must be rejected");
         assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn temporal_flags_describe_one_connection() {
+        let cli = Cli::try_parse_from([
+            "lightspeed-runtime",
+            "--temporal-target",
+            "temporal.internal:7233",
+            "--namespace",
+            "lightspeed",
+            "--temporal-tls",
+            "true",
+            "--temporal-tls-server-ca-file",
+            "/etc/temporal/ca.pem",
+            "--temporal-tls-server-name",
+            "frontend.temporal.internal",
+            "--temporal-tls-client-cert-file",
+            "/etc/temporal/client.pem",
+            "--temporal-tls-client-key-file",
+            "/etc/temporal/client.key",
+            "--temporal-api-key-file",
+            "/run/secrets/temporal-api-key",
+        ])
+        .expect("parse Temporal connection flags");
+        let config = cli
+            .run
+            .temporal_settings(None)
+            .resolve()
+            .expect("consistent Temporal settings");
+
+        assert_eq!(config.target().as_str(), "https://temporal.internal:7233/");
+        assert_eq!(config.namespace(), "lightspeed");
+        let tls = config.tls().expect("TLS is on");
+        assert_eq!(
+            tls.server_ca_file.as_deref(),
+            Some(std::path::Path::new("/etc/temporal/ca.pem"))
+        );
+        assert_eq!(
+            tls.server_name.as_deref(),
+            Some("frontend.temporal.internal")
+        );
+        assert!(config.uses_client_certificate());
+        assert!(config.uses_api_key());
+    }
+
+    #[test]
+    fn inconsistent_temporal_settings_fail_before_connecting() {
+        // Every flag is given, blank where unset, so the variables of the
+        // shell that runs the test cannot leak into the parse.
+        let parse = |tls: &str, cert: &str, key: &str| {
+            Cli::try_parse_from([
+                "lightspeed-runtime",
+                "--temporal-target",
+                "temporal.internal:7233",
+                "--namespace",
+                "lightspeed",
+                "--temporal-tls",
+                tls,
+                "--temporal-tls-server-ca-file",
+                "",
+                "--temporal-tls-server-name",
+                "",
+                "--temporal-tls-client-cert-file",
+                cert,
+                "--temporal-tls-client-key-file",
+                key,
+                "--temporal-api-key-file",
+                "",
+            ])
+            .expect("parse Temporal connection flags")
+            .run
+        };
+
+        assert!(matches!(
+            parse("", "/etc/temporal/client.pem", "")
+                .temporal_settings(None)
+                .resolve(),
+            Err(TemporalConfigError::IncompleteClientCertificate { .. })
+        ));
+        assert!(matches!(
+            parse("sometimes", "", "").temporal_settings(None).resolve(),
+            Err(TemporalConfigError::InvalidTlsSwitch)
+        ));
+        assert!(matches!(
+            parse("", "", "")
+                .temporal_settings(Some("key-1".to_owned()))
+                .resolve(),
+            Ok(config) if config.tls().is_some() && config.uses_api_key()
+        ));
+        let plain = parse("", "", "")
+            .temporal_settings(None)
+            .resolve()
+            .expect("no TLS setting");
+        assert!(plain.tls().is_none());
+        assert_eq!(plain.target().as_str(), "http://temporal.internal:7233/");
     }
 
     #[test]
@@ -971,23 +1303,127 @@ mod tests {
         };
         assert!(assert_actor);
         assert_eq!(
-            parse_groups(&groups).unwrap(),
+            groups.groups().unwrap(),
             [
                 api::MethodGroup::ChannelsInbound,
                 api::MethodGroup::DeploymentChannels
             ]
             .into_iter()
-            .collect()
+            .collect::<api::ApiKeyGroups>()
         );
         assert!(parse_groups(&["identity".into()]).is_err());
+    }
+
+    /// The groups of each key-making command, or the parse error.
+    fn key_groups(command: &[&str]) -> Result<api::ApiKeyGroups, clap::Error> {
+        let arguments = ["server", "api-key"].iter().chain(command).copied();
+        let groups = match Cli::try_parse_from(arguments)?.command {
+            Some(Command::ApiKey(
+                ApiKeyCommand::Provision { groups, .. }
+                | ApiKeyCommand::Create { groups, .. }
+                | ApiKeyCommand::Bootstrap { groups, .. },
+            )) => groups,
+            other => panic!("expected a command that makes a key, got {other:?}"),
+        };
+        Ok(groups.groups().expect("known groups"))
+    }
+
+    #[test]
+    fn every_key_making_command_states_its_groups() {
+        let id = "00000000-0000-4000-8000-000000000001";
+        for command in [
+            vec!["provision"],
+            vec!["create", "--deployment"],
+            vec!["create", "--universe-id", id],
+            vec!["bootstrap", "--universe-id", id],
+        ] {
+            // Leaving the groups out is an error, never every group.
+            let missing = key_groups(&command).unwrap_err();
+            assert_eq!(
+                missing.kind(),
+                clap::error::ErrorKind::MissingRequiredArgument,
+                "{command:?}"
+            );
+
+            let mut all = command.clone();
+            all.push("--all-groups");
+            assert_eq!(key_groups(&all).unwrap(), api::ApiKeyGroups::All);
+
+            let mut listed = command.clone();
+            listed.extend(["--group", "session", "--group", "models"]);
+            assert_eq!(
+                key_groups(&listed).unwrap(),
+                [api::MethodGroup::Session, api::MethodGroup::Models]
+                    .into_iter()
+                    .collect::<api::ApiKeyGroups>()
+            );
+
+            let mut both = listed.clone();
+            both.push("--all-groups");
+            assert_eq!(
+                key_groups(&both).unwrap_err().kind(),
+                clap::error::ErrorKind::ArgumentConflict,
+                "{command:?}"
+            );
+        }
+    }
+
+    fn provisioned(generated_secret: Option<&str>) -> ProvisionedKey {
+        let key = auth::import_api_key(
+            auth::ApiKeySpec {
+                key_id: Some("bootstrap".into()),
+                scope: api::AccessScope::Deployment,
+                groups: api::ApiKeyGroups::All,
+                assert_actor: false,
+                created_by: api::Attribution::Local,
+                display_name: None,
+            },
+            1,
+            &format!("lsk_{}", "A".repeat(43)),
+        )
+        .unwrap();
+        ProvisionedKey {
+            record: key.record,
+            generated_secret: generated_secret.map(auth::SecretValue::from),
+            created: generated_secret.is_some(),
+            secret_replaced: false,
+        }
+    }
+
+    #[test]
+    fn provision_prints_a_secret_only_when_it_generated_one() {
+        let supplied = provisioned(None).output();
+        assert!(supplied.get("secret").is_none());
+        assert_eq!(supplied["keyId"], "bootstrap");
+        assert_eq!(supplied["created"], false);
+        assert_eq!(supplied["secretReplaced"], false);
+        assert!(
+            supplied["keyPrefix"]
+                .as_str()
+                .is_some_and(|prefix| prefix.len() == auth::API_KEY_DISPLAY_PREFIX_LEN)
+        );
+        // Nothing in the output of a supplied key is the secret itself.
+        assert!(!supplied.to_string().contains(&"A".repeat(43)));
+
+        let generated = provisioned(Some("lsk_generated")).output();
+        assert_eq!(generated["secret"], "lsk_generated");
+        assert_eq!(generated["created"], true);
     }
 
     #[test]
     fn bootstrap_and_universe_creation_need_no_identity() {
         let id = "00000000-0000-4000-8000-000000000001";
-        assert!(Cli::try_parse_from(["server", "api-key", "bootstrap"]).is_err());
+        assert!(Cli::try_parse_from(["server", "api-key", "bootstrap", "--all-groups"]).is_err());
         assert!(
-            Cli::try_parse_from(["server", "api-key", "bootstrap", "--universe-id", id]).is_ok()
+            Cli::try_parse_from([
+                "server",
+                "api-key",
+                "bootstrap",
+                "--universe-id",
+                id,
+                "--all-groups"
+            ])
+            .is_ok()
         );
         assert!(Cli::try_parse_from(["server", "universe", "create"]).is_ok());
         assert!(Cli::try_parse_from(["server", "identity", "development"]).is_err());

@@ -56,15 +56,48 @@ vLLM, or choose **Custom provider**. Configure:
 | Base URL | The API base URL advertised by the service, including its API path when required. |
 | API key (optional) | The service's key, or leave it empty for an endpoint that does not require authentication. |
 | API kinds | The endpoints the service actually implements: Chat Completions, Responses, and/or Audio Transcriptions. The form defaults to Chat Completions. |
-| Extra headers | Non-secret service-specific headers, if required. Authentication has its own field. |
+| Extra headers | Service-specific headers, if required. Each is either **Plain text** or a **Credential**. |
 
 Choose **Save provider**, check model discovery, and select a model in your
 profile. If a provider does not list the model you need, use manual model
 selection below.
 
 The base URL must use HTTPS except for loopback addresses. It cannot contain
-embedded credentials, a query, or a fragment. Extra headers cannot replace
-reserved headers such as `Authorization`, `Host`, or `Content-Type`.
+embedded credentials, a query, or a fragment.
+
+### Extra headers
+
+An extra header is sent with every request to the endpoint, model discovery
+included, alongside the API key. Its value comes from one of two sources:
+
+| Source | What is stored | Who can read it |
+| --- | --- | --- |
+| Plain text | The value, as written. | Everyone who can read the provider: the value is returned with the provider's settings. Use it for settings such as a title or a tenant name. |
+| Credential | A reference to a token credential of this universe. | Nobody. The runtime resolves the credential's current token for each request and sends it as the header value, without a prefix. Reading the provider returns only which credential it uses. |
+
+A service that authenticates with a header of its own, such as `api-key` or
+`x-api-key`, takes that header as a **Credential**: create a token credential on
+the **Credentials** page, then choose it for the header. The names `api-key`,
+`x-api-key`, and `proxy-authorization` are refused as plain text, because a
+plain value is shown to every reader of the provider.
+
+Only a token credential can supply a header. A credential obtained through a
+sign-in flow is refused, and a credential limited to an audience must cover
+the endpoint's base URL. The credential does not need to be retrievable: the
+runtime attaches it to its own request, and the value never reaches a machine
+or a client. Replacing the credential's token takes effect on the next
+request; revoking it fails requests to the provider until the header names a
+usable credential.
+
+Header names are case-insensitive and stored in lowercase. Extra headers
+cannot replace the headers the connection itself owns: `Authorization`, which
+carries the API key, and `Host`, `Content-Type`, `Cookie`, `Set-Cookie`,
+`Connection`, and `Transfer-Encoding`. An endpoint takes at most 32 headers; a
+plain value is 1 to 4,096 printable ASCII characters.
+
+An MCP server's
+[request headers](tools-and-mcp.md#authenticate-with-custom-request-headers)
+follow the same rules; only the reserved names differ.
 
 The runtime makes these requests. A URL containing `localhost` therefore
 refers to the machine or container running that process, not the computer

@@ -19,13 +19,38 @@ export interface EnvironmentCredentialOption {
   suggestedEnvName?: string;
 }
 
+/// A process in the environment receives the plain value, so only a
+/// credential created as retrievable can be bound. The runtime refuses the
+/// rest; the picker leaves them out and says so.
+export function isBindableGrant(grant: Pick<SecretGrant, "status" | "exposure">): boolean {
+  return grant.status === "active" && grant.exposure === "retrievable";
+}
+
+/// Why brokered credentials are missing from the picker, or null when none
+/// are: their value stays inside Lightspeed and cannot be handed to a machine.
+export function brokeredCredentialNote(secrets: SecretsInventory | undefined): string | null {
+  const count = (secrets?.grants ?? []).filter(
+    (grant) => grant.status === "active" && grant.exposure !== "retrievable",
+  ).length;
+  if (count === 0) return null;
+  const subject = count === 1 ? "1 credential is" : `${count} credentials are`;
+  return `${subject} not listed: only credentials created as retrievable can be assigned, because the process receives the plain value. Exposure is fixed at creation, so add a new retrievable credential to use one here.`;
+}
+
+/// Of a provider's stored credentials, only a model API key may be bound.
+function isBindableProvider(provider: SecretProvider): boolean {
+  return provider.status === "active"
+    && provider.hasCredential
+    && provider.config.type === "modelApiKey";
+}
+
 export function environmentCredentialOptions(
   secrets: SecretsInventory | undefined,
 ): EnvironmentCredentialOption[] {
   if (!secrets) return [];
   return [
     ...secrets.grants
-      .filter((grant) => grant.status === "active")
+      .filter(isBindableGrant)
       .map((grant) => {
         const subscription = subscriptionBinding(grant);
         if (subscription) {
@@ -44,7 +69,7 @@ export function environmentCredentialOptions(
         };
       }),
     ...secrets.providers
-      .filter((provider) => provider.status === "active" && provider.hasCredential)
+      .filter(isBindableProvider)
       .map((provider) => ({
         value: `provider:${provider.credentialId}`,
         label: `${modelProviderName(provider)} · Model provider API key`,
@@ -60,17 +85,13 @@ export function environmentCredentialSourceFromValue(value: string): Environment
   if (value.startsWith("provider:")) {
     return { type: "authProviderCredential", providerId: value.slice("provider:".length) };
   }
-  if (value.startsWith("secret:")) {
-    return { type: "directSecret", secretId: value.slice("secret:".length) };
-  }
   throw new Error("invalid environment credential source");
 }
 
 /// Inverse of `environmentCredentialSourceFromValue` for editing saved sources.
 export function environmentCredentialSourceValue(source: EnvironmentCredentialSource): string {
   if (source.type === "authGrant") return `grant:${source.grantId}`;
-  if (source.type === "authProviderCredential") return `provider:${source.providerId}`;
-  return `secret:${source.secretId}`;
+  return `provider:${source.providerId}`;
 }
 
 export function environmentCredentialSourceLabel(
@@ -81,30 +102,24 @@ export function environmentCredentialSourceLabel(
     const grant = secrets?.grants.find((candidate) => candidate.grantId === source.grantId);
     return grant ? accessGrantName(grant) : source.grantId;
   }
-  if (source.type === "authProviderCredential") {
-    const provider = secrets?.providers.find(
-      (candidate) => candidate.credentialId === source.providerId,
-    );
-    return provider ? modelProviderName(provider) : source.providerId;
-  }
-  return `Direct secret (${source.secretId})`;
+  const provider = secrets?.providers.find(
+    (candidate) => candidate.credentialId === source.providerId,
+  );
+  return provider ? modelProviderName(provider) : source.providerId;
 }
 
 export function environmentCredentialAvailable(
   source: EnvironmentCredentialSource,
   secrets: SecretsInventory | undefined,
 ): boolean {
-  if (!secrets || source.type === "directSecret") return true;
+  if (!secrets) return true;
   if (source.type === "authGrant") {
     return secrets.grants.some(
-      (grant) => grant.grantId === source.grantId && grant.status === "active",
+      (grant) => grant.grantId === source.grantId && isBindableGrant(grant),
     );
   }
   return secrets.providers.some(
-    (provider) =>
-      provider.credentialId === source.providerId
-      && provider.status === "active"
-      && provider.hasCredential,
+    (provider) => provider.credentialId === source.providerId && isBindableProvider(provider),
   );
 }
 

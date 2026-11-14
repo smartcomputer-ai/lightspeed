@@ -198,7 +198,7 @@ pub(super) async fn read_vfs_snapshot(
     })
 }
 
-pub(super) fn vfs_workspace_view(record: VfsWorkspaceRecord) -> VfsWorkspaceView {
+pub(in crate::gateway) fn vfs_workspace_view(record: VfsWorkspaceRecord) -> VfsWorkspaceView {
     VfsWorkspaceView {
         workspace_id: record.workspace_id.as_str().to_owned(),
         display_name: record.display_name,

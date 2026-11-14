@@ -13,7 +13,7 @@ pub struct UniverseArgs {
 enum UniverseCommand {
     /// List universes; * marks the active universe for this invocation.
     List,
-    /// Show the active universe's UUID and current runtime slug.
+    /// Show the active universe's UUID and current handle.
     Status,
     /// Persist this connection's universe selection.
     Use { target: String },
@@ -21,13 +21,16 @@ enum UniverseCommand {
     Create {
         #[arg(long)]
         id: Option<uuid::Uuid>,
+        /// The universe's deployment-unique name; derived from the UUID when
+        /// omitted.
         #[arg(long)]
-        slug: Option<String>,
+        handle: Option<String>,
     },
     /// Read a universe and its resource counts.
     Read { target: String },
-    /// Assign or change a runtime slug. Existing URLs may stop working.
-    SetSlug { target: String, slug: String },
+    /// Rename a universe. Requests and URLs that use the previous handle
+    /// stop reaching it.
+    SetHandle { target: String, handle: String },
 }
 pub async fn universe(args: UniverseArgs) -> Result<()> {
     let active = connection::ACTIVE.get().context("no connection")?;
@@ -58,7 +61,22 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 )
                 .await?
                 .result;
-            let active_id = active.active_universe_id();
+            // The selection may be a handle; the listing gives its UUID.
+            let selected = active.active_universe();
+            let is_active = |universe: &api::DeploymentUniverseView| {
+                selected.as_deref() == Some(universe.universe_id.as_str())
+                    || selected.as_deref() == Some(universe.handle.as_str())
+            };
+            let active_id = response
+                .universes
+                .iter()
+                .find(|universe| is_active(universe))
+                .map(|universe| universe.universe_id.clone())
+                .or_else(|| {
+                    selected
+                        .clone()
+                        .filter(|s| uuid::Uuid::parse_str(s).is_ok())
+                });
             if args.json {
                 #[derive(serde::Serialize)]
                 struct ListedUniverse {
@@ -70,7 +88,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                     .universes
                     .into_iter()
                     .map(|universe| ListedUniverse {
-                        active: active_id.as_deref() == Some(universe.universe_id.as_str()),
+                        active: is_active(&universe),
                         universe,
                     })
                     .collect();
@@ -81,29 +99,25 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 if response.universes.is_empty() {
                     println!("No universes found.");
                 } else {
-                    println!("  UUID                                  SLUG");
+                    println!("  UUID                                  HANDLE");
                 }
                 for u in response.universes {
                     println!(
                         "{} {}  {}",
-                        if active_id.as_deref() == Some(u.universe_id.as_str()) {
-                            "*"
-                        } else {
-                            " "
-                        },
+                        if is_active(&u) { "*" } else { " " },
                         u.universe_id,
-                        u.slug.as_deref().unwrap_or("(no slug)")
+                        u.handle
                     );
                 }
             }
         }
-        UniverseCommand::Create { id, slug } => {
+        UniverseCommand::Create { id, handle } => {
             let response: api::DeploymentUniverseCreateResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_UNIVERSES_CREATE,
                     api::DeploymentUniverseCreateParams {
                         universe_id: id.unwrap_or_else(uuid::Uuid::new_v4).to_string(),
-                        slug,
+                        handle,
                     },
                 )
                 .await?
@@ -113,20 +127,17 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
             } else {
                 println!(
                     "{}  {}",
-                    response.universe.universe_id,
-                    response.universe.slug.as_deref().unwrap_or("(no slug)")
+                    response.universe.universe_id, response.universe.handle
                 );
             }
         }
-        UniverseCommand::SetSlug { target, slug } => {
-            let id = connection::resolve_universe(active, &target).await?;
+        UniverseCommand::SetHandle { target, handle } => {
             let response: api::DeploymentUniverseReadResponse = client
                 .request(
-                    api::METHOD_DEPLOYMENT_UNIVERSES_SLUG_PUT,
-                    api::DeploymentUniverseSlugPutParams {
-                        universe_id: id,
-                        slug,
-                        only_if_unset: false,
+                    api::METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT,
+                    api::DeploymentUniverseHandlePutParams {
+                        universe: target,
+                        handle,
                     },
                 )
                 .await?
@@ -136,17 +147,15 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
             } else {
                 println!(
                     "{}  {}",
-                    response.universe.universe_id,
-                    response.universe.slug.as_deref().unwrap_or("(no slug)")
+                    response.universe.universe_id, response.universe.handle
                 );
             }
         }
         UniverseCommand::Read { target } => {
-            let id = connection::resolve_universe(active, &target).await?;
             let response: api::DeploymentUniverseReadResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_UNIVERSES_READ,
-                    api::DeploymentUniverseReadParams { universe_id: id },
+                    api::DeploymentUniverseReadParams { universe: target },
                 )
                 .await?
                 .result;
@@ -163,37 +172,151 @@ pub struct ApiKeyArgs {
     #[command(subcommand)]
     command: ApiKeyCommand,
 }
+
+impl ApiKeyArgs {
+    /// Whether the command runs without a runtime connection.
+    pub fn offline(&self) -> bool {
+        matches!(self.command, ApiKeyCommand::GenerateSecret)
+    }
+}
+/// The scope a key belongs to: the selected universe, or the deployment.
+#[derive(Debug, Clone, Args)]
+struct KeyScopeArgs {
+    /// A deployment key. Without this flag the key belongs to the selected
+    /// universe (`--universe`, or the saved selection).
+    #[arg(long)]
+    deployment: bool,
+}
+
+impl KeyScopeArgs {
+    /// The scope the command addresses. A universe selected by its handle
+    /// is resolved to its UUID, which is what a key's scope records.
+    async fn scope(&self, client: &HttpAgentApi) -> Result<api::AccessScope> {
+        if self.deployment {
+            return Ok(api::AccessScope::Deployment);
+        }
+        let selected = crate::connection::ACTIVE
+            .get()
+            .and_then(|connection| connection.active_universe())
+            .context(
+                "select a universe with --universe, or pass --deployment for a deployment key",
+            )?;
+        let universe_id = match uuid::Uuid::parse_str(&selected) {
+            Ok(universe_id) => universe_id,
+            Err(_) => {
+                let response: api::DeploymentUniverseReadResponse = client
+                    .request(
+                        api::METHOD_DEPLOYMENT_UNIVERSES_READ,
+                        api::DeploymentUniverseReadParams { universe: selected },
+                    )
+                    .await?
+                    .result;
+                uuid::Uuid::parse_str(&response.universe.universe_id)
+                    .context("the runtime returned a universe id that is not a UUID")?
+            }
+        };
+        Ok(api::AccessScope::Universe { universe_id })
+    }
+}
+
+/// The method groups a key is given. A key's authority is always stated:
+/// leaving both flags out is an error, never "everything".
+#[derive(Debug, Clone, Args)]
+struct KeyGroupArgs {
+    /// A method group the key may call (repeatable).
+    #[arg(
+        long = "group",
+        required_unless_present = "all_groups",
+        conflicts_with = "all_groups"
+    )]
+    groups: Vec<String>,
+    /// Every method group the key's scope allows in the runtime's release.
+    /// The key stores that set, so a later release does not widen it on its
+    /// own; declare the key again to give it groups added since.
+    #[arg(long)]
+    all_groups: bool,
+}
+
+impl KeyGroupArgs {
+    fn groups(&self) -> Result<api::ApiKeyGroups> {
+        if self.all_groups {
+            return Ok(api::ApiKeyGroups::All);
+        }
+        self.groups
+            .iter()
+            .map(|group| {
+                api::MethodGroup::parse(group)
+                    .with_context(|| format!("unknown method group {group}"))
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum ApiKeyCommand {
+    /// List API keys with their scope, groups and the prefix of their
+    /// secret.
     List,
-    /// Create a key; the secret is printed once.
+    /// Print a new secret for a key you will declare with `put`. Nothing is
+    /// sent to a runtime and nothing is saved: keep the output in your
+    /// secret store.
+    GenerateSecret,
+    /// Create a key with a generated secret, which is printed once.
     Create {
-        #[arg(long)]
+        #[arg(long = "display-name")]
         name: String,
-        #[arg(
-            long,
-            required_unless_present = "universe_id",
-            conflicts_with = "universe_id"
-        )]
-        deployment: bool,
-        #[arg(long)]
-        universe_id: Option<uuid::Uuid>,
-        #[arg(long = "group")]
-        groups: Vec<String>,
+        #[command(flatten)]
+        scope: KeyScopeArgs,
+        /// The key's id within its scope; allocated when omitted.
+        #[arg(long = "id")]
+        key_id: Option<String>,
+        #[command(flatten)]
+        groups: KeyGroupArgs,
         #[arg(long)]
         assert_actor: bool,
     },
-    /// Replace an active key secret immediately; prints the new secret once.
-    Rotate {
-        key_prefix: String,
+    /// Declare a key with a secret you supply: afterwards the key of this id
+    /// exists, answers to exactly that secret, and holds these groups.
+    /// Repeating the command changes nothing; a different secret replaces
+    /// the previous one at once. Generate one with `lightspeed api-key
+    /// generate-secret`.
+    Put {
+        /// The key's id within its scope.
+        key_id: String,
+        #[arg(long = "display-name")]
+        name: String,
+        #[command(flatten)]
+        scope: KeyScopeArgs,
+        #[command(flatten)]
+        groups: KeyGroupArgs,
+        #[arg(long)]
+        assert_actor: bool,
+        #[command(flatten)]
+        secret: crate::key_secrets::SecretSourceArgs,
     },
+    /// Replace an active key's secret with a generated one immediately;
+    /// prints the new secret once.
+    Rotate {
+        key_id: String,
+        #[command(flatten)]
+        scope: KeyScopeArgs,
+    },
+    /// Revoke a key at once. A revoked key is never restored; its id stays
+    /// taken.
     Revoke {
-        key_prefix: String,
+        key_id: String,
+        #[command(flatten)]
+        scope: KeyScopeArgs,
     },
 }
+
 pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
+    if matches!(args.command, ApiKeyCommand::GenerateSecret) {
+        return crate::key_secrets::print_generated_secret(crate::key_secrets::SecretKind::ApiKey);
+    }
     let client = HttpAgentApi::new("");
     match args.command {
+        ApiKeyCommand::GenerateSecret => unreachable!("handled before a client exists"),
         ApiKeyCommand::List => {
             let response: api::DeploymentApiKeyListResponse = client
                 .request(
@@ -208,11 +331,12 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
                 if response.api_keys.is_empty() {
                     println!("No API keys found.");
                 } else {
-                    println!("PREFIX  STATUS  SCOPE  NAME");
+                    println!("KEY ID  PREFIX  STATUS  SCOPE  NAME");
                 }
                 for key in response.api_keys {
                     println!(
-                        "{}  {}  {}  {}",
+                        "{}  {}  {}  {}  {}",
+                        key.key_id,
                         key.key_prefix,
                         if key.revoked_at_ms.is_some() {
                             "revoked"
@@ -227,33 +351,18 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
         }
         ApiKeyCommand::Create {
             name,
-            deployment: _,
-            universe_id,
+            scope,
+            key_id,
             groups,
             assert_actor,
         } => {
-            let groups = if groups.is_empty() {
-                None
-            } else {
-                Some(
-                    groups
-                        .iter()
-                        .map(|g| {
-                            api::MethodGroup::parse(g)
-                                .with_context(|| format!("unknown method group {g}"))
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                )
-            };
-            let scope = universe_id.map_or(api::AccessScope::Deployment, |universe_id| {
-                api::AccessScope::Universe { universe_id }
-            });
             let response: api::DeploymentApiKeyCreateResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_API_KEYS_CREATE,
                     api::DeploymentApiKeyCreateParams {
-                        scope,
-                        groups,
+                        scope: scope.scope(&client).await?,
+                        key_id,
+                        groups: groups.groups()?,
                         assert_actor,
                         display_name: name,
                     },
@@ -265,11 +374,49 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
             }
             crate::output::show(args.json, &response)?;
         }
-        ApiKeyCommand::Rotate { key_prefix } => {
+        ApiKeyCommand::Put {
+            key_id,
+            name,
+            scope,
+            groups,
+            assert_actor,
+            secret,
+        } => {
+            let response: api::DeploymentApiKeyPutResponse = client
+                .request(
+                    api::METHOD_DEPLOYMENT_API_KEYS_PUT,
+                    api::DeploymentApiKeyPutParams {
+                        scope: scope.scope(&client).await?,
+                        key_id,
+                        groups: groups.groups()?,
+                        assert_actor,
+                        display_name: name,
+                        secret: secret.read()?,
+                    },
+                )
+                .await?
+                .result;
+            if !args.json {
+                println!(
+                    "{}",
+                    match (response.created, response.secret_replaced) {
+                        (true, _) => "API key created with the supplied secret.",
+                        (false, true) =>
+                            "API key now answers to the supplied secret. The previous secret no longer works.",
+                        (false, false) => "API key is as declared.",
+                    }
+                );
+            }
+            crate::output::show(args.json, &response)?;
+        }
+        ApiKeyCommand::Rotate { key_id, scope } => {
             let response: api::DeploymentApiKeyCreateResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_API_KEYS_ROTATE,
-                    api::DeploymentApiKeyRotateParams { key_prefix },
+                    api::DeploymentApiKeyRotateParams {
+                        scope: scope.scope(&client).await?,
+                        key_id,
+                    },
                 )
                 .await?
                 .result;
@@ -280,11 +427,14 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
             }
             crate::output::show(args.json, &response)?;
         }
-        ApiKeyCommand::Revoke { key_prefix } => {
+        ApiKeyCommand::Revoke { key_id, scope } => {
             let response: api::DeploymentApiKeyRevokeResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_API_KEYS_REVOKE,
-                    api::DeploymentApiKeyRevokeParams { key_prefix },
+                    api::DeploymentApiKeyRevokeParams {
+                        scope: scope.scope(&client).await?,
+                        key_id,
+                    },
                 )
                 .await?
                 .result;
@@ -305,6 +455,7 @@ enum ModelsCommand {
     /// Configure provider endpoints and their API-key or OAuth credentials.
     #[command(visible_alias = "providers")]
     Provider(crate::auth_cli::AuthModelArgs),
+    /// List the models the universe's providers offer.
     List {
         #[arg(long)]
         json: bool,
@@ -334,7 +485,7 @@ pub async fn models(args: ModelsArgs) -> Result<()> {
                 ("apiKind", "API"),
                 ("model", "MODEL"),
             ],
-            "No models available. Configure a connection with model provider add.",
+            "No models available. Configure a connection with model provider put.",
         )?;
         for provider in &response.providers {
             if let Some(error) = &provider.error {

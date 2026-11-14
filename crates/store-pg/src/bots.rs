@@ -79,6 +79,24 @@ impl PgStore {
         &self,
         created_by: Option<&str>,
     ) -> Result<Vec<(BotRosterRow, api::ResourceAccessSummary)>, BotError> {
+        self.bot_roster_filtered(created_by, None).await
+    }
+
+    pub async fn bot_roster_filtered(
+        &self,
+        created_by: Option<&str>,
+        bot_id: Option<&str>,
+    ) -> Result<Vec<(BotRosterRow, api::ResourceAccessSummary)>, BotError> {
+        self.bot_roster_by_ids(created_by, bot_id.map(|id| vec![id.to_owned()]).as_deref())
+            .await
+    }
+
+    /// The same roster projection as bots/list, restricted to changed ids.
+    pub async fn bot_roster_by_ids(
+        &self,
+        created_by: Option<&str>,
+        ids: Option<&[String]>,
+    ) -> Result<Vec<(BotRosterRow, api::ResourceAccessSummary)>, BotError> {
         let last_event_columns = prefixed_event_columns("le", ROSTER_EVENT_PREFIX);
         let event_columns = event_columns();
         let created_by_match = crate::access::actor_match("b.created_by", 2);
@@ -91,9 +109,18 @@ impl PgStore {
                 pc.pending_count,
                 act.working,
                 act.waiting,
+                counts.open_count, counts.active_count, b.controller_status_json AS status_json,
                 {last_event_columns},
                 b.created_by
             FROM bots b
+            LEFT JOIN LATERAL (
+                SELECT count(*) FILTER (WHERE s.lifecycle_status <> 'closed') AS open_count,
+                       count(*) FILTER (WHERE a.activity <> 'idle') AS active_count
+                FROM sessions s
+                LEFT JOIN sessions r ON r.universe_id=s.universe_id AND r.session_id=COALESCE(s.origin_root_session_id,s.session_id)
+                LEFT JOIN session_summary a ON a.universe_id=s.universe_id AND a.session_id=s.session_id
+                WHERE s.universe_id=b.universe_id AND s.deleted_at_ms IS NULL AND COALESCE(r.bot_id,s.bot_id)=b.bot_id
+            ) counts ON true
             LEFT JOIN LATERAL (
                 SELECT count(*) AS trigger_count
                 FROM bot_triggers t
@@ -114,20 +141,22 @@ impl PgStore {
             ) le ON true
             LEFT JOIN LATERAL (
                 SELECT count(*) > 0 AS working, COALESCE(bool_or(a.activity = 'waiting'), false) AS waiting
-                FROM session_activity a
+                FROM session_summary a
                 JOIN sessions s ON s.universe_id = a.universe_id AND s.session_id = a.session_id
                 LEFT JOIN sessions r ON r.universe_id = s.universe_id
                     AND r.session_id = COALESCE(s.origin_root_session_id, s.session_id)
-                WHERE a.universe_id = b.universe_id
+                WHERE a.universe_id = b.universe_id AND a.activity <> 'idle'
+                  AND s.deleted_at_ms IS NULL
                   AND COALESCE(r.bot_id, s.bot_id) = b.bot_id
             ) act ON true
-            WHERE b.universe_id = $1 AND ($2::text IS NULL OR {created_by_match})
+            WHERE b.universe_id = $1 AND ($2::text IS NULL OR {created_by_match}) AND ($3::text[] IS NULL OR b.bot_id=ANY($3))
             ORDER BY b.bot_id
             "#
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(created_by)
+            .bind(ids)
             .fetch_all(&self.pool)
             .await
             .map_err(|error| bot_sql_error("list bot roster", error))?;
@@ -153,6 +182,26 @@ impl PgStore {
                     Some(_) => Some(event_from_row(row, ROSTER_EVENT_PREFIX)?),
                     None => None,
                 };
+                let facts: ::bots::BotStatusProjection = row
+                    .try_get::<Option<serde_json::Value>, _>("status_json")
+                    .map_err(|e| bot_sql_error("decode bot status", e))?
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(|e| BotError::store(format!("decode bot status: {e}")))?
+                    .unwrap_or_default();
+                let activity = if waiting {
+                    api::SessionActivity::Waiting
+                } else if working {
+                    api::SessionActivity::Working
+                } else {
+                    api::SessionActivity::Idle
+                };
+                let status = facts.list_status(
+                    &bot,
+                    activity,
+                    pending_count.max(0) as u64,
+                    last_event.as_ref(),
+                );
                 let created_by =
                     crate::access::created_by_from_row(row, "created_by").map_err(|error| {
                         bot_sql_error(
@@ -162,6 +211,15 @@ impl PgStore {
                     })?;
                 Ok((
                     BotRosterRow {
+                        status,
+                        open_session_count: row
+                            .try_get::<i64, _>("open_count")
+                            .map_err(|e| bot_sql_error("decode session count", e))?
+                            .max(0) as u64,
+                        active_session_count: row
+                            .try_get::<i64, _>("active_count")
+                            .map_err(|e| bot_sql_error("decode active count", e))?
+                            .max(0) as u64,
                         bot,
                         trigger_count: u32::try_from(trigger_count).unwrap_or(u32::MAX),
                         pending_count: u64::try_from(pending_count).unwrap_or(0),
@@ -218,6 +276,7 @@ impl BotStore for PgStore {
         let Some(row) = row else {
             return Err(BotError::BotAlreadyExists { bot_id });
         };
+        self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
         bot_from_row(&row)
     }
 
@@ -373,7 +432,10 @@ impl BotStore for PgStore {
             .await
             .map_err(|error| bot_sql_error("close bot", error))?;
         match row {
-            Some(row) => bot_from_row(&row),
+            Some(row) => {
+                self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
+                bot_from_row(&row)
+            }
             // Already closed (returned unchanged) or absent (`BotNotFound`).
             None => self.read_bot(bot_id).await,
         }
@@ -412,6 +474,7 @@ impl BotStore for PgStore {
                 bot_id: bot_id.clone(),
             });
         };
+        self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
         json_column(&row, "closed_sessions_json")
     }
 
@@ -430,6 +493,7 @@ impl BotStore for PgStore {
                 bot_id: bot_id.clone(),
             });
         };
+        self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
         bot_from_row(&row)
     }
 
@@ -451,6 +515,7 @@ impl BotStore for PgStore {
                 bot_id: bot_id.clone(),
             });
         };
+        self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
         i64_to_u64(seq, "event_seq")
     }
 }
@@ -487,6 +552,9 @@ impl PgStore {
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| bot_sql_error("write bot", error))?;
+        if row.is_some() {
+            self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
+        }
         row.as_ref().map(bot_from_row).transpose()
     }
 }
@@ -665,6 +733,7 @@ impl BotTriggerStore for PgStore {
                 trigger_id: trigger_id.clone(),
             });
         };
+        self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
         trigger_from_row(&row)
     }
 
@@ -702,6 +771,7 @@ impl BotTriggerStore for PgStore {
                 trigger_id: trigger_id.clone(),
             });
         };
+        self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
         trigger_from_row(&row)
     }
 
@@ -737,6 +807,9 @@ impl BotTriggerStore for PgStore {
             .map(trigger_from_row)
             .collect::<Result<Vec<_>, _>>()?;
         changed.sort_by(|left, right| left.trigger_id.cmp(&right.trigger_id));
+        if !changed.is_empty() {
+            self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
+        }
         Ok(changed)
     }
 
@@ -770,6 +843,7 @@ impl BotTriggerStore for PgStore {
                 trigger_id: trigger_id.clone(),
             });
         }
+        self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
         Ok(())
     }
 
@@ -802,6 +876,7 @@ impl BotTriggerStore for PgStore {
                 trigger_id: trigger_id.clone(),
             });
         }
+        self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
         Ok(())
     }
 }
@@ -845,6 +920,9 @@ impl PgStore {
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| map_trigger_write_error(bot_id, "insert bot trigger", error))?;
+        if row.is_some() {
+            self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
+        }
         row.as_ref().map(trigger_from_row).transpose()
     }
 
@@ -896,6 +974,9 @@ impl PgStore {
             .map_err(|error| {
                 map_trigger_write_error(&replaced.bot_id, "write bot trigger", error)
             })?;
+        if row.is_some() {
+            self.changed(crate::changes::ChangeKind::Bot, replaced.bot_id.as_str());
+        }
         row.as_ref().map(trigger_from_row).transpose()
     }
 }
@@ -1020,6 +1101,7 @@ impl BotEventStore for PgStore {
             tx.commit()
                 .await
                 .map_err(|error| BotError::store(format!("commit bot event insertion: {error}")))?;
+            self.changed(crate::changes::ChangeKind::Bot, record.bot_id.as_str());
             return Ok(InsertBotEventOutcome::Inserted(event_from_row(&row, "")?));
         }
         tx.commit()
@@ -1042,6 +1124,9 @@ impl BotEventStore for PgStore {
         .execute(&self.pool)
         .await
         .map_err(|error| bot_sql_error("delete bot event", error))?;
+        if result.rows_affected() > 0 {
+            self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
+        }
         Ok(result.rows_affected() > 0)
     }
 
@@ -1229,6 +1314,9 @@ impl BotEventStore for PgStore {
         .execute(&self.pool)
         .await
         .map_err(|error| bot_sql_error("record bot event outcomes", error))?;
+        if result.rows_affected() > 0 {
+            self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
+        }
         Ok(result.rows_affected())
     }
 }
@@ -1435,6 +1523,31 @@ fn bot_sql_error(action: &str, error: sqlx::Error) -> BotError {
 fn store_message(message: impl Into<String>) -> BotError {
     BotError::Store {
         message: message.into(),
+    }
+}
+
+impl PgStore {
+    pub async fn record_bot_status(
+        &self,
+        bot_id: &BotId,
+        status: &::bots::BotStatusProjection,
+        at_ms: i64,
+    ) -> Result<(), BotError> {
+        let status = serde_json::to_value(status)
+            .map_err(|error| BotError::store(format!("encode bot status: {error}")))?;
+        // Advance the observation time even for equal facts, so an older retry
+        // cannot overwrite a newer observation that happened to have the same value.
+        let changed = sqlx::query(
+            "UPDATE bots SET controller_status_json=$3, controller_status_at_ms=$4
+             WHERE universe_id=$1 AND bot_id=$2
+               AND (controller_status_at_ms IS NULL OR controller_status_at_ms<$4
+                    OR (controller_status_at_ms=$4 AND controller_status_json IS DISTINCT FROM $3))")
+            .bind(self.config.universe_id).bind(bot_id.as_str()).bind(status).bind(at_ms)
+            .execute(&self.pool).await.map_err(|error| bot_sql_error("record bot status",error))?.rows_affected();
+        if changed > 0 {
+            self.changed(crate::changes::ChangeKind::Bot, bot_id.as_str());
+        }
+        Ok(())
     }
 }
 

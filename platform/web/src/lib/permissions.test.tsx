@@ -44,7 +44,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const universes = (role: string | null) => mocks.api.mockReset().mockResolvedValue([{ id: "universe", slug: "test", role }]);
+const universes = (role: string | null) => mocks.api.mockReset().mockResolvedValue([{ id: "universe", handle: "test", role }]);
 
 it("gives each role what the one below has, plus its own", () => {
   const offered = (action: PermissionAction) => UNIVERSE_ROLES.filter((role) => allowsAction(role, action));

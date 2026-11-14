@@ -36,7 +36,7 @@ vi.mock("@/lib/permissions", () => ({
 vi.mock("@/lib/universes", () => ({
   useActiveUniverse: () => ({
     universe: { id: "u" },
-    slug: "test",
+    handle: "test",
     isLoading: false,
   }),
 }));
@@ -178,7 +178,7 @@ async function render(withTree = false) {
               <WorkspaceDropArea>
                 <WorkspaceFileTree
                   entries={entries}
-                  slug="test"
+                  handle="test"
                   workspaceId="ws"
                   activePath={undefined}
                 />
@@ -437,7 +437,7 @@ it("renames a workspace in the picker while keeping the open file and unsaved ed
       }
       if (path.endsWith("/workspaces")) return [workspace];
       if (path.endsWith("/tree")) return { ...tree(), workspace };
-      if (path.includes("/files/")) return { bytesBase64: "eA==", bytes: 1 };
+      if (path.includes("/blobs/")) return { bytesBase64: "eA==", bytes: 1 };
       throw new Error(`Unexpected request: ${path}`);
     },
   );
@@ -451,7 +451,7 @@ it("renames a workspace in the picker while keeping the open file and unsaved ed
           <WorkspaceLocation />
           <Routes>
             <Route
-              path="/u/:slug/workspaces/:workspaceId/files/*"
+              path="/u/:handle/workspaces/:workspaceId/files/*"
               element={<WorkspacesPage admin={false} />}
             />
           </Routes>
@@ -555,7 +555,7 @@ it.each([true, false])(
         if (deleted) throw new ApiError(404, { error: "Workspace deleted" });
         return { ...tree(), workspace };
       }
-      if (path.includes("/files/")) return { bytesBase64: "eA==", bytes: 1 };
+      if (path.includes("/blobs/")) return { bytesBase64: "eA==", bytes: 1 };
       throw new Error(`Unexpected request: ${path}`);
     });
     const client = createQueryClient();
@@ -568,11 +568,11 @@ it.each([true, false])(
             <WorkspaceLocation />
             <Routes>
               <Route
-                path="/u/:slug/workspaces/:workspaceId/files/*"
+                path="/u/:handle/workspaces/:workspaceId/files/*"
                 element={<WorkspacesPage admin={false} />}
               />
               <Route
-                path="/u/:slug/workspaces/:workspaceId?"
+                path="/u/:handle/workspaces/:workspaceId?"
                 element={<WorkspacesPage admin={false} />}
               />
             </Routes>
@@ -633,7 +633,7 @@ it.each([
         { path, name: "renamed", expectedRevision: 3 },
       ],
     ]);
-    expect(mocks.renamed).toHaveBeenCalledWith(path, destination);
+    expect(mocks.renamed).toHaveBeenCalledWith(path, destination, { before: 3, after: 3 });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   },
 );
@@ -991,7 +991,7 @@ it("offers the open file’s actions in its detail header and on its row’s rig
   mocks.api.mockImplementation(async (_method: string, path: string) => {
     if (path.endsWith("/workspaces")) return [workspace];
     if (path.endsWith("/tree")) return snapshot.promise;
-    if (path.includes("/files/")) return content.promise;
+    if (path.includes("/blobs/")) return content.promise;
     throw new Error(`Unexpected request: ${path}`);
   });
   const client = createQueryClient();
@@ -1003,7 +1003,7 @@ it("offers the open file’s actions in its detail header and on its row’s rig
         >
           <Routes>
             <Route
-              path="/u/:slug/workspaces/:workspaceId/files/*"
+              path="/u/:handle/workspaces/:workspaceId/files/*"
               element={<WorkspacesPage admin={false} />}
             />
           </Routes>
@@ -1019,7 +1019,7 @@ it("offers the open file’s actions in its detail header and on its row’s rig
   await waitForUi(() => {
     expect(mocks.api).toHaveBeenCalledWith(
       "GET",
-      "/api/v1/universes/u/workspaces/ws/files/docs/a%20%23%3F.txt",
+      "/api/v1/universes/u/blobs/old",
     );
   });
   expect(container.querySelector('textarea[aria-label="File contents"]')).toBeNull();
@@ -1091,8 +1091,8 @@ it.each(["", "docs"])(
           revision++;
           return { workspace: workspace() };
         }
-        if (path.includes("/files/"))
-          return { bytesBase64: path.includes("note") ? "" : "eA==", bytes: 0 };
+        if (path.includes("/blobs/"))
+          return { bytesBase64: path.endsWith("/empty") ? "" : "eA==", bytes: 0 };
         throw new Error(`Unexpected request: ${path}`);
       },
     );
@@ -1105,7 +1105,7 @@ it.each(["", "docs"])(
           >
             <Routes>
               <Route
-                path="/u/:slug/workspaces/:workspaceId/files/*"
+                path="/u/:handle/workspaces/:workspaceId/files/*"
                 element={<WorkspacesPage admin={false} />}
               />
             </Routes>
@@ -1195,7 +1195,8 @@ it.each(["file", "folder", "move-file", "move-folder"])(
           currentWorkspace = { ...workspace, revision: 4 };
           return { workspace: currentWorkspace };
         }
-        if (path.includes("/files/")) return { bytesBase64: "eA==", bytes: 1 };
+        if (method === "PUT") return { workspace: { ...currentWorkspace, revision: 5 } };
+        if (path.includes("/blobs/")) return { bytesBase64: "eA==", bytes: 1 };
         throw new Error(`Unexpected request: ${path}`);
       },
     );
@@ -1208,7 +1209,7 @@ it.each(["file", "folder", "move-file", "move-folder"])(
           >
             <Routes>
               <Route
-                path="/u/:slug/workspaces/:workspaceId/files/*"
+                path="/u/:handle/workspaces/:workspaceId/files/*"
                 element={<WorkspacesPage admin={false} />}
               />
             </Routes>
@@ -1280,10 +1281,11 @@ it.each(["metaKey", "ctrlKey"] as const)(
       revision: 3,
       files: 1,
     };
-    mocks.api.mockImplementation(async (_method: string, path: string) => {
+    mocks.api.mockImplementation(async (method: string, path: string) => {
+      if (method === "PUT") return { workspace: { ...workspace, revision: 4 } };
       if (path.endsWith("/workspaces")) return [workspace];
       if (path.endsWith("/tree")) return { ...tree(), workspace };
-      if (path.includes("/files/")) return { bytesBase64: "eA==", bytes: 1 };
+      if (path.includes("/blobs/")) return { bytesBase64: "eA==", bytes: 1 };
       throw new Error(`Unexpected request: ${path}`);
     });
     const client = createQueryClient();
@@ -1295,7 +1297,7 @@ it.each(["metaKey", "ctrlKey"] as const)(
           >
             <Routes>
               <Route
-                path="/u/:slug/workspaces/:workspaceId/files/*"
+                path="/u/:handle/workspaces/:workspaceId/files/*"
                 element={<WorkspacesPage admin={false} />}
               />
             </Routes>
@@ -1359,7 +1361,7 @@ it.each([
     mocks.api.mockImplementation(async (_method: string, path: string) => {
       if (path.endsWith("/workspaces")) return [workspace];
       if (path.endsWith("/tree")) return { ...tree(), workspace };
-      if (path.includes("/files/"))
+      if (path.includes("/blobs/"))
         return { bytesBase64: btoa(content), bytes: content.length };
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -1372,7 +1374,7 @@ it.each([
           >
             <Routes>
               <Route
-                path="/u/:slug/workspaces/:workspaceId/files/*"
+                path="/u/:handle/workspaces/:workspaceId/files/*"
                 element={<WorkspacesPage admin={false} />}
               />
             </Routes>
@@ -1424,7 +1426,7 @@ it.each([
       if (path.endsWith("/workspaces")) return [workspace];
       if (path.endsWith("/tree"))
         return saved ? refreshedTree.promise : { ...tree(), workspace };
-      if (path.includes("/files/"))
+      if (path.includes("/blobs/"))
         return readingNewBlob
           ? refreshedBlob.promise
           : { blobRef: "old", bytesBase64: "eA==", bytes: 1 };
@@ -1439,7 +1441,7 @@ it.each([
           >
             <Routes>
               <Route
-                path="/u/:slug/workspaces/:workspaceId/files/*"
+                path="/u/:handle/workspaces/:workspaceId/files/*"
                 element={<WorkspacesPage admin={false} />}
               />
             </Routes>
@@ -1507,12 +1509,12 @@ it.each([
       });
     });
     await waitForUi(() => expect(
-      mocks.api.mock.calls.filter(([method, path]) => method === "GET" && path.includes("/files/")),
+      mocks.api.mock.calls.filter(([method, path]) => method === "GET" && path.includes("/blobs/")),
     ).toHaveLength(2));
     stable();
     expect(
       mocks.api.mock.calls.filter(
-        ([method, path]) => method === "GET" && path.includes("/files/"),
+        ([method, path]) => method === "GET" && path.includes("/blobs/"),
       ),
     ).toHaveLength(2);
     await act(async () => {
@@ -1578,7 +1580,7 @@ it.each([
     "POST", "/api/v1/universes/u/workspaces/ws/move",
     { path, destination, expectedRevision: 3 },
   ]]);
-  expect(mocks.renamed).toHaveBeenCalledWith(path, destination);
+  expect(mocks.renamed).toHaveBeenCalledWith(path, destination, { before: 3, after: 3 });
   expect(container.querySelector('[data-workspace-drop-target="true"]')).toBeNull();
 });
 
@@ -1629,4 +1631,44 @@ it("reports move collisions and server conflicts without relocating the editor",
   await entryDrag("drop", target, transfer);
   expect(document.body.textContent).toContain("Workspace changed");
   expect(mocks.renamed).not.toHaveBeenCalled();
+});
+
+it.each(["changed", "deleted"])("preserves a dirty draft when its file is externally %s", async (change) => {
+  const workspace = { workspaceId: "ws", revision: 3, files: 1 };
+  mocks.api.mockImplementation(async (_method: string, path: string) => {
+    if (path.endsWith("/workspaces")) return [workspace];
+    if (path.endsWith("/tree")) return { ...tree(), workspace };
+    if (path.endsWith("/blobs/old")) return { bytesBase64: btoa("original"), bytes: 8 };
+    if (path.endsWith("/blobs/external")) return { bytesBase64: btoa("external"), bytes: 8 };
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const client = createQueryClient();
+  await act(async () => root.render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={["/u/test/workspaces/ws/files/docs/a%20%23%3F.txt"]}>
+        <Routes><Route path="/u/:handle/workspaces/:workspaceId/files/*" element={<WorkspacesPage admin={false} />} /></Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  ));
+  const editor = await waitForEditor();
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "my draft");
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect((button("Save") as HTMLButtonElement).disabled).toBe(false);
+  await act(async () => {
+    workspace.revision = 4;
+    entries = change === "deleted" ? {} : { docs: { kind: "directory", entries: { "a #?.txt": { ...file, blob_ref: "external" } } } };
+    client.setQueryData(["workspace-tree", "u", "ws"], { ...tree(4), workspace: { ...workspace, revision: 4 } });
+  });
+  await waitForUi(() => expect(container.textContent).toContain("Your draft is preserved"));
+  expect(container.querySelector("textarea")!.value).toBe("my draft");
+  expect((button("Save") as HTMLButtonElement).disabled).toBe(true);
+  await act(async () => { editor.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true })); });
+  expect(mocks.api.mock.calls.filter(([method]) => method === "PUT")).toHaveLength(0);
+  if (change === "changed") {
+    await waitForUi(() => expect(client.isFetching()).toBe(0));
+    await click(button("Discard draft and reload"));
+    await waitForUi(() => expect(container.querySelector("textarea")!.value).toBe("external"));
+  }
 });

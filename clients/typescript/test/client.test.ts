@@ -131,6 +131,8 @@ describe("LightspeedClient", () => {
   it("ships canonical method documentation from the Rust manifest", () => {
     expect(METHOD_INFO["session/config/put"]).toEqual({
       scope: "universe",
+      streaming: false,
+      notifications: [],
       access: { kind: "universe", action: "configureSession" },
       summary: "Replace session configuration",
       description:
@@ -699,6 +701,32 @@ describe("LightspeedClient", () => {
         status: 502,
         body: "<html>Bad Gateway</html>",
         transient: true,
+      });
+    });
+
+    it("reports the gateway's 401 as the server's unauthenticated error", async () => {
+      // No valid key: the gateway answers before reading the body, so there is no request id.
+      const refusal = {
+        id: null,
+        error: {
+          code: -32001,
+          message: "request is not authenticated",
+          data: { kind: "unauthenticated", message: "request is not authenticated" },
+        },
+      };
+      const call = client((async () => Response.json(refusal, { status: 401 })) as typeof fetch)
+        .call("initialize", {});
+      await expect(call).rejects.toBeInstanceOf(LightspeedRpcError);
+      await expect(call).rejects.toMatchObject({ kind: "unauthenticated", code: -32001 });
+    });
+
+    it("reports a 401 that is not the gateway's by its status", async () => {
+      const call = client((async () => new Response("<html>Sign in</html>", { status: 401 })) as typeof fetch)
+        .call("initialize", {});
+      await expect(call).rejects.toMatchObject({
+        name: "LightspeedTransportError",
+        status: 401,
+        transient: false,
       });
     });
 

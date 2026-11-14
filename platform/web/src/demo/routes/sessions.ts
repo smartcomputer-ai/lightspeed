@@ -489,7 +489,7 @@ export function sessionRoutes(store: DemoStore): Hono {
     if (missing) return badRequest(c, `blob ${missing} was not found`);
     const run = findRun(session, runId);
     if (!run) return notFound(c, "not found in engine");
-    const steered = steerRun(store, session, runId, body.data.text, `user:${store.currentUser.id}`, body.data.attachments);
+    const steered = steerRun(store, session, runId, body.data.text, `user:${store.currentUser.id}`, body.data.attachments, body.data.submissionId);
     if (!steered) {
       return c.json({
         error: `run ${runId} is ${run.status}; only a running run accepts steering`,

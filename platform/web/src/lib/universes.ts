@@ -18,37 +18,39 @@ export function memberships(universes: Universe[] | undefined): Universe[] {
   return (universes ?? []).filter((u) => u.role != null && u.status === "active");
 }
 
-/// Resolves the /u/:slug path segment against the loaded list, from a page
+/// Resolves the /u/:handle path segment against the loaded list, from a page
 /// or from the shell around it.
 export function useActiveUniverse(): {
   universe: Universe | undefined;
-  slug: string | undefined;
+  handle: string | undefined;
   isLoading: boolean;
 } {
-  const slug = useMatch("/u/:slug/*")?.params.slug;
+  const handle = useMatch("/u/:handle/*")?.params.handle;
   const universes = useUniverses();
   return {
-    universe: slug ? universes.data?.find((u) => u.slug === slug) : undefined,
-    slug,
+    universe: handle ? universes.data?.find((u) => u.handle === handle) : undefined,
+    handle,
     isLoading: universes.isLoading,
   };
 }
 
-/// Landing page inside a universe: its bots, or its sessions when bots are
-/// switched off.
-export function universeHome(universe: { slug: string; features?: FeatureStates }): string {
-  return `/u/${universe.slug}/${universe.features?.bots === false ? "sessions" : "bots"}`;
+/// Landing page inside a universe: its bots while that feature is on, its
+/// sessions otherwise.
+export function universeHome(universe: { handle: string; features?: FeatureStates }): string {
+  return `/u/${universe.handle}/${universe.features?.bots ? "bots" : "sessions"}`;
 }
 
-/// Whether a feature is on in the active universe. Switched-off features
-/// are hidden, not enforced; before the universe loads, the default holds.
+/// Whether a feature is on in the active universe. The Platform refuses a
+/// switched-off feature's requests itself, so this only decides what to show
+/// and which requests are worth making; before the universe loads, the
+/// default holds.
 export function useFeature(feature: FeatureKey): boolean {
   const { universe } = useActiveUniverse();
   return universe?.features?.[feature] ?? FEATURES[feature].default;
 }
 
-export function rememberUniverse(slug: string) {
-  localStorage.setItem(LAST_UNIVERSE_KEY, slug);
+export function rememberUniverse(handle: string) {
+  localStorage.setItem(LAST_UNIVERSE_KEY, handle);
 }
 
 export function lastUniverse(): string | null {

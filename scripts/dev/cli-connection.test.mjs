@@ -14,12 +14,14 @@ function fixture(t) {
   const run = async (_name, _command, args, env) => {
     calls.push({ args, env });
     if (args.includes("universe")) return { stdout: "" };
-    let secret = env.LIGHTSPEED_BOOTSTRAP_API_KEY;
-    if (secret && keys.get(secret) === "revoked") throw new Error("revoked");
-    if (args.includes("--require-existing")) assert.equal(keys.get(secret), "active", "restart must use an active key");
-    if (!secret) secret = `lsk_test_${++sequence}`;
+    const supplied = env.LIGHTSPEED_BOOTSTRAP_API_KEY;
+    if (supplied && keys.get(supplied) === "revoked") throw new Error("revoked");
+    if (args.includes("--require-existing")) assert.equal(keys.get(supplied), "active", "restart must use an active key");
+    const secret = supplied ?? `lsk_test_${++sequence}`;
     keys.set(secret, "active");
-    return { stdout: JSON.stringify({ secret }) };
+    // As the command does: a supplied secret is never printed back.
+    const keyId = args[args.indexOf("--key-id") + 1];
+    return { stdout: JSON.stringify(supplied ? { keyId } : { keyId, secret }) };
   };
   const env = { LIGHTSPEED_AUTH_MODE: "authenticated", LIGHTSPEED_API_URL: "http://127.0.0.1:18080/rpc", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" };
   return { root, env, run, calls, keys };
@@ -28,7 +30,7 @@ test("runtime and full profiles share a persistent CLI key and separate Platform
   const f = fixture(t);
   const first = await prepareCliConnection({ ...f, full: false });
   const universeCall = f.calls.find(c => c.args.includes("universe"));
-  assert.deepEqual(universeCall.args.slice(-4), ["--universe-id", f.env.LIGHTSPEED_PG_UNIVERSE_ID, "--slug", "development"]);
+  assert.deepEqual(universeCall.args.slice(-4), ["--universe-id", f.env.LIGHTSPEED_PG_UNIVERSE_ID, "--handle", "development"]);
   const handoff = JSON.parse(readFileSync(first.handoff));
   const secret = readFileSync(handoff.credentialFile, "utf8");
   assert.equal(statSync(handoff.credentialFile).mode & 0o777, 0o600);
@@ -37,7 +39,14 @@ test("runtime and full profiles share a persistent CLI key and separate Platform
   const second = await prepareCliConnection({ ...f, full: true });
   assert.equal(readFileSync(handoff.credentialFile, "utf8"), secret);
   assert.notEqual(second.platformSecret, secret);
-  assert.ok(f.calls.filter(c => c.args.includes("provision")).every(c => c.args.includes("--refresh-groups")));
+  // Each kind is declared under its own key id, the same on every start, and
+  // never asked merely to verify.
+  const keyIds = f.calls.filter(c => c.args.includes("provision")).map(c => c.args[c.args.indexOf("--key-id") + 1]);
+  assert.deepEqual([...new Set(keyIds)].map(id => id.replace(/-[0-9a-f]{8}$/, "")).sort(), ["dev-cli", "dev-platform"]);
+  assert.equal(new Set(keyIds).size, 2);
+  assert.ok(f.calls.filter(c => c.args.includes("provision")).every(c => !c.args.includes("--require-existing")));
+  // A key's groups are always stated; development keys hold every group.
+  assert.ok(f.calls.filter(c => c.args.includes("provision")).every(c => c.args.includes("--all-groups") && !c.args.includes("--group")));
   f.keys.set(secret, "revoked");
   await assert.rejects(prepareCliConnection({ ...f, full: true }), /revoked/);
   assert.equal(f.keys.size, 2, "revocation does not trigger another key");
@@ -67,10 +76,33 @@ test("bootstrap opt-out does not repair missing database credentials or refresh 
   await prepareCliConnection({ ...f, full: true });
   f.calls.length = 0;
   await prepareCliConnection({ ...f, full: true, noBootstrap: true });
-  assert.ok(f.calls.filter(c => c.args.includes("provision")).every(c => c.args.includes("--require-existing") && !c.args.includes("--refresh-groups")));
+  assert.ok(f.calls.filter(c => c.args.includes("provision")).every(c => c.args.includes("--require-existing")));
   f.keys.clear();
   await assert.rejects(prepareCliConnection({ ...f, full: true, noBootstrap: true }), /restart must use an active key/);
   assert.equal(f.keys.size, 0);
+});
+test("a supplied secret is kept from what the launcher holds, not read back from the command", async t => {
+  const f = fixture(t);
+  const run = async (name, command, args, env) => {
+    const result = await f.run(name, command, args, env);
+    if (args.includes("provision") && env.LIGHTSPEED_BOOTSTRAP_API_KEY) assert.equal(JSON.parse(result.stdout).secret, undefined);
+    return result;
+  };
+  const supplied = { ...f, run, env: { ...f.env, LIGHTSPEED_BOOTSTRAP_API_KEY: " lsk_supplied\n" }, full: false };
+  const first = await prepareCliConnection(supplied);
+  const file = JSON.parse(readFileSync(first.handoff)).credentialFile;
+  assert.equal(readFileSync(file, "utf8"), "lsk_supplied");
+  // A restart supplies the saved secret and still has it afterwards.
+  await prepareCliConnection({ ...f, run, full: false });
+  assert.equal(readFileSync(file, "utf8"), "lsk_supplied");
+  // Whatever the command prints for a supplied key, the supplied value is kept.
+  const other = async (_name, _command, args) => args.includes("universe") ? { stdout: "" } : { stdout: JSON.stringify({ keyId: "k", secret: "lsk_other" }) };
+  await prepareCliConnection({ ...f, run: other, full: false });
+  assert.equal(readFileSync(file, "utf8"), "lsk_supplied");
+  // A generated key without its secret cannot be used.
+  const silent = fixture(t);
+  const withholding = async (_name, _command, args) => args.includes("universe") ? { stdout: "" } : { stdout: JSON.stringify({ keyId: "k" }) };
+  await assert.rejects(prepareCliConnection({ ...silent, run: withholding, full: false }), /invalid credential response/);
 });
 test("single mode writes a credential-free handoff", async t => {
   const f = fixture(t);

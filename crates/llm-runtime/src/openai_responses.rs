@@ -474,7 +474,13 @@ async fn materialize_request_with_catalog(
         top_p: optional_f64(params.top_p.as_ref(), "top_p")?,
         metadata: non_empty_map(params.metadata.clone()),
         parallel_tool_calls: params.parallel_tool_calls,
-        store: params.store,
+        // Every request carries its whole input and reasoning comes back
+        // encrypted for replay, so nothing depends on the provider keeping the
+        // response. Stored requests also cannot repeat a compaction item: the
+        // provider refuses the second one as a conflicting record, which fails
+        // the second run after a compaction. Only a caller that builds the
+        // provider params itself can ask the provider to keep a response.
+        store: Some(params.store.unwrap_or(false)),
         stream: params.stream,
         service_tier,
         context_management: context_management_from_compaction(request.compaction.as_ref()),
@@ -2106,6 +2112,32 @@ mod tests {
             json!({ "effort": "xhigh", "summary": "auto" })
         );
         assert_eq!(value["parallel_tool_calls"], json!(false));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn materialize_create_request_does_not_store_unless_asked() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+
+        let unset = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        assert_eq!(
+            serde_json::to_value(unset).expect("json")["store"],
+            json!(false)
+        );
+
+        request.params = Some(openai_params(&OpenAiResponsesParams {
+            store: Some(true),
+            ..OpenAiResponsesParams::default()
+        }));
+        let asked = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        assert_eq!(
+            serde_json::to_value(asked).expect("json")["store"],
+            json!(true)
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

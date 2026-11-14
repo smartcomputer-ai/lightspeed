@@ -51,6 +51,10 @@ body-supplied origin claims. Bot deliveries use `event`; other API clients
 may supply their own strings. Authorization and requester attribution are
 explained in [Access and security](../docs/documentation/access-and-security/overview.md).
 
+The SDK [transcript metadata helpers and session-view data guide](../docs/documentation/integrating-and-extending/api-and-typescript.md#build-transcript-authors-and-times)
+describe author/time derivation, materialized list fields and watch integration.
+The helpers are available independently of the current UI presentation.
+
 The [history loader](web/src/components/session/history-loader.tsx) starts
 with recent events, while the [live reader](web/src/lib/sessions/tail.ts)
 follows from that window's head. Older pages load as the reader scrolls up.
@@ -59,6 +63,12 @@ streams by event and entry ID; historical lifecycle events must not overwrite
 live session controls. Changing sessions cancels both read paths. Transient
 read failures retain existing content while retrying, and authorization or
 integrity errors remain visible immediately.
+
+[Submission reconciliation](web/src/lib/sessions/submissions.ts) combines local
+sends with event history in one projection. Local render keys survive confirmation;
+input stays visible while the event tail catches up with HTTP receipts. Steering
+matches submission and steering IDs and renders within its run from the start.
+Local messages appear immediately; incoming messages retain entrance motion.
 
 [Run sections](web/src/lib/sessions/run-sections.ts) select the final answer
 from the run's recorded output reference, so loading older history cannot
@@ -78,22 +88,26 @@ settings.
 The universe sidebar groups the work (Bots, Sessions), the **Setup** agents are
 made from (Profiles, Workspaces, Models, Environments, MCP servers), **Access**
 (Credentials, API keys, Members) and the universe's **Settings** (General,
-Channels, Templates) at flat `/u/:slug/...` routes; bare `/u/:slug/settings`
+Channels, Templates) at flat `/u/:handle/...` routes; bare `/u/:handle/settings`
 opens the first settings page the caller may see. Models holds model provider keys,
 compatible endpoints and coding-agent subscriptions. Credentials lists reusable
 tokens, environment secrets, GitHub App installations and custom OAuth grants;
 model and MCP server logins stay on their own pages, while credential pickers
-still offer every grant. Credentials, Channels and Templates are for Operators
+still offer every grant, except that the environment picker offers only
+retrievable ones. Credentials, Channels and Templates are for Operators
 and Admins; API keys and General are for Admins.
 
 **Features.** A universe admin switches parts of the product on or off under
-General → Features; today Bots and Channels, where Channels need Bots. The
-registry is `FEATURES` in `platform/shared`, and a universe stores only the
-switches set away from their default (`universes.features`). The universe list
-carries each feature's effective state, and the web hides a switched-off
-feature's pages, menu items and choices. Switching off hides; it does not
-enforce: the API stays open, and what already runs, such as a bot answering on
-its channels, keeps running.
+General → Features; today Bots and Channels, where Channels need Bots. Both
+start off. The registry is `FEATURES` in `platform/shared`, and a universe
+stores only the switches set away from their default (`universes.features`).
+The universe list carries each feature's effective state, and the web hides a
+switched-off feature's pages, menu items and choices. The backend enforces the
+switch in the member gate: a member's `bots/*` or `channels/*` call is refused
+with a 403 while its feature is off, whatever their role. The switch covers
+what members do through the Platform. What already runs, such as a bot
+answering on its channels, keeps running, and a holder of a runtime key is
+bound by that key's groups, not by the switch.
 
 ## People, universes and access
 
@@ -196,7 +210,8 @@ actors, and credential leasing and channel delivery are opt-in. Platform admins 
 mint every key under **Platform admin → API keys**, choosing what a key reaches (the
 deployment or one universe), the method groups it may call, and whether it
 speaks for people. A secret is shown once. Rotate it to replace it immediately
-while preserving authority; revoke and mint a replacement to change permissions.
+while preserving authority. Keys are addressed by their key id within their scope;
+the page shows the id when its creator chose one, and the secret's prefix.
 The Configurator template asks which key its MCP server acts with:
 the current one, a new key with chosen groups (starting from the configuration
 groups), or an existing universe key whose secret the Admin pastes; it revokes

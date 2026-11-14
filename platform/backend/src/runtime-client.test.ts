@@ -265,3 +265,123 @@ describe("session lifecycle permissions", () => {
     }
   });
 });
+
+describe("feature switches", () => {
+  const within = (features: unknown, role: UniverseRole = "admin") =>
+    memberClient(env, { ...universe, features }, { userId: "alice", role });
+  const featureMethods = (prefix: string) =>
+    (Object.keys(METHOD_ROLES) as (typeof METHODS)[number][]).filter((method) => method.startsWith(prefix));
+
+  it("refuse every bot and channel method, for an admin too, in a universe that stored no switch", async () => {
+    const calls = core();
+    expect(featureMethods("bots/").length).toBeGreaterThan(0);
+    expect(featureMethods("channels/").length).toBeGreaterThan(0);
+    for (const client of [as("admin"), within({}), within(null)]) {
+      for (const method of [...featureMethods("bots/"), ...featureMethods("channels/")]) {
+        const error = await refusal(client.call(method, {} as never));
+        expect(error, method).toBeInstanceOf(GateRefusal);
+        expect((error as GateRefusal).status, method).toBe(403);
+      }
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("answer with the switch that is off, in the shape of every other gate refusal", async () => {
+    core();
+    const bots = await refusal(within({}).call("bots/list", {}));
+    expect((bots as GateRefusal).message).toBe("Bots are turned off in this universe");
+    const channels = await refusal(within({ bots: true }).call("channels/accounts/list", {} as never));
+    expect((channels as GateRefusal).status).toBe(403);
+    expect((channels as GateRefusal).message).toBe("Channels are turned off in this universe");
+  });
+
+  it("let bot methods through with Bots on, and keep channel methods refused until Channels is on", async () => {
+    const calls = core();
+    await within({ bots: true }).call("bots/list", {});
+    expect(await refusal(within({ bots: true }).call("channels/accounts/list", {} as never))).toBeInstanceOf(GateRefusal);
+    await within({ bots: true, channels: true }).call("channels/accounts/list", {} as never);
+    await within({ bots: true, channels: true }).call("bots/list", {});
+    expect(calls.map((call) => call.method)).toEqual(["bots/list", "channels/accounts/list", "bots/list"]);
+  });
+
+  it("refuse channel methods while Bots are off, whatever Channels' own switch says", async () => {
+    const calls = core();
+    for (const features of [{ channels: true }, { bots: false, channels: true }]) {
+      const error = await refusal(within(features).call("channels/accounts/list", {} as never));
+      expect((error as GateRefusal).message).toBe("Channels are turned off in this universe");
+      expect(await refusal(within(features).call("bots/list", {}))).toBeInstanceOf(GateRefusal);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("treat stored switches it cannot read as nothing stored", async () => {
+    const calls = core();
+    for (const features of ["on", [true], { bots: "yes" }]) {
+      expect(await refusal(within(features).call("bots/list", {}))).toBeInstanceOf(GateRefusal);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("still hold a member to the method's role once the feature is on", async () => {
+    const calls = core();
+    const error = await refusal(within({ bots: true, channels: true }, "viewer").call("bots/create", {} as never));
+    expect((error as GateRefusal).message).toBe("operator role required");
+    await within({ bots: true }, "viewer").call("bots/list", {});
+    expect(calls.map((call) => call.method)).toEqual(["bots/list"]);
+  });
+
+  it("leave every other method to its own rules", async () => {
+    const calls = core();
+    await within({}, "viewer").call("profiles/list", {});
+    await within({ bots: false }, "viewer").call("session/list", { limit: 1 });
+    expect(calls.map((call) => call.method)).toEqual(["profiles/list", "session/list"]);
+  });
+});
+
+describe("trigger secrets", () => {
+  const within = (role: UniverseRole) =>
+    memberClient(env, { ...universe, features: { bots: true, channels: true } }, { userId: "alice", role });
+  const target = { botId: "triage", triggerId: "github" };
+
+  it("let every member read a trigger and only operators read its secrets", async () => {
+    const calls = core();
+    for (const role of ["viewer", "contributor"] as const) {
+      await within(role).call("bots/triggers/list", { botId: "triage" });
+      await within(role).call("bots/triggers/read", target);
+      const error = await refusal(within(role).call("bots/triggers/secrets/read", target));
+      expect(error, role).toBeInstanceOf(GateRefusal);
+      expect((error as GateRefusal).status, role).toBe(403);
+      expect((error as GateRefusal).message, role).toBe("operator role required");
+    }
+    expect(calls.map((call) => call.method)).not.toContain("bots/triggers/secrets/read");
+    for (const role of ["operator", "admin"] as const) {
+      await within(role).call("bots/triggers/secrets/read", target);
+    }
+    expect(calls.filter((call) => call.method === "bots/triggers/secrets/read")).toHaveLength(2);
+  });
+
+  it("hold the methods that answer with secrets to the operator role too", () => {
+    expect(METHOD_ROLES["bots/triggers/secrets/read"]).toBe("operator");
+    expect(METHOD_ROLES["bots/triggers/put"]).toBe("operator");
+    expect(METHOD_ROLES["bots/create"]).toBe("operator");
+    expect(METHOD_ROLES["bots/triggers/read"]).toBe("viewer");
+    expect(METHOD_ROLES["bots/triggers/list"]).toBe("viewer");
+  });
+});
+
+it("gates watch collections and forces the member's session visibility", async () => {
+  const calls: { params: unknown; headers: Headers }[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
+    expect(init.redirect).toBe("error");
+    calls.push({ params: JSON.parse(String(init.body)).params, headers: new Headers(init.headers) });
+    return new Response("data: {\"method\":\"watch/reset\",\"params\":{}}\n\n", { headers: { "content-type": "text/event-stream" } });
+  }));
+  const viewer = memberClient(env, { ...universe, features: { bots: false } }, { userId: "alice", role: "viewer" });
+  await (await viewer.openWatch({ visibleTo: "bob" })).body!.cancel();
+  await (await memberClient(env, { ...universe, features: { bots: true } }, { userId: "carol", role: "admin" }).openWatch()).body!.cancel();
+  expect(calls[0]!.params).toEqual({ kinds: ["session", "environment", "workspace"], visibleTo: "alice" });
+  expect(calls[1]!.params).toEqual({ kinds: ["session", "bot", "environment", "workspace"] });
+  expect(calls[0]!.headers.get("x-lightspeed-actor")).toBe("alice");
+  await expect(viewer.openWatch({ kinds: ["bot"] })).rejects.toBeInstanceOf(GateRefusal);
+  expect(calls).toHaveLength(2);
+});

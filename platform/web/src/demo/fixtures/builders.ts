@@ -54,7 +54,7 @@ import type {
   WebhookVerification,
 } from "@lightspeed-ai/sdk";
 import { DEFAULT_MODEL, newSession } from "../engine";
-import type { DemoStore, DemoToolCall, SessionRecord, UniverseState } from "../store";
+import type { DemoStore, DemoToolCall, SessionRecord, StoredBotTrigger, UniverseState } from "../store";
 import type { UniverseRole } from "@lightspeed-ai/platform-shared";
 import { INCUS_PROVIDER_ID } from "./platform";
 
@@ -372,7 +372,7 @@ export function member(
     id: store.nextId("member"),
     userId,
     role,
-    email: user?.email ?? `${userId}@${universe.universe.slug}.example`,
+    email: user?.email ?? `${userId}@${universe.universe.handle}.example`,
     name: user?.name ?? userId,
     createdAt: atIso(joinedAtMs),
   };
@@ -598,7 +598,10 @@ export function externalEnvironment(init: ExternalEnvironmentInit): Environment 
 
 export interface RegisteredEnvironmentInit extends EnvironmentInit {
   registrationKeyId: string;
-  daemonId: string;
+  /// Absent on a declared environment that no daemon is bound to.
+  daemonId?: string;
+  /// The registration name of a declared environment.
+  name?: string;
   identityMode: EnvironmentIdentityModeView;
   connected: boolean;
   connectionChangedAtMs: number;
@@ -606,12 +609,16 @@ export interface RegisteredEnvironmentInit extends EnvironmentInit {
 }
 
 export function registeredEnvironment(init: RegisteredEnvironmentInit): Environment {
+  const { daemon, ...record } = lifecycle(init);
   const environment: Omit<Environment, "status"> = {
-    ...lifecycle(init),
+    ...record,
+    // The daemon build is known only once a daemon has connected.
+    ...(init.daemonId ? { daemon } : {}),
     source: {
       type: "registered",
       registrationKeyId: init.registrationKeyId,
-      daemonId: init.daemonId,
+      ...(init.daemonId ? { daemonId: init.daemonId } : {}),
+      ...(init.name ? { name: init.name } : {}),
       identityMode: init.identityMode,
       connected: init.connected,
       connectionChangedAtMs: init.connectionChangedAtMs,
@@ -803,22 +810,22 @@ export interface WebhookSpecInit {
   preset?: WebhookPreset | null;
 }
 
-/// A webhook trigger with its capability-URL ingest path in the core shape:
-/// `/hooks/bots/{universeId}/{botId}/{triggerId}/{token}`.
+/// A webhook trigger, stored with its capability-URL ingest path in the core
+/// shape: `/hooks/bots/{universeId}/{botId}/{triggerId}/{token}`.
 export function webhookTrigger(
   universe: UniverseState,
   botId: string,
   triggerId: string,
   spec: WebhookSpecInit,
   rest: TriggerRest,
-): BotTriggerView {
+): StoredBotTrigger {
   return {
     ...baseTrigger(botId, triggerId, rest),
     kind: "webhook",
     verification: spec.verification ?? { scheme: "token" },
     preset: spec.preset ?? null,
     ingestPath: `/hooks/bots/${universe.universe.lightspeedUniverseId}/${botId}/${triggerId}/${spec.token}`,
-  } as BotTriggerView;
+  } as StoredBotTrigger;
 }
 
 export function scheduleTrigger(
@@ -876,8 +883,9 @@ export interface ChatSpecInit {
   priority?: number;
 }
 
-/// A chat connection: one session per conversation, kept forever.
-export function chatTrigger(botId: string, triggerId: string, spec: ChatSpecInit, rest: TriggerRest): BotTriggerView {
+/// A chat connection, stored with its pairing code: one session per
+/// conversation, kept forever.
+export function chatTrigger(botId: string, triggerId: string, spec: ChatSpecInit, rest: TriggerRest): StoredBotTrigger {
   return {
     ...baseTrigger(botId, triggerId, { route: { policy: "perKey", key: null }, sessionCloseAfterMs: 0, ...rest }),
     kind: "chat",
@@ -888,7 +896,7 @@ export function chatTrigger(botId: string, triggerId: string, spec: ChatSpecInit
     pairing: spec.pairingCode ? "code" : "open",
     priority: spec.priority ?? 100,
     pairingCode: spec.pairingCode ?? null,
-  } as BotTriggerView;
+  } as StoredBotTrigger;
 }
 
 export interface ControlledInit {

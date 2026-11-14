@@ -56,7 +56,7 @@ impl ConnectionDisplay {
             .as_deref()
             .filter(|_| !generated_dev)
             .unwrap_or(&endpoint_label);
-        let universe_label = universe.slug.clone().unwrap_or_else(|| {
+        let universe_label = universe.handle.clone().unwrap_or_else(|| {
             universe
                 .universe_id
                 .as_deref()
@@ -72,7 +72,7 @@ impl ConnectionDisplay {
             connection.endpoint.clone()
         };
         let mut header_universe = universe
-            .slug
+            .handle
             .as_deref()
             .or(universe.universe_id.as_deref())
             .unwrap_or("none selected")
@@ -109,19 +109,19 @@ impl ConnectionDisplay {
             ));
         }
         details.push_str(&format!(
-            "\nUniverse:\n  Slug: {}\n  UUID: {}",
+            "\nUniverse:\n  Handle: {}\n  UUID: {}",
+            universe.handle.as_deref().unwrap_or("unavailable"),
             universe
-                .slug
+                .universe_id
                 .as_deref()
-                .unwrap_or(if universe.slug_unavailable_reason.is_some() {
+                .unwrap_or(if universe.handle.is_some() {
                     "unavailable"
                 } else {
-                    "(no slug)"
+                    "none selected"
                 }),
-            universe.universe_id.as_deref().unwrap_or("none selected"),
         ));
-        if let Some(reason) = &universe.slug_unavailable_reason {
-            details.push_str(&format!("\n  Slug lookup: {reason}"));
+        if let Some(reason) = &universe.unavailable_reason {
+            details.push_str(&format!("\n  Lookup: {reason}"));
         }
         Self {
             footer,
@@ -144,6 +144,7 @@ mod tests {
             caller: Some(api::CallerAccess {
                 scope: api::AccessScope::Deployment,
                 single: false,
+                key_id: None,
                 key_prefix: None,
                 groups: vec![],
             }),
@@ -153,8 +154,8 @@ mod tests {
     fn universe() -> UniverseStatus {
         UniverseStatus {
             universe_id: Some(uuid::Uuid::nil().to_string()),
-            slug: Some("customer-a".into()),
-            slug_unavailable_reason: None,
+            handle: Some("customer-a".into()),
+            unavailable_reason: None,
         }
     }
 
@@ -202,10 +203,29 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_slugs_keep_identity_and_explain_the_fallback() {
+    fn a_selection_by_handle_shows_the_handle_when_the_uuid_cannot_be_read() {
         let mut universe = universe();
-        universe.slug = None;
-        universe.slug_unavailable_reason = Some("requires deployment/universes permission".into());
+        universe.universe_id = None;
+        universe.unavailable_reason = Some("requires deployment/universes permission".into());
+        let display = ConnectionDisplay::new(
+            &connection(Some("production"), "https://runtime.example:8443/rpc"),
+            &universe,
+        );
+        assert_eq!(display.footer.as_deref(), Some("production / customer-a"));
+        assert!(display.details.contains("Handle: customer-a"));
+        assert!(display.details.contains("UUID: unavailable"));
+        assert!(
+            display
+                .details
+                .contains("requires deployment/universes permission")
+        );
+    }
+
+    #[test]
+    fn unavailable_handles_keep_identity_and_explain_the_fallback() {
+        let mut universe = universe();
+        universe.handle = None;
+        universe.unavailable_reason = Some("requires deployment/universes permission".into());
         let mut connection = connection(None, "https://runtime.example:8443/rpc");
         connection.caller.as_mut().unwrap().scope = api::AccessScope::Universe {
             universe_id: uuid::Uuid::nil(),
@@ -215,7 +235,7 @@ mod tests {
             display.footer.as_deref(),
             Some("runtime.example:8443 / 00000000")
         );
-        assert!(display.details.contains("Slug: unavailable"));
+        assert!(display.details.contains("Handle: unavailable"));
         assert!(
             display
                 .details

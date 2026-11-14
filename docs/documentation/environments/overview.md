@@ -44,7 +44,10 @@ machine. Lightspeed supports three ways to reach and manage it:
 A registered machine needs outbound connectivity to Lightspeed, so it does
 not need its own inbound daemon address. A registration key admits machines
 into a particular universe. Each admitted daemon then uses its own persistent
-identity to reconnect.
+identity to reconnect. A fixed machine can also be declared in advance, with
+an environment ID you choose, so that profiles can name it before its daemon
+has registered; see
+[Run registered daemons](registered-daemons.md#declare-fixed-machines-before-their-daemons-register).
 
 A provider adds machine lifecycle management. Lightspeed asks it to create a
 machine and, later, to close it; the provider runs everything in between,
@@ -144,6 +147,16 @@ never read or change that directory, but commands running as the daemon's
 user can. Grant **Run commands** only where that is acceptable, or run
 commands in a target whose daemon identity is not worth protecting, such as
 a disposable VM.
+
+File and transfer tools also never reach the daemon's registration key file
+or, on Linux, the `/proc` and `/sys` filesystems, which would show the
+environment variables and memory of every process the daemon's user runs.
+Everything else that user can read under the daemon's filesystem root is
+readable with **Read files** alone. The root is the whole machine unless the
+daemon is started with a narrower one, so a session that should read only a
+project needs a daemon whose root is that project, or a machine that holds
+nothing else. [Choose the access level](using-environments.md#choose-the-access-level)
+lists what each level reaches.
 
 Environment credential bindings can supply secrets to processes without
 putting the values into the agent's instructions. Those processes can access

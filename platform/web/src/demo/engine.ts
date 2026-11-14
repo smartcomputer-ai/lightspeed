@@ -673,6 +673,7 @@ export function steerRun(
   text: string,
   origin?: string,
   media: MessageAttachment[] = [],
+  submissionId?: string,
 ): { steeringId: string; run: RunView } | null {
   const run = findRun(session, runId);
   if (!run || run.status !== "running") return null;
@@ -694,7 +695,7 @@ export function steerRun(
           : []),
       ],
     },
-    { runId },
+    { runId, ...(submissionId ? { submissionId } : {}) },
   );
   return { steeringId, run };
 }

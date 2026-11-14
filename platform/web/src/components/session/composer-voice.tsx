@@ -1,4 +1,3 @@
-import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { CancelIcon, DictateIcon, DictationUnavailableIcon, LoadingIcon, RetryIcon, StopIcon } from "@/icons";
 import { MAX_DICTATION_SECONDS } from "@lightspeed-ai/platform-shared";
@@ -12,7 +11,6 @@ type Voice = ReturnType<typeof useDictation>;
 const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 /// The timer turns amber in the last half minute before the automatic stop.
 const WARN_AT = MAX_DICTATION_SECONDS - 30;
-const BARS = [0.55, 0.85, 1, 0.75, 0.5];
 
 /// Dictation lives in one control. Idle, it is a microphone icon; while
 /// recording, transcribing, or failed, the icon grows into a pill that
@@ -43,7 +41,6 @@ export function VoiceControl({ voice, unavailableReason, settingsHref, demo, onS
           title={warn ? `Recording stops at ${clock(MAX_DICTATION_SECONDS)}` : undefined}>
           {clock(voice.seconds)}
         </span>
-        <LevelMeter level={voice.level} />
         <PillButton label="Cancel dictation" title="Discard recording (Esc)" onClick={voice.cancel}><CancelIcon /></PillButton>
         <PillButton label="Stop recording" title="Stop and insert transcript" onClick={() => void voice.stop()}>
           <StopIcon className="fill-current" />
@@ -120,33 +117,5 @@ function PillButton({ label, title, onClick, children }: { label: string; title?
       className="text-current hover:bg-foreground/10 hover:text-current" onClick={onClick}>
       {children}
     </Button>
-  );
-}
-
-/// Five bars that follow the input level. Updated per animation frame
-/// through refs, so a recording does not re-render the composer.
-function LevelMeter({ level }: { level: () => number }) {
-  const bars = useRef<Array<HTMLSpanElement | null>>([]);
-  useEffect(() => {
-    if (typeof requestAnimationFrame !== "function") return;
-    let frame = 0;
-    let smoothed = 0;
-    const tick = () => {
-      smoothed = smoothed * 0.6 + level() * 0.4;
-      bars.current.forEach((bar, index) => {
-        if (bar) bar.style.transform = `scaleY(${Math.max(0.18, Math.min(1, smoothed * BARS[index]! * 1.6))})`;
-      });
-      frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [level]);
-  return (
-    <span className="flex h-3.5 items-center gap-0.5" aria-hidden>
-      {BARS.map((_, index) => (
-        <span key={index} ref={(node) => { bars.current[index] = node; }} style={{ transform: "scaleY(0.18)" }}
-          className="h-full w-0.5 origin-center rounded-full bg-current transition-transform duration-75" />
-      ))}
-    </span>
   );
 }

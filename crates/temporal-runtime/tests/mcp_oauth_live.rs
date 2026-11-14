@@ -4,7 +4,8 @@ use auth::{
     AuthBrokerError, AuthCallback, AuthFlowStatus, AuthGrantExposure, AuthGrantStatus,
     AuthGrantStore, AuthRegistryError, AuthTokenBroker, HttpOAuthMetadataClient,
     HttpOAuthTokenClient, McpOAuthDriver, McpOAuthTarget, OAuthFlowService, OAuthRefreshRuntime,
-    RegistryTokenBroker, SecretStore, StartAuthFlow, TokenAudience, parse_mcp_oauth_challenge,
+    PrivateNetworkList, RegistryTokenBroker, SecretStore, StartAuthFlow, TokenAudience,
+    parse_mcp_oauth_challenge,
 };
 use axum::{
     Form, Json, Router,
@@ -42,7 +43,12 @@ async fn mcp_oauth_live_round_trip_restart_refresh_scope_and_reauth() -> anyhow:
     let (fixture, endpoint, fixture_task) = start_oauth_mcp_fixture().await?;
     let redirect_uri = "http://127.0.0.1:18999/auth/callback";
 
-    let oauth_http = Arc::new(HttpOAuthMetadataClient::with_private_networks(true));
+    // The fixture is a loopback HTTP server, reachable only because the
+    // private-network list names it; the suite sets the list itself so it does
+    // not depend on the caller's environment.
+    let oauth_http = Arc::new(HttpOAuthMetadataClient::with_private_networks(
+        PrivateNetworkList::parse("localhost,127.0.0.1,::1")?,
+    ));
     let driver = McpOAuthDriver::new(store.clone(), store.clone(), oauth_http.clone());
     let client = driver
         .ensure_client(

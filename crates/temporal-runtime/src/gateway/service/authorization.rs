@@ -88,14 +88,6 @@ impl GatewayAgentApi {
         .await
     }
 
-    pub(crate) async fn may_manage_bot(&self, id: &api::BotId) -> Result<bool, AgentApiError> {
-        self.permitted(
-            MethodAccess::Universe(UniverseAction::ManageBot),
-            Some(&ResourceRef::Bot(id.as_str().into())),
-        )
-        .await
-    }
-
     /// A bot's poll trigger leases exactly the credential its admitted
     /// configuration names, under the bot's own controller authority.
     pub(crate) async fn lease_bot_poll_grant(
@@ -196,6 +188,7 @@ impl GatewayAgentApi {
 
     pub(crate) fn access_store(&self) -> store_pg::PgAccessStore {
         store_pg::PgAccessStore::new(self.store.pool().clone())
+            .with_changes(self.store.changes().clone())
     }
 
     /// The caller's context, which must address this universe-bound service.
@@ -399,14 +392,7 @@ impl GatewayAgentApi {
 
     /// The attribution as harness commands record it.
     pub(super) fn requested_by(&self) -> Result<Option<harness::Attribution>, AgentApiError> {
-        Ok(Some(match self.attribution()? {
-            Attribution::Actor { id } => harness::Attribution::Actor { id },
-            Attribution::Key { prefix } => harness::Attribution::Key { prefix },
-            Attribution::Local => harness::Attribution::Local,
-            Attribution::Internal { component, cause } => {
-                harness::Attribution::Internal { component, cause }
-            }
-        }))
+        Ok(Some(recorded_attribution(self.attribution()?)))
     }
 
     /// Record who started a session, once its row exists. A request's root
@@ -457,6 +443,26 @@ impl GatewayAgentApi {
     }
 }
 
+/// A request's attribution in the shape session events record. The harness
+/// keeps its own mirror of the public type so that the event log does not
+/// depend on the API crate.
+pub(super) fn recorded_attribution(attribution: Attribution) -> harness::Attribution {
+    match attribution {
+        Attribution::Actor { id } => harness::Attribution::Actor { id },
+        Attribution::Key { key_id, scope_kind } => harness::Attribution::Key {
+            key_id,
+            scope_kind: match scope_kind {
+                api::AccessScopeKind::Deployment => harness::AttributedKeyScope::Deployment,
+                api::AccessScopeKind::Universe => harness::AttributedKeyScope::Universe,
+            },
+        },
+        Attribution::Local => harness::Attribution::Local,
+        Attribution::Internal { component, cause } => {
+            harness::Attribution::Internal { component, cause }
+        }
+    }
+}
+
 /// Every one of `resources` exists in `universe`, or the first missing one
 /// is not found.
 pub(crate) async fn require_resources(
@@ -480,4 +486,44 @@ pub(crate) async fn require_resources(
 /// kind and the id that was supplied.
 pub(crate) fn not_found(resource: &ResourceRef) -> AgentApiError {
     AgentApiError::not_found(format!("{} not found: {}", resource.label(), resource.id()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What a session event records for a request must read back, through
+    /// the projection, as the attribution the request had.
+    #[test]
+    fn a_request_attribution_is_recorded_in_events_with_the_same_wire_shape() {
+        for attribution in [
+            Attribution::Actor {
+                id: "user-1".into(),
+            },
+            Attribution::key("ci-bot", api::AccessScope::Deployment),
+            Attribution::key(
+                "ci-bot",
+                api::AccessScope::Universe {
+                    universe_id: uuid::Uuid::from_u128(1),
+                },
+            ),
+            Attribution::Local,
+            Attribution::Internal {
+                component: "controller".into(),
+                cause: "bot".into(),
+            },
+        ] {
+            assert_eq!(
+                serde_json::to_value(recorded_attribution(attribution.clone())).unwrap(),
+                serde_json::to_value(&attribution).unwrap()
+            );
+        }
+        assert_eq!(
+            recorded_attribution(Attribution::key("ci-bot", api::AccessScope::Deployment)),
+            harness::Attribution::Key {
+                key_id: "ci-bot".into(),
+                scope_kind: harness::AttributedKeyScope::Deployment,
+            }
+        );
+    }
 }

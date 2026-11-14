@@ -35,10 +35,41 @@ impl AccessScope {
             Self::Universe { universe_id } => Some(universe_id),
         }
     }
+
+    /// Whether this is the deployment or a universe, without naming which
+    /// universe.
+    pub fn kind(self) -> AccessScopeKind {
+        match self {
+            Self::Deployment => AccessScopeKind::Deployment,
+            Self::Universe { .. } => AccessScopeKind::Universe,
+        }
+    }
+}
+
+/// The kind of an [`AccessScope`]: the deployment, or a universe. Where a
+/// record already belongs to one universe this is enough to tell a universe
+/// key of that universe from a deployment key.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum AccessScopeKind {
+    Deployment,
+    Universe,
+}
+
+impl AccessScopeKind {
+    /// The stored and wire spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Deployment => "deployment",
+            Self::Universe => "universe",
+        }
+    }
 }
 
 /// The methods a key may call, by group. Every public method but
-/// `initialize` belongs to exactly one group, derived from its name, so a
+/// `initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a
 /// new method never changes what an existing key reaches beyond its group.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
@@ -160,8 +191,9 @@ impl MethodGroup {
         )
     }
 
-    /// Every group a key of `scope` may hold, which is also what a key
-    /// minted without explicit groups receives.
+    /// Every group a key of `scope` may hold, which is what a key asked for
+    /// with the literal `all` receives. A key is never given groups it did
+    /// not ask for.
     pub fn allowed_in(scope: AccessScope) -> BTreeSet<MethodGroup> {
         Self::ALL
             .into_iter()
@@ -171,7 +203,7 @@ impl MethodGroup {
 
     /// The group a method belongs to, from its name. `None` for
     /// `initialize`, which every key may call, and for names outside the
-    /// contract.
+    /// contract. `universe/watch` checks the group of each requested kind.
     pub fn of(method: &str) -> Option<MethodGroup> {
         let group = |prefix: &str| method.starts_with(prefix);
         Some(if method == "blobs/put" {
@@ -229,8 +261,15 @@ impl MethodGroup {
 pub enum Attribution {
     /// The actor a key asserted for its request.
     Actor { id: String },
-    /// A key acting for itself, named by its display prefix.
-    Key { prefix: String },
+    /// A key acting for itself, named by its key id. A key id is unique
+    /// among the keys of one scope, so `scopeKind` says whether it names a
+    /// deployment key or a key of the universe the record belongs to. The
+    /// id survives a change of secret; the secret's display prefix does not
+    /// and is deliberately not recorded.
+    Key {
+        key_id: String,
+        scope_kind: AccessScopeKind,
+    },
     /// An unauthenticated local development request, or an in-process call.
     Local,
     /// The runtime's own work: a bot, a delegated session, a registration,
@@ -239,6 +278,14 @@ pub enum Attribution {
 }
 
 impl Attribution {
+    /// A key of `scope` acting for itself.
+    pub fn key(key_id: impl Into<String>, scope: AccessScope) -> Self {
+        Self::Key {
+            key_id: key_id.into(),
+            scope_kind: scope.kind(),
+        }
+    }
+
     /// The asserted actor, if this is one.
     pub fn actor(&self) -> Option<&str> {
         match self {
@@ -481,6 +528,57 @@ mod tests {
     }
 
     #[test]
+    fn a_key_is_attributed_by_its_id_and_scope_kind() {
+        let universe = AccessScope::Universe {
+            universe_id: Uuid::from_u128(1),
+        };
+        assert_eq!(universe.kind(), AccessScopeKind::Universe);
+        assert_eq!(AccessScope::Deployment.kind(), AccessScopeKind::Deployment);
+        for kind in [AccessScopeKind::Deployment, AccessScopeKind::Universe] {
+            assert_eq!(
+                serde_json::to_value(kind).unwrap(),
+                serde_json::Value::String(kind.as_str().to_owned())
+            );
+        }
+
+        let attribution = Attribution::key("ci-bot", universe);
+        assert_eq!(
+            attribution,
+            Attribution::Key {
+                key_id: "ci-bot".into(),
+                scope_kind: AccessScopeKind::Universe,
+            }
+        );
+        let wire = serde_json::json!({"kind": "key", "keyId": "ci-bot", "scopeKind": "universe"});
+        assert_eq!(serde_json::to_value(&attribution).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<Attribution>(wire).unwrap(),
+            attribution
+        );
+        assert_eq!(
+            serde_json::to_value(Attribution::key("platform", AccessScope::Deployment)).unwrap(),
+            serde_json::json!({"kind": "key", "keyId": "platform", "scopeKind": "deployment"})
+        );
+    }
+
+    /// A key was once named by the display prefix of its secret. That record
+    /// names no key, so it is refused rather than read as one.
+    #[test]
+    fn an_attribution_naming_a_key_by_its_secret_prefix_does_not_decode() {
+        for stale in [
+            serde_json::json!({"kind": "key", "prefix": "lsk_abcdefgh"}),
+            serde_json::json!({"kind": "key", "keyId": "ci-bot"}),
+            serde_json::json!({"kind": "key", "scopeKind": "deployment"}),
+            serde_json::json!({"kind": "key", "keyId": "ci-bot", "scopeKind": "tenant"}),
+        ] {
+            assert!(
+                serde_json::from_value::<Attribution>(stale.clone()).is_err(),
+                "{stale}"
+            );
+        }
+    }
+
+    #[test]
     fn methods_belong_to_groups_by_name() {
         for (method, group) in [
             ("session/runs/start", Some(MethodGroup::Session)),
@@ -592,7 +690,7 @@ mod tests {
     fn every_method_belongs_to_a_group_of_its_scope() {
         for spec in crate::schema_export::full_method_manifest() {
             let group = MethodGroup::of(spec.method);
-            if spec.method == METHOD_INITIALIZE {
+            if matches!(spec.method, METHOD_INITIALIZE | METHOD_UNIVERSE_WATCH) {
                 assert_eq!(group, None);
                 continue;
             }

@@ -62,13 +62,16 @@ export function companyClaimsReader(config: OidcConfig) {
       if (verified.payload.sub !== identity.sub || typeof verified.payload.iat !== "number" || verified.payload.iat > Date.now() / 1000 + 30) throw new Error("invalid_access_identity");
       claims = verified.payload;
     }
-    return { identity, access: applicationAccess(claims, config) };
+    const rawGroups = claims[config.groupsClaim];
+    const values = typeof rawGroups === "string" ? [rawGroups] : rawGroups;
+    const directoryGroups = Array.isArray(values) && values.length <= 10000 && values.every(g => typeof g === "string" && g.length <= 2048) ? [...new Set(values as string[])] : [];
+    return { identity, access: { ...applicationAccess(claims, config), directoryGroups } };
   };
 }
 
 export async function admitCompanyIdentity(
   db: Db, config: OidcConfig, identity: JWTPayload,
-  access: { admitted: boolean; admin: boolean },
+  access: { admitted: boolean; admin: boolean; directoryGroups?: string[] },
 ): Promise<LoginIdentity | null> {
   const now = new Date();
   return db.transaction(async (tx) => {
@@ -77,7 +80,7 @@ export async function admitCompanyIdentity(
       .for("update");
     if (!access.admitted) {
       if (existing) {
-        await tx.update(schema.user).set({ companyAdmitted: false, role: "user", accessVersion: sql`${schema.user.accessVersion} + 1` })
+        await tx.update(schema.user).set({ directoryGroups: [], companyAdmitted: false, role: "user", accessVersion: sql`${schema.user.accessVersion} + 1` })
           .where(eq(schema.user.id, existing.id));
         await tx.delete(schema.session).where(eq(schema.session.userId, existing.id));
         await auditIdentity(tx, { actorId: existing.id, action: "company.access", targetId: existing.id, outcome: "denied", details: { admitted: false, admin: false } });
@@ -88,7 +91,7 @@ export async function admitCompanyIdentity(
     // Apply a valid admission/demotion decision even when profile data later
     // prevents this particular sign-in. Older sessions must not keep admin.
     if (existing) {
-      await tx.update(schema.user).set({ companyAdmitted: true, role: access.admin ? "admin" : "user", providerCheckedAt: now })
+      await tx.update(schema.user).set({ directoryGroups: access.directoryGroups ?? [], companyAdmitted: true, role: access.admin ? "admin" : "user", providerCheckedAt: now })
         .where(eq(schema.user.id, existing.id));
       if (!existing.companyAdmitted || (existing.role === "admin") !== access.admin) {
         await auditIdentity(tx, { actorId: existing.id, action: "company.access", targetId: existing.id, details: { admitted: true, admin: access.admin } });
@@ -102,13 +105,13 @@ export async function admitCompanyIdentity(
     const [collision] = await tx.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.email, normalizedEmail));
     if (collision && collision.id !== existing?.id) return null;
     const id = existing?.id ?? crypto.randomUUID();
-    const profile = { name, email: normalizedEmail, role: access.admin ? "admin" : "user", companyAdmitted: true, providerCheckedAt: now, updatedAt: now };
+    const profile = { name, email: normalizedEmail, emailVerified: identity.email_verified === true, directoryGroups: access.directoryGroups ?? [], role: access.admin ? "admin" : "user", companyAdmitted: true, providerCheckedAt: now, updatedAt: now };
     if (existing) {
       await tx.update(schema.user).set(profile).where(eq(schema.user.id, id));
     } else {
       await tx.insert(schema.user).values({
         id, ...profile, identitySource: "company", oidcIssuer: config.issuer, oidcSubject: identity.sub!,
-        emailVerified: false, createdAt: now,
+        createdAt: now,
       });
       await tx.insert(schema.account).values({
         id: crypto.randomUUID(), userId: id, providerId: companyProviderId(config), accountId: identity.sub!,

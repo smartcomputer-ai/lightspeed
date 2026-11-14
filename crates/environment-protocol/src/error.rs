@@ -251,7 +251,9 @@ pub enum PermissionReason {
     /// The path, or a symlink it passes through, resolves outside the
     /// daemon's filesystem root.
     OutsideRoot,
-    /// The path names or contains the daemon's state directory.
+    /// The path names or contains a place the daemon keeps to itself: its
+    /// state directory, its registration key, or a kernel filesystem such
+    /// as `/proc` or `/sys`.
     DaemonState,
     /// The operating system refused access.
     FilePermission,

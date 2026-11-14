@@ -10,7 +10,7 @@ import { ApiError, type ModelDefaults } from "@/api";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, slug: "test", name: "Test" }, slug: "test", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, handle: "test", name: "Test" }, handle: "test", isLoading: false }) }));
 
 const legacy = {
   providerId: "anthropic", credentialId: "anthropic", usableForModels: false, providerKind: "modelApiKey",
@@ -46,6 +46,8 @@ beforeEach(() => {
     }
     if (path.endsWith("/secrets")) return { providers: [legacy], grants: [subscription] };
     if (path.endsWith("/integrations/subscriptions")) return [subscription];
+    // The endpoint header editor offers the universe's token credentials.
+    if (path.endsWith("/auth-grants")) return [];
     if (path.endsWith("/integrations/model-keys")) return { ...legacy, providerId: "openai", credentialId: "model:openai", usableForModels: true };
     if (path.endsWith("/models")) {
       if (discoveryFails) throw new Error("discovery unavailable");

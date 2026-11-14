@@ -1,3 +1,4 @@
+import { UniverseWatchProvider } from "@/lib/universe-watch";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { lazy, Suspense, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -106,59 +107,59 @@ export function App() {
       <Route element={
         <UserPreferencesProvider userId={user.id}>
           <PermissionIdentityProvider userId={user.id} platformAdmin={admin}>
-            <AppShell user={user} admin={admin} />
+            <UniverseWatchProvider><AppShell user={user} admin={admin} /></UniverseWatchProvider>
           </PermissionIdentityProvider>
         </UserPreferencesProvider>
       }>
         <Route index element={<HomeRedirect admin={admin} />} />
-        <Route path="u/:slug" element={<UniverseIndexRedirect />} />
-        <Route path="u/:slug/sessions" element={<SessionsPage admin={admin} />} />
+        <Route path="u/:handle" element={<UniverseIndexRedirect />} />
+        <Route path="u/:handle/sessions" element={<SessionsPage admin={admin} />} />
         <Route
-          path="u/:slug/sessions/:sessionId"
+          path="u/:handle/sessions/:sessionId"
           element={<SessionsPage admin={admin} />}
         />
-        <Route path="u/:slug/workspaces" element={<WorkspacesPage admin={admin} />} />
+        <Route path="u/:handle/workspaces" element={<WorkspacesPage admin={admin} />} />
         <Route
-          path="u/:slug/workspaces/:workspaceId"
+          path="u/:handle/workspaces/:workspaceId"
           element={<WorkspacesPage admin={admin} />}
         />
         <Route
-          path="u/:slug/workspaces/:workspaceId/files/*"
+          path="u/:handle/workspaces/:workspaceId/files/*"
           element={<WorkspacesPage admin={admin} />}
         />
-        <Route path="u/:slug/bots" element={<FeatureGate feature="bots"><BotsPage admin={admin} /></FeatureGate>} />
-        <Route path="u/:slug/bots/:botId" element={<FeatureGate feature="bots"><BotsPage admin={admin} view="chat" /></FeatureGate>} />
+        <Route path="u/:handle/bots" element={<FeatureGate feature="bots"><BotsPage admin={admin} /></FeatureGate>} />
+        <Route path="u/:handle/bots/:botId" element={<FeatureGate feature="bots"><BotsPage admin={admin} view="chat" /></FeatureGate>} />
         <Route
-          path="u/:slug/bots/:botId/chat/:sessionId"
+          path="u/:handle/bots/:botId/chat/:sessionId"
           element={<FeatureGate feature="bots"><BotsPage admin={admin} view="chat" /></FeatureGate>}
         />
         <Route
-          path="u/:slug/bots/:botId/activity"
+          path="u/:handle/bots/:botId/activity"
           element={<FeatureGate feature="bots"><BotsPage admin={admin} view="activity" /></FeatureGate>}
         />
-        <Route path="u/:slug/blobs/:digest" element={<BlobPage admin={admin} />} />
-        <Route path="u/:slug/profiles" element={<ProfilesPage admin={admin} />} />
+        <Route path="u/:handle/blobs/:digest" element={<BlobPage admin={admin} />} />
+        <Route path="u/:handle/profiles" element={<ProfilesPage admin={admin} />} />
         <Route
-          path="u/:slug/profiles/:profileId"
+          path="u/:handle/profiles/:profileId"
           element={<ProfilesPage admin={admin} />}
         />
-        <Route path="u/:slug/models" element={<ModelsPage admin={admin} />} />
-        <Route path="u/:slug/environments" element={<EnvironmentsPage admin={admin} />} />
-        <Route path="u/:slug/mcp-servers" element={<McpServersPage admin={admin} />} />
-        <Route path="u/:slug/members" element={<MembersPage admin={admin} />} />
-        <Route path="u/:slug/api-keys" element={<ApiKeysPage admin={admin} />} />
-        <Route path="u/:slug/credentials" element={<CredentialsPage admin={admin} />} />
-        <Route path="u/:slug/settings" element={<SettingsIndexRedirect />} />
+        <Route path="u/:handle/models" element={<ModelsPage admin={admin} />} />
+        <Route path="u/:handle/environments" element={<EnvironmentsPage admin={admin} />} />
+        <Route path="u/:handle/mcp-servers" element={<McpServersPage admin={admin} />} />
+        <Route path="u/:handle/members" element={<MembersPage admin={admin} />} />
+        <Route path="u/:handle/api-keys" element={<ApiKeysPage admin={admin} />} />
+        <Route path="u/:handle/credentials" element={<CredentialsPage admin={admin} />} />
+        <Route path="u/:handle/settings" element={<SettingsIndexRedirect />} />
         <Route
-          path="u/:slug/settings/general"
+          path="u/:handle/settings/general"
           element={<GeneralSettingsPage admin={admin} />}
         />
         <Route
-          path="u/:slug/settings/channels"
+          path="u/:handle/settings/channels"
           element={<FeatureGate feature="channels"><ChannelsPage admin={admin} /></FeatureGate>}
         />
         <Route
-          path="u/:slug/settings/templates"
+          path="u/:handle/settings/templates"
           element={<SetupsPage admin={admin} />}
         />
         {admin && (

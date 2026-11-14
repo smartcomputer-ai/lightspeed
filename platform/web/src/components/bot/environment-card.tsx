@@ -22,12 +22,12 @@ const GONE = new Set(["closing", "closed", "failed"]);
  * provider runs the idle policy its template sets.
  */
 export function BotEnvironmentCard({
-  slug,
+  handle,
   universeId,
   environmentId,
 }: {
-  /** Universe slug for page links. */
-  slug: string;
+  /** Universe handle for page links. */
+  handle: string;
   universeId: string;
   environmentId: string;
 }) {
@@ -65,7 +65,7 @@ export function BotEnvironmentCard({
             label="Environment"
             value={
               <Link
-                to={`/u/${slug}/environments`}
+                to={`/u/${handle}/environments`}
                 className="inline-flex items-center gap-1 font-mono text-xs hover:underline"
               >
                 {current.displayName ?? current.environmentId}

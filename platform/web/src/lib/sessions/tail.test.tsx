@@ -9,6 +9,8 @@ interface Request {
   url: URL;
   signal: AbortSignal;
   reply: (body: unknown, status?: number) => void;
+  /** An answer whose body is sent as it is, not encoded as JSON. */
+  replyText: (body: string | null, status: number) => void;
   reject: (error: Error) => void;
 }
 let requests: Request[];
@@ -49,7 +51,8 @@ beforeEach(() => {
     const signal = options.signal as AbortSignal;
     signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
     requests.push({ url: new URL(url, "http://localhost"), signal, reject,
-      reply: (body, status = 200) => resolve(new Response(JSON.stringify(body), { status })) });
+      reply: (body, status = 200) => resolve(new Response(JSON.stringify(body), { status })),
+      replyText: (body, status) => resolve(new Response(body, { status })) });
   })));
   container = document.createElement("div");
   root = createRoot(container);
@@ -186,6 +189,44 @@ describe("recent transcript and live history", () => {
     expect(tail.error).toContain("401");
     expect(tail.errorIsTransient).toBe(false);
     expect(requests).toHaveLength(2);
+  });
+
+  it("shows the status and text of a failed answer that is not JSON", async () => {
+    vi.useFakeTimers();
+    await act(async () => root.render(<Harness />));
+    await act(async () => requests[0]!.replyText("upstream request timeout\n", 504));
+    expect(tail.error).toBe("Reading session history failed (504): upstream request timeout");
+    expect(tail.errorIsTransient).toBe(true);
+    await act(async () => vi.advanceTimersByTime(3000));
+    await reply(1, history([1], 1));
+    expect(tail.error).toBeNull();
+    expect(tail.phase).toBe("live");
+  });
+
+  it("keeps the short message for a failed answer with a JSON or an empty body", async () => {
+    vi.useFakeTimers();
+    await act(async () => root.render(<Harness />));
+    await reply(0, { error: "forbidden" }, 403);
+    expect(tail.error).toBe("Reading session history failed (403)");
+    await act(async () => vi.advanceTimersByTime(3000));
+    await act(async () => requests[1]!.replyText(null, 502));
+    expect(tail.error).toBe("Reading session history failed (502)");
+    expect(tail.errorIsTransient).toBe(true);
+  });
+
+  it("reports a successful answer that is not a page instead of failing to parse it", async () => {
+    vi.useFakeTimers();
+    await act(async () => root.render(<Harness />));
+    await act(async () => requests[0]!.replyText("<!doctype html>\n<title>Sign in</title>", 200));
+    expect(tail.phase).toBe("loading");
+    expect(tail.error).toBe("Reading session history failed (200): not JSON: <!doctype html> <title>Sign in</title>");
+    expect(tail.errorIsTransient).toBe(false);
+    await act(async () => vi.advanceTimersByTime(3000));
+    await act(async () => requests[1]!.replyText("", 200));
+    expect(tail.error).toBe("Reading session history failed (200): empty response");
+    expect(tail.errorIsTransient).toBe(false);
+    await act(async () => vi.advanceTimersByTime(3000));
+    expect(requests).toHaveLength(3);
   });
 
   it("aborts a reconnect and clears its deadline when navigating away", async () => {

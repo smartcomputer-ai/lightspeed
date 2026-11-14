@@ -31,19 +31,19 @@ import {
   UniverseNotFound,
 } from "@/components/page";
 import { Switch } from "@/components/ui/switch";
-import { universeSlugSchema, FEATURES, FEATURE_KEYS, type FeatureKey } from "@lightspeed-ai/platform-shared";
+import { universeHandleSchema, UNIVERSE_HANDLE_MAX_LENGTH, FEATURES, FEATURE_KEYS, type FeatureKey } from "@lightspeed-ai/platform-shared";
 import { useActiveUniverse } from "@/lib/universes";
 import { UniverseAppearanceCard } from "@/components/universe-appearance-card";
 
 export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
   if (!universe || !permissions.can("manageAccess")) {
-    return <UniverseNotFound slug={slug} />;
+    return <UniverseNotFound handle={handle} />;
   }
 
   return (
@@ -51,7 +51,7 @@ export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
       <PageHeader title="General" description="Universe name, features, appearance, identifiers, and lifecycle." />
       <div className="grid gap-6">
         <RenameCard universe={universe} />
-        <SlugCard key={`${universe.id}/${universe.slug}`} universe={universe} />
+        <HandleCard key={`${universe.id}/${universe.handle}`} universe={universe} />
         <FeaturesCard universe={universe} />
         <UniverseAppearanceCard key={`${universe.id}/${universe.icon}/${universe.iconColor}`} universe={universe} />
         <IdentifiersCard universe={universe} />
@@ -61,8 +61,9 @@ export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
   );
 }
 
-/// What this universe shows. A switched-off feature leaves the app, not the
-/// runtime: what already runs keeps running.
+/// What this universe offers its members. A switched-off feature is hidden
+/// and its requests are refused; the runtime is not told, so what already
+/// runs keeps running.
 function FeaturesCard({ universe }: { universe: Universe }) {
   const queryClient = useQueryClient();
   const change = useMutation({
@@ -75,8 +76,9 @@ function FeaturesCard({ universe }: { universe: Universe }) {
       <CardHeader>
         <CardTitle>Features</CardTitle>
         <CardDescription>
-          Turning a feature off hides it for everyone in this universe. What already runs keeps
-          running: a bot keeps answering on its channels.
+          A feature that is off is hidden and unavailable to everyone in this universe. Turning one
+          off does not stop what already runs: a bot keeps answering on its channels until it is
+          paused or closed.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -108,34 +110,37 @@ function FeaturesCard({ universe }: { universe: Universe }) {
   );
 }
 
-export function SlugCard({ universe }: { universe: Universe }) {
+export function HandleCard({ universe }: { universe: Universe }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [slug, setSlug] = useState(universe.slug);
+  const [handle, setHandle] = useState(universe.handle);
   const rename = useMutation({
-    mutationFn: () => api<Universe>("PUT", `/api/v1/universes/${universe.id}/slug`, { slug: slug.trim() }),
+    mutationFn: () => api<Universe>("PUT", `/api/v1/universes/${universe.id}/handle`, { handle: handle.trim() }),
     onSuccess: (updated) => {
       queryClient.setQueryData<Universe[]>(["universes"], rows => rows?.map(row => row.id === updated.id ? updated : row));
-      setSlug(updated.slug);
-      navigate(`/u/${updated.slug}/settings/general`, { replace: true });
+      setHandle(updated.handle);
+      navigate(`/u/${updated.handle}/settings/general`, { replace: true });
       void queryClient.invalidateQueries({ queryKey: ["universes"] });
     },
   });
-  const valid = universeSlugSchema.safeParse(slug.trim()).success;
+  const valid = universeHandleSchema.safeParse(handle.trim()).success;
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Slug</CardTitle>
-        <CardDescription>Changes the runtime slug and this universe's URL. Existing links may stop working.</CardDescription>
+        <CardTitle>Handle</CardTitle>
+        <CardDescription>
+          The universe's unique name in this deployment, used in its URL and by API clients that address it by handle.
+          Lowercase letters, digits and hyphens. After a rename, links and clients using the previous handle stop reaching it.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <form className="flex max-w-md items-end gap-3" onSubmit={event => { event.preventDefault(); if (valid) rename.mutate(); }}>
           <Field className="flex-1">
-            <FieldLabel htmlFor="universe-slug">Runtime slug</FieldLabel>
-            <Input id="universe-slug" value={slug} onChange={event => setSlug(event.target.value)} required maxLength={128} />
+            <FieldLabel htmlFor="universe-handle">Handle</FieldLabel>
+            <Input id="universe-handle" value={handle} onChange={event => setHandle(event.target.value)} required maxLength={UNIVERSE_HANDLE_MAX_LENGTH} />
           </Field>
-          <Button type="submit" disabled={rename.isPending || !valid || slug.trim() === universe.slug}>
-            {rename.isPending ? "Saving…" : "Save slug"}
+          <Button type="submit" disabled={rename.isPending || !valid || handle.trim() === universe.handle}>
+            {rename.isPending ? "Saving…" : "Save handle"}
           </Button>
         </form>
         {rename.error && <p role="alert" className="mt-2 text-sm text-destructive">{rename.error.message}</p>}
@@ -147,6 +152,7 @@ export function SlugCard({ universe }: { universe: Universe }) {
 function RenameCard({ universe }: { universe: Universe }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(universe.name);
+  const managed = universe.runtimeConfiguration?.displayName !== undefined;
 
   const rename = useMutation({
     mutationFn: () =>
@@ -156,7 +162,7 @@ function RenameCard({ universe }: { universe: Universe }) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    rename.mutate();
+    if (!managed) rename.mutate();
   };
 
   return (
@@ -164,7 +170,7 @@ function RenameCard({ universe }: { universe: Universe }) {
       <CardHeader>
         <CardTitle>Name</CardTitle>
         <CardDescription>
-          The display name shown in the switcher. Changing it does not change the URL slug.
+          {managed ? "Managed by the universe configuration. Update displayName in its document to rename it." : "The display name shown in the switcher. Changing it does not change the handle."}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -173,6 +179,7 @@ function RenameCard({ universe }: { universe: Universe }) {
             <FieldLabel htmlFor="universe-name">Display name</FieldLabel>
             <Input
               id="universe-name"
+              disabled={managed}
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
@@ -180,7 +187,7 @@ function RenameCard({ universe }: { universe: Universe }) {
           </Field>
           <Button
             type="submit"
-            disabled={rename.isPending || name.trim() === universe.name || !name.trim()}
+            disabled={managed || rename.isPending || name.trim() === universe.name || !name.trim()}
           >
             {rename.isPending ? "Saving…" : "Save"}
           </Button>
@@ -204,9 +211,9 @@ function IdentifiersCard({ universe }: { universe: Universe }) {
       </CardHeader>
       <CardContent className="grid gap-3 text-sm">
         <div className="grid gap-1">
-          <span className="text-muted-foreground">URL slug</span>
+          <span className="text-muted-foreground">Handle</span>
           <code className="w-fit rounded-md bg-muted px-2 py-0.5 font-mono text-xs">
-            {universe.slug}
+            {universe.handle}
           </code>
         </div>
         <div className="grid gap-1">

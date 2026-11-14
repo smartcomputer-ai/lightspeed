@@ -1,3 +1,4 @@
+import { useWatchConnected } from "@/lib/universe-watch";
 import { DeleteSessionDialog } from "@/components/session/delete-session-dialog";
 import { useSessionCompaction } from "@/lib/sessions/compaction";
 import { useDictationAvailability } from "@/lib/use-dictation";
@@ -5,7 +6,7 @@ import { ShareSessionDialog, useCanShareSession, useSessionOwner } from "@/compo
 import { ActivityDot } from "@/components/activity-dot";
 import { SessionActionsMenu } from "@/components/session/session-actions-menu";
 import { requestRowMenu } from "@/lib/row-menu";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type FormEvent } from "react";
 import {
   type InfiniteData,
   useInfiniteQuery,
@@ -99,13 +100,12 @@ import {
   QueuedRunsBar,
   SystemChips,
   TranscriptEntryView,
-  UserBand,
   type QueuedRunItem,
 } from "@/components/session/transcript-view";
 import { RunSectionView } from "@/components/session/run-section";
-import { TranscriptEntrance, TranscriptMotionProvider } from "@/components/session/transcript-motion";
+import { TranscriptMotionProvider } from "@/components/session/transcript-motion";
 import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/tool-trace";
-import { sectionsByRun, withPendingRunInputs } from "@/lib/sessions/run-sections";
+import { projectSubmissions, submissionReducer, type LocalSubmission } from "@/lib/sessions/submissions";
 import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
 import { ReadError } from "@/components/read-error";
@@ -180,7 +180,7 @@ const EXECUTION_FAILURE_TEXT: Record<NonNullable<SessionView["executionFailure"]
 };
 
 export function SessionsPage({ admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const { sessionId } = useParams<{ sessionId: string }>();
   const location = useLocation();
   const canCreate = useActionPermissions(universe?.id).can("createSession");
@@ -192,7 +192,7 @@ export function SessionsPage({ admin }: { admin: boolean }) {
   if (!universe || !universe.role) {
     return (
       <div className="p-6">
-        <UniverseNotFound slug={slug} />
+        <UniverseNotFound handle={handle} />
       </div>
     );
   }
@@ -200,18 +200,18 @@ export function SessionsPage({ admin }: { admin: boolean }) {
   return (
     <div className="flex min-h-0 min-w-0 max-w-full flex-1">
       <ListPane detailOpen={Boolean(sessionId)}>
-        <SessionList key={universe.id} universeId={universe.id} slug={slug!} activeId={sessionId} />
+        <SessionList key={universe.id} universeId={universe.id} handle={handle!} activeId={sessionId} />
       </ListPane>
       <section className={cn("min-w-0 flex-1 flex-col", sessionId ? "flex" : "hidden md:flex")}>
-        {!sessionId && <ProviderReadinessBanner universeId={universe.id} slug={slug!} />}
+        {!sessionId && <ProviderReadinessBanner universeId={universe.id} handle={handle!} />}
         {sessionId ? (
           <SessionDetail
             key={sessionDraftKey(universe.id, sessionId)}
             universeId={universe.id}
-            slug={slug!}
+            handle={handle!}
             sessionId={sessionId}
-            backTo={`/u/${slug}/sessions${location.search}`}
-            sessionHref={(target) => `/u/${slug}/sessions/${target}${location.search}`}
+            backTo={`/u/${handle}/sessions${location.search}`}
+            sessionHref={(target) => `/u/${handle}/sessions/${target}${location.search}`}
           />
         ) : (
           <DetailPrompt
@@ -228,11 +228,11 @@ export function SessionsPage({ admin }: { admin: boolean }) {
 
 function SessionList({
   universeId,
-  slug,
+  handle,
   activeId,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   activeId: string | undefined;
 }) {
   const queryClient = useQueryClient();
@@ -243,6 +243,7 @@ function SessionList({
   const filterEntries = Object.entries(metadataFilter);
   const [preferences, setPreferences] = useState(() => readSessionListPreferences(universeId));
   const { showClosed, showSubagents, showControlledSessions, showSessionIds, metadataKeys } = preferences;
+  const watchConnected = useWatchConnected(universeId);
   // One read for the whole list: each row's environment by name and status.
   const environments = useQuery({ ...openEnvironmentsQuery(universeId), refetchInterval: 30_000 });
   const listQuery = new URLSearchParams({ limit: "50" });
@@ -265,7 +266,7 @@ function SessionList({
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     // Sessions can be created by runtime workflows (not only by this browser),
     // so frontend mutation invalidation alone cannot keep this list current.
-    refetchInterval: SESSION_LIST_REFRESH_MS,
+    refetchInterval: watchConnected ? 60_000 : SESSION_LIST_REFRESH_MS,
     refetchIntervalInBackground: false,
   });
   const [createOpen, setCreateOpen] = useCreateParam("session");
@@ -690,7 +691,7 @@ function SessionList({
             <SessionTreeItem
               key={node.session.id}
               node={node}
-              slug={slug}
+              handle={handle}
               activeId={activeId}
               depth={0}
               selecting={selecting}
@@ -720,7 +721,7 @@ function SessionList({
       )}
       {canCreate && (createOpen || createShown) && <NewSessionDialog
         universeId={universeId}
-        slug={slug}
+        handle={handle}
         open={createOpen}
         onOpenChange={setCreateOpen}
         onClosed={() => setCreateShown(false)}
@@ -824,7 +825,7 @@ interface SessionRowControls {
 
 function SessionTreeItem({
   node,
-  slug,
+  handle,
   activeId,
   depth,
   last = true,
@@ -832,7 +833,7 @@ function SessionTreeItem({
   ...controls
 }: {
   node: SessionNode;
-  slug: string;
+  handle: string;
   activeId: string | undefined;
   depth: number;
   /// The last of its siblings.
@@ -846,7 +847,7 @@ function SessionTreeItem({
     <>
       <SessionListItem
         session={node.session}
-        slug={slug}
+        handle={handle}
         active={node.session.id === activeId}
         tree={{ depth, last, lines, children: node.children.length > 0 }}
         subAgentCount={node.children.length}
@@ -856,7 +857,7 @@ function SessionTreeItem({
         <SessionTreeItem
           key={child.session.id}
           node={child}
-          slug={slug}
+          handle={handle}
           activeId={activeId}
           depth={depth + 1}
           last={index === node.children.length - 1}
@@ -870,7 +871,7 @@ function SessionTreeItem({
 
 function SessionListItem({
   session,
-  slug,
+  handle,
   active,
   tree,
   subAgentCount = 0,
@@ -884,7 +885,7 @@ function SessionListItem({
   environments,
 }: {
   session: SessionSummary;
-  slug: string;
+  handle: string;
   active: boolean;
   /// Its place in the tree of sessions and their sub-agents.
   tree: ListRowTree;
@@ -900,7 +901,7 @@ function SessionListItem({
     return value === undefined ? [] : [{ key, value }];
   });
   const navigate = useNavigate();
-  const to = `/u/${slug}/sessions/${session.id}${search ? `?${search}` : ""}`;
+  const to = `/u/${handle}/sessions/${session.id}${search ? `?${search}` : ""}`;
   return (
     <ListRow
       to={to}
@@ -948,14 +949,14 @@ function SessionListItem({
 
 function NewSessionDialog({
   universeId,
-  slug,
+  handle,
   open,
   onOpenChange,
   onClosed,
   search,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Its close has finished (animations included). */
@@ -1004,7 +1005,7 @@ function NewSessionDialog({
         </span>
         {modelPending ? "Loading…" : effectiveModel.model ? modelLabel(effectiveModel.model) : defaults.error ? "Could not load default" : "Not selected"}
       </p>
-      <ProviderReadinessBanner universeId={universeId} slug={slug} model={effectiveModel.model ?? (defaults.data ? null : undefined)} enabled={open && !modelPending} className="rounded-lg border" />
+      <ProviderReadinessBanner universeId={universeId} handle={handle} model={effectiveModel.model ?? (defaults.data ? null : undefined)} enabled={open && !modelPending} className="rounded-lg border" />
     </div>
   );
   // Creating sends the dialog off to warp (see launch): it closes once the
@@ -1035,7 +1036,7 @@ function NewSessionDialog({
       // The new session opens behind the warp; the dialog (open while the
       // address asks for it) stays until the warp has built up, then closes,
       // which fades it all out over the session.
-      const path = `/u/${slug}/sessions/${target}`;
+      const path = `/u/${handle}/sessions/${target}`;
       const nextSearch = new URLSearchParams(search);
       navigate(`${path}?${nextSearch}`);
       nextSearch.delete("new");
@@ -1361,16 +1362,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+/** Key by sessionDraftKey: local submissions and render identities belong to this mount. */
 export function SessionDetail({
   universeId,
-  slug,
+  handle,
   sessionId,
-  backTo = `/u/${slug}/sessions`,
+  backTo = `/u/${handle}/sessions`,
   embedded = false,
   sessionHref,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   sessionId: string;
   backTo?: string;
   /**
@@ -1402,15 +1404,13 @@ export function SessionDetail({
   const compaction = useSessionCompaction(universeId, sessionId, session.data);
   const owner = useSessionOwner(universeId, session.data?.access);
   const canShare = useCanShareSession(universeId, session.data?.access, Boolean(session.data?.origin));
-  const [pending, setPending] = useState<PendingMessage[]>([]);
-  // Retain only this view's local submission identities after pending cleanup.
-  // Historical acknowledgements must never rekey a backend-loaded run. Scope
-  // these records because run ids repeat across sessions.
-  const [localSubmissions, setLocalSubmissions] = useState<Map<string, Map<string, string | null>>>(() => new Map());
+  const [submissions, updateSubmission] = useReducer(submissionReducer, []);
   const submissionScope = JSON.stringify([universeId, sessionId]);
-  const currentScope = useRef(submissionScope);
-  currentScope.current = submissionScope;
-  const [pendingSteers, setPendingSteers] = useState<PendingSteer[]>([]);
+  const currentScope = useRef<string | null>(submissionScope);
+  useEffect(() => {
+    currentScope.current = submissionScope;
+    return () => { currentScope.current = null; };
+  }, [submissionScope]);
   const [notices, setNotices] = useState<{ id: string; text: string }[]>([]);
   const [stoppingRunId, setStoppingRunId] = useState<string | null>(null);
   const [cancellingQueued, setCancellingQueued] = useState<Set<string>>(() => new Set());
@@ -1463,7 +1463,6 @@ export function SessionDetail({
   const activeRun = tail.transcript.activeRun;
   const queuedRuns = tail.transcript.queuedRuns;
   const runRevision = tail.transcript.runRevision;
-  const sections = useMemo(() => sectionsByRun(entries, activeRun), [entries, activeRun]);
 
   // The session view is authoritative for run state; fold it into the tail
   // whenever it arrives (forward moves only), and refresh it on every run
@@ -1486,88 +1485,13 @@ export function SessionDetail({
     }
   }, [runRevision, refetchSession]);
 
-  // An optimistic send learns its run id from whichever arrives first: the
-  // POST response, or the tail's `runAccepted` carrying our submission id.
-  const runBySubmission = tail.transcript.runBySubmission;
-  useEffect(() => {
-    setPending((prev) => {
-      let changed = false;
-      const next = prev.map((message) => {
-        if (message.runId) {
-          return message;
-        }
-        const runId = runBySubmission.get(message.id);
-        if (!runId) {
-          return message;
-        }
-        changed = true;
-        return { ...message, runId };
-      });
-      return changed ? next : prev;
-    });
-  }, [runRevision, runBySubmission]);
+  const submissionView = useMemo(
+    () => projectSubmissions(tail.transcript, submissions),
+    [tail.transcript, submissions],
+  );
+  const { sections: displaySections, inlinePending: pendingInTranscript, pendingRuns: resolvedPending } = submissionView;
 
-  // Reconcile optimistic echoes against the engine's own entries. A sent
-  // message is confirmed by the run input entry carrying its run id (the
-  // id can arrive after the entry, so this re-runs when pending changes
-  // too); a steer by a steering entry with the same text on its run.
-  const pendingRunIds = pending.map((message) => message.runId ?? "").join("|");
   useEffect(() => {
-    setPending((prev) => {
-      if (prev.length === 0) {
-        return prev;
-      }
-      const confirmedRuns = new Set(
-        entries
-          .filter((entry) => entry.kind === "message" && entry.role === "user" && !entry.steering)
-          .map((entry) => (entry as { runId?: string }).runId)
-          .filter((runId): runId is string => Boolean(runId)),
-      );
-      const next = prev.filter((message) => !(message.runId && confirmedRuns.has(message.runId)));
-      return next.length === prev.length ? prev : next;
-    });
-    setPendingSteers((prev) => {
-      if (prev.length === 0) {
-        return prev;
-      }
-      const confirmed = new Set(
-        entries
-          .filter((entry) => entry.kind === "message" && entry.role === "user" && entry.steering)
-          .map((entry) => `${(entry as { runId?: string }).runId ?? ""}\u0000${(entry as { text: string }).text.trim()}`),
-      );
-      const next = prev.filter((steer) => !confirmed.has(`${steer.runId}\u0000${steer.text.trim()}`));
-      return next.length === prev.length ? prev : next;
-    });
-  }, [entries, pendingRunIds]);
-
-  // A pending message whose run the tail now knows is no longer optimistic
-  // for status purposes; drop the ones whose run ended without ever
-  // materializing input (cancelled while queued).
-  useEffect(() => {
-    setPending((prev) => {
-      const next = prev.filter(
-        (message) => !(message.runId && tail.transcript.runPhases.get(message.runId) === "terminal"),
-      );
-      return next.length === prev.length ? prev : next;
-    });
-    setPendingSteers((prev) => {
-      const dropped = prev.filter(
-        (steer) => tail.transcript.runPhases.get(steer.runId) === "terminal",
-      );
-      if (dropped.length === 0) {
-        return prev;
-      }
-      // A steer that never materialized before its run ended was not
-      // seen by the model; say so instead of letting it vanish.
-      setNotices((current) => [
-        ...current,
-        ...dropped.map((steer) => ({
-          id: steer.id,
-          text: `steering not delivered — the run ended before its next turn: “${steer.text}”`,
-        })),
-      ]);
-      return prev.filter((steer) => !dropped.includes(steer));
-    });
     if (stoppingRunId && tail.transcript.runPhases.get(stoppingRunId) === "terminal") {
       setStoppingRunId(null);
     }
@@ -1582,46 +1506,6 @@ export function SessionDetail({
     });
   }, [runRevision, tail.transcript.runPhases, stoppingRunId]);
 
-  // Resolve run ids synchronously for rendering (the effect above persists
-  // them a render later); otherwise the optimistic row and the tail's row
-  // coexist for one frame under different keys and the list flickers.
-  const resolvedPending: PendingMessage[] = pending.map((message) =>
-    message.runId ? message : { ...message, runId: runBySubmission.get(message.id) ?? null },
-  );
-  const queuedIds = new Set(queuedRuns.map((run) => run.runId));
-  // A message sent while a run was already live will be queued by the
-  // engine; show it in the queue from the start rather than as a
-  // transcript echo that jumps into the queue a moment later.
-  const isQueuedPending = (message: PendingMessage) =>
-    message.status === "queued" ||
-    (message.status === "sending" && message.expectQueued) ||
-    (message.runId !== null && queuedIds.has(message.runId));
-  // Hide an echo the same frame its engine entry shows (the effect above
-  // removes it from state a render later).
-  const confirmedInputRuns = new Set(
-    entries
-      .filter((entry) => entry.kind === "message" && entry.role === "user" && !entry.steering)
-      .map((entry) => (entry as { runId?: string }).runId)
-      .filter((runId): runId is string => Boolean(runId)),
-  );
-  const pendingInTranscript = resolvedPending.filter(
-    (message) =>
-      !isQueuedPending(message) && !(message.runId && confirmedInputRuns.has(message.runId)),
-  );
-  const submissionKeys = new Map<string, string>();
-  for (const [submissionId, acknowledgedRunId] of localSubmissions.get(submissionScope) ?? []) {
-    const runId = acknowledgedRunId ?? runBySubmission.get(submissionId);
-    if (runId) submissionKeys.set(runId, submissionId);
-  }
-  const displaySections = withPendingRunInputs(sections, pendingInTranscript, submissionKeys);
-  const confirmedSteers = new Set(
-    entries
-      .filter((entry) => entry.kind === "message" && entry.role === "user" && entry.steering)
-      .map((entry) => `${(entry as { runId?: string }).runId ?? ""}\u0000${(entry as { text: string }).text.trim()}`),
-  );
-  const visiblePendingSteers = pendingSteers.filter(
-    (steer) => !confirmedSteers.has(`${steer.runId}\u0000${steer.text.trim()}`),
-  );
   // The run to steer or stop: the tail's active run, or — before the tail
   // has reported it — the run the engine just accepted as running.
   const steerTargetRunId =
@@ -1629,15 +1513,16 @@ export function SessionDetail({
     resolvedPending.find(
       (message) =>
         message.runId &&
-        (message.status === "running" ||
-          tail.transcript.runPhases.get(message.runId) === "running"),
+        (tail.transcript.runPhases.has(message.runId)
+          ? tail.transcript.runPhases.get(message.runId) === "running"
+          : message.status === "running" || message.status === "parked"),
     )?.runId ??
     null;
-  const runActive = runInProgress(tail.transcript) || pending.length > 0;
+  const runActive = runInProgress(tail.transcript) || resolvedPending.length > 0;
   const stopping = stoppingRunId !== null && steerTargetRunId === stoppingRunId;
   const canSteer = canControl && steerTargetRunId !== null && !(activeRun?.cancelling ?? false) && !stopping;
   const queuedItems: QueuedRunItem[] = [
-    ...queuedRuns.map((run) => {
+    ...submissionView.queuedRuns.map((run) => {
       const sent = resolvedPending.find((message) => message.runId === run.runId);
       return {
         key: sent?.id ?? run.runId,
@@ -1650,8 +1535,8 @@ export function SessionDetail({
     ...resolvedPending
       .filter(
         (message) =>
-          isQueuedPending(message) &&
-          !(message.runId && tail.transcript.runPhases.has(message.runId)),
+          submissionView.queued.has(message.id) &&
+          !submissionView.queuedRuns.some(run => run.runId === message.runId),
       )
       .map((message) => ({
         key: message.id,
@@ -1667,17 +1552,17 @@ export function SessionDetail({
   const managerLabel = controlledSessionOwnerLabel(integration);
   const owningBotId = controlledSessionBotId(integration, session.data?.metadata);
   // With bots switched off, a bot's session reads as controlled, with no way
-  // into the hidden bot page.
+  // into the hidden bot page and no roster to name its peers.
   const botsOn = useFeature("bots");
   const owningBotHref = owningBotId && botsOn
-    ? `/u/${slug}/bots/${encodeURIComponent(owningBotId)}/chat/${encodeURIComponent(sessionId)}`
+    ? `/u/${handle}/bots/${encodeURIComponent(owningBotId)}/chat/${encodeURIComponent(sessionId)}`
     : null;
   // Emit rows and event bands name peer bots; only a bot's own sessions
   // carry that traffic, and only bot managers may list the roster.
   const botDirectory = useQuery({
     queryKey: ["bots", universeId],
     queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
-    enabled: owningBotId !== null,
+    enabled: owningBotId !== null && botsOn,
     staleTime: 60_000,
     retry: false,
   });
@@ -1694,9 +1579,9 @@ export function SessionDetail({
       ? { bot: true, botId: owningBotId ?? undefined, label: owningBot ? botLabel(owningBot) : owningBotId ?? "a bot", href: owningBotHref }
       : { bot: false, label: managerLabel },
     lineage,
-    lineageHref: sessionHref ?? ((target: string) => `/u/${slug}/sessions/${target}`),
+    lineageHref: sessionHref ?? ((target: string) => `/u/${handle}/sessions/${target}`),
     resources: resourcesShown
-      ? sessionResourceItems({ resources, slug, onConfigure: !embedded && canConfigure ? () => setSettingsOpen(true) : undefined })
+      ? sessionResourceItems({ resources, handle, onConfigure: !embedded && canConfigure ? () => setSettingsOpen(true) : undefined })
       : [],
   }) : [];
   const showStrip = SHOW_META_STRIP && meta.length > 0 && (resourcesShown || hasLineage(lineage));
@@ -1714,13 +1599,13 @@ export function SessionDetail({
   const transcriptFiles = useMemo(() => filesByHandle(entries), [entries]);
   const transcriptLinks = useMemo<TranscriptLinks>(() => {
     const names = new Map((botRoster ?? []).map((bot) => [bot.botId, botLabel(bot)]));
-    const href = sessionHref ?? ((target: string) => `/u/${slug}/sessions/${target}`);
+    const href = sessionHref ?? ((target: string) => `/u/${handle}/sessions/${target}`);
     return {
       botName: (botId) => names.get(botId),
       sessionHref: href,
       // A browser address: these links open in a new tab, outside the router.
       blobHref: (blobRef, hints) => {
-        const path = blobHref(slug, blobRef, { ...hints, session: sessionId });
+        const path = blobHref(handle, blobRef, { ...hints, session: sessionId });
         return path && appHref(path);
       },
       navigate: (target) => void navigate(target),
@@ -1732,7 +1617,7 @@ export function SessionDetail({
         load: (handle, signal) => findFileReference(handle, (before) => fetchHistory(universeId, sessionId, before, signal)),
       },
     };
-  }, [botRoster, sessionHref, slug, sessionId, navigate, loadMedia, transcriptMedia, transcriptFiles, universeId]);
+  }, [botRoster, sessionHref, handle, sessionId, navigate, loadMedia, transcriptMedia, transcriptFiles, universeId]);
   // Operator override: the engine happily admits direct runs on a controlled
   // session (they queue like any client run), so the gate here is policy,
   // not capability. Off by default because direct input bypasses the
@@ -1765,14 +1650,9 @@ export function SessionDetail({
     const media = echoMedia(message.attachments);
     // The submission id doubles as the engine idempotency key: a retried
     // POST returns the original run instead of starting a second one.
-    const expectQueued = runActive;
-    setLocalSubmissions((previous) => new Map(previous).set(
-      submissionScope, new Map(previous.get(submissionScope)).set(submissionId, null),
-    ));
-    if (currentScope.current === submissionScope) setPending((prev) => [
-      ...prev,
-      { id: submissionId, text, media, runId: null, status: "sending", expectQueued },
-    ]);
+    updateSubmission({ type: "send", submission: {
+      id: submissionId, kind: "run", text, media, runId: null, queued: runActive,
+    } });
     try {
       const accepted = await postUntilAccepted(
         () => api<SessionRunAccepted>(
@@ -1789,25 +1669,13 @@ export function SessionDetail({
       );
       if (!accepted) return true;
       if (currentScope.current === submissionScope) setFollowRequest((request) => request + 1);
-      setLocalSubmissions((previous) => new Map(previous).set(
-        submissionScope, new Map(previous.get(submissionScope)).set(submissionId, accepted.run.id),
-      ));
-      if (currentScope.current === submissionScope) {
-        // An idempotent retry can return a run that already finished.
-        const terminal = ["completed", "cancelled", "failed"].includes(accepted.run.status);
-        setPending((prev) => terminal
-          ? prev.filter((message) => message.id !== submissionId)
-          : prev.map((message) => message.id === submissionId ? {
-            ...message,
-            runId: message.runId ?? accepted.run.id,
-            status: accepted.run.status === "queued" ? "queued" : "running",
-          } : message));
-        if (terminal) void session.refetch();
-      }
+      updateSubmission({ type: "accepted", id: submissionId,
+        runId: accepted.run.id, status: accepted.run.status });
+      if (["completed", "cancelled", "failed"].includes(accepted.run.status)) void session.refetch();
       return true;
     } catch (error) {
       if (currentScope.current === submissionScope) {
-        setPending((prev) => prev.filter((message) => message.id !== submissionId));
+        updateSubmission({ type: "withdrawn", id: submissionId });
         setSendError(error instanceof Error ? error.message : String(error));
       }
       return false;
@@ -1825,10 +1693,12 @@ export function SessionDetail({
     }
     const id = crypto.randomUUID();
     if (currentScope.current === submissionScope) {
-      setPendingSteers((prev) => [...prev, { id, runId, text, media: echoMedia(attachments) }]);
+      updateSubmission({ type: "send", submission: {
+        id, kind: "steering", runId, text, media: echoMedia(attachments), queued: false,
+      } });
     }
     try {
-      await postUntilAccepted(
+      const accepted = await postUntilAccepted(
         () => api<SessionRunSteered>(
           "POST",
           `/api/v1/universes/${universeId}/sessions/${sessionId}/runs/${runId}/steer`,
@@ -1840,10 +1710,12 @@ export function SessionDetail({
         ),
         () => currentScope.current === submissionScope,
       );
+      if (accepted) updateSubmission({ type: "accepted", id,
+        runId, steeringId: accepted.steeringId });
       if (currentScope.current === submissionScope) setFollowRequest((request) => request + 1);
       return { ok: true };
     } catch (error) {
-      setPendingSteers((prev) => prev.filter((steer) => steer.id !== id));
+      updateSubmission({ type: "withdrawn", id });
       return { ok: false, error };
     }
   };
@@ -1922,6 +1794,10 @@ export function SessionDetail({
       });
       return;
     }
+    if (response.run.status === "cancelled" && response.run.startedAtMs == null) {
+      const sent = resolvedPending.find(item => item.runId === runId);
+      if (sent) updateSubmission({ type: "withdrawn", id: sent.id });
+    }
     void session.refetch();
   };
 
@@ -1954,7 +1830,8 @@ export function SessionDetail({
         throw new Error("The queued message started before it could be converted. Steering was not sent.");
       }
       if (currentScope.current === submissionScope) {
-        setPending((prev) => prev.filter((pending) => (pending.runId ?? runBySubmission.get(pending.id)) !== runId));
+        const sent = resolvedPending.find(item => item.runId === runId);
+        if (sent) updateSubmission({ type: "withdrawn", id: sent.id });
         reconcileRuns([{ id: runId, status: "cancelled", acceptedAtMs: 0, source: { type: "input" } }]);
       }
       // Keep the original target even if the tail reports a different active run.
@@ -2118,7 +1995,7 @@ export function SessionDetail({
 
   return (
     <>
-      <ProviderReadinessBanner universeId={universeId} slug={slug} model={modelFromConfig(session.data?.config)} enabled={Boolean(session.data)} />
+      <ProviderReadinessBanner universeId={universeId} handle={handle} model={modelFromConfig(session.data?.config)} enabled={Boolean(session.data)} />
       {session.data?.executionFailure && (
         <div role="alert" className="flex items-center gap-3 border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">
           <span className="min-w-0 flex-1">
@@ -2256,7 +2133,7 @@ export function SessionDetail({
       )}
       <TranscriptLinksContext.Provider value={transcriptLinks}>
       <MessageScrollerProvider key={`${universeId}/${sessionId}`} autoScroll defaultScrollPosition="end">
-        <TranscriptMotionProvider sections={displaySections} pendingKeys={visiblePendingSteers.map((steer) => steer.id)} ready={tail.phase === "live"} historyRevision={tail.historyRevision}>
+        <TranscriptMotionProvider sections={displaySections} ready={tail.phase === "live"} historyRevision={tail.historyRevision}>
         <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport preserveScrollOnPrepend>
             <SessionHistoryLoader tail={tail} />
@@ -2292,12 +2169,7 @@ export function SessionDetail({
                   )}
                 </MessageScrollerItem>
               ))}
-              {visiblePendingSteers.map((steer) => (
-                <MessageScrollerItem key={steer.id} messageId={steer.id}>
-                  <TranscriptEntrance motionKey={steer.id}><UserBand text={steer.text} media={steer.media} steering /></TranscriptEntrance>
-                </MessageScrollerItem>
-              ))}
-              {notices.map((notice) => (
+              {[...notices, ...submissionView.notices].map((notice) => (
                 <MessageScrollerItem key={notice.id} messageId={notice.id}>
                   <TranscriptEntryView
                     entry={{ kind: "marker", key: notice.id, text: notice.text, tone: "muted" }}
@@ -2369,7 +2241,7 @@ export function SessionDetail({
         </div>
       ))}
       <SessionComposer
-        dictation={{ ...dictation, settingsHref: `/u/${slug}/models` }}
+        dictation={{ ...dictation, settingsHref: `/u/${handle}/models` }}
         key={sessionDraftKey(universeId, sessionId)}
         draftKey={sessionDraftKey(universeId, sessionId)}
         runActive={runActive}
@@ -2432,25 +2304,6 @@ export function SessionDetail({
   );
 }
 
-interface PendingMessage {
-  id: string;
-  text: string;
-  /// Attachments sent with the message, previewed from local files.
-  media?: TranscriptMedia[];
-  /// Engine run id once the POST returned; null while in flight.
-  runId: string | null;
-  status: "sending" | "running" | "queued";
-  /// Sent while a run was already live, so the engine will queue it.
-  expectQueued: boolean;
-}
-
-interface PendingSteer {
-  id: string;
-  runId: string;
-  text: string;
-  media?: TranscriptMedia[];
-}
-
 /// The attachment fields the message routes accept.
 function wireAttachment({ blobRef, mime, kind, name }: SentAttachment) {
   return { blobRef, mime, kind, name };
@@ -2481,7 +2334,7 @@ function attachmentSummary(media: TranscriptMedia[] | undefined): string {
 function queuedRunText(
   runId: string,
   runs: SessionRunView[] | undefined,
-  pending: PendingMessage[],
+  pending: LocalSubmission[],
 ): string {
   const run = runs?.find((candidate) => String(candidate.id) === runId);
   if (run?.source.type === "input") {

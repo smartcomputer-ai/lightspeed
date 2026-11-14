@@ -114,6 +114,150 @@ and earlier bot rows fail the new constraints at `migrate`. Moving to it takes a
 fresh runtime database and a new Temporal namespace. Every API enum and error kind
 is now camelCase, so clients and dashboards reading the old values need updating.
 
+A request an API key makes for itself is now attributed to the key's id and
+scope kind, no longer to the display prefix of its secret. `migrate` rewrites
+the stored attributions in the runtime database, including those inside session
+events, by looking up the key that holds each recorded prefix. A record whose
+key has had its secret replaced since cannot be matched and becomes an internal
+attribution that quotes the old prefix. Temporal histories are not rewritten: a
+session, or a transcription job, in which a key acted without asserting an
+actor does not replay, so treat the release as
+[breaking](#move-a-breaking-release-to-a-new-namespace). Clients that read
+`createdBy`, `requestedBy` or `decidedBy` find `keyId` and `scopeKind` where
+`prefix` used to be.
+
+Creating or declaring an API key now requires its method groups. A
+`deployment/api-keys/create` or `deployment/api-keys/put` request, an
+`api-key create`, `put` or `provision` command, or an `apiKeys` entry of a
+configuration document that leaves them out is refused where it used to
+receive every group of the key's scope. Add `"groups": "all"`, `--all-groups`
+or `groups: all` to scripts and documents that relied on the omission, or
+list the groups. Stored keys keep the groups they hold. `api-key provision`
+also no longer prints a secret that was supplied through
+`LIGHTSPEED_BOOTSTRAP_API_KEY`, so a start-up job that read the secret back
+from the command's output must use the value it supplied. See
+[API keys and service access](../access-and-security/api-keys-and-service-access.md).
+
+In `authenticated` mode a request without a valid key is now answered with
+HTTP 401 before its body is read, where it used to receive HTTP 200 with a
+JSON-RPC error. The response still carries the `unauthenticated` error, with a
+null `id`. A key that cannot be checked, for example because the database is
+unreachable, is answered with HTTP 500 the same way. The CLI and the SDKs of
+this release report the 401 as the typed `unauthenticated` error; an SDK built
+before it raises a transport error instead, and a client that calls `/rpc`
+itself must read the status. See
+[Gateway modes](../access-and-security/api-keys-and-service-access.md#gateway-modes).
+
+An extra header of a model provider's endpoint is now a tagged value, a
+`literal` or a `credential`, the form an MCP server's request headers already
+have, where it used to be a plain string. API clients and configuration
+documents that send a header as a bare string are refused and must send the
+tagged form. `migrate` does not convert stored headers: remove the extra
+headers of a model provider before upgrading and add them again afterwards.
+
+On both a model endpoint and an MCP server, a header named `api-key` or
+`x-api-key` now accepts only a `credential` (as does `proxy-authorization` on a
+model endpoint; an MCP server reserves that name). These names carry a secret,
+and a `literal` is returned to every reader of the provider or server.
+`migrate` stops with a constraint error if an MCP server still stores a plain
+value under one of them: before upgrading, save the value as a token credential
+and make the header name that credential. A
+`lightspeed model provider put --header` or `lightspeed mcp server put --header`
+script keeps working unless it passes one of these names, which take
+`--header-credential`. See
+[Extra headers](../using-lightspeed/models-and-credentials.md#extra-headers)
+and
+[custom request headers](../using-lightspeed/tools-and-mcp.md#authenticate-with-custom-request-headers).
+
+Only two things can now be bound into an environment: a credential created as
+retrievable, and the API key of a model API key provider. The runtime checks
+this when a binding is made and each time it is resolved. `migrate` records
+every credential that is already bound into an environment as retrievable, so
+existing bindings keep working; from then on such a credential can also be
+leased by trusted services. `migrate` deletes bindings that named a stored
+secret directly: that source, and the CLI's `--secret-id` flag, no longer
+exist, so list such bindings before upgrading and bind a retrievable
+credential under the same variable afterwards. A binding to any other
+provider's credential, such as a GitHub App's private key, is kept but refused
+when it is resolved, and every command and job in that environment fails with
+a message naming the variable until the binding is removed; bind a GitHub
+installation credential in its place. A brokered credential that was not bound
+stays brokered and cannot be bound later, which includes GitHub installation
+credentials granted before the upgrade: add the credential again as
+retrievable. Scripts and configuration documents that create a credential for
+an environment must say so, with `--retrievable` or `exposure: retrievable`.
+A configuration document written before the upgrade that binds a credential
+into an environment declares that credential without `exposure`, which reads
+as brokered, while `migrate` has stored it as retrievable. `config diff` and
+`config apply` stop at that difference and name the stored value: add
+`exposure: retrievable` to the credential's existing entry. The credential
+keeps its id and its token. `config export` leaves out a binding to another provider's credential, so the
+exported document can be applied; applying it to an environment that lists
+other bindings removes the left-out one.
+See
+[Choose a credential source](../environments/credentials.md#choose-a-credential-source).
+
+`LIGHTSPEED_MCP_OAUTH_ALLOW_PRIVATE_NETWORKS` is removed and no longer read; a
+value left in the environment has no effect. MCP OAuth requests (metadata,
+client registration, token exchange and refresh) now follow
+`LIGHTSPEED_MCP_PRIVATE_NETWORKS`, decided for each URL by its own host. A
+deployment that set the old switch must list its internal MCP servers and their
+authorization servers, by hostname or address range, or sign-in and token
+refresh toward them fail with "outbound hostname resolved to a forbidden
+address". See the
+[environment-variable reference](../reference/environment-variables.md).
+
+A skill's `name`, `description` and `short_description` now have fixed length
+limits and may not contain control characters. A skill outside them leaves the
+catalog at the next refresh with a warning that names its file. See
+[Add a skill](../using-lightspeed/workspaces-and-skills.md#add-a-skill).
+
+The **Bots** and **Channels** features of a universe now start switched off,
+and the Platform refuses bot and channel requests from members while a switch
+is off, where it used to only hide the pages. The new default applies to
+existing universes too: after the upgrade, a universe that never stored its
+own choice has both features off, and its bot and channel pages stay hidden
+until an Admin turns them on under **Settings → General → Features**. Do that
+in every universe that uses bots or chat channels. Bots that are already
+running keep running in the runtime during that time, because the switch
+governs only what members do through the Platform. A deployment that uses
+neither feature can also stop running the `bots` and `channels` roles; see
+[Runtime roles and scaling](overview.md#runtime-roles-and-scaling).
+
+A trigger's ingest path and pairing code are no longer part of the trigger
+that `bots/triggers/read`, `bots/triggers/list` and `bots/triggers/delete`
+return. A client that read `ingestPath` or `pairingCode` there must call
+`bots/triggers/secrets/read`, a bot-management method, or take the values from
+the answer of `bots/triggers/put` (`secrets`) or `bots/create`
+(`triggerSecrets`). A bot that may change its own triggers no longer sees
+either value when it lists them; it is told a URL or code once, by the call
+that created it, and only in its Main conversation. See
+[Receive a webhook](../using-lightspeed/bots-and-triggers.md#receive-a-webhook).
+
+`lightspeed-envd` no longer loads a `.env` file from its working directory. A
+daemon that took `LIGHTSPEED_ENVD_*` settings from one starts without them:
+pass them through the process environment or the command line, for example
+with a systemd `EnvironmentFile`. The daemon's file tools now also refuse the
+registration key file it was started with and, on Linux, the `/proc` and
+`/sys` filesystems, under any filesystem root; a command's working directory
+follows the same rule, and what a started command reads does not. See
+[Choose the access level](../environments/using-environments.md#choose-the-access-level).
+
+`TEMPORAL_ADDRESS` now names a host and port only. An address with user
+information, a path or a query is a startup error in the runtime and in the
+connector host. A bare host written without a port now connects to port
+`7233`, where the runtime used to fall back to port `80`. The connection can
+also be secured with TLS, a client certificate and an API key; with none of
+those settings it is unencrypted as before. See
+[Secure the Temporal connection](configuration.md#secure-the-temporal-connection).
+
+The web app no longer displays images that Markdown loads from another site.
+In transcripts, reasoning, and file and blob previews such an image appears as
+a link that names its host; images recorded with the session or stored in its
+files are displayed as before. Enabling **Virtual File System** or
+**Environments** in the profile and session editor no longer turns on **Prompt
+loading** and **Skill discovery**; saved configurations keep their settings.
+
 For disposable development state, stop the launcher and use `./dev.sh reset`
 to recreate the local databases and clear the development object-store prefix.
 Retained Temporal histories still hold the old payloads, so also point

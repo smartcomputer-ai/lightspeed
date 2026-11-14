@@ -97,10 +97,12 @@ for (const resetExitCode of [0, 7]) {
     let sequence = 0;
     const run = async (_name, _command, args, provisioningEnv) => {
       if (args.includes("universe")) return { stdout: "" };
-      const secret = provisioningEnv.LIGHTSPEED_BOOTSTRAP_API_KEY ?? `lsk_reset_${++sequence}`;
+      const supplied = provisioningEnv.LIGHTSPEED_BOOTSTRAP_API_KEY;
+      const secret = supplied ?? `lsk_reset_${++sequence}`;
       if (args.includes("--require-existing")) assert.ok(keys.has(secret), "saved key must exist in the database");
       keys.add(secret);
-      return { stdout: JSON.stringify({ secret }) };
+      // A supplied secret is never printed back.
+      return { stdout: JSON.stringify(supplied ? { keyId: "dev" } : { keyId: "dev", secret }) };
     };
     const options = { root: directory, env, full: true, run };
     const before = await prepareCliConnection(options);

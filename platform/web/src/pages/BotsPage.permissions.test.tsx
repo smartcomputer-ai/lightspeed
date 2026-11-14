@@ -10,7 +10,10 @@ import { BotSetup } from "@/components/bot/setup";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "contributor" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, slug: "universe", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({
+  useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, handle: "universe", isLoading: false }),
+  useFeature: () => true,
+}));
 vi.mock("@/pages/SessionsPage", () => ({ SessionDetail: () => <div>Readable transcript</div> }));
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
 vi.mock("@/components/session/session-config-editor", () => ({ SessionConfigEditor: () => <div data-testid="config-editor">Model configuration editor</div> }));
@@ -70,7 +73,7 @@ async function settle() {
 }
 async function show(view: "chat" | "activity" = "activity", introduce = false) {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[{ pathname: "/u/universe/bots/bot", state: { introduce } }]}><Routes><Route path="/u/:slug/bots/:botId" element={<BotsPage admin={true} view={view} />} /></Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[{ pathname: "/u/universe/bots/bot", state: { introduce } }]}><Routes><Route path="/u/:handle/bots/:botId" element={<BotsPage admin={true} view={view} />} /></Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();
 }
@@ -112,7 +115,7 @@ it("sends the introduction from router state only with session control", async (
 
 it("does not turn bot management into profile or environment administration", async () => {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter><BotSetup universeId="universe" slug="universe" bot={bot} manage /></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter><BotSetup universeId="universe" handle="universe" bot={bot} manage /></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();
   const profileToggle = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.startsWith("Session profile"))!;
@@ -126,7 +129,7 @@ it("does not turn bot management into profile or environment administration", as
   // Configuring the environment is an operator's.
   mocks.role = "operator";
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter><BotSetup universeId="universe" slug="universe" bot={bot} manage /></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter><BotSetup universeId="universe" handle="universe" bot={bot} manage /></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();
   expect(button("Pause")).toBeDefined();

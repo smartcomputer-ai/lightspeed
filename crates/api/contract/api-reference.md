@@ -6,6 +6,22 @@ A key calls a method when it holds the method's group. Role and target are metad
 
 ## Universe methods
 
+### `universe/watch`
+
+**Watch universe list changes**
+
+Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Each requested kind requires its own API-key group. Includes sub-agents; visibleTo restricts session access as on session/list.
+
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `none`
+- Role: `viewer`
+- Target: `none`
+- Params: `UniverseWatchParams`
+- Result: `AgentApiOutcome<UniverseWatchResponse>`
+
+- Transport: `text/event-stream`
+- Notifications: session/changed, session/removed, bots/changed, bots/removed, environments/changed, environments/removed, workspaces/changed, workspaces/removed, watch/reset
+
 ### `vfs/workspaces/files/read`
 
 **Read a workspace file**
@@ -380,7 +396,7 @@ Clears active environment selection without changing or closing the universe env
 
 **Bind a credential into an environment**
 
-Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.
+Maps an environment variable name to a retrievable credential grant or to a model API key provider's stored key. Commands in the environment receive the plain value, so a brokered grant and any other provider credential are refused. Requires configuring resources in the universe. The response exposes only the source handle, never secret material.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
@@ -406,7 +422,7 @@ Returns variable names and credential source handles for a universe environment;
 
 **Unbind an environment credential**
 
-Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.
+Removes one variable-to-credential mapping without deleting the underlying grant or provider credential.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `environments`
@@ -492,6 +508,32 @@ Creates an open environment backed by a Lightspeed-reachable envd endpoint, attr
 - Target: `none`
 - Params: `EnvironmentExternalCreateParams`
 - Result: `AgentApiOutcome<EnvironmentExternalCreateResponse>`
+
+### `environments/registered/put`
+
+**Declare a registered environment**
+
+Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.
+
+- Access: `{"kind":"universe","action":"configureResource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
+- Params: `EnvironmentRegisteredPutParams`
+- Result: `AgentApiOutcome<EnvironmentRegisteredPutResponse>`
+
+### `environments/registered/release`
+
+**Release a declared environment's daemon**
+
+Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.
+
+- Access: `{"kind":"universe","action":"configureResource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
+- Params: `EnvironmentRegisteredReleaseParams`
+- Result: `AgentApiOutcome<EnvironmentRegisteredReleaseResponse>`
 
 ### `environments/ingress/put`
 
@@ -623,6 +665,19 @@ Creates a reusable universe-scoped key that lets outbound envd daemons register 
 - Params: `EnvironmentRegistrationKeyCreateParams`
 - Result: `AgentApiOutcome<EnvironmentRegistrationKeyCreateResponse>`
 
+### `environments/registration-keys/put`
+
+**Declare an environment registration key**
+
+Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's.
+
+- Access: `{"kind":"universe","action":"configureResource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
+- Params: `EnvironmentRegistrationKeyPutParams`
+- Result: `AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>`
+
 ### `environments/registration-keys/read`
 
 **Read an environment registration key**
@@ -744,7 +799,7 @@ Returns the revision and independent agentRun and speechToText selections. Revis
 
 **Set a universe model default**
 
-Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
+Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `models`
@@ -1043,7 +1098,7 @@ Deletes the catalog document. Existing session configs that reference it are not
 
 **Import a token credential**
 
-Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.
+Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
@@ -1097,18 +1152,18 @@ Lists non-secret grant metadata for the universe, optionally filtered by status.
 - Params: `AuthGrantListParams`
 - Result: `AgentApiOutcome<AuthGrantListResponse>`
 
-### `auth/grants/replace`
+### `auth/grants/put`
 
-**Replace a token credential's value**
+**Declare a token credential**
 
-Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.
+Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthGrantReplaceParams`
-- Result: `AgentApiOutcome<AuthGrantReplaceResponse>`
+- Params: `AuthGrantPutParams`
+- Result: `AgentApiOutcome<AuthGrantPutResponse>`
 
 ### `auth/grants/revoke`
 
@@ -1214,18 +1269,18 @@ Creates a model or GitHub credential source. Plaintext API keys/private keys are
 - Params: `AuthProviderCreateParams`
 - Result: `AgentApiOutcome<AuthProviderCreateResponse>`
 
-### `auth/providers/replace`
+### `auth/providers/put`
 
-**Replace an authentication provider**
+**Declare an authentication provider**
 
-Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.
+Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthProviderReplaceParams`
-- Result: `AgentApiOutcome<AuthProviderReplaceResponse>`
+- Params: `AuthProviderPutParams`
+- Result: `AgentApiOutcome<AuthProviderPutResponse>`
 
 ### `auth/providers/read`
 
@@ -1283,7 +1338,7 @@ Uses the registered GitHub App provider credential to query accessible installat
 
 **Grant access to a GitHub App installation**
 
-Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.
+Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `auth`
@@ -1296,7 +1351,7 @@ Creates or refreshes a universe auth grant for one accessible installation. The 
 
 **Create a bot**
 
-Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.
+Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.
 
 - Access: `{"kind":"universe","action":"createBot"}`
 - Group: `bots`
@@ -1400,7 +1455,7 @@ Asks the controller to close one of the bot's sessions at its next idle boundary
 
 **Create or replace a trigger**
 
-Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.
+Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.
 
 - Access: `{"kind":"universe","action":"manageBot"}`
 - Group: `bots`
@@ -1413,7 +1468,7 @@ Validates the trigger document (CEL parses, grants exist, one inbox per bot, cha
 
 **Read a trigger**
 
-Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.
+Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `bots`
@@ -1426,7 +1481,7 @@ Returns one trigger with its incidents and cursor; the ingest path and pairing c
 
 **List a bot's triggers**
 
-Returns every trigger of the bot ordered by id, secrets included for bot-management callers.
+Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `bots`
@@ -1434,6 +1489,19 @@ Returns every trigger of the bot ordered by id, secrets included for bot-managem
 - Target: `none`
 - Params: `BotTriggerListParams`
 - Result: `AgentApiOutcome<BotTriggerListResponse>`
+
+### `bots/triggers/secrets/read`
+
+**Read a trigger's secrets**
+
+Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.
+
+- Access: `{"kind":"universe","action":"manageBot"}`
+- Group: `bots`
+- Role: `operator`
+- Target: `none`
+- Params: `BotTriggerSecretsReadParams`
+- Result: `AgentApiOutcome<BotTriggerSecretsReadResponse>`
 
 ### `bots/triggers/delete`
 
@@ -1682,7 +1750,7 @@ Deployment configuration inventory of one universe's provider bindings.
 
 **Create a universe**
 
-Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.
+Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
@@ -1708,7 +1776,7 @@ Returns deployment-wide universe summaries with approximate live aggregate count
 
 **Read a universe**
 
-Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.
+Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
@@ -1717,17 +1785,30 @@ Returns one deployment tenant summary with aggregate session, workspace, profile
 - Params: `DeploymentUniverseReadParams`
 - Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
 
-### `deployment/universes/slug/put`
+### `deployment/universes/configuration/put`
 
-**Set a universe slug**
+**Declare universe presentation and access**
 
-Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.
+Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
 - Role: `none`
 - Target: `none`
-- Params: `DeploymentUniverseSlugPutParams`
+- Params: `DeploymentUniverseConfigurationPutParams`
+- Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
+
+### `deployment/universes/handle/put`
+
+**Rename a universe**
+
+Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.
+
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/universes`
+- Role: `none`
+- Target: `none`
+- Params: `DeploymentUniverseHandlePutParams`
 - Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
 
 ### `deployment/universes/delete`
@@ -1747,7 +1828,7 @@ Permanently terminates live session workflows, deletes external blob objects, an
 
 **Create a scoped API key**
 
-Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.
+Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/api-keys`
@@ -1755,6 +1836,19 @@ Mints a key for a universe or the deployment with the method groups it may call 
 - Target: `none`
 - Params: `DeploymentApiKeyCreateParams`
 - Result: `AgentApiOutcome<DeploymentApiKeyCreateResponse>`
+
+### `deployment/api-keys/put`
+
+**Declare a scoped API key**
+
+Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.
+
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/api-keys`
+- Role: `none`
+- Target: `none`
+- Params: `DeploymentApiKeyPutParams`
+- Result: `AgentApiOutcome<DeploymentApiKeyPutResponse>`
 
 ### `deployment/api-keys/list`
 
@@ -1773,7 +1867,7 @@ Returns non-secret key metadata, all keys or those of one scope, including group
 
 **Rotate a scoped API key**
 
-Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.
+Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/api-keys`
@@ -1786,7 +1880,7 @@ Atomically replaces an active key secret and display prefix, immediately rejecti
 
 **Revoke a scoped API key**
 
-Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.
+Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/api-keys`

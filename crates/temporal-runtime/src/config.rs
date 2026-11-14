@@ -237,6 +237,7 @@ pub fn task_queues_from_env() -> anyhow::Result<TaskQueues> {
 /// instances are stamped out of this via [`DeploymentStores::store_for`].
 #[derive(Clone)]
 pub struct DeploymentStores {
+    changes: Arc<store_pg::changes::ChangeBus>,
     pool: PgPool,
     object_store: Option<Arc<dyn ObjectStore>>,
     object_prefix: Option<String>,
@@ -261,6 +262,7 @@ impl DeploymentStores {
             None => None,
         };
         Ok(Self {
+            changes: store_pg::changes::ChangeBus::postgres(pool.clone()),
             pool,
             object_store,
             object_prefix: optional_env("LIGHTSPEED_OBJECT_STORE_PREFIX"),
@@ -275,6 +277,10 @@ impl DeploymentStores {
     pub fn with_blob_cache(mut self, blob_cache: Option<Arc<BlobCache>>) -> Self {
         self.blob_cache = blob_cache;
         self
+    }
+
+    pub fn changes(&self) -> &Arc<store_pg::changes::ChangeBus> {
+        &self.changes
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -294,17 +300,17 @@ impl DeploymentStores {
     /// Build the universe-bound store. Does not create the universe row;
     /// callers decide existence policy first (see `UniverseRuntime`).
     pub fn store_for(&self, universe_id: Uuid) -> Arc<PgStore> {
-        self.store_for_with_slug(universe_id, None)
+        self.store_for_with_handle(universe_id, None)
     }
 
-    pub fn store_for_with_slug(
+    pub fn store_for_with_handle(
         &self,
         universe_id: Uuid,
-        universe_slug: Option<String>,
+        universe_handle: Option<String>,
     ) -> Arc<PgStore> {
         let mut config = PgStoreConfig::new(universe_id);
-        if let Some(slug) = universe_slug {
-            config = config.with_universe_slug(slug);
+        if let Some(handle) = universe_handle {
+            config = config.with_universe_handle(handle);
         }
         if let Some(prefix) = &self.object_prefix {
             config = config.with_object_prefix(prefix.clone());
@@ -322,7 +328,7 @@ impl DeploymentStores {
             Some(blob_cache) => store.with_blob_cache(blob_cache.clone()),
             None => store,
         };
-        Arc::new(store)
+        Arc::new(store.with_changes(self.changes.clone()))
     }
 }
 

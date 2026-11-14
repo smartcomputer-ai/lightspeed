@@ -39,9 +39,9 @@ use temporal_runtime::{
     worker::{ActivityState, SessionTools, WorkerActivities, sessions_worker, worker_runtime},
 };
 use temporal_workflow::{
-    AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET,
-    WORKFLOW_TOOL_RECOVERY_QUERY, WorkflowToolRecipeV1, WorkflowToolRecoveryResult,
-    WorkflowToolStartArgs, compose_workflow_id, connect_temporal, workflow_tool_recipe_fingerprint,
+    AgentSessionWorkflow, TemporalConnectionConfig, WORKFLOW_TOOL_RECOVERY_QUERY,
+    WorkflowToolRecipeV1, WorkflowToolRecoveryResult, WorkflowToolStartArgs, compose_workflow_id,
+    connect_temporal, workflow_tool_recipe_fingerprint,
 };
 use temporalio_client::{Client, WorkflowStartOptions, WorkflowTerminateOptions};
 use temporalio_common::{data_converters::RawValue, protos::temporal::api::common::v1::Payload};
@@ -849,13 +849,9 @@ where
     let session_queue = format!("lightspeed-agent-live-{}", uuid::Uuid::new_v4().simple());
     let plugin_queue = format!("lightspeed-plugin-live-{}", uuid::Uuid::new_v4().simple());
     let session_id = SessionId::new(format!("session_live_{}", uuid::Uuid::new_v4().simple()));
-    let temporal_target =
-        std::env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-    let namespace = std::env::var("TEMPORAL_NAMESPACE")
-        .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
 
     let runtime = worker_runtime()?;
-    let client = connect_temporal(&temporal_target, &namespace).await?;
+    let client = connect_temporal(&TemporalConnectionConfig::from_env()?).await?;
     let store = pg_store_from_env().await?;
     let blobs: Arc<dyn BlobStore> = store.clone();
 

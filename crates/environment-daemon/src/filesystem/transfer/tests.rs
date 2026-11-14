@@ -166,6 +166,77 @@ fn reason(error: &ProtocolError) -> Option<PreconditionReason> {
     }
 }
 
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn captures_refuse_the_registration_key_and_prune_it_from_a_tree() {
+    use crate::filesystem::Protected;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap().join("root");
+    std::fs::create_dir_all(root.join("project/secrets")).unwrap();
+    std::fs::write(root.join("project/secrets/key"), b"lsrk_secret").unwrap();
+    std::fs::write(root.join("project/readme"), b"readme").unwrap();
+    std::fs::create_dir_all(root.join("other")).unwrap();
+    std::fs::hard_link(root.join("project/secrets/key"), root.join("other/copy")).unwrap();
+    std::fs::write(root.join("other/file"), b"file").unwrap();
+    let mut protected = Protected::default();
+    protected.refuse_file(&root.join("project/secrets/key"));
+    let confinement = std::sync::Arc::new(
+        Confinement::protecting(
+            root.clone(),
+            root.parent().unwrap().join("state"),
+            protected,
+        )
+        .unwrap(),
+    );
+    let fs = LocalFileSystem::new(FilesystemConfig {
+        confinement,
+        cwd: root.clone(),
+        writable: false,
+        limits: crate::data_limits().filesystem,
+    })
+    .unwrap();
+    let refused = |error: ProtocolError| {
+        matches!(
+            error.data,
+            ErrorData::PermissionDenied {
+                reason: Some(environment_protocol::error::PermissionReason::DaemonState)
+            }
+        )
+    };
+    // The key itself, and a tree that holds it, are refused outright, as a
+    // tree that holds the daemon state is.
+    for (operation, source) in [
+        ("key", "project/secrets/key"),
+        ("holder", "project/secrets"),
+        ("tree", "project"),
+    ] {
+        let error = begin(
+            &fs,
+            operation,
+            capture(path(&root, source), TreeFilter::default()),
+        )
+        .await
+        .unwrap_err();
+        assert!(refused(error), "{source}");
+    }
+    // A tree that merely has another name for the key is captured without
+    // that entry.
+    begin(
+        &fs,
+        "other",
+        capture(path(&root, "other"), TreeFilter::default()),
+    )
+    .await
+    .unwrap();
+    advance_until(&fs, "other", TransferPhase::Inventory)
+        .await
+        .unwrap();
+    let entries = inventory(&fs, "other").await;
+    let paths: Vec<_> = entries.iter().map(|entry| entry.path.as_str()).collect();
+    assert_eq!(paths, [".", "file"]);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn captures_expand_inside_links_skip_ignored_trees_and_serve_ranged_content() {
     let temp = tempfile::tempdir().unwrap();

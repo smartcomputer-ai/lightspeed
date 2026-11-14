@@ -51,6 +51,7 @@ export function seedPlatform(store: DemoStore): void {
   // The Platform's own deployment key: every group, and it speaks for the
   // signed-in person.
   store.deploymentKeys.push({
+    keyId: "platform",
     keyPrefix: "lsk_platform",
     displayName: "Lightspeed Platform",
     scope: { kind: "deployment" },

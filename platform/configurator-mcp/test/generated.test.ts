@@ -6,6 +6,7 @@ describe("generated universe tools", () => {
   it("contains the configured universe-method surface and no deployment methods", () => {
     const excluded = new Set([
       "initialize",
+      "universe/watch",
       "environments/jobs/create",
       "environments/jobs/read",
       "environments/jobs/cancel",
@@ -15,6 +16,9 @@ describe("generated universe tools", () => {
       "environments/registration-keys/revoke",
       "environments/registration-keys/update",
       "environments/registration-keys/rotate",
+      "environments/registration-keys/put",
+      "environments/registered/put",
+      "environments/registered/release",
     ]);
     const expectedMethods = Object.entries(METHOD_INFO)
       .filter(([method, info]) => info.scope === "universe" && !excluded.has(method))
@@ -29,11 +33,15 @@ describe("generated universe tools", () => {
     expect(GENERATED_TOOLS.map((tool) => tool.method)).not.toEqual(
       expect.arrayContaining([
         "initialize",
+        "universe/watch",
         "environments/jobs/create",
         "environments/jobs/read",
         "environments/jobs/cancel",
         "environments/registration-keys/create",
+        "environments/registration-keys/put",
         "environments/registration-keys/revoke",
+        "environments/registered/put",
+        "environments/registered/release",
       ]),
     );
   });

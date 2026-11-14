@@ -48,6 +48,20 @@ pub fn webhook_ingest_path(
     format!("/hooks/bots/{universe_id}/{bot_id}/{trigger_id}/{token}")
 }
 
+/// The stored secrets in their wire form: a webhook's URL token as the
+/// ingest path it completes, a chat trigger's pairing code as it is.
+pub(crate) fn trigger_secrets_view(
+    universe_id: uuid::Uuid,
+    record: &BotTriggerRecord,
+) -> BotTriggerSecretsView {
+    BotTriggerSecretsView {
+        ingest_path: record.secrets.webhook_token.as_deref().map(|token| {
+            webhook_ingest_path(universe_id, &record.bot_id, &record.trigger_id, token)
+        }),
+        pairing_code: record.secrets.pairing_code.clone(),
+    }
+}
+
 fn random_bytes(len: usize) -> Vec<u8> {
     let mut bytes = vec![0u8; len];
     rand::rngs::SysRng
@@ -110,16 +124,11 @@ impl GatewayAgentApi {
             ))
     }
 
-    pub(crate) fn trigger_view(&self, record: &BotTriggerRecord) -> BotTriggerView {
-        let ingest_path = record.secrets.webhook_token.as_deref().map(|token| {
-            webhook_ingest_path(
-                self.universe_id(),
-                &record.bot_id,
-                &record.trigger_id,
-                token,
-            )
-        });
-        record.view(false, ingest_path)
+    /// A trigger's secrets as bot-management methods return them. Callers
+    /// authorize a management method first: a trigger view never holds
+    /// these, so this is the only way they leave the store.
+    pub(crate) fn trigger_secrets_view(&self, record: &BotTriggerRecord) -> BotTriggerSecretsView {
+        trigger_secrets_view(self.universe_id(), record)
     }
 
     async fn read_bot_record(&self, bot_id: &BotId) -> Result<BotRecord, AgentApiError> {
@@ -870,10 +879,17 @@ impl GatewayAgentApi {
         }
         Ok(BotCreateResponse {
             bot: bot.view(),
-            triggers: triggers
+            trigger_secrets: triggers
                 .iter()
-                .map(|record| self.trigger_view(record))
+                .map(|record| {
+                    (
+                        record.trigger_id.as_str().to_owned(),
+                        self.trigger_secrets_view(record),
+                    )
+                })
+                .filter(|(_, secrets)| !secrets.is_empty())
                 .collect(),
+            triggers: triggers.iter().map(BotTriggerRecord::view).collect(),
         })
     }
 
@@ -889,15 +905,26 @@ impl GatewayAgentApi {
         Ok(BotListResponse {
             bots: rows
                 .into_iter()
-                .map(|(row, access)| BotListItem {
-                    bot: row.bot.view(),
-                    access,
-                    trigger_count: row.trigger_count,
-                    pending_count: row.pending_count,
-                    last_event: row.last_event.map(|event| event.view()),
-                    activity: row.activity,
-                })
+                .map(|(row, access)| bot_list_item(row, access))
                 .collect(),
+        })
+    }
+
+    /// The secrets of one trigger. The caller has authorized
+    /// `bots/triggers/secrets/read`, which needs bot management for a
+    /// request and for an internal controller alike.
+    pub(super) async fn read_bot_trigger_secrets_record(
+        &self,
+        bot_id: &BotId,
+        trigger_id: &BotTriggerId,
+    ) -> Result<BotTriggerSecretsReadResponse, AgentApiError> {
+        let record = self
+            .store()
+            .read_bot_trigger(bot_id, trigger_id)
+            .await
+            .map_err(map_bot_error)?;
+        Ok(BotTriggerSecretsReadResponse {
+            secrets: self.trigger_secrets_view(&record),
         })
     }
 
@@ -931,5 +958,95 @@ impl From<AdmitTriggerOutcome> for Option<InsertBotEventOutcome> {
             }
             AdmitTriggerOutcome::Filtered { .. } => None,
         }
+    }
+}
+
+pub(in crate::gateway) fn bot_list_item(
+    row: ::bots::BotRosterRow,
+    access: ResourceAccessSummary,
+) -> BotListItem {
+    BotListItem {
+        status: row.status,
+        open_session_count: row.open_session_count,
+        active_session_count: row.active_session_count,
+        bot: row.bot.view(),
+        access,
+        trigger_count: row.trigger_count,
+        pending_count: row.pending_count,
+        last_event: row.last_event.map(|event| event.view()),
+        activity: row.activity,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(spec: BotTriggerSpec, secrets: BotTriggerSecrets) -> BotTriggerRecord {
+        BotTriggerRecord {
+            bot_id: BotId::new("triage"),
+            trigger_id: BotTriggerId::new("github"),
+            revision: 3,
+            document: BotTriggerDocument {
+                spec,
+                filter: None,
+                route: None,
+                coalesce: None,
+                deliver: None,
+                session_close_after_ms: None,
+                enabled: true,
+            },
+            secrets,
+            disabled_reason: None,
+            disabled_at_ms: None,
+            last_filter_error: None,
+            last_filter_error_at_ms: None,
+            cursor: None,
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        }
+    }
+
+    #[test]
+    fn a_trigger_view_holds_no_secret_and_the_secrets_view_holds_both() {
+        let universe_id = uuid::Uuid::from_u128(7);
+        let webhook = record(
+            BotTriggerSpec::Webhook {
+                verification: WebhookVerification::Token,
+                preset: None,
+            },
+            BotTriggerSecrets {
+                webhook_token: Some("tok-1".to_owned()),
+                pairing_code: Some("ABCDEFGH2345".to_owned()),
+            },
+        );
+        let view = serde_json::to_string(&webhook.view()).expect("trigger view");
+        assert!(!view.contains("tok-1"), "{view}");
+        assert!(!view.contains("ABCDEFGH2345"), "{view}");
+        assert!(!view.contains("/hooks/"), "{view}");
+
+        let secrets = trigger_secrets_view(universe_id, &webhook);
+        assert_eq!(
+            secrets.ingest_path.as_deref(),
+            Some(
+                webhook_ingest_path(universe_id, &webhook.bot_id, &webhook.trigger_id, "tok-1")
+                    .as_str()
+            )
+        );
+        assert_eq!(secrets.pairing_code.as_deref(), Some("ABCDEFGH2345"));
+    }
+
+    #[test]
+    fn a_trigger_without_secrets_has_an_empty_secrets_view() {
+        let schedule = record(
+            BotTriggerSpec::Schedule {
+                cron: Some("0 3 * * *".to_owned()),
+                at_ms: None,
+                timezone: "UTC".to_owned(),
+                summary: "nightly".to_owned(),
+            },
+            BotTriggerSecrets::default(),
+        );
+        assert!(trigger_secrets_view(uuid::Uuid::from_u128(7), &schedule).is_empty());
     }
 }

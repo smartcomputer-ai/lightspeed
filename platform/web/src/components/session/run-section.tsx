@@ -33,17 +33,18 @@ export const RunSectionView = memo(function RunSectionView({
   // counts under the preference it was made under.
   const [override, setOverride] = useState<{ open: boolean; collapse: boolean } | null>(null);
   const open = override?.collapse === collapseCompletedRuns ? override.open : !collapseCompletedRuns;
+  const immediate = section.work.some(entry => entry.kind === "message" && entry.local);
 
   return (
     <div className="flex min-w-0 flex-col gap-3">
       {section.input && <TranscriptEntryView entry={section.input} />}
       {section.live ? (
-        <TranscriptEntrance motionKey={`activity:${section.key}`} className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-amber-500/25 bg-card px-1 py-1">
+        <TranscriptEntrance motionKey={`activity:${section.key}`} immediate={immediate} className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-amber-500/25 bg-card px-1 py-1">
           <WorkList entries={section.work} loadFullText={loadFullText} />
           <RunStatusRow run={activeRun} />
         </TranscriptEntrance>
       ) : section.work.length > 0 ? (
-        <TranscriptEntrance motionKey={`activity:${section.key}`} className="min-w-0 rounded-lg border bg-card">
+        <TranscriptEntrance motionKey={`activity:${section.key}`} immediate={immediate} className="min-w-0 rounded-lg border bg-card">
           <RunStrip
             section={section}
             open={open}

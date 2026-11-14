@@ -907,7 +907,7 @@
           },
           {
             "const": "daemonState",
-            "description": "The path names or contains the daemon's state directory.",
+            "description": "The path names or contains a place the daemon keeps to itself: its\nstate directory, its registration key, or a kernel filesystem such\nas `/proc` or `/sys`.",
             "type": "string"
           },
           {

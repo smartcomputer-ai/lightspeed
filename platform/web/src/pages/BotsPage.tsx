@@ -1,3 +1,4 @@
+import { useWatchConnected } from "@/lib/universe-watch";
 import type { BotReadResponse } from "@lightspeed-ai/sdk";
 import { useQuery } from "@tanstack/react-query";
 import { AddIcon, BotAvatarIcon } from "@/icons";
@@ -37,7 +38,7 @@ const ROSTER_REFRESH_MS = 5_000;
 
 /// Bots: a roster on the left and one bot's conversations or activity on the right.
 export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const { botId, sessionId } = useParams<{ botId?: string; sessionId?: string }>();
   const permissions = useActionPermissions(universe?.id);
   const [createOpen, setCreateOpen] = useCreateParam("bot");
@@ -46,7 +47,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
   if (!universe) {
     return (
       <div className="p-6">
-        <UniverseNotFound slug={slug} />
+        <UniverseNotFound handle={handle} />
       </div>
     );
   }
@@ -57,7 +58,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
       <ListPane detailOpen={Boolean(botId)}>
         <BotsPane
           universeId={universe.id}
-          slug={slug!}
+          handle={handle!}
           activeId={botId}
           create={create}
           onCreate={() => setCreateOpen(true)}
@@ -68,7 +69,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
           <BotWorkspace
             key={botId}
             universeId={universe.id}
-            slug={slug!}
+            handle={handle!}
             botId={botId}
             view={view}
             sessionId={sessionId}
@@ -85,7 +86,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
       {create && createOpen && (
         <BotCreateDialog
           universeId={universe.id}
-          slug={slug!}
+          handle={handle!}
           open={createOpen}
           onOpenChange={setCreateOpen}
         />
@@ -114,6 +115,8 @@ export function rosterLine(bot: BotListItem): { text: string; tone: BotTone } {
       tone: "paused",
     };
   }
+  if (bot.status === "attention") return { text: "Needs attention", tone: "attention" };
+  if (bot.status === "budget") return { text: "Budget exhausted", tone: "attention" };
   const last = bot.lastEvent;
   if (bot.activity === "waiting") return { text: "Waiting for approval", tone: "waiting" };
   if (bot.pendingCount > 0) {
@@ -146,21 +149,22 @@ function rosterGroups(bots: BotListItem[]) {
 
 function BotsPane({
   universeId,
-  slug,
+  handle,
   activeId,
   create,
   onCreate,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   activeId: string | undefined;
   create: boolean;
   onCreate: () => void;
 }) {
+  const watchConnected = useWatchConnected(universeId);
   const bots = useQuery({
     queryKey: ["bots", universeId],
     queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
-    refetchInterval: ROSTER_REFRESH_MS,
+    refetchInterval: watchConnected ? 60_000 : ROSTER_REFRESH_MS,
     refetchIntervalInBackground: false,
   });
   const roster = bots.data?.bots ?? [];
@@ -194,14 +198,14 @@ function BotsPane({
                 return (
                   <ListRow
                     key={bot.botId}
-                    to={`/u/${slug}/bots/${bot.botId}`}
+                    to={`/u/${handle}/bots/${bot.botId}`}
                     active={bot.botId === activeId}
                     // Right-click: the bot (opened if it is not) and its
                     // page's ⋯ menu, at the pointer.
                     entryProps={{
                       onContextMenu: (event) => {
                         event.preventDefault();
-                        if (bot.botId !== activeId) navigate(`/u/${slug}/bots/${bot.botId}`);
+                        if (bot.botId !== activeId) navigate(`/u/${handle}/bots/${bot.botId}`);
                         requestRowMenu("bot", bot.botId, event);
                       },
                     }}
@@ -227,13 +231,13 @@ function BotsPane({
 
 function BotWorkspace({
   universeId,
-  slug,
+  handle,
   botId,
   view,
   sessionId,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   botId: string;
   view: BotTab;
   sessionId: string | undefined;
@@ -263,7 +267,7 @@ function BotWorkspace({
   return (
     <BotDetail
       universeId={universeId}
-      slug={slug}
+      handle={handle}
       bot={bot.data.bot}
       {...(state.data?.state ? { state: state.data.state } : {})}
       {...(state.error ? { stateError: state.error.message } : {})}

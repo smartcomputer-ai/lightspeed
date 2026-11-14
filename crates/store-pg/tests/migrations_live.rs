@@ -109,14 +109,6 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
         return Err(format!("unexpected migrated status: {status:?}"));
     }
 
-    // The environment baseline is folded into one migration; the ledger
-    // ends at revision 15.
-    if REQUIRED_SCHEMA_REVISION != 15 {
-        return Err(format!(
-            "unexpected required schema revision {REQUIRED_SCHEMA_REVISION}"
-        ));
-    }
-
     // The public schema can have these same names. Every newly migrated schema
     // must still receive its own foreign keys.
     let foreign_keys: Vec<(String, bool, bool, bool)> = sqlx::query_as(
@@ -128,6 +120,7 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
          JOIN pg_class AS target ON target.oid = constraint_row.confrelid
          WHERE source.relnamespace = current_schema()::regnamespace
            AND constraint_row.conname IN (
+               'auth_provider_headers_grant_fk',
                'environments_registration_key_fk',
                'mcp_server_headers_grant_fk',
                'mcp_servers_auth_grant_fk'
@@ -140,8 +133,14 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
     if foreign_keys
         != vec![
             // Deferrable but checked immediately, so only a universe delete
-            // (which defers its constraints) can remove keys and
-            // environments in either cascade order.
+            // (which defers its constraints) can remove grants and headers,
+            // or keys and environments, in either cascade order.
+            (
+                "auth_provider_headers_grant_fk".to_owned(),
+                true,
+                false,
+                true,
+            ),
             (
                 "environments_registration_key_fk".to_owned(),
                 true,

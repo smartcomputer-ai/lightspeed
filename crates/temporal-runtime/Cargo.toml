@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 temporal-workflow = { path = "../temporal-workflow" }
 jsonschema = { version = "0.58", default-features = false }
-ipnet = "2"
 api = { path = "../api" }
 api-projection = { path = "../api-projection" }
 harness = { path = "../harness" }
@@ -30,6 +29,7 @@ clap = { version = "4", features = ["derive", "env"] }
 dotenvy = "0.15"
 futures-util = "0.3"
 futures = "0.3"
+hmac = "0.13"
 http = "1"
 llm-clients = { path = "../llm-clients" }
 llm-runtime = { path = "../llm-runtime" }

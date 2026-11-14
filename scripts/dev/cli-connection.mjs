@@ -1,7 +1,7 @@
 // Local credential handoff; all authority remains in the runtime key store.
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { DevError } from "./errors.mjs";
 
 function writePrivate(file, text) {
@@ -25,7 +25,7 @@ export async function prepareCliConnection({ root, env, full, noBootstrap, run }
   const statePath = path.join(directory, "provisioned.json");
   const state = existsSync(statePath) ? JSON.parse(readPrivate(statePath)) : {};
   const universe = env.LIGHTSPEED_PG_UNIVERSE_ID;
-  await run("development universe", "cargo", ["run", "-p", "temporal-runtime", "--", "universe", "create", "--universe-id", universe, "--slug", "development"], env);
+  await run("development universe", "cargo", ["run", "-p", "temporal-runtime", "--", "universe", "create", "--universe-id", universe, "--handle", "development"], env);
   if (env.LIGHTSPEED_AUTH_MODE === "single") {
     writePrivate(handoff, JSON.stringify({ endpoint: env.LIGHTSPEED_API_URL, single: true, ownedCredential: false }, null, 2));
     return { handoff };
@@ -42,25 +42,36 @@ export async function prepareCliConnection({ root, env, full, noBootstrap, run }
     if (previous && supplied && previous !== supplied.trim()) throw new DevError(`The supplied ${kind} key differs from the saved development key.`, { hint: "Explicitly provision the replacement and update the protected credential file." });
     const secret = previous ?? supplied?.trim();
     if (noBootstrap && !secret) return null;
-    const args = ["run", "-p", "temporal-runtime", "--", "api-key", "provision", "--name", `Development ${kind}: ${root}`];
+    // One key per kind and checkout, so checkouts sharing a database do not
+    // replace each other's secret.
+    const keyId = `dev-${kind}-${createHash("sha256").update(root).digest("hex").slice(0, 8)}`;
+    // Development keys hold every group, stated here because the command has
+    // no default. Each start declares the key again, which gives it the
+    // groups a new build added.
+    const args = ["run", "-p", "temporal-runtime", "--", "api-key", "provision", "--key-id", keyId, "--name", `Development ${kind}: ${root}`, "--all-groups"];
     if (assertActor) args.push("--assert-actor");
     if (noBootstrap) args.push("--require-existing");
-    else args.push("--refresh-groups");
     const provisioningEnv = { ...env, RUST_LOG: "off" };
     delete provisioningEnv.LIGHTSPEED_BOOTSTRAP_API_KEY;
     if (secret) provisioningEnv.LIGHTSPEED_BOOTSTRAP_API_KEY = secret;
     const result = await run(`development ${kind} key`, "cargo", args, provisioningEnv, { captureStdout: true });
-    let credential;
+    // The command prints a secret only when it generated one. A secret this
+    // launcher supplied is the one it already holds, so nothing is read back.
+    let provisioned = secret;
     try {
-      credential = JSON.parse(result.stdout);
-      if (typeof credential.secret !== "string" || !credential.secret.startsWith("lsk_")) throw new Error();
+      const credential = JSON.parse(result.stdout);
+      if (typeof credential.keyId !== "string") throw new Error();
+      if (!provisioned) {
+        if (typeof credential.secret !== "string" || !credential.secret.startsWith("lsk_")) throw new Error();
+        provisioned = credential.secret;
+      }
     } catch {
       throw new DevError("API-key provisioning returned an invalid credential response; secret output withheld.");
     }
-    writePrivate(file, credential.secret);
+    writePrivate(file, provisioned);
     state[kind] = true;
     writePrivate(statePath, JSON.stringify(state));
-    return { file, secret: credential.secret };
+    return { file, secret: provisioned };
   }
 
   const cli = await provision("cli", env.LIGHTSPEED_BOOTSTRAP_API_KEY, false);

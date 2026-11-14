@@ -7,10 +7,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { MembersPage } from "./MembersPage";
 
-const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
+const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer", configuration: {} as Record<string, unknown> }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", () => ({
-  useActiveUniverse: () => ({ universe: { id: "universe", slug: "test", name: "Test", role: mocks.role }, slug: "test", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "universe", handle: "test", name: "Test", role: mocks.role, runtimeConfiguration: mocks.configuration }, handle: "test", isLoading: false }),
 }));
 // JSDOM has no popup layout; keep the real options and exercise changes with a native select.
 vi.mock("@/components/ui/select", async () => {
@@ -46,6 +46,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
   mocks.role = "viewer";
+  mocks.configuration = {};
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
     if (path.endsWith("/members")) return members;
     if (path === "/api/v1/users") return [];
@@ -129,4 +130,15 @@ it("shows other members names and roles without emails or controls", async () =>
   expect(rows[0]![1]).toContain("contributor");
   expect(container.textContent).not.toContain("alice@example.test");
   expect(container.querySelector("button")).toBeNull();
+});
+
+
+it("shows document-managed grants separately from editable memberships", async () => {
+  mocks.role = "admin";
+  mocks.configuration = { members: [{ issuer: "https://identity.example", subject: "owner", role: "admin" }], directoryGroupMappings: [{ issuer: "https://identity.example", group: "research-readers", role: "viewer" }] };
+  await show(<MembersPage admin={false} />);
+  expect(container.textContent).toContain("Declared access");
+  expect(container.textContent).toContain("Group: research-readers");
+  expect(container.querySelector('[aria-label="Edit role for owner"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Edit role for Alice"]')).not.toBeNull();
 });

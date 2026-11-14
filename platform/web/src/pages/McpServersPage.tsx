@@ -9,7 +9,7 @@ import { useMcpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { slugify } from "@lightspeed-ai/platform-shared";
-import { AddIcon, DeleteIcon, LoadingIcon, McpServerIcon, NewTabIcon, RetryIcon, SignInIcon, SuccessIcon } from "@/icons";
+import { AddIcon, LoadingIcon, McpServerIcon, NewTabIcon, RetryIcon, SignInIcon, SuccessIcon } from "@/icons";
 import {
   api,
   type AuthGrantOption,
@@ -17,8 +17,15 @@ import {
   type McpOAuthFlowStart,
   type McpServer,
   type McpServerAuthDiscovery,
-  type McpServerHeader,
 } from "@/api";
+import { RequestHeaderEditor, headerCredentialOptions } from "@/components/request-headers";
+import {
+  MCP_SERVER_HEADER_OWNER,
+  requestHeaderRows,
+  requestHeadersInput,
+  type RequestHeader,
+  type RequestHeaderRow,
+} from "@/lib/request-headers";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -55,14 +62,14 @@ const MCP_CREATE_STEPS = [
 /// server picker links against. Full-document saves mirror the engine's
 /// put-with-revision catalog semantics.
 export function McpServersPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
   if (!universe || !permissions.can("read")) {
-    return <UniverseNotFound slug={slug} />;
+    return <UniverseNotFound handle={handle} />;
   }
 
   return <ServerList key={universe.id} universeId={universe.id} />;
@@ -319,7 +326,7 @@ function ServerDialog({
   const [credentialGrantId, setCredentialGrantId] = useState(
     server?.credential?.grantId ?? "",
   );
-  const [headerRows, setHeaderRows] = useState<McpHeaderRow[]>(() => mcpHeaderRows(server?.headers));
+  const [headerRows, setHeaderRows] = useState<RequestHeaderRow[]>(() => requestHeaderRows(server?.headers));
   const [status, setStatus] = useState<McpServer["status"]>(server?.status ?? "active");
   const [discovery, setDiscovery] = useState<McpServerAuthDiscovery | null>(null);
   const [lastProbedUrl, setLastProbedUrl] = useState("");
@@ -334,18 +341,15 @@ function ServerDialog({
     (grant) => grant.grantId === credentialGrantId,
   );
   const currentOAuthScopes = oauthScopes.split(",").map((scope) => scope.trim()).filter(Boolean);
-  const headerGrants = authGrants
-    .filter((grant) => grant.providerKind === "staticToken" && grant.status === "active")
-    .slice()
-    .sort((left, right) => authGrantLabel(left).localeCompare(authGrantLabel(right)));
-  const headerInput = mcpHeadersInput(headerRows);
+  const headerGrants = headerCredentialOptions(authGrants);
+  const headerInput = requestHeadersInput(MCP_SERVER_HEADER_OWNER, headerRows);
   const connectionSettingsDirty = Boolean(server && (
     serverUrl.trim() !== server.serverUrl ||
     authPolicy !== server.authPolicy.type ||
     credentialGrantId !== (server.credential?.grantId ?? "") ||
     status !== server.status ||
     allowPrivateNetwork !== server.allowPrivateNetwork ||
-    JSON.stringify(headerInput.headers) !== JSON.stringify(mcpHeadersInput(mcpHeaderRows(server.headers)).headers) ||
+    JSON.stringify(headerInput.headers) !== JSON.stringify(requestHeadersInput(MCP_SERVER_HEADER_OWNER, requestHeaderRows(server.headers)).headers) ||
     (isOAuthPolicy(authPolicy) && (
       oauthResource.trim() !== oauthPolicyString(server.authPolicy, "resource") ||
       JSON.stringify(currentOAuthScopes) !== JSON.stringify(oauthPolicyScopes(server.authPolicy)) ||
@@ -756,15 +760,18 @@ function ServerDialog({
           </Field>
         </SettingsGroup>
         <SettingsGroup title="Request headers">
-          <HeaderEditor
+          <RequestHeaderEditor
+            owner={MCP_SERVER_HEADER_OWNER}
             rows={headerRows}
             grants={headerGrants}
             loading={authGrantsLoading}
-            execution={execution}
             onChange={(rows) => {
               setHeaderRows(rows);
               setError(null);
             }}
+            description="Sent with every request to this server, alongside its authentication."
+            note={execution === "provider" ? "Custom headers need Lightspeed to connect." : undefined}
+            namePlaceholder="X-Upstream-Token"
           />
         </SettingsGroup>
         <SettingsGroup title="Network">
@@ -962,116 +969,6 @@ function AuthDiscoveryNote({
     );
   }
   return <FieldDescription>Lightspeed will check the server without saving it.</FieldDescription>;
-}
-
-function HeaderEditor({
-  rows,
-  grants,
-  loading,
-  execution,
-  onChange,
-}: {
-  rows: McpHeaderRow[];
-  grants: AuthGrantOption[];
-  loading: boolean;
-  execution: McpServer["execution"];
-  onChange: (rows: McpHeaderRow[]) => void;
-}) {
-  const update = (key: number, patch: Partial<McpHeaderRow>) =>
-    onChange(rows.map((row) => (row.key === key ? { ...row, ...patch } : row)));
-  return (
-    <div className="grid gap-3">
-      <p className="text-xs text-muted-foreground">
-        Sent with every request to this server, alongside its authentication. Plain-text values are
-        stored and shown as written, so put secrets in a credential.
-        {execution === "provider" && " Custom headers need Lightspeed to connect."}
-      </p>
-      {rows.map((row, index) => {
-        const position = index + 1;
-        const boundAvailable = grants.some((grant) => grant.grantId === row.value);
-        return (
-          <div key={row.key} className="grid gap-2 rounded-md border p-3" data-slot="mcp-header-row">
-            <div className="flex items-center gap-2">
-              <Input
-                aria-label={`Header ${position} name`}
-                value={row.name}
-                onChange={(event) => update(row.key, { name: event.target.value })}
-                placeholder="X-Upstream-Token"
-                className="font-mono"
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={`Remove header ${position}`}
-                onClick={() => onChange(rows.filter((candidate) => candidate.key !== row.key))}
-              >
-                <DeleteIcon />
-              </Button>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)]">
-              <Select
-                value={row.source}
-                onValueChange={(next) => update(row.key, { source: next as McpHeaderRow["source"], value: "" })}
-              >
-                <SelectTrigger className="w-full" aria-label={`Header ${position} source`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="literal">Plain text</SelectItem>
-                  <SelectItem value="credential">Credential</SelectItem>
-                </SelectContent>
-              </Select>
-              {row.source === "literal" ? (
-                <Input
-                  aria-label={`Header ${position} value`}
-                  value={row.value}
-                  onChange={(event) => update(row.key, { value: event.target.value })}
-                  placeholder="Not secret"
-                  className="font-mono"
-                />
-              ) : (
-                <Select
-                  value={row.value || "none"}
-                  onValueChange={(next) => update(row.key, { value: next === "none" ? "" : next as string })}
-                >
-                  <SelectTrigger className="w-full" aria-label={`Header ${position} credential`}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Choose a credential</SelectItem>
-                    {row.value && !boundAvailable && (
-                      <SelectItem value={row.value}>{row.value} (unavailable)</SelectItem>
-                    )}
-                    {grants.map((grant) => (
-                      <SelectItem key={grant.grantId} value={grant.grantId}>
-                        {authGrantLabel(grant)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-            {row.source === "credential" && !loading && grants.length === 0 && !row.value && (
-              <FieldDescription>
-                Create a token credential on the Credentials page, then return here.
-              </FieldDescription>
-            )}
-          </div>
-        );
-      })}
-      <div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => onChange([...rows, emptyMcpHeaderRow(rows)])}
-        >
-          <AddIcon data-icon="inline-start" />Add header
-        </Button>
-      </div>
-    </div>
-  );
 }
 
 function CredentialSelect({
@@ -1432,78 +1329,9 @@ function authGrantLabel(grant: AuthGrantOption): string {
   return `${name} (${grant.providerId})`;
 }
 
-/// One editable header row. `value` is the plain value or the grant id.
-export interface McpHeaderRow {
-  key: number;
-  name: string;
-  source: McpServerHeader["type"];
-  value: string;
-}
-
-function emptyMcpHeaderRow(rows: McpHeaderRow[]): McpHeaderRow {
-  const key = rows.reduce((max, row) => Math.max(max, row.key), 0) + 1;
-  return { key, name: "", source: "literal", value: "" };
-}
-
-export function mcpHeaderRows(headers: McpServer["headers"]): McpHeaderRow[] {
-  return Object.entries(headers ?? {}).map(([name, header], index) => ({
-    key: index + 1,
-    name,
-    source: header.type,
-    value: header.type === "literal" ? header.value : header.grantId,
-  }));
-}
-
-/// The server owns these; the engine refuses them too, but naming them here
-/// saves a round trip.
-const RESERVED_MCP_HEADERS = new Set([
-  "accept", "authorization", "connection", "content-length", "content-type", "expect", "host",
-  "keep-alive", "last-event-id", "mcp-protocol-version", "mcp-session-id", "proxy-authenticate",
-  "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade",
-]);
-
-/// Rows as the wire header map. Blank rows are dropped; anything else must be
-/// complete, unique regardless of case, and not reserved.
-export function mcpHeadersInput(rows: McpHeaderRow[]): {
-  headers: Record<string, McpServerHeader>;
-  error?: string;
-} {
-  const headers: Record<string, McpServerHeader> = {};
-  const seen = new Set<string>();
-  for (const row of rows) {
-    const name = row.name.trim();
-    const value = row.value.trim();
-    if (!name && !value) continue;
-    if (!name) return { headers, error: "Give every request header a name." };
-    const lower = name.toLowerCase();
-    if (seen.has(lower)) return { headers, error: `The header ${name} is listed more than once.` };
-    seen.add(lower);
-    if (RESERVED_MCP_HEADERS.has(lower) || lower.startsWith("x-lightspeed-")) {
-      return {
-        headers,
-        error: lower === "authorization"
-          ? "Use the Authentication setting for the Authorization header."
-          : `The header ${name} is set by Lightspeed and cannot be configured.`,
-      };
-    }
-    if (!value) {
-      return {
-        headers,
-        error: row.source === "literal"
-          ? `Enter a value for the header ${name}.`
-          : `Choose a credential for the header ${name}.`,
-      };
-    }
-    headers[name] = row.source === "literal"
-      ? { type: "literal", value }
-      : { type: "credential", grantId: value };
-  }
-  return { headers };
-}
-
 export function mcpHeadersExecutionError(
   execution: McpServer["execution"],
-  headers: Record<string, McpServerHeader>,
+  headers: Record<string, RequestHeader>,
 ): string | null {
   if (execution === "provider" && Object.keys(headers).length > 0) {
     return "Request headers need Lightspeed to connect. Choose “Lightspeed connects” or remove the headers.";

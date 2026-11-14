@@ -1328,8 +1328,13 @@ fn environment_status_message(environment: &EnvironmentRecord) -> Option<String>
             "Environment is {status}. Tools that use it wake it and wait until it is ready."
         )),
         Status::Away => Some(
-            match environment.registered().map(|source| source.identity_mode) {
-                Some(environments::RegisteredIdentityMode::Persistent) => {
+            match environment.registered() {
+                Some(source) if source.awaits_daemon() => {
+                    "No daemon has registered for this environment yet; tools wait up to two minutes for one."
+                }
+                Some(source)
+                    if source.identity_mode == environments::RegisteredIdentityMode::Persistent =>
+                {
                     "The daemon is disconnected; tools wait up to two minutes for it to reconnect."
                 }
                 _ => "The daemon is disconnected.",
@@ -4438,7 +4443,8 @@ mod tests {
             let mut record = open.clone();
             record.source = EnvironmentSource::Registered(RegisteredSource {
                 registration_key_id: environments::EnvironmentRegistrationKeyId::new("key"),
-                daemon_public_key: "00".repeat(32),
+                registration_name: None,
+                daemon_public_key: Some("00".repeat(32)),
                 identity_mode,
                 connected: false,
                 connection_changed_at_ms: 3,
@@ -4453,6 +4459,18 @@ mod tests {
         assert_eq!(
             environment_status_message(&away(RegisteredIdentityMode::Ephemeral)).as_deref(),
             Some("The daemon is disconnected.")
+        );
+        // Declared, and its machine has not registered yet.
+        let mut waiting = away(RegisteredIdentityMode::Persistent);
+        if let EnvironmentSource::Registered(source) = &mut waiting.source {
+            source.registration_name = Some("runner-0".to_owned());
+            source.daemon_public_key = None;
+        }
+        assert_eq!(
+            environment_status_message(&waiting).as_deref(),
+            Some(
+                "No daemon has registered for this environment yet; tools wait up to two minutes for one."
+            )
         );
     }
 

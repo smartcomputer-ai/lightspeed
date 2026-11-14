@@ -6,7 +6,7 @@ import { gatewayRoutes } from "./gateway.js";
 const auth = vi.hoisted(() => ({ role: "contributor" }));
 vi.mock("./universes.js", () => ({ universeForSession: vi.fn(async (_ctx, _c, id: string) => ({
   universe: { lightspeedUniverseId: id, gatewayUrl: "https://engine.example/rpc" },
-  slug: "test", role: auth.role, member: { userId: "member", role: auth.role },
+  handle: "test", role: auth.role, member: { userId: "member", role: auth.role },
 })) }));
 beforeEach(() => { auth.role = "contributor"; });
 afterEach(() => vi.unstubAllGlobals());

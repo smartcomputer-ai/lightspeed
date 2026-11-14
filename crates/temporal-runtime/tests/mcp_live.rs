@@ -1132,45 +1132,214 @@ async fn run_model_key_replacement_live_client(
     let (first_secret, first_value) = stored_key(store.clone(), row_id.clone()).await?;
     anyhow::ensure!(first_value == "key-one");
 
-    // A replacement the engine rejects changes nothing: the old key stays.
-    let rejected = api
-        .replace_auth_provider(api::AuthProviderReplaceParams {
+    let declare = |display_name: Option<&str>,
+                   endpoint: Option<api::ModelEndpointConfig>,
+                   credential: &str,
+                   dry_run: bool| {
+        api.put_auth_provider(api::AuthProviderPutParams {
             provider_id: provider_id.clone(),
-            display_name: None,
-            config: api::AuthProviderConfigInput::ModelApiKey {
-                endpoint: Some(api::ModelEndpointConfig {
-                    base_url: "https://models.example.com/v1".to_owned(),
-                    headers: Default::default(),
-                    api_kinds: Vec::new(),
-                }),
-            },
-            credential: Some("key-two".to_owned()),
+            display_name: display_name.map(str::to_owned),
+            config: api::AuthProviderConfigInput::ModelApiKey { endpoint },
+            credential: Some(credential.to_owned()),
+            dry_run,
         })
-        .await;
-    anyhow::ensure!(rejected.is_err(), "an empty API-kind list must be refused");
+    };
+
+    // Declaring the provider as it is changes nothing, not even its secret.
+    let same = declare(Some("Replaceable key"), None, "key-one", false)
+        .await?
+        .result;
+    anyhow::ensure!(!same.created && !same.credential_replaced);
     anyhow::ensure!(
-        stored_key(store.clone(), row_id.clone()).await? == (first_secret.clone(), first_value),
-        "a rejected replacement must keep the old key"
+        stored_key(store.clone(), row_id.clone()).await?
+            == (first_secret.clone(), first_value.clone()),
+        "an unchanged declaration must not rewrite the stored key"
     );
 
-    // A valid replacement swaps the key in place and deletes the old value.
-    let replaced = api
-        .replace_auth_provider(api::AuthProviderReplaceParams {
-            provider_id: provider_id.clone(),
-            display_name: Some("Replaced key".to_owned()),
-            config: api::AuthProviderConfigInput::ModelApiKey { endpoint: None },
-            credential: Some("key-two".to_owned()),
-        })
+    // A declaration the engine rejects changes nothing: the old key stays.
+    let rejected = declare(
+        None,
+        Some(api::ModelEndpointConfig {
+            base_url: "https://models.example.com/v1".to_owned(),
+            headers: Default::default(),
+            api_kinds: Vec::new(),
+        }),
+        "key-two",
+        false,
+    )
+    .await;
+    anyhow::ensure!(rejected.is_err(), "an empty API-kind list must be refused");
+    anyhow::ensure!(
+        stored_key(store.clone(), row_id.clone()).await?
+            == (first_secret.clone(), first_value.clone()),
+        "a rejected declaration must keep the old key"
+    );
+
+    // A dry run reports the replacement and writes nothing.
+    let preview = declare(Some("Replaced key"), None, "key-two", true)
         .await?
-        .result
-        .provider;
-    anyhow::ensure!(replaced.provider_id == provider_id);
+        .result;
+    anyhow::ensure!(!preview.created && preview.credential_replaced);
+    anyhow::ensure!(preview.provider.display_name.as_deref() == Some("Replaced key"));
+    anyhow::ensure!(
+        stored_key(store.clone(), row_id.clone()).await? == (first_secret.clone(), first_value),
+        "a dry run must keep the old key"
+    );
+
+    // A changed declaration swaps the key in place and deletes the old value.
+    let replaced = declare(Some("Replaced key"), None, "key-two", false)
+        .await?
+        .result;
+    anyhow::ensure!(!replaced.created && replaced.credential_replaced);
+    anyhow::ensure!(replaced.provider.provider_id == provider_id);
     let (second_secret, second_value) = stored_key(store.clone(), row_id.clone()).await?;
     anyhow::ensure!(second_value == "key-two" && second_secret != first_secret);
     anyhow::ensure!(
         store.read_secret(&first_secret).await.is_err(),
         "the replaced key is deleted"
     );
+
+    // Settings alone change without touching the key.
+    let renamed = declare(Some("Renamed"), None, "key-two", false)
+        .await?
+        .result;
+    anyhow::ensure!(!renamed.credential_replaced);
+    anyhow::ensure!(renamed.provider.display_name.as_deref() == Some("Renamed"));
+    anyhow::ensure!(
+        stored_key(store.clone(), row_id.clone()).await? == (second_secret, second_value),
+        "a settings change must keep the stored key"
+    );
+
+    // An endpoint header that names a credential. The declaration is refused,
+    // in a dry run too, while the credential does not exist, and a plain value
+    // under a name that carries a secret is refused whatever its value. Once
+    // the credential is a token credential the declaration is accepted, and
+    // what comes back names the credential under the lowercased header, never
+    // its token.
+    let header_suffix = uuid::Uuid::new_v4().simple().to_string();
+    let header_grant = format!("authgrant_gateway_{header_suffix}");
+    let header_token = format!("gateway-live-token-{header_suffix}");
+    let credential_header = || api::RequestHeader::Credential {
+        grant_id: header_grant.clone(),
+    };
+    let declare_header = |header: api::RequestHeader, dry_run: bool| {
+        declare(
+            Some("Renamed"),
+            Some(api::ModelEndpointConfig {
+                base_url: "https://models.example.com/v1".to_owned(),
+                headers: std::collections::BTreeMap::from([("X-Api-Key".to_owned(), header)]),
+                api_kinds: vec!["openai:completions".to_owned()],
+            }),
+            "key-two",
+            dry_run,
+        )
+    };
+    for dry_run in [true, false] {
+        let missing = declare_header(credential_header(), dry_run).await;
+        anyhow::ensure!(
+            missing.is_err_and(|error| error.kind == api::AgentApiErrorKind::NotFound),
+            "a header must name a credential that exists"
+        );
+    }
+    let plain = declare_header(
+        api::RequestHeader::Literal {
+            value: header_token.clone(),
+        },
+        false,
+    )
+    .await;
+    anyhow::ensure!(
+        plain.is_err_and(|error| error.kind == api::AgentApiErrorKind::InvalidRequest),
+        "a header that carries a secret takes a credential, not a plain value"
+    );
+    api.import_auth_grant(api::AuthGrantImportParams {
+        grant_id: Some(header_grant.clone()),
+        provider_id: None,
+        exposure: api::AuthGrantExposure::Brokered,
+        token: header_token.clone(),
+        display_name: Some("Model gateway".to_owned()),
+        subject_hint: None,
+        scopes: Vec::new(),
+        audience: None,
+        expires_at_ms: None,
+        metadata: None,
+    })
+    .await?;
+    let declared = declare_header(credential_header(), false).await?.result;
+    anyhow::ensure!(!declared.created && !declared.credential_replaced);
+    let api::AuthProviderConfigView::ModelApiKey {
+        endpoint: Some(endpoint),
+    } = &declared.provider.config
+    else {
+        anyhow::bail!("the declared provider keeps its endpoint");
+    };
+    anyhow::ensure!(
+        endpoint.headers
+            == std::collections::BTreeMap::from([("x-api-key".to_owned(), credential_header())]),
+        "the header is stored under its lowercased name and names the credential"
+    );
+    anyhow::ensure!(
+        !serde_json::to_string(&declared.provider)?.contains(&header_token),
+        "a provider never returns the token of a header credential"
+    );
+    let headers_in_document: bool = sqlx::query_scalar(
+        "SELECT config_json #> '{endpoint,headers}' IS NOT NULL
+         FROM auth_providers WHERE universe_id = $1 AND provider_id = $2",
+    )
+    .bind(store.config().universe_id)
+    .bind(provider_id.as_str())
+    .fetch_one(store.pool())
+    .await?;
+    anyhow::ensure!(
+        !headers_in_document,
+        "headers are rows beside the provider, not part of its document"
+    );
+    // A credential that was revoked can no longer be declared for a header.
+    api.revoke_auth_grant(api::AuthGrantRevokeParams {
+        grant_id: header_grant.clone(),
+    })
+    .await?;
+    let revoked = declare_header(credential_header(), true).await;
+    anyhow::ensure!(
+        revoked.is_err_and(|error| error.kind == api::AgentApiErrorKind::Rejected),
+        "a header must name an active credential"
+    );
+
+    // A provider that does not exist is created by its declaration.
+    let fresh_id = format!("model:declared_{}", uuid::Uuid::new_v4().simple());
+    let preview = api
+        .put_auth_provider(api::AuthProviderPutParams {
+            provider_id: fresh_id.clone(),
+            display_name: None,
+            config: api::AuthProviderConfigInput::ModelApiKey { endpoint: None },
+            credential: Some("key-fresh".to_owned()),
+            dry_run: true,
+        })
+        .await?
+        .result;
+    anyhow::ensure!(preview.created);
+    anyhow::ensure!(
+        store
+            .read_auth_provider(&auth::AuthProviderId::new(fresh_id.clone()))
+            .await
+            .is_err(),
+        "a dry run creates nothing"
+    );
+    let created = api
+        .put_auth_provider(api::AuthProviderPutParams {
+            provider_id: fresh_id.clone(),
+            display_name: None,
+            config: api::AuthProviderConfigInput::ModelApiKey { endpoint: None },
+            credential: Some("key-fresh".to_owned()),
+            dry_run: false,
+        })
+        .await?
+        .result;
+    anyhow::ensure!(created.created && created.provider.has_credential);
+    api.delete_auth_provider(api::AuthProviderDeleteParams {
+        provider_id: fresh_id,
+    })
+    .await?;
 
     api.delete_auth_provider(api::AuthProviderDeleteParams { provider_id })
         .await?;
@@ -1251,41 +1420,52 @@ async fn run_custom_headers_live_client(
     let headers = std::collections::BTreeMap::from([
         (
             "X-Upstream-Url".to_owned(),
-            api::McpServerHeader::Literal {
+            api::RequestHeader::Literal {
                 value: "https://tracker.example.com".to_owned(),
             },
         ),
         (
             "X-Upstream-Token".to_owned(),
-            api::McpServerHeader::Credential {
+            api::RequestHeader::Credential {
                 grant_id: grant_id.clone(),
             },
         ),
     ]);
-    let created = api
-        .put_mcp_server(McpServerPutParams {
-            server: McpServerInput {
-                server_id: server_id.clone(),
-                display_name: Some("Header gateway".to_owned()),
-                server_url,
-                default_server_label: "gateway".to_owned(),
-                description: None,
-                allowed_tools: None,
-                execution: RemoteMcpExecution::Runtime,
-                exposure: RemoteMcpExposure::Inject,
-                approval: RemoteMcpApprovalPolicy::Never,
-                defer_loading: None,
-                allow_private_network: true,
-                auth_policy: api::McpServerAuthPolicy::None,
-                credential: None,
-                headers,
-                status: McpServerStatus::Active,
+    let server = |headers| McpServerPutParams {
+        server: McpServerInput {
+            server_id: server_id.clone(),
+            display_name: Some("Header gateway".to_owned()),
+            server_url: server_url.clone(),
+            default_server_label: "gateway".to_owned(),
+            description: None,
+            allowed_tools: None,
+            execution: RemoteMcpExecution::Runtime,
+            exposure: RemoteMcpExposure::Inject,
+            approval: RemoteMcpApprovalPolicy::Never,
+            defer_loading: None,
+            allow_private_network: true,
+            auth_policy: api::McpServerAuthPolicy::None,
+            credential: None,
+            headers,
+            status: McpServerStatus::Active,
+        },
+        expected_revision: None,
+    };
+    // A name that carries a secret takes a credential: a plain value would be
+    // returned to every reader of the server.
+    let plain = api
+        .put_mcp_server(server(std::collections::BTreeMap::from([(
+            "X-Api-Key".to_owned(),
+            api::RequestHeader::Literal {
+                value: token.clone(),
             },
-            expected_revision: None,
-        })
-        .await?
-        .result
-        .server;
+        )])))
+        .await;
+    anyhow::ensure!(
+        plain.is_err_and(|error| error.kind == api::AgentApiErrorKind::InvalidRequest),
+        "a header that carries a secret takes a credential, not a plain value"
+    );
+    let created = api.put_mcp_server(server(headers)).await?.result.server;
     // Names come back lowercased; the credential is named, never its token.
     anyhow::ensure!(
         created.headers.keys().collect::<Vec<_>>() == vec!["x-upstream-token", "x-upstream-url"],
@@ -1311,17 +1491,56 @@ async fn run_custom_headers_live_client(
     // Replacing the credential's value reaches the server on the next request
     // without editing the server.
     let rotated = format!("upstream-live-token-rotated-{suffix}");
-    let replaced = api
-        .replace_auth_grant(api::AuthGrantReplaceParams {
+    let declare = |token: &str, display_name: &str, dry_run: bool| {
+        api.put_auth_grant(api::AuthGrantPutParams {
             grant_id: grant_id.clone(),
-            token: rotated.clone(),
+            provider_id: None,
+            exposure: api::AuthGrantExposure::Brokered,
+            token: token.to_owned(),
+            display_name: Some(display_name.to_owned()),
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: None,
             expires_at_ms: None,
+            metadata: None,
+            dry_run,
         })
-        .await?
-        .result
-        .grant;
+    };
+    // Declaring the credential as it is changes nothing.
+    let same = declare(&token, "Upstream tracker", false).await?.result;
+    anyhow::ensure!(!same.created && !same.token_replaced);
+    anyhow::ensure!(same.grant.updated_at_ms == same.grant.created_at_ms);
+    // A dry run reports the replacement without making it.
+    let preview = declare(&rotated, "Upstream tracker", true).await?.result;
+    anyhow::ensure!(!preview.created && preview.token_replaced);
+    // Its settings follow the declaration without touching the token.
+    let renamed = declare(&token, "Tracker", false).await?.result;
+    anyhow::ensure!(!renamed.token_replaced);
+    anyhow::ensure!(renamed.grant.display_name.as_deref() == Some("Tracker"));
+    // What a credential is never changes.
+    let exposed = api
+        .put_auth_grant(api::AuthGrantPutParams {
+            grant_id: grant_id.clone(),
+            provider_id: None,
+            exposure: api::AuthGrantExposure::Retrievable,
+            token: token.clone(),
+            display_name: None,
+            subject_hint: None,
+            scopes: Vec::new(),
+            audience: None,
+            expires_at_ms: None,
+            metadata: None,
+            dry_run: false,
+        })
+        .await;
     anyhow::ensure!(
-        replaced.grant_id == grant_id,
+        exposed.is_err_and(|error| error.kind == api::AgentApiErrorKind::Conflict),
+        "exposure is fixed when the credential is made"
+    );
+    let replaced = declare(&rotated, "Tracker", false).await?.result;
+    anyhow::ensure!(!replaced.created && replaced.token_replaced);
+    anyhow::ensure!(
+        replaced.grant.grant_id == grant_id,
         "replacement keeps the credential id"
     );
     let before_rotation = fixture.seen.lock().await.len();

@@ -67,7 +67,7 @@ async fn exercise(pool: &sqlx::PgPool) {
     let request = Put {
         slot: Slot::AgentRun,
         model: Some(route("anthropic", "anthropic:messages")),
-        expected_revision: 0,
+        expected_revision: Some(0),
     };
     let (left, right) = tokio::join!(
         first.put_model_defaults(request.clone()),
@@ -83,7 +83,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         .put_model_defaults(Put {
             slot: Slot::AgentRun,
             model: Some(route("local", "openai:completions")),
-            expected_revision: 0,
+            expected_revision: Some(0),
         })
         .await
         .unwrap();
@@ -91,7 +91,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         .put_model_defaults(Put {
             slot: Slot::SpeechToText,
             model: Some(route("speech", "openai:audio-transcriptions")),
-            expected_revision: 1,
+            expected_revision: Some(1),
         })
         .await
         .unwrap();
@@ -103,7 +103,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         .put_model_defaults(Put {
             slot: Slot::AgentRun,
             model: None,
-            expected_revision: 1,
+            expected_revision: Some(1),
         })
         .await
         .unwrap_err();
@@ -115,7 +115,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         .put_model_defaults(Put {
             slot: Slot::AgentRun,
             model: speech.speech_to_text.clone(),
-            expected_revision: 2,
+            expected_revision: Some(2),
         })
         .await
         .unwrap_err();
@@ -128,7 +128,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         .put_model_defaults(Put {
             slot: Slot::AgentRun,
             model: None,
-            expected_revision: 2,
+            expected_revision: Some(2),
         })
         .await
         .unwrap();
@@ -139,7 +139,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         .put_model_defaults(Put {
             slot: Slot::AgentRun,
             model: winner.agent_run,
-            expected_revision: 0,
+            expected_revision: Some(0),
         })
         .await
         .unwrap_err();
@@ -148,6 +148,38 @@ async fn exercise(pool: &sqlx::PgPool) {
         ModelDefaultsStoreError::Conflict { expected: 0 }
     ));
     assert_eq!(first.read_model_defaults().await.unwrap(), cleared);
+
+    // Without an expected revision the write is unconditional: it advances
+    // whatever revision the defaults are at, and touches only its slot.
+    let unconditional = first
+        .put_model_defaults(Put {
+            slot: Slot::AgentRun,
+            model: Some(route("anthropic", "anthropic:messages")),
+            expected_revision: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(unconditional.revision, 4);
+    assert!(unconditional.agent_run.is_some());
+    assert_eq!(unconditional.speech_to_text, speech.speech_to_text);
+    // A universe with no defaults yet takes its first write the same way.
+    let untouched = PgStore::new(pool.clone(), PgStoreConfig::new(Uuid::new_v4()));
+    untouched.ensure_universe().await.unwrap();
+    let seeded = untouched
+        .put_model_defaults(Put {
+            slot: Slot::SpeechToText,
+            model: Some(route("speech", "openai:audio-transcriptions")),
+            expected_revision: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(seeded.revision, 1);
+    assert_eq!(seeded.agent_run, None);
+    sqlx::query("DELETE FROM universes WHERE universe_id = $1")
+        .bind(untouched.config().universe_id)
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM universes WHERE universe_id = $1")
         .bind(first.config().universe_id)
         .execute(pool)

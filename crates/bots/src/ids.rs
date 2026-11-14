@@ -108,6 +108,22 @@ pub fn is_bot_session(bot_id: &BotId, session_id: &str) -> bool {
             .is_some_and(|rest| rest.starts_with(':') || rest.starts_with("-g"))
 }
 
+/// Whether a session id is the bot's main session or a rotated generation
+/// of it. Routed sessions (per conversation, per key, per event) and
+/// anything that is not this bot's session are not: the answer decides
+/// what only the bot's own standing context may be told, so it names the
+/// main session positively instead of excluding the routed shapes.
+pub fn is_bot_main_session(bot_id: &BotId, session_id: &str) -> bool {
+    let base = format!("{BOT_SESSION_PREFIX}{bot_id}");
+    match session_id.strip_prefix(&base) {
+        Some("") => true,
+        Some(rest) => rest.strip_prefix("-g").is_some_and(|generation| {
+            !generation.is_empty() && generation.bytes().all(|byte| byte.is_ascii_digit())
+        }),
+        None => false,
+    }
+}
+
 fn slugify(value: &str, max_len: usize) -> String {
     let mut slug = String::with_capacity(value.len());
     let mut pending_dash = false;
@@ -302,6 +318,33 @@ mod tests {
             routed_session_generation_id("bot:v1:t:k-x", 2),
             "bot:v1:t:k-x-g2"
         );
+    }
+
+    #[test]
+    fn only_the_main_session_and_its_generations_are_main() {
+        let b = bot("triage");
+        assert!(is_bot_main_session(&b, &bot_main_session_id(&b, 1)));
+        assert!(is_bot_main_session(&b, &bot_main_session_id(&b, 3)));
+        assert!(is_bot_main_session(&b, "bot:v1:triage-g12"));
+        // Routed sessions, and their rotated generations.
+        let keyed = bot_keyed_session_id(&b, "chat 42");
+        assert!(!is_bot_main_session(&b, &keyed));
+        assert!(!is_bot_main_session(
+            &b,
+            &routed_session_generation_id(&keyed, 2)
+        ));
+        assert!(!is_bot_main_session(
+            &b,
+            &bot_per_event_session_id(&b, "evt-1")
+        ));
+        // Another bot's session, an ordinary session, and near misses.
+        assert!(!is_bot_main_session(&b, "bot:v1:triager"));
+        assert!(!is_bot_main_session(&b, "bot:v1:other"));
+        assert!(!is_bot_main_session(&b, "bot:v1:triage-g"));
+        assert!(!is_bot_main_session(&b, "bot:v1:triage-gx"));
+        assert!(!is_bot_main_session(&b, "bot:v1:triage-2"));
+        assert!(!is_bot_main_session(&b, "ses_0123"));
+        assert!(!is_bot_main_session(&b, ""));
     }
 
     #[test]

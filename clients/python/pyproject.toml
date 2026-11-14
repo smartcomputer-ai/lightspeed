@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lightspeed-ai"
+version = "0.9.0"
+description = "Async Python SDK for the Lightspeed JSON-RPC gateway"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = ["httpx>=0.28,<1"]
+
+[project.urls]
+Documentation = "https://ls.bot/docs/"
+Repository = "https://github.com/smartcomputer-ai/lightspeed"
+Issues = "https://github.com/smartcomputer-ai/lightspeed/issues"
+
+[dependency-groups]
+dev = [
+  "datamodel-code-generator==0.93.0",
+  "mypy>=1.19,<2",
+  "pytest>=9,<10",
+  "pytest-asyncio>=1.3,<2",
+  "temporalio>=1.36,<2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lightspeed_ai"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+files = ["src/lightspeed_ai", "tests/typing_examples.py"]

@@ -2,6 +2,15 @@ use super::*;
 
 #[async_trait]
 pub trait AgentApiService: Send + Sync {
+    async fn watch_universe(
+        &self,
+        _params: UniverseWatchParams,
+    ) -> Result<AgentApiOutcome<UniverseWatchResponse>, AgentApiError> {
+        Err(AgentApiError::invalid_request(
+            "universe/watch requires an HTTP event stream",
+        ))
+    }
+
     async fn start_transcription(
         &self,
         _params: TranscriptionStartParams,
@@ -244,6 +253,16 @@ pub trait AgentApiService: Send + Sync {
         params: EnvironmentExternalCreateParams,
     ) -> Result<AgentApiOutcome<EnvironmentExternalCreateResponse>, AgentApiError>;
 
+    async fn put_registered_environment(
+        &self,
+        params: EnvironmentRegisteredPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegisteredPutResponse>, AgentApiError>;
+
+    async fn release_registered_environment(
+        &self,
+        params: EnvironmentRegisteredReleaseParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegisteredReleaseResponse>, AgentApiError>;
+
     async fn put_environment_ingress(
         &self,
         params: EnvironmentIngressPutParams,
@@ -324,6 +343,11 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: EnvironmentRegistrationKeyCreateParams,
     ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyCreateResponse>, AgentApiError>;
+
+    async fn put_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>, AgentApiError>;
 
     async fn read_environment_registration_key(
         &self,
@@ -452,10 +476,10 @@ pub trait AgentApiService: Send + Sync {
         params: AuthGrantReadParams,
     ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError>;
 
-    async fn replace_auth_grant(
+    async fn put_auth_grant(
         &self,
-        params: AuthGrantReplaceParams,
-    ) -> Result<AgentApiOutcome<AuthGrantReplaceResponse>, AgentApiError>;
+        params: AuthGrantPutParams,
+    ) -> Result<AgentApiOutcome<AuthGrantPutResponse>, AgentApiError>;
 
     async fn revoke_auth_grant(
         &self,
@@ -497,10 +521,10 @@ pub trait AgentApiService: Send + Sync {
         params: AuthProviderCreateParams,
     ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError>;
 
-    async fn replace_auth_provider(
+    async fn put_auth_provider(
         &self,
-        params: AuthProviderReplaceParams,
-    ) -> Result<AgentApiOutcome<AuthProviderReplaceResponse>, AgentApiError>;
+        params: AuthProviderPutParams,
+    ) -> Result<AgentApiOutcome<AuthProviderPutResponse>, AgentApiError>;
 
     async fn list_auth_providers(
         &self,
@@ -582,6 +606,11 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: BotTriggerListParams,
     ) -> Result<AgentApiOutcome<BotTriggerListResponse>, AgentApiError>;
+
+    async fn read_bot_trigger_secrets(
+        &self,
+        params: BotTriggerSecretsReadParams,
+    ) -> Result<AgentApiOutcome<BotTriggerSecretsReadResponse>, AgentApiError>;
 
     async fn delete_bot_trigger(
         &self,

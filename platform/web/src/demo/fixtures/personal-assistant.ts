@@ -76,7 +76,7 @@ import {
 import { TELEGRAM_ADA_ACCOUNT_ID, WHATSAPP_ADA_ACCOUNT_ID } from "./platform";
 
 export const PERSONAL_ASSISTANT_UNIVERSE_ID = "33333333-3333-4333-8333-333333333333";
-export const PERSONAL_ASSISTANT_SLUG = "personal-assistant";
+export const PERSONAL_ASSISTANT_HANDLE = "personal-assistant";
 const LIGHTSPEED_UNIVERSE_ID = "0000c0c0-0000-4000-8000-0000000c0c0c";
 
 const PROFILE = {
@@ -898,9 +898,9 @@ function seedEnvironments(universe: UniverseState): void {
     identityMode: "persistent",
     ephemeralDisconnectGraceMs: 300_000,
     status: "active",
-    registeredEnvironmentCount: 1,
-    activeEnvironmentCount: 1,
-    lastRegisteredAtMs: ago(9 * DAY_MS),
+    registeredEnvironmentCount: 2,
+    activeEnvironmentCount: 2,
+    lastRegisteredAtMs: ago(2 * DAY_MS),
     createdAtMs: ago(9 * DAY_MS),
     updatedAtMs: ago(9 * DAY_MS),
   });
@@ -915,6 +915,20 @@ function seedEnvironments(universe: UniverseState): void {
     displayName: "Ada's laptop",
     createdAtMs: ago(9 * DAY_MS),
     updatedAtMs: ago(3 * HOUR_MS),
+  }));
+  // Declared ahead of the machine: the environment already has its id, and
+  // the first daemon the key admits as "home-server" becomes it.
+  universe.environments.set("env-home-server", registeredEnvironment({
+    environmentId: "env-home-server",
+    registrationKeyId: homeDevicesKey,
+    name: "home-server",
+    identityMode: "persistent",
+    connected: false,
+    connectionChangedAtMs: ago(2 * DAY_MS),
+    lastSeenAtMs: ago(2 * DAY_MS),
+    displayName: "Home server",
+    createdAtMs: ago(2 * DAY_MS),
+    updatedAtMs: ago(2 * DAY_MS),
   }));
   universe.providerBindings.push(
     providerBinding({
@@ -2672,7 +2686,7 @@ function seedChannels(universe: UniverseState): void {
 export function seedPersonalAssistant(store: DemoStore): void {
   const universe = store.addUniverse({
     id: PERSONAL_ASSISTANT_UNIVERSE_ID,
-    slug: PERSONAL_ASSISTANT_SLUG,
+    handle: PERSONAL_ASSISTANT_HANDLE,
     name: "Personal Assistant",
     icon: "personal-assistant",
     iconColor: "blue",
@@ -2680,6 +2694,8 @@ export function seedPersonalAssistant(store: DemoStore): void {
     role: "admin",
     createdAt: agoIso(5 * 7 * DAY_MS),
     responder,
+    // Bots and channels are off in a new universe; this one is built on them.
+    features: { bots: true, channels: true },
   });
   seedMembers(store, universe);
   seedProfiles(universe);

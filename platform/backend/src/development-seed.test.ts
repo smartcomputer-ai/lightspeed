@@ -14,7 +14,7 @@ const env = {
 
 /// A database answering each read, in order, with the next of `reads`, and a
 /// core that accepts universe creation with the deployment key alone.
-function setup(reads: unknown[][], runtimeSlug = "test") {
+function setup(reads: unknown[][], runtimeHandle = "test") {
   const creations: unknown[] = [];
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
     const headers = new Headers(init.headers);
@@ -23,7 +23,7 @@ function setup(reads: unknown[][], runtimeSlug = "test") {
     const rpc = JSON.parse(String(init.body));
     expect(rpc.method).toBe("deployment/universes/create");
     creations.push(rpc.params);
-    return Response.json({ id: rpc.id, result: { result: { created: true, universe: { universeId: rpc.params.universeId, slug: runtimeSlug } }, notifications: [] } });
+    return Response.json({ id: rpc.id, result: { result: { created: true, universe: { universeId: rpc.params.universeId, handle: runtimeHandle } }, notifications: [] } });
   }));
   const inserts: { table: unknown; values: Record<string, unknown> }[] = [];
   const updates: Record<string, unknown>[] = [];
@@ -53,11 +53,12 @@ it("creates Test with the admin and three credential logins as members of their 
   // login and no membership.
   const state = setup([[admin], [], [], [], [], [], [], [], []]);
   await seedDevelopment(state.db, env);
-  expect(state.creations).toEqual([{ universeId: "6c696768-7473-4065-8064-000000000010", slug: "test" }]);
+  expect(state.creations).toEqual([{ universeId: "6c696768-7473-4065-8064-000000000010", handle: "test" }]);
   const values = (table: unknown) => state.inserts.filter((entry) => entry.table === table).map((entry) => entry.values);
   expect(values(schema.organization)).toMatchObject([{ name: "Test", slug: "test" }]);
   const organizationId = values(schema.organization)[0]!.id;
-  expect(values(schema.universes)).toMatchObject([{ organizationId, name: "Test" }]);
+  // The fixture universe exercises bots and channels, which are off by default.
+  expect(values(schema.universes)).toMatchObject([{ organizationId, name: "Test", features: { bots: true, channels: true } }]);
   expect(values(schema.user).map((user) => user.email)).toEqual([
     "operator@lightspeed.dev", "contributor@lightspeed.dev", "viewer@lightspeed.dev",
   ]);
@@ -83,7 +84,7 @@ it("reruns without duplicating and restores a changed role", async () => {
   expect(state.updates).toEqual([{ slug: "test" }, { role: "operator" }]);
 });
 
-it("preserves a runtime rename when caching the development universe slug", async () => {
+it("preserves a runtime rename when caching the development universe handle", async () => {
   const state = setup([[admin], [], [], [], [], [], [], [], []], "renamed-test");
   await seedDevelopment(state.db, env);
   expect(state.inserts.find(entry => entry.table === schema.organization)?.values.slug).toBe("renamed-test");

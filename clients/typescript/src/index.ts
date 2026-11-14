@@ -5,6 +5,7 @@ export {
   generateSubmissionId,
 } from "./client.js";
 export type {
+  WatchOptions,
   AwaitRunOptions,
   AwaitRunResult,
   CallOptions,
@@ -22,6 +23,8 @@ export type {
 export { CLIENT_HELPERS } from "./generated/helpers.js";
 export { runTimeline } from "./run-timeline.js";
 export type { RunTimelineItem, RunTimelineTool } from "./run-timeline.js";
+export { transcriptAuthor, transcriptMetadata } from "./transcript-metadata.js";
+export type { TranscriptMessageAuthor, TranscriptMessageMetadata } from "./transcript-metadata.js";
 export {
   METHODS,
   METHOD_INFO,
@@ -35,3 +38,5 @@ export type {
   NotificationMethod,
 } from "./generated/methods.js";
 export type * from "./generated/types.js";
+
+export { readEventStream } from "./event-stream.js";

@@ -12,6 +12,12 @@ from another session, an inherited sub-agent environment, a bot command
 trigger, or a standalone API job. Sharing environment access therefore also
 shares access to its injected credentials.
 
+Because the process receives the plain value, binding a credential is a way
+to read it. Only two kinds of source can be bound: a credential created as
+**retrievable**, and the API key of a model provider. A brokered credential
+is one whose value never leaves the runtime, so it cannot be bound. See
+[Choose a credential source](#choose-a-credential-source).
+
 Use an Operator or Admin account for these setup steps. Contributors can use
 the resulting environment in sessions they control, including its injected
 credentials. Start with [an environment you can use](using-environments.md).
@@ -48,17 +54,47 @@ the program that will use it.
 
 ## Choose a credential source
 
-The source picker lists usable credentials already present in the universe:
+The source picker lists the credentials in the universe that can be bound:
 
 | Source | What the process receives |
 | --- | --- |
 | Environment secret | The stored opaque value. |
-| Access credential | A bearer value obtained through its grant, including suitable OAuth connections or GitHub installation credentials. |
+| Retrievable access credential | A bearer value obtained through its grant: a token created with the retrievable option, or a GitHub installation credential, which supplies a short-lived installation token. |
 | Imported coding-agent subscription | The imported token or serialized token set, according to that integration's suggested variable. |
-| Model-provider API key | The exportable key from an active provider credential record. |
+| Model-provider API key | The stored key of an active model API key provider. |
 
-The public API also supports a direct secret reference. The web form creates
-environment secrets through the grant-backed path instead.
+Every credential has an exposure, chosen when it is created and fixed
+afterwards:
+
+- A **brokered** credential stays inside the runtime, which attaches it to
+  its own outbound requests, such as calls to an MCP server or a header of a
+  model endpoint. Nothing returns its value.
+- A **retrievable** credential can also be bound into an environment, and
+  leased by trusted services for bot webhook signatures and authenticated
+  polls.
+
+Binding requires a retrievable credential, and the runtime checks this both
+when the binding is made and each time it is resolved for a process or job.
+Environment secrets, imported coding-agent subscriptions and GitHub
+installation credentials granted on the **Credentials** page are created
+retrievable. For a pasted token, select **Retrievable by environments and
+trusted services** when you create it. A brokered credential does not appear
+in the picker, and the dialog says how many were left out. To use one in an
+environment, add a new retrievable credential with the same value; the
+exposure of an existing credential cannot be changed.
+
+A model provider's API key is the one case where a plain value reaches a
+machine without the retrievable option: the key exists to call the model
+provider, and binding it lets commands on the machine make the same calls.
+No other provider credential can be bound. In particular a GitHub App's
+private key cannot: bind a GitHub installation credential of that App
+instead, and the process receives an installation token that expires within
+the hour. A credential named by an MCP server header or a model endpoint
+header is attached by the runtime to its own request and does not need to be
+retrievable.
+
+There is no source that names a stored secret directly. Every bound value is
+a credential or a model provider key, so the rules above cover every binding.
 
 A variable name must start with an ASCII letter or underscore and contain
 only ASCII letters, digits, and underscores, with at most 128 characters.
@@ -101,10 +137,12 @@ Running processes also keep their original values. Use a credential and task
 lifetime appropriate to the operation, and start new work after a credential
 change when it needs the new value.
 
-The ordinary environment-injection path does not require the bearer-secret
-option **Retrievable by trusted services**. That option serves other explicit
-service-leasing use cases. Here, the token broker resolves the binding for
-the environment operation.
+Environment injection requires a credential created with **Retrievable by
+environments and trusted services**, because the resolved value is handed to
+the process. A binding whose credential is brokered, or whose provider is not
+a model API key provider, fails at this step with a message that names the
+variable and the credential; no command runs until the binding is changed or
+removed.
 
 ## Run coding agents with subscription credentials
 
@@ -148,7 +186,11 @@ every variable bound to it supplies the new value to the next process or job
 without any binding changing. Processes already running and jobs already
 admitted keep the old value. Environment secrets and tokens can be replaced;
 OAuth and GitHub App credentials renew themselves instead. From the CLI, use
-`lightspeed auth grants replace ID --token-stdin`.
+`lightspeed credential replace ID --token-stdin`, which keeps the
+credential's settings. A pipeline that holds the value in a secret store can
+declare the whole credential with `lightspeed credential put ID --token-env
+VARIABLE`: it creates the credential when missing, applies changed settings,
+replaces the token only when it differs, and changes nothing when repeated.
 
 To move a variable to a different credential instead, assign the same
 environment-variable name to that credential and verify a new process. Revoke
@@ -171,7 +213,7 @@ configured, bind a stored grant by reference:
 
 ```bash
 target/debug/lightspeed environment credentials bind "<environment-id>" \
-  --env-name ACORN_RELEASE_TOKEN --grant-id "<credential-id>"
+  --env-name ACORN_RELEASE_TOKEN --grant "<credential-id>"
 target/debug/lightspeed environment credentials list "<environment-id>"
 ```
 
@@ -196,10 +238,26 @@ The params for `environments/credentials/bind` use the same reference model:
 ```
 
 For `authProviderCredential`, the `providerId` field names the credential
-record, commonly `model:openai`, rather than the session's model route ID
-`openai`. The CLI uses `--provider-id` for that source and `--secret-id` for a
-direct secret. Supply only one source. Exact types and list/unbind methods are
-in the [API reference](../../../crates/api/contract/api-reference.md).
+record of a model API key provider, commonly `model:openai`, rather than the
+session's model route ID `openai`. The CLI uses `--provider-id` for that
+source. Supply exactly one of `--grant` and `--provider-id`. Exact types and
+list/unbind methods are in the
+[API reference](../../../crates/api/contract/api-reference.md).
+
+A credential made from the CLI is brokered unless it is created with
+`--retrievable`, on `lightspeed credential put`, `lightspeed credential
+login` and `lightspeed credential github installation grant`:
+
+```bash
+target/debug/lightspeed credential put acorn-release-token \
+  --token-env ACORN_RELEASE_TOKEN --retrievable
+```
+
+Declaring an existing credential again with a different exposure is refused;
+declare it under a new ID. In a
+[configuration document](../deployment/configuration-as-code.md) the same
+setting is `exposure: retrievable` on the credential, and `diff` and `apply`
+refuse a document that binds a brokered credential into an environment.
 
 ## Keep the exposure boundary clear
 
@@ -220,7 +278,8 @@ checks like the one above rather than printing credentials into the transcript.
 | --- | --- |
 | The variable is absent | Check the target environment and exact name, then start a new process rather than continuing one already running. |
 | Submission reports an environment-variable collision | Remove the bound name from explicit command or job `env`. |
-| Credential resolution fails before execution | Check that the referenced source is active, unexpired, and suitable for the requested audience. |
+| Credential resolution fails before execution | Check that the referenced source is active, unexpired, and suitable for the requested audience. A message that the source "may not be bound into an environment" means the credential is brokered or the provider is not a model API key provider: bind a retrievable credential under that variable name. |
+| The credential is missing from the source picker | It is brokered. Add a retrievable credential with the same value and assign that one. |
 | A profile change did not rotate the machine's token | Profiles do not manage credentials. Change the environment binding directly. |
 | A queued job uses an old token | Its values were resolved at admission. Submit new work after updating the binding. |
 | An imported subscription stopped working | Reimport a current credential and update its binding; the static imported record is not refreshed by core. |

@@ -9,7 +9,9 @@ pub enum AgentApiErrorKind {
     /// The request was understood and the caller may make it, but current
     /// state or policy refuses it. Never an authorization decision.
     Rejected,
-    /// No valid credential was presented.
+    /// No valid credential was presented. An authenticated gateway decides
+    /// this from the request headers and answers HTTP 401 without reading
+    /// the request body, so the error answers no request id.
     Unauthenticated,
     /// The authenticated caller lacks permission for this operation or target.
     Forbidden,
@@ -286,6 +288,8 @@ impl MethodScope {
 /// [`schemars::SchemaGenerator`]. Produced by the same macro invocation that
 /// generates the method's dispatcher, so the manifest cannot drift from it.
 pub struct MethodSpec {
+    /// Nonempty for streaming methods; these notifications precede the final response.
+    pub notifications: &'static [&'static str],
     pub method: &'static str,
     pub scope: MethodScope,
     pub access: MethodAccess,
@@ -304,9 +308,18 @@ pub struct MethodSchemas {
     pub result: schemars::Schema,
 }
 
+macro_rules! stream_notifications {
+    () => {
+        &[]
+    };
+    ($value:expr) => {
+        $value
+    };
+}
+
 macro_rules! api_methods {
     ($($method_const:ident => $service_fn:ident($params:ty) -> $response:ty =>
-        [$summary:expr, $description:expr], access: $access:expr),+ $(,)?) => {
+        [$summary:expr, $description:expr], $(streaming: $emits:expr,)? access: $access:expr),+ $(,)?) => {
         pub(crate) fn universe_method_access(method: &str) -> Option<MethodAccess> {
             match method {
                 $($method_const => Some($access),)+
@@ -339,6 +352,7 @@ macro_rules! api_methods {
                 $(
                     MethodSpec {
                         method: $method_const,
+                        notifications: stream_notifications!($($emits)?),
                         scope: ($access).scope(),
                         access: $access,
                         summary: $summary,
@@ -357,6 +371,8 @@ macro_rules! api_methods {
 }
 
 api_methods! {
+    METHOD_UNIVERSE_WATCH => watch_universe(UniverseWatchParams) -> UniverseWatchResponse =>
+        ["Watch universe list changes", "Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Each requested kind requires its own API-key group. Includes sub-agents; visibleTo restricts session access as on session/list."], streaming: WATCH_NOTIFICATIONS, access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_VFS_WORKSPACES_FILES_READ => read_vfs_workspace_file(VfsWorkspaceFileReadParams) -> BlobReadResponse =>
         ["Read a workspace file", "Reads bytes at a path in the current workspace head."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_INITIALIZE => initialize(InitializeParams) -> InitializeResponse =>
@@ -414,11 +430,11 @@ api_methods! {
     METHOD_SESSION_ENVIRONMENTS_DEACTIVATE => deactivate_session_environment(SessionEnvironmentDeactivateParams) -> SessionEnvironmentDeactivateResponse =>
         ["Deactivate the session environment", "Clears active environment selection without changing or closing the universe environment."], access: MethodAccess::Universe(UniverseAction::ConfigureSession),
     METHOD_ENVIRONMENTS_CREDENTIALS_BIND => bind_environment_credential(EnvironmentCredentialBindParams) -> EnvironmentCredentialBindResponse =>
-        ["Bind a credential into an environment", "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Bind a credential into an environment", "Maps an environment variable name to a retrievable credential grant or to a model API key provider's stored key. Commands in the environment receive the plain value, so a brokered grant and any other provider credential are refused. Requires configuring resources in the universe. The response exposes only the source handle, never secret material."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_CREDENTIALS_LIST => list_environment_credentials(EnvironmentCredentialListParams) -> EnvironmentCredentialListResponse =>
         ["List environment credential bindings", "Returns variable names and credential source handles for a universe environment; resolved secret values are never returned."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND => unbind_environment_credential(EnvironmentCredentialUnbindParams) -> EnvironmentCredentialUnbindResponse =>
-        ["Unbind an environment credential", "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Unbind an environment credential", "Removes one variable-to-credential mapping without deleting the underlying grant or provider credential."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_CREATE => create_environment(EnvironmentCreateParams) -> EnvironmentCreateResponse =>
         ["Create an environment", "Creates a provisioned environment, attributed to the caller, from a template of a provider enabled for the universe. Idempotent per requestId: same inputs, same environment; others conflict. Provisioning until the target's first envd handshake, then open; idle overrides the template default."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_READ => read_environment(EnvironmentReadParams) -> EnvironmentReadResponse =>
@@ -431,6 +447,10 @@ api_methods! {
         ["Close an environment", "Closes an environment; idempotent. A provisioned environment moves to closing while Lightspeed asks its provider to remove the target, retrying until it is gone, then closed. External and registered environments close at once, and a connected registered daemon is told its environment closed."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_EXTERNAL_CREATE => create_external_environment(EnvironmentExternalCreateParams) -> EnvironmentExternalCreateResponse =>
         ["Register an external environment", "Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_ENVIRONMENTS_REGISTERED_PUT => put_registered_environment(EnvironmentRegisteredPutParams) -> EnvironmentRegisteredPutResponse =>
+        ["Declare a registered environment", "Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_ENVIRONMENTS_REGISTERED_RELEASE => release_registered_environment(EnvironmentRegisteredReleaseParams) -> EnvironmentRegisteredReleaseResponse =>
+        ["Release a declared environment's daemon", "Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_INGRESS_PUT => put_environment_ingress(EnvironmentIngressPutParams) -> EnvironmentIngressPutResponse =>
         ["Configure environment public ingress", "Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_POWER_PUT => put_environment_power(EnvironmentPowerPutParams) -> EnvironmentPowerPutResponse =>
@@ -451,6 +471,8 @@ api_methods! {
         ["Cancel environment jobs", "Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result."], access: MethodAccess::Universe(UniverseAction::UseResource),
     METHOD_ENVIRONMENTS_REGISTRATION_KEYS_CREATE => create_environment_registration_key(EnvironmentRegistrationKeyCreateParams) -> EnvironmentRegistrationKeyCreateResponse =>
         ["Mint an environment registration key", "Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode (immutable), active limit, disconnect grace, offline close-after, and expiry are the key's policy. Treat the secret like a cluster-join credential."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_ENVIRONMENTS_REGISTRATION_KEYS_PUT => put_environment_registration_key(EnvironmentRegistrationKeyPutParams) -> EnvironmentRegistrationKeyPutResponse =>
+        ["Declare an environment registration key", "Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_REGISTRATION_KEYS_READ => read_environment_registration_key(EnvironmentRegistrationKeyReadParams) -> EnvironmentRegistrationKeyReadResponse =>
         ["Read an environment registration key", "Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_REGISTRATION_KEYS_LIST => list_environment_registration_keys(EnvironmentRegistrationKeyListParams) -> EnvironmentRegistrationKeyListResponse =>
@@ -470,7 +492,7 @@ api_methods! {
     METHOD_MODELS_DEFAULTS_READ => read_model_defaults(ModelDefaultsReadParams) -> ModelDefaultsResponse =>
         ["Read universe model defaults", "Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_MODELS_DEFAULTS_PUT => put_model_defaults(ModelDefaultsPutParams) -> ModelDefaultsResponse =>
-        ["Set a universe model default", "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Set a universe model default", "Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_MODELS_LIST => list_models(ModelListParams) -> ModelListResponse =>
         ["Discover available models", "Queries supported providers directly, with a brief process-local burst cache, and returns best-effort selectable routes. One provider failure does not discard successful results from others."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_PROFILES_CREATE => create_profile(ProfileCreateParams) -> ProfileCreateResponse =>
@@ -516,15 +538,15 @@ api_methods! {
     METHOD_MCP_SERVERS_DELETE => delete_mcp_server(McpServerDeleteParams) -> McpServerDeleteResponse =>
         ["Delete an MCP server record", "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GRANTS_IMPORT => import_auth_grant(AuthGrantImportParams) -> AuthGrantImportResponse =>
-        ["Import a token credential", "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Import a token credential", "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GRANTS_LEASE => lease_auth_grant(AuthGrantLeaseParams) -> AuthGrantLeaseResponse =>
         ["Lease a retrievable authentication grant", "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads."], access: MethodAccess::Service,
     METHOD_AUTH_GRANTS_READ => read_auth_grant(AuthGrantReadParams) -> AuthGrantReadResponse =>
         ["Read authentication grant metadata", "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_AUTH_GRANTS_LIST => list_auth_grants(AuthGrantListParams) -> AuthGrantListResponse =>
         ["List authentication grants", "Lists non-secret grant metadata for the universe, optionally filtered by status."], access: MethodAccess::Universe(UniverseAction::Read),
-    METHOD_AUTH_GRANTS_REPLACE => replace_auth_grant(AuthGrantReplaceParams) -> AuthGrantReplaceResponse =>
-        ["Replace a token credential's value", "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_AUTH_GRANTS_PUT => put_auth_grant(AuthGrantPutParams) -> AuthGrantPutResponse =>
+        ["Declare a token credential", "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GRANTS_REVOKE => revoke_auth_grant(AuthGrantRevokeParams) -> AuthGrantRevokeResponse =>
         ["Revoke an authentication grant", "Marks the grant unusable by token consumers while retaining non-secret audit metadata."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_CLIENTS_CREATE => create_auth_client(AuthClientCreateParams) -> AuthClientCreateResponse =>
@@ -541,8 +563,8 @@ api_methods! {
         ["Read OAuth flow status", "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_PROVIDERS_CREATE => create_auth_provider(AuthProviderCreateParams) -> AuthProviderCreateResponse =>
         ["Register an authentication provider", "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_PROVIDERS_REPLACE => replace_auth_provider(AuthProviderReplaceParams) -> AuthProviderReplaceResponse =>
-        ["Replace an authentication provider", "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_AUTH_PROVIDERS_PUT => put_auth_provider(AuthProviderPutParams) -> AuthProviderPutResponse =>
+        ["Declare an authentication provider", "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_PROVIDERS_READ => read_auth_provider(AuthProviderReadParams) -> AuthProviderReadResponse =>
         ["Read authentication provider metadata", "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_AUTH_PROVIDERS_LIST => list_auth_providers(AuthProviderListParams) -> AuthProviderListResponse =>
@@ -552,9 +574,9 @@ api_methods! {
     METHOD_AUTH_GITHUB_INSTALLATIONS_LIST => list_github_installations(AuthGitHubInstallationListParams) -> AuthGitHubInstallationListResponse =>
         ["List GitHub App installations", "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT => grant_github_installation(AuthGitHubInstallationGrantParams) -> AuthGitHubInstallationGrantResponse =>
-        ["Grant access to a GitHub App installation", "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Grant access to a GitHub App installation", "Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_BOTS_CREATE => create_bot(BotCreateParams) -> BotCreateResponse =>
-        ["Create a bot", "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back."], access: MethodAccess::Universe(UniverseAction::CreateBot),
+        ["Create a bot", "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id."], access: MethodAccess::Universe(UniverseAction::CreateBot),
     METHOD_BOTS_PUT => put_bot(BotPutParams) -> BotPutResponse =>
         ["Create or replace a bot document", "Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits."], access: MethodAccess::Universe(UniverseAction::ManageBot),
     METHOD_BOTS_READ => read_bot(BotReadParams) -> BotReadResponse =>
@@ -570,11 +592,13 @@ api_methods! {
     METHOD_BOTS_SESSIONS_ROTATE => rotate_bot_session(BotSessionRotateParams) -> BotSessionRotateResponse =>
         ["Rotate a bot session", "Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow."], access: MethodAccess::Universe(UniverseAction::ManageBot),
     METHOD_BOTS_TRIGGERS_PUT => put_bot_trigger(BotTriggerPutParams) -> BotTriggerPutResponse =>
-        ["Create or replace a trigger", "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token."], access: MethodAccess::Universe(UniverseAction::ManageBot),
+        ["Create or replace a trigger", "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view."], access: MethodAccess::Universe(UniverseAction::ManageBot),
     METHOD_BOTS_TRIGGERS_READ => read_bot_trigger(BotTriggerReadParams) -> BotTriggerReadResponse =>
-        ["Read a trigger", "Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers."], access: MethodAccess::Universe(UniverseAction::Read),
+        ["Read a trigger", "Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_BOTS_TRIGGERS_LIST => list_bot_triggers(BotTriggerListParams) -> BotTriggerListResponse =>
-        ["List a bot's triggers", "Returns every trigger of the bot ordered by id, secrets included for bot-management callers."], access: MethodAccess::Universe(UniverseAction::Read),
+        ["List a bot's triggers", "Returns every trigger of the bot ordered by id, without ingest paths or pairing codes."], access: MethodAccess::Universe(UniverseAction::Read),
+    METHOD_BOTS_TRIGGERS_SECRETS_READ => read_bot_trigger_secrets(BotTriggerSecretsReadParams) -> BotTriggerSecretsReadResponse =>
+        ["Read a trigger's secrets", "Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger."], access: MethodAccess::Universe(UniverseAction::ManageBot),
     METHOD_BOTS_TRIGGERS_DELETE => delete_bot_trigger(BotTriggerDeleteParams) -> BotTriggerDeleteResponse =>
         ["Delete a trigger", "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history."], access: MethodAccess::Universe(UniverseAction::ManageBot),
     METHOD_BOTS_EVENTS_ADMIT => admit_bot_event(BotEventAdmitParams) -> BotEventAdmitResponse =>
@@ -610,6 +634,15 @@ api_methods! {
 /// JSON-RPC notification methods the server can emit, with payloads described
 /// by the [`AgentNotification`] schema.
 pub const NOTIFICATION_METHODS: &[&str] = &[
+    "session/changed",
+    "session/removed",
+    "bots/changed",
+    "bots/removed",
+    "environments/changed",
+    "environments/removed",
+    "workspaces/changed",
+    "workspaces/removed",
+    "watch/reset",
     NOTIFY_SESSION_STARTED,
     NOTIFY_SESSION_EVENT,
     NOTIFY_SESSION_RUNS_STARTED,

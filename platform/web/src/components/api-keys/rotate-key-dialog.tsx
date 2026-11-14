@@ -5,14 +5,16 @@ import { ApiKeySecret } from "./secret-once";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
-export function RotateKeyDialog({ apiKey, basePath, onClose, onRotated }: {
+export function RotateKeyDialog({ apiKey, basePath, query = "", onClose, onRotated }: {
   apiKey: DeploymentApiKeyView;
   basePath: string;
+  /** Names the key's scope where the route does not already. */
+  query?: string;
   onClose: () => void;
   onRotated: () => void;
 }) {
   const rotate = useMutation({
-    mutationFn: () => api<DeploymentApiKeyCreateResponse>("POST", `${basePath}/${encodeURIComponent(apiKey.keyPrefix)}/rotate`),
+    mutationFn: () => api<DeploymentApiKeyCreateResponse>("POST", `${basePath}/${encodeURIComponent(apiKey.keyId)}/rotate${query}`),
     retry: false,
     gcTime: 0,
     onSuccess: onRotated,
@@ -23,7 +25,7 @@ export function RotateKeyDialog({ apiKey, basePath, onClose, onRotated }: {
     onClose();
   };
   return <Dialog open onOpenChange={(open) => { if (!open) close(); }}>
-    <DialogContent>
+    <DialogContent className="max-h-[90vh] overflow-y-auto">
       {rotate.data ? <ApiKeySecret secret={rotate.data.secret} keyPrefix={rotate.data.apiKey.keyPrefix} onDone={close} /> : <>
         <DialogHeader>
           <DialogTitle>Rotate this API key?</DialogTitle>

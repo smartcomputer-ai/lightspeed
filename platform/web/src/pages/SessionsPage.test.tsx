@@ -3,7 +3,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, type BotView, type SessionView } from "@/api";
+import { ApiError, type BotView, type SessionView, type SessionEvent } from "@/api";
 import { BotChat } from "@/components/bot/chat";
 import { sessionDraftKey } from "@/lib/sessions/draft";
 import { applyEvents, emptyTranscript, reconcileRuns } from "@/lib/sessions/transcript";
@@ -110,6 +110,7 @@ describe("queued message steering", () => {
     transcript.runPhases.set("queued-run", "queued");
     mocks.reconcileRuns.mockImplementation((runs: Parameters<typeof reconcileRuns>[1]) => {
       Object.assign(transcript, reconcileRuns(transcript, runs));
+      publishTranscript();
     });
     mocks.api.mockImplementation(async (method, path) => {
       if (method === "GET") return queued;
@@ -262,7 +263,8 @@ describe("queued message steering", () => {
     expect(mocks.api.mock.calls.at(-1)).toEqual(firstSubmission);
     expect(container.textContent).not.toContain("Saved message");
     expect(container.querySelector('[aria-label="Queued messages"]')).toBeNull();
-    expect(container.textContent).not.toContain(text);
+    // The completion receipt must not erase input before the tail catches up.
+    expect(container.textContent).toContain(text);
   });
 
   it("restores the original session without showing a follow-up in the newly opened session", async () => {
@@ -384,14 +386,15 @@ afterEach(async () => {
 });
 
 async function show(pathway: Pathway, universeId = "universe", sessionId = "session") {
+  publishTranscript();
   await act(async () => root.render(
     <MemoryRouter>
       {pathway === "session" ? (
-        <SessionDetail universeId={universeId} slug={universeId} sessionId={sessionId} />
+        <SessionDetail key={sessionDraftKey(universeId, sessionId)} universeId={universeId} handle={universeId} sessionId={sessionId} />
       ) : (
         <BotChat
           universeId={universeId}
-          slug={universeId}
+          handle={universeId}
           bot={bot}
           state={{ controller: {
             mainSessionId: pathway === "bot-main" ? sessionId : "main",
@@ -402,6 +405,11 @@ async function show(pathway: Pathway, universeId = "universe", sessionId = "sess
       )}
     </MemoryRouter>,
   ));
+}
+
+function publishTranscript() {
+  // Publish fixture edits as a new snapshot, as the real event reader does.
+  mocks.tail.getMockImplementation()!().transcript = { ...transcript };
 }
 
 function input() {
@@ -789,4 +797,162 @@ describe("session action permissions", () => {
     expect(input().disabled).toBe(true);
     expect(container.querySelector('[aria-label="Stop run"]')).toBeNull();
   });
+});
+
+
+async function deliver(kind: SessionEvent["kind"], joins: SessionEvent["joins"] = {}) {
+  const seq = Math.max(0, ...transcript.seenEvents) + 1;
+  Object.assign(transcript, applyEvents(transcript, [{
+    sessionId: "session", cursor: { seq }, observedAtMs: seq, joins, kind,
+  }]));
+  await show("session");
+}
+
+const appliedMessage = (text: string, runId: string, steeringId?: string): SessionEvent["kind"] => ({
+  type: "contextEntriesApplied", baseRevision: 0, revision: 1, entries: [{
+    id: steeringId ?? "durable-input", kind: { type: "message", role: "user" }, text,
+    content: { blobRef: `blob-${steeringId ?? runId}` },
+    source: steeringId ? { type: "steering", runId, steeringId, inputIndex: 0 }
+      : { type: "runInput", runId, inputIndex: 0 },
+  }],
+});
+
+it("keeps an idle send mounted through separate acceptance, start, and input batches", async () => {
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(700);
+  let accept!: (value: unknown) => void;
+  mocks.api.mockReturnValue(new Promise(resolve => { accept = resolve; }));
+  await show("session");
+  await type("Long local message");
+  await enter();
+  const bubble = container.querySelector('[data-slot="bubble"]')!;
+  const expand = bubble.querySelector<HTMLButtonElement>('[data-message-expansion]')!;
+  await act(async () => expand.click());
+  expect(bubble.closest('.transcript-enter')).toBeNull();
+  const submissionId = mocks.api.mock.calls[0]![2].submissionId as string;
+  await deliver({ type: "runAccepted", runId: "run_1", submissionId, source: { type: "input", entries: [] } });
+  expect(container.querySelector('[aria-label="Queued messages"]')).toBeNull();
+  expect(container.querySelector('[data-slot="bubble"]')).toBe(bubble);
+  // The POST can still describe acceptance before execution started.
+  await act(async () => accept({ run: { id: "run_1", status: "queued" } }));
+  expect(container.querySelector('[data-slot="bubble"]')).toBe(bubble);
+  await deliver({ type: "runStarted", runId: "run_1" });
+  await deliver(appliedMessage("Long local message", "run_1"));
+  expect(container.querySelectorAll('[data-slot="bubble"]')).toHaveLength(1);
+  expect(container.querySelector('[data-slot="bubble"]')).toBe(bubble);
+  expect(expand.getAttribute('aria-expanded')).toBe("true");
+  expect(bubble.closest('.transcript-enter')).toBeNull();
+});
+
+it.each(["completed", "failed"] as const)("retains input when a %s POST and snapshot precede the tail", async status => {
+  let accept!: (value: unknown) => void;
+  mocks.api.mockReturnValue(new Promise(resolve => { accept = resolve; }));
+  await show("session");
+  await type("Fast run");
+  await enter();
+  const bubble = container.querySelector('[data-slot="bubble"]');
+  const submissionId = mocks.api.mock.calls[0]![2].submissionId as string;
+  await act(async () => accept({ run: { id: "run_1", status } }));
+  await deliver({ type: "runAccepted", runId: "run_1", submissionId, source: { type: "input", entries: [] } });
+  Object.assign(transcript, reconcileRuns(transcript, [{ id: "run_1", status, acceptedAtMs: 1, source: { type: "input" } }]));
+  await show("session");
+  expect(container.querySelector('[data-slot="bubble"]')).toBe(bubble);
+  await deliver({ type: "runStarted", runId: "run_1" });
+  await deliver(appliedMessage("Fast run", "run_1"));
+  expect(container.querySelector('[data-slot="bubble"]')).toBe(bubble);
+});
+
+it("offers queue controls when the tail reveals another author started first", async () => {
+  mocks.api.mockReturnValue(new Promise(() => {}));
+  await show("session");
+  await type("My follow-up");
+  await enter();
+  expect(container.querySelector('[data-slot="bubble"]')?.textContent).toContain("My follow-up");
+  const submissionId = mocks.api.mock.calls[0]![2].submissionId as string;
+  await deliver({ type: "runStarted", runId: "other" });
+  await deliver({ type: "runAccepted", runId: "mine", submissionId, source: { type: "input", entries: [] } });
+  const queue = container.querySelector('[aria-label="Queued messages"]');
+  expect(queue?.textContent).toContain("My follow-up");
+  for (const label of ["Cancel queued message", "Steer with queued message"]) {
+    const button = queue?.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
+    expect(button).toBeTruthy();
+    expect(button!.disabled).toBe(false);
+  }
+  expect(container.querySelector('[data-testid="transcript"]')?.textContent).not.toContain("My follow-up");
+  await deliver({ type: "runStarted", runId: "mine" });
+  expect(container.querySelector('[aria-label="Queued messages"]')).toBeNull();
+  expect(container.querySelector('[data-slot="bubble"]')?.textContent).toContain("My follow-up");
+});
+
+it("keeps pending steering and the preceding note mounted when a snapshot finishes ahead of the tail", async () => {
+  await deliver({ type: "runStarted", runId: "run_1" });
+  transcript.entries = [{ kind: "message", key: "note", role: "assistant", text: "Still checking", runId: "run_1" }];
+  mocks.api.mockReturnValue(new Promise(() => {}));
+  await show("session");
+  await type("Check the logs too");
+  await enter({ ctrlKey: true });
+  const bubbles = [...container.querySelectorAll('[data-slot="bubble"]')];
+  expect(bubbles.map(el => el.textContent)).toEqual(["Still checking", expect.stringContaining("Check the logs too")]);
+  Object.assign(transcript, reconcileRuns(transcript, [{ id: "run_1", status: "completed", acceptedAtMs: 1, source: { type: "input" } }]));
+  await show("session");
+  const after = [...container.querySelectorAll('[data-slot="bubble"]')];
+  expect(after).toHaveLength(2);
+  expect(after[0]).toBe(bubbles[0]);
+  expect(after[1]).toBe(bubbles[1]);
+});
+
+it.each(["post-first", "tail-first"] as const)("preserves steering identity and expansion with repeated text (%s)", async order => {
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(700);
+  transcript.activeRun = { runId: "run_1", label: "thinking", cancelling: false };
+  transcript.runPhases.set("run_1", "running");
+  transcript.entries = [
+    { kind: "message", key: "first", role: "user", text: "Original", runId: "run_1" },
+    { kind: "message", key: "old-steer", role: "user", text: "Again", runId: "run_1", steering: true, steeringId: "old" },
+  ];
+  let accept!: (value: unknown) => void;
+  mocks.api.mockReturnValue(new Promise(resolve => { accept = resolve; }));
+  await show("session");
+  await type("Again");
+  await enter({ ctrlKey: true });
+  const bubbles = () => [...container.querySelectorAll('[data-slot="bubble"]')].filter(el => el.textContent?.includes("Again"));
+  expect(bubbles()).toHaveLength(2);
+  const bubble = bubbles()[1]!;
+  const expand = bubble.querySelector<HTMLButtonElement>('[data-message-expansion]')!;
+  await act(async () => expand.click());
+  expect(bubble.closest('.transcript-enter')).toBeNull();
+  expect(bubble.closest('[data-testid="transcript"]')).not.toBeNull();
+  const submissionId = mocks.api.mock.calls[0]![2].submissionId as string;
+  const acknowledge = () => act(async () => accept({ steeringId: "new", run: { id: "run_1", status: "running" } }));
+  if (order === "post-first") await acknowledge();
+  await deliver({ type: "runSteeringAccepted", runId: "run_1", steeringId: "new", input: [] }, { runId: "run_1", submissionId });
+  await deliver(appliedMessage("Again", "run_1", "new"));
+  if (order === "tail-first") await acknowledge();
+  expect(bubbles()).toHaveLength(2);
+  expect(bubbles()[1]).toBe(bubble);
+  expect(expand.getAttribute('aria-expanded')).toBe("true");
+  expect(bubble.closest('.transcript-enter')).toBeNull();
+});
+
+it("does not leak a pending send or its late receipt into another session", async () => {
+  let accept!: (value: unknown) => void;
+  mocks.api.mockReturnValue(new Promise(resolve => { accept = resolve; }));
+  await show("session");
+  await type("Only in the first session");
+  await enter();
+  await show("session", "universe", "other");
+  expect(container.textContent).not.toContain("Only in the first session");
+  await act(async () => accept({ run: { id: "1", status: "running" } }));
+  expect(container.textContent).not.toContain("Only in the first session");
+});
+
+it("stops retrying held submissions when their session view unmounts", async () => {
+  let reject!: (error: unknown) => void;
+  mocks.api.mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }))
+    .mockResolvedValue({ run: { id: "1", status: "running" } });
+  await show("session");
+  await type("Held while compacting");
+  await enter();
+  await show("session", "universe", "other");
+  await act(async () => reject(new ApiError(409, { error: "held", kind: "operationPending" })));
+  expect(mocks.api).toHaveBeenCalledOnce();
+  expect(container.textContent).not.toContain("Held while compacting");
 });

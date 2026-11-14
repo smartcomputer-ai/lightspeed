@@ -40,15 +40,11 @@ use temporal_runtime::{
         request_context::{RequestContext, with_request_context as calling},
     },
 };
-use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
+use temporal_workflow::{TemporalConnectionConfig, connect_temporal};
 use uuid::Uuid;
 
 async fn live_runtime(name: &str) -> anyhow::Result<(Arc<UniverseRuntime>, sqlx::PgPool)> {
-    let temporal_target =
-        std::env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-    let namespace = std::env::var("TEMPORAL_NAMESPACE")
-        .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
-    let client = connect_temporal(&temporal_target, &namespace).await?;
+    let client = connect_temporal(&TemporalConnectionConfig::from_env()?).await?;
     let stores = DeploymentStores::from_env().await?;
     let pool = stores.pool().clone();
     let runtime = Arc::new(UniverseRuntime::new(
@@ -78,7 +74,7 @@ async fn provider_universe(
     calling(
         deployment_caller(),
         operator.create_universe(DeploymentUniverseCreateParams {
-            slug: None,
+            handle: None,
             universe_id: universe_id.to_string(),
         }),
     )
@@ -98,7 +94,7 @@ async fn provider_universe(
     calling(
         deployment_caller(),
         operator.put_environment_provider_binding(DeploymentProviderBindingPutParams {
-            universe_id: universe_id.to_string(),
+            universe: universe_id.to_string(),
             provider_id: provider_id.to_owned(),
             enabled: true,
         }),
@@ -118,7 +114,7 @@ async fn cleanup(
     let _ = calling(
         deployment_caller(),
         operator.delete_environment_provider_binding(DeploymentProviderBindingDeleteParams {
-            universe_id: universe_id.to_string(),
+            universe: universe_id.to_string(),
             provider_id: provider_id.to_owned(),
         }),
     )
@@ -137,6 +133,7 @@ async fn cleanup(
 fn create_params(request_id: &str, provider_id: &str) -> EnvironmentCreateParams {
     EnvironmentCreateParams {
         request_id: request_id.to_owned(),
+        environment_id: None,
         provider_id: provider_id.to_owned(),
         template_id: FAKE_TEMPLATE_ID.to_owned(),
         display_name: Some("Provisioned live VM".to_owned()),
@@ -466,6 +463,7 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
         let external = calling(
             caller_a.clone(),
             api_a.create_external_environment(api::EnvironmentExternalCreateParams {
+                environment_id: None,
                 request_id: format!("external-{suffix}"),
                 endpoint: format!("ws://127.0.0.1:1/{suffix}"),
                 display_name: None,

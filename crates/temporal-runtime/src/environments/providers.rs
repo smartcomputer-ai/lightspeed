@@ -201,7 +201,8 @@ pub(crate) fn environment_view(record: &EnvironmentRecord) -> EnvironmentView {
             },
             EnvironmentSource::Registered(source) => EnvironmentSourceView::Registered {
                 registration_key_id: source.registration_key_id.to_string(),
-                daemon_id: source.daemon_id().to_string(),
+                name: source.registration_name.clone(),
+                daemon_id: source.daemon_id().map(|daemon_id| daemon_id.to_string()),
                 identity_mode: identity_mode_view(source.identity_mode),
                 connected: source.connected,
                 connection_changed_at_ms: source.connection_changed_at_ms,

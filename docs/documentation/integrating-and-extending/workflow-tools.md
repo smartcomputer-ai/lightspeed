@@ -308,7 +308,7 @@ Promise resolution checks the pinned producer workflow and universe. The first
 terminal resolution wins; duplicate or late replies do not replace it. A signal the
 session cannot decode, such as a malformed promise ID or blob reference, is logged and
 dropped, so the sender hears nothing and the promise stays pending until its deadline.
-The TypeScript helpers refuse such a value when building the envelope. A reply naming a
+The TypeScript and Python helpers refuse such a value when building the envelope. A reply naming a
 blob that does not exist, or failing the reply schema, fails only that promise.
 `invocation_cancellation` is a best-effort notice that the corresponding
 promise is already canceled. Stop the associated work when practical, while
@@ -337,6 +337,9 @@ missing completion signal with recovery results available.
 | Domain work runs twice | Activity retry handling and durable deduplication by invocation identity. |
 
 The [generated workflow contract](../../../crates/temporal-workflow/contract/workflow-contract.md)
-and [TypeScript workflow helpers](../../../clients/typescript/src/workflow.ts)
+and the workflow helpers for [TypeScript](../../../clients/typescript/src/workflow.ts)
+and [Python](../../../clients/python/src/lightspeed_ai/workflow.py)
 own the exact envelopes, identifiers, and signal/query names. Use those helpers
-instead of copying hashing or workflow-ID rules into your integration.
+instead of copying hashing or workflow-ID rules into your integration. The
+[Python client README](../../../clients/python/README.md#write-workflow-code) has the
+started workflow above in Python.

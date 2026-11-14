@@ -630,8 +630,9 @@
           },
           "approval_3": {
             "decided_by": {
+              "keyId": "ci-bot",
               "kind": "key",
-              "prefix": "ls_abc"
+              "scopeKind": "universe"
             },
             "note": "looks fine",
             "request": {

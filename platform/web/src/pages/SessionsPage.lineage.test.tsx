@@ -10,15 +10,15 @@ import { hasLineage, sessionMetaItems, useSessionLineage } from "@/components/se
 
 /// The strip under a session header, with only its lineage: the parent and
 /// each sub-agent, drawn while there is any.
-function SessionLineage({ universeId, slug, sessionId, origin, runRevision }: {
-  universeId: string; slug: string; sessionId: string; origin: SessionOrigin | null; runRevision: number;
+function SessionLineage({ universeId, handle, sessionId, origin, runRevision }: {
+  universeId: string; handle: string; sessionId: string; origin: SessionOrigin | null; runRevision: number;
 }) {
   const lineage = useSessionLineage({ universeId, sessionId, origin, runRevision });
   if (!hasLineage(lineage)) return null;
   const items = sessionMetaItems({
     session: { id: sessionId, lifecycleStatus: "open", lifecycleControlled: false, activity: "idle", retention: { rootSessionId: sessionId }, origin } as never,
     lineage,
-    lineageHref: (id) => `/u/${slug}/sessions/${id}`,
+    lineageHref: (id) => `/u/${handle}/sessions/${id}`,
   });
   return <div><MetaToolbar items={items} place="strip" /></div>;
 }
@@ -78,7 +78,7 @@ async function show(runRevision: number, withParent = false, universeId = "unive
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <SessionLineage
-          universeId={universeId} slug={universeId} sessionId={sessionId}
+          universeId={universeId} handle={universeId} sessionId={sessionId}
           origin={withParent ? origin : null} runRevision={runRevision}
         />
       </MemoryRouter>

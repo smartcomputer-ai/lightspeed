@@ -54,6 +54,14 @@
         }
       ]
     },
+    "AccessScopeKind": {
+      "description": "The kind of an [`AccessScope`]: the deployment, or a universe. Where a\nrecord already belongs to one universe this is enough to tell a universe\nkey of that universe from a deployment key.",
+      "enum": [
+        "deployment",
+        "universe"
+      ],
+      "type": "string"
+    },
     "ActiveToolsView": {
       "properties": {
         "revision": {
@@ -126,7 +134,7 @@
         },
         {
           "const": "unauthenticated",
-          "description": "No valid credential was presented.",
+          "description": "No valid credential was presented. An authenticated gateway decides\nthis from the request headers and answers HTTP 401 without reading\nthe request body, so the error answers no request id.",
           "type": "string"
         },
         {
@@ -353,6 +361,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfAuthGrantPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/AuthGrantPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfAuthGrantReadResponse": {
       "properties": {
         "notifications": {
@@ -363,23 +388,6 @@
         },
         "result": {
           "$ref": "#/definitions/AuthGrantReadResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthGrantReplaceResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthGrantReplaceResponse"
         }
       },
       "required": [
@@ -455,6 +463,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfAuthProviderPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/AuthProviderPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfAuthProviderReadResponse": {
       "properties": {
         "notifications": {
@@ -465,23 +490,6 @@
         },
         "result": {
           "$ref": "#/definitions/AuthProviderReadResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthProviderReplaceResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthProviderReplaceResponse"
         }
       },
       "required": [
@@ -829,6 +837,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfBotTriggerSecretsReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/BotTriggerSecretsReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfChannelAccountCreateResponse": {
       "properties": {
         "notifications": {
@@ -1077,6 +1102,23 @@
         },
         "result": {
           "$ref": "#/definitions/DeploymentApiKeyListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentApiKeyPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentApiKeyPutResponse"
         }
       },
       "required": [
@@ -1577,6 +1619,40 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfEnvironmentRegisteredPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentRegisteredPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentRegisteredReleaseResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse": {
       "properties": {
         "notifications": {
@@ -1604,6 +1680,23 @@
         },
         "result": {
           "$ref": "#/definitions/EnvironmentRegistrationKeyListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentRegistrationKeyPutResponse"
         }
       },
       "required": [
@@ -2359,6 +2452,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfUniverseWatchResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/UniverseWatchResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfVfsSnapshotCommitResponse": {
       "properties": {
         "notifications": {
@@ -2480,6 +2590,214 @@
     },
     "AgentNotification": {
       "oneOf": [
+        {
+          "properties": {
+            "method": {
+              "const": "session/changed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "session": {
+                  "$ref": "#/definitions/SessionSummaryView"
+                }
+              },
+              "required": [
+                "session"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "session/removed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "sessionId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sessionId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "bots/changed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "bot": {
+                  "$ref": "#/definitions/BotListItem"
+                }
+              },
+              "required": [
+                "bot"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "bots/removed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "botId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "botId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "environments/changed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "environment": {
+                  "$ref": "#/definitions/EnvironmentView"
+                }
+              },
+              "required": [
+                "environment"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "environments/removed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "environmentId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "environmentId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "workspaces/changed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "workspace": {
+                  "$ref": "#/definitions/VfsWorkspaceView"
+                }
+              },
+              "required": [
+                "workspace"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "workspaces/removed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "workspaceId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "workspaceId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "watch/reset",
+              "type": "string"
+            },
+            "params": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
         {
           "properties": {
             "method": {
@@ -2788,6 +3106,22 @@
       ],
       "type": "object"
     },
+    "ApiKeyGroups": {
+      "anyOf": [
+        {
+          "const": "all",
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/definitions/MethodGroup"
+          },
+          "type": "array",
+          "uniqueItems": true
+        }
+      ],
+      "description": "The method groups a key is created or declared with: the literal `all`, which is every group the key's scope allows, or a non-empty list of groups."
+    },
     "ApprovalDecisionFailure": {
       "properties": {
         "kind": {
@@ -2971,19 +3305,23 @@
           "type": "object"
         },
         {
-          "description": "A key acting for itself, named by its display prefix.",
+          "description": "A key acting for itself, named by its key id. A key id is unique\namong the keys of one scope, so `scopeKind` says whether it names a\ndeployment key or a key of the universe the record belongs to. The\nid survives a change of secret; the secret's display prefix does not\nand is deliberately not recorded.",
           "properties": {
+            "keyId": {
+              "type": "string"
+            },
             "kind": {
               "const": "key",
               "type": "string"
             },
-            "prefix": {
-              "type": "string"
+            "scopeKind": {
+              "$ref": "#/definitions/AccessScopeKind"
             }
           },
           "required": [
             "kind",
-            "prefix"
+            "keyId",
+            "scopeKind"
           ],
           "type": "object"
         },
@@ -3386,14 +3724,22 @@
       "type": "object"
     },
     "AuthGrantExposure": {
-      "enum": [
-        "brokered",
-        "retrievable"
-      ],
-      "type": "string"
+      "description": "Where a credential's plain value may go, fixed when it is created.",
+      "oneOf": [
+        {
+          "const": "brokered",
+          "description": "The value stays inside the runtime, which attaches it to its own\noutbound requests (an MCP server, a model endpoint header).",
+          "type": "string"
+        },
+        {
+          "const": "retrievable",
+          "description": "The value may also be leased to a trusted service and bound into an\nenvironment, where commands receive it.",
+          "type": "string"
+        }
+      ]
     },
     "AuthGrantImportParams": {
-      "description": "Import a token credential as an auth grant. Together with\n[`AuthGrantReplaceParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
+      "description": "Import a new token credential as an auth grant, under the given id or an\nallocated one; an id already in use is a conflict. Together with\n[`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
       "properties": {
         "audience": {
           "type": [
@@ -3540,6 +3886,103 @@
       },
       "type": "object"
     },
+    "AuthGrantPutParams": {
+      "description": "Declare a token credential (`staticToken`): its id, its settings and the\ntoken it holds. A credential that is missing is created. One that exists\nhas its settings replaced by these (an absent field is unset) and, when it\nholds a different token, that token replaced, so MCP servers, headers,\nbot polls and environment variables referencing the id use the new value\nfrom their next request or process. Declaring it again changes nothing.\n\n`token` is encrypted on receipt and never returned; `Debug` output redacts\nit and request logging must never echo these params.",
+      "properties": {
+        "audience": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dryRun": {
+          "description": "Report what the declaration would do without doing it.",
+          "type": "boolean"
+        },
+        "expiresAtMs": {
+          "description": "When the token expires. Absent means it does not expire.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "exposure": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AuthGrantExposure"
+            }
+          ],
+          "default": "brokered",
+          "description": "Whether the plain token may be leased to a service or bound into an\nenvironment. It cannot be changed afterwards."
+        },
+        "grantId": {
+          "type": "string"
+        },
+        "metadata": {
+          "description": "Non-secret, caller-defined metadata. Must be a JSON object; never put\nsecret material here."
+        },
+        "providerId": {
+          "description": "Label recorded on the credential; `static` when absent. It cannot be\nchanged afterwards.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subjectHint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "grantId",
+        "token"
+      ],
+      "type": "object"
+    },
+    "AuthGrantPutResponse": {
+      "properties": {
+        "created": {
+          "description": "False when the credential already existed.",
+          "type": "boolean"
+        },
+        "grant": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AuthGrantView"
+            }
+          ],
+          "description": "The credential as declared: as it is now, or as it would be for a\ndry run."
+        },
+        "tokenReplaced": {
+          "description": "True when an existing credential held a different token.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "grant",
+        "created",
+        "tokenReplaced"
+      ],
+      "type": "object"
+    },
     "AuthGrantReadParams": {
       "properties": {
         "grantId": {
@@ -3552,41 +3995,6 @@
       "type": "object"
     },
     "AuthGrantReadResponse": {
-      "properties": {
-        "grant": {
-          "$ref": "#/definitions/AuthGrantView"
-        }
-      },
-      "required": [
-        "grant"
-      ],
-      "type": "object"
-    },
-    "AuthGrantReplaceParams": {
-      "description": "Replace the token of an active token credential (`staticToken`). The\ncredential keeps its id, display name, audience, exposure and everything\nthat references it, so MCP servers, headers, bot polls and environment\nvariables use the new value from their next request or process. `token` is\nencrypted on receipt and never returned; `Debug` output redacts it.",
-      "properties": {
-        "expiresAtMs": {
-          "description": "When the new token expires. Absent means it does not expire; the old\ntoken's expiry is not carried over.",
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "grantId": {
-          "type": "string"
-        },
-        "token": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "grantId",
-        "token"
-      ],
-      "type": "object"
-    },
-    "AuthGrantReplaceResponse": {
       "properties": {
         "grant": {
           "$ref": "#/definitions/AuthGrantView"
@@ -4017,6 +4425,65 @@
       },
       "type": "object"
     },
+    "AuthProviderPutParams": {
+      "description": "Declare a provider: its id, its configuration and its credential. A\nprovider that is missing is created. One that exists is rewritten in place\nas if it were created again under the same id, where it differs: the new\nsettings are validated before anything changes, so a rejected declaration\nleaves the provider as it was, and sessions and environment variables\nreferencing the id keep working throughout. Declaring it again changes\nnothing. `credential` is encrypted on receipt and never returned; `Debug`\noutput redacts it.",
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/AuthProviderConfigInput"
+        },
+        "credential": {
+          "description": "The provider's credential, for the kinds that take one. Absent leaves\nthe provider without a credential.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dryRun": {
+          "description": "Report what the declaration would do without doing it.",
+          "type": "boolean"
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "config"
+      ],
+      "type": "object"
+    },
+    "AuthProviderPutResponse": {
+      "properties": {
+        "created": {
+          "description": "False when the provider already existed.",
+          "type": "boolean"
+        },
+        "credentialReplaced": {
+          "description": "True when an existing provider held a different credential, or gained\nor lost one.",
+          "type": "boolean"
+        },
+        "provider": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AuthProviderView"
+            }
+          ],
+          "description": "The provider as declared: as it is now, or as it would be for a dry\nrun."
+        }
+      },
+      "required": [
+        "provider",
+        "created",
+        "credentialReplaced"
+      ],
+      "type": "object"
+    },
     "AuthProviderReadParams": {
       "properties": {
         "providerId": {
@@ -4029,45 +4496,6 @@
       "type": "object"
     },
     "AuthProviderReadResponse": {
-      "properties": {
-        "provider": {
-          "$ref": "#/definitions/AuthProviderView"
-        }
-      },
-      "required": [
-        "provider"
-      ],
-      "type": "object"
-    },
-    "AuthProviderReplaceParams": {
-      "description": "Replace an existing provider's configuration and credential in place, as\nif it were created again under the same id. The new settings are validated\nbefore anything changes, so a rejected replacement leaves the provider as\nit was; sessions and environment variables referencing the id keep working\nthroughout. `credential` is encrypted on receipt and never returned;\n`Debug` output redacts it.",
-      "properties": {
-        "config": {
-          "$ref": "#/definitions/AuthProviderConfigInput"
-        },
-        "credential": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "providerId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "providerId",
-        "config"
-      ],
-      "type": "object"
-    },
-    "AuthProviderReplaceResponse": {
       "properties": {
         "provider": {
           "$ref": "#/definitions/AuthProviderView"
@@ -4532,6 +4960,13 @@
       "properties": {
         "bot": {
           "$ref": "#/definitions/BotView"
+        },
+        "triggerSecrets": {
+          "additionalProperties": {
+            "$ref": "#/definitions/BotTriggerSecretsView"
+          },
+          "description": "Secrets of the triggers created with the bot, by trigger id; a\ntrigger that has none is left out.",
+          "type": "object"
         },
         "triggers": {
           "default": [],
@@ -5256,6 +5691,12 @@
         "access": {
           "$ref": "#/definitions/ResourceAccessSummary"
         },
+        "activeSessionCount": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "activity": {
           "allOf": [
             {
@@ -5343,6 +5784,12 @@
             }
           ]
         },
+        "openSessionCount": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "pendingCount": {
           "description": "Events whose delivery has not finished.",
           "format": "uint64",
@@ -5379,6 +5826,15 @@
           "default": false,
           "description": "Capability grant: the mutating self-configuration tools\n(`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).",
           "type": "boolean"
+        },
+        "status": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/BotListStatus"
+            }
+          ],
+          "default": "idle",
+          "description": "Display precedence: closed, paused, waiting, attention, budget, working, idle."
         },
         "triggerCount": {
           "format": "uint32",
@@ -5427,6 +5883,18 @@
         }
       },
       "type": "object"
+    },
+    "BotListStatus": {
+      "enum": [
+        "closed",
+        "paused",
+        "waiting",
+        "attention",
+        "budget",
+        "working",
+        "idle"
+      ],
+      "type": "string"
     },
     "BotPutParams": {
       "properties": {
@@ -5482,6 +5950,14 @@
         },
         "bot": {
           "$ref": "#/definitions/BotView"
+        },
+        "status": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/BotListStatus"
+            }
+          ],
+          "default": "idle"
         }
       },
       "required": [
@@ -5966,7 +6442,7 @@
           ]
         },
         "pairingCode": {
-          "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Never returned to\nchannel-facing views.",
+          "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Absent keeps the\nstored code, so an edit never has to send it back.",
           "type": [
             "string",
             "null"
@@ -6049,6 +6525,14 @@
     },
     "BotTriggerPutResponse": {
       "properties": {
+        "secrets": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/BotTriggerSecretsView"
+            }
+          ],
+          "description": "The trigger's secrets as stored after this write, minted or kept."
+        },
         "trigger": {
           "$ref": "#/definitions/BotTriggerView"
         }
@@ -6132,6 +6616,61 @@
           "type": "object"
         }
       ]
+    },
+    "BotTriggerSecretsReadParams": {
+      "properties": {
+        "botId": {
+          "$ref": "#/definitions/BotId"
+        },
+        "triggerId": {
+          "$ref": "#/definitions/BotTriggerId"
+        }
+      },
+      "required": [
+        "botId",
+        "triggerId"
+      ],
+      "type": "object"
+    },
+    "BotTriggerSecretsReadResponse": {
+      "description": "The secrets of one trigger; both fields are absent for a trigger that\nhas none.",
+      "properties": {
+        "ingestPath": {
+          "description": "Webhook triggers: the ingest path including its URL token.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pairingCode": {
+          "description": "Chat triggers with `pairing: code`: the code a conversation sends\nonce to connect.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BotTriggerSecretsView": {
+      "description": "What lets an outsider reach a trigger: whoever holds the ingest path can\npost events to the bot, and whoever holds the pairing code can connect a\nconversation to it. Kept apart from [`BotTriggerView`] so that reading or\nlisting triggers never discloses either; only bot-management methods\nreturn this.",
+      "properties": {
+        "ingestPath": {
+          "description": "Webhook triggers: the ingest path including its URL token.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pairingCode": {
+          "description": "Chat triggers with `pairing: code`: the code a conversation sends\nonce to connect.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
     },
     "BotTriggerView": {
       "description": "The whole configuration of one trigger, replaced with an expected\nrevision.",
@@ -6388,13 +6927,6 @@
             "null"
           ]
         },
-        "ingestPath": {
-          "description": "Webhook triggers: the ingest path including its URL token, for\nbot-management callers only.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "lastFilterError": {
           "description": "Last runtime failure of the CEL filter (the event was refused);\ncleared by the next match.",
           "type": [
@@ -6406,13 +6938,6 @@
           "format": "int64",
           "type": [
             "integer",
-            "null"
-          ]
-        },
-        "pairingCode": {
-          "description": "Chat triggers with `pairing: code`: the code, for bot-management\ncallers only.",
-          "type": [
-            "string",
             "null"
           ]
         },
@@ -6619,8 +7144,15 @@
           },
           "type": "array"
         },
+        "keyId": {
+          "description": "The calling key's id, unique among the keys of `scope`. It is what\nrecords attribute the key's own requests to. Absent for a request\nwithout a key, such as local development.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "keyPrefix": {
-          "description": "Display prefix of the calling key; absent for a request without a\nkey, such as local development.",
+          "description": "Display prefix of the calling key's current secret; absent for a\nrequest without a key, such as local development.",
           "type": [
             "string",
             "null"
@@ -8612,6 +9144,37 @@
       ],
       "type": "object"
     },
+    "DeclaredUniverseMember": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "description": "Select by verified email, or by issuer and subject, never both.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "issuer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "$ref": "#/definitions/UniverseMemberRole"
+        },
+        "subject": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "role"
+      ],
+      "type": "object"
+    },
     "DeletedSessionView": {
       "properties": {
         "deletedAtMs": {
@@ -8639,7 +9202,7 @@
       "properties": {
         "assertActor": {
           "default": false,
-          "description": "Whether the key may name the actor a request acts for with the\n`x-lightspeed-actor` header. Give it only to a gate that authenticates\npeople, such as the Platform.",
+          "description": "Whether the key may name the actor a request acts for with the\n`x-lightspeed-actor` header. Give it only to a gate that authenticates\npeople, such as the Platform. It cannot be changed afterwards.",
           "type": "boolean"
         },
         "displayName": {
@@ -8647,12 +9210,17 @@
           "type": "string"
         },
         "groups": {
-          "description": "The method groups the key may call; absent grants every group its\nscope allows. To change what a key may do, revoke\nit and mint another.",
-          "items": {
-            "$ref": "#/definitions/MethodGroup"
-          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/ApiKeyGroups"
+            }
+          ],
+          "description": "The method groups the key may call: a non-empty list, or `\"all\"` for\nevery group its scope allows. The key stores the resulting set."
+        },
+        "keyId": {
+          "description": "The key's id: 1-128 ASCII letters, digits, underscores, hyphens, dots\nor colons, starting with a letter or digit, and not yet used by a key\nof this scope. Omit it to have one allocated.",
           "type": [
-            "array",
+            "string",
             "null"
           ]
         },
@@ -8667,6 +9235,7 @@
       },
       "required": [
         "scope",
+        "groups",
         "displayName"
       ],
       "type": "object"
@@ -8716,15 +9285,92 @@
       },
       "type": "object"
     },
-    "DeploymentApiKeyRevokeParams": {
+    "DeploymentApiKeyPutParams": {
       "additionalProperties": false,
+      "description": "Declare a key whose secret the caller supplies. `Debug` redacts the\nsecret; the serialized request remains sensitive and must not be logged.",
       "properties": {
-        "keyPrefix": {
+        "assertActor": {
+          "default": false,
+          "description": "Whether the key may name the actor a request acts for. It cannot be\nchanged afterwards.",
+          "type": "boolean"
+        },
+        "displayName": {
+          "description": "Human-readable purpose shown in key-management interfaces.",
+          "type": "string"
+        },
+        "groups": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ApiKeyGroups"
+            }
+          ],
+          "description": "The method groups the key may call: a non-empty list, or `\"all\"` for\nevery group its scope allows. An existing key's groups are replaced\nby these, and `\"all\"` is resolved again on every call, so repeating a\ndeclaration after an upgrade gives the key the groups added since."
+        },
+        "keyId": {
+          "description": "The key's id within its scope: 1-128 ASCII letters, digits,\nunderscores, hyphens, dots or colons, starting with a letter or digit.",
+          "type": "string"
+        },
+        "scope": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AccessScope"
+            }
+          ],
+          "description": "A universe, or the deployment. It cannot be changed afterwards."
+        },
+        "secret": {
+          "description": "The secret the key answers to: `lsk_` followed by 32 random bytes\nencoded as base64url without padding. Generate it with a\ncryptographic random source.",
           "type": "string"
         }
       },
       "required": [
-        "keyPrefix"
+        "scope",
+        "keyId",
+        "groups",
+        "displayName",
+        "secret"
+      ],
+      "type": "object"
+    },
+    "DeploymentApiKeyPutResponse": {
+      "properties": {
+        "apiKey": {
+          "$ref": "#/definitions/DeploymentApiKeyView"
+        },
+        "created": {
+          "description": "False when the key already existed.",
+          "type": "boolean"
+        },
+        "secretReplaced": {
+          "description": "True when an existing key held a different secret, which no longer\nworks.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "apiKey",
+        "created",
+        "secretReplaced"
+      ],
+      "type": "object"
+    },
+    "DeploymentApiKeyRevokeParams": {
+      "additionalProperties": false,
+      "properties": {
+        "keyId": {
+          "type": "string"
+        },
+        "scope": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AccessScope"
+            }
+          ],
+          "description": "The scope the key belongs to."
+        }
+      },
+      "required": [
+        "scope",
+        "keyId"
       ],
       "type": "object"
     },
@@ -8742,17 +9388,26 @@
     "DeploymentApiKeyRotateParams": {
       "additionalProperties": false,
       "properties": {
-        "keyPrefix": {
+        "keyId": {
           "type": "string"
+        },
+        "scope": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AccessScope"
+            }
+          ],
+          "description": "The scope the key belongs to."
         }
       },
       "required": [
-        "keyPrefix"
+        "scope",
+        "keyId"
       ],
       "type": "object"
     },
     "DeploymentApiKeyView": {
-      "description": "Non-secret key metadata: what the key reaches and may call, and who\nminted it.",
+      "description": "Non-secret key metadata: what the key is called, reaches and may call,\nand who minted it.",
       "properties": {
         "assertActor": {
           "type": "boolean"
@@ -8777,7 +9432,12 @@
           },
           "type": "array"
         },
+        "keyId": {
+          "description": "The key's name among the keys of its scope. Together with the scope\nit addresses the key, and it is kept when the secret is replaced.",
+          "type": "string"
+        },
         "keyPrefix": {
+          "description": "The first characters of the key's current secret: enough to tell\nwhich secret the key holds without revealing it. It changes when the\nsecret does.",
           "type": "string"
         },
         "lastUsedAtMs": {
@@ -8801,6 +9461,7 @@
         }
       },
       "required": [
+        "keyId",
         "keyPrefix",
         "scope",
         "groups",
@@ -8917,12 +9578,13 @@
             "null"
           ]
         },
-        "universeId": {
+        "universe": {
+          "description": "The universe's UUID or handle.",
           "type": "string"
         }
       },
       "required": [
-        "universeId"
+        "universe"
       ],
       "type": "object"
     },
@@ -9115,12 +9777,13 @@
         "providerId": {
           "type": "string"
         },
-        "universeId": {
+        "universe": {
+          "description": "The universe's UUID or handle.",
           "type": "string"
         }
       },
       "required": [
-        "universeId",
+        "universe",
         "providerId"
       ],
       "type": "object"
@@ -9146,12 +9809,13 @@
         "providerId": {
           "type": "string"
         },
-        "universeId": {
+        "universe": {
+          "description": "The universe's UUID or handle.",
           "type": "string"
         }
       },
       "required": [
-        "universeId",
+        "universe",
         "providerId",
         "enabled"
       ],
@@ -9174,12 +9838,13 @@
         "sessionId": {
           "type": "string"
         },
-        "universeId": {
+        "universe": {
+          "description": "The universe's UUID or handle.",
           "type": "string"
         }
       },
       "required": [
-        "universeId",
+        "universe",
         "sessionId"
       ],
       "type": "object"
@@ -9199,10 +9864,49 @@
       ],
       "type": "object"
     },
+    "DeploymentUniverseConfigurationPutParams": {
+      "description": "Patch desired Platform configuration. Absent fields retain their values.",
+      "properties": {
+        "directoryGroupMappings": {
+          "description": "Exact issuer-qualified directory groups. Omit to leave unchanged;\nan empty list clears declared group grants.",
+          "items": {
+            "$ref": "#/definitions/UniverseDirectoryGroupMapping"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "displayName": {
+          "description": "Runtime-owned name. Named universes are adopted automatically by Platform.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "members": {
+          "description": "Declared grants, independent of manual memberships. Omit to leave unmanaged;\nan empty list clears declared members. Email selectors require verified email.",
+          "items": {
+            "$ref": "#/definitions/DeclaredUniverseMember"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "universe": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "type": "object"
+    },
     "DeploymentUniverseCreateParams": {
       "properties": {
-        "slug": {
-          "description": "Optional core universe slug, set only when the universe is first created.",
+        "handle": {
+          "description": "The new universe's handle: 1-63 lowercase letters, digits and\nhyphens, starting and ending with a letter or digit, and not in the\nform of a UUID. Omit it to have one derived from the UUID. Ignored\nwhen the universe already exists.",
           "type": [
             "string",
             "null"
@@ -9235,12 +9939,13 @@
     },
     "DeploymentUniverseDeleteParams": {
       "properties": {
-        "universeId": {
+        "universe": {
+          "description": "The universe's UUID or handle.",
           "type": "string"
         }
       },
       "required": [
-        "universeId"
+        "universe"
       ],
       "type": "object"
     },
@@ -9270,6 +9975,24 @@
       ],
       "type": "object"
     },
+    "DeploymentUniverseHandlePutParams": {
+      "description": "Rename a universe. The UUID and resources remain unchanged; the previous\nhandle is released, so requests and URLs using it stop reaching this\nuniverse.",
+      "properties": {
+        "handle": {
+          "description": "The new handle: 1-63 lowercase letters, digits and hyphens, starting\nand ending with a letter or digit, and not in the form of a UUID.",
+          "type": "string"
+        },
+        "universe": {
+          "description": "The universe's UUID or current handle.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "universe",
+        "handle"
+      ],
+      "type": "object"
+    },
     "DeploymentUniverseListParams": {
       "type": "object"
     },
@@ -9287,12 +10010,13 @@
     },
     "DeploymentUniverseReadParams": {
       "properties": {
-        "universeId": {
+        "universe": {
+          "description": "The universe's UUID or handle.",
           "type": "string"
         }
       },
       "required": [
-        "universeId"
+        "universe"
       ],
       "type": "object"
     },
@@ -9304,28 +10028,6 @@
       },
       "required": [
         "universe"
-      ],
-      "type": "object"
-    },
-    "DeploymentUniverseSlugPutParams": {
-      "description": "Set or change an existing universe's deployment-unique slug. The UUID and\nresources remain unchanged; URLs using the previous slug may stop working.",
-      "properties": {
-        "onlyIfUnset": {
-          "default": false,
-          "description": "For adoption: assign only if unnamed, or succeed if already equal.\nReject a different existing slug instead of renaming it.",
-          "type": "boolean"
-        },
-        "slug": {
-          "description": "1-128 ASCII characters: an alphanumeric first character, followed by\nalphanumerics, underscores, hyphens, dots or colons.",
-          "type": "string"
-        },
-        "universeId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "universeId",
-        "slug"
       ],
       "type": "object"
     },
@@ -9342,12 +10044,43 @@
           "minimum": 0,
           "type": "integer"
         },
+        "directoryGroupMappings": {
+          "description": "Exact issuer-qualified directory groups. Omit to leave unchanged;\nan empty list clears declared group grants.",
+          "items": {
+            "$ref": "#/definitions/UniverseDirectoryGroupMapping"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "displayName": {
+          "description": "Runtime-owned name. Named universes are adopted automatically by Platform.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "handle": {
+          "description": "The universe's deployment-unique name. Requests may address the\nuniverse by it wherever they may by UUID.",
+          "type": "string"
+        },
         "lastActivityAtMs": {
           "description": "Most recent session activity (`max(sessions.updated_at_ms)`); absent\nwhen the universe has no sessions.",
           "format": "uint64",
           "minimum": 0,
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "members": {
+          "description": "Declared grants, independent of manual memberships. Omit to leave unmanaged;\nan empty list clears declared members. Email selectors require verified email.",
+          "items": {
+            "$ref": "#/definitions/DeclaredUniverseMember"
+          },
+          "type": [
+            "array",
             "null"
           ]
         },
@@ -9361,12 +10094,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "slug": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "universeId": {
           "type": "string"
         },
@@ -9378,6 +10105,7 @@
       },
       "required": [
         "universeId",
+        "handle",
         "createdAtMs",
         "sessions",
         "workspaces",
@@ -9494,6 +10222,13 @@
             "null"
           ]
         },
+        "environmentId": {
+          "description": "The id profiles and bindings use for the environment. Omit it to have\none allocated. An id already in use is a conflict.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "idle": {
           "anyOf": [
             {
@@ -9598,6 +10333,7 @@
     "EnvironmentCredentialSourceView": {
       "oneOf": [
         {
+          "description": "A credential grant. It must be retrievable: a bound value is handed\nto the commands of the machine in plain form, which is exactly what\na brokered grant promises never to do.",
           "properties": {
             "grantId": {
               "type": "string"
@@ -9614,6 +10350,7 @@
           "type": "object"
         },
         {
+          "description": "The stored API key of a model API key provider. No other provider\nkind can be bound; this is the one source whose plain value reaches\na machine without a retrievable grant.",
           "properties": {
             "providerId": {
               "type": "string"
@@ -9626,22 +10363,6 @@
           "required": [
             "type",
             "providerId"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "secretId": {
-              "type": "string"
-            },
-            "type": {
-              "const": "directSecret",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "secretId"
           ],
           "type": "object"
         }
@@ -9770,6 +10491,13 @@
         "endpoint": {
           "description": "`ws://`, `wss://` or `unix://` URL of an envd instance reachable from\nLightspeed.",
           "type": "string"
+        },
+        "environmentId": {
+          "description": "The id profiles and bindings use for the environment. Omit it to have\none allocated. An id already in use is a conflict.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "metadata": {
           "additionalProperties": {
@@ -10289,8 +11017,91 @@
       ],
       "type": "object"
     },
+    "EnvironmentRegisteredPutParams": {
+      "description": "Declare a fixed machine as an environment before its daemon registers.\nThe first daemon the key admits under `name` becomes this environment and\nkeeps its id; from then on only that daemon's identity reconnects to it.",
+      "properties": {
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "environmentId": {
+          "description": "The id profiles and bindings use for the environment.",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "name": {
+          "description": "The name the daemon registers under: 1 to 128 bytes without control\ncharacters, unique among the open environments of the key. It cannot\nbe changed afterwards.",
+          "type": "string"
+        },
+        "registrationKeyId": {
+          "description": "The persistent registration key whose daemons may fill it. It cannot\nbe changed afterwards.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "environmentId",
+        "registrationKeyId",
+        "name"
+      ],
+      "type": "object"
+    },
+    "EnvironmentRegisteredPutResponse": {
+      "properties": {
+        "created": {
+          "description": "False when the environment was already declared.",
+          "type": "boolean"
+        },
+        "environment": {
+          "$ref": "#/definitions/EnvironmentView"
+        }
+      },
+      "required": [
+        "environment",
+        "created"
+      ],
+      "type": "object"
+    },
+    "EnvironmentRegisteredReleaseParams": {
+      "description": "Forget the daemon bound to a declared environment so that another\nidentity may bind to it.",
+      "properties": {
+        "environmentId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "environmentId"
+      ],
+      "type": "object"
+    },
+    "EnvironmentRegisteredReleaseResponse": {
+      "properties": {
+        "environment": {
+          "$ref": "#/definitions/EnvironmentView"
+        },
+        "released": {
+          "description": "False when no daemon was bound.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "environment",
+        "released"
+      ],
+      "type": "object"
+    },
     "EnvironmentRegistrationKeyCreateParams": {
       "properties": {
+        "declaredOnly": {
+          "description": "Persistent keys only: admit only daemons whose registration name\nmatches an environment declared under this key.",
+          "type": "boolean"
+        },
         "displayName": {
           "description": "Group name for the environments this key admits.",
           "type": "string"
@@ -10336,6 +11147,13 @@
             "integer",
             "null"
           ]
+        },
+        "registrationKeyId": {
+          "description": "The key's id within the universe: 1-128 ASCII letters, digits,\nunderscores, hyphens, dots or colons, starting with a letter or digit.\nOmit it to have one allocated.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -10377,6 +11195,100 @@
           "type": "array"
         }
       },
+      "type": "object"
+    },
+    "EnvironmentRegistrationKeyPutParams": {
+      "description": "Declare a registration key whose secret the caller supplies: its id, its\ncomplete policy and the secret it answers to. An absent policy field is\nunset.",
+      "properties": {
+        "declaredOnly": {
+          "description": "Persistent keys only: admit only daemons whose registration name\nmatches an environment declared under this key.",
+          "type": "boolean"
+        },
+        "displayName": {
+          "description": "Group name for the environments this key admits.",
+          "type": "string"
+        },
+        "ephemeralDisconnectGraceMs": {
+          "description": "Disconnect grace for ephemeral environments; omit for the default.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "expiresAtMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "identityMode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EnvironmentIdentityModeView"
+            }
+          ],
+          "description": "Immutable once the key exists."
+        },
+        "maxActiveEnvironments": {
+          "description": "Non-closed environments the key may have at once; omit for unlimited.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "offlineCloseAfterMs": {
+          "description": "Persistent keys only: close environments whose daemon has been away\nlonger than this; omit to keep them open.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "registrationKeyId": {
+          "type": "string"
+        },
+        "secret": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EnvironmentRegistrationSecretView"
+            }
+          ],
+          "description": "The secret daemons register with: `lsrk_` followed by 32 random bytes\nencoded as base64url without padding. Generate it with a\ncryptographic random source."
+        }
+      },
+      "required": [
+        "registrationKeyId",
+        "displayName",
+        "identityMode",
+        "secret"
+      ],
+      "type": "object"
+    },
+    "EnvironmentRegistrationKeyPutResponse": {
+      "properties": {
+        "created": {
+          "description": "False when the key already existed.",
+          "type": "boolean"
+        },
+        "registrationKey": {
+          "$ref": "#/definitions/EnvironmentRegistrationKeyView"
+        },
+        "secretReplaced": {
+          "description": "True when an existing key answered to a different secret, which is\nnow retired.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "registrationKey",
+        "created",
+        "secretReplaced"
+      ],
       "type": "object"
     },
     "EnvironmentRegistrationKeyReadParams": {
@@ -10477,6 +11389,10 @@
     "EnvironmentRegistrationKeyUpdateParams": {
       "description": "The complete editable policy of a registration key; an absent field is\nunset. The identity mode is immutable.",
       "properties": {
+        "declaredOnly": {
+          "description": "Persistent keys only: admit only daemons whose registration name\nmatches an environment declared under this key.",
+          "type": "boolean"
+        },
         "displayName": {
           "description": "Group name for the environments this key admits.",
           "type": "string"
@@ -10547,6 +11463,10 @@
         "createdAtMs": {
           "format": "int64",
           "type": "integer"
+        },
+        "declaredOnly": {
+          "description": "The key admits only daemons whose registration name matches one of\nits declared environments.",
+          "type": "boolean"
         },
         "displayName": {
           "description": "The group name shown wherever registered environments are listed.",
@@ -10733,7 +11653,7 @@
           "type": "object"
         },
         {
-          "description": "An envd that dialed the gateway outbound and was admitted by a\nregistration key. The key is the environment's group; the daemon id\nis derived from the daemon's public key and is its identity.",
+          "description": "An envd that dials the gateway outbound and is admitted by a\nregistration key. The key is the environment's group; the daemon id\nis derived from the daemon's public key and is its identity.",
           "properties": {
             "connected": {
               "description": "The daemon's control connection is up.",
@@ -10745,7 +11665,11 @@
               "type": "integer"
             },
             "daemonId": {
-              "type": "string"
+              "description": "Absent while a declared environment has no daemon bound: it is\nwaiting for its machine, or its machine was released.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "identityMode": {
               "allOf": [
@@ -10760,6 +11684,13 @@
               "format": "int64",
               "type": "integer"
             },
+            "name": {
+              "description": "Set on a declared environment: the name its daemon registers\nunder.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "registrationKeyId": {
               "type": "string"
             },
@@ -10771,7 +11702,6 @@
           "required": [
             "type",
             "registrationKeyId",
-            "daemonId",
             "identityMode",
             "connected",
             "connectionChangedAtMs",
@@ -11213,6 +12143,7 @@
           ]
         },
         "submissionId": {
+          "description": "Client submission identifier, when present. Run and steering acceptance\nevents expose this join so clients can match local input to its accepted\nrun or steering identifier without comparing message text.",
           "type": [
             "string",
             "null"
@@ -12024,45 +12955,6 @@
       ],
       "type": "object"
     },
-    "McpServerHeader": {
-      "description": "Value of one extra MCP request header.",
-      "oneOf": [
-        {
-          "description": "Sent as written. Not secret: reads return the value.",
-          "properties": {
-            "type": {
-              "const": "literal",
-              "type": "string"
-            },
-            "value": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "The token of a static-token credential in this universe, resolved at\neach request and sent raw, without a scheme prefix.",
-          "properties": {
-            "grantId": {
-              "type": "string"
-            },
-            "type": {
-              "const": "credential",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "grantId"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "McpServerInput": {
       "additionalProperties": false,
       "description": "Full MCP server document as submitted by clients.",
@@ -12149,9 +13041,9 @@
         },
         "headers": {
           "additionalProperties": {
-            "$ref": "#/definitions/McpServerHeader"
+            "$ref": "#/definitions/RequestHeader"
           },
-          "description": "Extra request headers sent on every request to the server, alongside\nany `Authorization` the auth policy produces. Names are\ncase-insensitive and stored lowercased; transport headers,\n`authorization` and `x-lightspeed-*` are reserved. Requires `runtime`\nexecution.",
+          "description": "Extra request headers sent on every request to the server, alongside\nany `Authorization` the auth policy produces. Names are\ncase-insensitive and stored lowercased; transport headers,\n`authorization` and `x-lightspeed-*` are reserved. `api-key` and\n`x-api-key` carry a secret and accept only a `credential` value.\nRequires `runtime` execution.",
           "type": "object"
         },
         "serverId": {
@@ -12391,7 +13283,7 @@
         },
         "headers": {
           "additionalProperties": {
-            "$ref": "#/definitions/McpServerHeader"
+            "$ref": "#/definitions/RequestHeader"
           },
           "description": "Extra request headers, keyed by lowercased name. Credential headers\nshow only the credential id; the token is never returned.",
           "type": "object"
@@ -12548,7 +13440,7 @@
       ]
     },
     "MethodGroup": {
-      "description": "The methods a key may call, by group. Every public method but\n`initialize` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
+      "description": "The methods a key may call, by group. Every public method but\n`initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
       "oneOf": [
         {
           "enum": [
@@ -12730,10 +13622,13 @@
       "additionalProperties": false,
       "properties": {
         "expectedRevision": {
-          "description": "Revision returned by read/put; zero for a universe with no updates.",
+          "description": "Write only if the defaults are still at this revision, as returned by\nread or put; zero for a universe with no updates. Omit it to write\nwhatever the current revision is.",
           "format": "uint64",
           "minimum": 0,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "model": {
           "anyOf": [
@@ -12752,8 +13647,7 @@
       },
       "required": [
         "slot",
-        "model",
-        "expectedRevision"
+        "model"
       ],
       "type": "object"
     },
@@ -12785,8 +13679,9 @@
         },
         "headers": {
           "additionalProperties": {
-            "type": "string"
+            "$ref": "#/definitions/RequestHeader"
           },
+          "description": "Extra request headers sent on every request to the endpoint, alongside\nthe provider's own credential. Names are case-insensitive and stored\nlowercased; transport headers and `authorization` are reserved.\n`api-key`, `x-api-key` and `proxy-authorization` carry a secret and\naccept only a `credential` value.",
           "type": "object"
         }
       },
@@ -13660,6 +14555,45 @@
       ],
       "type": "string"
     },
+    "RequestHeader": {
+      "description": "Value of one configured request header, as an MCP server and a model\nprovider's endpoint both carry them. A name listed in\n[`CREDENTIAL_ONLY_HEADER_NAMES`] accepts only a `credential` value.",
+      "oneOf": [
+        {
+          "description": "Sent as written. Not secret: reads return the value.",
+          "properties": {
+            "type": {
+              "const": "literal",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The token of a static-token credential in this universe, resolved at\neach request and sent raw, without a scheme prefix.",
+          "properties": {
+            "grantId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "credential",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "grantId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ResourceAccessSummary": {
       "description": "The audience of a session's or bot's root as views show it: whether it is\nshared with the universe, and who created it. A bot's session and a\ndelegated child show their root's.",
       "properties": {
@@ -14403,6 +15337,32 @@
           "type": "string"
         }
       ]
+    },
+    "SessionAttachmentsView": {
+      "properties": {
+        "environments": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mcpServers": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "workspaces": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
     },
     "SessionCloseParams": {
       "properties": {
@@ -16777,6 +17737,37 @@
       ],
       "type": "object"
     },
+    "SessionLastRunView": {
+      "properties": {
+        "failureKind": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RunFailureKindView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finishedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/RunStatus"
+        }
+      },
+      "required": [
+        "runId",
+        "status",
+        "finishedAtMs"
+      ],
+      "type": "object"
+    },
     "SessionLifecycleStatus": {
       "enum": [
         "new",
@@ -17270,6 +18261,7 @@
       "type": "object"
     },
     "SessionSummaryView": {
+      "description": "Display fields materialized with the session log.",
       "properties": {
         "access": {
           "allOf": [
@@ -17279,6 +18271,13 @@
           ],
           "description": "The audience of the session's root: whether it is shared with the\nuniverse, and who created it."
         },
+        "activeEnvironmentId": {
+          "description": "Environment selected by the session event log.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "activity": {
           "allOf": [
             {
@@ -17286,6 +18285,35 @@
             }
           ],
           "description": "What the session is doing now: idle, working on a run, or waiting for\nan approval."
+        },
+        "activityPhase": {
+          "description": "Open vocabulary: awaiting while a run is parked on promises. Approval waiting remains in activity.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activitySinceMs": {
+          "description": "When the current non-idle activity or phase began; absent while idle.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "attachments": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SessionAttachmentsView"
+            }
+          ],
+          "default": {
+            "environments": [],
+            "mcpServers": [],
+            "workspaces": []
+          },
+          "description": "Attached catalog resource ids, grouped by kind."
         },
         "closedAtMs": {
           "format": "uint64",
@@ -17306,8 +18334,64 @@
             "null"
           ]
         },
+        "executionFailure": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SessionExecutionFailureView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Last observed stopped workflow execution, cleared on recovery."
+        },
         "id": {
           "type": "string"
+        },
+        "lastMessageAtMs": {
+          "description": "Observation time when the preview message entered the event log.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "lastMessageOrigin": {
+          "description": "Application-supplied display provenance of the preview message; not authenticated identity.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastMessagePreview": {
+          "description": "Latest nonempty user or assistant message reduced to one plain line of at most 200 Unicode characters.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastMessageRole": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextMessageRoleView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Role of the message represented by lastMessagePreview."
+        },
+        "lastRun": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SessionLastRunView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Most recent terminal run, independent of the current activity."
         },
         "lifecycleControlled": {
           "description": "True only when the session's integration names a lifecycle controller.",
@@ -17336,6 +18420,13 @@
         },
         "retention": {
           "$ref": "#/definitions/SessionRetentionView"
+        },
+        "revision": {
+          "default": 0,
+          "description": "Monotonic revision of visible summary fields; log-only appends do not advance it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "updatedAtMs": {
           "format": "uint64",
@@ -18665,6 +19756,65 @@
         }
       ]
     },
+    "UniverseDirectoryGroupMapping": {
+      "additionalProperties": false,
+      "properties": {
+        "group": {
+          "type": "string"
+        },
+        "issuer": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/definitions/UniverseMemberRole"
+        }
+      },
+      "required": [
+        "issuer",
+        "group",
+        "role"
+      ],
+      "type": "object"
+    },
+    "UniverseMemberRole": {
+      "enum": [
+        "viewer",
+        "contributor",
+        "operator",
+        "admin"
+      ],
+      "type": "string"
+    },
+    "UniverseWatchParams": {
+      "additionalProperties": false,
+      "properties": {
+        "kinds": {
+          "default": [
+            "session",
+            "bot",
+            "environment",
+            "workspace"
+          ],
+          "description": "Collections to watch; omission selects all four. Must be nonempty.",
+          "items": {
+            "$ref": "#/definitions/WatchKind"
+          },
+          "type": "array"
+        },
+        "visibleTo": {
+          "description": "Restrict session rows to shared sessions and sessions created by this actor,\nas on session/list. Includes delegated children through their root's access.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "UniverseWatchResponse": {
+      "description": "Final response when a watch reaches its lifetime. Reconnect and refetch on\nwatch/reset; notifications are lossy hints and have no durable resume cursor.",
+      "type": "object"
+    },
     "VfsFeature": {
       "additionalProperties": false,
       "description": "Grants the session virtual filesystem. Workspace attachments declare the\nsession-visible namespace and the VFS catalog is surfaced. The file tool\nsurface is derived from the attachments: any attachment installs the read\ntools, any `edit` attachment adds the write tools, and with the\nenvironments feature granted the matching transfer tools appear. `{}`\ngrants a VFS with no attachments, no tools, and no sourcing.",
@@ -19028,6 +20178,16 @@
       "enum": [
         "universe",
         "restricted"
+      ],
+      "type": "string"
+    },
+    "WatchKind": {
+      "description": "Collections whose list rows can be watched. Each requires its existing API-key group.",
+      "enum": [
+        "session",
+        "bot",
+        "environment",
+        "workspace"
       ],
       "type": "string"
     },

@@ -3,8 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AddIcon, ApiKeyIcon, RevokeIcon, RotateSecretIcon } from "@/icons";
 import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/sdk";
 import { api, type Universe } from "@/api";
+import { isKeyIdConflict, KeyIdField } from "@/components/api-keys/key-id-field";
 import { GroupSummary, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
 import { RotateKeyDialog } from "@/components/api-keys/rotate-key-dialog";
+import { keyIdentifier, keyScopeQuery } from "@/lib/api-keys";
 import { ApiKeySecret } from "@/components/api-keys/secret-once";
 import { ReadError } from "@/components/read-error";
 import {
@@ -65,8 +67,8 @@ export function AdminApiKeysPage() {
     universes.data?.find((universe) => universe.lightspeedUniverseId === lightspeedUniverseId)?.name ?? lightspeedUniverseId;
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["admin-api-keys"] });
   const revoke = useMutation({
-    mutationFn: (keyPrefix: string) =>
-      api<DeploymentApiKeyView>("DELETE", `/api/v1/admin/api-keys/${encodeURIComponent(keyPrefix)}`),
+    mutationFn: (key: DeploymentApiKeyView) =>
+      api<DeploymentApiKeyView>("DELETE", `/api/v1/admin/api-keys/${encodeURIComponent(key.keyId)}${keyScopeQuery(key)}`),
     onSuccess: () => void invalidate(),
   });
   const [showRevoked, setShowRevoked] = useState(false);
@@ -113,8 +115,8 @@ export function AdminApiKeysPage() {
               {rows.map((key) => {
                 const revoked = key.revokedAtMs != null;
                 return (
-                  <TableRow key={key.keyPrefix}>
-                    <TableTitleCell title={key.displayName ?? "Unnamed key"} subtitle={key.keyPrefix} />
+                  <TableRow key={`${key.scope.kind === "universe" ? key.scope.universeId : ""}/${key.keyId}`}>
+                    <TableTitleCell title={key.displayName ?? "Unnamed key"} subtitle={keyIdentifier(key)} />
                     <TableCell>
                       {key.scope.kind === "deployment" ? "Deployment" : universeName(key.scope.universeId)}
                       {key.assertActor && (
@@ -162,7 +164,7 @@ export function AdminApiKeysPage() {
                               <AlertDialogCancel>Cancel</AlertDialogCancel>
                               <AlertDialogAction
                                 className="bg-destructive text-white hover:bg-destructive/90"
-                                onClick={() => revoke.mutate(key.keyPrefix)}
+                                onClick={() => revoke.mutate(key)}
                               >
                                 Revoke key
                               </AlertDialogAction>
@@ -192,6 +194,7 @@ export function AdminApiKeysPage() {
       {rotatingKey && <RotateKeyDialog
         apiKey={rotatingKey}
         basePath={"/api/v1/admin/api-keys"}
+        query={keyScopeQuery(rotatingKey)}
         onClose={() => setRotatingKey(null)}
         onRotated={() => void invalidate()}
       />}
@@ -217,13 +220,16 @@ function CreateKeyDialog({
   onCreated: () => void;
 }) {
   const [displayName, setDisplayName] = useState("");
+  const [keyId, setKeyId] = useState("");
   const [scope, setScope] = useState<string>(DEPLOYMENT);
   const [groups, setGroups] = useState<Set<MethodGroup> | null>(null);
   const [assertActor, setAssertActor] = useState(false);
   const [created, setCreated] = useState<DeploymentApiKeyCreateResponse | null>(null);
   const kind = scope === DEPLOYMENT ? "deployment" : "universe";
   const allowed = groupsFor(kind);
-  // Null means every group the scope allows, which a new key starts with.
+  // Null is the untouched form, which starts with every group of the scope
+  // ticked. What is ticked is what is sent: the key holds exactly the groups
+  // shown, and nothing is left for the server to fill in.
   const chosen = groups ?? new Set(allowed);
 
   const create = useMutation({
@@ -231,8 +237,9 @@ function CreateKeyDialog({
       api<DeploymentApiKeyCreateResponse>("POST", "/api/v1/admin/api-keys", {
         displayName: displayName.trim(),
         scope: kind === "deployment" ? { kind } : { kind, universeId: scope },
-        ...(groups ? { groups: allowed.filter((group) => groups.has(group)) } : {}),
+        groups: allowed.filter((group) => chosen.has(group)),
         assertActor,
+        ...(keyId.trim() ? { keyId: keyId.trim() } : {}),
       }),
     onSuccess: (result) => {
       setCreated(result);
@@ -243,6 +250,7 @@ function CreateKeyDialog({
   const close = () => {
     onOpenChange(false);
     setDisplayName("");
+    setKeyId("");
     setScope(DEPLOYMENT);
     setGroups(null);
     setAssertActor(false);
@@ -256,7 +264,7 @@ function CreateKeyDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) close(); }}>
-      <DialogContent showCloseButton={!created} className="sm:max-w-lg">
+      <DialogContent showCloseButton={!created} className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         {created ? (
           <ApiKeySecret secret={created.secret} keyPrefix={created.apiKey.keyPrefix} onDone={close} />
         ) : (
@@ -281,6 +289,12 @@ function CreateKeyDialog({
                   required
                 />
               </Field>
+              <KeyIdField
+                id="admin-key-id"
+                value={keyId}
+                onChange={(value) => { setKeyId(value); create.reset(); }}
+                conflict={isKeyIdConflict(create.error, keyId)}
+              />
               <Field>
                 <FieldLabel htmlFor="admin-key-scope">Reaches</FieldLabel>
                 <Select value={scope} onValueChange={(value) => { setScope(value as string); setGroups(null); }}>

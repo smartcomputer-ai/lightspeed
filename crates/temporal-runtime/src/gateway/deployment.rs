@@ -90,6 +90,45 @@ impl GatewayDeploymentApi {
         Ok(stats.map(universe_view))
     }
 
+    /// The existing universe a request names by UUID or handle.
+    async fn resolve_universe(&self, reference: &str) -> Result<Uuid, AgentApiError> {
+        let reference = reference.trim();
+        store_pg::resolve_universe_reference(self.pool(), reference)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| AgentApiError::not_found(format!("unknown universe: {reference}")))
+    }
+
+    /// What a created or declared key is called and may do, once its name is
+    /// present and its universe is known to exist. The caller always states
+    /// the groups; `all` is resolved when the key is built.
+    async fn api_key_spec(
+        &self,
+        scope: AccessScope,
+        key_id: Option<String>,
+        groups: api::ApiKeyGroups,
+        assert_actor: bool,
+        display_name: &str,
+    ) -> Result<auth::ApiKeySpec, AgentApiError> {
+        let display_name = display_name.trim();
+        if display_name.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "api key displayName must not be empty",
+            ));
+        }
+        if let AccessScope::Universe { universe_id } = scope {
+            self.require_universe(universe_id).await?;
+        }
+        Ok(auth::ApiKeySpec {
+            key_id,
+            scope,
+            groups,
+            assert_actor,
+            created_by: super::request_context::request_context()?.attribution(),
+            display_name: Some(display_name.to_owned()),
+        })
+    }
+
     async fn require_universe(&self, universe_id: Uuid) -> Result<(), AgentApiError> {
         if store_pg::universe_exists(self.pool(), universe_id)
             .await
@@ -146,8 +185,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: api::DeploymentDeletedSessionsListParams,
     ) -> Result<AgentApiOutcome<api::DeploymentDeletedSessionsListResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_SESSIONS_DELETED_LIST, async {
-            let universe_id = parse_universe_id(&params.universe_id)?;
-            self.require_universe(universe_id).await?;
+            let universe_id = self.resolve_universe(&params.universe).await?;
             let rows = self
                 .runtime
                 .stores()
@@ -182,8 +220,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: api::DeploymentSessionPurgeParams,
     ) -> Result<AgentApiOutcome<api::DeploymentSessionPurgeResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_SESSIONS_PURGE, async {
-            let universe_id = parse_universe_id(&params.universe_id)?;
-            self.require_universe(universe_id).await?;
+            let universe_id = self.resolve_universe(&params.universe).await?;
             SessionId::try_new(&params.session_id)
                 .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
             let deleted_session_ids = self
@@ -212,8 +249,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: api::DeploymentUniverseReadParams,
     ) -> Result<AgentApiOutcome<api::EnvironmentProviderBindingListResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST, async {
-            let universe_id = parse_universe_id(&params.universe_id)?;
-            self.require_universe(universe_id).await?;
+            let universe_id = self.resolve_universe(&params.universe).await?;
             let bindings = self
                 .runtime
                 .stores()
@@ -238,13 +274,13 @@ impl DeploymentApiService for GatewayDeploymentApi {
     ) -> Result<AgentApiOutcome<DeploymentUniverseCreateResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_CREATE, async {
             let universe_id = parse_universe_id(&params.universe_id)?;
-            if let Some(slug) = &params.slug {
-                validate_universe_slug(slug)?;
+            if let Some(handle) = &params.handle {
+                validate_universe_handle(handle)?;
             }
-            let created = store_pg::create_universe_with_slug(
+            let created = store_pg::create_universe_with_handle(
                 self.pool(),
                 universe_id,
-                params.slug.as_deref(),
+                params.handle.as_deref(),
             )
             .await
             .map_err(map_universe_store_error)?;
@@ -409,8 +445,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentProviderBindingPutParams,
     ) -> Result<AgentApiOutcome<DeploymentProviderBindingPutResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT, async {
-            let universe_id = parse_universe_id(&params.universe_id)?;
-            self.require_universe(universe_id).await?;
+            let universe_id = self.resolve_universe(&params.universe).await?;
             let store = self.runtime.stores().store_for(universe_id);
             let binding = store
                 .put_provider_binding(PutEnvironmentProviderBinding {
@@ -436,8 +471,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentProviderBindingDeleteParams,
     ) -> Result<AgentApiOutcome<DeploymentProviderBindingDeleteResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE, async {
-            let universe_id = parse_universe_id(&params.universe_id)?;
-            self.require_universe(universe_id).await?;
+            let universe_id = self.resolve_universe(&params.universe).await?;
             let provider_id = parse_environment_provider_id(params.provider_id)?;
             let store = self.runtime.stores().store_for(universe_id);
             let binding = store
@@ -456,27 +490,48 @@ impl DeploymentApiService for GatewayDeploymentApi {
         .await
     }
 
-    async fn put_universe_slug(
+    async fn put_universe_configuration(
         &self,
-        params: api::DeploymentUniverseSlugPutParams,
+        params: api::DeploymentUniverseConfigurationPutParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_SLUG_PUT, async {
-            let id = parse_universe_id(&params.universe_id)?;
-            validate_universe_slug(&params.slug)?;
-            let slug =
-                store_pg::put_universe_slug(self.pool(), id, &params.slug, params.only_if_unset)
-                    .await
-                    .map_err(map_universe_store_error)?
-                    .ok_or_else(|| AgentApiError::not_found("universe not found"))?;
-            if slug != params.slug {
-                return Err(AgentApiError::conflict(
-                    "universe already has a different slug",
-                ));
+        self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT, async {
+            params
+                .configuration
+                .validate()
+                .map_err(AgentApiError::invalid_request)?;
+            let id = self.resolve_universe(&params.universe).await?;
+            if !store_pg::put_universe_configuration(self.pool(), id, &params.configuration)
+                .await
+                .map_err(map_store_error)?
+            {
+                return Err(AgentApiError::not_found("universe no longer exists"));
             }
             let universe = self
                 .read_universe_view(id)
                 .await?
-                .ok_or_else(|| AgentApiError::not_found("universe not found"))?;
+                .ok_or_else(|| AgentApiError::not_found("universe no longer exists"))?;
+            Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
+                universe,
+            }))
+        })
+        .await
+    }
+
+    async fn put_universe_handle(
+        &self,
+        params: api::DeploymentUniverseHandlePutParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
+        self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT, async {
+            validate_universe_handle(&params.handle)?;
+            let id = self.resolve_universe(&params.universe).await?;
+            let unknown = || AgentApiError::not_found(format!("unknown universe: {id}"));
+            if !store_pg::put_universe_handle(self.pool(), id, &params.handle)
+                .await
+                .map_err(map_universe_store_error)?
+            {
+                return Err(unknown());
+            }
+            let universe = self.read_universe_view(id).await?.ok_or_else(unknown)?;
             Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
                 universe,
             }))
@@ -531,7 +586,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentUniverseReadParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_READ, async {
-            let universe_id = parse_universe_id(&params.universe_id)?;
+            let universe_id = self.resolve_universe(&params.universe).await?;
             let universe = self.read_universe_view(universe_id).await?.ok_or_else(|| {
                 AgentApiError::not_found(format!("unknown universe: {universe_id}"))
             })?;
@@ -547,15 +602,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentUniverseDeleteParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseDeleteResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_DELETE, async {
-        let universe_id = parse_universe_id(&params.universe_id)?;
-        if !store_pg::universe_exists(self.pool(), universe_id)
-            .await
-            .map_err(map_store_error)?
-        {
-            return Err(AgentApiError::not_found(format!(
-                "unknown universe: {universe_id}"
-            )));
-        }
+        let universe_id = self.resolve_universe(&params.universe).await?;
 
         let session_ids = store_pg::list_universe_session_ids(self.pool(), universe_id)
             .await
@@ -639,32 +686,19 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentApiKeyCreateParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_CREATE, async {
-            let display_name = params.display_name.trim();
-            if display_name.is_empty() {
-                return Err(AgentApiError::invalid_request(
-                    "api key displayName must not be empty",
-                ));
-            }
-            if let AccessScope::Universe { universe_id } = params.scope {
-                self.require_universe(universe_id).await?;
-            }
-            let created_by = super::request_context::request_context()?.attribution();
+            let spec = self
+                .api_key_spec(
+                    params.scope,
+                    params.key_id,
+                    params.groups,
+                    params.assert_actor,
+                    &params.display_name,
+                )
+                .await?;
             let store = store_pg::PgApiKeyStore::new(self.pool().clone());
             for _ in 0..3 {
-                let minted = auth::mint_api_key(
-                    auth::ApiKeySpec {
-                        scope: params.scope,
-                        groups: params
-                            .groups
-                            .as_ref()
-                            .map(|groups| groups.iter().copied().collect()),
-                        assert_actor: params.assert_actor,
-                        created_by: created_by.clone(),
-                        display_name: Some(display_name.to_owned()),
-                    },
-                    current_time_ms()?,
-                )
-                .map_err(map_api_key_error)?;
+                let minted = auth::mint_api_key(spec.clone(), current_time_ms()?)
+                    .map_err(map_api_key_error)?;
                 match store.create_api_key(&minted.key_hash, &minted.record).await {
                     Ok(()) => {
                         return Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
@@ -681,6 +715,35 @@ impl DeploymentApiService for GatewayDeploymentApi {
             Err(AgentApiError::internal(
                 "could not allocate a unique api key prefix",
             ))
+        })
+        .await
+    }
+
+    async fn put_api_key(
+        &self,
+        params: api::DeploymentApiKeyPutParams,
+    ) -> Result<AgentApiOutcome<api::DeploymentApiKeyPutResponse>, AgentApiError> {
+        self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_PUT, async {
+            let spec = self
+                .api_key_spec(
+                    params.scope,
+                    Some(params.key_id),
+                    params.groups,
+                    params.assert_actor,
+                    &params.display_name,
+                )
+                .await?;
+            let key = auth::import_api_key(spec, current_time_ms()?, &params.secret)
+                .map_err(map_api_key_error)?;
+            let put = store_pg::PgApiKeyStore::new(self.pool().clone())
+                .put_api_key(&key)
+                .await
+                .map_err(map_api_key_error)?;
+            Ok(AgentApiOutcome::new(api::DeploymentApiKeyPutResponse {
+                api_key: api_key_view(put.record),
+                created: put.created,
+                secret_replaced: put.secret_replaced,
+            }))
         })
         .await
     }
@@ -709,17 +772,11 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentApiKeyRotateParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_ROTATE, async {
-            let key_prefix = params.key_prefix.trim();
-            if key_prefix.is_empty() {
-                return Err(AgentApiError::invalid_request(
-                    "api key keyPrefix must not be empty",
-                ));
-            }
             let rotated = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .rotate_api_key(key_prefix)
+                .rotate_api_key(params.scope, params.key_id.trim())
                 .await
                 .map_err(map_api_key_error)?
-                .ok_or_else(|| AgentApiError::not_found("unknown or revoked api key prefix"))?;
+                .ok_or_else(|| AgentApiError::not_found("unknown or revoked api key"))?;
             Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
                 api_key: api_key_view(rotated.record),
                 secret: rotated.secret.expose().to_owned(),
@@ -733,17 +790,11 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentApiKeyRevokeParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyRevokeResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_REVOKE, async {
-            let key_prefix = params.key_prefix.trim();
-            if key_prefix.is_empty() {
-                return Err(AgentApiError::invalid_request(
-                    "api key keyPrefix must not be empty",
-                ));
-            }
             let record = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .revoke_api_key(key_prefix, current_time_ms()?)
+                .revoke_api_key(params.scope, params.key_id.trim(), current_time_ms()?)
                 .await
                 .map_err(map_api_key_error)?
-                .ok_or_else(|| AgentApiError::not_found("unknown api key prefix"))?;
+                .ok_or_else(|| AgentApiError::not_found("unknown api key"))?;
             Ok(AgentApiOutcome::new(DeploymentApiKeyRevokeResponse {
                 api_key: api_key_view(record),
             }))
@@ -764,8 +815,9 @@ fn parse_environment_provider_id(value: String) -> Result<EnvironmentProviderId,
 
 fn universe_view(stats: store_pg::UniverseStats) -> DeploymentUniverseView {
     DeploymentUniverseView {
+        configuration: stats.configuration,
         universe_id: stats.universe_id.to_string(),
-        slug: stats.slug,
+        handle: stats.handle,
         created_at_ms: u64::try_from(stats.created_at_ms).unwrap_or(0),
         last_activity_at_ms: stats
             .last_activity_at_ms
@@ -779,6 +831,7 @@ fn universe_view(stats: store_pg::UniverseStats) -> DeploymentUniverseView {
 
 fn api_key_view(record: auth::ApiKeyRecord) -> DeploymentApiKeyView {
     DeploymentApiKeyView {
+        key_id: record.key_id,
         key_prefix: record.key_prefix,
         scope: record.scope,
         groups: record.groups.into_iter().collect(),
@@ -805,21 +858,17 @@ fn map_api_key_error(error: auth::ApiKeyError) -> AgentApiError {
         auth::ApiKeyError::AlreadyExists { .. } => {
             AgentApiError::internal("generated api key prefix collision")
         }
+        error @ auth::ApiKeyError::KeyIdInUse { .. } => AgentApiError::conflict(error.to_string()),
+        auth::ApiKeyError::Conflict { message } => AgentApiError::conflict(message),
         auth::ApiKeyError::Invalid { message } => AgentApiError::invalid_request(message),
         auth::ApiKeyError::Store { message } => AgentApiError::internal(message),
     }
 }
 
-fn validate_universe_slug(slug: &str) -> Result<(), AgentApiError> {
-    if slug.is_empty()
-        || slug.len() > 128
-        || !slug.as_bytes()[0].is_ascii_alphanumeric()
-        || !slug
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || b"_.:-".contains(&c))
-    {
+fn validate_universe_handle(handle: &str) -> Result<(), AgentApiError> {
+    if !store_pg::is_valid_universe_handle(handle) {
         return Err(AgentApiError::invalid_request(
-            "slug must start with a letter or digit and contain 1-128 ASCII letters, digits, underscores, hyphens, dots or colons",
+            "a universe handle is 1-63 lowercase letters, digits and hyphens, starts and ends with a letter or digit, and is not in the form of a UUID",
         ));
     }
     Ok(())
@@ -829,7 +878,7 @@ fn map_universe_store_error(error: store_pg::PgStoreError) -> AgentApiError {
     if let store_pg::PgStoreError::Postgres(sqlx::Error::Database(ref db)) = error
         && db.is_unique_violation()
     {
-        return AgentApiError::conflict("universe slug is already in use");
+        return AgentApiError::conflict("universe handle is already in use");
     }
     map_store_error(error)
 }
@@ -854,20 +903,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn universe_slugs_follow_the_store_format() {
-        for slug in ["test", "My.Universe:one_two-3", "0"] {
-            assert!(validate_universe_slug(slug).is_ok());
+    fn a_handle_the_store_refuses_is_an_invalid_request() {
+        for handle in ["research", "team-2", "0"] {
+            assert!(validate_universe_handle(handle).is_ok(), "{handle}");
         }
-        for slug in ["", "-test", "with space", "a/b", "ümlaut"] {
+        for handle in [
+            "",
+            "Research",
+            "my.universe",
+            "-research",
+            "00000000-0000-0000-0000-000000000001",
+        ] {
             assert_eq!(
-                validate_universe_slug(slug).unwrap_err().kind,
-                api::AgentApiErrorKind::InvalidRequest
+                validate_universe_handle(handle).unwrap_err().kind,
+                api::AgentApiErrorKind::InvalidRequest,
+                "{handle}"
             );
         }
-        assert!(validate_universe_slug(&"a".repeat(128)).is_ok());
-        assert_eq!(
-            validate_universe_slug(&"a".repeat(129)).unwrap_err().kind,
-            api::AgentApiErrorKind::InvalidRequest
-        );
     }
 }

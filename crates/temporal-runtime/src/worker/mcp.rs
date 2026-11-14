@@ -1,16 +1,13 @@
 use std::{
     collections::HashMap,
-    net::IpAddr,
-    str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
-use auth::SecretValue;
+use auth::{PrivateNetworkAccess, PrivateNetworkList, SecretValue};
 use base64::Engine;
 use harness::RemoteMcpToolSpec;
-use ipnet::IpNet;
 use llm_runtime::{
     McpInventoryError, McpInventoryResolver, RuntimeMcpTool,
     secrets::{SecretResolveError, SecretResolver, resolve_mcp_bearer},
@@ -90,10 +87,11 @@ const MCP_FIND_TRUNCATED_NOTE: &str =
 type InventoryCacheKey = (String, u64, Option<Vec<String>>);
 type InventoryLocks = HashMap<InventoryCacheKey, Arc<Mutex<()>>>;
 
+/// The deployment's `LIGHTSPEED_MCP_PRIVATE_NETWORKS` list. Every outbound
+/// client that may leave the public internet takes its reach from here.
 #[derive(Clone, Debug, Default)]
 pub struct McpPrivateNetworkPolicy {
-    hosts: Arc<Vec<String>>,
-    networks: Arc<Vec<IpNet>>,
+    list: PrivateNetworkList,
 }
 
 impl McpPrivateNetworkPolicy {
@@ -106,52 +104,38 @@ impl McpPrivateNetworkPolicy {
     }
 
     pub fn parse(value: Option<&str>) -> Result<Self, String> {
-        let mut hosts = Vec::new();
-        let mut networks = Vec::new();
-        for item in value
-            .unwrap_or_default()
-            .split(',')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        {
-            if let Ok(network) = IpNet::from_str(item) {
-                networks.push(network);
-            } else if item.contains('/') {
-                return Err(format!(
-                    "invalid CIDR in LIGHTSPEED_MCP_PRIVATE_NETWORKS: {item}"
-                ));
-            } else {
-                hosts.push(item.to_ascii_lowercase());
-            }
-        }
-        Ok(Self {
-            hosts: Arc::new(hosts),
-            networks: Arc::new(networks),
-        })
+        PrivateNetworkList::parse(value.unwrap_or_default())
+            .map(|list| Self { list })
+            .map_err(|error| {
+                format!(
+                    "invalid CIDR in LIGHTSPEED_MCP_PRIVATE_NETWORKS: {}",
+                    error.item
+                )
+            })
     }
 
-    pub fn permits(&self, server_url: &str, record_opt_in: bool) -> bool {
+    /// What a request to `server_url` may reach beyond public addresses.
+    ///
+    /// A listed host is trusted wherever it resolves. Any other host is held
+    /// to the listed networks, and that is decided on its resolved addresses
+    /// by the client that pins them: only there is a hostname's destination
+    /// known, and known to be the one the connection uses.
+    pub fn access(&self, server_url: &str, record_opt_in: bool) -> PrivateNetworkAccess {
         if !record_opt_in {
-            return false;
+            return PrivateNetworkAccess::None;
         }
-        let Ok(url) = Url::parse(server_url) else {
-            return false;
-        };
-        let Some(host) = url.host_str() else {
-            return false;
-        };
-        if self
-            .hosts
-            .iter()
-            .any(|allowed| allowed == &host.to_ascii_lowercase())
-        {
-            return true;
+        match Url::parse(server_url) {
+            Ok(url) => self.list.access_for(&url),
+            Err(_) => PrivateNetworkAccess::None,
         }
-        host.parse::<IpAddr>().is_ok_and(|address| {
-            self.networks
-                .iter()
-                .any(|network| network.contains(&address))
-        })
+    }
+
+    /// The HTTP client for MCP OAuth metadata, registration, exchange and
+    /// refresh. It judges each URL against the list on its own, because an
+    /// authorization server is a different host from the MCP server it
+    /// protects and neither is known when the client is built.
+    pub fn oauth_http_client(&self) -> auth::HttpOAuthMetadataClient {
+        auth::HttpOAuthMetadataClient::with_private_networks(self.list.clone())
     }
 }
 
@@ -239,16 +223,16 @@ impl RuntimeMcpInventoryResolver {
         let auth = record_auth(self.secrets.as_ref(), &record, trusted_universe.is_some())
             .await
             .map_err(|error| McpInventoryError::new(format!("resolve MCP credential: {error}")))?;
-        let allow_private = self
+        let private_access = self
             .private_networks
-            .permits(&record.server_url, record.allow_private_network);
+            .access(&record.server_url, record.allow_private_network);
         let discovered = self
             .discoverer
             .discover_tools(
                 &record.server_url,
                 &auth,
                 trusted_universe,
-                allow_private,
+                private_access,
                 mcp::McpToolDiscoveryLimits::default(),
             )
             .await
@@ -643,16 +627,16 @@ impl RuntimeMcpExecutor {
         let auth = record_auth(self.secrets.as_ref(), &record, trusted_universe.is_some())
             .await
             .map_err(|error| format!("resolve MCP credential: {error}"))?;
-        let allow_private = self
+        let private_access = self
             .private_networks
-            .permits(&record.server_url, record.allow_private_network);
+            .access(&record.server_url, record.allow_private_network);
         let result = self
             .transport
             .call_tool(
                 &record.server_url,
                 &auth,
                 trusted_universe,
-                allow_private,
+                private_access,
                 mcp::McpToolDiscoveryLimits::default(),
                 McpToolCallRequest {
                     tool_name: tool_name.to_owned(),
@@ -1283,7 +1267,7 @@ mod tests {
             _server_url: &str,
             _auth: &McpRequestAuth,
             _trusted_universe: Option<uuid::Uuid>,
-            _allow_private_network: bool,
+            _private_access: PrivateNetworkAccess,
             _limits: mcp::McpToolDiscoveryLimits,
         ) -> Result<DiscoveredMcpInventory, mcp::McpToolDiscoveryFailure> {
             let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1381,7 +1365,7 @@ mod tests {
     /// Records where each fetch went and what it was allowed to reach.
     #[derive(Default)]
     struct RecordingDiscoverer {
-        fetches: std::sync::Mutex<Vec<(String, bool)>>,
+        fetches: std::sync::Mutex<Vec<(String, PrivateNetworkAccess)>>,
     }
 
     #[async_trait]
@@ -1391,13 +1375,13 @@ mod tests {
             server_url: &str,
             _auth: &McpRequestAuth,
             _trusted_universe: Option<uuid::Uuid>,
-            allow_private_network: bool,
+            private_access: PrivateNetworkAccess,
             _limits: mcp::McpToolDiscoveryLimits,
         ) -> Result<DiscoveredMcpInventory, mcp::McpToolDiscoveryFailure> {
             self.fetches
                 .lock()
                 .expect("fetches")
-                .push((server_url.to_owned(), allow_private_network));
+                .push((server_url.to_owned(), private_access));
             Ok(DiscoveredMcpInventory {
                 tools: Vec::new(),
                 tools_list_changed: false,
@@ -1434,8 +1418,14 @@ mod tests {
         assert_eq!(
             *discoverer.fetches.lock().expect("fetches"),
             [
-                ("http://127.0.0.1/first".to_owned(), true),
-                ("http://127.0.0.1/moved".to_owned(), false),
+                (
+                    "http://127.0.0.1/first".to_owned(),
+                    PrivateNetworkAccess::Any
+                ),
+                (
+                    "http://127.0.0.1/moved".to_owned(),
+                    PrivateNetworkAccess::None
+                ),
             ]
         );
     }
@@ -1545,13 +1535,98 @@ mod tests {
     }
 
     #[test]
-    fn private_policy_requires_record_opt_in_and_matching_host_or_cidr() {
-        let policy = McpPrivateNetworkPolicy::parse(Some("mcp.internal,10.20.0.0/16,fd00::/8"))
+    fn private_policy_trusts_a_listed_host_and_holds_the_rest_to_the_networks() {
+        let policy = McpPrivateNetworkPolicy::parse(Some("MCP.internal,::1,10.20.0.0/16,fd00::/8"))
             .expect("policy");
-        assert!(policy.permits("https://mcp.internal/mcp", true));
-        assert!(policy.permits("http://10.20.4.8/mcp", true));
-        assert!(!policy.permits("http://10.20.4.8/mcp", false));
-        assert!(!policy.permits("http://10.21.4.8/mcp", true));
+        let networks = PrivateNetworkAccess::Networks(
+            ["10.20.0.0/16", "fd00::/8"]
+                .map(|network| network.parse().expect("network"))
+                .into(),
+        );
+
+        // A listed host is matched as written, case aside, wherever it points.
+        assert_eq!(
+            policy.access("https://mcp.INTERNAL/mcp", true),
+            PrivateNetworkAccess::Any
+        );
+        assert_eq!(
+            policy.access("http://[::1]:8080/mcp", true),
+            PrivateNetworkAccess::Any
+        );
+        // Every other host, name or literal, is judged by address at connect time.
+        for url in [
+            "https://mcp.tools.svc.cluster.local/mcp",
+            "http://10.20.4.8/mcp",
+            "http://10.21.4.8/mcp",
+        ] {
+            assert_eq!(policy.access(url, true), networks, "{url}");
+        }
+        // Without the record's opt-in the deployment list does not apply.
+        for url in ["https://mcp.internal/mcp", "http://10.20.4.8/mcp"] {
+            assert_eq!(policy.access(url, false), PrivateNetworkAccess::None);
+        }
+    }
+
+    #[test]
+    fn private_policy_without_networks_admits_only_listed_hosts() {
+        let policy = McpPrivateNetworkPolicy::parse(Some("localhost")).expect("policy");
+        assert_eq!(
+            policy.access("http://localhost:3000/mcp", true),
+            PrivateNetworkAccess::Any
+        );
+        assert_eq!(
+            policy.access("https://mcp.tools.svc.cluster.local/mcp", true),
+            PrivateNetworkAccess::None
+        );
+        assert_eq!(
+            McpPrivateNetworkPolicy::default().access("http://10.20.4.8/mcp", true),
+            PrivateNetworkAccess::None
+        );
+    }
+
+    /// OAuth requests have no server record to opt in, and an authorization
+    /// server is its own host: the client takes the list and nothing else.
+    #[tokio::test(flavor = "current_thread")]
+    async fn oauth_client_reaches_private_hosts_only_through_the_list() {
+        async fn verdict(
+            client: &auth::HttpOAuthMetadataClient,
+            url: &str,
+        ) -> Result<(), auth::PinnedHttpError> {
+            client
+                .policy()
+                .client_for_url(&Url::parse(url).expect("url"))
+                .await
+                .map(|_| ())
+        }
+
+        let listed = McpPrivateNetworkPolicy::parse(Some("localhost,10.20.0.0/16"))
+            .expect("policy")
+            .oauth_http_client();
+        assert_eq!(verdict(&listed, "http://localhost:9/token").await, Ok(()));
+        assert_eq!(verdict(&listed, "http://10.20.4.8/token").await, Ok(()));
+        assert_eq!(
+            verdict(&listed, "https://127.0.0.1:9/token").await,
+            Err(auth::PinnedHttpError::NonPublicAddress)
+        );
+        assert_eq!(
+            verdict(&listed, "https://169.254.169.254/latest").await,
+            Err(auth::PinnedHttpError::NonPublicAddress)
+        );
+        assert_eq!(
+            verdict(&listed, "http://8.8.8.8/token").await,
+            Err(auth::PinnedHttpError::HttpsRequired)
+        );
+
+        let unlisted = McpPrivateNetworkPolicy::default().oauth_http_client();
+        assert_eq!(
+            verdict(&unlisted, "http://localhost:9/token").await,
+            Err(auth::PinnedHttpError::HttpsRequired)
+        );
+        assert_eq!(
+            verdict(&unlisted, "https://localhost:9/token").await,
+            Err(auth::PinnedHttpError::NonPublicAddress)
+        );
+        assert_eq!(verdict(&unlisted, "https://8.8.8.8/token").await, Ok(()));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1670,7 +1745,7 @@ mod tests {
             _server_url: &str,
             _auth: &McpRequestAuth,
             _trusted_universe: Option<uuid::Uuid>,
-            _allow_private_network: bool,
+            _private_access: PrivateNetworkAccess,
             _limits: mcp::McpToolDiscoveryLimits,
         ) -> Result<DiscoveredMcpInventory, mcp::McpToolDiscoveryFailure> {
             self.calls.fetch_add(1, Ordering::SeqCst);

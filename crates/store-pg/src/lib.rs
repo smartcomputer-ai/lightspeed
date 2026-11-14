@@ -11,6 +11,7 @@ mod blob;
 mod blob_cache;
 mod bots;
 mod cas_sweep;
+pub mod changes;
 mod channels;
 mod deployment;
 mod environment;
@@ -22,6 +23,7 @@ mod oauth;
 mod object;
 mod profile;
 mod providers;
+mod runtime_instances;
 mod s3;
 mod session;
 pub use session::PurgeSessionError;
@@ -108,7 +110,7 @@ impl fmt::Debug for SecretsMasterKey {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PgStoreConfig {
     pub universe_id: Uuid,
-    pub universe_slug: Option<String>,
+    pub universe_handle: Option<String>,
     pub inline_threshold_bytes: usize,
     pub object_prefix: String,
     pub secrets_master_key: Option<SecretsMasterKey>,
@@ -118,15 +120,15 @@ impl PgStoreConfig {
     pub fn new(universe_id: Uuid) -> Self {
         Self {
             universe_id,
-            universe_slug: None,
+            universe_handle: None,
             inline_threshold_bytes: DEFAULT_INLINE_THRESHOLD_BYTES,
             object_prefix: String::new(),
             secrets_master_key: None,
         }
     }
 
-    pub fn with_universe_slug(mut self, slug: impl Into<String>) -> Self {
-        self.universe_slug = Some(slug.into());
+    pub fn with_universe_handle(mut self, handle: impl Into<String>) -> Self {
+        self.universe_handle = Some(handle.into());
         self
     }
 
@@ -162,6 +164,7 @@ pub struct PgStore {
     pub(crate) object_store: Option<Arc<dyn ObjectStore>>,
     pub(crate) config: PgStoreConfig,
     pub(crate) blob_cache: Option<Arc<BlobCache>>,
+    pub(crate) changes: Arc<changes::ChangeBus>,
 }
 
 #[derive(Debug, Error)]
@@ -215,12 +218,27 @@ pub enum PgStoreError {
 }
 
 impl PgStore {
+    pub fn with_changes(mut self, changes: Arc<changes::ChangeBus>) -> Self {
+        self.changes = changes;
+        self
+    }
+
+    pub fn changes(&self) -> &Arc<changes::ChangeBus> {
+        &self.changes
+    }
+
+    pub(crate) fn changed(&self, kind: changes::ChangeKind, id: impl Into<String>) {
+        self.changes
+            .publish(changes::Change::new(self.config.universe_id, kind, id));
+    }
+
     pub fn new(pool: PgPool, config: PgStoreConfig) -> Self {
         Self {
             pool,
             object_store: None,
             config,
             blob_cache: None,
+            changes: Arc::new(changes::ChangeBus::default()),
         }
     }
 
@@ -234,6 +252,7 @@ impl PgStore {
             object_store: Some(object_store),
             config,
             blob_cache: None,
+            changes: Arc::new(changes::ChangeBus::default()),
         }
     }
 
@@ -286,26 +305,21 @@ impl PgStore {
         Ok(())
     }
 
+    /// Create this store's universe when it does not exist yet, under the
+    /// configured handle or the default one. An existing universe keeps its
+    /// handle: provisioning never renames.
     pub async fn ensure_universe(&self) -> Result<(), PgStoreError> {
-        // Explicit host provisioning may name an existing unnamed universe,
-        // but must not rename one that already has a slug.
-        sqlx::query(
-            r#"
-            INSERT INTO universes (universe_id, slug)
-            VALUES ($1, $2)
-            ON CONFLICT (universe_id) DO UPDATE SET slug = EXCLUDED.slug
-            WHERE universes.slug IS NULL AND EXCLUDED.slug IS NOT NULL
-            "#,
+        deployment::create_universe_with_handle(
+            &self.pool,
+            self.config.universe_id,
+            self.config.universe_handle.as_deref(),
         )
-        .bind(self.config.universe_id)
-        .bind(self.config.universe_slug.as_deref())
-        .execute(&self.pool)
         .await?;
         Ok(())
     }
 }
 
-pub use api_keys::PgApiKeyStore;
+pub use api_keys::{PgApiKeyStore, PutApiKey};
 pub use blob_cache::BlobCache;
 pub use cas_sweep::{
     CasObjectDeletion, CasSweepCandidate, CasSweepCursor, CasSweepError, CasSweepLeader,
@@ -313,9 +327,10 @@ pub use cas_sweep::{
 };
 pub use channels::list_channel_accounts_all;
 pub use deployment::{
-    UniverseStats, create_universe, create_universe_with_slug, delete_universe,
-    list_universe_object_keys, list_universe_session_ids, list_universe_stats, put_universe_slug,
-    read_universe_stats,
+    UNIVERSE_HANDLE_MAX_LEN, UniverseStats, create_universe, create_universe_with_handle,
+    default_universe_handle, delete_universe, is_valid_universe_handle, list_universe_object_keys,
+    list_universe_session_ids, list_universe_stats, put_universe_configuration,
+    put_universe_handle, read_universe_stats, resolve_universe_reference,
 };
 pub use environment::{
     list_revoked_environment_routes, list_universes_with_environment_work,
@@ -329,11 +344,17 @@ pub use migrations::{
     MIGRATIONS, REQUIRED_SCHEMA_REVISION, SchemaStatus, schema_status, verify_schema,
 };
 pub use object::{delete_objects_under_prefix, universe_cas_object_prefix};
+pub use runtime_instances::{
+    RegisteredConnectionOwner, RuntimeInstance, RuntimeLoop, RuntimeLoopLeader,
+    delete_runtime_instance, disconnect_runtime_instance_connections, read_live_runtime_instance,
+    read_registered_connection_owner, read_registered_connection_owners, register_runtime_instance,
+    renew_runtime_instance, sweep_expired_registered_connections,
+};
 
 /// Deployment-level universe listing for admin surfaces.
-pub async fn list_universes(pool: &PgPool) -> Result<Vec<(Uuid, Option<String>)>, PgStoreError> {
-    let rows: Vec<(Uuid, Option<String>)> =
-        sqlx::query_as("SELECT universe_id, slug FROM universes ORDER BY universe_id")
+pub async fn list_universes(pool: &PgPool) -> Result<Vec<(Uuid, String)>, PgStoreError> {
+    let rows: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT universe_id, handle FROM universes ORDER BY universe_id")
             .fetch_all(pool)
             .await?;
     Ok(rows)

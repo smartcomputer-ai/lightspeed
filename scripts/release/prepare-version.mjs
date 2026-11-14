@@ -8,6 +8,13 @@ export const releasePackages = [
   'environment-daemon', 'cli',
 ];
 
+// The Python client carries the product version, which its manifest and
+// lockfile each state once.
+const pythonVersionFiles = [
+  ['clients/python/pyproject.toml', /^(\[project\]\n(?:[^\[]*?\n)?version = ")([^"]+)"/m],
+  ['clients/python/uv.lock', /^(\[\[package\]\]\nname = "lightspeed-ai"\nversion = ")([^"]+)"/m],
+];
+
 export function validateVersion(version) {
   // Stable releases only: publication currently assigns npm's latest tag.
   if (typeof version !== 'string' || version !== version.trim()
@@ -43,12 +50,18 @@ export function verifyVersions(cwd) {
       throw new Error(`${name}: product version must inherit from workspace.package`);
     }
   }
+  for (const [file, pattern] of pythonVersionFiles) {
+    const found = readFileSync(join(cwd, file), 'utf8').match(pattern)?.[2];
+    if (found !== version) {
+      throw new Error(`${file}: expected product version ${version}, found ${found ?? 'no version'}`);
+    }
+  }
   return version;
 }
 
 export function prepareVersion(cwd, version) {
   validateVersion(version);
-  const paths = ['Cargo.toml', 'release/metadata.env', 'Cargo.lock'];
+  const paths = ['Cargo.toml', 'release/metadata.env', 'Cargo.lock', ...pythonVersionFiles.map(([file]) => file)];
   const originals = new Map(paths.map((path) => [path,
     existsSync(join(cwd, path)) ? readFileSync(join(cwd, path), 'utf8') : null,
   ]));
@@ -60,9 +73,13 @@ export function prepareVersion(cwd, version) {
   const metadata = replaceOnce(originals.get('release/metadata.env'),
     /^LIGHTSPEED_PRODUCT_VERSION=.*$/m,
     `LIGHTSPEED_PRODUCT_VERSION=${version}`, 'release/metadata.env');
+  const python = pythonVersionFiles.map(([file, pattern]) => [file,
+    replaceOnce(originals.get(file) ?? '', pattern, `$1${version}"`, file),
+  ]);
   try {
     writeFileSync(join(cwd, 'Cargo.toml'), cargo);
     writeFileSync(join(cwd, 'release/metadata.env'), metadata);
+    for (const [file, contents] of python) writeFileSync(join(cwd, file), contents);
     execFileSync('cargo', ['update', '--workspace', '--offline'], { cwd, stdio: 'pipe' });
     verifyVersions(cwd);
   } catch (error) {

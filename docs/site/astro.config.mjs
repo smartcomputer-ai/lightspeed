@@ -81,6 +81,7 @@ export default defineConfig({
           { slug: 'deployment/overview' },
           { slug: 'deployment/self-hosting' },
           { slug: 'deployment/multi-tenancy' },
+          { slug: 'deployment/configuration-as-code' },
           { slug: 'deployment/configuration' },
           { slug: 'deployment/operations' },
           { slug: 'deployment/upgrades-and-recovery' },

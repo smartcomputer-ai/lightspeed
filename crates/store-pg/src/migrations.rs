@@ -22,6 +22,7 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "auth_clients",
     "auth_flows",
     "auth_grants",
+    "auth_provider_headers",
     "auth_providers",
     "auth_secrets",
     "bot_events",
@@ -42,9 +43,10 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "environments",
     "mcp_server_headers",
     "mcp_servers",
-    "session_activity",
+    "runtime_instances",
     "session_checkpoints",
     "session_events",
+    "session_summary",
     "sessions",
     "universe_model_defaults",
     "universes",
@@ -135,9 +137,54 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "mcp_headers_and_static_tokens",
         sql: include_str!("../migrations/015_mcp_headers_and_static_tokens.sql"),
     },
+    EmbeddedMigration {
+        version: 16,
+        name: "universe_handles",
+        sql: include_str!("../migrations/016_universe_handles.sql"),
+    },
+    EmbeddedMigration {
+        version: 17,
+        name: "api_key_ids",
+        sql: include_str!("../migrations/017_api_key_ids.sql"),
+    },
+    EmbeddedMigration {
+        version: 18,
+        name: "declared_registered_environments",
+        sql: include_str!("../migrations/018_declared_registered_environments.sql"),
+    },
+    EmbeddedMigration {
+        version: 19,
+        name: "environment_credential_sources",
+        sql: include_str!("../migrations/019_environment_credential_sources.sql"),
+    },
+    EmbeddedMigration {
+        version: 20,
+        name: "auth_provider_headers",
+        sql: include_str!("../migrations/020_auth_provider_headers.sql"),
+    },
+    EmbeddedMigration {
+        version: 21,
+        name: "api_key_attribution",
+        sql: include_str!("../migrations/021_api_key_attribution.sql"),
+    },
+    EmbeddedMigration {
+        version: 22,
+        name: "universe_configuration",
+        sql: include_str!("../migrations/022_universe_configuration.sql"),
+    },
+    EmbeddedMigration {
+        version: 23,
+        name: "session_summaries",
+        sql: include_str!("../migrations/023_session_summaries.sql"),
+    },
+    EmbeddedMigration {
+        version: 24,
+        name: "environment_gateway_replicas",
+        sql: include_str!("../migrations/024_environment_gateway_replicas.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 15;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 24;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

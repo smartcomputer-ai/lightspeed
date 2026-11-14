@@ -47,6 +47,15 @@ Read the nearest `package.json` before choosing a script. A package may use
 Vitest, Node's test runner, or a focused compiler check; the workspace name
 selects which command npm executes.
 
+The Python client under `clients/python` is not an npm workspace. Its tests and
+type check run through [uv](https://docs.astral.sh/uv/):
+
+```bash
+cd clients/python
+uv run pytest
+uv run mypy
+```
+
 <a id="write-a-test-at-the-decision-boundary"></a>
 
 ## Test the rule and its consequences

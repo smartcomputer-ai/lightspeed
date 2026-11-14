@@ -232,6 +232,12 @@ environment whose daemon stays away that long; without it, the environment
 stays open until someone closes it. Once closed, a daemon identity is spent. A replacement
 needs a fresh state directory and a valid registration key.
 
+A declared environment that is still waiting for its first daemon, or whose
+daemon was released, is not closed by **Close when offline for**: no machine
+has gone away. To replace the machine behind a declared environment without
+closing it, release it; see
+[Replace a machine that lost its identity](registered-daemons.md#replace-a-machine-that-lost-its-identity).
+
 Revoking a registration key blocks new admissions. Existing identities can
 continue reconnecting unless their environments are also closed. The key
 revoke operation can optionally close those environments; that still leaves

@@ -598,7 +598,9 @@ export function SessionConfigEditor({
     change((next) => {
       const nextFeatures = record(next.features);
       if (enabled) {
-        if (name === "vfs") nextFeatures.vfs = { workspaces: [], prompts: {}, skills: {} };
+        // File access alone. Loading instructions or skills from those files
+        // lets their content steer the agent, so each is its own switch.
+        if (name === "vfs") nextFeatures.vfs = { workspaces: [] };
         else if (name === "web") nextFeatures.web = { search: {}, fetch: {} };
         else if (name === "mcp") {
           nextFeatures.mcp = { servers: [] };
@@ -784,7 +786,9 @@ function EnvironmentFeatureEditor({
   };
   const setEnabled = (nextEnabled: boolean) => change((next) => {
     const nextFeatures = record(next.features);
-    if (nextEnabled) nextFeatures.environments = { environments: [], prompts: {}, skills: {} };
+    // Machine access alone: instructions and skills found on a machine are
+    // sourced only once their own switches are turned on.
+    if (nextEnabled) nextFeatures.environments = { environments: [] };
     else delete nextFeatures.environments;
     if (Object.keys(nextFeatures).length) next.features = nextFeatures;
     else delete next.features;

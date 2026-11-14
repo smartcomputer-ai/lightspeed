@@ -68,6 +68,21 @@ impl BotWorkerActivities {
 
 #[activities]
 impl BotWorkerActivities {
+    #[activity(name = ACTIVITY_BOT_RECORD_STATUS)]
+    pub async fn record_status(
+        self: Arc<Self>,
+        ctx: ActivityContext,
+        request: BotRecordStatusRequest,
+    ) -> Result<(), ActivityError> {
+        let (api, _authority) = self
+            .controller(&ctx, request.universe_id, Some(&request.bot_id))
+            .await?;
+        api.store()
+            .record_bot_status(&request.bot_id, &request.status, request.observed_at_ms)
+            .await
+            .map_err(|error| activity_error("record bot status", crate::bots::map_bot_error(error)))
+    }
+
     #[activity(name = ACTIVITY_BOT_ENSURE_SESSION)]
     pub async fn ensure_session(
         self: Arc<Self>,

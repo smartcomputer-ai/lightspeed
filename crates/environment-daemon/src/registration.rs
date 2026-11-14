@@ -55,7 +55,9 @@ use crate::{
 };
 
 #[cfg(unix)]
-use crate::config::{AUTO_UPGRADE_ATTEMPTED_ENV, REEXEC_REGISTRATION_KEY_ENV};
+use crate::config::{
+    AUTO_UPGRADE_ATTEMPTED_ENV, REEXEC_REGISTRATION_KEY_ENV, REEXEC_REGISTRATION_KEY_FILE_ENV,
+};
 
 /// Bound on TCP connect, TLS and the WebSocket upgrade of the control
 /// connection.
@@ -556,6 +558,7 @@ impl Outbound {
             restart,
             installed.protocol_version,
             self.registration_key.as_ref(),
+            self.registration.registration_key_file.as_deref(),
         );
         SessionEnd::Exit(DaemonExit::Refused(format!(
             "{base}; installed the replacement but could not re-execute it: {error}"
@@ -655,7 +658,27 @@ fn exec_replacement(
     restart: &RestartInvocation,
     gateway_protocol: u32,
     registration_key: Option<&SecretString>,
+    registration_key_file: Option<&Path>,
 ) -> std::io::Error {
+    use std::os::unix::process::CommandExt as _;
+
+    replacement_command(
+        restart,
+        gateway_protocol,
+        registration_key,
+        registration_key_file,
+    )
+    .exec()
+}
+
+/// The command that replaces this process after an automatic upgrade.
+#[cfg(unix)]
+fn replacement_command(
+    restart: &RestartInvocation,
+    gateway_protocol: u32,
+    registration_key: Option<&SecretString>,
+    registration_key_file: Option<&Path>,
+) -> std::process::Command {
     use std::os::unix::process::CommandExt as _;
 
     let mut command = std::process::Command::new(&restart.executable);
@@ -665,7 +688,8 @@ fn exec_replacement(
         .env(AUTO_UPGRADE_ATTEMPTED_ENV, gateway_protocol.to_string())
         .env_remove("LIGHTSPEED_ENVD_REGISTRATION_KEY")
         .env_remove("LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE")
-        .env_remove(REEXEC_REGISTRATION_KEY_ENV);
+        .env_remove(REEXEC_REGISTRATION_KEY_ENV)
+        .env_remove(REEXEC_REGISTRATION_KEY_FILE_ENV);
     // Configuration removed the key variables from this process. A daemon
     // not yet admitted hands the held key across exactly this exec, so it
     // can still register even if its key file was removed; an admitted one
@@ -673,7 +697,12 @@ fn exec_replacement(
     if let Some(registration_key) = registration_key {
         command.env(REEXEC_REGISTRATION_KEY_ENV, registration_key.expose());
     }
-    command.exec()
+    // The replacement never reads the key file again, but it is told where
+    // the file is: while the file exists, file operations refuse it.
+    if let Some(path) = registration_key_file {
+        command.env(REEXEC_REGISTRATION_KEY_FILE_ENV, path);
+    }
+    command
 }
 
 #[cfg(not(unix))]
@@ -681,6 +710,7 @@ fn exec_replacement(
     _restart: &RestartInvocation,
     _gateway_protocol: u32,
     _registration_key: Option<&SecretString>,
+    _registration_key_file: Option<&Path>,
 ) -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::Unsupported,
@@ -1538,6 +1568,43 @@ mod tests {
                 "--registration-name",
                 "n"
             ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_replacement_is_told_where_the_key_file_is_but_not_to_read_it() {
+        use std::ffi::{OsStr, OsString};
+
+        let restart = RestartInvocation {
+            executable: PathBuf::from("/usr/local/bin/lightspeed-envd"),
+            arg0: OsString::from("lightspeed-envd"),
+            args: vec![OsString::from("--registration-key-file=/run/secrets/key")],
+        };
+        let env = |command: &std::process::Command, name: &str| {
+            command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new(name))
+                .map(|(_, value)| value.map(OsStr::to_owned))
+        };
+        let admitted = replacement_command(&restart, 4, None, Some(Path::new("/run/secrets/key")));
+        assert_eq!(admitted.get_args().count(), 0);
+        assert_eq!(
+            env(&admitted, REEXEC_REGISTRATION_KEY_FILE_ENV),
+            Some(Some(OsString::from("/run/secrets/key")))
+        );
+        // The variables that make a daemon read a key are cleared.
+        assert_eq!(
+            env(&admitted, "LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE"),
+            Some(None)
+        );
+        assert_eq!(env(&admitted, REEXEC_REGISTRATION_KEY_ENV), Some(None));
+
+        let without_file = replacement_command(&restart, 4, None, None);
+        assert_eq!(
+            env(&without_file, REEXEC_REGISTRATION_KEY_FILE_ENV),
+            Some(None),
+            "a location handed to this process is not passed on by accident"
         );
     }
 

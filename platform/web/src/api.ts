@@ -1,6 +1,7 @@
 import type { FeatureStates, UniverseRole, UniverseIconName, UniverseIconColor } from "@lightspeed-ai/platform-shared";
 export type { ToolAttachmentView, ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/sdk";
 import type {
+  SessionSummaryView as WireSessionSummary,
   Attribution,
   ResourceAccessSummary,
   SessionActivity,
@@ -22,15 +23,21 @@ import type {
   SessionEventsReadResponse,
   ToolCallDisplayView,
 } from "@lightspeed-ai/sdk";
+import type { RequestHeader } from "@/lib/request-headers";
+import { failureText, notJsonText, readResponseBody } from "@/lib/response-body";
 
 /// Thin fetch wrapper for /api/v1 (cookie-authenticated, same origin).
 
+/// `body` is the parsed JSON answer, `null` when there was none, or the
+/// shortened text of an answer that was not JSON. `message` replaces the text
+/// derived from a JSON error body.
 export class ApiError extends Error {
   constructor(
     public status: number,
     public body: unknown,
+    message?: string,
   ) {
-    super(extractMessage(body) ?? `API error ${status}`);
+    super(message ?? extractMessage(body) ?? `API error ${status}`);
   }
 }
 
@@ -67,25 +74,33 @@ export async function api<T>(method: string, path: string, body?: unknown, signa
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: "same-origin",
   });
-  const text = await res.text();
-  const json: unknown = text ? JSON.parse(text) : null;
+  const answer = await readResponseBody(res);
   if (!res.ok) {
     if (res.status === 401 && !window.location.pathname.endsWith("/login")) {
       window.location.assign(`${import.meta.env.BASE_URL}login?expired=1`);
     }
-    throw new ApiError(res.status, json);
+    // Text instead of JSON comes from something in front of the API, such as
+    // a proxy reporting a timeout. Its words are the only explanation there is.
+    if (answer.kind === "text") throw new ApiError(res.status, answer.text, failureText(res.status, answer.text));
+    throw new ApiError(res.status, answer.kind === "json" ? answer.value : null);
   }
-  return json as T;
+  // A success status with a body that is not JSON did not come from the API
+  // (a sign-in page, the application shell). Returning it would fail later,
+  // in the caller, with an error that names neither the status nor the text.
+  if (answer.kind === "text") throw new ApiError(res.status, answer.text, notJsonText(res.status, answer.text));
+  // No content, as a 204 has: there is nothing to return.
+  return (answer.kind === "json" ? answer.value : null) as T;
 }
 
 export interface Universe {
+  runtimeConfiguration?: Omit<import("@lightspeed-ai/sdk").DeploymentUniverseConfigurationPutParams, "universe">;
   icon?: UniverseIconName;
   iconColor?: UniverseIconColor;
   id: string;
   lightspeedUniverseId: string;
   name: string;
-  /// Cached runtime slug used as the Platform URL segment.
-  slug: string;
+  /// Cached runtime handle used as the Platform URL segment.
+  handle: string;
   gatewayUrl: string | null;
   status: "active" | "archived";
   createdAt: string;
@@ -98,7 +113,7 @@ export interface Universe {
 
 /// Engine-side universe inventory entry (deployment/universes/list view).
 export interface EngineUniverse {
-  slug?: string | null;
+  handle: string;
   universeId: string;
   sessions: number;
   workspaces: number;
@@ -108,7 +123,7 @@ export interface EngineUniverse {
   lastActivityAtMs?: number | null;
 }
 
-export interface UniverseSlugSyncResult {
+export interface UniverseHandleSyncResult {
   updated: number;
   skipped: number;
 }
@@ -282,7 +297,9 @@ export interface SecretProvider {
 
 export interface ModelEndpointConfig {
   baseUrl: string;
-  headers?: Record<string, string>;
+  /// Extra request headers keyed by lowercased name. A plain value is returned
+  /// to every reader; a credential header shows only its grant id.
+  headers?: Record<string, RequestHeader>;
   apiKinds: Array<"openai:responses" | "openai:completions" | "openai:audio-transcriptions">;
 }
 
@@ -325,10 +342,6 @@ export interface GitHubIntegration {
   grants: SecretGrant[];
 }
 
-export type McpServerHeader =
-  | { type: "literal"; value: string }
-  | { type: "credential"; grantId: string };
-
 /// Engine MCP server record (mcp/servers/list view). The optional credential
 /// is a non-secret universe-owned grant reference; token material is never returned.
 export interface McpServer {
@@ -347,7 +360,7 @@ export interface McpServer {
   credential?: { type: "authGrant"; grantId: string } | null;
   /// Extra request headers keyed by lowercased name. A credential header shows
   /// only its grant id; the token is never returned.
-  headers?: Record<string, McpServerHeader> | null;
+  headers?: Record<string, RequestHeader> | null;
   status: "active" | "needsAuthConfig" | "unverified" | "disabled";
   revision: number;
   createdAtMs: number;
@@ -437,30 +450,7 @@ export interface SessionOrigin {
   limits: { maxDepth: number; maxConcurrent: number; runTimeoutMs?: number };
 }
 
-export interface SessionSummary {
-  access: ResourceAccessSummary;
-  /// What the session is doing now: idle, working, or waiting for approval.
-  activity: SessionActivity;
-  id: string;
-  displayName?: string | null;
-  /// Descriptive key/value metadata; absent or empty when none was set.
-  metadata?: Record<string, string>;
-  createdAtMs: number;
-  updatedAtMs: number;
-  closedAtMs?: number | null;
-  lifecycleStatus: "new" | "open" | "closed";
-  retention: SessionRetention;
-  lifecycleControlled: boolean;
-  origin?: SessionOrigin | null;
-  /// The latest user or agent message as one line of plain text, bounded.
-  /// Only the demo backend sends it so far; the core session list does not
-  /// carry message text yet, so lists must work without it.
-  lastMessagePreview?: string | null;
-  /// The environment the session runs its commands in, for the list's
-  /// environment mark. Only the demo backend sends it so far; the core
-  /// session list does not, so lists must work without it.
-  activeEnvironmentId?: string | null;
-}
+export type SessionSummary = WireSessionSummary;
 
 export interface SessionRetention {
   rootSessionId: string;
@@ -692,6 +682,17 @@ export type {
 } from "@lightspeed-ai/sdk";
 
 import type { BotView } from "@lightspeed-ai/sdk";
+
+/// What lets an outsider reach a trigger. Never part of a trigger as it is
+/// read or listed: members who may manage the bot read it from
+/// `GET .../triggers/:triggerId/secrets`, and creating or replacing a trigger
+/// answers with it beside the trigger.
+export interface BotTriggerSecrets {
+  /// Webhook triggers: the ingest path including its URL token.
+  ingestPath?: string | null;
+  /// Chat triggers with `pairing: code`: the code a conversation sends once.
+  pairingCode?: string | null;
+}
 
 export function botLabel(bot: Pick<BotView, "botId" | "displayName">): string {
   return bot.displayName ?? bot.botId;

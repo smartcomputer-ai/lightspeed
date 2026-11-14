@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use clap::{ArgGroup, Args, Subcommand, ValueEnum};
 
 use crate::api_client::HttpAgentApi;
+use crate::request_headers::request_headers_from_args;
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct AuthArgs {
@@ -34,12 +35,12 @@ pub(crate) struct AuthModelArgs {
 enum AuthModelCommand {
     /// Read one stored model-provider connection without revealing its credential.
     Read(AuthModelRemoveArgs),
-    /// Store a model provider API key encrypted; provider API calls
-    /// use it instead of the worker's environment key.
-    Add(AuthModelAddArgs),
-    /// Bind an existing OAuth grant as the provider credential; calls send
-    /// its access token as an OAuth bearer token (refreshed automatically).
-    Bind(AuthModelBindArgs),
+    /// Declare a model provider: afterwards the provider of this id exists
+    /// with this endpoint and this credential. The credential is an API key
+    /// (stored encrypted), a credential obtained through sign-in (`--grant`,
+    /// sent as a refreshed OAuth bearer token), or none (`--no-auth`).
+    /// Repeating the command changes nothing.
+    Put(Box<AuthModelPutArgs>),
     /// List stored model provider credentials.
     List(AuthModelListArgs),
     /// Remove a stored model provider credential.
@@ -47,36 +48,13 @@ enum AuthModelCommand {
     Remove(AuthModelRemoveArgs),
 }
 
-#[derive(Args, Debug, Clone)]
-struct AuthModelBindArgs {
-    /// JSON-RPC agent API URL.
-    #[arg(skip)]
-    api_url: String,
-    /// Emit the created provider as JSON.
-    #[arg(long)]
-    json: bool,
-    /// Model provider id from the session model selection (e.g. "openai",
-    /// "anthropic"). Stored as the `model:<provider_id>` auth provider row.
-    provider_id: String,
-    /// Grant id to bind (e.g. from `lightspeed credential login`).
-    #[arg(long = "grant")]
-    grant_id: String,
-    /// Audience URL requested from the broker, typically the provider API
-    /// base URL. Omit only when the grant is audience-unrestricted.
-    #[arg(long = "audience")]
-    audience: Option<String>,
-    /// Optional display name.
-    #[arg(long = "display-name")]
-    display_name: Option<String>,
-}
-
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("api_key_source").required(true)))]
-struct AuthModelAddArgs {
+struct AuthModelPutArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
-    /// Emit the created provider as JSON.
+    /// Emit the result as JSON.
     #[arg(long)]
     json: bool,
     /// model provider id from the session model selection (e.g. "openai",
@@ -97,20 +75,43 @@ struct AuthModelAddArgs {
     /// Supported API kind; repeat for multiple kinds. Requires --base-url.
     #[arg(long = "api-kind", requires = "base_url")]
     api_kinds: Vec<String>,
-    /// Non-secret extra header as NAME=VALUE; repeat as needed.
-    #[arg(long = "header", requires = "base_url")]
+    /// Extra request header with a plain, non-secret value, as NAME=VALUE.
+    /// Repeat for several. Every reader of the provider sees the value.
+    #[arg(long = "header", value_name = "NAME=VALUE", requires = "base_url")]
     headers: Vec<String>,
+    /// Extra request header carrying a saved static-token credential's token,
+    /// sent raw, as NAME=GRANT_ID. Repeat for several. Names that carry a
+    /// secret (`api-key`, `x-api-key`, `proxy-authorization`) are accepted
+    /// only this way.
+    #[arg(
+        long = "header-credential",
+        value_name = "NAME=GRANT_ID",
+        requires = "base_url"
+    )]
+    header_credentials: Vec<String>,
     /// Register a credentialless endpoint.
     #[arg(long, group = "api_key_source", requires = "base_url")]
     no_auth: bool,
+    /// Use a credential obtained through sign-in (for example from
+    /// `lightspeed credential login`) instead of an API key.
+    #[arg(long = "grant", group = "api_key_source")]
+    grant_id: Option<String>,
+    /// With --grant: the audience requested for its access token, typically
+    /// the provider's API base URL. Omit only for an audience-unrestricted
+    /// credential.
+    #[arg(long, requires = "grant_id")]
+    audience: Option<String>,
     /// Optional display name.
     #[arg(long = "display-name")]
     display_name: Option<String>,
+    /// Report what would change without changing it.
+    #[arg(long = "dry-run")]
+    dry_run: bool,
 }
 
-impl std::fmt::Debug for AuthModelAddArgs {
+impl std::fmt::Debug for AuthModelPutArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthModelAddArgs")
+        f.debug_struct("AuthModelPutArgs")
             .field("api_url", &self.api_url)
             .field("provider_id", &self.provider_id)
             .field("api_key_file", &self.api_key_file)
@@ -166,6 +167,7 @@ struct AuthGithubAppArgs {
 enum AuthGithubAppCommand {
     /// Register a GitHub App: stores the private key encrypted and the app
     /// config as an auth provider.
+    #[command(name = "create")]
     Add(AuthGithubAppAddArgs),
     /// List registered GitHub Apps.
     List(AuthGithubAppListArgs),
@@ -303,6 +305,10 @@ struct AuthGithubInstallationGrantArgs {
     /// Optional display name.
     #[arg(long = "display-name")]
     display_name: Option<String>,
+    /// Let the installation's short-lived tokens be bound into environments
+    /// and leased to trusted services. Decided at creation.
+    #[arg(long)]
+    retrievable: bool,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -313,10 +319,12 @@ struct AuthGrantArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 enum AuthGrantCommand {
-    /// Import a reusable token as an external credential.
-    Import(AuthGrantImportArgs),
-    /// Replace the value of a token credential, keeping its id and every
-    /// server, header or environment variable that references it.
+    /// Declare a token credential: afterwards the credential of this id
+    /// exists with these settings and holds exactly this token. Repeating
+    /// the command changes nothing; unset flags clear their setting.
+    Put(AuthGrantPutArgs),
+    /// Replace the value of a token credential, keeping its settings, its id
+    /// and every server, header or environment variable that references it.
     Replace(AuthGrantReplaceArgs),
     /// List stored external credentials.
     List(AuthGrantListArgs),
@@ -328,52 +336,58 @@ enum AuthGrantCommand {
 
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("token_source").required(true)))]
-struct AuthGrantImportArgs {
+struct AuthGrantPutArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
-    /// Emit the imported grant as JSON.
+    /// Emit the result as JSON.
     #[arg(long)]
     json: bool,
-    /// Optional stable grant id. Generated when omitted.
-    #[arg(long = "id")]
-    grant_id: Option<String>,
-    /// Optional provider id recorded on the grant. Defaults to "static".
+    /// The credential's id.
+    grant_id: String,
+    /// Provider id recorded on the credential. Defaults to "static" and
+    /// cannot be changed afterwards.
     #[arg(long = "provider-id")]
     provider_id: Option<String>,
-    /// Token value. Prefer --token-stdin or --token-env to keep the value out
-    /// of shell history.
-    #[arg(long, group = "token_source")]
-    token: Option<String>,
+    /// Read the token from this file, such as a mounted secret.
+    #[arg(long = "token-file", group = "token_source")]
+    token_file: Option<std::path::PathBuf>,
     /// Read the token from this environment variable.
     #[arg(long = "token-env", group = "token_source")]
     token_env: Option<String>,
     /// Read the token from stdin.
     #[arg(long = "token-stdin", group = "token_source")]
     token_stdin: bool,
-    /// Optional display name.
     #[arg(long = "display-name")]
     display_name: Option<String>,
-    /// Optional subject hint (for example an account or user name).
+    /// Subject hint (for example an account or user name).
     #[arg(long = "subject-hint")]
     subject_hint: Option<String>,
-    /// Optional scope entry. Repeat to record multiple.
+    /// Scope entry. Repeat to record multiple.
     #[arg(long = "scope")]
     scopes: Vec<String>,
-    /// Optional audience the grant is bound to (for MCP: the server URL).
+    /// Audience the credential is bound to (for MCP: the server URL).
     #[arg(long)]
     audience: Option<String>,
-    /// Optional expiry in unix milliseconds.
+    /// Expiry in unix milliseconds. Omit for a token that does not expire.
     #[arg(long = "expires-at-ms")]
     expires_at_ms: Option<i64>,
+    /// Let the plain token be bound into environments and leased to trusted
+    /// services. Without it the token stays inside the runtime. Decided at
+    /// creation and cannot be changed afterwards.
+    #[arg(long)]
+    retrievable: bool,
+    /// Report what would change without changing it.
+    #[arg(long = "dry-run")]
+    dry_run: bool,
 }
 
-impl std::fmt::Debug for AuthGrantImportArgs {
+impl std::fmt::Debug for AuthGrantPutArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthGrantImportArgs")
+        f.debug_struct("AuthGrantPutArgs")
             .field("api_url", &self.api_url)
             .field("grant_id", &self.grant_id)
-            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("token_file", &self.token_file)
             .field("token_env", &self.token_env)
             .field("token_stdin", &self.token_stdin)
             .field("audience", &self.audience)
@@ -392,10 +406,9 @@ struct AuthGrantReplaceArgs {
     json: bool,
     /// Token credential whose value to replace.
     grant_id: String,
-    /// New token value. Prefer --token-stdin or --token-env to keep the value
-    /// out of shell history.
-    #[arg(long, group = "token_source")]
-    token: Option<String>,
+    /// Read the new token from this file, such as a mounted secret.
+    #[arg(long = "token-file", group = "token_source")]
+    token_file: Option<std::path::PathBuf>,
     /// Read the new token from this environment variable.
     #[arg(long = "token-env", group = "token_source")]
     token_env: Option<String>,
@@ -413,7 +426,7 @@ impl std::fmt::Debug for AuthGrantReplaceArgs {
         f.debug_struct("AuthGrantReplaceArgs")
             .field("api_url", &self.api_url)
             .field("grant_id", &self.grant_id)
-            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("token_file", &self.token_file)
             .field("token_env", &self.token_env)
             .field("token_stdin", &self.token_stdin)
             .finish_non_exhaustive()
@@ -485,6 +498,7 @@ struct AuthClientArgs {
 #[derive(Subcommand, Debug, Clone)]
 enum AuthClientCommand {
     /// Register a manually configured OAuth client.
+    #[command(name = "create")]
     Add(Box<AuthClientAddArgs>),
     /// List OAuth clients.
     List(AuthClientListArgs),
@@ -642,6 +656,10 @@ struct AuthLoginArgs {
     /// for the callback. Check progress with auth flow status polling.
     #[arg(long = "no-wait")]
     no_wait: bool,
+    /// Let the resulting credential's token be bound into environments and
+    /// leased to trusted services. Decided at creation.
+    #[arg(long)]
+    retrievable: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -688,8 +706,7 @@ pub(crate) async fn handle(args: AuthArgs) -> Result<()> {
 pub(crate) async fn model(args: AuthModelArgs) -> Result<()> {
     match args.command {
         AuthModelCommand::Read(args) => model_read(args).await,
-        AuthModelCommand::Add(args) => model_add(args).await,
-        AuthModelCommand::Bind(args) => model_bind(args).await,
+        AuthModelCommand::Put(args) => model_put(*args).await,
         AuthModelCommand::List(args) => model_list(args).await,
         AuthModelCommand::Remove(args) => model_remove(args).await,
     }
@@ -721,7 +738,7 @@ async fn client(args: AuthClientArgs) -> Result<()> {
 
 async fn grant(args: AuthGrantArgs) -> Result<()> {
     match args.command {
-        AuthGrantCommand::Import(args) => grant_import(args).await,
+        AuthGrantCommand::Put(args) => grant_put(args).await,
         AuthGrantCommand::Replace(args) => grant_replace(args).await,
         AuthGrantCommand::List(args) => grant_list(args).await,
         AuthGrantCommand::Read(args) => grant_read(args).await,
@@ -729,13 +746,22 @@ async fn grant(args: AuthGrantArgs) -> Result<()> {
     }
 }
 
+/// A token is read from a file, an environment variable or standard input,
+/// never from an argument, where other processes and the shell history
+/// would see it.
 fn resolve_token(
-    token: Option<&String>,
+    token_file: Option<&std::path::Path>,
     token_env: Option<&String>,
     _token_stdin: bool,
 ) -> Result<String> {
-    if let Some(token) = token {
-        return Ok(token.clone());
+    if let Some(path) = token_file {
+        let token = std::fs::read_to_string(path)
+            .with_context(|| format!("read token from {}", path.display()))?;
+        let token = token.trim().to_owned();
+        if token.is_empty() {
+            anyhow::bail!("token file {} is empty", path.display());
+        }
+        return Ok(token);
     }
     if let Some(name) = token_env {
         return std::env::var(name)
@@ -759,18 +785,26 @@ fn resolve_token(
     Ok(token)
 }
 
-async fn grant_import(args: AuthGrantImportArgs) -> Result<()> {
+/// Brokered unless the command asked for a retrievable credential.
+fn exposure(retrievable: bool) -> api::AuthGrantExposure {
+    if retrievable {
+        api::AuthGrantExposure::Retrievable
+    } else {
+        api::AuthGrantExposure::Brokered
+    }
+}
+
+async fn grant_put(args: AuthGrantPutArgs) -> Result<()> {
     let token = resolve_token(
-        args.token.as_ref(),
+        args.token_file.as_deref(),
         args.token_env.as_ref(),
         args.token_stdin,
     )?;
-    let api = HttpAgentApi::new(args.api_url.clone());
-    let response = api
-        .import_auth_grant(api::AuthGrantImportParams {
-            exposure: api::AuthGrantExposure::Brokered,
+    let response = HttpAgentApi::new(args.api_url.clone())
+        .put_auth_grant(api::AuthGrantPutParams {
             grant_id: args.grant_id.clone(),
             provider_id: args.provider_id.clone(),
+            exposure: exposure(args.retrievable),
             token,
             display_name: args.display_name.clone(),
             subject_hint: args.subject_hint.clone(),
@@ -778,6 +812,45 @@ async fn grant_import(args: AuthGrantImportArgs) -> Result<()> {
             audience: args.audience.clone(),
             expires_at_ms: args.expires_at_ms,
             metadata: None,
+            dry_run: args.dry_run,
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result;
+    print_put(&response, args.dry_run, args.json)
+}
+
+/// Replace only the value: the credential is declared again with the
+/// settings it has and the new token.
+async fn grant_replace(args: AuthGrantReplaceArgs) -> Result<()> {
+    let token = resolve_token(
+        args.token_file.as_deref(),
+        args.token_env.as_ref(),
+        args.token_stdin,
+    )?;
+    let api = HttpAgentApi::new(args.api_url.clone());
+    let current = api
+        .read_auth_grant(api::AuthGrantReadParams {
+            grant_id: args.grant_id.clone(),
+        })
+        .await
+        .map_err(crate::api_client::api_error)?
+        .result
+        .grant;
+    let response = api
+        .put_auth_grant(api::AuthGrantPutParams {
+            grant_id: current.grant_id,
+            provider_id: Some(current.provider_id),
+            exposure: current.exposure,
+            token,
+            display_name: current.display_name,
+            subject_hint: current.subject_hint,
+            scopes: current.scopes,
+            audience: current.audience,
+            // The old token's expiry is not carried over.
+            expires_at_ms: args.expires_at_ms,
+            metadata: Some(current.metadata),
+            dry_run: false,
         })
         .await
         .map_err(crate::api_client::api_error)?
@@ -790,26 +863,22 @@ async fn grant_import(args: AuthGrantImportArgs) -> Result<()> {
     Ok(())
 }
 
-async fn grant_replace(args: AuthGrantReplaceArgs) -> Result<()> {
-    let token = resolve_token(
-        args.token.as_ref(),
-        args.token_env.as_ref(),
-        args.token_stdin,
-    )?;
-    let api = HttpAgentApi::new(args.api_url.clone());
-    let response = api
-        .replace_auth_grant(api::AuthGrantReplaceParams {
-            grant_id: args.grant_id.clone(),
-            token,
-            expires_at_ms: args.expires_at_ms,
-        })
-        .await
-        .map_err(crate::api_client::api_error)?
-        .result;
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
+fn print_put(response: &api::AuthGrantPutResponse, dry_run: bool, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(response)?);
         return Ok(());
     }
+    println!(
+        "{}",
+        match (dry_run, response.created, response.token_replaced) {
+            (false, true, _) => "Credential created.",
+            (false, false, true) => "Credential now holds the supplied token.",
+            (false, false, false) => "Credential is as declared.",
+            (true, true, _) => "Would create the credential.",
+            (true, false, true) => "Would replace the credential's token.",
+            (true, false, false) => "Would not replace the credential's token.",
+        }
+    );
     print_grant(&response.grant);
     Ok(())
 }
@@ -997,7 +1066,7 @@ async fn login(args: AuthLoginArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url.clone());
     let started = api
         .start_auth_flow(api::AuthFlowStartParams {
-            exposure: api::AuthGrantExposure::Brokered,
+            exposure: exposure(args.retrievable),
             client_id: args.client_id.clone(),
             scopes: if args.scopes.is_empty() {
                 None
@@ -1091,7 +1160,7 @@ fn model_provider_row_id(provider_id: &str) -> String {
     }
 }
 
-fn resolve_model_api_key(args: &AuthModelAddArgs) -> Result<String> {
+fn resolve_model_api_key(args: &AuthModelPutArgs) -> Result<String> {
     if let Some(path) = &args.api_key_file {
         let key = std::fs::read_to_string(path)
             .with_context(|| format!("read API key from {}", path.display()))?;
@@ -1120,8 +1189,8 @@ fn resolve_model_api_key(args: &AuthModelAddArgs) -> Result<String> {
     Ok(key)
 }
 
-async fn model_add(args: AuthModelAddArgs) -> Result<()> {
-    let credential = if args.no_auth {
+async fn model_put(args: AuthModelPutArgs) -> Result<()> {
+    let credential = if args.no_auth || args.grant_id.is_some() {
         None
     } else {
         Some(resolve_model_api_key(&args)?)
@@ -1133,16 +1202,7 @@ async fn model_add(args: AuthModelAddArgs) -> Result<()> {
             if args.api_kinds.is_empty() {
                 anyhow::bail!("--base-url requires at least one --api-kind");
             }
-            let headers = args
-                .headers
-                .iter()
-                .map(|header| {
-                    let (name, value) = header
-                        .split_once('=')
-                        .context("header must be NAME=VALUE")?;
-                    Ok((name.to_owned(), value.to_owned()))
-                })
-                .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
+            let headers = request_headers_from_args(&args.headers, &args.header_credentials)?;
             Ok(api::ModelEndpointConfig {
                 base_url: url.clone(),
                 headers,
@@ -1150,45 +1210,30 @@ async fn model_add(args: AuthModelAddArgs) -> Result<()> {
             })
         })
         .transpose()?;
-    let config = if args.no_auth {
+    let config = if let Some(grant_id) = &args.grant_id {
+        api::AuthProviderConfigInput::ModelOAuth {
+            grant_id: grant_id.clone(),
+            audience: args.audience.clone(),
+            endpoint,
+        }
+    } else if args.no_auth {
         api::AuthProviderConfigInput::ModelEndpoint {
             endpoint: endpoint.context("--no-auth requires --base-url")?,
         }
     } else {
         api::AuthProviderConfigInput::ModelApiKey { endpoint }
     };
-    let api = HttpAgentApi::new(args.api_url.clone());
-    let response = api
-        .create_auth_provider(api::AuthProviderCreateParams {
-            provider_id: Some(model_provider_row_id(&args.provider_id)),
-            display_name: args.display_name.clone(),
-            config,
-            credential,
-        })
-        .await
-        .map_err(crate::api_client::api_error)?
-        .result;
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
-        return Ok(());
-    }
-    print_provider(&response.provider);
-    Ok(())
-}
-
-async fn model_bind(args: AuthModelBindArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url.clone());
-    let response = api
-        .create_auth_provider(api::AuthProviderCreateParams {
-            provider_id: Some(model_provider_row_id(&args.provider_id)),
-            display_name: args.display_name.clone(),
-            config: api::AuthProviderConfigInput::ModelOAuth {
-                grant_id: args.grant_id.clone(),
-                audience: args.audience.clone(),
-                endpoint: None,
+    let response: api::AuthProviderPutResponse = HttpAgentApi::new(args.api_url.clone())
+        .request(
+            api::METHOD_AUTH_PROVIDERS_PUT,
+            api::AuthProviderPutParams {
+                provider_id: model_provider_row_id(&args.provider_id),
+                display_name: args.display_name.clone(),
+                config,
+                credential,
+                dry_run: args.dry_run,
             },
-            credential: None,
-        })
+        )
         .await
         .map_err(crate::api_client::api_error)?
         .result;
@@ -1197,6 +1242,18 @@ async fn model_bind(args: AuthModelBindArgs) -> Result<()> {
         return Ok(());
     }
     print_provider(&response.provider);
+    println!();
+    println!(
+        "{}",
+        match (response.created, response.credential_replaced, args.dry_run) {
+            (true, _, false) => "Created.",
+            (true, _, true) => "Would be created.",
+            (false, true, false) => "Updated; the stored credential was replaced.",
+            (false, true, true) => "Would be updated; the stored credential would be replaced.",
+            (false, false, false) => "Declared; the credential is unchanged.",
+            (false, false, true) => "Settings would be applied; the credential is unchanged.",
+        }
+    );
     Ok(())
 }
 
@@ -1423,7 +1480,7 @@ async fn github_installation_grant(args: AuthGithubInstallationGrantArgs) -> Res
     let api = HttpAgentApi::new(args.api_url);
     let response = api
         .grant_github_installation(api::AuthGitHubInstallationGrantParams {
-            exposure: api::AuthGrantExposure::Brokered,
+            exposure: exposure(args.retrievable),
             provider_id: args.provider_id,
             installation_id: args.installation_id,
             grant_id: args.grant_id,
@@ -1464,21 +1521,87 @@ mod tests {
         command: AuthGrantCommand,
     }
 
+    #[derive(Parser)]
+    struct ModelCommand {
+        #[command(subcommand)]
+        command: AuthModelCommand,
+    }
+
     #[test]
-    fn grant_replace_needs_one_token_source_and_redacts_the_token() {
+    fn model_header_flags_build_literal_and_credential_headers() {
+        let parsed = ModelCommand::try_parse_from([
+            "models",
+            "put",
+            "router",
+            "--no-auth",
+            "--base-url",
+            "https://router.example/v1",
+            "--api-kind",
+            "openai:completions",
+            "--header",
+            "X-Title=Lightspeed",
+            "--header-credential",
+            "X-Api-Key=authgrant_router",
+        ])
+        .expect("parse");
+        let AuthModelCommand::Put(put) = parsed.command else {
+            panic!("expected put");
+        };
+        let headers =
+            request_headers_from_args(&put.headers, &put.header_credentials).expect("headers");
+        assert_eq!(
+            headers.get("X-Title"),
+            Some(&api::RequestHeader::Literal {
+                value: "Lightspeed".to_owned(),
+            })
+        );
+        assert_eq!(
+            headers.get("X-Api-Key"),
+            Some(&api::RequestHeader::Credential {
+                grant_id: "authgrant_router".to_owned(),
+            })
+        );
+
+        // Headers belong to an endpoint.
+        assert!(
+            ModelCommand::try_parse_from([
+                "models",
+                "put",
+                "router",
+                "--api-key-stdin",
+                "--header-credential",
+                "X-Api-Key=authgrant_router",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn grant_replace_needs_one_token_source_and_takes_no_token_argument() {
         let parsed = GrantCommand::try_parse_from([
             "grants",
             "replace",
             "authgrant_upstream",
-            "--token",
-            "never-printed",
+            "--token-file",
+            "/run/secrets/upstream",
         ])
         .expect("parse");
         let AuthGrantCommand::Replace(args) = parsed.command else {
             panic!("expected replace");
         };
         assert_eq!(args.grant_id, "authgrant_upstream");
-        assert!(!format!("{args:?}").contains("never-printed"));
+        // A token is never an argument: other processes and the shell
+        // history would see it.
+        assert!(
+            GrantCommand::try_parse_from([
+                "grants",
+                "replace",
+                "authgrant_upstream",
+                "--token",
+                "plaintext",
+            ])
+            .is_err()
+        );
 
         assert!(
             GrantCommand::try_parse_from(["grants", "replace", "authgrant_upstream"]).is_err(),
@@ -1489,12 +1612,28 @@ mod tests {
                 "grants",
                 "replace",
                 "authgrant_upstream",
-                "--token",
-                "a",
+                "--token-env",
+                "UPSTREAM_TOKEN",
                 "--token-stdin",
             ])
             .is_err(),
             "token sources are exclusive"
         );
+    }
+
+    #[test]
+    fn a_credential_is_brokered_unless_declared_retrievable() {
+        let put = |extra: &[&str]| {
+            let mut argv = vec!["grants", "put", "repo-token", "--token-env", "REPO_TOKEN"];
+            argv.extend_from_slice(extra);
+            let AuthGrantCommand::Put(args) =
+                GrantCommand::try_parse_from(argv).expect("parse").command
+            else {
+                panic!("expected put");
+            };
+            exposure(args.retrievable)
+        };
+        assert_eq!(put(&[]), api::AuthGrantExposure::Brokered);
+        assert_eq!(put(&["--retrievable"]), api::AuthGrantExposure::Retrievable);
     }
 }

@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({ api: vi.fn(), universe: {} as Universe }));
 vi.mock("@/api", async original => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", async original => ({
   ...await original<typeof import("@/lib/universes")>(),
-  useActiveUniverse: () => ({ universe: mocks.universe, slug: mocks.universe.slug, isLoading: false }),
+  useActiveUniverse: () => ({ universe: mocks.universe, handle: mocks.universe.handle, isLoading: false }),
 }));
 
 let root: Root;
@@ -25,7 +25,7 @@ let container: HTMLDivElement;
 let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  mocks.universe = { id: "universe", lightspeedUniverseId: "runtime", name: "Test", slug: "test",
+  mocks.universe = { id: "universe", lightspeedUniverseId: "runtime", name: "Test", handle: "test",
     gatewayUrl: null, status: "active", createdAt: "2026-01-01", role: "admin",
     features: { bots: true, channels: true }, icon: "orbit", iconColor: "default" };
   mocks.api.mockReset().mockImplementation(async (_method, _path, fields) => ({ ...mocks.universe, ...fields }));

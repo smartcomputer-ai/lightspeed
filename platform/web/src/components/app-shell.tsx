@@ -75,7 +75,7 @@ export function shellTitleTrail(pathname: string, universeName: string | undefin
     return item ? [item.label, ADMIN_TITLE] : [ADMIN_TITLE];
   }
   if (mode !== "universe") return [MODE_TITLE[mode]];
-  const universe = matchPath("/u/:slug/*", pathname);
+  const universe = matchPath("/u/:handle/*", pathname);
   if (!universe) return [];
   const section = universeSectionTrail(universe.params["*"] ?? "");
   return universeName ? [...section, universeName] : section;
@@ -150,10 +150,10 @@ function scrollToSection(id: string) {
 
 export function AppShell({ user, admin }: { user: SessionUser; admin: boolean }) {
   const universes = useUniverses();
-  const match = useMatch("/u/:slug/*");
-  const activeSlug = match?.params.slug;
-  const active = activeSlug
-    ? universes.data?.find((u) => u.slug === activeSlug)
+  const match = useMatch("/u/:handle/*");
+  const activeHandle = match?.params.handle;
+  const active = activeHandle
+    ? universes.data?.find((u) => u.handle === activeHandle)
     : undefined;
   const permissions = useActionPermissions(active?.id);
   const location = useLocation();
@@ -161,7 +161,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
 
   useEffect(() => {
     if (active) {
-      rememberUniverse(active.slug);
+      rememberUniverse(active.handle);
     }
   }, [active]);
 
@@ -226,7 +226,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
                     {items.map((item) => (
                       <NavItem
                         key={item.path}
-                        to={`/u/${active.slug}/${item.path}`}
+                        to={`/u/${active.handle}/${item.path}`}
                         icon={item.icon}
                         label={item.label}
                       />

@@ -5,6 +5,7 @@
 /// synchronous provider calls, as in the core.
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { keyIdConflictMessage } from "@lightspeed-ai/platform-shared";
 import type {
   EnvironmentIdlePolicyView,
   EnvironmentPowerStateView,
@@ -210,13 +211,13 @@ export function closeEnvironment(
 /// Stable, id-safe request id for an external endpoint so re-registering
 /// the same daemon converges on one environment.
 function externalRequestId(endpoint: string): string {
-  const slug = endpoint
+  const handle = endpoint
     .replace(/^wss?:\/\//, "")
     .replace(/\/+$/, "")
     .replace(/[^A-Za-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 100);
-  return `external-${slug || "envd"}`;
+  return `external-${handle || "envd"}`;
 }
 
 /// Claude Code prefers `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` over
@@ -249,22 +250,23 @@ function parseCredentialSource(value: unknown): EnvironmentCredentialSource | nu
 }
 
 /// Whether the source resolves to something injectable right now: an active
-/// grant, or an active model provider row that holds a credential.
+/// retrievable grant, or an active model API key provider that holds a key.
 function credentialSourceAvailable(universe: UniverseState, source: EnvironmentCredentialSource): boolean {
   if (source.type === "authGrant") {
     return universe.secrets.grants.some(
-      (grant) => grant.grantId === source.grantId && grant.status === "active",
+      (grant) =>
+        grant.grantId === source.grantId
+        && grant.status === "active"
+        && grant.exposure === "retrievable",
     );
   }
-  if (source.type === "authProviderCredential") {
-    return universe.secrets.providers.some(
-      (provider) =>
-        provider.credentialId === source.providerId
-        && provider.status === "active"
-        && provider.hasCredential,
-    );
-  }
-  return true;
+  return universe.secrets.providers.some(
+    (provider) =>
+      provider.credentialId === source.providerId
+      && provider.status === "active"
+      && provider.hasCredential
+      && provider.config.type === "modelApiKey",
+  );
 }
 
 function locate(
@@ -282,6 +284,7 @@ type RegistrationKeyBody = {
   maxActiveEnvironments?: number;
   ephemeralDisconnectGraceMs?: number;
   offlineCloseAfterMs?: number;
+  declaredOnly?: boolean;
   expiresAtMs?: number;
 };
 
@@ -292,18 +295,24 @@ function registrationKeyPolicy(
   identityMode: "persistent" | "ephemeral",
 ): Pick<
   EnvironmentRegistrationKey,
-  "displayName" | "maxActiveEnvironments" | "ephemeralDisconnectGraceMs" | "offlineCloseAfterMs" | "expiresAtMs"
+  | "displayName" | "maxActiveEnvironments" | "ephemeralDisconnectGraceMs" | "offlineCloseAfterMs"
+  | "declaredOnly" | "expiresAtMs"
 > | { error: string } {
   const displayName = body.displayName?.trim();
   if (!displayName) return { error: "displayName is required" };
   if (body.offlineCloseAfterMs !== undefined && identityMode === "ephemeral") {
     return { error: "offlineCloseAfterMs applies to persistent keys only" };
   }
+  if (body.declaredOnly && identityMode === "ephemeral") {
+    return { error: "declaredOnly applies to persistent keys only" };
+  }
   return {
     displayName,
     maxActiveEnvironments: body.maxActiveEnvironments ?? null,
     ephemeralDisconnectGraceMs: body.ephemeralDisconnectGraceMs ?? 300_000,
     offlineCloseAfterMs: body.offlineCloseAfterMs ?? null,
+    // Left out of the view when off, as on the wire.
+    declaredOnly: body.declaredOnly === true ? true : undefined,
     expiresAtMs: body.expiresAtMs ?? null,
   };
 }
@@ -374,14 +383,18 @@ export function environmentRoutes(store: DemoStore): Hono {
   app.post("/:id/environment-registration-keys", async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
-    const body = await readBody<RegistrationKeyBody>(c);
+    const body = await readBody<RegistrationKeyBody & { registrationKeyId?: string }>(c);
     const identityMode = body.identityMode === "ephemeral" ? "ephemeral" : "persistent";
     const policy = registrationKeyPolicy(body, identityMode);
     if ("error" in policy) return badRequest(c, policy.error);
+    // A chosen id is taken while any key of the universe holds it, revoked or not.
+    const keyId = body.registrationKeyId?.trim() || undefined;
+    const holder = universe.registrationKeys.find((key) => key.registrationKeyId === keyId);
+    if (keyId && holder) return conflict(c, keyIdConflictMessage(keyId, holder.status === "revoked"));
     const now = Date.now();
     const secret = mintSecret();
     const key: EnvironmentRegistrationKey = {
-      registrationKeyId: `registration_key_${crypto.randomUUID().replace(/-/g, "")}`,
+      registrationKeyId: keyId ?? `registration_key_${crypto.randomUUID().replace(/-/g, "")}`,
       keyPrefix: secret.slice(0, 12),
       identityMode,
       ...policy,
@@ -510,6 +523,75 @@ export function environmentRoutes(store: DemoStore): Hono {
     return c.json(environment, 201);
   });
 
+  /// `environments/registered/put`: a fixed machine declared before its
+  /// daemon registers. Open at once and away, with no daemon bound; the demo
+  /// has no daemons, so it stays waiting. Declaring again converges the
+  /// display name and metadata; the key and the name are fixed.
+  app.post("/:id/environments/registered", async (c) => {
+    const universe = universeFor(store, c);
+    if (!universe) return notFound(c);
+    const body = await readBody<{
+      environmentId?: unknown;
+      registrationKeyId?: unknown;
+      name?: unknown;
+      displayName?: unknown;
+      metadata?: unknown;
+    }>(c);
+    const environmentId = typeof body.environmentId === "string" ? body.environmentId.trim() : "";
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!environmentId || !name || typeof body.registrationKeyId !== "string") {
+      return badRequest(c, "environmentId, registrationKeyId, and name are required");
+    }
+    const key = universe.registrationKeys.find((k) => k.registrationKeyId === body.registrationKeyId);
+    if (!key) return notFound(c, "registration key not found");
+    if (key.identityMode !== "persistent") {
+      return badRequest(c, "only a persistent registration key can have declared environments");
+    }
+    const displayName = typeof body.displayName === "string" && body.displayName.trim()
+      ? body.displayName.trim()
+      : null;
+    const existing = universe.environments.get(environmentId);
+    if (existing) {
+      const source = existing.source;
+      if (source.type !== "registered" || source.registrationKeyId !== key.registrationKeyId || source.name !== name) {
+        return conflict(c, `environment id in use: ${environmentId}`);
+      }
+      if (existing.state === "closed") return conflict(c, "environment closed");
+      existing.displayName = displayName;
+      existing.metadata = stringMetadata(body.metadata);
+      return c.json(settle(existing));
+    }
+    if (key.status === "revoked") return conflict(c, "registration key unavailable: revoked");
+    const nameTaken = [...universe.environments.values()].some((environment) =>
+      environment.source.type === "registered"
+      && environment.source.registrationKeyId === key.registrationKeyId
+      && environment.source.name === name
+      && environment.state !== "closed");
+    if (nameTaken) return conflict(c, `registration name in use under this key: ${name}`);
+    const now = Date.now();
+    const environment: Environment = {
+      environmentId,
+      source: {
+        type: "registered",
+        registrationKeyId: key.registrationKeyId,
+        name,
+        identityMode: "persistent",
+        connected: false,
+        connectionChangedAtMs: now,
+        lastSeenAtMs: now,
+      },
+      displayName,
+      state: "open",
+      status: "away",
+      stateChangedAtMs: now,
+      metadata: stringMetadata(body.metadata),
+      createdAtMs: now,
+      updatedAtMs: now,
+    };
+    universe.environments.set(environmentId, environment);
+    return c.json(environment, 201);
+  });
+
   /// Before `/:environmentId` so the literal segment wins.
   app.get("/:id/environments/hints", (c) => {
     if (!universeFor(store, c)) return notFound(c);
@@ -540,6 +622,28 @@ export function environmentRoutes(store: DemoStore): Hono {
     const found = locate(store, c);
     if (!found) return notFound(c);
     return c.json(closeEnvironment(found.universe, found.environment.environmentId));
+  });
+
+  /// `environments/registered/release`: the bound daemon is forgotten and
+  /// disconnected; the declared environment keeps its id and name and waits
+  /// for another machine. No effect when no daemon is bound.
+  app.post("/:id/environments/:environmentId/release", (c) => {
+    const found = locate(store, c);
+    if (!found) return notFound(c);
+    const { environment } = found;
+    const source = environment.source;
+    if (source.type !== "registered" || !source.name) {
+      return badRequest(c, "only a declared environment can release its daemon");
+    }
+    if (environment.state === "closed") return badRequest(c, "environment closed");
+    if (!source.daemonId) return c.json(environment);
+    const now = Date.now();
+    delete source.daemonId;
+    source.connected = false;
+    source.connectionChangedAtMs = now;
+    // The build belonged to the daemon that is gone.
+    delete environment.daemon;
+    return c.json(settle(environment, now));
   });
 
   /// `environments/power/put`: a synchronous provider call; only the

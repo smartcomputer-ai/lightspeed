@@ -11,25 +11,26 @@
 use std::collections::{BTreeMap, HashMap};
 
 use async_trait::async_trait;
-use auth::{AuthGrantId, AuthProviderId, SecretId, SecretValue};
+use auth::{AuthGrantId, AuthProviderId, SecretValue};
 use environment_protocol::{ids::ProviderTargetId, routes::DataRouteBase};
 use environments::{
-    BeginCloseEnvironment, CreateEnvironment, CreateExternalEnvironment,
+    BeginCloseEnvironment, BindRegisteredEnvironment, CreateEnvironment, CreateExternalEnvironment,
     CreateRegisteredEnvironment, DEFAULT_EPHEMERAL_DISCONNECT_GRACE_MS, DaemonBuild,
-    EndProvisionedEnvironment, EnvironmentCloseReason, EnvironmentCredentialRecord,
-    EnvironmentCredentialSource, EnvironmentCredentialStore, EnvironmentEndpoint, EnvironmentId,
-    EnvironmentPage, EnvironmentProviderBindingRecord, EnvironmentProviderBindingStore,
-    EnvironmentProviderId, EnvironmentProviderRecord, EnvironmentProviderStore,
-    EnvironmentProvisionRequestId, EnvironmentRecord, EnvironmentRegistrationKeyId,
-    EnvironmentRegistrationKeyRecord, EnvironmentRegistrationKeyStore, EnvironmentRegistryError,
-    EnvironmentSource, EnvironmentState, EnvironmentStore, EnvironmentTemplateId, FailEnvironment,
-    FinishCloseEnvironment, ListEnvironmentCredentials, ListEnvironments, MarkRegisteredConnected,
+    DeclareRegisteredEnvironment, DeclaredOutcome, EndProvisionedEnvironment,
+    EnvironmentCloseReason, EnvironmentCredentialRecord, EnvironmentCredentialSource,
+    EnvironmentCredentialStore, EnvironmentEndpoint, EnvironmentId, EnvironmentPage,
+    EnvironmentProviderBindingRecord, EnvironmentProviderBindingStore, EnvironmentProviderId,
+    EnvironmentProviderRecord, EnvironmentProviderStore, EnvironmentProvisionRequestId,
+    EnvironmentRecord, EnvironmentRegistrationKeyId, EnvironmentRegistrationKeyRecord,
+    EnvironmentRegistrationKeyStore, EnvironmentRegistryError, EnvironmentSource, EnvironmentState,
+    EnvironmentStore, EnvironmentTemplateId, FailEnvironment, FinishCloseEnvironment,
+    ListEnvironmentCredentials, ListEnvironments, MarkRegisteredConnected,
     MarkRegisteredDisconnected, ObservedTarget, OpenEnvironment, PowerState,
     ProviderCredentialChange, ProvisionedSource, PutEnvironmentCredential, PutEnvironmentProvider,
     PutEnvironmentProviderBinding, REGISTERED_LIVENESS_STAMP_MS, REGISTERED_STALE_AFTER_MS,
     RecordTargetObservation, RegisteredIdentityMode, RegisteredSource, RegisteredSweep,
-    ScheduleEnvironmentAttempt, StampRegisteredSeen, TargetPhase, UpdateEnvironment,
-    sweep_registered_environment, validate_daemon_public_key,
+    ReleaseRegisteredEnvironment, ScheduleEnvironmentAttempt, StampRegisteredSeen, TargetPhase,
+    UpdateEnvironment, sweep_registered_environment, validate_daemon_public_key,
 };
 use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
 use uuid::Uuid;
@@ -56,7 +57,7 @@ const ENVIRONMENT_COLUMNS: &str = r#"
     e.next_attempt_at_ms, e.attempts,
     e.observed_phase, e.observed_power, e.observed_message, e.observed_at_ms,
     e.public_endpoint, e.daemon_endpoint,
-    e.registration_key_id, e.daemon_public_key, e.connected,
+    e.registration_key_id, e.registration_name, e.daemon_public_key, e.connected,
     e.connection_changed_at_ms, e.last_seen_at_ms,
     e.created_at_ms, e.updated_at_ms, e.closed_at_ms,
     k.identity_mode
@@ -71,7 +72,7 @@ const ENVIRONMENT_FROM: &str = r#"
 
 const CREDENTIAL_COLUMNS: &str = r#"
     environment_id, env_name, source_kind, grant_id, auth_provider_id,
-    secret_id, created_at_ms, updated_at_ms
+    created_at_ms, updated_at_ms
 "#;
 
 #[async_trait]
@@ -473,6 +474,10 @@ impl PgStore {
         tx.commit()
             .await
             .map_err(|error| sql_error(action, error))?;
+        self.changed(
+            crate::changes::ChangeKind::Environment,
+            candidate.environment_id.as_str(),
+        );
         Ok((candidate, true))
     }
 
@@ -526,6 +531,10 @@ impl PgStore {
             tx.commit()
                 .await
                 .map_err(|error| sql_error("commit environment create", error))?;
+            self.changed(
+                crate::changes::ChangeKind::Environment,
+                record.environment_id.as_str(),
+            );
             return Ok(record);
         }
         drop(tx);
@@ -659,6 +668,21 @@ impl EnvironmentStore for PgStore {
         if !live {
             return Err(request.secret_retired());
         }
+        // Another admission may have created this identity while we waited
+        // for the key lock. Converge before counting capacity: reconnecting
+        // that identity consumes no additional slot.
+        let existing_query = format!(
+            "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_FROM} WHERE e.universe_id = $1 AND e.daemon_public_key = $2"
+        );
+        if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(existing_query))
+            .bind(self.config.universe_id)
+            .bind(&request.daemon_public_key)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| sql_error("recheck registered identity", error))?
+        {
+            return environment_from_row(&row);
+        }
         if let Some(limit) = key.max_active_environments {
             let active: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM environments WHERE universe_id = $1 AND registration_key_id = $2 AND state <> 'closed'",
@@ -682,6 +706,10 @@ impl EnvironmentStore for PgStore {
                 tx.commit()
                     .await
                     .map_err(|error| sql_error("commit registered environment create", error))?;
+                self.changed(
+                    crate::changes::ChangeKind::Environment,
+                    record.environment_id.as_str(),
+                );
                 Ok(record)
             }
             Err(error) if constraint_of(&error) == Some("environments_daemon_public_key_idx") => {
@@ -704,6 +732,177 @@ impl EnvironmentStore for PgStore {
                 error,
             )),
         }
+    }
+
+    async fn declare_registered_environment(
+        &self,
+        request: DeclareRegisteredEnvironment,
+    ) -> Result<(EnvironmentRecord, DeclaredOutcome), EnvironmentRegistryError> {
+        if request.declared_at_ms < 0 {
+            return invalid("declared_at_ms must be nonnegative");
+        }
+        self.ensure_universe()
+            .await
+            .map_err(|error| store_error("ensure universe", error))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| sql_error("begin environment declaration", error))?;
+        // Lock the key row first, as an admission does: declarations and
+        // admissions against one key serialize, so the name check and the
+        // active count below are exact.
+        let key = crate::environment_registration::lock_registration_key(
+            &mut tx,
+            self.config.universe_id,
+            &request.registration_key_id,
+        )
+        .await?;
+        let query = format!(
+            "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_FROM} WHERE e.universe_id = $1 AND e.environment_id = $2 FOR UPDATE OF e"
+        );
+        let existing = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(self.config.universe_id)
+            .bind(request.environment_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| sql_error("lock declared environment", error))?
+            .as_ref()
+            .map(environment_from_row)
+            .transpose()?;
+        if let Some(mut record) = existing {
+            if !request.apply(&mut record)? {
+                return Ok((record, DeclaredOutcome::Unchanged));
+            }
+            let columns = EnvironmentColumns::of(&record)?;
+            update_environment_row(&mut tx, self.config.universe_id, &record, columns)
+                .await
+                .map_err(|error| {
+                    map_environment_write_error("update declared environment", error)
+                })?;
+            tx.commit()
+                .await
+                .map_err(|error| sql_error("commit environment declaration", error))?;
+            self.changed(
+                crate::changes::ChangeKind::Environment,
+                record.environment_id.as_str(),
+            );
+            return Ok((record, DeclaredOutcome::Updated));
+        }
+        let record = request.record(&key)?;
+        if let Some(limit) = key.max_active_environments {
+            let active: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM environments WHERE universe_id = $1 AND registration_key_id = $2 AND state <> 'closed'",
+            )
+            .bind(self.config.universe_id)
+            .bind(key.registration_key_id.as_str())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|error| sql_error("count registered environments", error))?;
+            if active >= i64::from(limit) {
+                return Err(EnvironmentRegistryError::RegistrationCapacityExhausted {
+                    registration_key_id: key.registration_key_id.to_string(),
+                    limit,
+                });
+            }
+        }
+        let columns = EnvironmentColumns::of(&record)?;
+        insert_environment_row(&mut tx, self.config.universe_id, &record, columns)
+            .await
+            .map_err(|error| map_environment_write_error("insert declared environment", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| sql_error("commit environment declaration", error))?;
+        self.changed(
+            crate::changes::ChangeKind::Environment,
+            record.environment_id.as_str(),
+        );
+        Ok((record, DeclaredOutcome::Created))
+    }
+
+    async fn bind_registered_environment(
+        &self,
+        request: BindRegisteredEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        validate_daemon_public_key(&request.daemon_public_key)?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| sql_error("begin registered environment bind", error))?;
+        // The same lock and secret check as an undeclared admission, so a
+        // rotation that retired the presented secret admits nothing here
+        // either.
+        let key = crate::environment_registration::lock_registration_key(
+            &mut tx,
+            self.config.universe_id,
+            &request.registration_key_id,
+        )
+        .await?;
+        key.check_admits(request.bound_at_ms)?;
+        let live: bool = sqlx::query_scalar(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM environment_registration_key_secrets
+                WHERE universe_id = $1 AND registration_key_id = $2
+                  AND secret_hash = $3 AND retired_at_ms IS NULL
+            )
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(key.registration_key_id.as_str())
+        .bind(&request.secret_hash)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| sql_error("check registration key secret", error))?;
+        if !live {
+            return Err(request.secret_retired());
+        }
+        let mut record =
+            lock_environment(&mut tx, self.config.universe_id, &request.environment_id).await?;
+        request.apply(&mut record)?;
+        let columns = EnvironmentColumns::of(&record)?;
+        update_environment_row(&mut tx, self.config.universe_id, &record, columns)
+            .await
+            .map_err(|error| map_environment_write_error("bind registered environment", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| sql_error("commit registered environment bind", error))?;
+        self.changed(
+            crate::changes::ChangeKind::Environment,
+            record.environment_id.as_str(),
+        );
+        Ok(record)
+    }
+
+    async fn release_registered_environment(
+        &self,
+        request: ReleaseRegisteredEnvironment,
+    ) -> Result<(EnvironmentRecord, bool), EnvironmentRegistryError> {
+        self.change_environment(
+            &request.environment_id,
+            "release registered environment",
+            |record| request.apply(record),
+        )
+        .await
+    }
+
+    async fn read_declared_environment(
+        &self,
+        registration_key_id: &EnvironmentRegistrationKeyId,
+        name: &str,
+    ) -> Result<Option<EnvironmentRecord>, EnvironmentRegistryError> {
+        let query = format!(
+            "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_FROM} WHERE e.universe_id = $1 AND e.registration_key_id = $2 AND e.registration_name = $3 AND e.state <> 'closed'"
+        );
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(self.config.universe_id)
+            .bind(registration_key_id.as_str())
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| sql_error("read declared environment", error))?;
+        row.as_ref().map(environment_from_row).transpose()
     }
 
     async fn read_environment(
@@ -1191,8 +1390,9 @@ pub async fn repair_registered_connections(
 }
 
 /// Of `keys` (universe, environment id), those whose live routes must end:
-/// the row is gone or not `open`, or it is provisioned and its universe's
-/// binding of the provider is missing or disabled.
+/// the row is gone or not `open`, it is provisioned and its universe's
+/// binding of the provider is missing or disabled, or it is a declared
+/// registered environment that no daemon is bound to.
 pub async fn list_revoked_environment_routes(
     pool: &PgPool,
     keys: &[(Uuid, String)],
@@ -1212,6 +1412,8 @@ pub async fn list_revoked_environment_routes(
         WHERE e.environment_id IS NULL
            OR e.state <> 'open'
            OR (e.source_kind = 'provisioned' AND (b.provider_id IS NULL OR NOT b.enabled))
+           -- Released: the environment is open, but no daemon serves it.
+           OR (e.source_kind = 'registered' AND e.daemon_public_key IS NULL)
         ORDER BY route.universe_id, route.environment_id
         "#,
     )
@@ -1230,14 +1432,14 @@ impl EnvironmentCredentialStore for PgStore {
     ) -> Result<EnvironmentCredentialRecord, EnvironmentRegistryError> {
         let record = request.into_record();
         record.validate()?;
-        let (kind, grant, provider, secret) = credential_source_columns(&record.source);
+        let (kind, grant, provider) = credential_source_columns(&record.source);
         let query = format!(
             r#"
-            INSERT INTO environment_credentials (universe_id, environment_id, env_name, source_kind, grant_id, auth_provider_id, secret_id, created_at_ms, updated_at_ms)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
+            INSERT INTO environment_credentials (universe_id, environment_id, env_name, source_kind, grant_id, auth_provider_id, created_at_ms, updated_at_ms)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
             ON CONFLICT (universe_id, environment_id, env_name) DO UPDATE SET
                 source_kind=EXCLUDED.source_kind, grant_id=EXCLUDED.grant_id,
-                auth_provider_id=EXCLUDED.auth_provider_id, secret_id=EXCLUDED.secret_id,
+                auth_provider_id=EXCLUDED.auth_provider_id,
                 updated_at_ms=EXCLUDED.updated_at_ms RETURNING {CREDENTIAL_COLUMNS}
         "#
         );
@@ -1248,7 +1450,6 @@ impl EnvironmentCredentialStore for PgStore {
             .bind(kind)
             .bind(grant)
             .bind(provider)
-            .bind(secret)
             .bind(record.created_at_ms)
             .fetch_one(&self.pool)
             .await
@@ -1349,6 +1550,7 @@ struct EnvironmentColumns {
     public_endpoint: Option<String>,
     daemon_endpoint: Option<String>,
     registration_key_id: Option<String>,
+    registration_name: Option<String>,
     daemon_public_key: Option<String>,
     connected: Option<bool>,
     connection_changed_at_ms: Option<i64>,
@@ -1385,6 +1587,7 @@ impl EnvironmentColumns {
             public_endpoint: None,
             daemon_endpoint: None,
             registration_key_id: None,
+            registration_name: None,
             daemon_public_key: None,
             connected: None,
             connection_changed_at_ms: None,
@@ -1429,7 +1632,8 @@ impl EnvironmentColumns {
             }
             EnvironmentSource::Registered(source) => {
                 columns.registration_key_id = Some(source.registration_key_id.as_str().to_owned());
-                columns.daemon_public_key = Some(source.daemon_public_key.clone());
+                columns.registration_name = source.registration_name.clone();
+                columns.daemon_public_key = source.daemon_public_key.clone();
                 columns.connected = Some(source.connected);
                 columns.connection_changed_at_ms = Some(source.connection_changed_at_ms);
                 columns.last_seen_at_ms = Some(source.last_seen_at_ms);
@@ -1459,10 +1663,10 @@ async fn insert_environment_row(
             public_endpoint, daemon_endpoint,
             registration_key_id, daemon_public_key, connected,
             connection_changed_at_ms, last_seen_at_ms,
-            created_at_ms, updated_at_ms, closed_at_ms
+            created_at_ms, updated_at_ms, closed_at_ms, registration_name
         ) VALUES (
             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
-            $18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33
+            $18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34
         )
         ON CONFLICT (universe_id, request_id) WHERE request_id IS NOT NULL DO NOTHING
         "#,
@@ -1500,13 +1704,15 @@ async fn insert_environment_row(
     .bind(columns.created_at_ms)
     .bind(columns.updated_at_ms)
     .bind(columns.closed_at_ms)
+    .bind(columns.registration_name)
     .execute(&mut **tx)
     .await?;
     Ok(result.rows_affected() == 1)
 }
 
-/// Write the mutable columns of a locked row. The kind, its identity
-/// columns and its create inputs never change after the insert.
+/// Write the mutable columns of a locked row. The kind and its create inputs
+/// never change after the insert. The daemon identity changes only on a
+/// declared registered row, when a daemon is bound to it or released.
 async fn update_environment_row(
     tx: &mut Transaction<'_, Postgres>,
     universe_id: Uuid,
@@ -1523,7 +1729,9 @@ async fn update_environment_row(
             observed_phase = $15, observed_power = $16, observed_message = $17,
             observed_at_ms = $18, public_endpoint = $19,
             connected = $20, connection_changed_at_ms = $21, last_seen_at_ms = $22,
-            updated_at_ms = $23, closed_at_ms = $24
+            updated_at_ms = $23, closed_at_ms = $24, daemon_public_key = $25,
+            owner_instance_id = CASE WHEN $20 AND $3 = 'open' THEN owner_instance_id ELSE NULL END,
+            control_connection_id = CASE WHEN $20 AND $3 = 'open' THEN control_connection_id ELSE NULL END
         WHERE universe_id = $1 AND environment_id = $2
         "#,
     )
@@ -1551,6 +1759,7 @@ async fn update_environment_row(
     .bind(columns.last_seen_at_ms)
     .bind(columns.updated_at_ms)
     .bind(columns.closed_at_ms)
+    .bind(columns.daemon_public_key)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -1620,7 +1829,8 @@ fn environment_from_row(row: &PgRow) -> Result<EnvironmentRecord, EnvironmentReg
                 "registration_key_id",
                 EnvironmentRegistrationKeyId::try_new,
             )?,
-            daemon_public_key: column(row, "daemon_public_key")?,
+            registration_name: optional_string(row, "registration_name")?,
+            daemon_public_key: optional_string(row, "daemon_public_key")?,
             identity_mode: identity_mode_from_str(&column(row, "identity_mode")?)?,
             connected: row
                 .try_get::<Option<bool>, _>("connected")
@@ -1734,7 +1944,6 @@ fn credential_from_row(
     let kind = column(row, "source_kind")?;
     let grant = optional_string(row, "grant_id")?;
     let provider = optional_string(row, "auth_provider_id")?;
-    let secret = optional_string(row, "secret_id")?;
     let source = match kind.as_str() {
         "auth_grant" => EnvironmentCredentialSource::AuthGrant {
             grant_id: AuthGrantId::try_new(grant.ok_or_else(|| store_message("missing grant id"))?)
@@ -1745,10 +1954,6 @@ fn credential_from_row(
                 provider.ok_or_else(|| store_message("missing auth provider id"))?,
             )
             .map_err(|e| store_message(format!("decode auth provider id: {e}")))?,
-        },
-        "direct_secret" => EnvironmentCredentialSource::DirectSecret {
-            secret_id: SecretId::try_new(secret.ok_or_else(|| store_message("missing secret id"))?)
-                .map_err(|e| store_message(format!("decode secret id: {e}")))?,
         },
         other => return Err(store_message(format!("unknown credential source: {other}"))),
     };
@@ -1763,21 +1968,17 @@ fn credential_from_row(
     Ok(record)
 }
 
+/// The source kind with its grant id and provider id columns; exactly one of
+/// the two ids is set.
 fn credential_source_columns(
     source: &EnvironmentCredentialSource,
-) -> (&'static str, Option<&str>, Option<&str>, Option<&str>) {
+) -> (&'static str, Option<&str>, Option<&str>) {
     match source {
         EnvironmentCredentialSource::AuthGrant { grant_id } => {
-            ("auth_grant", Some(grant_id.as_str()), None, None)
+            ("auth_grant", Some(grant_id.as_str()), None)
         }
-        EnvironmentCredentialSource::AuthProviderCredential { provider_id } => (
-            "auth_provider_credential",
-            None,
-            Some(provider_id.as_str()),
-            None,
-        ),
-        EnvironmentCredentialSource::DirectSecret { secret_id } => {
-            ("direct_secret", None, None, Some(secret_id.as_str()))
+        EnvironmentCredentialSource::AuthProviderCredential { provider_id } => {
+            ("auth_provider_credential", None, Some(provider_id.as_str()))
         }
     }
 }
@@ -1914,6 +2115,14 @@ fn map_environment_write_error(action: &str, error: sqlx::Error) -> EnvironmentR
         Some("environments_registration_key_fk") => {
             invalid_error("environment registration key does not exist")
         }
+        Some("environments_registration_name_idx") => EnvironmentRegistryError::AlreadyExists {
+            kind: "registration_name",
+            id: "another open environment of the key is declared with this name".to_owned(),
+        },
+        Some("environments_daemon_public_key_idx") => EnvironmentRegistryError::AlreadyExists {
+            kind: "daemon_identity",
+            id: "daemon identity is bound to another environment".to_owned(),
+        },
         _ => sql_error(action, error),
     }
 }
@@ -1970,4 +2179,64 @@ fn metadata_filter_json(metadata: &BTreeMap<String, String>) -> serde_json::Valu
             .map(|(key, value)| (key.clone(), serde_json::Value::String(value.clone())))
             .collect(),
     )
+}
+
+impl PgStore {
+    /// The environment list projection restricted to a batch of changed ids.
+    pub async fn environments_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
+        let query = format!(
+            "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_FROM} WHERE e.universe_id=$1 AND e.environment_id=ANY($2)"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(self.config.universe_id)
+            .bind(ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| sql_error("load changed environments", e))?;
+        rows.iter().map(environment_from_row).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CREDENTIAL_SOURCE_MIGRATION: &str =
+        include_str!("../migrations/019_environment_credential_sources.sql");
+
+    #[test]
+    fn stored_credential_source_kinds_pass_the_latest_check() {
+        let grant = EnvironmentCredentialSource::AuthGrant {
+            grant_id: AuthGrantId::new("authgrant_repo"),
+        };
+        let provider = EnvironmentCredentialSource::AuthProviderCredential {
+            provider_id: AuthProviderId::new("model:openai"),
+        };
+        assert_eq!(
+            credential_source_columns(&grant),
+            ("auth_grant", Some("authgrant_repo"), None)
+        );
+        assert_eq!(
+            credential_source_columns(&provider),
+            ("auth_provider_credential", None, Some("model:openai"))
+        );
+
+        // The check that names the allowed kinds is the line after its
+        // constraint name; a bare secret id is not among them.
+        let allowed = CREDENTIAL_SOURCE_MIGRATION
+            .lines()
+            .skip_while(|line| {
+                !line.contains("ADD CONSTRAINT environment_credentials_source_kind_known")
+            })
+            .nth(1)
+            .expect("source kind check");
+        for source in [&grant, &provider] {
+            let (kind, _, _) = credential_source_columns(source);
+            assert!(allowed.contains(&format!("'{kind}'")), "{kind}");
+        }
+        assert!(!allowed.contains("direct_secret"));
+    }
 }

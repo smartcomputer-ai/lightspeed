@@ -2,12 +2,15 @@ mod administration_cli;
 mod api_client;
 mod auth_cli;
 mod chat;
+mod config;
 mod connection;
 mod env_cli;
+mod key_secrets;
 mod mcp_cli;
 mod model_defaults_cli;
 mod output;
 mod profile_cli;
+mod request_headers;
 mod session_cli;
 mod session_resources;
 mod skills_cli;
@@ -30,7 +33,7 @@ struct Cli {
     /// Use a saved runtime connection for this invocation.
     #[arg(long, global = true)]
     connection: Option<String>,
-    /// Universe UUID or slug for this invocation.
+    /// Universe UUID or handle for this invocation.
     #[arg(long, global = true)]
     universe: Option<String>,
     #[command(subcommand)]
@@ -48,16 +51,17 @@ enum Command {
     /// Administer Lightspeed gateway API keys.
     #[command(visible_alias = "api-keys")]
     ApiKey(administration_cli::ApiKeyArgs),
+    /// Keep universe configuration in files: export it, check what a file
+    /// would change, and apply it.
+    Config(config::ConfigArgs),
     /// Discover models and configure model-provider connections.
     #[command(name = "model", visible_alias = "models")]
     Models(administration_cli::ModelsArgs),
     /// Chat with an agent session.
     #[command(visible_alias = "chats")]
     Chat(chat::ChatArgs),
-    /// Upload and download immutable VFS snapshots.
-    #[command(visible_alias = "vfses")]
-    Vfs(vfs_cli::VfsArgs),
-    /// Manage persistent VFS workspaces in the current universe.
+    /// Manage persistent VFS workspaces in the current universe, and the
+    /// snapshots they point at.
     #[command(visible_alias = "workspaces")]
     Workspace(vfs_cli::WorkspaceArgs),
     /// Manage registered MCP servers and their credentials.
@@ -90,10 +94,31 @@ async fn main() -> Result<()> {
         )
         .await;
     }
-    let active = connection::resolve(
+    // Some commands are offline: they need no connection and must work
+    // before a runtime exists.
+    let offline = match &cli.command {
+        Command::ApiKey(args) => args.offline(),
+        Command::Env(args) => args.offline(),
+        Command::Config(args) => args.offline(),
+        _ => false,
+    };
+    if offline {
+        return match cli.command {
+            Command::ApiKey(args) => administration_cli::api_key(args).await,
+            Command::Env(args) => env_cli::handle(args).await,
+            Command::Config(args) => config::handle(args).await,
+            _ => unreachable!("only these commands have offline forms"),
+        };
+    }
+    let wait = match &cli.command {
+        Command::Config(args) => args.wait_seconds(),
+        _ => None,
+    };
+    let active = connection::resolve_wait(
         cli.connection.as_deref(),
         cli.api_url.as_deref(),
         cli.universe.as_deref(),
+        wait,
     )
     .await?;
     connection::ACTIVE
@@ -102,10 +127,10 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Connect(_) => unreachable!(),
         Command::Universe(args) => administration_cli::universe(args).await,
+        Command::Config(args) => config::handle(args).await,
         Command::ApiKey(args) => administration_cli::api_key(args).await,
         Command::Models(args) => administration_cli::models(args).await,
         Command::Chat(args) => chat::handle(args).await,
-        Command::Vfs(args) => vfs_cli::handle(args).await,
         Command::Workspace(args) => vfs_cli::workspace(args).await,
         Command::Mcp(args) => mcp_cli::handle(args).await,
         Command::Auth(args) => auth_cli::handle(args).await,
@@ -135,7 +160,6 @@ mod tests {
             ("environment", "environments"),
             ("profile", "profiles"),
             ("session", "sessions"),
-            ("vfs", "vfses"),
         ] {
             let root = Cli::command();
             let cmd = root.find_subcommand(name).unwrap();
@@ -152,62 +176,8 @@ mod tests {
     }
 
     #[test]
-    fn every_session_option_accepts_short_s() {
-        use clap::CommandFactory;
-
-        fn check(command: &clap::Command) {
-            for arg in command.get_arguments() {
-                if arg.get_long() == Some("session") {
-                    assert_eq!(
-                        arg.get_short(),
-                        Some('s'),
-                        "{} --session",
-                        command.get_name()
-                    );
-                }
-            }
-            for subcommand in command.get_subcommands() {
-                check(subcommand);
-            }
-        }
-        let mut command = Cli::command();
-        command.build();
-        check(&command);
-        for args in [
-            vec!["chat", "-s", "test1"],
-            vec!["session", "workspace", "list", "-s", "test1"],
-            vec!["session", "mcp", "list", "-s", "test1"],
-            vec!["session", "skill", "list", "-s", "test1"],
-            vec!["session", "environment", "list", "-s", "test1"],
-        ] {
-            Cli::try_parse_from(std::iter::once("lightspeed").chain(args))
-                .expect("-s must parse as --session");
-        }
-    }
-
-    #[test]
     fn current_resource_commands_accept_scoped_flags() {
         for args in [
-            vec![
-                "session",
-                "environment",
-                "attach",
-                "machine",
-                "--session",
-                "s1",
-                "--access",
-                "jobs",
-                "--working-directory",
-                "/repo",
-            ],
-            vec![
-                "session",
-                "environment",
-                "detach",
-                "machine",
-                "--session",
-                "s1",
-            ],
             vec![
                 "session",
                 "config",
@@ -243,7 +213,7 @@ mod tests {
                 "--controller-endpoint",
                 "wss://provider.example/control",
             ],
-            vec!["environment", "binding", "put", "local", "--enabled"],
+            vec!["environment", "binding", "put", "local", "--enable"],
             vec!["environment", "template", "list", "--provider", "local"],
             vec!["profile", "--json", "read", "reviewer"],
             vec!["session", "restart", "s1"],
@@ -414,7 +384,7 @@ mod tests {
             "http://127.0.0.1:18080/rpc",
             "export",
             "support",
-            "--out",
+            "--output",
             "./support-profile.json",
         ])
         .expect("parse profiles export");
@@ -433,34 +403,36 @@ mod tests {
     }
 
     #[test]
-    fn vfs_snapshot_parse_accepts_directory_and_api_options() {
+    fn snapshot_upload_parse_accepts_directory_and_api_options() {
         let cli = Cli::try_parse_from([
             "lightspeed",
-            "vfs",
+            "workspace",
             "snapshot",
+            "upload",
             "--api-url",
             "http://127.0.0.1:18080/rpc",
             "--put-batch-bytes",
             "1048576",
             ".",
         ])
-        .expect("parse vfs snapshot");
-        assert!(matches!(cli.command, Command::Vfs(_)));
+        .expect("parse snapshot upload");
+        assert!(matches!(cli.command, Command::Workspace(_)));
     }
 
     #[test]
-    fn vfs_materialize_parse_accepts_snapshot_ref_and_destination() {
+    fn snapshot_download_parse_accepts_snapshot_ref_and_destination() {
         let cli = Cli::try_parse_from([
             "lightspeed",
-            "vfs",
-            "materialize",
+            "workspaces",
+            "snapshots",
+            "download",
             "--api-url",
             "http://127.0.0.1:18080/rpc",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "./out",
         ])
-        .expect("parse vfs materialize");
-        assert!(matches!(cli.command, Command::Vfs(_)));
+        .expect("parse snapshot download");
+        assert!(matches!(cli.command, Command::Workspace(_)));
     }
 
     #[test]
@@ -471,7 +443,7 @@ mod tests {
             "create",
             "--api-url",
             "http://127.0.0.1:18080/rpc",
-            "--workspace-id",
+            "--id",
             "workspace_1",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ])
@@ -540,28 +512,6 @@ mod tests {
     }
 
     #[test]
-    fn vfs_mount_put_parse_accepts_workspace_mount() {
-        let cli = Cli::try_parse_from([
-            "lightspeed",
-            "session",
-            "workspace",
-            "attach",
-            "--api-url",
-            "http://127.0.0.1:18080/rpc",
-            "--session",
-            "session_1",
-            "--path",
-            "/workspace",
-            "--workspace",
-            "workspace_1",
-            "--access",
-            "edit",
-        ])
-        .expect("parse vfs mount put");
-        assert!(matches!(cli.command, Command::Session(_)));
-    }
-
-    #[test]
     fn env_list_parse_accepts_universe_scope() {
         let cli = Cli::try_parse_from([
             "lightspeed",
@@ -572,23 +522,6 @@ mod tests {
         ])
         .expect("parse env list");
         assert!(matches!(cli.command, Command::Env(_)));
-    }
-
-    #[test]
-    fn env_activate_parse_accepts_environment() {
-        let cli = Cli::try_parse_from([
-            "lightspeed",
-            "session",
-            "environment",
-            "activate",
-            "--api-url",
-            "http://127.0.0.1:18080/rpc",
-            "--session",
-            "session_1",
-            "environment_1",
-        ])
-        .expect("parse env activate");
-        assert!(matches!(cli.command, Command::Session(_)));
     }
 
     #[test]
@@ -673,7 +606,7 @@ mod tests {
             "--api-url",
             "http://127.0.0.1:18080/rpc",
             "local-host",
-            "--name",
+            "--display-name",
             "Build box",
             "--metadata",
             "team=platform",
@@ -713,22 +646,22 @@ mod tests {
             vec![
                 "registration-key",
                 "create",
-                "--name",
+                "--display-name",
                 "Pods",
-                "--offline-close-after-min",
-                "60",
+                "--offline-close-after",
+                "60m",
             ],
             vec![
                 "registration-key",
                 "update",
                 "registration_key_1",
-                "--name",
+                "--display-name",
                 "Pods",
                 "--max-active",
                 "3",
             ],
             vec!["registration-key", "rotate", "registration_key_1"],
-            vec!["binding", "put", "incus", "--disabled"],
+            vec!["binding", "put", "incus", "--disable"],
             vec!["binding", "delete", "incus"],
             vec![
                 "provider",
@@ -780,7 +713,7 @@ mod tests {
             "local-host",
             "--env-name",
             "GITHUB_TOKEN",
-            "--grant-id",
+            "--grant",
             "authgrant_repo",
         ])
         .expect("parse env credentials bind");
@@ -799,13 +732,32 @@ mod tests {
             "local-host",
             "--env-name",
             "GITHUB_TOKEN",
-            "--grant-id",
+            "--grant",
             "authgrant_repo",
-            "--secret-id",
-            "secret_repo",
+            "--provider-id",
+            "openai",
         ])
         .expect_err("reject multiple credential sources");
         assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn env_credentials_bind_has_no_stored_secret_source() {
+        let error = Cli::try_parse_from([
+            "lightspeed",
+            "env",
+            "credentials",
+            "bind",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "local-host",
+            "--env-name",
+            "GITHUB_TOKEN",
+            "--secret-id",
+            "secret_repo",
+        ])
+        .expect_err("a stored secret is not a binding source");
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 
     #[test]
@@ -841,61 +793,6 @@ mod tests {
     }
 
     #[test]
-    fn vfs_mount_delete_parse_accepts_session_and_path() {
-        let cli = Cli::try_parse_from([
-            "lightspeed",
-            "session",
-            "workspace",
-            "detach",
-            "--api-url",
-            "http://127.0.0.1:18080/rpc",
-            "--session",
-            "session_1",
-            "--path",
-            "/workspace",
-        ])
-        .expect("parse vfs mount delete");
-        assert!(matches!(cli.command, Command::Session(_)));
-    }
-
-    #[test]
-    fn skills_list_parse_accepts_session() {
-        let cli = Cli::try_parse_from([
-            "lightspeed",
-            "session",
-            "skill",
-            "list",
-            "--api-url",
-            "http://127.0.0.1:18080/rpc",
-            "--session",
-            "session_1",
-        ])
-        .expect("parse skills list");
-        assert!(matches!(cli.command, Command::Session(_)));
-    }
-
-    #[test]
-    fn skills_use_parse_accepts_skill_id() {
-        let cli = Cli::try_parse_from([
-            "lightspeed",
-            "session",
-            "skill",
-            "use",
-            "--api-url",
-            "http://localhost:18080/rpc",
-            "--session",
-            "session_1",
-            "--json",
-            "skill:review",
-        ])
-        .expect("parse skill use");
-        assert!(matches!(cli.command, Command::Session(_)));
-        for command in ["active", "activate", "deactivate"] {
-            assert!(Cli::try_parse_from(["lightspeed", "session", "skill", command]).is_err());
-        }
-    }
-
-    #[test]
     fn mcp_server_put_parse_accepts_registry_options() {
         let cli = Cli::try_parse_from([
             "lightspeed",
@@ -905,7 +802,6 @@ mod tests {
             "2",
             "--api-url",
             "http://127.0.0.1:18080/rpc",
-            "--id",
             "echo",
             "--label",
             "echo",
@@ -913,41 +809,11 @@ mod tests {
             "hello",
             "--approval",
             "never",
+            "--url",
             "https://echo.example.com/mcp",
         ])
         .expect("parse mcp server put");
         assert!(matches!(cli.command, Command::Mcp(_)));
-    }
-
-    #[test]
-    fn auth_grant_import_parse_accepts_token_env() {
-        let cli = Cli::try_parse_from([
-            "lightspeed",
-            "credential",
-            "import",
-            "--api-url",
-            "http://127.0.0.1:18080/rpc",
-            "--id",
-            "authgrant_crm",
-            "--token-env",
-            "CRM_MCP_TOKEN",
-            "--audience",
-            "https://crm.example.com/mcp",
-        ])
-        .expect("parse auth grant import");
-        assert!(matches!(cli.command, Command::Auth(_)));
-    }
-
-    #[test]
-    fn auth_grant_import_requires_a_token_source() {
-        let result = Cli::try_parse_from([
-            "lightspeed",
-            "credential",
-            "import",
-            "--api-url",
-            "http://127.0.0.1:18080/rpc",
-        ]);
-        assert!(result.is_err(), "token source must be required");
     }
 
     #[test]
@@ -956,7 +822,7 @@ mod tests {
             "lightspeed",
             "credential",
             "oauth-client",
-            "add",
+            "create",
             "--api-url",
             "http://127.0.0.1:18080/rpc",
             "--id",
@@ -1009,7 +875,6 @@ mod tests {
             "put",
             "--api-url",
             "http://127.0.0.1:18080/rpc",
-            "--id",
             "crm",
             "--label",
             "crm",
@@ -1019,6 +884,7 @@ mod tests {
             "contacts.read",
             "--oauth-authorization-server",
             "https://as.example.com",
+            "--url",
             "https://crm.example.com/mcp",
         ])
         .expect("parse mcp server put with oauth policy");
@@ -1032,7 +898,7 @@ mod tests {
             "credential",
             "github",
             "app",
-            "add",
+            "create",
             "--api-url",
             "http://127.0.0.1:18080/rpc",
             "--id",
@@ -1042,7 +908,7 @@ mod tests {
             "--private-key-env",
             "GH_APP_KEY",
         ])
-        .expect("parse github app add");
+        .expect("parse github app create");
         assert!(matches!(parsed.command, Command::Auth(_)));
 
         let missing_key = Cli::try_parse_from([
@@ -1050,7 +916,7 @@ mod tests {
             "credential",
             "github",
             "app",
-            "add",
+            "create",
             "--api-url",
             "http://127.0.0.1:18080/rpc",
             "--app-id",
@@ -1109,23 +975,6 @@ mod tests {
         ])
         .expect("parse auth login");
         assert!(matches!(cli.command, Command::Auth(_)));
-    }
-
-    #[test]
-    fn mcp_link_parse_accepts_session_and_server() {
-        let cli = Cli::try_parse_from([
-            "lightspeed",
-            "session",
-            "mcp",
-            "attach",
-            "--api-url",
-            "http://127.0.0.1:18080/rpc",
-            "--session",
-            "session_1",
-            "echo",
-        ])
-        .expect("parse mcp link");
-        assert!(matches!(cli.command, Command::Session(_)));
     }
 
     #[test]

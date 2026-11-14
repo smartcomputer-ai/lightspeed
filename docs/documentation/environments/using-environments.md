@@ -40,10 +40,11 @@ setup**.
 Each attached environment carries its own **Access**: **Read files**, **Edit
 files**, **Run commands**, or **Run durable jobs**, each including the levels
 before it. Enabling
-**Environments** in the profile or session editor also turns on **Prompt
-loading** and **Skill discovery**; adjust each independently. Existing
-configurations keep their saved settings; a machine that is not attached
-cannot be selected.
+**Environments** in the profile or session editor does not turn on **Prompt
+loading** or **Skill discovery**: each is a separate switch that starts off,
+so instructions and skills found on a machine are followed only once you ask
+for that. Existing configurations keep their saved settings; a machine that
+is not attached cannot be selected.
 
 For this first check, choose **Run commands**. You can leave **Environment
 selection tools** off because you selected the machine yourself. The editor
@@ -94,6 +95,24 @@ atomically. An edit or patch fails, instead of overwriting, when the file
 changed on the machine after the agent read it. File tools stay inside the
 daemon's filesystem root: a symlink is followed only while its target stays
 inside it.
+
+**Read files** is not limited to the working directory. It reaches every
+file the daemon's operating-system user can read under the daemon's
+filesystem root, which is the whole machine unless the daemon was started
+with a narrower root: other projects, home directories, configuration files,
+and any credential file that user can open. Three places are refused to file
+tools at every level and under any root:
+
+- the daemon's state directory, which holds its identity key;
+- the registration key file the daemon was started with and, when that file
+  sits in a volume mounted to hold it, the whole volume;
+- on Linux, the `/proc` and `/sys` filesystems, so the environment variables,
+  command lines, and memory of running processes cannot be read as files.
+
+A path there fails with a permission error, a listing leaves the entry out,
+and search, glob, and transfer skip it. The refusal covers file tools only. A
+session with **Run commands** starts processes as the daemon's user, and
+those can read all three.
 
 ```json
 {"features":{"environments":{"environments":[{"environmentId":"<environment-id>","default":true,"access":"read"}]}}}
@@ -163,6 +182,13 @@ Prefer a persistent registered environment for a profile that names a
 borrowed machine. An ephemeral registration closes when its daemon stops or
 stays away past its disconnect grace period; once closed, that identity
 cannot return and the profile's saved selection becomes unavailable.
+
+A profile can also name a machine that has not connected yet. Declare the
+environment with an ID you choose, attach that ID in the profile, and start
+the machine whenever it is ready; see
+[Declare fixed machines before their daemons register](registered-daemons.md#declare-fixed-machines-before-their-daemons-register).
+Until its daemon connects, the environment shows as disconnected and tools
+that use it wait up to two minutes, then fail.
 
 ## Create an independent machine
 
@@ -248,14 +274,21 @@ with `session/start` can name an attached environment or `none` to suppress
 the default.
 
 With the [CLI connection settings](../using-lightspeed/sessions-and-runs.md#continue-from-the-cli)
-configured, the equivalent controls are:
+configured, inspect the machines and the session's selection, and replace the
+session's configuration:
 
 ```bash
 target/debug/lightspeed environment list
 target/debug/lightspeed environment read "<environment-id>"
-target/debug/lightspeed session environment activate --session "<session-id>" "<environment-id>"
-target/debug/lightspeed session environment deactivate --session "<session-id>"
+target/debug/lightspeed session read "<session-id>"
+target/debug/lightspeed session config read "<session-id>" --json > session-config.json
+target/debug/lightspeed session config put "<session-id>" --file session-config.json
 ```
+
+`session read` shows the active environment. `session config put` replaces
+the configuration, with the effect on the selection described above. The CLI
+has no command that activates or deactivates an environment directly; use the
+session's settings or the API for that.
 
 The public methods are `environments/list`, `environments/read`,
 `session/environments/activate`, and `session/environments/deactivate` in the

@@ -61,11 +61,11 @@ use environment_protocol::{
     routes::{CanonicalOrigin, DataRouteRefusal},
 };
 use environments::{
-    BeginCloseEnvironment, CreateRegisteredEnvironment, DaemonBuild, EnvironmentCloseReason,
-    EnvironmentRecord, EnvironmentRegistrationKeyStore, EnvironmentRegistryError, EnvironmentState,
-    EnvironmentStore, MarkRegisteredConnected, MarkRegisteredDisconnected,
-    REGISTERED_LIVENESS_STAMP_MS, RegisteredIdentityMode, RegisteredSweep, StampRegisteredSeen,
-    WAIT_RETRY_AFTER_MS, registration_key_hash,
+    BeginCloseEnvironment, BindRegisteredEnvironment, CreateRegisteredEnvironment, DaemonBuild,
+    EnvironmentCloseReason, EnvironmentRecord, EnvironmentRegistrationKeyStore,
+    EnvironmentRegistryError, EnvironmentState, EnvironmentStore, MarkRegisteredConnected,
+    MarkRegisteredDisconnected, REGISTERED_LIVENESS_STAMP_MS, RegisteredIdentityMode,
+    RegisteredSweep, StampRegisteredSeen, WAIT_RETRY_AFTER_MS, registration_key_hash,
 };
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use uuid::Uuid;
@@ -126,12 +126,17 @@ pub struct RegisteredConnections {
     /// or waiter is done.
     transitions: Mutex<HashMap<(Uuid, String), TransitionLock>>,
     pending: Mutex<HashMap<String, PendingStream>>,
+    routes: Mutex<HashMap<String, ActiveRoute>>,
+    proxy_count: std::sync::atomic::AtomicUsize,
     handshakes: Arc<Semaphore>,
     failures: Mutex<FailureLimiter>,
 }
 
 struct ControlHandle {
     connection_id: ControlConnectionId,
+    /// Ownership has committed; background revalidation must not inspect
+    /// the temporary handle installed while admission is in flight.
+    admitted: bool,
     commands: mpsc::Sender<ControlCommand>,
     /// Fired when a newer connection of the same identity is installed.
     /// A oneshot, so backpressure on `commands` can never drop it.
@@ -158,6 +163,46 @@ struct PendingStream {
     /// The control connection the token was sent on; pairing is refused
     /// once it is no longer current.
     control_connection_id: ControlConnectionId,
+    owner_instance_id: Uuid,
+}
+
+struct ActiveRoute {
+    key: RouteKey,
+    owner_instance_id: Uuid,
+    control_connection_id: ControlConnectionId,
+    _ended: watch::Sender<()>,
+}
+
+pub(super) struct RegisteredRoute {
+    ended: watch::Receiver<()>,
+    local_control_ended: Option<watch::Receiver<()>>,
+    _guard: RouteGuard,
+}
+
+struct RouteGuard {
+    registrations: Arc<RegisteredConnections>,
+    token: String,
+}
+
+pub(super) struct ProxyGuard(Arc<RegisteredConnections>);
+
+impl Drop for ProxyGuard {
+    fn drop(&mut self) {
+        self.0
+            .proxy_count
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Drop for RouteGuard {
+    fn drop(&mut self) {
+        self.registrations.take_pending(&self.token);
+        self.registrations
+            .routes
+            .lock()
+            .expect("registered routes poisoned")
+            .remove(&self.token);
+    }
 }
 
 impl Default for RegisteredConnections {
@@ -172,6 +217,8 @@ impl RegisteredConnections {
             controls: Mutex::new(HashMap::new()),
             transitions: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
+            routes: Mutex::new(HashMap::new()),
+            proxy_count: std::sync::atomic::AtomicUsize::new(0),
             handshakes: Arc::new(Semaphore::new(MAX_CONCURRENT_HANDSHAKES)),
             failures: Mutex::new(FailureLimiter::default()),
         }
@@ -261,11 +308,178 @@ impl RegisteredConnections {
         true
     }
 
+    /// Copy identities before database I/O; never hold the registry lock
+    /// while checking whether another replica has taken ownership.
+    pub(crate) fn control_snapshots(&self) -> Vec<(Uuid, String, ControlConnectionId)> {
+        self.controls
+            .lock()
+            .expect("registered connections poisoned")
+            .iter()
+            .filter(|(_, handle)| handle.admitted)
+            .map(|((universe_id, environment_id), handle)| {
+                (
+                    *universe_id,
+                    environment_id.clone(),
+                    handle.connection_id.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// End only the observed connection. A new local admission may have
+    /// replaced it while the ownership query was in flight.
+    pub(crate) fn remove_stale_control(
+        &self,
+        universe_id: Uuid,
+        environment_id: &str,
+        connection_id: &ControlConnectionId,
+    ) {
+        let mut controls = self
+            .controls
+            .lock()
+            .expect("registered connections poisoned");
+        let key = (universe_id, environment_id.to_owned());
+        if controls
+            .get(&key)
+            .is_some_and(|handle| &handle.connection_id == connection_id)
+            && let Some(handle) = controls.remove(&key)
+        {
+            // A different connection owns this identity. Stop the displaced
+            // daemon, rather than making duplicate identities reconnect forever.
+            let _ = handle.supersede.send(());
+        }
+    }
+
+    /// Drop senders without a supersede notification: shutdown and lease
+    /// loss close sockets normally, allowing each daemon to reconnect.
+    pub(crate) fn close_controls(&self) {
+        self.controls
+            .lock()
+            .expect("registered connections poisoned")
+            .clear();
+        self.pending
+            .lock()
+            .expect("pending streams poisoned")
+            .clear();
+    }
+
+    pub(crate) fn close_stale_control(
+        &self,
+        universe_id: Uuid,
+        environment_id: &str,
+        connection_id: &ControlConnectionId,
+    ) {
+        self.remove_if_current(universe_id, environment_id, connection_id);
+    }
+
     fn take_pending(&self, token: &str) -> Option<PendingStream> {
         let mut pending = self.pending.lock().expect("pending streams poisoned");
         let now = Instant::now();
         pending.retain(|_, entry| entry.expires_at > now);
         pending.remove(token)
+    }
+
+    pub fn active_route_count(&self) -> usize {
+        self.routes
+            .lock()
+            .expect("registered routes poisoned")
+            .len()
+            + self.proxy_count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub(super) fn track_proxy(self: &Arc<Self>) -> ProxyGuard {
+        self.proxy_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        ProxyGuard(self.clone())
+    }
+
+    pub fn end_all_routes(&self) {
+        self.routes
+            .lock()
+            .expect("registered routes poisoned")
+            .clear();
+        self.pending
+            .lock()
+            .expect("pending streams poisoned")
+            .clear();
+    }
+
+    /// Read each environment once, even when many streams share its owner.
+    /// Removing a route drops its sender and wakes its proxy immediately.
+    pub async fn revalidate_routes(
+        &self,
+        pool: &sqlx::PgPool,
+    ) -> Result<(), store_pg::PgStoreError> {
+        let watched: Vec<_> = self
+            .routes
+            .lock()
+            .expect("registered routes poisoned")
+            .iter()
+            .map(|(token, route)| {
+                (
+                    token.clone(),
+                    route.key.clone(),
+                    route.owner_instance_id,
+                    route.control_connection_id.clone(),
+                )
+            })
+            .collect();
+        let keys: Vec<_> = watched
+            .iter()
+            .map(|(_, key, _, _)| (key.universe_id, key.environment_id.clone()))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if keys.is_empty() {
+            return Ok(());
+        }
+        let owners: HashMap<_, _> = store_pg::read_registered_connection_owners(pool, &keys)
+            .await?
+            .into_iter()
+            .map(|(universe_id, environment_id, owner)| ((universe_id, environment_id), owner))
+            .collect();
+        let mut routes = self.routes.lock().expect("registered routes poisoned");
+        for (token, key, owner_instance_id, connection_id) in watched {
+            if !owners
+                .get(&(key.universe_id, key.environment_id))
+                .is_some_and(|owner| {
+                    owner.owner_instance_id == owner_instance_id
+                        && owner.control_connection_id == connection_id.as_str()
+                })
+            {
+                routes.remove(&token);
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) async fn request_stream(
+        &self,
+        key: &RouteKey,
+        connection_id: &ControlConnectionId,
+        token: String,
+    ) -> Result<(), StatusCode> {
+        let commands = self
+            .controls
+            .lock()
+            .expect("registered connections poisoned")
+            .get(&(key.universe_id, key.environment_id.clone()))
+            .filter(|handle| &handle.connection_id == connection_id)
+            .map(|handle| handle.commands.clone())
+            .ok_or(StatusCode::CONFLICT)?;
+        let (answered, answer) = oneshot::channel();
+        commands
+            .send(ControlCommand::OpenStream {
+                token: SecretString::new(token),
+                answered,
+            })
+            .await
+            .map_err(|_| StatusCode::CONFLICT)?;
+        match answer.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(StatusCode::BAD_GATEWAY),
+            Err(_) => Err(StatusCode::CONFLICT),
+        }
     }
 
     fn retry_after(&self, identity: &DaemonPublicKey) -> Option<Duration> {
@@ -383,6 +597,9 @@ pub enum AdmissionPlan {
     },
     /// A new identity that a registration key admits.
     Create(CreateRegisteredEnvironment),
+    /// A new identity whose key and registration name select a declared
+    /// environment that no daemon is bound to.
+    Bind(BindRegisteredEnvironment),
 }
 
 impl AdmissionPlan {
@@ -391,6 +608,7 @@ impl AdmissionPlan {
         match self {
             Self::Reconnect { environment, .. } => &environment.environment_id,
             Self::Create(request) => &request.environment_id,
+            Self::Bind(request) => &request.environment_id,
         }
     }
 }
@@ -450,6 +668,12 @@ pub fn verify_register_request(
 /// a known daemon identity reconnects its open environment, a new one is
 /// admitted through its registration key. Reads only; every refusal is
 /// typed.
+///
+/// A new identity never chooses its environment id. It obtains a chosen one
+/// only when an administrator declared an environment for its key and the
+/// name it registers under, and only while no other daemon is bound to that
+/// environment; otherwise it gets an id nothing references, or, under a key
+/// that admits only declared machines, nothing.
 pub async fn plan_admission<S>(
     store: &S,
     params: &RegisterParams,
@@ -484,6 +708,31 @@ where
         .map_err(unavailable)?
         .ok_or_else(unknown_registration_key)?;
     key.check_admits(now_ms).map_err(map_registry_error)?;
+    let name = params.display_name.as_ref().map(|name| name.as_str());
+    if let Some(name) = name
+        && let Some(declared) = store
+            .read_declared_environment(&key.registration_key_id, name)
+            .await
+            .map_err(unavailable)?
+    {
+        if declared
+            .registered()
+            .is_some_and(|source| source.awaits_daemon())
+        {
+            return Ok(AdmissionPlan::Bind(BindRegisteredEnvironment {
+                environment_id: declared.environment_id,
+                registration_key_id: key.registration_key_id.clone(),
+                secret_hash,
+                daemon_public_key,
+                daemon_build,
+                bound_at_ms: now_ms,
+            }));
+        }
+        return Err(declared_environment_bound(&declared.environment_id));
+    }
+    if key.declared_only {
+        return Err(not_declared(name));
+    }
     Ok(AdmissionPlan::Create(CreateRegisteredEnvironment {
         registration_key_id: key.registration_key_id.clone(),
         secret_hash,
@@ -560,6 +809,21 @@ where
                 admission: Admission::Created,
             })
         }
+        AdmissionPlan::Bind(request) => {
+            let environment_id = request.environment_id.clone();
+            match store.bind_registered_environment(request).await {
+                Ok(environment) => Ok(AdmittedEnvironment {
+                    environment,
+                    admission: Admission::Created,
+                }),
+                // Another identity bound it since the plan read it.
+                Err(EnvironmentRegistryError::AlreadyExists {
+                    kind: "daemon_identity",
+                    ..
+                }) => Err(declared_environment_bound(&environment_id)),
+                Err(error) => Err(map_registry_error(error)),
+            }
+        }
     }
 }
 
@@ -595,7 +859,15 @@ fn registration_receipt(
     Ok(RegistrationReceipt {
         environment_id: EnvironmentId::new(environment.environment_id.as_str())
             .map_err(internal)?,
-        daemon_id: DaemonId::new(source.daemon_id().as_str()).map_err(internal)?,
+        daemon_id: DaemonId::new(
+            source
+                .daemon_id()
+                .ok_or_else(|| {
+                    ProtocolError::internal("the admitted environment has no daemon bound")
+                })?
+                .as_str(),
+        )
+        .map_err(internal)?,
         control_connection_id: control_connection_id.clone(),
         identity_mode: match source.identity_mode {
             RegisteredIdentityMode::Persistent => RegistrationIdentityMode::Persistent,
@@ -614,6 +886,42 @@ fn environment_closed(environment: &EnvironmentRecord) -> ProtocolError {
         ),
     )
 }
+
+/// A declared environment already has a daemon, and this is another
+/// identity. It is never displaced: an operator releases the environment
+/// first. Retryable, so a machine that lost its identity binds once that
+/// has happened.
+fn declared_environment_bound(environment_id: &environments::EnvironmentId) -> ProtocolError {
+    ProtocolError::new(
+        environment_protocol::error::ErrorData::Unavailable {
+            retry_after_ms: Some(DECLARATION_RETRY_AFTER_MS),
+        },
+        format!(
+            "environment {environment_id} is bound to another daemon identity; an operator must release it before this daemon can take its place"
+        ),
+    )
+}
+
+/// The key admits only declared machines and none is declared under this
+/// name. Retryable, so a daemon that starts before its declaration binds
+/// once it exists.
+fn not_declared(name: Option<&str>) -> ProtocolError {
+    ProtocolError::new(
+        environment_protocol::error::ErrorData::Unavailable {
+            retry_after_ms: Some(DECLARATION_RETRY_AFTER_MS),
+        },
+        match name {
+            Some(name) => format!(
+                "no environment is declared for registration name {name}, and this key admits only declared machines"
+            ),
+            None => "this key admits only declared machines; register with the name of a declared environment".to_owned(),
+        },
+    )
+}
+
+/// How long a daemon waits before asking again for a declared environment
+/// that is not available to it yet.
+const DECLARATION_RETRY_AFTER_MS: u64 = 15_000;
 
 fn unknown_daemon() -> ProtocolError {
     ProtocolError::not_found_because(
@@ -696,6 +1004,9 @@ pub(super) async fn connect_upgrade(
     State(state): State<Arc<GatewayState>>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
+    if !state.replica().is_accepting() {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     if state.registration_origins().is_empty() {
         tracing::error!(
             target: "temporal_runtime",
@@ -713,75 +1024,158 @@ pub(super) async fn connect_upgrade(
         .into_response()
 }
 
-/// `GET /environment-gateway/data`: a reverse-dialed stream socket
-/// presenting its one-time token as a bearer header.
+/// The public dial-back may arrive at any replica. The signed token names
+/// the acceptor; only that replica consumes the pending pairing.
 pub(super) async fn data_upgrade(
     State(state): State<Arc<GatewayState>>,
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    let token = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "));
-    let Some(token) = token else {
+    let Some(token) = super::peers::bearer(&headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
+    if !state.replica().lease_valid() {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let Some(acceptor) = super::peers::token_acceptor(token, state.environment_gateway_token())
+    else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if acceptor == state.replica().instance_id() {
+        pair_data(&state, token, upgrade).await
+    } else {
+        super::peers::relay_data(state, token.to_owned(), acceptor, upgrade).await
+    }
+}
+
+pub(super) async fn pair_data(
+    state: &Arc<GatewayState>,
+    token: &str,
+    upgrade: WebSocketUpgrade,
+) -> Response {
     let registrations = state.registrations();
     let Some(pending) = registrations.take_pending(token) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    if registrations.current(pending.key.universe_id, &pending.key.environment_id)
-        != Some(pending.control_connection_id.clone())
-    {
-        // The control connection that issued the token was superseded or
-        // ended: whoever dials now is not the daemon it was sent to.
+    let current = if state.replica().is_registered() {
+        match tokio::time::timeout(
+            super::peers::OWNER_LOOKUP_TIMEOUT,
+            store_pg::read_registered_connection_owner(
+                state.pool(),
+                pending.key.universe_id,
+                &pending.key.environment_id,
+            ),
+        )
+        .await
+        {
+            Ok(Ok(Some(owner))) => {
+                owner.owner_instance_id == pending.owner_instance_id
+                    && owner.control_connection_id == pending.control_connection_id.as_str()
+            }
+            Ok(Ok(None)) => false,
+            _ => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        }
+    } else {
+        registrations.current(pending.key.universe_id, &pending.key.environment_id)
+            == Some(pending.control_connection_id)
+    };
+    if !current || !state.replica().lease_valid() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     upgrade
         .max_message_size(MAX_MESSAGE_BYTES as usize)
         .max_frame_size(MAX_MESSAGE_BYTES as usize)
         .on_upgrade(move |socket| async move {
-            // The waiting route owns the socket from here; if it gave up,
-            // dropping the socket closes the daemon's dial.
             let _ = pending.sender.send(socket);
         })
         .into_response()
 }
 
-/// Ask the daemon serving `key` to dial a data stream for one worker route
-/// and wait for it. Returns the paired socket and a receiver that closes
-/// when the control connection it was issued under ends. Without a live
-/// control connection the route is refused `disconnected`; a daemon that
-/// cannot open the stream is a bodiless 502, one that does not dial within
-/// [`STREAM_OPEN_TIMEOUT`] a 504.
+/// Bind the pending stream to the expected control connection before
+/// asking its owner to send openStream. The dial-back can arrive before
+/// the owner's HTTP response: envd acknowledges only after its upgrade.
 pub(super) async fn open_registered_route(
     state: &Arc<GatewayState>,
     key: &RouteKey,
-) -> Result<(WebSocket, watch::Receiver<()>), Box<Response>> {
+) -> Result<(WebSocket, RegisteredRoute), Box<Response>> {
     let disconnected = || {
         Box::new(refusal_response(
             &DataRouteRefusal::Disconnected {},
             Some(WAIT_RETRY_AFTER_MS),
         ))
     };
+    if !state.replica().is_accepting() {
+        return Err(disconnected());
+    }
     let registrations = state.registrations();
-    let (commands, control_connection_id, control_ended) = {
+    let (owner_instance_id, control_connection_id, peer_url) = if state.replica().is_registered() {
+        let owner = tokio::time::timeout(
+            super::peers::OWNER_LOOKUP_TIMEOUT,
+            store_pg::read_registered_connection_owner(
+                state.pool(),
+                key.universe_id,
+                &key.environment_id,
+            ),
+        )
+        .await
+        .map_err(|_| Box::new(StatusCode::SERVICE_UNAVAILABLE.into_response()))?
+        .map_err(|_| Box::new(StatusCode::SERVICE_UNAVAILABLE.into_response()))?
+        .ok_or_else(disconnected)?;
+        let connection_id = ControlConnectionId::new(owner.control_connection_id)
+            .map_err(|_| Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response()))?;
+        (owner.owner_instance_id, connection_id, owner.peer_url)
+    } else {
+        (
+            state.replica().instance_id(),
+            registrations
+                .current(key.universe_id, &key.environment_id)
+                .ok_or_else(disconnected)?,
+            None,
+        )
+    };
+    let local_control_ended = if owner_instance_id == state.replica().instance_id() {
         let controls = registrations
             .controls
             .lock()
             .expect("registered connections poisoned");
-        let Some(handle) = controls.get(&(key.universe_id, key.environment_id.clone())) else {
-            return Err(disconnected());
-        };
-        (
-            handle.commands.clone(),
-            handle.connection_id.clone(),
-            handle.ended.subscribe(),
+        Some(
+            controls
+                .get(&(key.universe_id, key.environment_id.clone()))
+                .filter(|handle| handle.connection_id == control_connection_id)
+                .ok_or_else(disconnected)?
+                .ended
+                .subscribe(),
         )
+    } else {
+        None
     };
-    let token = new_token();
+    let token = super::peers::new_token(
+        state.replica().instance_id(),
+        state.environment_gateway_token(),
+    );
     let (sender, socket) = oneshot::channel();
+    let (ended, route_ended) = watch::channel(());
+    registrations
+        .routes
+        .lock()
+        .expect("registered routes poisoned")
+        .insert(
+            token.clone(),
+            ActiveRoute {
+                key: key.clone(),
+                owner_instance_id,
+                control_connection_id: control_connection_id.clone(),
+                _ended: ended,
+            },
+        );
+    let route = RegisteredRoute {
+        ended: route_ended,
+        local_control_ended,
+        _guard: RouteGuard {
+            registrations: registrations.clone(),
+            token: token.clone(),
+        },
+    };
     registrations
         .pending
         .lock()
@@ -792,85 +1186,74 @@ pub(super) async fn open_registered_route(
                 sender,
                 expires_at: Instant::now() + STREAM_OPEN_TIMEOUT,
                 key: key.clone(),
-                control_connection_id,
+                control_connection_id: control_connection_id.clone(),
+                owner_instance_id,
             },
         );
     let opened = tokio::time::timeout(STREAM_OPEN_TIMEOUT, async {
-        let (answered, answer) = oneshot::channel();
-        commands
-            .send(ControlCommand::OpenStream {
-                token: SecretString::new(token.clone()),
-                answered,
-            })
-            .await
-            .map_err(|_| disconnected())?;
-        match answer.await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                tracing::warn!(
-                    target: "temporal_runtime",
-                    environment = %key.environment_id,
-                    %error,
-                    "registered daemon could not open a stream"
-                );
-                return Err(Box::new(StatusCode::BAD_GATEWAY.into_response()));
-            }
-            // The control connection ended before the daemon answered.
-            Err(_) => return Err(disconnected()),
-        }
-        socket
-            .await
-            .map_err(|_| Box::new(StatusCode::BAD_GATEWAY.into_response()))
+        let requested = if owner_instance_id == state.replica().instance_id() {
+            registrations
+                .request_stream(key, &control_connection_id, token.clone())
+                .await
+        } else {
+            let peer_url = peer_url.as_deref().ok_or(StatusCode::CONFLICT)?;
+            super::peers::request_stream(state, peer_url, key, &control_connection_id, &token).await
+        };
+        requested?;
+        socket.await.map_err(|_| StatusCode::BAD_GATEWAY)
     })
     .await;
     match opened {
-        Ok(Ok(socket)) => Ok((socket, control_ended)),
-        Ok(Err(refused)) => {
-            registrations.take_pending(&token);
-            Err(refused)
-        }
-        Err(_) => {
-            registrations.take_pending(&token);
-            Err(Box::new(StatusCode::GATEWAY_TIMEOUT.into_response()))
-        }
+        Ok(Ok(socket)) => Ok((socket, route)),
+        Ok(Err(StatusCode::CONFLICT)) => Err(disconnected()),
+        Ok(Err(status)) => Err(Box::new(status.into_response())),
+        Err(_) => Err(Box::new(StatusCode::GATEWAY_TIMEOUT.into_response())),
     }
 }
 
-/// Pipe one worker route and one reverse-dialed daemon socket until either
-/// side ends, the environment's routes are revoked, or the control
-/// connection the stream was issued under ends.
+/// Pipe bytes until either side closes, the environment is revoked, or
+/// this specific control connection is no longer current.
 pub(super) async fn proxy_registered_route(
     mut revoked: watch::Receiver<u64>,
-    mut control_ended: watch::Receiver<()>,
+    mut route: RegisteredRoute,
     mut worker: WebSocket,
     mut daemon: WebSocket,
 ) {
-    loop {
-        tokio::select! {
-            // A dropped revocation sender fails closed like a revocation.
-            _ = revoked.changed() => {
-                let _ = worker.send(close_message("environment route revoked")).await;
-                break;
-            }
-            // Nobody sends on it: it resolves when the handle is dropped.
-            _ = control_ended.changed() => {
-                let _ = worker.send(close_message("registered control connection ended")).await;
-                break;
-            }
-            message = worker.recv() => {
-                let Some(Ok(message)) = message else { break };
-                let close = matches!(message, Message::Close(_));
-                if daemon.send(message).await.is_err() || close { break }
-            }
-            message = daemon.recv() => {
-                let Some(Ok(message)) = message else { break };
-                let close = matches!(message, Message::Close(_));
-                if worker.send(message).await.is_err() || close { break }
+    let copy = async {
+        loop {
+            tokio::select! {
+                message = worker.recv() => {
+                    let Some(Ok(message)) = message else { break };
+                    let close = matches!(message, Message::Close(_));
+                    if daemon.send(message).await.is_err() || close { break }
+                }
+                message = daemon.recv() => {
+                    let Some(Ok(message)) = message else { break };
+                    let close = matches!(message, Message::Close(_));
+                    if worker.send(message).await.is_err() || close { break }
+                }
             }
         }
+    };
+    tokio::select! {
+        _ = revoked.changed() => {},
+        _ = route.ended.changed() => {},
+        _ = async {
+            match &mut route.local_control_ended {
+                Some(ended) => { let _ = ended.changed().await; }
+                None => std::future::pending::<()>().await,
+            }
+        } => {},
+        _ = copy => {},
     }
-    let _ = daemon.send(Message::Close(None)).await;
-    let _ = worker.send(Message::Close(None)).await;
+    // A peer that stopped reading must not keep a revoked route alive.
+    let _ = tokio::time::timeout(Duration::from_secs(1), async {
+        let _ = tokio::join!(
+            daemon.send(Message::Close(None)),
+            worker.send(Message::Close(None))
+        );
+    })
+    .await;
 }
 
 /// What the gateway does with one frame before admission.
@@ -1167,6 +1550,9 @@ async fn admit(
         register_id,
         plan,
     } = verified;
+    if !state.replica().is_accepting() {
+        return Err(Refused::Answer(register_id, registration_unavailable()));
+    }
     let registrations = state.registrations();
     let environment_id = plan.environment_id().to_string();
     let connection_id = ControlConnectionId::new(format!("connection_{}", Uuid::new_v4().simple()))
@@ -1183,6 +1569,7 @@ async fn admit(
         environment_id.clone(),
         ControlHandle {
             connection_id: connection_id.clone(),
+            admitted: false,
             commands,
             supersede,
             ended,
@@ -1194,7 +1581,19 @@ async fn admit(
         }
         Refused::Answer(register_id.clone(), error)
     };
-    let admitted = match commit_admission(store.as_ref(), plan, now_ms()).await {
+    // Registered replicas commit reconnect metadata and ownership in one
+    // fenced write below. The standalone store helper remains available to
+    // embeddings which have no process lease.
+    let committed = match plan {
+        AdmissionPlan::Reconnect { environment, .. } if state.replica().is_registered() => {
+            Ok(AdmittedEnvironment {
+                environment: *environment,
+                admission: Admission::Reconnected,
+            })
+        }
+        plan => commit_admission(store.as_ref(), plan, now_ms()).await,
+    };
+    let admitted = match committed {
         Ok(admitted) => admitted,
         Err(error) => {
             registrations.uninstall(universe_id, &environment_id, &connection_id, previous);
@@ -1210,12 +1609,53 @@ async fn admit(
                 let handed_back = previous.is_some();
                 if registrations.uninstall(universe_id, &environment_id, &connection_id, previous)
                     && !handed_back
+                    && !state.replica().is_registered()
                 {
                     mark_disconnected(&store, &admitted.environment.environment_id).await;
                 }
                 return Err(refuse(error));
             }
         };
+    if state.replica().is_registered() {
+        let claimed = store
+            .claim_registered_connection(
+                &admitted.environment.environment_id,
+                state.replica().instance_id(),
+                connection_id.as_str(),
+                &DaemonBuild::from_implementation(
+                    &register.implementation,
+                    register.protocol_version,
+                ),
+                &register.daemon_public_key.to_hex(),
+            )
+            .await;
+        match claimed {
+            Ok(true) if state.replica().is_accepting() => {}
+            outcome => {
+                if let Err(error) = outcome {
+                    tracing::warn!(%error, %environment_id, "claiming registered connection failed");
+                }
+                let _ = store
+                    .disconnect_owned_registered_connection(
+                        &admitted.environment.environment_id,
+                        state.replica().instance_id(),
+                        connection_id.as_str(),
+                    )
+                    .await;
+                registrations.uninstall(universe_id, &environment_id, &connection_id, previous);
+                return Err(refuse(registration_unavailable()));
+            }
+        }
+    }
+    if let Some(handle) = registrations
+        .controls
+        .lock()
+        .expect("registered connections poisoned")
+        .get_mut(&(universe_id, environment_id.clone()))
+        .filter(|handle| handle.connection_id == connection_id)
+    {
+        handle.admitted = true;
+    }
     if let Some(previous) = previous {
         // Dropping the displaced handle also ends its data routes.
         let _ = previous.supersede.send(());
@@ -1277,16 +1717,21 @@ async fn admitted_session(
             register.protocol_version,
         ),
     };
-    let end = session
-        .serve(
+    let end = tokio::select! {
+        end = session.serve(
             &mut socket,
             register_id,
             receipt,
             commands,
             superseded,
             revoked,
-        )
-        .await;
+        ) => end,
+        _ = state.replica().stopped() => SessionEnd::GatewayUnavailable,
+    };
+    // Release the daemon before database cleanup. A stalled liveness write
+    // can hold the transition precisely when PostgreSQL or the lease is lost.
+    let _ = tokio::time::timeout(Duration::from_secs(1), socket.send(Message::Close(None))).await;
+    drop(socket);
     // Inside the transition: a liveness write that already passed its
     // "still current" check lands first, a newer admission's connected
     // write lands after this disconnect, and a later liveness write sees
@@ -1303,14 +1748,41 @@ async fn admitted_session(
         "registered environment control connection ended"
     );
     if was_current {
-        mark_disconnected(&store, &environment.environment_id).await;
-        if end == SessionEnd::Goodbye && departure_closes(&environment) {
-            close_departed(&store, &environment).await;
-            state.signals().revoke(universe_id, &environment_id);
+        if state.replica().is_registered() {
+            let departing = end == SessionEnd::Goodbye && departure_closes(&environment);
+            let result = if departing {
+                store
+                    .depart_owned_registered_connection(
+                        &environment.environment_id,
+                        state.replica().instance_id(),
+                        connection_id.as_str(),
+                    )
+                    .await
+            } else {
+                store
+                    .disconnect_owned_registered_connection(
+                        &environment.environment_id,
+                        state.replica().instance_id(),
+                        connection_id.as_str(),
+                    )
+                    .await
+            };
+            match result {
+                Ok(true) if departing => state.signals().revoke(universe_id, &environment_id),
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(%error, %environment_id, "ending owned registered connection failed")
+                }
+            }
+        } else {
+            mark_disconnected(&store, &environment.environment_id).await;
+            if end == SessionEnd::Goodbye && departure_closes(&environment) {
+                close_departed(&store, &environment).await;
+                state.signals().revoke(universe_id, &environment_id);
+            }
         }
     }
     drop(transition);
-    let _ = socket.send(Message::Close(None)).await;
     Ok(())
 }
 
@@ -1373,6 +1845,10 @@ async fn close_departed(store: &Arc<store_pg::PgStore>, environment: &Environmen
 enum SessionEnd {
     Superseded,
     EnvironmentClosed,
+    /// An operator released the declared environment from this daemon.
+    Released,
+    /// This gateway drained or lost its lease; the daemon should retry.
+    GatewayUnavailable,
     Goodbye,
     HeartbeatTimeout,
     DaemonClosed,
@@ -1384,12 +1860,21 @@ impl SessionEnd {
         match self {
             Self::Superseded => "superseded",
             Self::EnvironmentClosed => "environment closed",
+            Self::Released => "released",
+            Self::GatewayUnavailable => "gateway unavailable",
             Self::Goodbye => "goodbye",
             Self::HeartbeatTimeout => "heartbeat timeout",
             Self::DaemonClosed => "daemon closed",
             Self::SendFailed => "send failed",
         }
     }
+}
+
+/// Why an environment no longer serves the control session watching it.
+enum EnvironmentGone {
+    Closed,
+    /// Released from this session's daemon, or bound to another since.
+    Released,
 }
 
 struct ControlSession<'a> {
@@ -1440,10 +1925,7 @@ impl ControlSession<'_> {
         let mut watching = true;
         let mut deadline = tokio::time::Instant::now() + LIVENESS_TIMEOUT;
         // The admission wrote the first stamp.
-        let mut last_stamp_ms = self
-            .environment
-            .registered()
-            .map_or_else(now_ms, |source| source.last_seen_at_ms);
+        let mut last_stamp = Instant::now();
         let mut next_request = 0_u64;
         let mut streams: HashMap<Id, oneshot::Sender<Result<(), ProtocolError>>> = HashMap::new();
         let mut commands_closed = false;
@@ -1457,16 +1939,30 @@ impl ControlSession<'_> {
             // never declares an answering daemon dead.
             tokio::select! {
                 biased;
-                _ = &mut superseded => {
-                    self.closed(socket, ClosedReason::Superseded, "another process with this daemon identity connected").await;
-                    return SessionEnd::Superseded;
-                }
-                closed = &mut environment_closed, if watching => {
-                    if closed.is_ok() {
-                        self.closed(socket, ClosedReason::EnvironmentClosed, "the environment was closed").await;
-                        return SessionEnd::EnvironmentClosed;
+                displaced = &mut superseded => {
+                    if displaced.is_ok() {
+                        self.closed(socket, ClosedReason::Superseded, "another process with this daemon identity connected").await;
+                        return SessionEnd::Superseded;
                     }
-                    watching = false;
+                    return SessionEnd::GatewayUnavailable;
+                }
+                gone = &mut environment_closed, if watching => {
+                    match gone {
+                        Ok(EnvironmentGone::Closed) => {
+                            self.closed(socket, ClosedReason::EnvironmentClosed, "the environment was closed").await;
+                            return SessionEnd::EnvironmentClosed;
+                        }
+                        // The environment lives on without this daemon. Its
+                        // identity is not spent, so the session just ends:
+                        // the daemon may register again.
+                        Ok(EnvironmentGone::Released) => {
+                            let _ = socket
+                                .send(close_message("the environment was released from this daemon"))
+                                .await;
+                            return SessionEnd::Released;
+                        }
+                        Err(_) => watching = false,
+                    }
                 }
                 command = commands.recv(), if !commands_closed => {
                     // The channel closes only when a newer connection
@@ -1493,7 +1989,7 @@ impl ControlSession<'_> {
                     streams.insert(id, answered);
                 }
                 _ = heartbeat.tick() => {
-                    if socket.send(Message::Ping(Default::default())).await.is_err() {
+                    if send_control_message(socket, Message::Ping(Default::default())).await.is_err() {
                         return SessionEnd::SendFailed;
                     }
                 }
@@ -1505,10 +2001,10 @@ impl ControlSession<'_> {
                     let answer = match message {
                         Message::Pong(_) => {
                             let at_ms = now_ms();
-                            if at_ms.saturating_sub(last_stamp_ms) >= REGISTERED_LIVENESS_STAMP_MS
+                            if last_stamp.elapsed() >= Duration::from_millis(REGISTERED_LIVENESS_STAMP_MS as u64)
                                 && seen_write.as_ref().is_none_or(|write| write.is_finished())
                             {
-                                last_stamp_ms = at_ms;
+                                last_stamp = Instant::now();
                                 seen_write = Some(self.record_seen(at_ms));
                             }
                             None
@@ -1551,12 +2047,16 @@ impl ControlSession<'_> {
     /// Wait off the session loop for the environment's routes to be
     /// revoked, then re-read the row once, so a slow store never delays
     /// pings, pongs or stream requests. The receiver fires once the
-    /// environment is closed; the watcher stops when the returned guard
-    /// drops.
+    /// environment is closed or no longer bound to this session's daemon;
+    /// the watcher stops when the returned guard drops.
     fn watch_environment_closed(
         &self,
         mut revoked: watch::Receiver<u64>,
-    ) -> (oneshot::Receiver<()>, AbortOnDrop) {
+    ) -> (oneshot::Receiver<EnvironmentGone>, AbortOnDrop) {
+        let bound = self
+            .environment
+            .registered()
+            .and_then(|source| source.daemon_public_key.clone());
         let signals: Arc<EnvironmentSignals> = self.state.signals().clone();
         let store = self.store.clone();
         let universe_id = self.universe_id;
@@ -1572,7 +2072,15 @@ impl ControlSession<'_> {
                 }
                 match EnvironmentStore::read_environment(store.as_ref(), &environment_id).await {
                     Ok(current) if current.state == EnvironmentState::Closed => {
-                        let _ = closed.send(());
+                        let _ = closed.send(EnvironmentGone::Closed);
+                        return;
+                    }
+                    Ok(current)
+                        if current
+                            .registered()
+                            .is_some_and(|source| source.daemon_public_key != bound) =>
+                    {
+                        let _ = closed.send(EnvironmentGone::Released);
                         return;
                     }
                     Ok(_) => {}
@@ -1596,12 +2104,14 @@ impl ControlSession<'_> {
         ) {
             let _ = send_text(socket, notification.to_text()).await;
         }
-        let _ = socket
-            .send(close_message(match reason {
+        let _ = send_control_message(
+            socket,
+            close_message(match reason {
                 ClosedReason::Superseded => "superseded by a newer connection of the same daemon",
                 ClosedReason::EnvironmentClosed => "environment closed",
-            }))
-            .await;
+            }),
+        )
+        .await;
     }
 
     /// The coarse liveness stamp of the current control connection, written
@@ -1617,11 +2127,36 @@ impl ControlSession<'_> {
         let environment_id = self.environment.environment_id.clone();
         let connection_id = self.connection_id.clone();
         let daemon_build = self.daemon_build.clone();
+        let replica = self.state.replica().clone();
         tokio::spawn(async move {
             let _transition = registrations
                 .transition(universe_id, environment_id.as_str())
                 .await;
-            if registrations.current(universe_id, environment_id.as_str()) != Some(connection_id) {
+            if registrations.current(universe_id, environment_id.as_str())
+                != Some(connection_id.clone())
+            {
+                return;
+            }
+            if replica.is_registered() {
+                if !replica.lease_valid() {
+                    return;
+                }
+                match store
+                    .stamp_owned_registered_connection(
+                        &environment_id,
+                        replica.instance_id(),
+                        connection_id.as_str(),
+                    )
+                    .await
+                {
+                    Ok(true) => {}
+                    // An expired lease is handled by the replica monitor;
+                    // it must not be interpreted as a terminal supersede.
+                    Ok(false) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, %environment_id, "stamping owned registered connection failed")
+                    }
+                }
                 return;
             }
             let stamped = EnvironmentStore::stamp_registered_seen(
@@ -1671,46 +2206,71 @@ impl Drop for AbortOnDrop {
     }
 }
 
-/// Startup repair, before the environment-gateway listener accepts
-/// connections: every registered row that reads connected loses its
-/// connection now, since this process held all of them (one
-/// environment-gateway replica per deployment). Persistent rows then get
-/// their full reconnect wait while their daemons reconnect.
-pub async fn repair_registered_connections(
-    runtime: &UniverseRuntime,
-) -> Result<u64, store_pg::PgStoreError> {
-    store_pg::repair_registered_connections(runtime.stores().pool(), now_ms()).await
-}
-
-/// The registered sweep of the environment-gateway role, every
-/// [`REGISTERED_SWEEP_INTERVAL`]: [`sweep_registered_universe`] for every
-/// universe with registered environments, then [`revoke_ended_routes`].
+/// Database sweeps have one leader; every replica watches and revokes its
+/// own routes independently, including while leadership changes.
 pub async fn run_registered_sweep(runtime: Arc<UniverseRuntime>) {
-    let mut interval = tokio::time::interval(REGISTERED_SWEEP_INTERVAL);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    loop {
-        interval.tick().await;
-        let universes = match store_pg::list_universes_with_registered_environments(
-            runtime.stores().pool(),
-        )
-        .await
-        {
-            Ok(universes) => universes,
-            Err(error) => {
-                tracing::warn!(target: "temporal_runtime", %error, "registered sweep could not list universes");
-                Vec::new()
+    let local = async {
+        let mut interval = tokio::time::interval(REGISTERED_SWEEP_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut changes = runtime.stores().changes().subscribe_all();
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {},
+                change = changes.recv() => {
+                    if matches!(change, Ok(Some(ref change)) if change.kind != store_pg::changes::ChangeKind::Environment) { continue; }
+                }
             }
-        };
-        let now = now_ms();
-        for universe_id in universes {
-            if let Err(error) = sweep_registered_universe(&runtime, universe_id, now).await {
-                tracing::warn!(target: "temporal_runtime", %error, %universe_id, "registered sweep failed");
+            if let Err(error) = revoke_ended_routes(&runtime).await {
+                tracing::warn!(%error, "local route revocation failed");
             }
         }
-        if let Err(error) = revoke_ended_routes(&runtime).await {
-            tracing::warn!(target: "temporal_runtime", %error, "route revocation sweep failed");
-        }
-    }
+    };
+    let global = super::replica::run_as_leader(
+        runtime.stores().pool(),
+        store_pg::RuntimeLoop::RegisteredSweep,
+        || async {
+            let mut interval = tokio::time::interval(REGISTERED_SWEEP_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                if let Err(error) =
+                    store_pg::sweep_expired_registered_connections(runtime.stores().pool()).await
+                {
+                    tracing::warn!(%error, "expired registered owner sweep failed");
+                }
+                let universes = match store_pg::list_universes_with_registered_environments(
+                    runtime.stores().pool(),
+                )
+                .await
+                {
+                    Ok(universes) => universes,
+                    Err(error) => {
+                        tracing::warn!(%error, "registered sweep could not list universes");
+                        continue;
+                    }
+                };
+                let now: i64 = match sqlx::query_scalar(
+                    "SELECT (extract(epoch FROM clock_timestamp()) * 1000)::bigint",
+                )
+                .fetch_one(runtime.stores().pool())
+                .await
+                {
+                    Ok(now) => now,
+                    Err(error) => {
+                        tracing::warn!(%error, "registered sweep clock read failed");
+                        continue;
+                    }
+                };
+                for universe_id in universes {
+                    if let Err(error) = sweep_registered_universe(&runtime, universe_id, now).await
+                    {
+                        tracing::warn!(%error, %universe_id, "registered sweep failed");
+                    }
+                }
+            }
+        },
+    );
+    tokio::join!(local, global);
 }
 
 /// One universe's registered sweep at `now_ms`: rows whose liveness stamp
@@ -1756,16 +2316,22 @@ pub async fn revoke_ended_routes(
 }
 
 async fn send_text(socket: &mut WebSocket, text: String) -> Result<(), axum::Error> {
-    socket.send(Message::Text(text.into())).await
+    send_control_message(socket, Message::Text(text.into())).await
+}
+
+async fn send_control_message(socket: &mut WebSocket, message: Message) -> Result<(), axum::Error> {
+    tokio::time::timeout(Duration::from_secs(5), socket.send(message))
+        .await
+        .map_err(|_| {
+            axum::Error::new(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "registered control write timed out",
+            ))
+        })?
 }
 
 fn new_nonce() -> ChallengeNonce {
     ChallengeNonce::from_bytes(random_bytes())
-}
-
-fn new_token() -> String {
-    use base64::Engine as _;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random_bytes::<32>())
 }
 
 fn random_bytes<const N: usize>() -> [u8; N] {
@@ -1863,6 +2429,7 @@ mod tests {
             max_active_environments: None,
             ephemeral_disconnect_grace_ms: None,
             offline_close_after_ms: None,
+            declared_only: false,
             expires_at_ms: None,
         }
     }
@@ -2063,7 +2630,10 @@ mod tests {
             receipt.environment_id.as_str(),
             created.environment.environment_id.as_str()
         );
-        assert_eq!(receipt.daemon_id.as_str(), source.daemon_id().as_str());
+        assert_eq!(
+            Some(receipt.daemon_id.as_str()),
+            source.daemon_id().as_ref().map(|id| id.as_str())
+        );
         assert!(receipt.daemon_id.as_str().starts_with("daemon_"));
 
         // A dropped connection, then a reconnect that ignores the key
@@ -2202,6 +2772,7 @@ mod tests {
             let (ended, _) = watch::channel(());
             ControlHandle {
                 connection_id: ControlConnectionId::new(id).unwrap(),
+                admitted: true,
                 commands,
                 supersede,
                 ended,
@@ -2234,6 +2805,78 @@ mod tests {
             ended.has_changed().is_err(),
             "dropping a handle ends the routes paired under it"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ownership_checks_skip_uncommitted_admission_and_preserve_newer_handles() {
+        let registrations = RegisteredConnections::new();
+        let universe = Uuid::new_v4();
+        let old = ControlConnectionId::new("connection_old").unwrap();
+        let new = ControlConnectionId::new("connection_new").unwrap();
+        let (commands, _) = mpsc::channel(1);
+        let (supersede, superseded) = oneshot::channel();
+        let (ended, _) = watch::channel(());
+        registrations.install(
+            universe,
+            "env".to_owned(),
+            ControlHandle {
+                connection_id: new.clone(),
+                admitted: false,
+                commands,
+                supersede,
+                ended,
+            },
+        );
+        assert!(registrations.control_snapshots().is_empty());
+        registrations
+            .controls
+            .lock()
+            .unwrap()
+            .get_mut(&(universe, "env".to_owned()))
+            .unwrap()
+            .admitted = true;
+        assert_eq!(
+            registrations.control_snapshots(),
+            vec![(universe, "env".to_owned(), new.clone())]
+        );
+        registrations.remove_stale_control(universe, "env", &old);
+        registrations.close_stale_control(universe, "env", &old);
+        assert_eq!(registrations.current(universe, "env"), Some(new.clone()));
+        registrations.remove_stale_control(universe, "env", &new);
+        assert!(
+            superseded.await.is_ok(),
+            "a confirmed takeover supersedes the old daemon"
+        );
+        assert!(registrations.control_snapshots().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn gateway_shutdown_closes_controls_without_terminal_daemon_notification() {
+        let registrations = RegisteredConnections::new();
+        let (commands, _) = mpsc::channel(1);
+        let (supersede, superseded) = oneshot::channel();
+        let (ended, mut route_ended) = watch::channel(());
+        registrations.install(
+            Uuid::new_v4(),
+            "env".to_owned(),
+            ControlHandle {
+                connection_id: ControlConnectionId::new("connection_drain").unwrap(),
+                admitted: true,
+                commands,
+                supersede,
+                ended,
+            },
+        );
+        registrations.close_controls();
+        assert!(
+            superseded.await.is_err(),
+            "ordinary closure must let the daemon reconnect"
+        );
+        assert!(
+            route_ended.changed().await.is_err(),
+            "routes attached to the closing control must end"
+        );
+        assert!(registrations.control_snapshots().is_empty());
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2309,6 +2952,312 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(expired.kind(), ProtocolErrorKind::Expired);
+    }
+
+    fn public_key_hex(key: &SigningKey) -> String {
+        DaemonPublicKey::from_bytes(key.verifying_key().to_bytes()).to_hex()
+    }
+
+    fn register_named(key: &SigningKey, secret: Option<&str>, name: &str) -> RegisterParams {
+        RegisterParams {
+            display_name: Some(DisplayName::new(name).unwrap()),
+            ..register(key, secret)
+        }
+    }
+
+    async fn declare(
+        store: &InMemoryEnvironmentRegistryStore,
+        key: &str,
+        environment: &str,
+        name: &str,
+    ) {
+        store
+            .declare_registered_environment(::environments::DeclareRegisteredEnvironment {
+                environment_id: ::environments::EnvironmentId::new(environment),
+                registration_key_id: EnvironmentRegistrationKeyId::new(key),
+                name: name.to_owned(),
+                display_name: None,
+                metadata: Default::default(),
+                declared_at_ms: 1_500,
+            })
+            .await
+            .expect("declare");
+    }
+
+    /// The refusal a daemon retries: the environment it asks for is not
+    /// available to it yet.
+    fn assert_retried_later(error: &ProtocolError) {
+        assert_eq!(
+            error.data,
+            ErrorData::Unavailable {
+                retry_after_ms: Some(DECLARATION_RETRY_AFTER_MS)
+            },
+            "{error}"
+        );
+        assert!(error.is_retryable());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_declared_environment_is_filled_by_the_first_daemon_of_its_key_and_name() {
+        let (store, secret) =
+            store_with_key("runners", policy(RegisteredIdentityMode::Persistent)).await;
+        declare(&store, "runners", "build-box", "runner-0").await;
+        let declared_id = ::environments::EnvironmentId::new("build-box");
+
+        // The name is no credential: without the key's secret it selects
+        // nothing.
+        let wrong_secret = admit_registration(
+            &store,
+            &register_named(&daemon(10), Some("lsrk_nope"), "runner-0"),
+            2_000,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            wrong_secret.data,
+            ErrorData::PermissionDenied {
+                reason: Some(PermissionReason::InvalidRegistrationKey)
+            }
+        ));
+
+        let first = daemon(10);
+        let plan = plan_admission(
+            &store,
+            &register_named(&first, Some(&secret), "runner-0"),
+            2_000,
+        )
+        .await
+        .expect("plan");
+        assert!(matches!(plan, AdmissionPlan::Bind(_)));
+        assert_eq!(plan.environment_id(), &declared_id);
+        let bound = commit_admission(&store, plan, 2_000).await.expect("bind");
+        assert_eq!(bound.admission, Admission::Created);
+        assert_eq!(bound.environment.environment_id, declared_id);
+        let source = bound.environment.registered().expect("registered");
+        assert!(source.connected);
+        assert_eq!(
+            source.daemon_public_key.as_deref(),
+            Some(public_key_hex(&first).as_str())
+        );
+        let receipt = registration_receipt(
+            &bound.environment,
+            &ControlConnectionId::new("connection_1").unwrap(),
+            bound.admission,
+        )
+        .unwrap();
+        assert_eq!(receipt.environment_id.as_str(), "build-box");
+
+        // Another identity with the same secret and name never displaces
+        // the bound machine. It is told to ask again.
+        let second = daemon(11);
+        let displaced = admit_registration(
+            &store,
+            &register_named(&second, Some(&secret), "runner-0"),
+            2_100,
+        )
+        .await
+        .unwrap_err();
+        assert_retried_later(&displaced);
+        assert_eq!(
+            store
+                .read_environment_by_daemon_public_key(&public_key_hex(&second))
+                .await
+                .unwrap(),
+            None,
+            "a refused daemon leaves nothing behind"
+        );
+
+        // The bound machine reconnects by its identity; neither its name nor
+        // a key is consulted again.
+        let reconnected =
+            admit_registration(&store, &register_named(&first, None, "renamed-pod"), 2_200)
+                .await
+                .expect("reconnect");
+        assert_eq!(reconnected.admission, Admission::Reconnected);
+        assert_eq!(reconnected.environment.environment_id, declared_id);
+
+        // A daemon that matches no declaration registers itself as before,
+        // under an id nothing references.
+        for (seed, params_name) in [(12, Some("runner-9")), (13, None)] {
+            let key = daemon(seed);
+            let mut params = register(&key, Some(&secret));
+            params.display_name = params_name.map(|name| DisplayName::new(name).unwrap());
+            let created = admit_registration(&store, &params, 2_300)
+                .await
+                .expect("self-registration");
+            assert_eq!(created.admission, Admission::Created);
+            assert_ne!(created.environment.environment_id, declared_id);
+            assert_eq!(
+                created.environment.registered().unwrap().registration_name,
+                None
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_declaration_belongs_to_its_key_only() {
+        let (store, _) =
+            store_with_key("runners", policy(RegisteredIdentityMode::Persistent)).await;
+        declare(&store, "runners", "build-box", "runner-0").await;
+        let other = mint_registration_key(
+            EnvironmentRegistrationKeyId::new("others"),
+            policy(RegisteredIdentityMode::Persistent),
+            1_000,
+        )
+        .expect("mint");
+        store
+            .create_registration_key(CreateEnvironmentRegistrationKey {
+                secret_hash: other.secret.secret_hash.clone(),
+                record: other.record.clone(),
+            })
+            .await
+            .expect("create key");
+
+        // The same name under another key selects nothing of this key's.
+        let admitted = admit_registration(
+            &store,
+            &register_named(&daemon(14), Some(other.secret.secret.expose()), "runner-0"),
+            2_000,
+        )
+        .await
+        .expect("self-registration under the other key");
+        assert_ne!(
+            admitted.environment.environment_id,
+            ::environments::EnvironmentId::new("build-box")
+        );
+        assert!(
+            store
+                .read_environment(&::environments::EnvironmentId::new("build-box"))
+                .await
+                .unwrap()
+                .registered()
+                .unwrap()
+                .awaits_daemon()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_declared_only_key_admits_nothing_undeclared_and_binds_once_declared() {
+        let (store, secret) = store_with_key(
+            "runners",
+            RegistrationKeyPolicy {
+                declared_only: true,
+                ..policy(RegisteredIdentityMode::Persistent)
+            },
+        )
+        .await;
+        let key = daemon(20);
+        let early = admit_registration(
+            &store,
+            &register_named(&key, Some(&secret), "runner-0"),
+            2_000,
+        )
+        .await
+        .unwrap_err();
+        assert_retried_later(&early);
+        let mut nameless = register(&daemon(21), Some(&secret));
+        nameless.display_name = None;
+        assert_retried_later(
+            &admit_registration(&store, &nameless, 2_000)
+                .await
+                .unwrap_err(),
+        );
+        assert!(
+            store
+                .list_environments(::environments::ListEnvironments::default())
+                .await
+                .unwrap()
+                .environments
+                .is_empty(),
+            "nothing undeclared appears in the universe"
+        );
+
+        // The declaration arrives; the same daemon's next attempt binds.
+        declare(&store, "runners", "build-box", "runner-0").await;
+        let bound = admit_registration(
+            &store,
+            &register_named(&key, Some(&secret), "runner-0"),
+            3_000,
+        )
+        .await
+        .expect("bind");
+        assert_eq!(
+            bound.environment.environment_id,
+            ::environments::EnvironmentId::new("build-box")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_released_environment_binds_the_next_identity_and_racing_binds_admit_one() {
+        let (store, secret) =
+            store_with_key("runners", policy(RegisteredIdentityMode::Persistent)).await;
+        declare(&store, "runners", "build-box", "runner-0").await;
+        let id = ::environments::EnvironmentId::new("build-box");
+
+        // Two identities plan against the unbound environment; one commit
+        // wins and the other is told to ask again.
+        let (first, second) = (daemon(30), daemon(31));
+        let first_plan = plan_admission(
+            &store,
+            &register_named(&first, Some(&secret), "runner-0"),
+            2_000,
+        )
+        .await
+        .expect("first plan");
+        let second_plan = plan_admission(
+            &store,
+            &register_named(&second, Some(&secret), "runner-0"),
+            2_000,
+        )
+        .await
+        .expect("second plan");
+        commit_admission(&store, first_plan, 2_000)
+            .await
+            .expect("first bind");
+        assert_retried_later(
+            &commit_admission(&store, second_plan, 2_000)
+                .await
+                .unwrap_err(),
+        );
+
+        let (_, released) = store
+            .release_registered_environment(::environments::ReleaseRegisteredEnvironment {
+                environment_id: id.clone(),
+                released_at_ms: 3_000,
+            })
+            .await
+            .expect("release");
+        assert!(released);
+
+        // The released identity is unknown again: without a key it is
+        // refused like any stranger.
+        let stranger = admit_registration(&store, &register_named(&first, None, "runner-0"), 3_100)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            stranger.data,
+            ErrorData::NotFound {
+                reason: Some(NotFoundReason::UnknownDaemon)
+            }
+        ));
+
+        let rebound = admit_registration(
+            &store,
+            &register_named(&second, Some(&secret), "runner-0"),
+            3_200,
+        )
+        .await
+        .expect("rebind");
+        assert_eq!(rebound.environment.environment_id, id);
+        assert_retried_later(
+            &admit_registration(
+                &store,
+                &register_named(&first, Some(&secret), "runner-0"),
+                3_300,
+            )
+            .await
+            .unwrap_err(),
+        );
     }
 
     fn text(value: serde_json::Value) -> Message {

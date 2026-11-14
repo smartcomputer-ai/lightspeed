@@ -68,7 +68,7 @@ import {
 } from "./builders";
 
 export const SOFTWARE_FACTORY_UNIVERSE_ID = "11111111-1111-4111-8111-111111111111";
-export const SOFTWARE_FACTORY_SLUG = "software-factory";
+export const SOFTWARE_FACTORY_HANDLE = "software-factory";
 const ENGINE_UNIVERSE_ID = "0000a11e-0000-4000-8000-00000000a11e";
 
 const PROFILE = {
@@ -1404,7 +1404,9 @@ function seedIntegrations(universe: UniverseState): void {
       displayName: "acme-lightspeed-app · acme-dev",
       subjectHint: "acme-dev",
       status: "active",
-      exposure: "brokered",
+      // Bound into the build environments, which only a retrievable
+      // credential can be.
+      exposure: "retrievable",
       createdBy: { kind: "actor", id: "user-ada" },
       scopes: [],
       hasAccessToken: true,
@@ -4539,7 +4541,7 @@ const responder: DemoResponder = (input, context) => {
 export function seedSoftwareFactory(store: DemoStore): void {
   const universe = store.addUniverse({
     id: SOFTWARE_FACTORY_UNIVERSE_ID,
-    slug: SOFTWARE_FACTORY_SLUG,
+    handle: SOFTWARE_FACTORY_HANDLE,
     name: "Software Factory",
     icon: "mobius",
     iconColor: "violet",
@@ -4547,6 +4549,8 @@ export function seedSoftwareFactory(store: DemoStore): void {
     role: "admin",
     createdAt: agoIso(70 * DAY_MS),
     responder,
+    // Bots and channels are off in a new universe; this one is built on them.
+    features: { bots: true, channels: true },
   });
   seedMembers(store, universe);
   seedProfiles(universe);

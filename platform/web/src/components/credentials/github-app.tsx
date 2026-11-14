@@ -114,7 +114,7 @@ export function GitHubAppForm({
           className="font-mono"
         />
         <FieldDescription>
-          The numeric App ID shown on the App's settings page (not the client ID or slug).
+          The numeric App ID shown on the App's settings page (not the client ID or handle).
         </FieldDescription>
       </Field>
       <Field>
@@ -265,7 +265,9 @@ export function GitHubAppDetails({
         </div>
         <p className="mb-2 text-sm text-muted-foreground">
           Accounts where this App is installed, live from GitHub. Grant an installation to let this
-          universe mint tokens for its repositories.
+          universe mint tokens for its repositories. A granted installation is a retrievable
+          credential: assigned to an environment, its processes receive a short-lived installation
+          token. The App's private key is never handed to a machine.
         </p>
         {installations.isLoading && <LoadingNote />}
         {installations.error && (

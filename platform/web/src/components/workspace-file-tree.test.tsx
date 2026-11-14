@@ -45,7 +45,7 @@ async function render(activePath: string | undefined) {
       <MemoryRouter>
         <WorkspaceFileTree
           entries={entries}
-          slug="u"
+          handle="u"
           workspaceId="ws"
           activePath={activePath}
         />

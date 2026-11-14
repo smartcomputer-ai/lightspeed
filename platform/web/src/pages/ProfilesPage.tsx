@@ -62,7 +62,7 @@ import { ListPane, ListPaneBody, ListPaneHeader, ListPaneState, ListRow, ListRow
 /// Saves keep the profiles/put +
 /// expectedRevision flow — a stale editor gets a 409, not a clobber.
 export function ProfilesPage(_props: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const { profileId } = useParams<{ profileId: string }>();
   const canCreate = useActionPermissions(universe?.id).can("createProfile");
   const [, setCreateOpen] = useCreateParam("profile");
@@ -73,7 +73,7 @@ export function ProfilesPage(_props: { admin: boolean }) {
   if (!universe || !universe.role) {
     return (
       <div className="p-6">
-        <UniverseNotFound slug={slug} />
+        <UniverseNotFound handle={handle} />
       </div>
     );
   }
@@ -81,7 +81,7 @@ export function ProfilesPage(_props: { admin: boolean }) {
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
       <ListPane detailOpen={Boolean(profileId)}>
-        <ProfilePane universeId={universe.id} slug={slug!} activeId={profileId} />
+        <ProfilePane universeId={universe.id} handle={handle!} activeId={profileId} />
       </ListPane>
       <div
         className={cn("min-w-0 flex-1 flex-col", profileId ? "flex" : "hidden md:flex")}
@@ -90,7 +90,7 @@ export function ProfilesPage(_props: { admin: boolean }) {
           <ProfileEditor
             key={profileId}
             universeId={universe.id}
-            slug={slug!}
+            handle={handle!}
             profileId={profileId}
           />
         ) : (
@@ -108,11 +108,11 @@ export function ProfilesPage(_props: { admin: boolean }) {
 
 function ProfilePane({
   universeId,
-  slug,
+  handle,
   activeId,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   activeId: string | undefined;
 }) {
   const profiles = useQuery({
@@ -145,7 +145,7 @@ function ProfilePane({
           {profiles.data?.map((profile) => (
             <ListRow
               key={profile.profileId}
-              to={`/u/${slug}/profiles/${profile.profileId}`}
+              to={`/u/${handle}/profiles/${profile.profileId}`}
               active={profile.profileId === activeId}
               title={profile.displayName ?? profile.profileId}
               badges={!permissions.can("manageProfile") && (
@@ -161,7 +161,7 @@ function ProfilePane({
       {canCreate && (
         <NewProfileDialog
           universeId={universeId}
-          slug={slug}
+          handle={handle}
           profiles={profiles.data ?? []}
           open={createOpen}
           onOpenChange={setCreateOpen}
@@ -173,11 +173,11 @@ function ProfilePane({
 
 function ProfileEditor({
   universeId,
-  slug,
+  handle,
   profileId,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   profileId: string;
 }) {
   const permissions = useActionPermissions(universeId);
@@ -252,7 +252,7 @@ function ProfileEditor({
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["profiles", universeId] });
-      navigate(`/u/${slug}/profiles`);
+      navigate(`/u/${handle}/profiles`);
     },
     onError: (err) => setError(err.message),
   });
@@ -329,7 +329,7 @@ function ProfileEditor({
   return (
     <>
       <DetailHeader
-        back={{ to: `/u/${slug}/profiles`, label: "Back to profiles" }}
+        back={{ to: `/u/${handle}/profiles`, label: "Back to profiles" }}
         title={(draft.displayName as string) || profileId}
         details={<>
           <code className="max-w-48 truncate rounded bg-muted px-1.5 py-0.5 font-mono">{profileId}</code>
@@ -613,13 +613,13 @@ function ConfigSection({
 }
 function NewProfileDialog({
   universeId,
-  slug,
+  handle,
   profiles,
   open,
   onOpenChange,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   profiles: ProfileSummary[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -656,7 +656,7 @@ function NewProfileDialog({
       setIdTouched(false);
       setSourceProfileId("");
       setError(null);
-      navigate(`/u/${slug}/profiles/${target}`);
+      navigate(`/u/${handle}/profiles/${target}`);
     },
     onError: (err) => setError(err.message),
   });

@@ -40,7 +40,7 @@ use temporal_runtime::{
     },
     worker::{ActivityState, SessionTools, WorkerActivities},
 };
-use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
+use temporal_workflow::{TemporalConnectionConfig, connect_temporal};
 use temporalio_client::WorkflowTerminateOptions;
 use uuid::Uuid;
 
@@ -66,11 +66,7 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
         cfg!(any(target_os = "linux", target_os = "macos")),
         "transfer backend requires Linux or macOS"
     );
-    let client = connect_temporal(
-        &std::env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.into()),
-        &std::env::var("TEMPORAL_NAMESPACE").unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.into()),
-    )
-    .await?;
+    let client = connect_temporal(&TemporalConnectionConfig::from_env()?).await?;
     let stores = DeploymentStores::from_env().await?;
     let universe_id = Uuid::new_v4();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -86,7 +82,7 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
         support::live::local_request_context_for(api::AccessScope::Deployment).await?,
         GatewayDeploymentApi::new(runtime.clone()).create_universe(
             api::DeploymentUniverseCreateParams {
-                slug: None,
+                handle: None,
                 universe_id: universe_id.to_string(),
             },
         ),
@@ -126,11 +122,13 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
             let key = state
                 .api
                 .create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
+                    registration_key_id: None,
                     display_name: "VFS transfer live".into(),
                     identity_mode: api::EnvironmentIdentityModeView::Ephemeral,
                     max_active_environments: Some(1),
                     ephemeral_disconnect_grace_ms: None,
                     offline_close_after_ms: None,
+                    declared_only: false,
                     expires_at_ms: None,
                 })
                 .await?

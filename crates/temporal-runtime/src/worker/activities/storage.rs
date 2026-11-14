@@ -1079,6 +1079,8 @@ mod tests {
         let session_id = SessionId::new("oversized");
         let result = CreateOrLoadSessionResult {
             record: SessionRecord {
+                revision: 1,
+                summary: Default::default(),
                 metadata: Default::default(),
                 session_id: session_id.clone(),
                 display_name: None,

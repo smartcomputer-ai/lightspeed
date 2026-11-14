@@ -9,7 +9,7 @@ import { universeHome, useActiveUniverse } from "@/lib/universes";
 /// `action` in the universe and its feature, if any, is on; the page applies
 /// its own gate as well.
 export interface UniverseNavItem {
-  /// Relative to `/u/:slug/`.
+  /// Relative to `/u/:handle/`.
   path: string;
   label: string;
   icon: ComponentType;
@@ -22,7 +22,7 @@ export function navItemVisible(
   can: (action: PermissionAction) => boolean,
   features: FeatureStates | undefined,
 ): boolean {
-  return can(item.action) && (!item.feature || features?.[item.feature] !== false);
+  return can(item.action) && (!item.feature || features?.[item.feature] === true);
 }
 
 export interface UniverseNavGroup {
@@ -71,7 +71,7 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
 ];
 
 /// The sidebar's names for a universe page, most specific first, given the
-/// path below `/u/:slug/`: ["Sessions"], or ["General", "Settings"] for a
+/// path below `/u/:handle/`: ["Sessions"], or ["General", "Settings"] for a
 /// page under its own group's path. Groups like Setup and Access are only
 /// headings in the menu, not part of the path. Unknown pages yield [].
 export function universeSectionTrail(path: string): string[] {
@@ -85,11 +85,11 @@ export function universeSectionTrail(path: string): string[] {
 /// Bare `/settings`: the first settings page the caller may see, else the
 /// universe's home.
 export function settingsIndexPath(
-  universe: { slug: string; features?: FeatureStates },
+  universe: { handle: string; features?: FeatureStates },
   can: (action: PermissionAction) => boolean,
 ): string {
   const first = SETTINGS_NAV.find((item) => navItemVisible(item, can, universe.features));
-  return first ? `/u/${universe.slug}/${first.path}` : universeHome(universe);
+  return first ? `/u/${universe.handle}/${first.path}` : universeHome(universe);
 }
 
 export function SettingsIndexRedirect() {

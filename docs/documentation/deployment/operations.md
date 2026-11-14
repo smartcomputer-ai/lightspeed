@@ -67,7 +67,7 @@ Session logs can include `universe_id`, `session_id`, `workflow_id`,
 `temporal_run_id`, `lightspeed_run_id`, and `session_head_seq`. A session's
 Temporal workflow ID is `<universe-uuid>/<session-id>`. Use the runtime UUID,
 which is visible in **Settings → General → Identifiers**, rather than the
-Platform URL slug.
+handle in the Platform URL.
 
 The Temporal execution ID and Lightspeed run ID identify different things.
 Temporal continue-as-new starts another execution of the same logical session
@@ -124,14 +124,29 @@ The runtime binary supports five roles:
 | `bots` | Bot controllers, trigger workflows and activities, and schedule reconciliation. |
 | `channels` | Conversation workflows and core channel activities. |
 
-Select roles with `LIGHTSPEED_ROLES` or `--roles`. Keep **exactly one active
-environment-gateway process per deployment**. Its live daemon connections are
-process-local. Replicating the default process, which includes every role,
-would also replicate that role and is not a supported scaling recipe.
+Select roles with `LIGHTSPEED_ROLES` or `--roles`. Environment gateways can
+run behind one shared address. Each replica needs its own directly reachable
+`LIGHTSPEED_ENVIRONMENT_GATEWAY_PEER_URL`; all replicas and workers share
+`LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN`. Workers keep the shared
+`LIGHTSPEED_ENVIRONMENT_GATEWAY_URL`. A single gateway can omit the peer URL.
 
-Split the roles before adding gateway or worker replicas. All processes must
-agree on stores, secrets, namespace, task queues, and environment routing.
-Every process without `environment-gateway` needs its internal URL and token.
+Each gateway registers its address and a 20-second lease in PostgreSQL,
+renewed every five seconds. Startup leaves other replicas' connections alone.
+A gateway that loses its lease stops accepting work and closes its sockets;
+daemons reconnect through the shared address. PostgreSQL advisory locks select
+one leader for each environment lifecycle, display, and registered sweep loop.
+
+Use `/ready` for gateway readiness and `/health` for process liveness. On
+shutdown, readiness fails and new routes and registrations are refused while
+existing streams drain for up to ten seconds. The gateway then closes its
+control sockets normally so daemons reconnect. Allow time for this drain and
+cleanup in the deployment's termination grace period. Active streams can be
+interrupted by shutdown or failure; reconnection does not automatically replay
+an operation that may already have run.
+
+Split roles when they need independent capacity. All processes must agree on
+stores, secrets, namespace, task queues, and environment routing. Every process
+without `environment-gateway` needs its internal URL and token.
 [Configuration](configuration.md) describes that shared setup.
 
 Each worker role runs its workflows and activities together. Add replicas of

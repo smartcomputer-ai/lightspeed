@@ -34,6 +34,11 @@ impl GatewayAgentApi {
         correlation_token: &str,
     ) -> Result<(), AgentApiError> {
         let started = Instant::now();
+        let mut changes = self.store.changes().subscribe(
+            self.universe_id(),
+            store_pg::changes::ChangeKind::Session,
+            session_id.as_str(),
+        );
         loop {
             if started.elapsed() > self.operation_timeout {
                 return Err(AgentApiError::operation_pending(format!(
@@ -47,7 +52,7 @@ impl GatewayAgentApi {
             if loaded.state.environment.active_environment_id.as_ref() == expected {
                 return Ok(());
             }
-            tokio::time::sleep(self.poll_interval).await;
+            store_pg::changes::wait_for_change(&mut changes, self.poll_interval).await;
         }
     }
 }

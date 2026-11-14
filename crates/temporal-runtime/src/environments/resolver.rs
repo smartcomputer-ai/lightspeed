@@ -372,6 +372,7 @@ mod tests {
                 max_active_environments: None,
                 ephemeral_disconnect_grace_ms: None,
                 offline_close_after_ms: None,
+                declared_only: false,
                 expires_at_ms: None,
             },
             1,

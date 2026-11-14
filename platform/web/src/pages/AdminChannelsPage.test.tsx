@@ -44,7 +44,7 @@ let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   routes = {
-    "/api/v1/universes": () => [{ id: "factory", lightspeedUniverseId: "core-factory", name: "Factory", slug: "factory", status: "active", features: {} }],
+    "/api/v1/universes": () => [{ id: "factory", lightspeedUniverseId: "core-factory", name: "Factory", handle: "factory", status: "active", features: {} }],
     "/api/v1/status/channels": () => status,
     "/api/v1/channel-accounts": () => accounts,
   };

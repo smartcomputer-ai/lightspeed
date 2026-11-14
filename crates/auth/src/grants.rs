@@ -203,6 +203,37 @@ pub struct AuthGrantTokenRefresh {
     pub updated_at_ms: i64,
 }
 
+/// What declaring a token credential writes over the one that exists: its
+/// settings, and the secret it points at. `access_token_secret` is the secret
+/// the credential already holds when only its settings change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TokenCredentialUpdate {
+    pub access_token_secret: SecretId,
+    pub display_name: Option<String>,
+    pub subject_hint: Option<String>,
+    pub scopes: Vec<String>,
+    pub audience: Option<String>,
+    pub metadata: serde_json::Value,
+    pub expires_at_ms: Option<i64>,
+    pub updated_at_ms: i64,
+}
+
+impl TokenCredentialUpdate {
+    /// The record as it reads once the update is applied.
+    pub fn apply(&self, record: &AuthGrantRecord) -> AuthGrantRecord {
+        let mut next = record.clone();
+        next.access_token_secret = Some(self.access_token_secret.clone());
+        next.display_name = self.display_name.clone();
+        next.subject_hint = self.subject_hint.clone();
+        next.scopes = self.scopes.clone();
+        next.audience = self.audience.clone();
+        next.metadata = self.metadata.clone();
+        next.expires_at_ms = self.expires_at_ms;
+        next.updated_at_ms = self.updated_at_ms.max(record.updated_at_ms);
+        next
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListAuthGrants {
     pub status: Option<AuthGrantStatus>,
@@ -239,14 +270,14 @@ pub trait AuthGrantStore: Send + Sync {
         refresh: AuthGrantTokenRefresh,
     ) -> Result<AuthGrantRecord, AuthRegistryError>;
 
-    /// Point the grant at a replacement access-token secret and expiry, only
+    /// Write a token credential's settings and the secret it points at, only
     /// if it still points at `expected`. `Ok(None)` means another writer
-    /// replaced it first; the caller still owns the secret it stored.
-    async fn replace_grant_token(
+    /// changed its value first; the caller still owns any secret it stored.
+    async fn update_token_credential(
         &self,
         grant_id: &AuthGrantId,
         expected: &SecretId,
-        replacement: AuthGrantTokenRefresh,
+        update: TokenCredentialUpdate,
     ) -> Result<Option<AuthGrantRecord>, AuthRegistryError>;
 
     /// Record the expiry of a token minted on demand without persisting the

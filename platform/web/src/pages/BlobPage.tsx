@@ -19,20 +19,20 @@ import { useDocumentTitle } from "@/lib/document-title";
 /// text, instructions, catalogs, and media the model was shown. Links carry
 /// a name, a type, and their source session or workspace as display hints.
 export function BlobPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
   const { digest } = useParams<{ digest: string }>();
   if (isLoading) return <LoadingNote />;
   if (!universe || !permissions.can("read")) {
-    return <div className="p-6"><UniverseNotFound slug={slug} /></div>;
+    return <div className="p-6"><UniverseNotFound handle={handle} /></div>;
   }
   if (!digest || !/^[a-f0-9]{64}$/.test(digest)) {
     return <p className="p-6 text-sm text-muted-foreground">This is not a blob address.</p>;
   }
-  return <BlobDetail key={`${universe.id}/${digest}`} universeId={universe.id} slug={slug!} digest={digest} />;
+  return <BlobDetail key={`${universe.id}/${digest}`} universeId={universe.id} handle={handle!} digest={digest} />;
 }
 
-function BlobDetail({ universeId, slug, digest }: { universeId: string; slug: string; digest: string }) {
+function BlobDetail({ universeId, handle, digest }: { universeId: string; handle: string; digest: string }) {
   const [preview, setPreview] = useState(false);
   const [search] = useSearchParams();
   const name = search.get("name")?.trim() || undefined;
@@ -65,8 +65,8 @@ function BlobDetail({ universeId, slug, digest }: { universeId: string; slug: st
               {[view && typeLabel(view), blob.data && formatBytes(blob.data.bytes)].filter(Boolean).join(" · ")}
             </span>
           </div>
-          {session && <LinkedFrom universeId={universeId} slug={slug} sessionId={session} />}
-          {workspace && <LinkedFromWorkspace universeId={universeId} slug={slug} workspaceId={workspace} path={path} />}
+          {session && <LinkedFrom universeId={universeId} handle={handle} sessionId={session} />}
+          {workspace && <LinkedFromWorkspace universeId={universeId} handle={handle} workspaceId={workspace} path={path} />}
         </div>
         <CopyLink />
         {view?.kind === "text" && <MarkdownViewToggle preview={preview} onPreviewChange={setPreview} />}
@@ -84,7 +84,7 @@ function BlobDetail({ universeId, slug, digest }: { universeId: string; slug: st
 /// The session a link was followed from. The page opens in a new tab, so
 /// this is where it came from rather than a way back; a session the viewer
 /// cannot read is named by its id without a link.
-function LinkedFrom({ universeId, slug, sessionId }: { universeId: string; slug: string; sessionId: string }) {
+function LinkedFrom({ universeId, handle, sessionId }: { universeId: string; handle: string; sessionId: string }) {
   const source = useQuery({
     queryKey: ["session", universeId, sessionId],
     queryFn: () => api<SessionView>("GET", `/api/v1/universes/${universeId}/sessions/${encodeURIComponent(sessionId)}`),
@@ -96,14 +96,14 @@ function LinkedFrom({ universeId, slug, sessionId }: { universeId: string; slug:
       Linked from session:{" "}
       {source.error
         ? <span className="font-mono" title={sessionId}>{label}</span>
-        : <Link to={`/u/${slug}/sessions/${encodeURIComponent(sessionId)}`} title={label}
+        : <Link to={`/u/${handle}/sessions/${encodeURIComponent(sessionId)}`} title={label}
             className="font-medium text-foreground underline-offset-2 hover:underline">{label}</Link>}
     </p>
   );
 }
 
-function LinkedFromWorkspace({ universeId, slug, workspaceId, path }: {
-  universeId: string; slug: string; workspaceId: string; path?: string;
+function LinkedFromWorkspace({ universeId, handle, workspaceId, path }: {
+  universeId: string; handle: string; workspaceId: string; path?: string;
 }) {
   const source = useQuery({
     queryKey: ["workspace-tree", universeId, workspaceId],
@@ -111,7 +111,7 @@ function LinkedFromWorkspace({ universeId, slug, workspaceId, path }: {
     retry: false,
   });
   const label = source.data?.workspace.displayName?.trim() || workspaceId;
-  const workspaceHref = `/u/${slug}/workspaces/${encodeURIComponent(workspaceId)}`;
+  const workspaceHref = `/u/${handle}/workspaces/${encodeURIComponent(workspaceId)}`;
   let entry: VfsTreeEntry | undefined;
   if (source.data && path && validWorkspaceTransferPath(path)) {
     entry = { kind: "directory", entries: source.data.manifest.root.entries };

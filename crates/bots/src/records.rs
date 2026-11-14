@@ -53,6 +53,9 @@ impl BotRecord {
 /// Roster row: the bot plus what the console needs at a glance.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BotRosterRow {
+    pub status: api::BotListStatus,
+    pub open_session_count: u64,
+    pub active_session_count: u64,
     pub bot: BotRecord,
     pub trigger_count: u32,
     pub pending_count: u64,
@@ -114,8 +117,8 @@ pub trait BotStore: Send + Sync {
 
 // ── Triggers ────────────────────────────────────────────────────────────────
 
-/// Server-minted trigger secrets, kept beside the document and shown only
-/// to managing principals.
+/// Trigger secrets, kept beside the document and returned only by
+/// bot-management methods, never in a trigger view.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BotTriggerSecrets {
     /// Webhook triggers: the URL path token (24 random bytes, hex).
@@ -156,10 +159,10 @@ impl BotTriggerRecord {
         matches!(self.kind(), BotTriggerKind::Schedule | BotTriggerKind::Poll)
     }
 
-    /// The wire view. `redact` hides the ingest path and pairing code
-    /// (channel-facing views); `ingest_path` is the webhook route when
-    /// the caller can build one.
-    pub fn view(&self, redact: bool, ingest_path: Option<String>) -> BotTriggerView {
+    /// The wire view. It never carries the trigger's secrets: reading a
+    /// trigger is open to every reader, and the ingest path and pairing
+    /// code let their holder reach the bot.
+    pub fn view(&self) -> BotTriggerView {
         BotTriggerView {
             bot_id: self.bot_id.clone(),
             trigger_id: self.trigger_id.clone(),
@@ -170,12 +173,6 @@ impl BotTriggerRecord {
             last_filter_error: self.last_filter_error.clone(),
             last_filter_error_at_ms: self.last_filter_error_at_ms,
             cursor_state: self.cursor.clone(),
-            ingest_path: if redact { None } else { ingest_path },
-            pairing_code: if redact {
-                None
-            } else {
-                self.secrets.pairing_code.clone()
-            },
             created_at_ms: self.created_at_ms,
             updated_at_ms: self.updated_at_ms,
         }
@@ -554,3 +551,152 @@ pub trait BotEventStore: Send + Sync {
 pub trait BotRegistryStore: BotStore + BotTriggerStore + BotEventStore {}
 
 impl<T: BotStore + BotTriggerStore + BotEventStore> BotRegistryStore for T {}
+
+/// Controller facts unavailable from session activity or the event queue.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BotStatusProjection {
+    pub setup: api::BotSetupStatus,
+    pub budget_exhausted: bool,
+    pub last_error: Option<String>,
+    pub closing: bool,
+    pub closed: bool,
+}
+
+impl BotStatusProjection {
+    pub fn list_status(
+        &self,
+        bot: &BotRecord,
+        activity: api::SessionActivity,
+        pending: u64,
+        last: Option<&BotEventRecord>,
+    ) -> api::BotListStatus {
+        use api::BotListStatus as Status;
+        if bot.closed_at_ms.is_some() || self.closed || self.closing {
+            return Status::Closed;
+        }
+        if !bot.document.enabled {
+            return Status::Paused;
+        }
+        if activity == api::SessionActivity::Waiting {
+            return Status::Waiting;
+        }
+        if self.setup == api::BotSetupStatus::Degraded || self.last_error.is_some() {
+            return Status::Attention;
+        }
+        if self.budget_exhausted && pending > 0 {
+            return Status::Budget;
+        }
+        if self.setup == api::BotSetupStatus::Initializing
+            || activity == api::SessionActivity::Working
+            || pending > 0
+        {
+            return Status::Working;
+        }
+        if last.is_some_and(|event| {
+            matches!(
+                event.outcome,
+                Some(api::BotEventOutcome::RunFailed | api::BotEventOutcome::Blocked)
+            )
+        }) {
+            return Status::Attention;
+        }
+        Status::Idle
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+    #[test]
+    fn roster_precedence_keeps_approvals_visible() {
+        use api::{BotListStatus as Status, SessionActivity as Activity};
+        let mut bot = BotRecord {
+            bot_id: BotId::new("test"),
+            revision: 1,
+            document: BotDocument {
+                display_name: None,
+                description: None,
+                profile_id: ProfileId::new("test"),
+                brief: None,
+                runs_per_day: None,
+                breaker: None,
+                routed_session_close_after_ms: None,
+                self_config: false,
+                emit: false,
+                enabled: true,
+            },
+            event_seq: 0,
+            closed_at_ms: None,
+            closed_sessions: vec![],
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        let ready = BotStatusProjection {
+            setup: api::BotSetupStatus::Ready,
+            ..Default::default()
+        };
+        for (facts, activity, pending, expected) in [
+            (ready.clone(), Activity::Idle, 0, Status::Idle),
+            (ready.clone(), Activity::Working, 0, Status::Working),
+            (ready.clone(), Activity::Idle, 1, Status::Working),
+            (
+                BotStatusProjection {
+                    budget_exhausted: true,
+                    ..ready.clone()
+                },
+                Activity::Idle,
+                1,
+                Status::Budget,
+            ),
+            (
+                BotStatusProjection {
+                    budget_exhausted: true,
+                    ..ready.clone()
+                },
+                Activity::Waiting,
+                1,
+                Status::Waiting,
+            ),
+            (
+                BotStatusProjection {
+                    last_error: Some("error".into()),
+                    ..ready.clone()
+                },
+                Activity::Working,
+                1,
+                Status::Attention,
+            ),
+            (
+                BotStatusProjection {
+                    last_error: Some("error".into()),
+                    ..ready.clone()
+                },
+                Activity::Waiting,
+                1,
+                Status::Waiting,
+            ),
+            (
+                BotStatusProjection {
+                    closing: true,
+                    ..ready.clone()
+                },
+                Activity::Waiting,
+                1,
+                Status::Closed,
+            ),
+        ] {
+            assert_eq!(facts.list_status(&bot, activity, pending, None), expected);
+        }
+        bot.document.enabled = false;
+        assert_eq!(
+            ready.list_status(&bot, Activity::Working, 1, None),
+            Status::Paused
+        );
+        bot.closed_at_ms = Some(1);
+        assert_eq!(
+            ready.list_status(&bot, Activity::Waiting, 1, None),
+            Status::Closed
+        );
+    }
+}

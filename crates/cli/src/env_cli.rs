@@ -18,6 +18,15 @@ enum EnvCommand {
     Create(CreateArgs),
     /// Register an existing, Lightspeed-reachable envd WebSocket endpoint.
     Register(RegisterArgs),
+    /// Declare an environment with a chosen id under a persistent
+    /// registration key, before its machine exists. It waits for its
+    /// machine: the first daemon the key admits under the registration name
+    /// is bound to it. Declaring it again changes nothing.
+    Declare(DeclareArgs),
+    /// Forget the daemon bound to a declared environment and end its
+    /// connection, so that a machine with a new identity can bind. The
+    /// environment keeps its id and everything that references it.
+    Release(EnvironmentResourceArgs),
     /// Inspect or set the current universe's bindings to environment providers.
     #[command(visible_alias = "bindings")]
     Binding(BindingArgs),
@@ -57,6 +66,16 @@ struct RegistrationKeyArgs {
 enum RegistrationKeyCommand {
     /// Mint a key. The secret is printed exactly once.
     Create(RegistrationKeyCreateArgs),
+    /// Declare a key with a secret you supply: afterwards the key of this id
+    /// exists with this policy and answers to exactly that secret. Repeating
+    /// the command changes nothing; a different secret retires the previous
+    /// one at once. Generate one with `lightspeed environment
+    /// registration-key generate-secret`.
+    Put(RegistrationKeyPutArgs),
+    /// Print a new secret for a key you will declare with `put`. Nothing is
+    /// sent to a runtime and nothing is saved: keep the output in your
+    /// secret store.
+    GenerateSecret,
     /// List this universe's registration keys with their environment counts.
     List(ResourceArgs),
     /// Read one registration key.
@@ -82,33 +101,67 @@ struct RegistrationKeyCreateArgs {
     /// grace. Immutable once the key exists.
     #[arg(long, value_enum, default_value_t = IdentityModeArg::Persistent)]
     mode: IdentityModeArg,
+    /// The key's id within the universe; allocated when omitted.
+    #[arg(long = "id")]
+    registration_key_id: Option<String>,
     #[command(flatten)]
     policy: RegistrationKeyPolicyArgs,
 }
 
 #[derive(Args, Debug, Clone)]
+struct RegistrationKeyPutArgs {
+    #[arg(skip)]
+    api_url: String,
+    #[arg(long)]
+    json: bool,
+    registration_key_id: String,
+    /// persistent or ephemeral; it cannot be changed once the key exists.
+    #[arg(long, value_enum, default_value_t = IdentityModeArg::Persistent)]
+    mode: IdentityModeArg,
+    #[command(flatten)]
+    policy: RegistrationKeyPolicyArgs,
+    #[command(flatten)]
+    secret: crate::key_secrets::SecretSourceArgs,
+}
+
+impl IdentityModeArg {
+    fn view(self) -> api::EnvironmentIdentityModeView {
+        match self {
+            Self::Persistent => api::EnvironmentIdentityModeView::Persistent,
+            Self::Ephemeral => api::EnvironmentIdentityModeView::Ephemeral,
+        }
+    }
+}
+
+#[derive(Args, Debug, Clone)]
 struct RegistrationKeyPolicyArgs {
     /// Group name shown for every environment this key admits.
-    #[arg(long)]
-    name: String,
+    #[arg(long = "display-name")]
+    display_name: String,
     /// Non-closed environments the key may have at once.
     #[arg(long = "max-active")]
     max_active: Option<u32>,
-    /// Ephemeral disconnect grace in minutes (default: 5).
-    #[arg(long = "grace-min")]
-    grace_min: Option<u64>,
+    /// Ephemeral keys: how long a disconnected daemon is waited for before
+    /// its environment closes, such as 90s or 5m (default: 5m).
+    #[arg(long, value_name = "DURATION", value_parser = crate::session_cli::parse_duration_ms)]
+    grace: Option<u64>,
     /// Persistent keys only: close an environment whose daemon has been
-    /// away longer than this many minutes.
-    #[arg(long = "offline-close-after-min")]
-    offline_close_after_min: Option<u64>,
-    /// Stop admitting new daemons after this many hours.
-    #[arg(long = "expires-in-hours")]
-    expires_in_hours: Option<u64>,
+    /// away longer than this, such as 12h or 30d.
+    #[arg(long = "offline-close-after", value_name = "DURATION", value_parser = crate::session_cli::parse_duration_ms)]
+    offline_close_after: Option<u64>,
+    /// Persistent keys only: admit only daemons whose registration name
+    /// matches an environment declared under this key
+    /// (`environment declare`).
+    #[arg(long = "declared-only")]
+    declared_only: bool,
+    /// Stop admitting new daemons after this long, such as 24h or 7d.
+    #[arg(long = "expires-in", value_name = "DURATION", value_parser = crate::session_cli::parse_duration_ms)]
+    expires_in: Option<u64>,
 }
 
 impl RegistrationKeyPolicyArgs {
     fn expires_at_ms(&self) -> Result<Option<i64>> {
-        let Some(hours) = self.expires_in_hours else {
+        let Some(expires_in_ms) = self.expires_in else {
             return Ok(None);
         };
         let now_ms = i64::try_from(
@@ -116,13 +169,9 @@ impl RegistrationKeyPolicyArgs {
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_millis(),
         )?;
-        Ok(Some(
-            now_ms.saturating_add(
-                i64::try_from(hours)
-                    .unwrap_or(i64::MAX)
-                    .saturating_mul(3_600_000),
-            ),
-        ))
+        Ok(Some(now_ms.saturating_add(
+            i64::try_from(expires_in_ms).unwrap_or(i64::MAX),
+        )))
     }
 }
 
@@ -135,10 +184,6 @@ struct RegistrationKeyUpdateArgs {
     registration_key_id: String,
     #[command(flatten)]
     policy: RegistrationKeyPolicyArgs,
-}
-
-fn minutes_ms(minutes: Option<u64>) -> Option<u64> {
-    minutes.map(|minutes| minutes.saturating_mul(60_000))
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy)]
@@ -227,8 +272,8 @@ struct EnvUpdateArgs {
     #[command(flatten)]
     common: EnvironmentResourceArgs,
     /// The new display name; omit to clear it.
-    #[arg(long)]
-    name: Option<String>,
+    #[arg(long = "display-name")]
+    display_name: Option<String>,
     /// The complete new metadata; omit every pair to clear it.
     #[command(flatten)]
     metadata: crate::session_cli::MetadataPairs,
@@ -251,8 +296,12 @@ struct CredentialArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 enum CredentialCommand {
+    /// Supply an environment variable of the environment from a retrievable
+    /// credential or from a model provider's API key.
     Bind(CredentialBindArgs),
+    /// List the environment variables bound for an environment.
     List(CredentialListArgs),
+    /// Stop supplying an environment variable.
     Unbind(CredentialUnbindArgs),
 }
 
@@ -271,12 +320,13 @@ struct CredentialBindArgs {
     common: CredentialListArgs,
     #[arg(long = "env-name")]
     env_name: String,
-    #[arg(long = "grant-id", conflicts_with_all = ["provider_id", "secret_id"])]
+    /// A credential created with retrievable exposure: commands on the
+    /// machine receive its plain value.
+    #[arg(long = "grant", conflicts_with = "provider_id")]
     grant_id: Option<String>,
-    #[arg(long = "provider-id", conflicts_with_all = ["grant_id", "secret_id"])]
+    /// A model API key provider, whose stored key is supplied.
+    #[arg(long = "provider-id", conflicts_with = "grant_id")]
     provider_id: Option<String>,
-    #[arg(long = "secret-id", conflicts_with_all = ["grant_id", "provider_id"])]
-    secret_id: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -287,11 +337,25 @@ struct CredentialUnbindArgs {
     env_name: String,
 }
 
+impl EnvArgs {
+    /// Whether the command runs without a runtime connection.
+    pub(crate) fn offline(&self) -> bool {
+        matches!(
+            &self.command,
+            EnvCommand::RegistrationKeys(RegistrationKeyArgs {
+                command: RegistrationKeyCommand::GenerateSecret
+            })
+        )
+    }
+}
+
 pub(crate) async fn handle(args: EnvArgs) -> Result<()> {
     match args.command {
         EnvCommand::Provider(args) => provider(args).await,
         EnvCommand::Create(args) => create(args).await,
         EnvCommand::Register(args) => register(args).await,
+        EnvCommand::Declare(args) => declare(args).await,
+        EnvCommand::Release(args) => release(args).await,
         EnvCommand::Binding(args) => binding(args).await,
         EnvCommand::Template(args) => template(args).await,
         EnvCommand::Ingress(args) => ingress(args).await,
@@ -307,18 +371,20 @@ pub(crate) async fn handle(args: EnvArgs) -> Result<()> {
 
 async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
     match args.command {
+        RegistrationKeyCommand::GenerateSecret => crate::key_secrets::print_generated_secret(
+            crate::key_secrets::SecretKind::RegistrationKey,
+        ),
         RegistrationKeyCommand::Create(args) => {
             let expires_at_ms = args.policy.expires_at_ms()?;
             let response = HttpAgentApi::new(args.api_url)
                 .create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
-                    display_name: args.policy.name,
-                    identity_mode: match args.mode {
-                        IdentityModeArg::Persistent => api::EnvironmentIdentityModeView::Persistent,
-                        IdentityModeArg::Ephemeral => api::EnvironmentIdentityModeView::Ephemeral,
-                    },
+                    registration_key_id: args.registration_key_id,
+                    display_name: args.policy.display_name,
+                    identity_mode: args.mode.view(),
                     max_active_environments: args.policy.max_active,
-                    ephemeral_disconnect_grace_ms: minutes_ms(args.policy.grace_min),
-                    offline_close_after_ms: minutes_ms(args.policy.offline_close_after_min),
+                    ephemeral_disconnect_grace_ms: args.policy.grace,
+                    offline_close_after_ms: args.policy.offline_close_after,
+                    declared_only: args.policy.declared_only,
                     expires_at_ms,
                 })
                 .await
@@ -328,15 +394,47 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                 print_registration_secret(&response.registration_key, &response.secret.0)
             })
         }
+        RegistrationKeyCommand::Put(args) => {
+            let expires_at_ms = args.policy.expires_at_ms()?;
+            let response = HttpAgentApi::new(args.api_url)
+                .put_environment_registration_key(api::EnvironmentRegistrationKeyPutParams {
+                    registration_key_id: args.registration_key_id,
+                    display_name: args.policy.display_name,
+                    identity_mode: args.mode.view(),
+                    max_active_environments: args.policy.max_active,
+                    ephemeral_disconnect_grace_ms: args.policy.grace,
+                    offline_close_after_ms: args.policy.offline_close_after,
+                    declared_only: args.policy.declared_only,
+                    expires_at_ms,
+                    secret: api::EnvironmentRegistrationSecretView(args.secret.read()?),
+                })
+                .await
+                .map_err(crate::api_client::api_error)?
+                .result;
+            print_json_or(args.json, &response, || {
+                print_registration_key(&response.registration_key);
+                println!();
+                println!(
+                    "{}",
+                    match (response.created, response.secret_replaced) {
+                        (true, _) => "Created with the supplied secret.",
+                        (false, true) =>
+                            "Now answers to the supplied secret. The previous secret is retired.",
+                        (false, false) => "Already as declared.",
+                    }
+                );
+            })
+        }
         RegistrationKeyCommand::Update(args) => {
             let expires_at_ms = args.policy.expires_at_ms()?;
             let response = HttpAgentApi::new(args.api_url)
                 .update_environment_registration_key(api::EnvironmentRegistrationKeyUpdateParams {
                     registration_key_id: args.registration_key_id,
-                    display_name: args.policy.name,
+                    display_name: args.policy.display_name,
                     max_active_environments: args.policy.max_active,
-                    ephemeral_disconnect_grace_ms: minutes_ms(args.policy.grace_min),
-                    offline_close_after_ms: minutes_ms(args.policy.offline_close_after_min),
+                    ephemeral_disconnect_grace_ms: args.policy.grace,
+                    offline_close_after_ms: args.policy.offline_close_after,
+                    declared_only: args.policy.declared_only,
                     expires_at_ms,
                 })
                 .await
@@ -443,7 +541,7 @@ async fn update(args: EnvUpdateArgs) -> Result<()> {
     let response = HttpAgentApi::new(args.common.api_url)
         .update_environment(api::EnvironmentUpdateParams {
             environment_id: args.common.environment_id,
-            display_name: args.name,
+            display_name: args.display_name,
             metadata: args.metadata.map(),
         })
         .await
@@ -519,17 +617,14 @@ async fn close(args: EnvironmentResourceArgs) -> Result<()> {
 async fn credentials(args: CredentialArgs) -> Result<()> {
     match args.command {
         CredentialCommand::Bind(args) => {
-            let source = match (args.grant_id, args.provider_id, args.secret_id) {
-                (Some(grant_id), None, None) => {
+            let source = match (args.grant_id, args.provider_id) {
+                (Some(grant_id), None) => {
                     api::EnvironmentCredentialSourceView::AuthGrant { grant_id }
                 }
-                (None, Some(provider_id), None) => {
+                (None, Some(provider_id)) => {
                     api::EnvironmentCredentialSourceView::AuthProviderCredential { provider_id }
                 }
-                (None, None, Some(secret_id)) => {
-                    api::EnvironmentCredentialSourceView::DirectSecret { secret_id }
-                }
-                _ => anyhow::bail!("specify exactly one credential source"),
+                _ => anyhow::bail!("specify exactly one of --grant and --provider-id"),
             };
             let response = HttpAgentApi::new(args.common.api_url)
                 .bind_environment_credential(api::EnvironmentCredentialBindParams {
@@ -598,6 +693,9 @@ pub(crate) fn print_json_or<T: serde::Serialize>(
 struct CreateArgs {
     #[command(flatten)]
     common: ResourceArgs,
+    /// The environment's id; allocated when omitted.
+    #[arg(long = "id")]
+    environment_id: Option<String>,
     /// The provider to create the environment with; the universe needs an
     /// enabled binding to it.
     #[arg(long)]
@@ -618,6 +716,9 @@ struct RegisterArgs {
     common: ResourceArgs,
     /// A ws://, wss:// or unix:// endpoint of envd reachable from the runtime.
     endpoint: String,
+    /// The environment's id; allocated when omitted.
+    #[arg(long = "id")]
+    environment_id: Option<String>,
     /// Supply the same request ID when retrying registration.
     #[arg(long)]
     request_id: String,
@@ -626,6 +727,24 @@ struct RegisterArgs {
     #[command(flatten)]
     metadata: crate::session_cli::MetadataPairs,
 }
+#[derive(Args, Debug, Clone)]
+struct DeclareArgs {
+    #[command(flatten)]
+    common: EnvironmentResourceArgs,
+    /// The persistent registration key whose daemons may fill the
+    /// environment.
+    #[arg(long = "key")]
+    registration_key_id: String,
+    /// The name the daemon registers under
+    /// (`LIGHTSPEED_ENVD_REGISTRATION_NAME`), for example its pod name.
+    #[arg(long = "registration-name")]
+    registration_name: String,
+    #[arg(long = "display-name")]
+    display_name: Option<String>,
+    #[command(flatten)]
+    metadata: crate::session_cli::MetadataPairs,
+}
+
 #[derive(Args, Debug, Clone)]
 struct BindingArgs {
     #[command(subcommand)]
@@ -637,14 +756,12 @@ enum BindingCommand {
     /// (deployment key).
     Put {
         provider_id: String,
-        #[arg(
-            long,
-            conflicts_with = "disabled",
-            required_unless_present = "disabled"
-        )]
-        enabled: bool,
+        /// Let the universe provision from this provider.
+        #[arg(long, conflicts_with = "disable", required_unless_present = "disable")]
+        enable: bool,
+        /// Keep the binding but stop new provisioning from it.
         #[arg(long)]
-        disabled: bool,
+        disable: bool,
         #[arg(long)]
         json: bool,
     },
@@ -654,7 +771,9 @@ enum BindingCommand {
         #[arg(long)]
         json: bool,
     },
+    /// List the selected universe's provider bindings.
     List(ResourceArgs),
+    /// Read the selected universe's binding to one provider.
     Read {
         provider_id: String,
         #[arg(long)]
@@ -668,6 +787,7 @@ struct TemplateArgs {
 }
 #[derive(Subcommand, Debug, Clone)]
 enum TemplateCommand {
+    /// List the templates the universe's enabled providers offer.
     List {
         /// Only this provider's templates; omit for every enabled binding.
         #[arg(long)]
@@ -675,6 +795,7 @@ enum TemplateCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Read one template of a provider.
     Read {
         template_id: String,
         #[arg(long)]
@@ -698,6 +819,7 @@ async fn create(args: CreateArgs) -> Result<()> {
             api::METHOD_ENVIRONMENTS_CREATE,
             api::EnvironmentCreateParams {
                 request_id: args.request_id,
+                environment_id: args.environment_id,
                 provider_id: args.provider,
                 template_id: args.template,
                 display_name: args.display_name,
@@ -724,6 +846,7 @@ async fn register(args: RegisterArgs) -> Result<()> {
             api::METHOD_ENVIRONMENTS_EXTERNAL_CREATE,
             api::EnvironmentExternalCreateParams {
                 request_id: args.request_id,
+                environment_id: args.environment_id,
                 endpoint: args.endpoint,
                 display_name: args.display_name,
                 metadata: args.metadata.map(),
@@ -733,20 +856,74 @@ async fn register(args: RegisterArgs) -> Result<()> {
         .result;
     crate::output::show(args.common.json, &response.environment)
 }
+async fn declare(args: DeclareArgs) -> Result<()> {
+    let response: api::EnvironmentRegisteredPutResponse = HttpAgentApi::new(args.common.api_url)
+        .request(
+            api::METHOD_ENVIRONMENTS_REGISTERED_PUT,
+            api::EnvironmentRegisteredPutParams {
+                environment_id: args.common.environment_id,
+                registration_key_id: args.registration_key_id,
+                name: args.registration_name,
+                display_name: args.display_name,
+                metadata: args.metadata.map(),
+            },
+        )
+        .await?
+        .result;
+    if args.common.json {
+        return crate::output::show(true, &response);
+    }
+    crate::output::show(false, &response.environment)?;
+    println!();
+    println!(
+        "{}",
+        if response.created {
+            "Declared. It is away until its daemon registers."
+        } else {
+            "Already declared."
+        }
+    );
+    Ok(())
+}
+async fn release(args: EnvironmentResourceArgs) -> Result<()> {
+    let response: api::EnvironmentRegisteredReleaseResponse = HttpAgentApi::new(args.api_url)
+        .request(
+            api::METHOD_ENVIRONMENTS_REGISTERED_RELEASE,
+            api::EnvironmentRegisteredReleaseParams {
+                environment_id: args.environment_id,
+            },
+        )
+        .await?
+        .result;
+    if args.json {
+        return crate::output::show(true, &response);
+    }
+    crate::output::show(false, &response.environment)?;
+    println!();
+    println!(
+        "{}",
+        if response.released {
+            "Released. The next daemon its key admits under the registration name is bound to it."
+        } else {
+            "No daemon was bound."
+        }
+    );
+    Ok(())
+}
 async fn binding(args: BindingArgs) -> Result<()> {
     let client = HttpAgentApi::new("");
     match args.command {
         BindingCommand::Put {
             provider_id,
-            enabled,
-            disabled: _,
+            enable: enabled,
+            disable: _,
             json,
         } => {
             let response: api::DeploymentProviderBindingPutResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT,
                     api::DeploymentProviderBindingPutParams {
-                        universe_id: selected_universe_id("binding a provider")?,
+                        universe: selected_universe("binding a provider")?,
                         provider_id,
                         enabled,
                     },
@@ -760,7 +937,7 @@ async fn binding(args: BindingArgs) -> Result<()> {
                 .request(
                     api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE,
                     api::DeploymentProviderBindingDeleteParams {
-                        universe_id: selected_universe_id("deleting a binding")?,
+                        universe: selected_universe("deleting a binding")?,
                         provider_id,
                     },
                 )
@@ -875,10 +1052,16 @@ struct ProviderPutArgs {
     /// it from the controller endpoint. Required for a `unix://` controller.
     #[arg(long)]
     data_route_base: Option<String>,
-    /// File holding the bearer credential the provider expects; omit to keep
-    /// the stored one. A provider needs none.
-    #[arg(long, conflicts_with = "clear_credential")]
+    /// File holding the bearer credential the provider expects; omit every
+    /// credential source to keep the stored one. A provider needs none.
+    #[arg(long, group = "credential_source", conflicts_with = "clear_credential")]
     credential_file: Option<std::path::PathBuf>,
+    /// Read the credential from this environment variable.
+    #[arg(long, group = "credential_source", conflicts_with = "clear_credential")]
+    credential_env: Option<String>,
+    /// Read the credential from standard input.
+    #[arg(long, group = "credential_source", conflicts_with = "clear_credential")]
+    credential_stdin: bool,
     /// Remove the stored credential.
     #[arg(long)]
     clear_credential: bool,
@@ -886,11 +1069,18 @@ struct ProviderPutArgs {
     json: bool,
 }
 
-/// The universe a deployment-scoped binding command addresses.
-fn selected_universe_id(action: &str) -> Result<String> {
+fn nonempty_secret(value: String) -> Result<String> {
+    let value = value.trim().to_owned();
+    anyhow::ensure!(!value.is_empty(), "the supplied credential is empty");
+    Ok(value)
+}
+
+/// The universe a deployment-scoped binding command addresses, as the UUID
+/// or handle the connection selects.
+fn selected_universe(action: &str) -> Result<String> {
     crate::connection::ACTIVE
         .get()
-        .and_then(|c| c.active_universe_id())
+        .and_then(|c| c.active_universe())
         .ok_or_else(|| anyhow::anyhow!("select a universe before {action}"))
 }
 #[derive(Args, Debug, Clone)]
@@ -900,10 +1090,12 @@ struct ProviderArgs {
 }
 #[derive(Subcommand, Debug, Clone)]
 enum ProviderCommand {
+    /// List the deployment's environment provider controllers.
     List {
         #[arg(long)]
         json: bool,
     },
+    /// Read one provider controller; its credential is never shown.
     Read {
         provider_id: String,
         #[arg(long)]
@@ -911,6 +1103,7 @@ enum ProviderCommand {
     },
     /// Register or replace a provider controller.
     Put(ProviderPutArgs),
+    /// Delete a provider controller that no universe is bound to.
     Delete {
         provider_id: String,
         #[arg(long)]
@@ -954,11 +1147,21 @@ async fn provider(args: ProviderArgs) -> Result<()> {
             crate::output::show(json, &response.provider)
         }
         ProviderCommand::Put(args) => {
-            let credential = args
-                .credential_file
-                .as_deref()
-                .map(crate::connection::read_secret)
-                .transpose()?;
+            let credential = if let Some(file) = args.credential_file.as_deref() {
+                Some(crate::connection::read_secret(file)?)
+            } else if let Some(variable) = &args.credential_env {
+                Some(nonempty_secret(
+                    std::env::var(variable)
+                        .map_err(|_| anyhow::anyhow!("{variable} is not set"))?,
+                )?)
+            } else if args.credential_stdin {
+                use std::io::Read as _;
+                let mut input = String::new();
+                std::io::stdin().read_to_string(&mut input)?;
+                Some(nonempty_secret(input)?)
+            } else {
+                None
+            };
             let response: api::DeploymentEnvironmentProviderPutResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT,

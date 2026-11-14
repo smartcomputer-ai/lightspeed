@@ -16,9 +16,8 @@ From a source checkout, start either the runtime alone or the full product:
 Use `./dev.sh --no-envd` to include Platform. Both profiles default to
 `authenticated` mode. After migrations, the launcher creates the initial
 universe and provisions separate CLI and Platform keys as needed. The initial
-universe receives the slug `development` if it has no slug; an existing slug
-is preserved. Universe listings show `(no slug)` for unnamed universes. In another
-terminal, from the same checkout:
+universe is created with the handle `development`; if it already exists, it
+keeps the handle it has. In another terminal, from the same checkout:
 
 ```bash
 cargo build --locked -p cli
@@ -65,19 +64,26 @@ On the server host, configure the runtime stores and secrets as described in
 
 ```bash
 lightspeed-runtime migrate
-lightspeed-runtime api-key provision --name "Initial operator"
+lightspeed-runtime api-key provision --name "Initial operator" --all-groups
 ```
 
 From source, replace `lightspeed-runtime` with
-`cargo run -p temporal-runtime --`. The provision command prints JSON containing
-the secret; capture it securely. It creates a deployment key with every method
-group and no actor assertion. No universe is needed yet.
+`cargo run -p temporal-runtime --`. The provision command prints JSON that
+contains the generated secret; capture it securely. It creates a deployment
+key with the id `bootstrap`, every method group and no actor assertion. Choose
+another id with `--key-id`. The groups are always stated: `--all-groups`, or
+repeated `--group` for a narrower key. No universe is needed yet.
 
-To supply a key from deployment secret configuration, set
+To supply the key from deployment secret configuration, set
 `LIGHTSPEED_BOOTSTRAP_API_KEY` for the provision command. Its format is `lsk_`
-followed by 32 random bytes encoded as unpadded base64url. The command stores
-only its hash and metadata in the normal key store. Repeating it with the
-same active key is idempotent; revoked keys and authority mismatches fail.
+followed by 32 random bytes encoded as unpadded base64url; `lightspeed api-key
+generate-secret` prints one. The command stores only its hash and metadata in
+the normal key store, and declares the key: repeating it with the same secret
+changes nothing, changed groups are applied, and a different secret replaces
+the previous one at once. A revoked key and a changed actor flag fail.
+The JSON printed for a supplied secret holds the key's id and prefix and what
+changed, and no `secret` field: the value you supplied is the secret.
+`--require-existing` only verifies that the supplied key exists as described.
 The runtime never authenticates directly against this environment variable,
 and ordinary server startup does not provision keys.
 
@@ -86,7 +92,7 @@ Start the server in `LIGHTSPEED_AUTH_MODE=authenticated`. On the client:
 ```bash
 lightspeed connect add production --url https://runtime.example/rpc
 lightspeed connect use production
-lightspeed universe create --slug personal
+lightspeed universe create --handle personal
 lightspeed universe use personal
 ```
 
@@ -105,7 +111,7 @@ lightspeed connect use production
 lightspeed universe list
 lightspeed universe use personal
 lightspeed universe status
-lightspeed universe set-slug personal my-personal
+lightspeed universe set-handle personal my-personal
 lightspeed --connection production --universe staging session list
 lightspeed connect remove production
 ```
@@ -127,27 +133,37 @@ for old overrides there if the effective connection is unexpected.
 Saved connections live in `$XDG_CONFIG_HOME/lightspeed` or
 `$HOME/.config/lightspeed`. `LIGHTSPEED_CONFIG_DIR` overrides that directory.
 `connect status` groups the effective connection and key authority, followed by
-the selected universe's current slug and UUID. `universe status` shows just the
+the selected universe's current handle and UUID. The key is shown by its key
+id, which is what records attribute its requests to, and by the display prefix
+of the secret in use. `universe status` shows just the
 active universe. Both resolve the effective selection, including environment
 and command-line overrides or a universe bound by the server. Status reports
-when no universe is selected, or when its slug cannot be read with the current
-key. Slug lookup requires deployment authority and the `deployment/universes`
-group (or single mode); a universe key still shows its bound UUID.
+when no universe is selected. A selection carries either the UUID or the
+handle; showing the other one requires deployment authority and the
+`deployment/universes` group (or single mode), and status says so when the
+current key cannot read it. A universe key still shows its bound UUID.
 `universe list` marks the active universe with `*`; it marks none if there is no
 selection. These commands support `--json`, as does `connect list`. JSON status
-includes the slug and UUID; JSON universe lists include each row's `active`
+includes the handle and UUID; JSON universe lists include each row's `active`
 flag and the effective `activeUniverseId`.
 
 | Authority | Universe selection |
 | --- | --- |
-| Deployment key | Select by core UUID or slug. Listing/slugs require `deployment/universes`; explicit UUIDs work without listing permission. |
+| Deployment key | Select by UUID or handle. `universe use` saves the UUID, so a later rename does not move the saved selection; saving by handle and listing universes require `deployment/universes`. `--universe` and `LIGHTSPEED_UNIVERSE` are sent as given, so a handle works with any deployment key and follows the name if the universe is renamed. |
 | Universe key | The key selects its universe. Conflicting overrides fail; no universe header is sent. |
 | Single mode | The server selects its configured universe; no identity headers are sent. |
 
-Runtime slugs are optional and unique within a deployment. `universe set-slug`
-assigns or changes one without changing the UUID, resources, keys or saved CLI
-selection. Renaming releases the old slug; old Platform URLs can stop working
-or refer to another universe if that slug is reused.
+Every universe has a handle: a name that is unique within the deployment and
+addresses the universe wherever its UUID does. A handle is 1 to 63 lowercase
+letters, digits and hyphens, starts and ends with a letter or digit, and cannot
+have the form of a UUID. `universe create` without `--handle` derives one from
+the UUID, such as `u-41d07ab355e1`.
+
+`universe set-handle` renames a universe without changing its UUID, resources,
+keys or saved CLI selection. Renaming releases the old handle: Platform URLs
+and API clients that use it stop reaching the universe, and reach another one
+if that handle is later reused. Automation that addresses a universe by handle
+should treat a rename as a coordinated change.
 
 Deployment operations omit the universe header even when a universe is
 selected. Keys remain constrained by their allowed groups. A direct runtime
@@ -160,22 +176,40 @@ Provider credentials are separate from the Lightspeed gateway key. Store a
 built-in provider key from an environment variable:
 
 ```bash
-lightspeed model provider add openai --api-key-env OPENAI_API_KEY
+lightspeed model provider put openai --api-key-env OPENAI_API_KEY
 lightspeed model list
 ```
 
 For a compatible endpoint, supply its full configuration:
 
 ```bash
-lightspeed model provider add my-provider \
+lightspeed model provider put my-provider \
   --base-url https://provider.example/v1 \
   --api-kind openai:completions \
   --api-key-env MY_PROVIDER_KEY
 ```
 
-Repeat `--api-kind` for multiple supported APIs and `--header NAME=VALUE` for
-non-secret headers. For a credentialless endpoint, use `--no-auth` instead of
-a key source. The runtime validates endpoint configuration; its loopback URLs
+Repeat `--api-kind` for multiple supported APIs. An extra header is either
+`--header NAME=VALUE`, a plain value that every reader of the provider sees, or
+`--header-credential NAME=GRANT_ID`, which sends the current token of a saved
+token credential and never returns it. `api-key`, `x-api-key`, and
+`proxy-authorization` are accepted only as `--header-credential`.
+`lightspeed mcp server put` takes the same two flags for an MCP server's
+request headers, with the same rule for `api-key` and `x-api-key`:
+
+```bash
+lightspeed credential put gateway-key --token-env GATEWAY_KEY
+lightspeed model provider put my-provider \
+  --base-url https://provider.example/v1 \
+  --api-kind openai:completions \
+  --no-auth \
+  --header-credential api-key=gateway-key \
+  --header X-Title=Lightspeed
+```
+
+For a credentialless endpoint, use `--no-auth` instead of
+a key source. `put` declares the provider: repeating it changes nothing. The
+runtime validates endpoint configuration; its loopback URLs
 refer to the runtime host. Provider setup requires the `auth` group and model
 discovery requires `models`.
 
@@ -188,12 +222,12 @@ lightspeed chat --provider my-provider --api-kind openai:completions --model MOD
 Without those flags, a new session uses its profile's model, if supplied, then
 the universe's agent-run default. Configure that default below or select a
 route explicitly. Provider identity and API kind are fixed for each session;
-`/model` can choose any other model within that route. The TUI footer shows the connection name and universe slug
+`/model` can choose any other model within that route. The TUI footer shows the connection name and universe handle
 for saved or explicit runtime connections; generated local-development
 connections omit this label. The footer also shows the current session ID,
-shortening UUIDs while preserving readable IDs. If the universe slug is
+shortening UUIDs while preserving readable IDs. If the universe handle is
 unavailable, the footer uses a short universe UUID. `/status` shows the full connection name, endpoint,
-authentication scope, universe slug/UUID and current session ID. Connection
+authentication scope, universe handle/UUID and current session ID. Connection
 details are captured when chat opens, with no background polling. Each process
 keeps its resolved connection; switching saved defaults elsewhere does not
 retarget a running chat. See [Sessions and runs](sessions-and-runs.md) for
@@ -236,11 +270,11 @@ files are not kept in sync, and agent edits are not written back to your machine
 default to `/workspace` with `edit` access. `--workspace-path` and
 `--workspace-access read|edit` require one of the two sources.
 
-These shortcuts use the same revision-checked attachment operation as
-`session workspace attach`. They replace an attachment at the specified path
+These shortcuts change the session's configuration with a revision check.
+They replace an attachment at the specified path
 and preserve other attachments and configuration. Repeating `--upload` creates
 another workspace. Resuming with `chat -s SESSION_ID` alone retains the session's
-existing attachments. Every `--session` option also accepts `-s`.
+existing attachments. `--session` also accepts `-s`.
 
 ## Configure universe model defaults
 
@@ -255,9 +289,10 @@ lightspeed model defaults clear speech-to-text
 ```
 
 Use a model supported by the configured provider. These commands require the
-`models` method group. `set` and `clear` read the current revision before
-writing; use `--expected-revision REVISION` to require a revision you already
-read. All three commands support `--json`.
+`models` method group. `set` and `clear` write whatever the current defaults
+are; pass `--expected-revision REVISION` to have the write refused if the
+defaults changed since the revision you read. All three commands support
+`--json`.
 
 An explicit session model takes precedence over a profile model, followed by
 the `agent-run` default. Without any of these, creation fails with
@@ -274,37 +309,60 @@ intended routes with these commands.
 A deployment key with `deployment/api-keys` can issue narrower keys:
 
 ```bash
-lightspeed api-key create --name "Agent client" --universe-id UNIVERSE_UUID \
+lightspeed --universe UNIVERSE api-key create --display-name "Agent client" \
   --group session --group models --group vfs --group blobs/put
 lightspeed api-key list
-lightspeed api-key rotate KEY_PREFIX
-lightspeed api-key revoke KEY_PREFIX
+lightspeed --universe UNIVERSE api-key rotate KEY_ID
+lightspeed --universe UNIVERSE api-key revoke KEY_ID
 ```
 
-Rotation replaces the secret immediately and prints its replacement once.
-Use the returned prefix for later key-management commands and update every
-client using the old secret. Scope and permissions stay the same.
+A key is addressed by its key id and its scope. The scope is the selected
+universe, given by UUID or handle with `--universe` or taken from the saved
+selection, or the deployment with `--deployment`. A handle is resolved to the
+UUID first, which needs the `deployment/universes` group. Pass `--id` to
+`create` to choose the id; otherwise one is allocated and shown by `list`. Rotation replaces the
+secret immediately and prints its replacement once. Update every client using
+the old secret. The key id, scope and permissions stay the same.
+
+To declare a key whose secret already exists in your secret store, use `put`
+with a secret read from a file, an environment variable or standard input:
+
+```bash
+lightspeed api-key generate-secret > agent.key
+lightspeed --universe UNIVERSE api-key put agent-client \
+  --display-name "Agent client" --group session --group models \
+  --secret-file agent.key
+```
+
+Repeating `put` changes nothing; changed groups are applied; a different
+secret replaces the previous one at once. See
+[Declare a key with a supplied secret](../access-and-security/api-keys-and-service-access.md#declare-a-key-with-a-supplied-secret).
+`generate-secret` needs no connection.
 
 Create prints the secret once; use `--json` for machine-readable output. Add `--group auth` if the client needs
 to configure provider credentials, and other groups for the resources it
-manages. Omitting groups grants every group allowed by the chosen scope.
+manages. `create` and `put` require the groups: repeated `--group`, or
+`--all-groups` for every group the chosen scope allows. The key stores the
+resulting list, so a later release that adds a group does not widen it.
+A key with `deployment/api-keys` can make a key with any authority; see
+[Key management is full authority](../access-and-security/api-keys-and-service-access.md#key-management-is-full-authority).
 These are integration credentials, not personal Platform login tokens.
 
 To add Platform, give it its own deployment service key with the required
 method groups and actor assertion. Use Platform's administrator adoption flow
-to link an existing runtime universe. Platform uses the runtime slug for its
-URLs and caches it for lookups. Creation sends the requested slug to runtime;
-adoption preserves an existing slug or requires one to be assigned to an unnamed
-universe before linking. Platform does not invent a different slug on collision.
+to link an existing runtime universe. Platform uses the universe's handle for
+its URLs and caches it for lookups. Creation sends the requested handle to
+runtime; adoption keeps the handle the universe already has. Platform does not
+invent a different handle on collision.
 Ordinary universe lists and reads use Platform's database without contacting
 runtime. Creation, adoption and renaming through Platform's general settings
-immediately cache the slug returned by runtime. After a CLI or direct API rename,
+immediately cache the handle returned by runtime. After a CLI or direct API rename,
 a Platform administrator must use **Sync from runtime** on the **Universes**
-page to update the cached URLs. There is no periodic or background slug refresh.
-A failed sync reports an error and preserves the cache; missing or unnamed
-runtime universes are reported as skipped for review. During runtime outages,
+page to update the cached URLs. There is no periodic or background handle refresh.
+A failed sync reports an error and preserves the cache; universes missing from
+the runtime are reported as skipped for review. During runtime outages,
 the cached universe list remains available for membership administration.
-Linked universes across different runtime deployments must have distinct slugs
+Linked universes across different runtime deployments must have distinct handles
 within one Platform.
 
 IDs, profiles and sessions stay in the runtime; Platform creates only its
@@ -319,16 +377,16 @@ Resource commands use singular names and accept plural aliases: `universe(s)`,
 `api-key(s)`, `session(s)`, `profile(s)`, `model(s)`, `workspace(s)`, `credential(s)`,
 `environment(s)`, and `mcp`/`mcps`. `env` is also an alias for `environment`.
 `connect` (`connections`) manages local connection settings; `chat` (`chats`)
-starts or continues a conversation. `vfs` (`vfses`) uploads and downloads
-immutable snapshots. `--connection`, `--universe`, and `--api-url` can appear
+starts or continues a conversation. `workspace snapshot` (`snapshots`) uploads
+and downloads immutable snapshots. `--connection`, `--universe`, and `--api-url` can appear
 before or after subcommands. The endpoint override follows the same credential
 isolation rules as saved connections.
 
 Workspaces, MCP registrations, credentials and environments belong to the
 selected universe and have independent lifecycles. Session attachments declare
-which resources an agent may use. Changing an attachment preserves unrelated
-configuration and checks its revision; configuration changes require an idle
-session. Attaching an environment does not activate or provision it.
+which resources an agent may use. They are part of the session's
+configuration; configuration changes check its revision and require an idle
+session. Attaching an environment does not provision it.
 
 ```bash
 lightspeed workspace list
@@ -337,7 +395,8 @@ lightspeed mcp list
 lightspeed mcp tools my-server
 lightspeed mcp login my-server
 lightspeed credential list
-lightspeed credential import --provider-id my-service --token-env SERVICE_TOKEN
+lightspeed credential put my-service-token --token-env SERVICE_TOKEN --display-name "My service"
+lightspeed credential replace my-service-token --token-stdin
 lightspeed model provider list
 lightspeed environment list
 lightspeed profile list
@@ -346,18 +405,30 @@ lightspeed session read SESSION_ID
 lightspeed session config read SESSION_ID --json > session-config.json
 lightspeed session config put SESSION_ID --file session-config.json
 lightspeed session profile apply SESSION_ID --profile reviewer
-lightspeed session workspace attach --session SESSION_ID --workspace WORKSPACE_ID --path /repo --access read
-lightspeed session mcp attach SERVER_ID --session SESSION_ID --tools search,fetch
-lightspeed session environment attach ENVIRONMENT_ID --session SESSION_ID --access exec --working-directory /repo
-lightspeed session environment activate ENVIRONMENT_ID --session SESSION_ID
-lightspeed session skill list --session SESSION_ID
-lightspeed session skill use SKILL_ID --session SESSION_ID
 ```
 
-The workspace, MCP and environment groups under `session` each provide
-`attach`, `detach` and `list`. Lists show declared attachments rather than
-inferring them from materialized tools. Detaching does not delete the resource.
-Environment lists mark the active attachment. Skill selection submits ordinary
+`credential put` declares a token credential by id: it is created when missing, its settings
+follow the flags given (unset ones are cleared), its token is replaced only
+when it differs, and repeating the command changes nothing. `--dry-run`
+reports what would change. `credential replace` swaps only the token and
+keeps the settings. Both read the token from `--token-file`, `--token-env` or
+`--token-stdin`, never from the command line.
+
+A credential is brokered unless it is created with `--retrievable`: its token
+stays inside the runtime, which attaches it to its own requests. Pass
+`--retrievable` to `credential put`, `credential login` or
+`credential github installation grant` for a credential that will be
+[bound into an environment](../environments/credentials.md) or leased by a
+trusted service. The choice is fixed when the credential is created;
+declaring the same id with the other exposure is refused.
+
+A session's attached workspaces, MCP servers and environments are part of its
+configuration. To change them, read the configuration with
+`session config read --json`, edit the document and write it back with
+`session config put`, or apply a profile that attaches them with
+`session profile apply`. Removing an attachment does not delete the resource.
+`session read` shows the active environment. In the chat TUI, `/skills` lists
+discovered skills and `/skill` selects one. Skill selection submits ordinary
 agent input (or steers an existing run); there is no separate skill execution
 or installation registry.
 
@@ -376,6 +447,25 @@ unless `--json` is requested. Configuration `put` replaces a complete document;
 omitted fields return to their defaults, except an omitted model preserves the
 existing session model. It checks the revision read immediately
 before the write, or the explicit `--expected-revision` supplied by the caller.
+
+## Keep configuration in files
+
+The `config` commands treat a universe's configuration as a document:
+
+```bash
+lightspeed --universe research config export -o research.yaml
+lightspeed config diff -f research.yaml
+lightspeed config apply -f research.yaml
+```
+
+`export` writes credentials, providers, model defaults, MCP servers,
+registration keys, environments, profiles and API keys in the shape of the
+API's own inputs, with each secret named by where it comes from. `apply`
+makes the universe named by the document's `handle` match it, creating the
+universe when it does not exist, and changes nothing when it already
+matches. `diff` shows what `apply` would do and exits with status 2 when that
+is anything. See
+[Configuration as code](../deployment/configuration-as-code.md).
 
 ## Repair rejected context
 
@@ -418,22 +508,23 @@ full context window rather than a specific rejected entry, use the
 A deployment administrator registers a provider controller and binds it to a
 universe. `environment provider put` takes the provider ID, its
 `--controller-endpoint`, and optionally `--display-name`, `--data-route-base`
-(required for a `unix://` controller), and `--credential-file`; omitting the
+(required for a `unix://` controller), and a credential from
+`--credential-file`, `--credential-env` or `--credential-stdin`; omitting the
 credential keeps the stored one, and `--clear-credential` removes it.
-`environment binding put PROVIDER_ID --enabled` (or `--disabled`) binds the
+`environment binding put PROVIDER_ID --enable` (or `--disable`) binds the
 selected universe. These operations require a deployment key; provider
 list/read/delete and binding delete do as well. Normal environment and
 template operations operate within the selected universe.
 
 ```bash
 lightspeed environment provider put incus-local --controller-endpoint ws://127.0.0.1:19090/control --credential-file ./provider-credential
-lightspeed environment binding put incus-local --enabled
+lightspeed environment binding put incus-local --enable
 lightspeed environment template list --provider incus-local
 lightspeed environment create --provider incus-local --template linux-v1 --request-id provision-my-machine
 lightspeed environment register wss://machine.example/envd --request-id register-my-machine
 lightspeed environment list --include-closed --limit 50
 lightspeed environment read ENVIRONMENT_ID
-lightspeed environment update ENVIRONMENT_ID --name "Build machine" --metadata team=release
+lightspeed environment update ENVIRONMENT_ID --display-name "Build machine" --metadata team=release
 lightspeed environment power ENVIRONMENT_ID paused
 lightspeed environment ingress ENVIRONMENT_ID --enable
 ```
@@ -447,9 +538,31 @@ environments unless `--include-closed` is given, and returns one page at a
 time; when more remain, it prints the `--after` value for the next page. `environment update`
 replaces the display name and metadata, so omitted flags clear them.
 
-Outbound daemons use `environment registration-key create|list|read|update|rotate|revoke`.
+Outbound daemons use `environment registration-key create|put|list|read|update|rotate|revoke`.
+`create --id` chooses the key's id, and `put` declares a key with a secret you
+supply (`environment registration-key generate-secret`), for pipelines that
+keep the secret in a secret store.
 `update` replaces a key's group name and policy, including
-`--offline-close-after-min` for a persistent key; `rotate` prints a new secret
-once and retires the old one. Credentials bound with `environment credential
+`--offline-close-after` and `--declared-only` for a persistent key; `rotate`
+prints a new secret once and retires the old one. Durations such as
+`--grace 5m`, `--offline-close-after 12h` and `--expires-in 24h` take the
+suffixes `ms`, `s`, `m`, `h`, `d` and `w`.
+
+A fixed machine can be declared before its daemon registers, under an
+environment ID you choose:
+
+```bash
+lightspeed environment declare build-box --key ci-runners --registration-name lightspeed-runner-0
+lightspeed environment release build-box
+```
+
+`declare` makes the environment exist, disconnected, until the first
+daemon that key admits under that registration name binds to it; running it
+again changes nothing. `release` forgets the bound daemon so that a
+machine with a new identity can take its place. `environment create` and
+`environment register` take `--id` to choose their environment's ID as well.
+See [Run registered daemons](../environments/registered-daemons.md#declare-fixed-machines-before-their-daemons-register).
+
+Credentials bound with `environment credential
 bind` supply the environment's configured secret references; attachment
 access controls the agent's permitted use of the machine.

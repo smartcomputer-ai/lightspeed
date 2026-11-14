@@ -3,6 +3,7 @@
     "session/start": ["integration"]
   },
   "excludeMethods": [
+    "universe/watch",
     "environments/jobs/create",
     "environments/jobs/read",
     "environments/jobs/cancel",
@@ -11,6 +12,9 @@
     "environments/registration-keys/list",
     "environments/registration-keys/revoke",
     "environments/registration-keys/update",
-    "environments/registration-keys/rotate"
+    "environments/registration-keys/rotate",
+    "environments/registration-keys/put",
+    "environments/registered/put",
+    "environments/registered/release"
   ]
 }

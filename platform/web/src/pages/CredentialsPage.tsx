@@ -90,20 +90,20 @@ export function isReusableCredential(
 }
 
 export function CredentialsPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
   if (!universe || !permissions.can("configureResource")) {
-    return <UniverseNotFound slug={slug} />;
+    return <UniverseNotFound handle={handle} />;
   }
 
-  return <CredentialList universeId={universe.id} slug={universe.slug} />;
+  return <CredentialList universeId={universe.id} handle={universe.handle} />;
 }
 
-function CredentialList({ universeId, slug }: { universeId: string; slug: string }) {
+function CredentialList({ universeId, handle }: { universeId: string; handle: string }) {
   const queryClient = useQueryClient();
   const [pasteOpen, setPasteOpen] = useState(false);
   const [gitHubOpen, setGitHubOpen] = useState(false);
@@ -152,7 +152,7 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
     <>
       <PageHeader
         title="Credentials"
-        description="Reusable tokens and secrets owned by this universe. Environments, MCP servers and bot triggers reference them without exposing their values; retrievable credentials may be leased by trusted services."
+        description="Reusable tokens and secrets owned by this universe. A brokered credential never leaves Lightspeed, which attaches it to its own requests to MCP servers. A retrievable credential can also be assigned to an environment, whose processes receive its value, and leased by trusted services."
         actions={
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button />}>
@@ -174,9 +174,9 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
       />
       <p className="mb-4 text-sm text-muted-foreground">
         Model keys and subscription logins are managed on{" "}
-        <Link to={`/u/${slug}/models`} className="underline underline-offset-2">Models</Link>, MCP
+        <Link to={`/u/${handle}/models`} className="underline underline-offset-2">Models</Link>, MCP
         server logins on{" "}
-        <Link to={`/u/${slug}/mcp-servers`} className="underline underline-offset-2">MCP servers</Link>.
+        <Link to={`/u/${handle}/mcp-servers`} className="underline underline-offset-2">MCP servers</Link>.
       </p>
       {inventory.isLoading && <LoadingNote />}
       {inventory.error && (
@@ -187,8 +187,9 @@ function CredentialList({ universeId, slug }: { universeId: string; slug: string
       )}
       {inventory.data && reusable.length === 0 && (
         <EmptyState icon={CredentialIcon} title="No credentials yet">
-          Tokens, environment secrets and GitHub App installations live here, bound to
-          environments, MCP servers and bot triggers without exposing their values.
+          Tokens, environment secrets and GitHub App installations live here, for MCP servers,
+          bot triggers and environments to reference. Values are never shown again; an
+          environment's processes receive the ones assigned to it.
         </EmptyState>
       )}
       {grants.length > 0 && (
@@ -570,7 +571,7 @@ function PasteCredentialDialog({
         }
       }}
     >
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Paste a token or secret</DialogTitle>
           <DialogDescription>
@@ -591,8 +592,8 @@ function PasteCredentialDialog({
             </Select>
             <FieldDescription>
               {kind === "environment"
-                ? "Stores an opaque value for injection into an environment variable. Multiline values such as SSH private keys are preserved."
-                : "Creates a revocable token that MCP servers, bots or environments can reference, as a bearer token or in a header of their own."}
+                ? "Stores an opaque value for injection into an environment variable; processes in that environment receive it. Multiline values such as SSH private keys are preserved."
+                : "Creates a revocable token that MCP servers and bots can reference, as a bearer token or in a header of their own, and that a model provider can send in an extra header. Make it retrievable to assign it to an environment too."}
             </FieldDescription>
           </Field>
           {kind === "token" && (
@@ -601,14 +602,15 @@ function PasteCredentialDialog({
                 <Checkbox
                   checked={retrievable}
                   onCheckedChange={(checked) => setRetrievable(checked === true)}
-                  aria-label="Allow trusted services to retrieve this credential"
+                  aria-label="Allow environments and trusted services to retrieve this credential"
                 />
                 <span className="grid gap-1">
-                  <span className="text-sm font-medium">Retrievable by trusted services</span>
+                  <span className="text-sm font-medium">Retrievable by environments and trusted services</span>
                   <span className="text-xs text-muted-foreground">
-                    Required for Bot webhook signatures and authenticated HTTP polls. Trusted
-                    service workers can lease the plaintext into memory; every lease is audited.
-                    This choice cannot be changed later.
+                    Required to assign the token to an environment, whose processes receive the
+                    plaintext, and for Bot webhook signatures and authenticated HTTP polls, where
+                    trusted service workers lease it into memory; every lease is audited. This
+                    choice cannot be changed later.
                   </span>
                 </span>
               </label>
@@ -745,7 +747,7 @@ function ReplaceValueDialog({
   };
   return (
     <Dialog open={grant !== null} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Replace value</DialogTitle>
           <DialogDescription>

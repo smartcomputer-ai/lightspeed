@@ -22,11 +22,12 @@ use super::*;
 
 use ::environments::{
     BeginCloseEnvironment, CreateEnvironment, CreateExternalEnvironment, DaemonBuild,
-    EndProvisionedEnvironment, EnvironmentCloseReason, EnvironmentEndpoint, EnvironmentId,
-    EnvironmentProviderId, EnvironmentProviderStore, EnvironmentProvisionRequestId,
-    EnvironmentRecord, EnvironmentRegistryError, EnvironmentState, EnvironmentStore,
-    EnvironmentTemplateId, FailEnvironment, FinishCloseEnvironment, ListEnvironments,
-    ObservedTarget, OpenEnvironment, RecordTargetObservation, ScheduleEnvironmentAttempt,
+    DeclareRegisteredEnvironment, DeclaredOutcome, EndProvisionedEnvironment,
+    EnvironmentCloseReason, EnvironmentEndpoint, EnvironmentId, EnvironmentProviderId,
+    EnvironmentProviderStore, EnvironmentProvisionRequestId, EnvironmentRecord,
+    EnvironmentRegistryError, EnvironmentState, EnvironmentStore, EnvironmentTemplateId,
+    FailEnvironment, FinishCloseEnvironment, ListEnvironments, ObservedTarget, OpenEnvironment,
+    RecordTargetObservation, ReleaseRegisteredEnvironment, ScheduleEnvironmentAttempt,
     UpdateEnvironment, WAIT_RETRY_AFTER_MS,
 };
 use environment_client::{ClientError, DataClient};
@@ -174,11 +175,15 @@ impl EnvironmentService {
         let endpoint = EnvironmentEndpoint::parse(&params.endpoint).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid environment endpoint: {error}"))
         })?;
+        let chosen = params
+            .environment_id
+            .map(parse_registry_environment_id)
+            .transpose()?;
         let environment = EnvironmentStore::create_external_environment(
             self.store.as_ref(),
             CreateExternalEnvironment {
                 request_id,
-                environment_id: allocate_environment_id(),
+                environment_id: chosen.clone().unwrap_or_else(allocate_environment_id),
                 endpoint,
                 display_name: params.display_name,
                 metadata: validated_caller_metadata(params.metadata)?,
@@ -187,8 +192,81 @@ impl EnvironmentService {
         )
         .await
         .map_err(map_environments_error)?;
+        created_under_chosen_id(&environment, chosen.as_ref())?;
         Ok(EnvironmentExternalCreateResponse {
             environment: environment_view(&environment),
+        })
+    }
+
+    /// `environments/registered/put`: declare a fixed machine under a
+    /// persistent registration key. The environment exists at once, open and
+    /// without a daemon; the first daemon its key admits under the declared
+    /// name is bound to it.
+    pub(crate) async fn put_registered_environment_record(
+        &self,
+        params: EnvironmentRegisteredPutParams,
+    ) -> Result<EnvironmentRegisteredPutResponse, AgentApiError> {
+        let environment_id = parse_registry_environment_id(params.environment_id)?;
+        let registration_key_id = parse_registration_key_id(params.registration_key_id)?;
+        ::environments::validate_registration_name(&params.name).map_err(map_environments_error)?;
+        let declaration = DeclareRegisteredEnvironment {
+            environment_id,
+            registration_key_id,
+            name: params.name,
+            display_name: params.display_name,
+            metadata: validated_caller_metadata(params.metadata)?,
+            declared_at_ms: now_ms()?,
+        };
+        let (environment, outcome) = EnvironmentStore::declare_registered_environment(
+            self.store.as_ref(),
+            declaration.clone(),
+        )
+        .await
+        .map_err(|error| map_declaration_error(error, &declaration))?;
+        if outcome == DeclaredOutcome::Created {
+            tracing::info!(
+                target: "temporal_runtime",
+                environment_id = %environment.environment_id,
+                registration_key_id = %declaration.registration_key_id,
+                name = %declaration.name,
+                "registered environment declared"
+            );
+        }
+        Ok(EnvironmentRegisteredPutResponse {
+            environment: environment_view(&environment),
+            created: outcome == DeclaredOutcome::Created,
+        })
+    }
+
+    /// `environments/registered/release`: forget the daemon bound to a
+    /// declared environment and end its live connection and routes, so
+    /// another identity may bind.
+    pub(crate) async fn release_registered_environment_record(
+        &self,
+        params: EnvironmentRegisteredReleaseParams,
+    ) -> Result<EnvironmentRegisteredReleaseResponse, AgentApiError> {
+        let environment_id = parse_registry_environment_id(params.environment_id)?;
+        let (environment, released) = EnvironmentStore::release_registered_environment(
+            self.store.as_ref(),
+            ReleaseRegisteredEnvironment {
+                environment_id: environment_id.clone(),
+                released_at_ms: now_ms()?,
+            },
+        )
+        .await
+        .map_err(map_environments_error)?;
+        if released {
+            self.signals
+                .revoke(self.store.config().universe_id, environment_id.as_str());
+            tracing::info!(
+                target: "temporal_runtime",
+                environment_id = %environment_id,
+                "registered environment released from its daemon"
+            );
+        }
+        Ok(EnvironmentRegisteredReleaseResponse {
+            environment: environment_view(&environment),
+            released,
         })
     }
 
@@ -204,11 +282,15 @@ impl EnvironmentService {
             AgentApiError::invalid_request(format!("invalid environment template id: {error}"))
         })?;
         let idle = params.idle.as_ref().map(registry_idle_policy).transpose()?;
+        let chosen = params
+            .environment_id
+            .map(parse_registry_environment_id)
+            .transpose()?;
         let environment = EnvironmentStore::create_environment(
             self.store.as_ref(),
             CreateEnvironment {
                 request_id,
-                environment_id: allocate_environment_id(),
+                environment_id: chosen.clone().unwrap_or_else(allocate_environment_id),
                 provider_id,
                 template_id,
                 idle,
@@ -219,6 +301,7 @@ impl EnvironmentService {
         )
         .await
         .map_err(map_environments_error)?;
+        created_under_chosen_id(&environment, chosen.as_ref())?;
         if environment.state == EnvironmentState::Provisioning {
             self.signals.nudge_work();
         }
@@ -518,12 +601,16 @@ impl EnvironmentService {
                 continue;
             };
             let service = self.clone();
+            let work = work.clone();
             tokio::spawn(async move {
-                let outcome = service
-                    .reconciler()
-                    .work_provider(provider_id, rows, now_ms)
-                    .await;
-                claim.finish(outcome.into_result());
+                let reconciler = service.reconciler();
+                tokio::select! {
+                    biased;
+                    _ = work.cancelled() => {}
+                    outcome = reconciler.work_provider(provider_id, rows, now_ms) => {
+                        claim.finish(outcome.into_result());
+                    }
+                }
             });
             started += 1;
         }
@@ -1268,9 +1355,29 @@ impl Reconciler<'_> {
 
 /// The provider work passes in flight, one per universe and provider at a
 /// time, and the rate limit of their failure warnings.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct ProviderWork {
     inner: std::sync::Arc<std::sync::Mutex<ProviderWorkState>>,
+    cancelled: tokio::sync::watch::Sender<bool>,
+}
+
+impl Default for ProviderWork {
+    fn default() -> Self {
+        Self {
+            inner: Default::default(),
+            cancelled: tokio::sync::watch::channel(false).0,
+        }
+    }
+}
+
+/// The leadership loop owns this guard. Cancelling that loop also stops
+/// its detached provider passes, including when it is aborted on shutdown.
+pub(crate) struct ProviderWorkCancellation(tokio::sync::watch::Sender<bool>);
+
+impl Drop for ProviderWorkCancellation {
+    fn drop(&mut self) {
+        self.0.send_replace(true);
+    }
 }
 
 #[derive(Default)]
@@ -1283,6 +1390,15 @@ struct ProviderWorkState {
 }
 
 impl ProviderWork {
+    pub(crate) fn cancel_on_drop(&self) -> ProviderWorkCancellation {
+        ProviderWorkCancellation(self.cancelled.clone())
+    }
+
+    async fn cancelled(&self) {
+        let mut cancelled = self.cancelled.subscribe();
+        let _ = cancelled.wait_for(|cancelled| *cancelled).await;
+    }
+
     /// Claim the provider's next pass in the universe; `None` while one is
     /// in flight.
     fn claim(
@@ -1413,6 +1529,50 @@ pub(crate) fn allocate_environment_id() -> EnvironmentId {
 
 /// Caller-supplied environment metadata: the same bounds and reserved-prefix
 /// rule as session metadata, checked before the record is written.
+/// A create is idempotent per request id, so a retry returns the environment
+/// the first attempt made. When the caller chose an id, that environment
+/// must be the one under it: the same request id with another chosen id is
+/// a different request.
+fn created_under_chosen_id(
+    environment: &EnvironmentRecord,
+    chosen: Option<&EnvironmentId>,
+) -> Result<(), AgentApiError> {
+    match chosen {
+        Some(chosen) if *chosen != environment.environment_id => {
+            Err(AgentApiError::conflict(format!(
+                "this request id already created environment {}; it cannot also create {chosen}",
+                environment.environment_id
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// A declaration conflict, said in the caller's terms: which of the id and
+/// the name is taken.
+fn map_declaration_error(
+    error: EnvironmentRegistryError,
+    declaration: &DeclareRegisteredEnvironment,
+) -> AgentApiError {
+    match error {
+        EnvironmentRegistryError::AlreadyExists {
+            kind: "registration_name",
+            ..
+        } => AgentApiError::conflict(format!(
+            "registration key {} already has an open environment named {:?}",
+            declaration.registration_key_id, declaration.name
+        )),
+        EnvironmentRegistryError::AlreadyExists {
+            kind: "environment",
+            ..
+        } => AgentApiError::conflict(format!(
+            "environment id {} is in use by an environment that is not this declaration:              another kind, a closed one, or one declared under another key or name",
+            declaration.environment_id
+        )),
+        other => map_environments_error(other),
+    }
+}
+
 fn validated_caller_metadata(
     metadata: std::collections::BTreeMap<String, String>,
 ) -> Result<std::collections::BTreeMap<String, String>, AgentApiError> {
@@ -1460,6 +1620,30 @@ mod tests {
         drop(sibling);
         assert_eq!(work.in_flight(), 0);
         assert!(work.claim(universe, &provider).is_some());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ending_leadership_cancels_provider_work_and_releases_its_claim() {
+        let work = ProviderWork::default();
+        let leadership = work.cancel_on_drop();
+        let claim = work
+            .claim(
+                uuid::Uuid::new_v4(),
+                &EnvironmentProviderId::new("provider"),
+            )
+            .unwrap();
+        let worker = work.clone();
+        let task = tokio::spawn(async move {
+            let _claim = claim;
+            worker.cancelled().await;
+        });
+        assert_eq!(work.in_flight(), 1);
+        drop(leadership);
+        tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .expect("leadership loss must cancel provider work")
+            .unwrap();
+        assert_eq!(work.in_flight(), 0);
     }
 
     struct Fixture {

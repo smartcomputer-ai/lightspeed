@@ -133,6 +133,11 @@ impl GatewayAgentApi {
     ) -> Result<(u64, BTreeMap<ContextEntryKey, ContextAppendWaitOutcome>), AgentApiError> {
         let started = Instant::now();
         let mut outcomes = BTreeMap::new();
+        let mut changes = self.store.changes().subscribe(
+            self.universe_id(),
+            store_pg::changes::ChangeKind::Session,
+            session_id.as_str(),
+        );
         loop {
             if started.elapsed() > self.operation_timeout {
                 return Err(AgentApiError::operation_pending(format!(
@@ -176,7 +181,7 @@ impl GatewayAgentApi {
             if outcomes.len() == expected.len() {
                 return Ok((loaded.state.context.revision, outcomes));
             }
-            tokio::time::sleep(self.poll_interval).await;
+            store_pg::changes::wait_for_change(&mut changes, self.poll_interval).await;
         }
     }
 
@@ -198,6 +203,11 @@ impl GatewayAgentApi {
         let started = Instant::now();
         let mut outcomes: BTreeMap<ContextEntryKey, Option<AgentAdmissionFailure>> =
             BTreeMap::new();
+        let mut changes = self.store.changes().subscribe(
+            self.universe_id(),
+            store_pg::changes::ChangeKind::Session,
+            session_id.as_str(),
+        );
         loop {
             if started.elapsed() > self.operation_timeout {
                 return Err(AgentApiError::operation_pending(format!(
@@ -240,7 +250,7 @@ impl GatewayAgentApi {
             if outcomes.len() == expected.len() {
                 return Ok((loaded.state.context.revision, outcomes));
             }
-            tokio::time::sleep(self.poll_interval).await;
+            store_pg::changes::wait_for_change(&mut changes, self.poll_interval).await;
         }
     }
 
@@ -253,6 +263,11 @@ impl GatewayAgentApi {
         correlation_token: &str,
     ) -> Result<(u64, Option<AgentAdmissionFailure>), AgentApiError> {
         let started = Instant::now();
+        let mut changes = self.store.changes().subscribe(
+            self.universe_id(),
+            store_pg::changes::ChangeKind::Session,
+            session_id.as_str(),
+        );
         loop {
             if started.elapsed() > self.operation_timeout {
                 return Err(AgentApiError::operation_pending(format!(
@@ -288,7 +303,7 @@ impl GatewayAgentApi {
             if applied {
                 return Ok((loaded.state.context.revision, None));
             }
-            tokio::time::sleep(self.poll_interval).await;
+            store_pg::changes::wait_for_change(&mut changes, self.poll_interval).await;
         }
     }
 
@@ -301,6 +316,11 @@ impl GatewayAgentApi {
         correlation_token: &str,
     ) -> Result<(), AgentApiError> {
         let started = Instant::now();
+        let mut changes = self.store.changes().subscribe(
+            self.universe_id(),
+            store_pg::changes::ChangeKind::Session,
+            session_id.as_str(),
+        );
         loop {
             if started.elapsed() > self.operation_timeout {
                 return Err(AgentApiError::operation_pending(format!(
@@ -325,7 +345,7 @@ impl GatewayAgentApi {
                     }
                 };
             }
-            tokio::time::sleep(self.poll_interval).await;
+            store_pg::changes::wait_for_change(&mut changes, self.poll_interval).await;
         }
     }
 
@@ -350,12 +370,17 @@ impl GatewayAgentApi {
         correlation_token: &str,
     ) -> Result<RunSummaryView, AgentApiError> {
         let started = Instant::now();
+        let mut changes = self.store.changes().subscribe(
+            self.universe_id(),
+            store_pg::changes::ChangeKind::Session,
+            session_id.as_str(),
+        );
         loop {
             if started.elapsed() > self.operation_timeout {
                 return Err(run_start_pending_error(submission_id));
             }
             let Some(status) = self.query_status_optional(session_id).await? else {
-                tokio::time::sleep(self.poll_interval).await;
+                store_pg::changes::wait_for_change(&mut changes, self.poll_interval).await;
                 continue;
             };
             check_command_status(&status, correlation_token)?;
@@ -364,7 +389,7 @@ impl GatewayAgentApi {
                     .project_run_summary_by_id(session_id, RunId::new(run_id))
                     .await;
             }
-            tokio::time::sleep(self.poll_interval).await;
+            store_pg::changes::wait_for_change(&mut changes, self.poll_interval).await;
         }
     }
 
@@ -383,6 +408,11 @@ impl GatewayAgentApi {
         correlation_token: &str,
     ) -> Result<harness::SteeringId, AgentApiError> {
         let started = Instant::now();
+        let mut changes = self.store.changes().subscribe(
+            self.universe_id(),
+            store_pg::changes::ChangeKind::Session,
+            session_id.as_str(),
+        );
         loop {
             if started.elapsed() > self.operation_timeout {
                 return Err(steering_pending_error(run_id, submission_id));
@@ -412,7 +442,7 @@ impl GatewayAgentApi {
                     });
                 }
             }
-            tokio::time::sleep(self.poll_interval).await;
+            store_pg::changes::wait_for_change(&mut changes, self.poll_interval).await;
         }
     }
 
@@ -460,6 +490,11 @@ impl GatewayAgentApi {
         correlation_token: &str,
         started: Instant,
     ) -> Result<ApprovalDecisionOutcome, AgentApiError> {
+        let mut changes = self.store.changes().subscribe(
+            self.universe_id(),
+            store_pg::changes::ChangeKind::Session,
+            session_id.as_str(),
+        );
         loop {
             if started.elapsed() > self.operation_timeout {
                 return Err(AgentApiError::operation_pending(format!(
@@ -517,7 +552,7 @@ impl GatewayAgentApi {
                 }
                 Some(_) => {}
             }
-            tokio::time::sleep(self.poll_interval).await;
+            store_pg::changes::wait_for_change(&mut changes, self.poll_interval).await;
         }
     }
 
@@ -527,6 +562,11 @@ impl GatewayAgentApi {
         correlation_token: &str,
     ) -> Result<(), AgentApiError> {
         let started = Instant::now();
+        let mut changes = self.store.changes().subscribe(
+            self.universe_id(),
+            store_pg::changes::ChangeKind::Session,
+            session_id.as_str(),
+        );
         loop {
             if started.elapsed() > self.operation_timeout.min(CLOSE_WAIT) {
                 return Err(AgentApiError::operation_pending(format!(
@@ -540,7 +580,7 @@ impl GatewayAgentApi {
             if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
                 return Ok(());
             }
-            tokio::time::sleep(self.poll_interval).await;
+            store_pg::changes::wait_for_change(&mut changes, self.poll_interval).await;
         }
     }
 
@@ -551,6 +591,11 @@ impl GatewayAgentApi {
         correlation_token: &str,
     ) -> Result<RunSummaryView, AgentApiError> {
         let started = Instant::now();
+        let mut changes = self.store.changes().subscribe(
+            self.universe_id(),
+            store_pg::changes::ChangeKind::Session,
+            session_id.as_str(),
+        );
         loop {
             if started.elapsed() > self.operation_timeout {
                 return Err(AgentApiError::operation_pending(format!(
@@ -582,7 +627,7 @@ impl GatewayAgentApi {
             {
                 return self.project_run_summary_by_id(session_id, run_id).await;
             }
-            tokio::time::sleep(self.poll_interval).await;
+            store_pg::changes::wait_for_change(&mut changes, self.poll_interval).await;
         }
     }
 
@@ -640,15 +685,39 @@ impl GatewayAgentApi {
         session_id: &SessionId,
         status: api::SessionLifecycleStatus,
     ) -> Option<api::SessionExecutionFailureView> {
+        let observed = self.store.load_session(session_id).await.ok().flatten();
         match self.execution_liveness(session_id).await {
-            Ok(liveness) => liveness.open_session_failure(status),
+            Ok(liveness) => {
+                let failure = liveness.open_session_failure(status);
+                if let Some(observed) = observed
+                    && (failure.is_some() || observed.summary.execution_failure.is_some())
+                {
+                    use harness::storage::summary::ExecutionFailure as Stored;
+                    let stored = failure.as_ref().map(|failure| match failure {
+                        api::SessionExecutionFailureView::Failed => Stored::Failed,
+                        api::SessionExecutionFailureView::Terminated => Stored::Terminated,
+                        api::SessionExecutionFailureView::TimedOut => Stored::TimedOut,
+                        api::SessionExecutionFailureView::Missing => Stored::Missing,
+                    });
+                    if let Err(error) = self
+                        .store
+                        .record_execution_failure(
+                            session_id,
+                            Some(observed.revision),
+                            stored,
+                            now_ms()
+                                .map(|time| time.max(0) as u64)
+                                .unwrap_or(observed.updated_at_ms),
+                        )
+                        .await
+                    {
+                        tracing::warn!(%error, %session_id, "could not record execution observation");
+                    }
+                }
+                failure
+            }
             Err(error) => {
-                tracing::warn!(
-                    target: "temporal_runtime",
-                    session_id = %session_id,
-                    error = %error,
-                    "could not check the session's workflow execution"
-                );
+                tracing::warn!(target: "temporal_runtime", %session_id, %error, "could not check the session's workflow execution");
                 None
             }
         }

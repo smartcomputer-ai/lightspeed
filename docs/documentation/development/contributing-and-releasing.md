@@ -59,7 +59,7 @@ that applies to the changed paths:
 | Change | Selected checks |
 | --- | --- |
 | Rust implementation | Formatting, Clippy, workspace tests, release metadata, and a live PostgreSQL migration-ledger test. |
-| TypeScript consumers or public API inputs | Generated consumers, typechecks, tests and builds, Platform migration validation, and release packaging checks. API changes also select Rust checks. |
+| TypeScript or Python consumers, or public API inputs | Generated consumers, typechecks, tests and builds, Platform migration validation, and release packaging checks. The Python client's generated output, types, and tests are checked here too. API changes also select Rust checks. |
 | Published manual, site, assets, or imported references | Documentation adapter tests, Astro diagnostics, and the static build with link and asset validation. |
 | Root npm dependency files | Consumer and documentation checks. |
 | Build, release, workflow, or unclassified inputs | All suites. |
@@ -88,7 +88,7 @@ scripts/release/verify-metadata.sh
 ```
 
 The check compares the metadata with its owners: executable package versions,
-the pinned toolchain and build image, protocol constants, runtime schema
+the Python client's version, the pinned toolchain and build image, protocol constants, runtime schema
 revision, and Platform migration journal and supported baseline. These
 values have different meanings. A product version bump does not itself
 migrate a database or make an older daemon speak a new protocol.
@@ -104,7 +104,8 @@ scripts/release/verify-metadata.sh
 ```
 
 The preparation command updates `workspace.package.version` in `Cargo.toml`,
-`LIGHTSPEED_PRODUCT_VERSION` in `release/metadata.env`, and the Cargo lockfile.
+`LIGHTSPEED_PRODUCT_VERSION` in `release/metadata.env`, the Cargo lockfile, and the
+Python client's version in `clients/python/pyproject.toml` and its `uv.lock`.
 The four executable packages and `release-info` inherit the workspace version;
 internal library versions remain independent. Cargo refreshes workspace package
 versions offline while preserving locked external dependencies. If preparation

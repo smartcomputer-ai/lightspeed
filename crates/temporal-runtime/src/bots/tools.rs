@@ -18,7 +18,7 @@ use api::{
 use bots::{
     BotError, BotEventStore, BotRecord, BotRefusalCode, BotTriggerRecord, BotTriggerStore,
     EventReceiver, RoutedSession, RoutedSessionClosePolicy,
-    ids::{MAX_BOT_HOPS, bot_emit_event_id, bot_keyed_session_id},
+    ids::{MAX_BOT_HOPS, bot_emit_event_id, bot_keyed_session_id, is_bot_main_session},
     tools::{
         BOT_BRIEF_PUT_TOOL_ID, BOT_EMIT_TOOL_ID, BOT_EVENT_LIST_TOOL_ID, BOT_EVENT_READ_TOOL_ID,
         BOT_FILTER_TEST_TOOL_ID, BOT_STATUS_TOOL_ID, BOT_TRIGGER_DELETE_TOOL_ID,
@@ -26,8 +26,9 @@ use bots::{
         parse_trigger_put_args,
     },
     views::{
-        bot_status_view, event_envelope_view, event_list_row_view, filter_result_view, read_budget,
-        resolve_inbox, trigger_tool_view,
+        MintedTriggerSecretsView, bot_status_view, event_envelope_view, event_list_row_view,
+        filter_result_view, minted_trigger_secrets, read_budget, resolve_inbox,
+        trigger_put_tool_view, trigger_tool_view,
     },
 };
 use harness::{
@@ -217,7 +218,7 @@ async fn run(api: &GatewayAgentApi, request: &BotExecuteToolRequest) -> Result<V
     match request.tool_id.as_str() {
         BOT_STATUS_TOOL_ID => Ok(bot_status_view(&bot, Some(&request.controller.snapshot))),
         BOT_TRIGGER_LIST_TOOL_ID => list_triggers(api, &bot).await,
-        BOT_TRIGGER_PUT_TOOL_ID => put_trigger(api, &bot, &args).await,
+        BOT_TRIGGER_PUT_TOOL_ID => put_trigger(api, &bot, request, &args).await,
         BOT_TRIGGER_DELETE_TOOL_ID => delete_trigger(api, &bot, &args).await,
         BOT_FILTER_TEST_TOOL_ID => test_filter(api, &bot, &args).await,
         BOT_EVENT_LIST_TOOL_ID => list_events(api, &bot, &args).await,
@@ -348,31 +349,45 @@ pub(crate) fn ingest_url(public_base_url: &str, ingest_path: &str) -> String {
     format!("{}{ingest_path}", public_base_url.trim_end_matches('/'))
 }
 
-/// A trigger as the model sees it. The bot is its own manager under the
-/// self-configuration grant, so it keeps its chat pairing codes (it has to
-/// tell the human what to send); everything else is redacted as for a
-/// non-managing member.
-fn trigger_view(api: &GatewayAgentApi, bot: &BotRecord, record: &BotTriggerRecord) -> Value {
-    let ingest_url = api
-        .trigger_view(record)
-        .ingest_path
-        .map(|path| ingest_url(api.public_base_url(), &path));
-    trigger_tool_view(record, ingest_url, bot.document.self_config)
-}
-
 async fn list_triggers(api: &GatewayAgentApi, bot: &BotRecord) -> Result<Value, ToolError> {
     let triggers = api.store().list_bot_triggers(&bot.bot_id).await?;
     Ok(json!({
-        "triggers": triggers
-            .iter()
-            .map(|record| trigger_view(api, bot, record))
-            .collect::<Vec<_>>(),
+        "triggers": triggers.iter().map(trigger_tool_view).collect::<Vec<_>>(),
     }))
+}
+
+/// What a `bot_trigger_put` result shows of the trigger's secrets: only
+/// what this call minted, and only to the bot's main session.
+///
+/// A routed session works for one conversation, key or event, so its
+/// counterpart may be an outsider and could ask for a trigger to be put;
+/// the main session is the bot's own standing context. Later calls show
+/// nothing either way, so a secret is in one tool result at most.
+fn put_result_secrets(
+    public_base_url: &str,
+    session_id: &str,
+    existing: Option<&BotTriggerRecord>,
+    record: &BotTriggerRecord,
+    ingest_path: Option<String>,
+) -> MintedTriggerSecretsView {
+    if !is_bot_main_session(&record.bot_id, session_id) {
+        return MintedTriggerSecretsView::default();
+    }
+    let minted =
+        minted_trigger_secrets(existing.map(|existing| &existing.secrets), &record.secrets);
+    MintedTriggerSecretsView {
+        ingest_url: minted
+            .webhook_token
+            .and(ingest_path)
+            .map(|path| ingest_url(public_base_url, &path)),
+        pairing_code: minted.pairing_code,
+    }
 }
 
 async fn put_trigger(
     api: &GatewayAgentApi,
     bot: &BotRecord,
+    request: &BotExecuteToolRequest,
     args: &Value,
 ) -> Result<Value, ToolError> {
     let put = parse_trigger_put_args(args).map_err(ToolFailure::invalid)?;
@@ -402,10 +417,14 @@ async fn put_trigger(
             None,
         )
         .await?;
-    Ok(json!({
-        "trigger": trigger_view(api, bot, &record),
-        "created": existing.is_none(),
-    }))
+    let minted = put_result_secrets(
+        api.public_base_url(),
+        &request.session_id,
+        existing.as_ref(),
+        &record,
+        api.trigger_secrets_view(&record).ingest_path,
+    );
+    Ok(trigger_put_tool_view(&record, existing.is_none(), minted))
 }
 
 async fn delete_trigger(
@@ -1003,6 +1022,180 @@ mod tests {
             ingest_url("https://ls.example/", "/hooks/bots/u/b/t/tok"),
             "https://ls.example/hooks/bots/u/b/t/tok"
         );
+    }
+
+    fn trigger_record(
+        trigger_id: &str,
+        spec: api::BotTriggerSpec,
+        secrets: bots::BotTriggerSecrets,
+    ) -> BotTriggerRecord {
+        BotTriggerRecord {
+            bot_id: BotId::new("triage"),
+            trigger_id: BotTriggerId::new(trigger_id),
+            revision: 1,
+            document: api::BotTriggerDocument {
+                spec,
+                filter: None,
+                route: None,
+                coalesce: None,
+                deliver: None,
+                session_close_after_ms: None,
+                enabled: true,
+            },
+            secrets,
+            disabled_reason: None,
+            disabled_at_ms: None,
+            last_filter_error: None,
+            last_filter_error_at_ms: None,
+            cursor: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        }
+    }
+
+    fn webhook_record(token: &str) -> BotTriggerRecord {
+        trigger_record(
+            "github",
+            api::BotTriggerSpec::Webhook {
+                verification: api::WebhookVerification::Token,
+                preset: None,
+            },
+            bots::BotTriggerSecrets {
+                webhook_token: Some(token.to_owned()),
+                pairing_code: None,
+            },
+        )
+    }
+
+    fn chat_record(code: Option<&str>) -> BotTriggerRecord {
+        trigger_record(
+            "tg",
+            api::BotTriggerSpec::Chat {
+                account_id: "tg-main".to_owned(),
+                match_scope: None,
+                activation: Default::default(),
+                access: Default::default(),
+                pairing: if code.is_some() {
+                    api::ChatPairing::Code
+                } else {
+                    api::ChatPairing::Open
+                },
+                priority: 100,
+            },
+            bots::BotTriggerSecrets {
+                webhook_token: None,
+                pairing_code: code.map(str::to_owned),
+            },
+        )
+    }
+
+    const MAIN: &str = "bot:v1:triage";
+    const ORIGIN: &str = "https://ls.example/";
+
+    fn ingest_path_of(record: &BotTriggerRecord) -> Option<String> {
+        record
+            .secrets
+            .webhook_token
+            .as_ref()
+            .map(|token| format!("/hooks/bots/u/triage/{}/{token}", record.trigger_id))
+    }
+
+    fn put_secrets(
+        session_id: &str,
+        existing: Option<&BotTriggerRecord>,
+        record: &BotTriggerRecord,
+    ) -> MintedTriggerSecretsView {
+        put_result_secrets(ORIGIN, session_id, existing, record, ingest_path_of(record))
+    }
+
+    #[test]
+    fn a_put_in_the_main_session_shows_the_secrets_it_minted_once() {
+        let webhook = webhook_record("tok-1");
+        let created = put_secrets(MAIN, None, &webhook);
+        assert_eq!(
+            created.ingest_url.as_deref(),
+            Some("https://ls.example/hooks/bots/u/triage/github/tok-1")
+        );
+        assert_eq!(created.pairing_code, None);
+        // The same holds in a rotated generation of the main session.
+        assert_eq!(put_secrets("bot:v1:triage-g2", None, &webhook), created);
+        // An edit keeps the URL token, so the URL is not shown again.
+        assert_eq!(
+            put_secrets(MAIN, Some(&webhook), &webhook),
+            MintedTriggerSecretsView::default()
+        );
+
+        let chat = chat_record(Some("ABCDEFGH2345"));
+        let paired = put_secrets(MAIN, None, &chat);
+        assert_eq!(paired.pairing_code.as_deref(), Some("ABCDEFGH2345"));
+        assert_eq!(paired.ingest_url, None);
+        assert_eq!(
+            put_secrets(MAIN, Some(&chat), &chat),
+            MintedTriggerSecretsView::default()
+        );
+        // Requiring pairing again on an open connection mints a new code.
+        let open = chat_record(None);
+        assert_eq!(
+            put_secrets(MAIN, Some(&open), &chat)
+                .pairing_code
+                .as_deref(),
+            Some("ABCDEFGH2345")
+        );
+        assert_eq!(
+            put_secrets(MAIN, Some(&chat), &open),
+            MintedTriggerSecretsView::default()
+        );
+    }
+
+    #[test]
+    fn a_put_outside_the_main_session_shows_no_secret() {
+        let webhook = webhook_record("tok-1");
+        let chat = chat_record(Some("ABCDEFGH2345"));
+        for session_id in [
+            // A conversation's session, a keyed session and its rotated
+            // generation, a per-event session.
+            "bot:v1:triage:k-tg-main-42-0123abcd",
+            "bot:v1:triage:k-pr-42-0123abcd-g2",
+            "bot:v1:triage:e-0123456789ab",
+            // Not this bot's main session at all.
+            "bot:v1:other",
+            "ses_0123",
+            "",
+        ] {
+            for record in [&webhook, &chat] {
+                assert_eq!(
+                    put_secrets(session_id, None, record),
+                    MintedTriggerSecretsView::default(),
+                    "{session_id}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_put_result_carries_a_secret_only_where_the_caller_may_read_it() {
+        let webhook = webhook_record("tok-1");
+        let shown = trigger_put_tool_view(&webhook, true, put_secrets(MAIN, None, &webhook));
+        assert!(shown["ingestUrl"].as_str().unwrap().ends_with("/tok-1"));
+        assert!(!shown["trigger"].to_string().contains("tok-1"));
+        for (session_id, existing) in [
+            ("bot:v1:triage:e-0123456789ab", None),
+            (MAIN, Some(&webhook)),
+        ] {
+            let hidden = trigger_put_tool_view(
+                &webhook,
+                existing.is_none(),
+                put_secrets(session_id, existing, &webhook),
+            );
+            assert!(!hidden.to_string().contains("tok-1"), "{hidden}");
+            assert!(hidden.get("ingestUrl").is_none());
+        }
+        // The list never shows either secret, whatever the session.
+        for record in [&webhook, &chat_record(Some("ABCDEFGH2345"))] {
+            let listed = trigger_tool_view(record).to_string();
+            assert!(!listed.contains("tok-1"), "{listed}");
+            assert!(!listed.contains("ABCDEFGH2345"), "{listed}");
+        }
     }
 
     #[test]

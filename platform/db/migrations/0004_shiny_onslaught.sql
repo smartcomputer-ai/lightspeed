@@ -1,0 +1,2 @@
+ALTER TABLE "user" ADD COLUMN "directory_groups" jsonb DEFAULT '[]'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "universes" ADD COLUMN "runtime_configuration" jsonb DEFAULT '{}'::jsonb NOT NULL;

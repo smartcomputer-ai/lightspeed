@@ -5,8 +5,20 @@ import {
   type Method,
   type MethodParams,
   type MethodResult,
+  type UniverseWatchParams,
+  type WatchKind,
 } from "@lightspeed-ai/sdk";
-import { canCloseSession, canDeleteSession, roleAtLeast, type UniverseRole } from "@lightspeed-ai/platform-shared";
+import {
+  FEATURES,
+  canCloseSession,
+  canDeleteSession,
+  effectiveFeatures,
+  featureOfMethod,
+  roleAtLeast,
+  type FeatureKey,
+  type FeatureStates,
+  type UniverseRole,
+} from "@lightspeed-ai/platform-shared";
 import type { ServerEnv } from "./env.js";
 import { METHOD_ROLES, SESSION_TARGET_METHODS } from "./routes/method-roles.js";
 
@@ -43,12 +55,25 @@ export function universeKeyClient(env: ServerEnv, endpoint: string | null | unde
   return new LightspeedClient(clientOptions(env, endpoint, { authorization: `Bearer ${secret}` }));
 }
 
+/// The refusal for a feature that is off in the universe, or null while it
+/// is on. `features` is what the universe stored. The member gate applies
+/// this to every call; a route asks directly when it does work of its own
+/// (an outbound request, a stored credential) before its first gated call.
+export function featureRefusal(features: unknown, feature: FeatureKey): GateRefusal | null {
+  return featureOff(effectiveFeatures(features), feature);
+}
+
+function featureOff(features: FeatureStates, feature: FeatureKey): GateRefusal | null {
+  return features[feature] ? null : new GateRefusal(403, `${FEATURES[feature].label} are turned off in this universe`);
+}
+
 /// Universe methods on a member's behalf: the deployment key names the
 /// universe and asserts the user as the actor, and every call passes the
-/// member gate first.
+/// member gate first. `features` is what the universe stored; a universe
+/// passed without it has every feature at its default.
 export function memberClient(
   env: ServerEnv,
-  universe: { lightspeedUniverseId: string; gatewayUrl?: string | null },
+  universe: { lightspeedUniverseId: string; gatewayUrl?: string | null; features?: unknown },
   member: Member,
 ): LightspeedClient {
   return new MemberClient(
@@ -57,6 +82,7 @@ export function memberClient(
       "x-lightspeed-actor": member.userId,
     }),
     member,
+    effectiveFeatures(universe.features),
   );
 }
 
@@ -72,18 +98,37 @@ function clientOptions(env: ServerEnv, endpoint: string | null | undefined, head
   };
 }
 
-/// The member gate, in order: the member's role meets the method's role; a
-/// session a method names is shared with the universe or was created by the
-/// member (creator-only methods need the creator), unless the member is an
-/// admin; a member's session list is narrowed to what they may see.
+/// The member gate, in order: the feature a method belongs to is on in the
+/// universe, whatever the member's role; the member's role meets the method's
+/// role; a session a method names is shared with the universe or was created
+/// by the member (creator-only methods need the creator), unless the member
+/// is an admin; a member's session list is narrowed to what they may see.
 class MemberClient extends LightspeedClient {
-  constructor(options: ConstructorParameters<typeof LightspeedClient>[0], private readonly member: Member) {
+  constructor(
+    options: ConstructorParameters<typeof LightspeedClient>[0],
+    private readonly member: Member,
+    private readonly features: FeatureStates,
+  ) {
     super(options);
+  }
+
+  override async openWatch(params: UniverseWatchParams = {}, options: CallOptions = {}): Promise<Response> {
+    if (!roleAtLeast(this.member.role, "viewer")) throw new GateRefusal(403, "viewer role required");
+    const requested = params.kinds ?? ["session", "bot", "environment", "workspace"];
+    const kinds: WatchKind[] = requested.filter(kind => kind !== "bot" || this.features.bots);
+    if (!kinds.length) throw new GateRefusal(403, "no enabled collections requested");
+    return super.openWatch({
+      kinds,
+      ...(this.member.role === "admin" ? (params.visibleTo ? { visibleTo: params.visibleTo } : {}) : { visibleTo: this.member.userId }),
+    }, options);
   }
 
   override async call<M extends Method>(method: M, params: MethodParams<M>, options: CallOptions = {}): Promise<MethodResult<M>> {
     const required = METHOD_ROLES[method];
     if (!required) throw new GateRefusal(403, `${method} is not a member method`);
+    const feature = featureOfMethod(method);
+    const off = feature && featureOff(this.features, feature);
+    if (off) throw off;
     if (!roleAtLeast(this.member.role, required)) throw new GateRefusal(403, `${required} role required`);
     if (!roleAtLeast(this.member.role, "operator")) {
       if (method === "session/start") requirePreparedSession(params as MethodParams<"session/start">);

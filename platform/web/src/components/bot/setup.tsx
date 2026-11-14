@@ -75,13 +75,13 @@ import {
  */
 export function BotSetup({
   universeId,
-  slug,
+  handle,
   bot,
   state,
   manage,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   bot: BotView;
   state?: BotStateView;
   manage: boolean;
@@ -142,7 +142,7 @@ export function BotSetup({
         </SetupSection>
         <SessionProfileSection
           universeId={universeId}
-          slug={slug}
+          handle={handle}
           bot={bot}
           manage={manage}
           profile={profile.data}
@@ -155,7 +155,7 @@ export function BotSetup({
           inbox={triggerList.find((trigger) => trigger.kind === "bot")}
         />
         <GuardrailsSection universeId={universeId} bot={bot} state={state} manage={manage} />
-        <DangerSection universeId={universeId} slug={slug} bot={bot} manage={manage} />
+        <DangerSection universeId={universeId} handle={handle} bot={bot} manage={manage} />
       </div>
     </div>
   );
@@ -378,14 +378,14 @@ type ProfileSaveRequest = {
  */
 function SessionProfileSection({
   universeId,
-  slug,
+  handle,
   bot,
   manage,
   profile,
   profileError,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   bot: BotView;
   manage: boolean;
   profile: ProfileDocument | undefined;
@@ -470,7 +470,7 @@ function SessionProfileSection({
             `profile ${bot.profileId}`,
           ].filter(Boolean).join(" · ")}
     >
-      <ProfileSwitcher universeId={universeId} bot={bot} slug={slug} manage={manage && !closed} sharedWith={sharedWith} />
+      <ProfileSwitcher universeId={universeId} bot={bot} handle={handle} manage={manage && !closed} sharedWith={sharedWith} />
       {profileError && (
         <p className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">
           Profile <code>{bot.profileId}</code> could not be read: {profileError}
@@ -512,7 +512,7 @@ function SessionProfileSection({
               </pre>
             )}
             {defaultEnvironment?.environmentId && (
-              <BotEnvironmentCard slug={slug} universeId={universeId} environmentId={defaultEnvironment.environmentId} />
+              <BotEnvironmentCard handle={handle} universeId={universeId} environmentId={defaultEnvironment.environmentId} />
             )}
             {manageProfile && (
               <SaveRow
@@ -547,13 +547,13 @@ function SessionProfileSection({
 function ProfileSwitcher({
   universeId,
   bot,
-  slug,
+  handle,
   manage,
   sharedWith,
 }: {
   universeId: string;
   bot: BotView;
-  slug: string;
+  handle: string;
   manage: boolean;
   sharedWith: BotListItem[];
 }) {
@@ -596,7 +596,7 @@ function ProfileSwitcher({
           <Button
             variant="ghost"
             size="sm"
-            nativeButton={false} render={<Link to={`/u/${slug}/profiles/${encodeURIComponent(bot.profileId)}`} />}
+            nativeButton={false} render={<Link to={`/u/${handle}/profiles/${encodeURIComponent(bot.profileId)}`} />}
           >
             Open on the Profiles page <GoToIcon data-icon="inline-end" />
           </Button>
@@ -975,12 +975,12 @@ function ToggleRow({
 
 function DangerSection({
   universeId,
-  slug,
+  handle,
   bot,
   manage,
 }: {
   universeId: string;
-  slug: string;
+  handle: string;
   bot: BotView;
   manage: boolean;
 }) {
@@ -1003,7 +1003,7 @@ function DangerSection({
     onSuccess: async () => {
       queryClient.removeQueries({ queryKey: ["bot", universeId, bot.botId] });
       await queryClient.invalidateQueries({ queryKey: ["bots", universeId] });
-      navigate(`/u/${slug}/bots`);
+      navigate(`/u/${handle}/bots`);
     },
   });
   if (!manage) return null;

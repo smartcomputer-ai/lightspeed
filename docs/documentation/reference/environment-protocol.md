@@ -623,6 +623,18 @@ One rule applies to every method and to every command's `cwd`:
 - No method addresses the daemon's state directory. A path that names it or
   lies inside it, and a remove, rename, write, or capture whose subject
   contains it, is `permissionDenied` (`daemonState`). Walks prune it.
+- The included daemon applies the same refusal, under the same reason, to
+  two more places it counts as its own under any root. On Linux, an entry on
+  the `/proc` or `/sys` filesystem is recognized by its device, so the same
+  filesystem bound at another path and a link into one are refused alike; a
+  separate instance mounted at another path is not recognized. The registration
+  key file is recognized as the file its configured path names when the
+  request starts, under every name that reaches it; when the directory that
+  holds it is a mount of its own, every entry of that volume is refused. A
+  remove, rename, write, or capture whose subject contains the key file is
+  refused, walks prune these entries, and `fs/readDirectory` leaves them
+  out. A command's `cwd` follows the rule; what a started process reads does
+  not.
 
 Paths are UTF-8. POSIX spellings remain unchanged; Windows drive paths use an
 uppercase drive and `/` separators (`C:/work`). Native conversion takes the
@@ -660,8 +672,8 @@ matches a directory prunes it. The root's direct children are depth 1.
 
 By default, walks respect `.gitignore`, `.ignore`, and git excludes, and
 skip names that start with `.`. `includeIgnored` and `includeHidden` opt out.
-`.git`, `.hg`, `.svn`, `.jj`, and the daemon state directory are always
-pruned. Entries a walk cannot read or represent are skipped and counted; they
+`.git`, `.hg`, `.svn`, `.jj`, the daemon state directory, and the other
+places the confinement rule refuses are always pruned. Entries a walk cannot read or represent are skipped and counted; they
 never end the walk. A file larger than the remaining byte budget is skipped
 and counted too.
 

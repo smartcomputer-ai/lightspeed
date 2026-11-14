@@ -3,8 +3,10 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AddIcon, ApiKeyIcon, RevokeIcon, RotateSecretIcon } from "@/icons";
 import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/sdk";
+import { isKeyIdConflict, KeyIdField } from "@/components/api-keys/key-id-field";
 import { GroupSummary, KeyPresetField, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
 import { RotateKeyDialog } from "@/components/api-keys/rotate-key-dialog";
+import { keyIdentifier } from "@/lib/api-keys";
 import { ApiKeySecret } from "@/components/api-keys/secret-once";
 import { api } from "@/api";
 import {
@@ -47,14 +49,14 @@ import { useActionPermissions } from "@/lib/permissions";
 import { DEFAULT_UNIVERSE_KEY_GROUPS, groupSummary, groupsFor } from "@/lib/method-groups";
 
 export function ApiKeysPage({ admin: _admin }: { admin: boolean }) {
-  const { universe, slug, isLoading } = useActiveUniverse();
+  const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
   if (!universe || !permissions.can("manageAccess")) {
-    return <UniverseNotFound slug={slug} />;
+    return <UniverseNotFound handle={handle} />;
   }
 
   return <ApiKeyList universeId={universe.id} />;
@@ -73,10 +75,10 @@ function ApiKeyList({ universeId }: { universeId: string }) {
     queryClient.invalidateQueries({ queryKey: ["api-keys", universeId] });
 
   const revoke = useMutation({
-    mutationFn: (keyPrefix: string) =>
+    mutationFn: (keyId: string) =>
       api<DeploymentApiKeyView>(
         "DELETE",
-        `/api/v1/universes/${universeId}/api-keys/${encodeURIComponent(keyPrefix)}`,
+        `/api/v1/universes/${universeId}/api-keys/${encodeURIComponent(keyId)}`,
       ),
     onSuccess: () => void invalidate(),
   });
@@ -127,10 +129,10 @@ function ApiKeyList({ universeId }: { universeId: string }) {
               {rows.map((key) => {
                 const revoked = key.revokedAtMs != null;
                 return (
-                  <TableRow key={key.keyPrefix}>
+                  <TableRow key={key.keyId}>
                     <TableTitleCell
                       title={key.displayName ?? "Unnamed key"}
-                      subtitle={key.keyPrefix}
+                      subtitle={keyIdentifier(key)}
                     />
                     <TableCell className="text-xs text-muted-foreground">
                       <GroupSummary summary={groupSummary("universe", key.groups)} />
@@ -183,7 +185,7 @@ function ApiKeyList({ universeId }: { universeId: string }) {
                               <AlertDialogCancel>Cancel</AlertDialogCancel>
                               <AlertDialogAction
                                 className="bg-destructive text-white hover:bg-destructive/90"
-                                onClick={() => revoke.mutate(key.keyPrefix)}
+                                onClick={() => revoke.mutate(key.keyId)}
                               >
                                 Revoke key
                               </AlertDialogAction>
@@ -243,6 +245,7 @@ function CreateApiKeyDialog({
   onCreated: () => void;
 }) {
   const [displayName, setDisplayName] = useState("");
+  const [keyId, setKeyId] = useState("");
   const [groups, setGroups] = useState<Set<MethodGroup>>(() => new Set(DEFAULT_UNIVERSE_KEY_GROUPS));
   const [created, setCreated] = useState<DeploymentApiKeyCreateResponse | null>(null);
   const allowed = groupsFor("universe");
@@ -252,6 +255,7 @@ function CreateApiKeyDialog({
       api<DeploymentApiKeyCreateResponse>("POST", `/api/v1/universes/${universeId}/api-keys`, {
         displayName: displayName.trim(),
         groups: allowed.filter((group) => groups.has(group)),
+        ...(keyId.trim() ? { keyId: keyId.trim() } : {}),
       }),
     onSuccess: (result) => {
       setCreated(result);
@@ -262,6 +266,7 @@ function CreateApiKeyDialog({
   const close = () => {
     onOpenChange(false);
     setDisplayName("");
+    setKeyId("");
     setGroups(new Set(DEFAULT_UNIVERSE_KEY_GROUPS));
     setCreated(null);
     create.reset();
@@ -283,7 +288,7 @@ function CreateApiKeyDialog({
         }
       }}
     >
-      <DialogContent showCloseButton={!created} className="sm:max-w-lg">
+      <DialogContent showCloseButton={!created} className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         {created ? (
           <ApiKeySecret secret={created.secret} keyPrefix={created.apiKey.keyPrefix} onDone={close} />
         ) : (
@@ -309,6 +314,12 @@ function CreateApiKeyDialog({
                 />
                 <FieldDescription>Shown in this list; it is not part of the secret.</FieldDescription>
               </Field>
+              <KeyIdField
+                id="api-key-id"
+                value={keyId}
+                onChange={(value) => { setKeyId(value); create.reset(); }}
+                conflict={isKeyIdConflict(create.error, keyId)}
+              />
               <KeyPresetField groups={groups} onChange={setGroups} />
               <MethodGroupPicker idPrefix="api-key" allowed={allowed} chosen={groups} onChange={setGroups} />
               {create.error && (

@@ -6,6 +6,7 @@ import {
   gitHubAppProviderId,
   mcpOAuthFlowCompletionError,
   mcpServerInputWithOAuthGrant,
+  modelEndpointSchema,
   modelProviderCredentialId,
   modelProviderCredentialView,
   sessionCreateSchema,
@@ -44,6 +45,36 @@ describe("model provider credential ids", () => {
   });
 });
 
+describe("model endpoint headers", () => {
+  const endpoint = (headers: unknown) => ({
+    baseUrl: "https://router.example/v1",
+    apiKinds: ["openai:completions"],
+    headers,
+  });
+
+  it("accepts a plain value or a credential reference per header", () => {
+    const headers = {
+      "x-title": { type: "literal", value: "Lightspeed" },
+      "x-api-key": { type: "credential", grantId: "authgrant_router" },
+    };
+    expect(modelEndpointSchema.parse(endpoint(headers)).headers).toEqual(headers);
+    expect(modelEndpointSchema.parse(endpoint(undefined)).headers).toBeUndefined();
+  });
+
+  it("refuses a header that does not say where its value comes from", () => {
+    for (const header of [
+      "Lightspeed",
+      { value: "Lightspeed" },
+      { type: "credential" },
+      { type: "credential", grantId: " " },
+      { type: "secret", value: "sk-plain" },
+    ]) {
+      expect(modelEndpointSchema.safeParse(endpoint({ "x-title": header })).success).toBe(false);
+    }
+    expect(modelEndpointSchema.safeParse(endpoint({ "": { type: "literal", value: "v" } })).success).toBe(false);
+  });
+});
+
 describe("custom access credential ids", () => {
   it("explains that revoked ids are terminal", () => {
     expect(credentialIdConflictMessage("deploy-token", "revoked")).toContain(
@@ -71,22 +102,53 @@ describe("environment secrets", () => {
     ).toEqual({
       grantId: "px-dev-ssh-key",
       providerId: "environment-secret",
+      exposure: "retrievable",
       displayName: "px-dev SSH key",
       token: privateKey,
     });
   });
+
+  it("are retrievable, because an environment receives their plain value", () => {
+    expect(environmentSecretGrantParams({ value: "v" }).exposure).toBe("retrievable");
+  });
 });
 
 describe("credential replacement", () => {
+  const grant = (overrides: Record<string, unknown>) => ({
+    grantId: "px-dev-ssh-key", providerId: "static", providerKind: "staticToken", exposure: "brokered",
+    createdBy: { kind: "local" }, hasAccessToken: true, hasRefreshToken: false, status: "active",
+    leaseCount: 0, createdAtMs: 1, updatedAtMs: 1, ...overrides,
+  }) as Parameters<typeof credentialReplaceParams>[0];
+
   it("forwards the new value exactly and only a given expiry", () => {
-    expect(credentialReplaceParams("px-dev-ssh-key", {
+    expect(credentialReplaceParams(grant({}), {
       value: "-----BEGIN KEY-----\nline\n-----END KEY-----\n",
     })).toEqual({
       grantId: "px-dev-ssh-key",
+      providerId: "static",
+      exposure: "brokered",
       token: "-----BEGIN KEY-----\nline\n-----END KEY-----\n",
     });
-    expect(credentialReplaceParams("authgrant_1", { value: "t", expiresAtMs: 5 }))
-      .toEqual({ grantId: "authgrant_1", token: "t", expiresAtMs: 5 });
+    expect(credentialReplaceParams(grant({ grantId: "authgrant_1", expiresAtMs: 1 }), { value: "t", expiresAtMs: 5 }))
+      .toMatchObject({ grantId: "authgrant_1", token: "t", expiresAtMs: 5 });
+  });
+
+  it("declares the credential again with the settings it has, dropping the old expiry", () => {
+    const current = grant({
+      exposure: "retrievable", displayName: "Deploy key", subjectHint: "ci", scopes: ["repo"],
+      audience: "https://git.example.com", metadata: { product: "ssh" }, expiresAtMs: 99,
+    });
+    expect(credentialReplaceParams(current, { value: "new" })).toEqual({
+      grantId: "px-dev-ssh-key",
+      providerId: "static",
+      exposure: "retrievable",
+      token: "new",
+      displayName: "Deploy key",
+      subjectHint: "ci",
+      scopes: ["repo"],
+      audience: "https://git.example.com",
+      metadata: { product: "ssh" },
+    });
   });
 });
 

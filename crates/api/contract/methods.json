@@ -5,9 +5,47 @@
         "action": "read",
         "kind": "universe"
       },
+      "description": "Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Each requested kind requires its own API-key group. Includes sub-agents; visibleTo restricts session access as on session/list.",
+      "group": null,
+      "method": "universe/watch",
+      "notifications": [
+        "session/changed",
+        "session/removed",
+        "bots/changed",
+        "bots/removed",
+        "environments/changed",
+        "environments/removed",
+        "workspaces/changed",
+        "workspaces/removed",
+        "watch/reset"
+      ],
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/UniverseWatchParams"
+        },
+        "type": "UniverseWatchParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfUniverseWatchResponse"
+        },
+        "type": "AgentApiOutcome<UniverseWatchResponse>"
+      },
+      "role": "viewer",
+      "scope": "universe",
+      "streaming": true,
+      "summary": "Watch universe list changes",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "read",
+        "kind": "universe"
+      },
       "description": "Reads bytes at a path in the current workspace head.",
       "group": "vfs",
       "method": "vfs/workspaces/files/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsWorkspaceFileReadParams"
@@ -22,6 +60,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read a workspace file",
       "target": null
     },
@@ -32,6 +71,7 @@
       "description": "Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.",
       "group": null,
       "method": "initialize",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/InitializeParams"
@@ -46,6 +86,7 @@
       },
       "role": null,
       "scope": "connection",
+      "streaming": false,
       "summary": "Inspect the Lightspeed protocol",
       "target": null
     },
@@ -57,6 +98,7 @@
       "description": "Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.",
       "group": "session",
       "method": "session/start",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionStartParams"
@@ -71,6 +113,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Start a session",
       "target": "sessionId"
     },
@@ -82,6 +125,7 @@
       "description": "Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.",
       "group": "session",
       "method": "session/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionReadParams"
@@ -96,6 +140,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read a session",
       "target": "sessionId"
     },
@@ -107,6 +152,7 @@
       "description": "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by filters such as visibleTo, which keeps sessions whose root is shared with the universe or was created by that actor. An unknown parameter is refused. Pages may shift while sessions are changing.",
       "group": "session",
       "method": "session/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionListParams"
@@ -121,6 +167,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List sessions",
       "target": null
     },
@@ -132,6 +179,7 @@
       "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.",
       "group": "session",
       "method": "session/config/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionConfigPutParams"
@@ -146,6 +194,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Replace session configuration",
       "target": "sessionId"
     },
@@ -157,6 +206,7 @@
       "description": "Sets the display name, or clears it when displayName is omitted.",
       "group": "session",
       "method": "session/rename",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionRenameParams"
@@ -171,6 +221,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Rename a session",
       "target": "sessionId"
     },
@@ -182,6 +233,7 @@
       "description": "Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.",
       "group": "session",
       "method": "session/metadata/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionMetadataPutParams"
@@ -196,6 +248,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Replace session metadata",
       "target": "sessionId"
     },
@@ -207,6 +260,7 @@
       "description": "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
       "group": "session/delete",
       "method": "session/retention/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionRetentionPutParams"
@@ -221,6 +275,7 @@
       },
       "role": "admin",
       "scope": "universe",
+      "streaming": false,
       "summary": "Replace session retention",
       "target": "sessionId"
     },
@@ -232,6 +287,7 @@
       "description": "Starts a new workflow execution for an open session whose last one stopped, from its log. A run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards. A running session is left alone. Refused for a closed session and for one with no run history.",
       "group": "session",
       "method": "session/restart",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionRestartParams"
@@ -246,6 +302,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Restart a stopped session",
       "target": "sessionId"
     },
@@ -257,6 +314,7 @@
       "description": "Closes an idle session and detaches its environment bindings. Without force, active work of any kind, including a pending detached promise, rejects the call. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
       "group": "session",
       "method": "session/close",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionCloseParams"
@@ -271,6 +329,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Close a session",
       "target": "sessionId"
     },
@@ -282,6 +341,7 @@
       "description": "Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.",
       "group": "session/delete",
       "method": "session/delete",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionDeleteParams"
@@ -296,6 +356,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Delete closed sessions",
       "target": "sessionId"
     },
@@ -307,6 +368,7 @@
       "description": "Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.",
       "group": "session",
       "method": "session/share",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionShareParams"
@@ -321,6 +383,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Share a session with the universe",
       "target": "sessionId"
     },
@@ -332,6 +395,7 @@
       "description": "Returns chronological events. Forward (default) follows after and supports long-polling. Backward reads the latest window below before (or the head); pass nextCursor as before until complete. Follow live events after the initial backward headCursor. Windows may split runs/tool batches; keep historical reconstruction separate from live controls.",
       "group": "session",
       "method": "session/events/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionEventsReadParams"
@@ -346,6 +410,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read the session event stream",
       "target": "sessionId"
     },
@@ -357,6 +422,7 @@
       "description": "Admits a batch of keyed context entries with per-entry results. The same content under a key is a no-op. Different content replaces the earlier entry, which leaves active context, and goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry without discarding successful entries.",
       "group": "session",
       "method": "session/context/append",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ContextAppendParams"
@@ -371,6 +437,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Append keyed session context",
       "target": "sessionId"
     },
@@ -382,6 +449,7 @@
       "description": "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
       "group": "session",
       "method": "session/context/remove",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ContextRemoveParams"
@@ -396,6 +464,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Remove keyed session context",
       "target": "sessionId"
     },
@@ -407,6 +476,7 @@
       "description": "Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.",
       "group": "session",
       "method": "session/context/replace",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ContextReplaceParams"
@@ -421,6 +491,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Replace session context entries",
       "target": "sessionId"
     },
@@ -432,6 +503,7 @@
       "description": "Performs one standalone compaction in any automatic mode, including Disabled, and waits for its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves the context unchanged and fails the call with its reason. A wait that runs out fails with operationPending while it can still complete; session events report the outcome.",
       "group": "session",
       "method": "session/context/compact",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ContextCompactParams"
@@ -446,6 +518,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Compact session context",
       "target": "sessionId"
     },
@@ -457,6 +530,7 @@
       "description": "Returns once the run is accepted — queued behind an active run, or running — not when it finishes. A compacting session holds the request; if the wait runs out the call fails with operationPending and the submission id, and the run still starts later. Retrying with that id cannot start a second run. Follow session events or reread the session.",
       "group": "session",
       "method": "session/runs/start",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/RunStartParams"
@@ -471,6 +545,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Start an agent run",
       "target": "sessionId"
     },
@@ -482,6 +557,7 @@
       "description": "Returns a newest-first keyset page of bounded run summaries, from current state for recent runs and from the session's log for older ones.",
       "group": "session",
       "method": "session/runs/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/RunListParams"
@@ -496,6 +572,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List session runs",
       "target": "sessionId"
     },
@@ -507,6 +584,7 @@
       "description": "Projects one run from its events. A run past the server's detail limit keeps its opening and its most recent turns and sets earlierEventsOmitted; session/events/read has the rest.",
       "group": "session",
       "method": "session/runs/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/RunReadParams"
@@ -521,6 +599,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read one session run",
       "target": "sessionId"
     },
@@ -532,6 +611,7 @@
       "description": "Requests cancellation of the named queued or active run and returns its summary; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.",
       "group": "session",
       "method": "session/runs/cancel",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/RunCancelParams"
@@ -546,6 +626,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Cancel a run",
       "target": "sessionId"
     },
@@ -557,6 +638,7 @@
       "description": "Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision. A decision whose wait runs out reports status pending and can still apply.",
       "group": "session",
       "method": "session/runs/approvals/decide",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/RunApprovalsDecideParams"
@@ -571,6 +653,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Decide pending run approvals",
       "target": "sessionId"
     },
@@ -582,6 +665,7 @@
       "description": "Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. A parked run holds it without waking. Rejected for queued, cancelling, or finished runs. Supply submissionId so a retry lands once; a wait that runs out fails with operationPending and the steering can still land.",
       "group": "session",
       "method": "session/runs/steer",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/RunSteerParams"
@@ -596,6 +680,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Steer the active run",
       "target": "sessionId"
     },
@@ -607,6 +692,7 @@
       "description": "Returns separate VFS and environment catalogs with source, reference, availability, readable skill paths, and warnings. Refreshes only when open with no active or queued run, without waking environments. Absent catalogs are omitted.",
       "group": "session",
       "method": "session/skills/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SkillListParams"
@@ -621,6 +707,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List available session skills",
       "target": "sessionId"
     },
@@ -632,6 +719,7 @@
       "description": "Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
       "group": "session",
       "method": "session/profiles/apply",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ProfileApplyParams"
@@ -646,6 +734,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Apply a profile to a session",
       "target": "sessionId"
     },
@@ -657,6 +746,7 @@
       "description": "Selects an attached, live universe environment for environment-targeted tools while the session is idle.",
       "group": "session",
       "method": "session/environments/activate",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionEnvironmentActivateParams"
@@ -671,6 +761,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Activate a session environment",
       "target": "sessionId"
     },
@@ -682,6 +773,7 @@
       "description": "Clears active environment selection without changing or closing the universe environment.",
       "group": "session",
       "method": "session/environments/deactivate",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/SessionEnvironmentDeactivateParams"
@@ -696,6 +788,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Deactivate the session environment",
       "target": "sessionId"
     },
@@ -704,9 +797,10 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Maps an environment variable name to an existing grant/provider/direct-secret handle for a universe environment. Requires configuring the environment and configuring resources in the universe. The response exposes only the source handle, never secret material.",
+      "description": "Maps an environment variable name to a retrievable credential grant or to a model API key provider's stored key. Commands in the environment receive the plain value, so a brokered grant and any other provider credential are refused. Requires configuring resources in the universe. The response exposes only the source handle, never secret material.",
       "group": "environments",
       "method": "environments/credentials/bind",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentCredentialBindParams"
@@ -721,6 +815,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Bind a credential into an environment",
       "target": null
     },
@@ -732,6 +827,7 @@
       "description": "Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.",
       "group": "environments",
       "method": "environments/credentials/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentCredentialListParams"
@@ -746,6 +842,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "List environment credential bindings",
       "target": null
     },
@@ -754,9 +851,10 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Removes one variable-to-credential mapping without deleting the underlying grant, provider credential, or secret.",
+      "description": "Removes one variable-to-credential mapping without deleting the underlying grant or provider credential.",
       "group": "environments",
       "method": "environments/credentials/unbind",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentCredentialUnbindParams"
@@ -771,6 +869,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Unbind an environment credential",
       "target": null
     },
@@ -782,6 +881,7 @@
       "description": "Creates a provisioned environment, attributed to the caller, from a template of a provider enabled for the universe. Idempotent per requestId: same inputs, same environment; others conflict. Provisioning until the target's first envd handshake, then open; idle overrides the template default.",
       "group": "environments",
       "method": "environments/create",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentCreateParams"
@@ -796,6 +896,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Create an environment",
       "target": null
     },
@@ -807,6 +908,7 @@
       "description": "Returns one environment: its source, lifecycle state, derived display status, state message, close reason, daemon build, and the latest provider observation.",
       "group": "environments",
       "method": "environments/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentReadParams"
@@ -821,6 +923,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read an environment",
       "target": null
     },
@@ -832,6 +935,7 @@
       "description": "Replaces the display name and caller metadata of an environment of any kind. Refused for a closed environment.",
       "group": "environments",
       "method": "environments/update",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentUpdateParams"
@@ -846,6 +950,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Update an environment",
       "target": null
     },
@@ -857,6 +962,7 @@
       "description": "Lists the universe environments in id order, one page at a time, optionally filtered by provider, registration key, state, or metadata. Closed environments are omitted unless includeClosed is set or state is closed. Continue from nextAfter.",
       "group": "environments",
       "method": "environments/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentListParams"
@@ -871,6 +977,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List environments",
       "target": null
     },
@@ -882,6 +989,7 @@
       "description": "Closes an environment; idempotent. A provisioned environment moves to closing while Lightspeed asks its provider to remove the target, retrying until it is gone, then closed. External and registered environments close at once, and a connected registered daemon is told its environment closed.",
       "group": "environments",
       "method": "environments/close",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentCloseParams"
@@ -896,6 +1004,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Close an environment",
       "target": null
     },
@@ -907,6 +1016,7 @@
       "description": "Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use.",
       "group": "environments",
       "method": "environments/external/create",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentExternalCreateParams"
@@ -921,7 +1031,62 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Register an external environment",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "description": "Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.",
+      "group": "environments",
+      "method": "environments/registered/put",
+      "notifications": [],
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentRegisteredPutParams"
+        },
+        "type": "EnvironmentRegisteredPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentRegisteredPutResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentRegisteredPutResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "streaming": false,
+      "summary": "Declare a registered environment",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "description": "Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.",
+      "group": "environments",
+      "method": "environments/registered/release",
+      "notifications": [],
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentRegisteredReleaseParams"
+        },
+        "type": "EnvironmentRegisteredReleaseParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentRegisteredReleaseResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "streaming": false,
+      "summary": "Release a declared environment's daemon",
       "target": null
     },
     {
@@ -932,6 +1097,7 @@
       "description": "Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.",
       "group": "environments",
       "method": "environments/ingress/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentIngressPutParams"
@@ -946,6 +1112,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Configure environment public ingress",
       "target": null
     },
@@ -957,6 +1124,7 @@
       "description": "Synchronously moves an open provisioned environment's target to running, paused, suspended, or stopped via its provider and records the observation; the provider may also change power on idle. Rejected without provider power control or when the template lacks the state; an internal error, safe to retry, when the provider is unreachable or times out.",
       "group": "environments",
       "method": "environments/power/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentPowerPutParams"
@@ -971,6 +1139,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Set environment power",
       "target": null
     },
@@ -982,6 +1151,7 @@
       "description": "Lists this universe's bindings to deployment providers and whether each is enabled.",
       "group": "environments",
       "method": "environments/provider-bindings/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentProviderBindingListParams"
@@ -996,6 +1166,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List environment provider bindings",
       "target": null
     },
@@ -1007,6 +1178,7 @@
       "description": "Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.",
       "group": "environments",
       "method": "environments/provider-bindings/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentProviderBindingReadParams"
@@ -1021,6 +1193,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read an environment provider binding",
       "target": null
     },
@@ -1032,6 +1205,7 @@
       "description": "Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.",
       "group": "environments",
       "method": "environments/templates/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentTemplateListParams"
@@ -1046,6 +1220,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List environment templates",
       "target": null
     },
@@ -1057,6 +1232,7 @@
       "description": "Returns one template, read live from a bound provider's controller.",
       "group": "environments",
       "method": "environments/templates/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentTemplateReadParams"
@@ -1071,6 +1247,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read an environment template",
       "target": null
     },
@@ -1082,6 +1259,7 @@
       "description": "Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environmentNotReady while it wakes or reconnects; retry with backoff.",
       "group": "environments",
       "method": "environments/jobs/create",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentJobCreateParams"
@@ -1096,6 +1274,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Create environment jobs",
       "target": null
     },
@@ -1107,6 +1286,7 @@
       "description": "Reads selected job handles with bounded output from a byte offset or the output tail; continue from each entry's outputNext and poll on the returned status.",
       "group": "environments",
       "method": "environments/jobs/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentJobReadParams"
@@ -1121,6 +1301,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read environment jobs",
       "target": null
     },
@@ -1132,6 +1313,7 @@
       "description": "Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.",
       "group": "environments",
       "method": "environments/jobs/cancel",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentJobCancelParams"
@@ -1146,6 +1328,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Cancel environment jobs",
       "target": null
     },
@@ -1157,6 +1340,7 @@
       "description": "Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode (immutable), active limit, disconnect grace, offline close-after, and expiry are the key's policy. Treat the secret like a cluster-join credential.",
       "group": "environments",
       "method": "environments/registration-keys/create",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentRegistrationKeyCreateParams"
@@ -1171,7 +1355,35 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Mint an environment registration key",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configureResource",
+        "kind": "universe"
+      },
+      "description": "Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's.",
+      "group": "environments",
+      "method": "environments/registration-keys/put",
+      "notifications": [],
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentRegistrationKeyPutParams"
+        },
+        "type": "EnvironmentRegistrationKeyPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "streaming": false,
+      "summary": "Declare an environment registration key",
       "target": null
     },
     {
@@ -1182,6 +1394,7 @@
       "description": "Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.",
       "group": "environments",
       "method": "environments/registration-keys/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentRegistrationKeyReadParams"
@@ -1196,6 +1409,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read an environment registration key",
       "target": null
     },
@@ -1207,6 +1421,7 @@
       "description": "Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted.",
       "group": "environments",
       "method": "environments/registration-keys/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentRegistrationKeyListParams"
@@ -1221,6 +1436,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "List environment registration keys",
       "target": null
     },
@@ -1232,6 +1448,7 @@
       "description": "Replaces a key's editable policy: display name, active limit, disconnect grace, offline close-after, and expiry; an omitted field is unset. The identity mode is immutable. The active limit and expiry apply to later admissions; a changed disconnect grace or offline close-after applies at the next sweep to environments whose daemon is away.",
       "group": "environments",
       "method": "environments/registration-keys/update",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentRegistrationKeyUpdateParams"
@@ -1246,6 +1463,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Update an environment registration key",
       "target": null
     },
@@ -1257,6 +1475,7 @@
       "description": "Replaces the key's secret and display prefix and retires the old secret at once. The key keeps its id, group, policy, and the environments it admitted; daemons already registered are unaffected because they never present the key again. Returns the new secret once. Refused for a revoked key.",
       "group": "environments",
       "method": "environments/registration-keys/rotate",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentRegistrationKeyRotateParams"
@@ -1271,6 +1490,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Rotate an environment registration key",
       "target": null
     },
@@ -1282,6 +1502,7 @@
       "description": "Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.",
       "group": "environments",
       "method": "environments/registration-keys/revoke",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/EnvironmentRegistrationKeyRevokeParams"
@@ -1296,6 +1517,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Revoke an environment registration key",
       "target": null
     },
@@ -1307,6 +1529,7 @@
       "description": "Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created.",
       "group": "transcriptions",
       "method": "transcriptions/start",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/TranscriptionStartParams"
@@ -1321,6 +1544,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Start transcription",
       "target": null
     },
@@ -1332,6 +1556,7 @@
       "description": "Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire.",
       "group": "transcriptions",
       "method": "transcriptions/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/TranscriptionReadParams"
@@ -1346,6 +1571,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read transcription",
       "target": null
     },
@@ -1357,6 +1583,7 @@
       "description": "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.",
       "group": "transcriptions",
       "method": "transcriptions/cancel",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/TranscriptionCancelParams"
@@ -1371,6 +1598,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Cancel transcription",
       "target": null
     },
@@ -1382,6 +1610,7 @@
       "description": "Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers.",
       "group": "models",
       "method": "models/defaults/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ModelDefaultsReadParams"
@@ -1396,6 +1625,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read universe model defaults",
       "target": null
     },
@@ -1404,9 +1634,10 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
+      "description": "Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
       "group": "models",
       "method": "models/defaults/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ModelDefaultsPutParams"
@@ -1421,6 +1652,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Set a universe model default",
       "target": null
     },
@@ -1432,6 +1664,7 @@
       "description": "Queries supported providers directly, with a brief process-local burst cache, and returns best-effort selectable routes. One provider failure does not discard successful results from others.",
       "group": "models",
       "method": "models/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ModelListParams"
@@ -1446,6 +1679,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Discover available models",
       "target": null
     },
@@ -1457,6 +1691,7 @@
       "description": "Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.",
       "group": "profiles",
       "method": "profiles/create",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ProfileCreateParams"
@@ -1471,6 +1706,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Create an agent profile",
       "target": null
     },
@@ -1482,6 +1718,7 @@
       "description": "Returns the complete profile document and current revision.",
       "group": "profiles",
       "method": "profiles/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ProfileReadParams"
@@ -1496,6 +1733,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read an agent profile",
       "target": null
     },
@@ -1507,6 +1745,7 @@
       "description": "Returns lightweight summaries of universe-scoped reusable profiles.",
       "group": "profiles",
       "method": "profiles/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ProfileListParams"
@@ -1521,6 +1760,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List agent profiles",
       "target": null
     },
@@ -1532,6 +1772,7 @@
       "description": "Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.",
       "group": "profiles",
       "method": "profiles/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ProfilePutParams"
@@ -1546,6 +1787,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Create or replace an agent profile",
       "target": null
     },
@@ -1557,6 +1799,7 @@
       "description": "Deletes the catalog document; sessions previously created or configured from it retain their materialized state.",
       "group": "profiles",
       "method": "profiles/delete",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ProfileDeleteParams"
@@ -1571,6 +1814,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Delete an agent profile",
       "target": null
     },
@@ -1582,6 +1826,7 @@
       "description": "Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.",
       "group": "blobs/put",
       "method": "blobs/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BlobPutParams"
@@ -1596,6 +1841,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Store content-addressed blobs",
       "target": null
     },
@@ -1607,6 +1853,7 @@
       "description": "Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.",
       "group": "session",
       "method": "blobs/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BlobReadParams"
@@ -1621,6 +1868,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read a content-addressed blob",
       "target": null
     },
@@ -1632,6 +1880,7 @@
       "description": "Checks a batch of content references without returning blob bodies, preserving request order.",
       "group": "session",
       "method": "blobs/has",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BlobHasParams"
@@ -1646,6 +1895,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Check blob availability",
       "target": null
     },
@@ -1657,6 +1907,7 @@
       "description": "Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.",
       "group": "vfs",
       "method": "vfs/snapshots/commit",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsSnapshotCommitParams"
@@ -1671,6 +1922,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Commit a VFS snapshot",
       "target": null
     },
@@ -1682,6 +1934,7 @@
       "description": "Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.",
       "group": "vfs",
       "method": "vfs/snapshots/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsSnapshotReadParams"
@@ -1696,6 +1949,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read a VFS snapshot",
       "target": null
     },
@@ -1707,6 +1961,7 @@
       "description": "Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.",
       "group": "vfs",
       "method": "vfs/workspaces/create",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsWorkspaceCreateParams"
@@ -1721,6 +1976,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Create a mutable VFS workspace",
       "target": null
     },
@@ -1732,6 +1988,7 @@
       "description": "Returns workspace metadata, current head snapshot, and revision for safe updates.",
       "group": "vfs",
       "method": "vfs/workspaces/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsWorkspaceReadParams"
@@ -1746,6 +2003,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read a VFS workspace",
       "target": null
     },
@@ -1757,6 +2015,7 @@
       "description": "Lists the mutable universe workspaces with head snapshots, sizes, and revisions.",
       "group": "vfs",
       "method": "vfs/workspaces/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsWorkspaceListParams"
@@ -1771,6 +2030,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List VFS workspaces",
       "target": null
     },
@@ -1782,6 +2042,7 @@
       "description": "Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.",
       "group": "vfs",
       "method": "vfs/workspaces/update",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsWorkspaceUpdateParams"
@@ -1796,6 +2057,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Update a VFS workspace",
       "target": null
     },
@@ -1807,6 +2069,7 @@
       "description": "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.",
       "group": "vfs",
       "method": "vfs/workspaces/delete",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/VfsWorkspaceDeleteParams"
@@ -1821,6 +2084,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Delete a VFS workspace",
       "target": null
     },
@@ -1832,6 +2096,7 @@
       "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.",
       "group": "mcp",
       "method": "mcp/servers/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/McpServerPutParams"
@@ -1846,6 +2111,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Create or replace an MCP server record",
       "target": null
     },
@@ -1857,6 +2123,7 @@
       "description": "Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.",
       "group": "mcp",
       "method": "mcp/servers/auth/discover",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/McpServerAuthDiscoverParams"
@@ -1871,6 +2138,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Discover MCP server authentication",
       "target": null
     },
@@ -1882,6 +2150,7 @@
       "description": "Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.",
       "group": "mcp",
       "method": "mcp/servers/tools/discover",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/McpServerToolsDiscoverParams"
@@ -1896,6 +2165,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Discover MCP server tools",
       "target": null
     },
@@ -1907,6 +2177,7 @@
       "description": "Returns one catalog document with defaults, auth policy, non-secret grant binding, status, and revision; no credential value is exposed.",
       "group": "mcp",
       "method": "mcp/servers/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/McpServerReadParams"
@@ -1921,6 +2192,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read an MCP server record",
       "target": null
     },
@@ -1932,6 +2204,7 @@
       "description": "Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.",
       "group": "mcp",
       "method": "mcp/servers/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/McpServerListParams"
@@ -1946,6 +2219,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List MCP server records",
       "target": null
     },
@@ -1957,6 +2231,7 @@
       "description": "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.",
       "group": "mcp",
       "method": "mcp/servers/delete",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/McpServerDeleteParams"
@@ -1971,6 +2246,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Delete an MCP server record",
       "target": null
     },
@@ -1979,9 +2255,10 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; retrievable exposure is immutable and permits service-only leases.",
+      "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.",
       "group": "auth",
       "method": "auth/grants/import",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthGrantImportParams"
@@ -1996,6 +2273,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Import a token credential",
       "target": null
     },
@@ -2006,6 +2284,7 @@
       "description": "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.",
       "group": "auth/lease",
       "method": "auth/grants/lease",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthGrantLeaseParams"
@@ -2020,6 +2299,7 @@
       },
       "role": null,
       "scope": "service",
+      "streaming": false,
       "summary": "Lease a retrievable authentication grant",
       "target": null
     },
@@ -2031,6 +2311,7 @@
       "description": "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
       "group": "auth",
       "method": "auth/grants/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthGrantReadParams"
@@ -2045,6 +2326,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read authentication grant metadata",
       "target": null
     },
@@ -2056,6 +2338,7 @@
       "description": "Lists non-secret grant metadata for the universe, optionally filtered by status.",
       "group": "auth",
       "method": "auth/grants/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthGrantListParams"
@@ -2070,6 +2353,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List authentication grants",
       "target": null
     },
@@ -2078,24 +2362,26 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Encrypts the new plaintext token and swaps it in atomically under the same grant id, then deletes the old value. Only active staticToken grants can be replaced. Everything referencing the grant uses the new token from its next request; processes already running and leases already issued keep the old value. The token is never returned.",
+      "description": "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.",
       "group": "auth",
-      "method": "auth/grants/replace",
+      "method": "auth/grants/put",
+      "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthGrantReplaceParams"
+          "$ref": "#/definitions/AuthGrantPutParams"
         },
-        "type": "AuthGrantReplaceParams"
+        "type": "AuthGrantPutParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantReplaceResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantPutResponse"
         },
-        "type": "AgentApiOutcome<AuthGrantReplaceResponse>"
+        "type": "AgentApiOutcome<AuthGrantPutResponse>"
       },
       "role": "operator",
       "scope": "universe",
-      "summary": "Replace a token credential's value",
+      "streaming": false,
+      "summary": "Declare a token credential",
       "target": null
     },
     {
@@ -2106,6 +2392,7 @@
       "description": "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
       "group": "auth",
       "method": "auth/grants/revoke",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthGrantRevokeParams"
@@ -2120,6 +2407,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Revoke an authentication grant",
       "target": null
     },
@@ -2131,6 +2419,7 @@
       "description": "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
       "group": "auth",
       "method": "auth/clients/create",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthClientCreateParams"
@@ -2145,6 +2434,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Register an OAuth client",
       "target": null
     },
@@ -2156,6 +2446,7 @@
       "description": "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.",
       "group": "auth",
       "method": "auth/clients/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthClientReadParams"
@@ -2170,6 +2461,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read OAuth client metadata",
       "target": null
     },
@@ -2181,6 +2473,7 @@
       "description": "Lists non-secret OAuth client registrations in the universe.",
       "group": "auth",
       "method": "auth/clients/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthClientListParams"
@@ -2195,6 +2488,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List OAuth clients",
       "target": null
     },
@@ -2206,6 +2500,7 @@
       "description": "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
       "group": "auth",
       "method": "auth/clients/delete",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthClientDeleteParams"
@@ -2220,6 +2515,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Delete an OAuth client",
       "target": null
     },
@@ -2231,6 +2527,7 @@
       "description": "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
       "group": "auth",
       "method": "auth/flows/start",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthFlowStartParams"
@@ -2245,6 +2542,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Start an OAuth authorization flow",
       "target": null
     },
@@ -2256,6 +2554,7 @@
       "description": "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
       "group": "auth",
       "method": "auth/flows/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthFlowStatusParams"
@@ -2270,6 +2569,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read OAuth flow status",
       "target": null
     },
@@ -2281,6 +2581,7 @@
       "description": "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
       "group": "auth",
       "method": "auth/providers/create",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthProviderCreateParams"
@@ -2295,6 +2596,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Register an authentication provider",
       "target": null
     },
@@ -2303,24 +2605,26 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Replaces an existing provider's configuration and credential in place under the same id. The new settings are validated first, so a rejected replacement changes nothing; the swap is atomic and the old credential is then deleted. Sessions and environment variables referencing the id use the new settings from their next call.",
+      "description": "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.",
       "group": "auth",
-      "method": "auth/providers/replace",
+      "method": "auth/providers/put",
+      "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthProviderReplaceParams"
+          "$ref": "#/definitions/AuthProviderPutParams"
         },
-        "type": "AuthProviderReplaceParams"
+        "type": "AuthProviderPutParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderReplaceResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderPutResponse"
         },
-        "type": "AgentApiOutcome<AuthProviderReplaceResponse>"
+        "type": "AgentApiOutcome<AuthProviderPutResponse>"
       },
       "role": "operator",
       "scope": "universe",
-      "summary": "Replace an authentication provider",
+      "streaming": false,
+      "summary": "Declare an authentication provider",
       "target": null
     },
     {
@@ -2331,6 +2635,7 @@
       "description": "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.",
       "group": "auth",
       "method": "auth/providers/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthProviderReadParams"
@@ -2345,6 +2650,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read authentication provider metadata",
       "target": null
     },
@@ -2356,6 +2662,7 @@
       "description": "Lists non-secret model/GitHub provider registrations for the universe.",
       "group": "auth",
       "method": "auth/providers/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthProviderListParams"
@@ -2370,6 +2677,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List authentication providers",
       "target": null
     },
@@ -2381,6 +2689,7 @@
       "description": "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
       "group": "auth",
       "method": "auth/providers/delete",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthProviderDeleteParams"
@@ -2395,6 +2704,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Delete an authentication provider",
       "target": null
     },
@@ -2406,6 +2716,7 @@
       "description": "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
       "group": "auth",
       "method": "auth/github/installations/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthGitHubInstallationListParams"
@@ -2420,6 +2731,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "List GitHub App installations",
       "target": null
     },
@@ -2428,9 +2740,10 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Creates or refreshes a universe auth grant for one accessible installation. The installation token is brokered internally and never returned.",
+      "description": "Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.",
       "group": "auth",
       "method": "auth/github/installations/grant",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/AuthGitHubInstallationGrantParams"
@@ -2445,6 +2758,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Grant access to a GitHub App installation",
       "target": null
     },
@@ -2453,9 +2767,10 @@
         "action": "createBot",
         "kind": "universe"
       },
-      "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back.",
+      "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.",
       "group": "bots",
       "method": "bots/create",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotCreateParams"
@@ -2470,6 +2785,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Create a bot",
       "target": null
     },
@@ -2481,6 +2797,7 @@
       "description": "Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.",
       "group": "bots",
       "method": "bots/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotPutParams"
@@ -2495,6 +2812,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Create or replace a bot document",
       "target": null
     },
@@ -2506,6 +2824,7 @@
       "description": "Returns the bot record, its current revision, and lifecycle columns.",
       "group": "bots",
       "method": "bots/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotReadParams"
@@ -2520,6 +2839,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read a bot",
       "target": null
     },
@@ -2531,6 +2851,7 @@
       "description": "Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.",
       "group": "bots",
       "method": "bots/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotListParams"
@@ -2545,6 +2866,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List bots",
       "target": null
     },
@@ -2556,6 +2878,7 @@
       "description": "Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.",
       "group": "bots",
       "method": "bots/close",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotCloseParams"
@@ -2570,6 +2893,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Close a bot",
       "target": null
     },
@@ -2581,6 +2905,7 @@
       "description": "Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.",
       "group": "bots",
       "method": "bots/delete",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotDeleteParams"
@@ -2595,6 +2920,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Delete a bot",
       "target": null
     },
@@ -2606,6 +2932,7 @@
       "description": "Queries the controller workflow for its live snapshot (sessions, buffers, active and recent deliveries, budget) and lists sub-agent descendants. The controller is absent until the bot's first event.",
       "group": "bots",
       "method": "bots/state/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotStateReadParams"
@@ -2620,6 +2947,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read bot controller state",
       "target": null
     },
@@ -2631,6 +2959,7 @@
       "description": "Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.",
       "group": "bots",
       "method": "bots/sessions/rotate",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotSessionRotateParams"
@@ -2645,6 +2974,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Rotate a bot session",
       "target": null
     },
@@ -2653,9 +2983,10 @@
         "action": "manageBot",
         "kind": "universe"
       },
-      "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token.",
+      "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.",
       "group": "bots",
       "method": "bots/triggers/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotTriggerPutParams"
@@ -2670,6 +3001,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Create or replace a trigger",
       "target": null
     },
@@ -2678,9 +3010,10 @@
         "action": "read",
         "kind": "universe"
       },
-      "description": "Returns one trigger with its incidents and cursor; the ingest path and pairing code are included for bot-management callers.",
+      "description": "Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.",
       "group": "bots",
       "method": "bots/triggers/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotTriggerReadParams"
@@ -2695,6 +3028,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read a trigger",
       "target": null
     },
@@ -2703,9 +3037,10 @@
         "action": "read",
         "kind": "universe"
       },
-      "description": "Returns every trigger of the bot ordered by id, secrets included for bot-management callers.",
+      "description": "Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.",
       "group": "bots",
       "method": "bots/triggers/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotTriggerListParams"
@@ -2720,7 +3055,35 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List a bot's triggers",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "manageBot",
+        "kind": "universe"
+      },
+      "description": "Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.",
+      "group": "bots",
+      "method": "bots/triggers/secrets/read",
+      "notifications": [],
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/BotTriggerSecretsReadParams"
+        },
+        "type": "BotTriggerSecretsReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfBotTriggerSecretsReadResponse"
+        },
+        "type": "AgentApiOutcome<BotTriggerSecretsReadResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "streaming": false,
+      "summary": "Read a trigger's secrets",
       "target": null
     },
     {
@@ -2731,6 +3094,7 @@
       "description": "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.",
       "group": "bots",
       "method": "bots/triggers/delete",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotTriggerDeleteParams"
@@ -2745,6 +3109,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Delete a trigger",
       "target": null
     },
@@ -2756,6 +3121,7 @@
       "description": "Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.",
       "group": "bots",
       "method": "bots/events/admit",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotEventAdmitParams"
@@ -2770,6 +3136,7 @@
       },
       "role": "contributor",
       "scope": "universe",
+      "streaming": false,
       "summary": "Admit an event manually",
       "target": null
     },
@@ -2781,6 +3148,7 @@
       "description": "Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.",
       "group": "bots",
       "method": "bots/events/replay",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotEventReplayParams"
@@ -2795,6 +3163,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Replay a stored event",
       "target": null
     },
@@ -2806,6 +3175,7 @@
       "description": "Cursor-paginated event log, newest first, with outcomes; payload documents stay in the CAS.",
       "group": "bots",
       "method": "bots/events/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotEventListParams"
@@ -2820,6 +3190,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List a bot's events",
       "target": null
     },
@@ -2831,6 +3202,7 @@
       "description": "Returns the event row and its full stored envelope document.",
       "group": "bots",
       "method": "bots/events/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotEventReadParams"
@@ -2845,6 +3217,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read an event by number",
       "target": null
     },
@@ -2856,6 +3229,7 @@
       "description": "Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.",
       "group": "bots",
       "method": "bots/filters/test",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/BotFilterTestParams"
@@ -2870,6 +3244,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Test a CEL filter",
       "target": null
     },
@@ -2881,6 +3256,7 @@
       "description": "Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.",
       "group": "channels",
       "method": "channels/accounts/create",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ChannelAccountCreateParams"
@@ -2895,6 +3271,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Create a channel account",
       "target": null
     },
@@ -2906,6 +3283,7 @@
       "description": "Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.",
       "group": "channels",
       "method": "channels/accounts/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ChannelAccountPutParams"
@@ -2920,6 +3298,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Create or replace a channel account",
       "target": null
     },
@@ -2931,6 +3310,7 @@
       "description": "Returns the account document and revision.",
       "group": "channels",
       "method": "channels/accounts/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ChannelAccountReadParams"
@@ -2945,6 +3325,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read a channel account",
       "target": null
     },
@@ -2956,6 +3337,7 @@
       "description": "Lists this universe's provider accounts, optionally by provider.",
       "group": "channels",
       "method": "channels/accounts/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ChannelAccountListParams"
@@ -2970,6 +3352,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List channel accounts",
       "target": null
     },
@@ -2981,6 +3364,7 @@
       "description": "Removes the account and its pairings; chat triggers that reference it stop serving conversations.",
       "group": "channels",
       "method": "channels/accounts/delete",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ChannelAccountDeleteParams"
@@ -2995,6 +3379,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Delete a channel account",
       "target": null
     },
@@ -3005,6 +3390,7 @@
       "description": "Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.",
       "group": "channels/inbound",
       "method": "channels/inbound/admit",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ChannelInboundAdmitParams"
@@ -3019,6 +3405,7 @@
       },
       "role": null,
       "scope": "service",
+      "streaming": false,
       "summary": "Admit a provider message",
       "target": null
     },
@@ -3030,6 +3417,7 @@
       "description": "Lists conversations paired to chat triggers, optionally by account or bot.",
       "group": "channels",
       "method": "channels/pairings/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ChannelPairingListParams"
@@ -3044,6 +3432,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "List chat pairings",
       "target": null
     },
@@ -3055,6 +3444,7 @@
       "description": "Removes one pairing; the conversation must present the pairing code again to reconnect.",
       "group": "channels",
       "method": "channels/pairings/delete",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ChannelPairingDeleteParams"
@@ -3069,6 +3459,7 @@
       },
       "role": "operator",
       "scope": "universe",
+      "streaming": false,
       "summary": "Unpair a conversation",
       "target": null
     },
@@ -3080,6 +3471,7 @@
       "description": "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
       "group": "channels",
       "method": "channels/conversations/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/ChannelConversationReadParams"
@@ -3094,6 +3486,7 @@
       },
       "role": "viewer",
       "scope": "universe",
+      "streaming": false,
       "summary": "Read a conversation snapshot",
       "target": null
     },
@@ -3104,6 +3497,7 @@
       "description": "Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods.",
       "group": "deployment/sessions",
       "method": "deployment/sessions/deleted/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentDeletedSessionsListParams"
@@ -3118,6 +3512,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "List deleted sessions",
       "target": null
     },
@@ -3128,6 +3523,7 @@
       "description": "Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history.",
       "group": "deployment/sessions",
       "method": "deployment/sessions/purge",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentSessionPurgeParams"
@@ -3142,6 +3538,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "Permanently delete a session",
       "target": null
     },
@@ -3152,6 +3549,7 @@
       "description": "Deployment configuration inventory of one universe's provider bindings.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-provider-bindings/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentUniverseReadParams"
@@ -3166,6 +3564,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "List a universe's deployment provider bindings",
       "target": null
     },
@@ -3173,9 +3572,10 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Creates the deployment tenant boundary for an explicit UUID. The operation is idempotent and reports whether a new universe was created.",
+      "description": "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.",
       "group": "deployment/universes",
       "method": "deployment/universes/create",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentUniverseCreateParams"
@@ -3190,6 +3590,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "Create a universe",
       "target": null
     },
@@ -3200,6 +3601,7 @@
       "description": "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.",
       "group": "deployment/universes",
       "method": "deployment/universes/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentUniverseListParams"
@@ -3214,6 +3616,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "List universes",
       "target": null
     },
@@ -3221,9 +3624,10 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Returns one deployment tenant summary with aggregate session, workspace, profile, and blob usage.",
+      "description": "Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.",
       "group": "deployment/universes",
       "method": "deployment/universes/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentUniverseReadParams"
@@ -3238,6 +3642,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "Read a universe",
       "target": null
     },
@@ -3245,14 +3650,15 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Sets or changes a deployment-unique slug without changing the universe UUID or resources. The previous slug is released and old URLs may stop working. With onlyIfUnset, a different existing slug is a conflict. Claiming another universe's slug also returns a conflict. Does not create a universe.",
+      "description": "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged.",
       "group": "deployment/universes",
-      "method": "deployment/universes/slug/put",
+      "method": "deployment/universes/configuration/put",
+      "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/DeploymentUniverseSlugPutParams"
+          "$ref": "#/definitions/DeploymentUniverseConfigurationPutParams"
         },
-        "type": "DeploymentUniverseSlugPutParams"
+        "type": "DeploymentUniverseConfigurationPutParams"
       },
       "result": {
         "schema": {
@@ -3262,7 +3668,34 @@
       },
       "role": null,
       "scope": "deployment",
-      "summary": "Set a universe slug",
+      "streaming": false,
+      "summary": "Declare universe presentation and access",
+      "target": null
+    },
+    {
+      "access": {
+        "kind": "deployment"
+      },
+      "description": "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.",
+      "group": "deployment/universes",
+      "method": "deployment/universes/handle/put",
+      "notifications": [],
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/DeploymentUniverseHandlePutParams"
+        },
+        "type": "DeploymentUniverseHandlePutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentUniverseReadResponse"
+        },
+        "type": "AgentApiOutcome<DeploymentUniverseReadResponse>"
+      },
+      "role": null,
+      "scope": "deployment",
+      "streaming": false,
+      "summary": "Rename a universe",
       "target": null
     },
     {
@@ -3272,6 +3705,7 @@
       "description": "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
       "group": "deployment/universes",
       "method": "deployment/universes/delete",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentUniverseDeleteParams"
@@ -3286,6 +3720,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "Purge a universe",
       "target": null
     },
@@ -3293,9 +3728,10 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.",
+      "description": "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.",
       "group": "deployment/api-keys",
       "method": "deployment/api-keys/create",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentApiKeyCreateParams"
@@ -3310,7 +3746,34 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "Create a scoped API key",
+      "target": null
+    },
+    {
+      "access": {
+        "kind": "deployment"
+      },
+      "description": "Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.",
+      "group": "deployment/api-keys",
+      "method": "deployment/api-keys/put",
+      "notifications": [],
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/DeploymentApiKeyPutParams"
+        },
+        "type": "DeploymentApiKeyPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentApiKeyPutResponse"
+        },
+        "type": "AgentApiOutcome<DeploymentApiKeyPutResponse>"
+      },
+      "role": null,
+      "scope": "deployment",
+      "streaming": false,
+      "summary": "Declare a scoped API key",
       "target": null
     },
     {
@@ -3320,6 +3783,7 @@
       "description": "Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
       "group": "deployment/api-keys",
       "method": "deployment/api-keys/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentApiKeyListParams"
@@ -3334,6 +3798,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "List scoped API keys",
       "target": null
     },
@@ -3341,9 +3806,10 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.",
+      "description": "Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.",
       "group": "deployment/api-keys",
       "method": "deployment/api-keys/rotate",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentApiKeyRotateParams"
@@ -3358,6 +3824,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "Rotate a scoped API key",
       "target": null
     },
@@ -3365,9 +3832,10 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found.",
+      "description": "Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.",
       "group": "deployment/api-keys",
       "method": "deployment/api-keys/revoke",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentApiKeyRevokeParams"
@@ -3382,6 +3850,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "Revoke a scoped API key",
       "target": null
     },
@@ -3392,6 +3861,7 @@
       "description": "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentEnvironmentProviderPutParams"
@@ -3406,6 +3876,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "Put an environment provider",
       "target": null
     },
@@ -3416,6 +3887,7 @@
       "description": "Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentEnvironmentProviderListParams"
@@ -3430,6 +3902,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "List environment providers",
       "target": null
     },
@@ -3440,6 +3913,7 @@
       "description": "Returns one deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/read",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentEnvironmentProviderReadParams"
@@ -3454,6 +3928,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "Read an environment provider",
       "target": null
     },
@@ -3464,6 +3939,7 @@
       "description": "Deletes a deployment provider only when no universe binding and no non-closed environment references it.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/delete",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentEnvironmentProviderDeleteParams"
@@ -3478,6 +3954,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "Delete an environment provider",
       "target": null
     },
@@ -3488,6 +3965,7 @@
       "description": "Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/bindings/put",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentProviderBindingPutParams"
@@ -3502,6 +3980,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "Put an environment provider binding",
       "target": null
     },
@@ -3512,6 +3991,7 @@
       "description": "Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/bindings/delete",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentProviderBindingDeleteParams"
@@ -3526,6 +4006,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "Delete an environment provider binding",
       "target": null
     },
@@ -3536,6 +4017,7 @@
       "description": "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.",
       "group": "deployment/channels",
       "method": "deployment/channels/accounts/list",
+      "notifications": [],
       "params": {
         "schema": {
           "$ref": "#/definitions/DeploymentChannelAccountListParams"
@@ -3550,6 +4032,7 @@
       },
       "role": null,
       "scope": "deployment",
+      "streaming": false,
       "summary": "List channel accounts across universes",
       "target": null
     }
@@ -3558,6 +4041,15 @@
     "$ref": "#/definitions/AgentNotification"
   },
   "notifications": [
+    "session/changed",
+    "session/removed",
+    "bots/changed",
+    "bots/removed",
+    "environments/changed",
+    "environments/removed",
+    "workspaces/changed",
+    "workspaces/removed",
+    "watch/reset",
     "session/started",
     "session/event",
     "session/runs/started",

@@ -1,9 +1,10 @@
 use ::mcp::{
     ListMcpServers, McpApprovalPolicy, McpExecution, McpExposure, McpRegistryError,
-    McpRegistryStore, McpServerAuthPolicy, McpServerHeaderValue, McpServerHeaders, McpServerId,
-    McpServerRecord, McpServerStatus, PutMcpServerRecord, RemoteMcpTransport,
+    McpRegistryStore, McpServerAuthPolicy, McpServerId, McpServerRecord, McpServerStatus,
+    PutMcpServerRecord, RemoteMcpTransport,
 };
 use async_trait::async_trait;
+use auth::{RequestHeaderValue, RequestHeaders};
 use sqlx::Row;
 
 use crate::PgStore;
@@ -303,11 +304,11 @@ impl PgStore {
             for (name, value) in &record.headers {
                 names.push(name.clone());
                 match value {
-                    McpServerHeaderValue::Literal { value } => {
+                    RequestHeaderValue::Literal { value } => {
                         literals.push(Some(value.clone()));
                         grants.push(None);
                     }
-                    McpServerHeaderValue::Credential { grant_id } => {
+                    RequestHeaderValue::Credential { grant_id } => {
                         literals.push(None);
                         grants.push(Some(grant_id.as_str().to_owned()));
                     }
@@ -434,7 +435,7 @@ struct HeaderRow {
     grant_id: Option<String>,
 }
 
-fn headers_from_json(value: serde_json::Value) -> Result<McpServerHeaders, McpRegistryError> {
+fn headers_from_json(value: serde_json::Value) -> Result<RequestHeaders, McpRegistryError> {
     let rows: Vec<HeaderRow> =
         serde_json::from_value(value).map_err(|error| McpRegistryError::Store {
             message: format!("decode mcp server headers: {error}"),
@@ -442,8 +443,8 @@ fn headers_from_json(value: serde_json::Value) -> Result<McpServerHeaders, McpRe
     rows.into_iter()
         .map(|row| {
             let value = match (row.literal_value, row.grant_id) {
-                (Some(value), None) => McpServerHeaderValue::Literal { value },
-                (None, Some(grant_id)) => McpServerHeaderValue::Credential {
+                (Some(value), None) => RequestHeaderValue::Literal { value },
+                (None, Some(grant_id)) => RequestHeaderValue::Credential {
                     grant_id: auth::AuthGrantId::try_new(grant_id).map_err(|error| {
                         McpRegistryError::Store {
                             message: format!("decode mcp header grant id: {error}"),

@@ -28,7 +28,7 @@ const run = (key: string): RunSection => ({
 
 async function render(sections: RunSection[], historyRevision = 0, ready = true) {
   await act(async () => root.render(
-    <TranscriptMotionProvider sections={sections} pendingKeys={[]} ready={ready} historyRevision={historyRevision}>
+    <TranscriptMotionProvider sections={sections} ready={ready} historyRevision={historyRevision}>
       {sections.map((section) => <RunSectionView key={section.key} section={section}
         activeRun={section.live ? { runId: section.key, label: "thinking", cancelling: false } : null}
         showRunStatistics={false} collapseCompletedRuns />)}
@@ -127,4 +127,20 @@ it("does not animate previously hidden messages when activity is expanded", asyn
   expect(message.textContent).toBe("Earlier progress");
   expect([...container.querySelectorAll(".transcript-enter")]).toEqual(entrances);
   expect(message.closest('[data-slot="message"]')!.parentElement!.classList.contains("transcript-enter")).toBe(false);
+});
+
+
+it("stops a parent entrance immediately when local steering arrives", async () => {
+  await render([]);
+  const section = { ...run("active"), live: true };
+  await render([section]);
+  const activity = container.querySelector('[role="status"]')!.parentElement!;
+  expect(activity.classList.contains("transcript-enter")).toBe(true);
+  const steer = { kind: "message" as const, key: "local-steer", role: "user" as const,
+    text: "Adjust this", steering: true, local: true };
+  await render([{ ...section, work: [steer] }]);
+  expect(activity.classList.contains("transcript-enter")).toBe(false);
+  expect(activity.querySelector(".transcript-enter")).toBeNull();
+  await render([{ ...section, work: [{ ...steer, steeringId: "confirmed" }] }]);
+  expect(activity.classList.contains("transcript-enter")).toBe(false);
 });

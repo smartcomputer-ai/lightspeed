@@ -2,7 +2,8 @@
 //!
 //! Every path goes through one [`Confinement`]: resolved beneath the root's
 //! directory descriptor, following a symlink only while its target stays
-//! inside the root, and never addressing the daemon state directory. Every
+//! inside the root, and never addressing the daemon state directory, a
+//! kernel filesystem or the registration key ([`Protected`]). Every
 //! later operation names the resolved entry by its parent descriptor and
 //! name, so nothing follows a link swapped in after resolution. Handlers do
 //! their I/O on blocking threads; walks poll the request's cancellation
@@ -15,6 +16,7 @@ mod os;
 #[cfg(windows)]
 #[path = "filesystem/os_windows.rs"]
 mod os;
+mod protected;
 mod scan;
 mod search;
 mod transfer;
@@ -59,6 +61,7 @@ use environment_protocol::{
     paths::{EntryName, EnvironmentPath},
 };
 use os::{Directory, EntryStat, RenameMode};
+pub use protected::Protected;
 #[cfg(unix)]
 use rustix::io::Errno;
 use sha2::{Digest, Sha256};
@@ -356,9 +359,9 @@ impl Inner {
         let read = data.len() as u64;
         let more = read > params.max_bytes;
         data.truncate(params.max_bytes as usize);
-        // Files such as procfs entries report size 0; their size is what
-        // could be read. Every other file's size is what `fstat` reported,
-        // also for an `offset` past its end.
+        // A file some virtual filesystems generate on read reports size 0;
+        // its size is what could be read. Every other file's size is what
+        // `fstat` reported, also for an `offset` past its end.
         let file_size = if opened.size == 0 && read > 0 {
             params.offset.saturating_add(read)
         } else {
@@ -549,6 +552,7 @@ impl Inner {
             .open_directory()
             .map_err(|error| io_error(error, path))?;
         let mut names = directory.names().map_err(|error| io_error(error, path))?;
+        let protected = self.confinement.protected_files();
         if resolved
             .stat
             .is_some_and(|stat| self.confinement.holds_state(&stat))
@@ -584,6 +588,13 @@ impl Inner {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(io_error(error, format!("{path}/{entry_name}"))),
             };
+            // A mount point of a refused filesystem, or the registration
+            // key: left out like the state directory. Told apart only here,
+            // where every entry of the page is examined anyway, so a large
+            // directory is not examined whole for the sake of one page.
+            if self.confinement.refuses(&protected, &stat) {
+                continue;
+            }
             response.entries.push(DirectoryEntry {
                 name: entry_name,
                 metadata: metadata(&directory, name, &stat),
@@ -1058,29 +1069,328 @@ mod tests {
         assert_eq!(reason(&error), Some(PreconditionReason::IsDirectory));
     }
 
-    #[cfg(target_os = "linux")]
-    #[tokio::test(flavor = "current_thread")]
-    async fn zero_size_proc_files_report_the_bytes_read() {
-        let temp = tempfile::tempdir().unwrap();
-        let base = temp.path().canonicalize().unwrap();
-        let confinement = Arc::new(Confinement::new("/".into(), base.join("state")).unwrap());
-        let fs = LocalFileSystem::new(FilesystemConfig {
+    /// A filesystem over `/`, working in `base`, with `protected` refused.
+    fn protected_filesystem(base: &Path, protected: Protected, writable: bool) -> LocalFileSystem {
+        let confinement =
+            Arc::new(Confinement::protecting("/".into(), base.join("state"), protected).unwrap());
+        LocalFileSystem::new(FilesystemConfig {
             confinement,
-            cwd: base,
-            writable: false,
+            cwd: base.to_path_buf(),
+            writable,
             limits: limits(),
         })
-        .unwrap();
+        .unwrap()
+    }
+
+    /// The refusal of the daemon's own state, which the protected locations
+    /// share.
+    fn is_daemon_state(error: &ProtocolError) -> bool {
+        matches!(
+            error.data,
+            ErrorData::PermissionDenied {
+                reason: Some(PermissionReason::DaemonState)
+            }
+        )
+    }
+
+    /// Every name `fs/readDirectory` reports for `path`, over all pages.
+    async fn listed(fs: &LocalFileSystem, path: EnvironmentPath) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = fs
+                .read_directory(
+                    &context(),
+                    ReadDirectoryParams {
+                        path: path.clone(),
+                        limit: 2,
+                        cursor: cursor.take(),
+                    },
+                )
+                .await
+                .unwrap();
+            names.extend(
+                page.entries
+                    .iter()
+                    .map(|entry| entry.name.as_str().to_owned()),
+            );
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => return names,
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn kernel_filesystems_are_refused_whatever_the_root() {
+        assert!(
+            Path::new("/proc/self/status").exists() && Path::new("/sys/kernel").exists(),
+            "this test needs /proc and /sys mounted"
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        let protected = Protected::for_daemon(None, &[Path::new("/"), &base]);
+        let fs = protected_filesystem(&base, protected, true);
+        symlink("/proc/self/environ", base.join("environ")).unwrap();
+        symlink("/sys", base.join("system")).unwrap();
+        std::fs::write(base.join("file"), b"file").unwrap();
+        for subject in [
+            EnvironmentPath::new("/proc/self/status").unwrap(),
+            EnvironmentPath::new("/proc/self/environ").unwrap(),
+            EnvironmentPath::new("/proc/1/cmdline").unwrap(),
+            EnvironmentPath::new("/sys/kernel/ostype").unwrap(),
+            path(&base, "environ"),
+            path(&base, "system/kernel/ostype"),
+        ] {
+            let error = fs
+                .read_file(&context(), read(subject.clone(), 1024))
+                .await
+                .unwrap_err();
+            assert!(is_daemon_state(&error), "read {subject}: {error}");
+            let error = fs
+                .write_file(&context(), write(subject.clone(), b"x"))
+                .await
+                .unwrap_err();
+            assert!(is_daemon_state(&error), "write {subject}: {error}");
+        }
+        for subject in ["/proc", "/proc/self", "/sys", "/sys/kernel"] {
+            let subject = EnvironmentPath::new(subject).unwrap();
+            let error = fs
+                .read_directory(
+                    &context(),
+                    ReadDirectoryParams {
+                        path: subject.clone(),
+                        limit: 10,
+                        cursor: None,
+                    },
+                )
+                .await
+                .unwrap_err();
+            assert!(is_daemon_state(&error), "list {subject}: {error}");
+            let error = fs
+                .get_metadata(
+                    &context(),
+                    GetMetadataParams {
+                        path: subject.clone(),
+                        follow_symlinks: false,
+                    },
+                )
+                .await
+                .unwrap_err();
+            assert!(is_daemon_state(&error), "stat {subject}: {error}");
+        }
+        // Listing the root leaves both mount points out.
+        let root = listed(&fs, EnvironmentPath::new("/").unwrap()).await;
+        assert!(!root.iter().any(|name| name == "proc" || name == "sys"));
+        assert!(root.iter().any(|name| name == "dev"), "{root:?}");
+        // The rest of the machine is as reachable as before.
         let response = fs
-            .read_file(
+            .read_file(&context(), read(path(&base, "file"), 16))
+            .await
+            .unwrap();
+        assert_eq!(response.data.as_slice(), b"file");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn every_file_operation_refuses_a_protected_filesystem_and_the_registration_key() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        // `/dev` stands in for a kernel filesystem: a mount of its own that
+        // needs no privilege to reach.
+        assert_ne!(
+            std::fs::metadata("/dev").unwrap().dev(),
+            std::fs::metadata(&base).unwrap().dev(),
+            "this test needs /dev to be a filesystem of its own"
+        );
+        std::fs::create_dir_all(base.join("secrets")).unwrap();
+        std::fs::write(base.join("secrets/key"), b"lsrk_secret").unwrap();
+        std::fs::write(base.join("secrets/notes"), b"notes").unwrap();
+        std::fs::write(base.join("plain"), b"plain").unwrap();
+        symlink("/dev/null", base.join("null")).unwrap();
+        symlink("secrets/key", base.join("key-link")).unwrap();
+        let mut protected = Protected::default();
+        protected.refuse_filesystem_at(Path::new("/dev")).unwrap();
+        protected.refuse_file(&base.join("secrets/key"));
+        let fs = protected_filesystem(&base, protected, true);
+
+        let key = path(&base, "secrets/key");
+        let device = EnvironmentPath::new("/dev/null").unwrap();
+        for subject in [
+            key.clone(),
+            path(&base, "key-link"),
+            device.clone(),
+            path(&base, "null"),
+        ] {
+            let error = fs
+                .read_file(&context(), read(subject.clone(), 1024))
+                .await
+                .unwrap_err();
+            assert!(is_daemon_state(&error), "read {subject}: {error}");
+            let error = fs
+                .write_file(&context(), write(subject.clone(), b"overwritten"))
+                .await
+                .unwrap_err();
+            assert!(is_daemon_state(&error), "write {subject}: {error}");
+            let error = fs
+                .get_metadata(
+                    &context(),
+                    GetMetadataParams {
+                        path: subject.clone(),
+                        follow_symlinks: true,
+                    },
+                )
+                .await
+                .unwrap_err();
+            assert!(is_daemon_state(&error), "stat {subject}: {error}");
+        }
+        // Nothing is created on the refused filesystem either.
+        for subject in ["/dev/lightspeed-absent", "/dev/lightspeed-absent/deeper"] {
+            let subject = EnvironmentPath::new(subject).unwrap();
+            let error = fs
+                .write_file(&context(), write(subject.clone(), b"x"))
+                .await
+                .unwrap_err();
+            assert!(is_daemon_state(&error), "create {subject}: {error}");
+            let error = fs
+                .create_directory(
+                    &context(),
+                    CreateDirectoryParams {
+                        path: subject.clone(),
+                        recursive: true,
+                    },
+                )
+                .await
+                .unwrap_err();
+            assert!(is_daemon_state(&error), "mkdir {subject}: {error}");
+        }
+        let error = fs
+            .read_directory(
                 &context(),
-                read(EnvironmentPath::new("/proc/self/status").unwrap(), 1 << 20),
+                ReadDirectoryParams {
+                    path: EnvironmentPath::new("/dev").unwrap(),
+                    limit: 10,
+                    cursor: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(is_daemon_state(&error), "list /dev: {error}");
+        // Its mount point is left out of the listing of the directory above.
+        let top = listed(&fs, EnvironmentPath::new("/").unwrap()).await;
+        assert!(!top.iter().any(|name| name == "dev"), "{top:?}");
+        // The key is left out of its directory's listing; its neighbour and
+        // the link that names it are ordinary entries.
+        assert_eq!(listed(&fs, path(&base, "secrets")).await, ["notes"]);
+        assert!(
+            listed(&fs, EnvironmentPath::new(base.to_str().unwrap()).unwrap())
+                .await
+                .contains(&"key-link".to_owned())
+        );
+
+        let remove = |path: EnvironmentPath| RemoveParams {
+            path,
+            recursive: true,
+            force: true,
+        };
+        for subject in [key.clone(), path(&base, "secrets"), device.clone()] {
+            let error = fs
+                .remove(&context(), remove(subject.clone()))
+                .await
+                .unwrap_err();
+            assert!(is_daemon_state(&error), "remove {subject}: {error}");
+        }
+        let rename = |source: EnvironmentPath, destination: EnvironmentPath| RenameParams {
+            source,
+            destination,
+            overwrite: true,
+            if_match: None,
+        };
+        for (source, destination) in [
+            (key.clone(), path(&base, "taken")),
+            (path(&base, "secrets"), path(&base, "moved")),
+            (path(&base, "plain"), key.clone()),
+            (
+                path(&base, "plain"),
+                EnvironmentPath::new("/dev/taken").unwrap(),
+            ),
+        ] {
+            let error = fs
+                .rename(&context(), rename(source.clone(), destination.clone()))
+                .await
+                .unwrap_err();
+            assert!(
+                is_daemon_state(&error),
+                "rename {source} to {destination}: {error}"
+            );
+        }
+        assert_eq!(
+            std::fs::read(base.join("secrets/key")).unwrap(),
+            b"lsrk_secret"
+        );
+        assert!(base.join("plain").exists());
+
+        // Search and glob walk past both without a trace.
+        let glob = fs
+            .glob_files(
+                &context(),
+                GlobFilesParams {
+                    root: EnvironmentPath::new(base.to_str().unwrap()).unwrap(),
+                    filter: environment_protocol::data::fs::TreeFilter {
+                        include: vec!["*".to_owned()],
+                        include_hidden: true,
+                        include_ignored: true,
+                        ..Default::default()
+                    },
+                    limits: environment_protocol::data::fs::GlobFilesLimits {
+                        max_matches: 100,
+                        max_files: 100,
+                        max_duration_ms: 10_000,
+                    },
+                },
             )
             .await
             .unwrap();
-        assert!(!response.data.is_empty());
-        assert_eq!(response.file_size, response.data.len() as u64);
-        assert!(!response.truncated);
+        let matched: Vec<&str> = glob
+            .matches
+            .iter()
+            .map(|found| found.as_str().strip_prefix(base.to_str().unwrap()).unwrap())
+            .collect();
+        assert!(matched.contains(&"/secrets/notes"), "{matched:?}");
+        assert!(matched.contains(&"/plain"), "{matched:?}");
+        assert!(!matched.contains(&"/secrets/key"), "{matched:?}");
+        assert_eq!(glob.skipped_entry_count, 0);
+        let search = fs
+            .search_text(
+                &context(),
+                SearchTextParams {
+                    root: EnvironmentPath::new(base.to_str().unwrap()).unwrap(),
+                    pattern: "lsrk_|notes".into(),
+                    pattern_ignore_case: false,
+                    filter: environment_protocol::data::fs::TreeFilter {
+                        include_hidden: true,
+                        include_ignored: true,
+                        ..Default::default()
+                    },
+                    limits: environment_protocol::data::fs::SearchTextLimits {
+                        max_matches: 100,
+                        max_files: 100,
+                        max_bytes: 1 << 20,
+                        max_duration_ms: 10_000,
+                        max_line_bytes: 4096,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let found: Vec<&str> = search
+            .matches
+            .iter()
+            .map(|found| found.line.as_str())
+            .collect();
+        assert_eq!(found, ["notes"]);
     }
 
     #[tokio::test(flavor = "current_thread")]

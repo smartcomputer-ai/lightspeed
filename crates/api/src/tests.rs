@@ -174,6 +174,118 @@ fn auth_provider_create_params_redact_credential_in_debug_output() {
 }
 
 #[test]
+fn model_endpoint_headers_are_tagged_values_on_the_wire() {
+    let endpoint = json!({
+        "baseUrl": "https://router.example/v1",
+        "headers": {
+            "x-api-key": { "type": "credential", "grantId": "authgrant_router" },
+            "x-title": { "type": "literal", "value": "Lightspeed" },
+        },
+        "apiKinds": ["openai:completions"],
+    });
+    let decoded: ModelEndpointConfig =
+        serde_json::from_value(endpoint.clone()).expect("deserialize endpoint");
+    assert_eq!(
+        decoded.headers.get("x-api-key"),
+        Some(&RequestHeader::Credential {
+            grant_id: "authgrant_router".to_owned(),
+        })
+    );
+    assert_eq!(
+        decoded.headers.get("x-title"),
+        Some(&RequestHeader::Literal {
+            value: "Lightspeed".to_owned(),
+        })
+    );
+    assert_eq!(serde_json::to_value(&decoded).unwrap(), endpoint);
+
+    // A header is always tagged: a bare string names no value source.
+    let bare = json!({
+        "baseUrl": "https://router.example/v1",
+        "headers": { "x-title": "Lightspeed" },
+        "apiKinds": ["openai:completions"],
+    });
+    assert!(serde_json::from_value::<ModelEndpointConfig>(bare).is_err());
+
+    // An endpoint without headers leaves the field out.
+    let plain = ModelEndpointConfig {
+        base_url: "https://router.example/v1".to_owned(),
+        headers: Default::default(),
+        api_kinds: vec!["openai:completions".to_owned()],
+    };
+    assert!(
+        serde_json::to_value(&plain)
+            .unwrap()
+            .get("headers")
+            .is_none()
+    );
+}
+
+#[test]
+fn mcp_servers_and_model_endpoints_share_one_header_shape() {
+    let headers = json!({
+        "x-tenant": { "type": "literal", "value": "acme" },
+        "x-upstream-token": { "type": "credential", "grantId": "authgrant_upstream" },
+    });
+    let expected = BTreeMap::from([
+        (
+            "x-tenant".to_owned(),
+            RequestHeader::Literal {
+                value: "acme".to_owned(),
+            },
+        ),
+        (
+            "x-upstream-token".to_owned(),
+            RequestHeader::Credential {
+                grant_id: "authgrant_upstream".to_owned(),
+            },
+        ),
+    ]);
+
+    let server: McpServerInput = serde_json::from_value(json!({
+        "serverId": "tracker",
+        "serverUrl": "https://tracker.example/mcp",
+        "defaultServerLabel": "tracker",
+        "headers": headers,
+    }))
+    .expect("deserialize server");
+    assert_eq!(server.headers, expected);
+    assert_eq!(serde_json::to_value(&server).unwrap()["headers"], headers);
+
+    let endpoint: ModelEndpointConfig = serde_json::from_value(json!({
+        "baseUrl": "https://router.example/v1",
+        "headers": headers,
+        "apiKinds": ["openai:completions"],
+    }))
+    .expect("deserialize endpoint");
+    assert_eq!(endpoint.headers, expected);
+    assert_eq!(serde_json::to_value(&endpoint).unwrap()["headers"], headers);
+
+    for name in ["api-key", "X-Api-Key", "Proxy-Authorization"] {
+        assert!(is_credential_only_header(name), "{name}");
+    }
+    assert!(!is_credential_only_header("x-tenant"));
+    assert!(
+        CREDENTIAL_ONLY_HEADER_NAMES
+            .windows(2)
+            .all(|pair| pair[0] < pair[1])
+    );
+
+    // The value source is always named; nothing else is accepted.
+    for invalid in [
+        json!("acme"),
+        json!({ "value": "acme" }),
+        json!({ "type": "secret", "value": "acme" }),
+        json!({ "type": "credential", "grant_id": "authgrant_upstream" }),
+    ] {
+        assert!(
+            serde_json::from_value::<RequestHeader>(invalid.clone()).is_err(),
+            "{invalid}"
+        );
+    }
+}
+
+#[test]
 fn environment_provider_put_params_redact_credential_in_debug_output() {
     let params: DeploymentEnvironmentProviderPutParams = serde_json::from_value(json!({
         "providerId": "incus-local",
@@ -2008,6 +2120,7 @@ impl AgentApiService for TestService {
                     universe_id: uuid::Uuid::nil(),
                 },
                 single: true,
+                key_id: None,
                 key_prefix: None,
                 groups: MethodGroup::ALL.to_vec(),
             },
@@ -2110,6 +2223,8 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionListResponse {
             sessions: vec![SessionSummaryView {
+                revision: 0,
+                details: Default::default(),
                 access: test_access_summary(),
                 activity: SessionActivity::Idle,
                 metadata: Default::default(),
@@ -2133,6 +2248,8 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionRenameResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionRenameResponse {
             session: SessionSummaryView {
+                revision: 0,
+                details: Default::default(),
                 access: test_access_summary(),
                 activity: SessionActivity::Idle,
                 metadata: Default::default(),
@@ -2155,6 +2272,8 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionMetadataPutResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionMetadataPutResponse {
             session: SessionSummaryView {
+                revision: 0,
+                details: Default::default(),
                 access: test_access_summary(),
                 activity: SessionActivity::Idle,
                 retention: test_session_retention(&params.session_id),
@@ -2193,6 +2312,8 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionDeleteResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionDeleteResponse {
             session: SessionSummaryView {
+                revision: 0,
+                details: Default::default(),
                 access: test_access_summary(),
                 activity: SessionActivity::Idle,
                 metadata: Default::default(),
@@ -2441,6 +2562,28 @@ impl AgentApiService for TestService {
         }))
     }
 
+    async fn put_registered_environment(
+        &self,
+        params: EnvironmentRegisteredPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegisteredPutResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(EnvironmentRegisteredPutResponse {
+            environment: test_declared_environment(&params),
+            created: true,
+        }))
+    }
+
+    async fn release_registered_environment(
+        &self,
+        params: EnvironmentRegisteredReleaseParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegisteredReleaseResponse>, AgentApiError> {
+        let mut environment = test_external_environment();
+        environment.environment_id = params.environment_id;
+        Ok(AgentApiOutcome::new(EnvironmentRegisteredReleaseResponse {
+            environment,
+            released: true,
+        }))
+    }
+
     async fn put_environment_ingress(
         &self,
         params: EnvironmentIngressPutParams,
@@ -2618,6 +2761,22 @@ impl AgentApiService for TestService {
         Ok(AgentApiOutcome::new(
             EnvironmentRegistrationKeyUpdateResponse {
                 registration_key: key,
+            },
+        ))
+    }
+
+    async fn put_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>, AgentApiError> {
+        let mut key = test_registration_key();
+        key.registration_key_id = params.registration_key_id;
+        key.display_name = params.display_name;
+        Ok(AgentApiOutcome::new(
+            EnvironmentRegistrationKeyPutResponse {
+                registration_key: key,
+                created: true,
+                secret_replaced: false,
             },
         ))
     }
@@ -2906,12 +3065,14 @@ impl AgentApiService for TestService {
         }))
     }
 
-    async fn replace_auth_grant(
+    async fn put_auth_grant(
         &self,
-        params: AuthGrantReplaceParams,
-    ) -> Result<AgentApiOutcome<AuthGrantReplaceResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthGrantReplaceResponse {
+        params: AuthGrantPutParams,
+    ) -> Result<AgentApiOutcome<AuthGrantPutResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(AuthGrantPutResponse {
             grant: test_auth_grant(params.grant_id, AuthGrantStatus::Active),
+            created: false,
+            token_replaced: !params.dry_run,
         }))
     }
 
@@ -3004,12 +3165,14 @@ impl AgentApiService for TestService {
         }))
     }
 
-    async fn replace_auth_provider(
+    async fn put_auth_provider(
         &self,
-        params: AuthProviderReplaceParams,
-    ) -> Result<AgentApiOutcome<AuthProviderReplaceResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthProviderReplaceResponse {
+        params: AuthProviderPutParams,
+    ) -> Result<AgentApiOutcome<AuthProviderPutResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(AuthProviderPutResponse {
             provider: test_auth_provider(params.provider_id),
+            created: true,
+            credential_replaced: false,
         }))
     }
 
@@ -3159,6 +3322,15 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<BotTriggerListResponse>, AgentApiError> {
         Err(AgentApiError::internal(
             "list_bot_triggers is not part of the api test double",
+        ))
+    }
+
+    async fn read_bot_trigger_secrets(
+        &self,
+        _params: BotTriggerSecretsReadParams,
+    ) -> Result<AgentApiOutcome<BotTriggerSecretsReadResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "read_bot_trigger_secrets is not part of the api test double",
         ))
     }
 
@@ -3342,7 +3514,8 @@ fn test_auth_grant(grant_id: String, status: AuthGrantStatus) -> AuthGrantView {
         provider_kind: AuthProviderKind::StaticToken,
         exposure: AuthGrantExposure::Brokered,
         created_by: Attribution::Key {
-            prefix: "lsk_abcdefgh".into(),
+            key_id: "ci-bot".into(),
+            scope_kind: AccessScopeKind::Universe,
         },
         display_name: None,
         subject_hint: None,
@@ -3509,6 +3682,7 @@ fn test_registration_key() -> EnvironmentRegistrationKeyView {
         max_active_environments: Some(8),
         ephemeral_disconnect_grace_ms: 300_000,
         offline_close_after_ms: None,
+        declared_only: false,
         expires_at_ms: None,
         status: EnvironmentRegistrationKeyStatusView::Active,
         registered_environment_count: 1,
@@ -3559,6 +3733,47 @@ async fn dispatch_json_rpc_routes_registration_key_update_and_rotate() {
     assert_eq!(result["secret"], json!("lsrk_rotated-secret"));
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_a_declared_registered_environment() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_ENVIRONMENTS_REGISTERED_PUT.to_owned(),
+            params: Some(json!({
+                "environmentId": "build-box",
+                "registrationKeyId": "runners",
+                "name": "lightspeed-runner-0"
+            })),
+        },
+    )
+    .await;
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let result = &response.result.expect("result")["result"];
+    assert_eq!(result["created"], json!(true));
+    let environment = &result["environment"];
+    assert_eq!(environment["environmentId"], json!("build-box"));
+    assert_eq!(environment["status"], json!("away"));
+    assert_eq!(environment["source"]["type"], json!("registered"));
+    assert_eq!(environment["source"]["name"], json!("lightspeed-runner-0"));
+    // A declared environment that waits for its machine has no daemon.
+    assert!(environment["source"].get("daemonId").is_none());
+
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(2),
+            method: METHOD_ENVIRONMENTS_REGISTERED_RELEASE.to_owned(),
+            params: Some(json!({ "environmentId": "build-box" })),
+        },
+    )
+    .await;
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let result = &response.result.expect("result")["result"];
+    assert_eq!(result["released"], json!(true));
+    assert_eq!(result["environment"]["environmentId"], json!("build-box"));
+}
+
 #[test]
 fn registration_secret_views_redact_debug_output() {
     let response = EnvironmentRegistrationKeyCreateResponse {
@@ -3570,6 +3785,33 @@ fn registration_secret_views_redact_debug_output() {
     assert!(debug.contains("<redacted>"));
     let json = serde_json::to_value(&response).expect("serialize");
     assert_eq!(json["secret"], "lsrk_plaintext");
+}
+
+fn test_declared_environment(params: &EnvironmentRegisteredPutParams) -> EnvironmentView {
+    EnvironmentView {
+        environment_id: params.environment_id.clone(),
+        request_id: None,
+        source: EnvironmentSourceView::Registered {
+            registration_key_id: params.registration_key_id.clone(),
+            name: Some(params.name.clone()),
+            daemon_id: None,
+            identity_mode: EnvironmentIdentityModeView::Persistent,
+            connected: false,
+            connection_changed_at_ms: 10,
+            last_seen_at_ms: 10,
+        },
+        display_name: params.display_name.clone(),
+        state: EnvironmentStateView::Open,
+        status: EnvironmentStatusView::Away,
+        state_message: None,
+        close_reason: None,
+        state_changed_at_ms: 10,
+        daemon: None,
+        metadata: params.metadata.clone(),
+        created_at_ms: 10,
+        updated_at_ms: 10,
+        closed_at_ms: None,
+    }
 }
 
 fn test_external_environment() -> EnvironmentView {
@@ -3656,8 +3898,9 @@ struct TestDeploymentService;
 
 fn test_deployment_universe(universe_id: &str) -> DeploymentUniverseView {
     DeploymentUniverseView {
+        configuration: UniverseConfiguration::default(),
         universe_id: universe_id.to_owned(),
-        slug: Some("acme".to_owned()),
+        handle: "acme".to_owned(),
         created_at_ms: 10,
         last_activity_at_ms: Some(20),
         sessions: 3,
@@ -3675,6 +3918,7 @@ fn test_deployment_api_key(key_prefix: &str) -> DeploymentApiKeyView {
         groups: vec![MethodGroup::Session],
         assert_actor: false,
         created_by: Attribution::Local,
+        key_id: "coding-agent".to_owned(),
         key_prefix: key_prefix.to_owned(),
         display_name: Some("coding agent".to_owned()),
         created_at_ms: 10,
@@ -3722,16 +3966,27 @@ impl DeploymentApiService for TestDeploymentService {
         params: DeploymentUniverseReadParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
-            universe: test_deployment_universe(&params.universe_id),
+            universe: test_deployment_universe(&params.universe),
         }))
     }
 
-    async fn put_universe_slug(
+    async fn put_universe_configuration(
         &self,
-        params: DeploymentUniverseSlugPutParams,
+        params: DeploymentUniverseConfigurationPutParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
-        let mut universe = test_deployment_universe(&params.universe_id);
-        universe.slug = Some(params.slug);
+        let mut universe = test_deployment_universe(&params.universe);
+        universe.configuration = params.configuration;
+        Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
+            universe,
+        }))
+    }
+
+    async fn put_universe_handle(
+        &self,
+        params: DeploymentUniverseHandlePutParams,
+    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
+        let mut universe = test_deployment_universe(&params.universe);
+        universe.handle = params.handle;
         Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
             universe,
         }))
@@ -3742,7 +3997,7 @@ impl DeploymentApiService for TestDeploymentService {
         params: DeploymentUniverseDeleteParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseDeleteResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(DeploymentUniverseDeleteResponse {
-            universe_id: params.universe_id,
+            universe_id: params.universe,
             workflows_terminated: 2,
             blob_objects_deleted: 5,
         }))
@@ -3755,6 +4010,19 @@ impl DeploymentApiService for TestDeploymentService {
         Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
             api_key: test_deployment_api_key("lsk_ab12cd34"),
             secret: "lsk_one_time_secret".to_owned(),
+        }))
+    }
+
+    async fn put_api_key(
+        &self,
+        params: DeploymentApiKeyPutParams,
+    ) -> Result<AgentApiOutcome<DeploymentApiKeyPutResponse>, AgentApiError> {
+        let mut api_key = test_deployment_api_key("lsk_supplied");
+        api_key.key_id = params.key_id;
+        Ok(AgentApiOutcome::new(DeploymentApiKeyPutResponse {
+            api_key,
+            created: false,
+            secret_replaced: true,
         }))
     }
 
@@ -3771,7 +4039,7 @@ impl DeploymentApiService for TestDeploymentService {
         &self,
         params: DeploymentApiKeyRotateParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
-        assert_eq!(params.key_prefix, "lsk_ab12cd34");
+        assert_eq!(params.key_id, "coding-agent");
         Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
             api_key: test_deployment_api_key("lsk_rotated1"),
             secret: "lsk_rotated_secret".to_owned(),
@@ -3904,12 +4172,12 @@ async fn deployment_environment_provider_methods_dispatch() {
         ),
         (
             METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT,
-            json!({ "universeId": universe_id, "providerId": "incus-local", "enabled": true }),
+            json!({ "universe": universe_id, "providerId": "incus-local", "enabled": true }),
             "binding",
         ),
         (
             METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE,
-            json!({ "universeId": universe_id, "providerId": "incus-local" }),
+            json!({ "universe": universe_id, "providerId": "incus-local" }),
             "binding",
         ),
     ];
@@ -3992,13 +4260,39 @@ async fn dispatch_deployment_json_rpc_routes_universe_lifecycle() {
         JsonRpcRequest {
             id: RequestId::Number(3),
             method: METHOD_DEPLOYMENT_UNIVERSES_DELETE.to_owned(),
-            params: Some(json!({ "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" })),
+            params: Some(json!({ "universe": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f" })),
         },
     )
     .await;
     let result = delete.result.expect("result");
     assert_eq!(result["result"]["workflowsTerminated"], json!(2));
     assert_eq!(result["result"]["blobObjectsDeleted"], json!(5));
+
+    // A rename addresses the universe by either form and names the new handle.
+    let rename = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
+        JsonRpcRequest {
+            id: RequestId::Number(4),
+            method: METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT.to_owned(),
+            params: Some(json!({ "universe": "acme", "handle": "acme-labs" })),
+        },
+    )
+    .await;
+    let result = rename.result.expect("result");
+    assert_eq!(result["result"]["universe"]["handle"], json!("acme-labs"));
+    let response = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
+        JsonRpcRequest {
+            id: RequestId::Number(51),
+            method: METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT.to_owned(),
+            params: Some(json!({"universe":"acme", "displayName":"Acme", "members":[]})),
+        },
+    )
+    .await;
+    assert!(response.error.is_none());
+    let result = response.result.unwrap();
+    assert_eq!(result["result"]["universe"]["displayName"], "Acme");
+    assert_eq!(result["result"]["universe"]["members"], json!([]));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -4018,8 +4312,31 @@ async fn dispatch_deployment_json_rpc_routes_scoped_api_key_management() {
     )
     .await;
     let result = create.result.expect("create result");
+    assert_eq!(result["result"]["apiKey"]["keyId"], "coding-agent");
     assert_eq!(result["result"]["apiKey"]["keyPrefix"], "lsk_ab12cd34");
     assert_eq!(result["result"]["secret"], "lsk_one_time_secret");
+
+    // A declared key is addressed by scope and key id and returns no secret.
+    let put = dispatch_deployment_json_rpc(
+        &TestDeploymentService,
+        JsonRpcRequest {
+            id: RequestId::Number(5),
+            method: METHOD_DEPLOYMENT_API_KEYS_PUT.to_owned(),
+            params: Some(json!({
+                "scope": { "kind": "universe", "universeId": universe_id },
+                "keyId": "release-bot",
+                "groups": ["session"],
+                "displayName": "release bot",
+                "secret": "lsk_supplied_secret"
+            })),
+        },
+    )
+    .await;
+    let result = put.result.expect("put result");
+    assert_eq!(result["result"]["apiKey"]["keyId"], "release-bot");
+    assert_eq!(result["result"]["created"], false);
+    assert_eq!(result["result"]["secretReplaced"], true);
+    assert!(result["result"].get("secret").is_none());
 
     let list = dispatch_deployment_json_rpc(
         &TestDeploymentService,
@@ -4039,7 +4356,10 @@ async fn dispatch_deployment_json_rpc_routes_scoped_api_key_management() {
         JsonRpcRequest {
             id: RequestId::Number(4),
             method: METHOD_DEPLOYMENT_API_KEYS_ROTATE.to_owned(),
-            params: Some(json!({ "keyPrefix": "lsk_ab12cd34" })),
+            params: Some(json!({
+                "scope": { "kind": "universe", "universeId": universe_id },
+                "keyId": "coding-agent"
+            })),
         },
     )
     .await;
@@ -4052,7 +4372,10 @@ async fn dispatch_deployment_json_rpc_routes_scoped_api_key_management() {
         JsonRpcRequest {
             id: RequestId::Number(3),
             method: METHOD_DEPLOYMENT_API_KEYS_REVOKE.to_owned(),
-            params: Some(json!({ "keyPrefix": "lsk_ab12cd34" })),
+            params: Some(json!({
+                "scope": { "kind": "universe", "universeId": universe_id },
+                "keyId": "coding-agent"
+            })),
         },
     )
     .await;
@@ -4118,4 +4441,192 @@ fn code_mode_feature_defaults_and_public_field_names_are_stable() {
     assert_eq!(value["version"], 1);
     assert_eq!(value["maxOutstandingToolCalls"], 16);
     assert!(serde_json::from_value::<CodeModeFeature>(json!({"maxToolCallz":4})).is_err());
+}
+
+#[test]
+fn deployment_api_key_put_params_redact_the_secret_in_debug_output() {
+    let params = DeploymentApiKeyPutParams {
+        scope: AccessScope::Deployment,
+        key_id: "platform".to_owned(),
+        groups: ApiKeyGroups::All,
+        assert_actor: true,
+        display_name: "Platform".to_owned(),
+        secret: "lsk_supplied_secret".to_owned(),
+    };
+    let debug = format!("{params:?}");
+    assert!(debug.contains("platform"));
+    assert!(!debug.contains("lsk_supplied_secret"));
+}
+
+#[test]
+fn api_key_groups_are_the_literal_all_or_a_non_empty_list() {
+    let all: ApiKeyGroups = serde_json::from_value(json!("all")).unwrap();
+    assert_eq!(all, ApiKeyGroups::All);
+    assert_eq!(serde_json::to_value(&all).unwrap(), json!("all"));
+
+    // A list is a set: stated order and repeats do not matter, and it is
+    // written back in the order a key view reports.
+    let listed: ApiKeyGroups =
+        serde_json::from_value(json!(["vfs", "session", "vfs", "blobs/put"])).unwrap();
+    assert_eq!(
+        listed,
+        [
+            MethodGroup::Session,
+            MethodGroup::BlobsPut,
+            MethodGroup::Vfs
+        ]
+        .into_iter()
+        .collect::<ApiKeyGroups>()
+    );
+    assert_eq!(
+        serde_json::to_value(&listed).unwrap(),
+        json!(["session", "blobs/put", "vfs"])
+    );
+
+    for refused in [
+        json!([]),
+        json!("ALL"),
+        json!("session"),
+        json!(null),
+        json!(true),
+        json!(["session", "everything"]),
+        json!({ "all": true }),
+    ] {
+        assert!(
+            serde_json::from_value::<ApiKeyGroups>(refused.clone()).is_err(),
+            "{refused}"
+        );
+    }
+}
+
+#[test]
+fn all_resolves_to_what_the_scope_allows_and_a_list_to_itself() {
+    let universe = AccessScope::Universe {
+        universe_id: uuid::Uuid::from_u128(7),
+    };
+    assert_eq!(
+        ApiKeyGroups::All.resolve(universe),
+        MethodGroup::allowed_in(universe)
+    );
+    assert_eq!(
+        ApiKeyGroups::All.resolve(AccessScope::Deployment),
+        MethodGroup::ALL.into_iter().collect()
+    );
+    let listed: ApiKeyGroups = [MethodGroup::Session].into_iter().collect();
+    assert_eq!(
+        listed.resolve(AccessScope::Deployment),
+        [MethodGroup::Session].into_iter().collect()
+    );
+}
+
+#[test]
+fn key_writes_require_groups() {
+    let scope = json!({ "kind": "deployment" });
+    // A request that leaves groups out is refused instead of being read as
+    // every group.
+    assert!(
+        serde_json::from_value::<DeploymentApiKeyCreateParams>(json!({
+            "scope": scope,
+            "displayName": "operator",
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<DeploymentApiKeyPutParams>(json!({
+            "scope": scope,
+            "keyId": "operator",
+            "displayName": "operator",
+            "secret": "lsk_supplied_secret",
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<DeploymentApiKeyCreateParams>(json!({
+            "scope": scope,
+            "displayName": "operator",
+            "groups": null,
+        }))
+        .is_err()
+    );
+    let create: DeploymentApiKeyCreateParams = serde_json::from_value(json!({
+        "scope": scope,
+        "displayName": "operator",
+        "groups": "all",
+    }))
+    .unwrap();
+    assert_eq!(create.groups, ApiKeyGroups::All);
+    assert_eq!(serde_json::to_value(&create).unwrap()["groups"], "all");
+}
+
+#[test]
+fn the_api_key_groups_schema_admits_all_or_a_list_of_groups() {
+    let mut generator = schemars::generate::SchemaSettings::draft07().into_generator();
+    let schema = <ApiKeyGroups as JsonSchema>::json_schema(&mut generator).to_value();
+    assert_eq!(
+        schema["anyOf"][0],
+        json!({ "type": "string", "const": "all" })
+    );
+    assert_eq!(schema["anyOf"][1]["type"], "array");
+    assert!(
+        schema["anyOf"][1]["items"]["$ref"]
+            .as_str()
+            .is_some_and(|reference| reference.ends_with("/MethodGroup"))
+    );
+    let params = generator
+        .root_schema_for::<DeploymentApiKeyPutParams>()
+        .to_value();
+    assert!(
+        params["required"]
+            .as_array()
+            .is_some_and(|required| required.contains(&json!("groups")))
+    );
+}
+
+#[test]
+fn an_environment_credential_source_is_a_grant_or_a_provider_credential() {
+    let bind = |source: Value| {
+        serde_json::from_value::<EnvironmentCredentialBindParams>(json!({
+            "environmentId": "build-box",
+            "envName": "TOKEN",
+            "source": source,
+        }))
+    };
+    for (wire, source) in [
+        (
+            json!({ "type": "authGrant", "grantId": "authgrant_repo" }),
+            EnvironmentCredentialSourceView::AuthGrant {
+                grant_id: "authgrant_repo".to_owned(),
+            },
+        ),
+        (
+            json!({ "type": "authProviderCredential", "providerId": "model:openai" }),
+            EnvironmentCredentialSourceView::AuthProviderCredential {
+                provider_id: "model:openai".to_owned(),
+            },
+        ),
+    ] {
+        assert_eq!(
+            bind(wire.clone()).expect("a bindable source").source,
+            source
+        );
+        assert_eq!(serde_json::to_value(&source).unwrap(), wire);
+    }
+
+    // A stored secret cannot be named: a bare secret id has no exposure to
+    // check, so a request that carries one is not a binding request.
+    assert!(bind(json!({ "type": "directSecret", "secretId": "authsec_1" })).is_err());
+
+    // The published schema offers exactly the two sources.
+    let mut generator = schemars::generate::SchemaSettings::draft07().into_generator();
+    let schema = generator
+        .root_schema_for::<EnvironmentCredentialSourceView>()
+        .to_value();
+    let mut types: Vec<&str> = schema["oneOf"]
+        .as_array()
+        .expect("one schema per source")
+        .iter()
+        .filter_map(|variant| variant["properties"]["type"]["const"].as_str())
+        .collect();
+    types.sort_unstable();
+    assert_eq!(types, ["authGrant", "authProviderCredential"]);
 }

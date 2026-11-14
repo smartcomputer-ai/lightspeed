@@ -2,32 +2,80 @@
 //!
 //! A key names what it reaches (one universe, or the deployment), the method
 //! groups it may call, and whether it may assert the actor a request acts
-//! for. That is its whole authority. Rotation replaces the secret without
-//! changing authority: changing what a key may do is revoking it and
-//! minting another, so a running process never gains or loses rights
-//! silently. Persistence belongs to the deployment store, before universe
+//! for. That is its whole authority. What it reaches and whether it asserts
+//! actors are fixed for its life; its groups are settings an administrator
+//! may change. Persistence belongs to the deployment store, before universe
 //! resolution.
 //!
-//! Keys are server-generated high-entropy secrets (`lsk_<random>`). Only a
-//! SHA-256 hash is persisted — no KDF (the secret is random, not a human
-//! password) and no AEAD/master-key involvement (the secret never needs to be
-//! recovered, only recognized). The plaintext is shown once at mint time.
+//! A key is identified by its key id, which is unique among the keys of its
+//! scope and survives a change of secret. The secret is high-entropy random
+//! data (`lsk_<random>`), generated here or supplied in the same form by
+//! whoever declares the key. Only a SHA-256 hash is persisted — no KDF (the
+//! secret is random, not a human password) and no AEAD/master-key involvement
+//! (the secret never needs to be recovered, only recognized). A generated
+//! plaintext is shown once at mint time.
 
 use std::collections::BTreeSet;
 
-use api::{AccessScope, Attribution, MethodGroup};
+use api::{AccessScope, ApiKeyGroups, Attribution, MethodGroup};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{SecretValue, generate_prefixed_secret, secret_display_prefix, secret_sha256_hex};
+use crate::{
+    SecretValue, generate_prefixed_secret, is_prefixed_secret, secret_display_prefix,
+    secret_sha256_hex,
+};
 
 /// Prefix of every Lightspeed API key secret.
-pub const API_KEY_SECRET_PREFIX: &str = "lsk_";
+pub const API_KEY_SECRET_PREFIX: &str = api::API_KEY_SECRET_PREFIX;
 
 /// Length of the stored display prefix (`lsk_` plus the first characters of
 /// the random part) — enough to identify a key in listings without revealing
 /// meaningful entropy.
 pub const API_KEY_DISPLAY_PREFIX_LEN: usize = 12;
+
+/// Longest key id.
+pub const API_KEY_ID_MAX_LEN: usize = 128;
+
+/// Prefix of a key id the server allocated because the creator named none.
+const ALLOCATED_API_KEY_ID_PREFIX: &str = "api_key_";
+
+/// A key id for a key whose creator named none.
+pub fn allocate_api_key_id() -> String {
+    crate::random_auth_id(ALLOCATED_API_KEY_ID_PREFIX)
+}
+
+/// Whether `key_id` has the form of a server-allocated id: the key was never
+/// given a name of its creator's choosing.
+pub fn is_allocated_api_key_id(key_id: &str) -> bool {
+    key_id
+        .strip_prefix(ALLOCATED_API_KEY_ID_PREFIX)
+        .is_some_and(|rest| {
+            rest.len() == 32
+                && rest
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        })
+}
+
+/// A key id is 1-128 ASCII letters, digits, underscores, hyphens, dots or
+/// colons, starting with a letter or digit.
+pub fn validate_api_key_id(key_id: &str) -> Result<(), ApiKeyError> {
+    let bytes = key_id.as_bytes();
+    let valid = !bytes.is_empty()
+        && bytes.len() <= API_KEY_ID_MAX_LEN
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_.:-".contains(byte));
+    if valid {
+        Ok(())
+    } else {
+        Err(ApiKeyError::Invalid {
+            message: "a key id is 1-128 ASCII letters, digits, underscores, hyphens, dots or colons, starting with a letter or digit".into(),
+        })
+    }
+}
 
 /// How stale `last_used_at_ms` may become. Resolution is a read; the usage
 /// stamp is refreshed at most this often so a busy key is not a hot row.
@@ -35,8 +83,13 @@ pub const API_KEY_LAST_USED_RESOLUTION_MS: u64 = 60_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiKeyRecord {
-    /// Unique display/identification prefix of the secret (`lsk_ab12cd34`).
-    /// This is the caller-facing handle for listing and revocation.
+    /// The key's name among the keys of its scope. It addresses the key, is
+    /// kept when the secret is replaced, and is what the key's own requests
+    /// are attributed to.
+    pub key_id: String,
+    /// Display prefix of the current secret (`lsk_ab12cd34`): enough to
+    /// recognize which secret a key holds. It changes with the secret, so no
+    /// record names a key by it.
     pub key_prefix: String,
     /// What the key reaches. A deployment key addresses a universe by header.
     pub scope: AccessScope,
@@ -52,12 +105,17 @@ pub struct ApiKeyRecord {
     pub last_used_at_ms: Option<u64>,
 }
 
-/// What a new key may do.
+/// What a new key is called and may do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApiKeySpec {
+    /// `None` has the server allocate an id.
+    pub key_id: Option<String>,
     pub scope: AccessScope,
-    /// `None` grants every group the scope allows.
-    pub groups: Option<BTreeSet<MethodGroup>>,
+    /// The groups the key is given. There is no default: whoever makes a
+    /// key states them, and "every group the scope allows" is the explicit
+    /// [`ApiKeyGroups::All`], resolved when the key is built so the stored
+    /// set is always concrete.
+    pub groups: ApiKeyGroups,
     pub assert_actor: bool,
     pub created_by: Attribution,
     pub display_name: Option<String>,
@@ -73,8 +131,17 @@ pub struct MintedApiKey {
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum ApiKeyError {
+    /// Another key's secret shares this display prefix. A generated secret
+    /// is simply generated again.
     #[error("api key already exists: {key_prefix}")]
     AlreadyExists { key_prefix: String },
+
+    #[error("api key id is already in use: {key_id}")]
+    KeyIdInUse { key_id: String },
+
+    /// The request is well formed but the key's present state refuses it.
+    #[error("api key conflict: {message}")]
+    Conflict { message: String },
 
     #[error("invalid api key: {message}")]
     Invalid { message: String },
@@ -85,7 +152,9 @@ pub enum ApiKeyError {
 
 /// Mint a new key secret. The secret is returned exactly once; only its hash
 /// and display prefix are meant to be persisted. Groups must be allowed in
-/// the key's scope: only a deployment key holds deployment groups.
+/// the key's scope: only a deployment key holds deployment groups. The
+/// record holds the concrete groups, with `all` resolved for the scope as
+/// this release defines it.
 pub fn mint_api_key(spec: ApiKeySpec, created_at_ms: u64) -> Result<MintedApiKey, ApiKeyError> {
     import_api_key(
         spec,
@@ -94,23 +163,14 @@ pub fn mint_api_key(spec: ApiKeySpec, created_at_ms: u64) -> Result<MintedApiKey
     )
 }
 
-/// Register an operator-supplied random key through the ordinary key store.
-/// Accept the same 32-byte base64url representation used by generated keys.
+/// Build a key around a supplied secret, in the same 32-byte base64url
+/// representation generated keys use.
 pub fn import_api_key(
     spec: ApiKeySpec,
     created_at_ms: u64,
     secret: &str,
 ) -> Result<MintedApiKey, ApiKeyError> {
-    use base64::Engine as _;
-    let valid = secret
-        .strip_prefix(API_KEY_SECRET_PREFIX)
-        .and_then(|value| {
-            base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .decode(value)
-                .ok()
-        })
-        .is_some_and(|bytes| bytes.len() == 32);
-    if !valid {
+    if !is_prefixed_secret(API_KEY_SECRET_PREFIX, secret) {
         return Err(ApiKeyError::Invalid {
             message:
                 "expected lsk_ followed by 32 random bytes encoded as base64url without padding"
@@ -118,7 +178,7 @@ pub fn import_api_key(
         });
     }
     let allowed = MethodGroup::allowed_in(spec.scope);
-    let groups = spec.groups.unwrap_or_else(|| allowed.clone());
+    let groups: BTreeSet<MethodGroup> = spec.groups.resolve(spec.scope);
     if groups.is_empty() {
         return Err(ApiKeyError::Invalid {
             message: "a key needs at least one method group".into(),
@@ -129,8 +189,16 @@ pub fn import_api_key(
             message: format!("a universe key cannot hold {}", group.as_str()),
         });
     }
+    let key_id = match spec.key_id {
+        Some(key_id) => {
+            validate_api_key_id(&key_id)?;
+            key_id
+        }
+        None => allocate_api_key_id(),
+    };
     let key_hash = api_key_hash(secret);
     let record = ApiKeyRecord {
+        key_id,
         key_prefix: api_key_display_prefix(secret),
         scope: spec.scope,
         groups,
@@ -162,14 +230,49 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
+    /// `None` asks for every group the scope allows.
     fn spec(scope: AccessScope, groups: Option<&[MethodGroup]>) -> ApiKeySpec {
         ApiKeySpec {
+            key_id: None,
             scope,
-            groups: groups.map(|groups| groups.iter().copied().collect()),
+            groups: groups.map_or(ApiKeyGroups::All, |groups| groups.iter().copied().collect()),
             assert_actor: false,
             created_by: Attribution::Local,
             display_name: None,
         }
+    }
+
+    #[test]
+    fn a_key_takes_the_id_it_is_given_or_an_allocated_one() {
+        let allocated = mint_api_key(spec(AccessScope::Deployment, None), 1).unwrap();
+        assert!(is_allocated_api_key_id(&allocated.record.key_id));
+        let named = mint_api_key(
+            ApiKeySpec {
+                key_id: Some("platform".into()),
+                ..spec(AccessScope::Deployment, None)
+            },
+            1,
+        )
+        .unwrap();
+        assert_eq!(named.record.key_id, "platform");
+        assert!(!is_allocated_api_key_id("platform"));
+        assert!(!is_allocated_api_key_id("api_key_short"));
+        for invalid in ["", "-edge", "with space", "a/b", &"a".repeat(129)] {
+            assert!(
+                matches!(
+                    mint_api_key(
+                        ApiKeySpec {
+                            key_id: Some(invalid.to_owned()),
+                            ..spec(AccessScope::Deployment, None)
+                        },
+                        1,
+                    ),
+                    Err(ApiKeyError::Invalid { .. })
+                ),
+                "{invalid}"
+            );
+        }
+        assert!(validate_api_key_id(&"a".repeat(128)).is_ok());
     }
 
     fn universe() -> AccessScope {
@@ -209,18 +312,39 @@ mod tests {
     }
 
     #[test]
-    fn keys_without_groups_hold_every_group_their_scope_allows() {
+    fn all_is_stored_as_every_group_the_scope_allows() {
         let universe_key = mint_api_key(spec(universe(), None), 1).expect("mint");
         assert_eq!(
             universe_key.record.groups,
             MethodGroup::allowed_in(universe())
         );
-        let deployment_key = mint_api_key(spec(AccessScope::Deployment, None), 1).expect("mint");
         assert!(
-            deployment_key
+            universe_key
                 .record
                 .groups
-                .contains(&MethodGroup::DeploymentApiKeys)
+                .iter()
+                .all(|group| !group.is_deployment())
+        );
+        let deployment_key = mint_api_key(spec(AccessScope::Deployment, None), 1).expect("mint");
+        assert_eq!(
+            deployment_key.record.groups,
+            MethodGroup::ALL.into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn listed_groups_are_stored_exactly() {
+        let key = mint_api_key(
+            spec(
+                AccessScope::Deployment,
+                Some(&[MethodGroup::Session, MethodGroup::Models]),
+            ),
+            1,
+        )
+        .expect("mint");
+        assert_eq!(
+            key.record.groups,
+            BTreeSet::from([MethodGroup::Session, MethodGroup::Models])
         );
     }
 

@@ -874,8 +874,8 @@ function FormsSection() {
             <FieldDescription>Shown in the sidebar and in channel messages.</FieldDescription>
           </Field>
           <Field data-invalid>
-            <FieldLabel htmlFor="overview-slug">Slug</FieldLabel>
-            <Input id="overview-slug" defaultValue="Release Planner" aria-invalid />
+            <FieldLabel htmlFor="overview-handle">Handle</FieldLabel>
+            <Input id="overview-handle" defaultValue="Release Planner" aria-invalid />
             <FieldError>Use lowercase letters, digits and dashes.</FieldError>
           </Field>
           <Field data-disabled>

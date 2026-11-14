@@ -84,11 +84,28 @@ and activities together on its own task queue. Select roles to deploy them
 separately and add replicas of the worker roles that need more capacity.
 Cross-component work reaches other workflows through starts and signals.
 
-Run exactly one `environment-gateway` process per deployment. It owns live
-daemon connections, and worker requests for those daemons must reach that
-process. Other roles can have multiple workers. If you share a Temporal
-namespace between deployments, assign distinct session, bot, and channel task
-queues to each deployment.
+Environment gateways can run as replicas behind one shared address. Each
+replica advertises its own direct peer URL and renews a PostgreSQL lease;
+replicas forward stream setup and dial-back connections to the process that
+holds the required socket. Workers keep one gateway URL. Configure the same
+gateway token on all replicas and allow private traffic between their peer
+listeners; see [networking and ingress](../environments/networking-and-ingress.md).
+If you share a Temporal namespace between deployments, assign distinct session,
+bot, and channel task queues to each deployment.
+
+A deployment that does not use bots should not run them. Start the runtime
+without the `bots` and `channels` roles and leave the **Bots** and
+**Channels** switches off in every universe, which is how a new universe
+starts. An unset `LIGHTSPEED_ROLES` runs every role, so set it to the roles
+the deployment keeps: its current list without `bots` and `channels`, for
+example `LIGHTSPEED_ROLES=gateway,environment-gateway,sessions,code`. Keep
+`code` in an explicit list when sessions use Code Mode; that worker role runs
+its scripts. The two measures cover different callers. The switches make the
+Platform refuse bot and channel requests from every member of a universe.
+Leaving the roles out means nothing in the deployment runs a bot controller,
+a trigger or a chat conversation, whoever asked for one, including a holder of
+a runtime API key. Add the roles, and switch the features on per universe,
+when a team starts using bots.
 
 ## Persistence determines what survives
 

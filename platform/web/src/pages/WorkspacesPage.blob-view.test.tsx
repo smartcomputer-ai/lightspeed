@@ -20,7 +20,7 @@ vi.mock("@/lib/permissions", () => ({
 vi.mock("@/lib/universes", () => ({
   useActiveUniverse: () => ({
     universe: { id: "u" },
-    slug: "test",
+    handle: "test",
     isLoading: false,
   }),
 }));
@@ -69,10 +69,11 @@ beforeEach(() => {
   stored = "x";
   mocks.api
     .mockReset()
-    .mockImplementation(async (_method: string, path: string) => {
+    .mockImplementation(async (method: string, path: string) => {
       if (path.endsWith("/workspaces")) return [tree().workspace];
       if (path.endsWith("/tree")) return tree();
-      if (path.includes("/files/"))
+      if (method === "PUT") return { workspace: { ...tree().workspace, revision: 4 } };
+      if (path.includes("/blobs/"))
         return { blobRef, bytesBase64: btoa(stored), bytes: stored.length };
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -99,7 +100,7 @@ async function render() {
         >
           <Routes>
             <Route
-              path="/u/:slug/workspaces/:workspaceId/files/*"
+              path="/u/:handle/workspaces/:workspaceId/files/*"
               element={<WorkspacesPage admin={false} />}
             />
           </Routes>

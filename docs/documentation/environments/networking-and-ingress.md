@@ -28,14 +28,37 @@ response returns as the tool result. Registered machines initiate their own
 outbound connections; external daemons and Incus guests are reached over
 private deployment networks.
 
-Run exactly one **environment-gateway** process per deployment. It owns live
-registered-daemon connections, the worker routes, and the reconciliation
-that creates and closes provisioned machines. At startup it marks every
-registered environment disconnected until its daemon reconnects, which is
-correct only while a single process holds those connections. Worker routes
-must reach that process. Other runtime roles can
-scale independently; distributing this gateway's live connection ownership
-across replicas is not currently supported.
+Several **environment-gateway** processes can share one load-balanced address.
+Each process registers its own direct peer URL in PostgreSQL and renews its
+lease. The database records which process holds each daemon's control
+connection. A worker route may land on any replica, and the daemon's data
+connection may land on another; the replicas route setup to the owner and
+relay data to the replica holding the worker socket. Sticky sessions are not
+required. A stream crosses one or two gateway processes, regardless of the
+fleet's size.
+
+Set `LIGHTSPEED_ENVIRONMENT_GATEWAY_PEER_URL` on every replica to an HTTP(S)
+origin that other replicas can reach directly, such as its pod IP and listener
+port. Use the same `LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN` on all replicas.
+The peer URL identifies this process and must not point to the shared load
+balancer. A deployment with a single gateway can omit it.
+
+For an IPv4 Kubernetes Deployment listening on port 18080, the container's
+environment can derive its address automatically:
+
+```yaml
+env:
+  - name: POD_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.podIP
+  - name: LIGHTSPEED_ENVIRONMENT_GATEWAY_PEER_URL
+    value: "http://$(POD_IP):18080"
+```
+
+Every new pod registers its own address; scaling needs no list of peers.
+Allow gateway-to-gateway traffic on that port and use `/ready` for readiness.
+Starting a replica does not disconnect other replicas' daemons.
 
 Processes that do not run the environment-gateway role need
 `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` and
@@ -74,8 +97,12 @@ one-time pairing token. Publishing only the control path can therefore make
 the machine appear connected while its actual tool operations fail. Both
 paths need WebSocket upgrades and suitable long-lived-connection handling.
 
-The worker route under `/environment-gateway/routes/` is a separate private,
-bearer-authenticated path. Do not give its deployment token to borrowed
+The worker route under `/environment-gateway/routes/` and the replica routes
+under `/environment-gateway/peer/` are private, bearer-authenticated paths.
+Reject both prefixes at the public edge. Peers use `POST .../peer/streams`
+for stream setup and WebSocket `GET .../peer/data` for a dial-back relay.
+Pairing tokens authenticate the acceptor and expire quickly; only the acceptor
+can consume each token, once. Do not give the deployment token to borrowed
 machines. The daemon registration flow supplies what those machines need.
 
 Follow [Bring your own compute](bring-your-own-compute.md) for the complete
@@ -251,7 +278,7 @@ response and the environment's endpoint fields.
 
 | Symptom | What to check |
 | --- | --- |
-| A registered daemon connects but commands cannot route | Publish both connect and data paths; check WebSocket handling and routing to the single environment gateway. |
+| A registered daemon connects but commands cannot route | Publish both connect and data paths; check WebSocket handling and gateway peer reachability, matching deployment tokens, and live instance leases. |
 | Worker calls fail while the daemon looks healthy | Check the worker's gateway URL/token and private route reachability. |
 | Incus health passes but guest operations fail | Check guest daemon readiness, guest IPv4 routing, and the provider-to-daemon port. |
 | A loopback endpoint works locally but fails in containers | Replace it with the private address reachable from the actual connecting process. |

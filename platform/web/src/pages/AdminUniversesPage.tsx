@@ -1,5 +1,4 @@
 import { DeletedSessionsDialog } from "@/components/admin/deleted-sessions";
-import { universeSlugSchema } from "@lightspeed-ai/platform-shared";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,7 +9,7 @@ import {
   type EngineUniverse,
   type Universe,
   type UniverseReconcile,
-  type UniverseSlugSyncResult,
+  type UniverseHandleSyncResult,
 } from "@/api";
 import {
   AlertDialog,
@@ -56,7 +55,7 @@ import { universeHome, useUniverses } from "@/lib/universes";
 /// switcher. Reconciliation against the engine rides along: each row gets
 /// an engine status, and engine universes with no platform row (orphans)
 /// are listed below with adopt/delete actions. Reconciliation checks links;
-/// updating cached runtime slugs requires the explicit sync action.
+/// updating cached runtime handles requires the explicit sync action.
 export function AdminUniversesPage() {
   const universes = useUniverses();
   const queryClient = useQueryClient();
@@ -78,8 +77,8 @@ export function AdminUniversesPage() {
     void queryClient.invalidateQueries({ queryKey: ["universes-reconcile"] });
   };
 
-  const syncSlugs = useMutation({
-    mutationFn: () => api<UniverseSlugSyncResult>("POST", "/api/v1/universes/sync-slugs", {}),
+  const syncHandles = useMutation({
+    mutationFn: () => api<UniverseHandleSyncResult>("POST", "/api/v1/universes/sync-handles", {}),
     onSuccess: refresh,
   });
 
@@ -114,8 +113,8 @@ export function AdminUniversesPage() {
         description="Every universe on this deployment, including archived ones."
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="outline" disabled={syncSlugs.isPending} onClick={() => syncSlugs.mutate()}>
-              {syncSlugs.isPending ? "Syncing…" : "Sync from runtime"}
+            <Button variant="outline" disabled={syncHandles.isPending} onClick={() => syncHandles.mutate()}>
+              {syncHandles.isPending ? "Syncing…" : "Sync from runtime"}
             </Button>
             <Button onClick={() => setCreateOpen(true)}>
               <AddIcon data-icon="inline-start" />
@@ -126,11 +125,11 @@ export function AdminUniversesPage() {
       />
       <DeletedSessionsDialog universe={deletedUniverse} onClose={() => setDeletedUniverse(null)} />
       <NewUniverseDialog open={createOpen} onOpenChange={setCreateOpen} />
-      {syncSlugs.error && <p role="alert" className="mb-4 text-sm text-destructive">{syncSlugs.error.message}</p>}
-      {syncSlugs.data && !syncSlugs.isPending && !syncSlugs.error && (
+      {syncHandles.error && <p role="alert" className="mb-4 text-sm text-destructive">{syncHandles.error.message}</p>}
+      {syncHandles.data && !syncHandles.isPending && !syncHandles.error && (
         <p role="status" className="mb-4 text-sm text-muted-foreground">
-          Synced runtime slugs: {syncSlugs.data.updated} updated.
-          {syncSlugs.data.skipped > 0 && ` ${syncSlugs.data.skipped} missing or unnamed runtime universes skipped; these require review.`}
+          Synced runtime handles: {syncHandles.data.updated} updated.
+          {syncHandles.data.skipped > 0 && ` ${syncHandles.data.skipped} missing from the runtime and skipped; these require review.`}
         </p>
       )}
       {universes.isLoading && <LoadingNote />}
@@ -156,7 +155,7 @@ export function AdminUniversesPage() {
             <TableBody>
               {rows.map((universe) => (
                 <TableRow key={universe.id}>
-                  <TableTitleCell title={universe.name} subtitle={universe.slug} />
+                  <TableTitleCell title={universe.name} subtitle={universe.handle} />
                   <TableCell>
                     <Badge
                       variant={universe.status === "active" ? "secondary" : "outline"}
@@ -385,7 +384,6 @@ export function AdoptDialog({
   onAdopted: () => void;
 }) {
   const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const adopt = useMutation({
@@ -393,7 +391,6 @@ export function AdoptDialog({
       api<Universe>("POST", "/api/v1/universes/adopt", {
         lightspeedUniverseId: orphan!.universeId,
         name: name.trim(),
-        ...(!orphan!.slug ? { slug: slug.trim() } : {}),
       }),
     onSuccess: () => {
       onOpenChange(false);
@@ -408,10 +405,6 @@ export function AdoptDialog({
     event.preventDefault();
     if (!name.trim()) {
       setError("a name is required");
-      return;
-    }
-    if (!orphan?.slug && !universeSlugSchema.safeParse(slug.trim()).success) {
-      setError("Enter a slug starting with a letter or digit, using at most 128 letters, digits, dots, colons, underscores or hyphens.");
       return;
     }
     adopt.mutate();
@@ -440,13 +433,11 @@ export function AdoptDialog({
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor="adopt-slug">Slug</FieldLabel>
-            <Input id="adopt-slug" value={orphan?.slug ?? slug}
-              onChange={(e) => setSlug(e.target.value)} readOnly={!!orphan?.slug}
-              required maxLength={128} placeholder="my-universe" />
+            <FieldLabel htmlFor="adopt-handle">Handle</FieldLabel>
+            <Input id="adopt-handle" value={orphan?.handle ?? ""} readOnly />
             <p className="text-sm text-muted-foreground">
-              {orphan?.slug ? "Uses the existing runtime slug. Rename it separately in runtime if needed."
-                : "Required for Platform URLs. This assigns the slug to the runtime universe."}
+              Adoption keeps the universe's handle, which Platform URLs use. Rename it afterwards in
+              the universe's settings if needed.
             </p>
           </Field>
           {error && <p className="text-sm text-destructive">{error}</p>}

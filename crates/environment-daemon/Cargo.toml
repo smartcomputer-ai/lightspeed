@@ -7,7 +7,6 @@ edition = "2024"
 hex = "0.4"
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
-dotenvy = "0.15"
 release-info = { path = "../release-info" }
 futures-util = "0.3"
 flate2 = "1"

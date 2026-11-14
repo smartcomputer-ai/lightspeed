@@ -293,8 +293,9 @@ lightspeed chat --session "<session-id>"
 
 Copy **Session ID** from the web app's session title menu.
 For a remote installation, use the gateway address and authentication supplied
-by the operator. A deployment key needs `LIGHTSPEED_UNIVERSE` set to the core
-universe UUID, distinct from the readable slug in the browser URL. Local
+by the operator. A deployment key needs `LIGHTSPEED_UNIVERSE` set to the
+universe's UUID, or to its handle, which is the readable name in the browser
+URL. Local
 single mode accepts neither API keys nor universe headers.
 
 Without model flags, `lightspeed chat` uses the deployment default for a new

@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 
 type TreeProps = {
   entries: Record<string, VfsTreeEntry>;
-  slug: string;
+  handle: string;
   workspaceId: string;
   activePath: string | undefined;
 };
@@ -184,7 +184,7 @@ export function WorkspaceFileTree(props: TreeProps) {
           <EntryRow
             key={row.path}
             {...row}
-            slug={props.slug}
+            handle={props.handle}
             workspaceId={props.workspaceId}
             active={props.activePath === row.path}
             focused={focusedPath === row.path}
@@ -321,7 +321,7 @@ function EntryRow({
   tree,
   position,
   siblings,
-  slug,
+  handle,
   workspaceId,
   active,
   focused,
@@ -330,7 +330,7 @@ function EntryRow({
   onFocusPath,
   menuOpen,
 }: VisibleEntry & {
-  slug: string;
+  handle: string;
   workspaceId: string;
   active: boolean;
   focused: boolean;
@@ -353,7 +353,7 @@ function EntryRow({
       to={
         directory
           ? undefined
-          : `/u/${slug}/workspaces/${workspaceId}/files/${path.split("/").map(encodeURIComponent).join("/")}`
+          : `/u/${handle}/workspaces/${workspaceId}/files/${path.split("/").map(encodeURIComponent).join("/")}`
       }
       toggle={directory ? { open, onToggle: onFlip } : undefined}
       // The item is the tree item: focused by the keyboard, labelled, with

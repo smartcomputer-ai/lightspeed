@@ -17,7 +17,7 @@ export function sessionAdminRoutes(ctx: AppContext) {
     const [universe] = await ctx.db.select().from(schema.universes).where(eq(schema.universes.id, c.req.param("id"))).limit(1);
     if (!universe) return c.json({ error: "not found" }, 404);
     const result = await deploymentClientFor(ctx, universe.gatewayUrl).call("deployment/sessions/deleted/list", {
-      universeId: universe.lightspeedUniverseId, after: c.req.query("after"),
+      universe: universe.lightspeedUniverseId, after: c.req.query("after"),
     });
     return c.json(result.result);
   }));
@@ -25,7 +25,7 @@ export function sessionAdminRoutes(ctx: AppContext) {
     const [universe] = await ctx.db.select().from(schema.universes).where(eq(schema.universes.id, c.req.param("id"))).limit(1);
     if (!universe) return c.json({ error: "not found" }, 404);
     const result = await deploymentClientFor(ctx, universe.gatewayUrl).call("deployment/sessions/purge", {
-      universeId: universe.lightspeedUniverseId, sessionId: c.req.param("sessionId"),
+      universe: universe.lightspeedUniverseId, sessionId: c.req.param("sessionId"),
     });
     if (result.result.deletedSessionIds.length) await auditIdentity(ctx.db, {
       actorId: c.get("session").user.id, universeId: universe.id,

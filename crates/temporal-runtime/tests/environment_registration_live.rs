@@ -13,7 +13,7 @@
 //! the next revocation sweep. The registered sweep closes ephemeral rows
 //! after their grace and persistent rows after the key's offline bound; a
 //! parked daemon waits for its stop signal instead of exiting. Rotation
-//! keeps the key's group, startup repair marks connected rows disconnected,
+//! keeps the key's group,
 //! and a configured registration URL is an accepted signature origin.
 
 mod support;
@@ -21,9 +21,10 @@ mod support;
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 use api::{
-    AgentApiService, DeploymentApiService, DeploymentUniverseCreateParams, EnvironmentCloseParams,
-    EnvironmentCloseReasonView, EnvironmentIdentityModeView, EnvironmentListParams,
-    EnvironmentReadParams, EnvironmentRegistrationKeyCreateParams,
+    AgentApiErrorKind, AgentApiService, DeploymentApiService, DeploymentUniverseCreateParams,
+    EnvironmentCloseParams, EnvironmentCloseReasonView, EnvironmentIdentityModeView,
+    EnvironmentListParams, EnvironmentReadParams, EnvironmentRegisteredPutParams,
+    EnvironmentRegisteredReleaseParams, EnvironmentRegistrationKeyCreateParams,
     EnvironmentRegistrationKeyReadParams, EnvironmentRegistrationKeyRevokeParams,
     EnvironmentRegistrationKeyRotateParams, EnvironmentRegistrationKeyUpdateParams,
     EnvironmentSourceView, EnvironmentStateView, EnvironmentStatusView, EnvironmentView,
@@ -70,7 +71,7 @@ use temporal_runtime::{
         request_context::{RequestContext, with_request_context as calling},
     },
 };
-use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
+use temporal_workflow::{TemporalConnectionConfig, connect_temporal};
 use tools::{
     environment::process::{
         ContinueProcessRequest, ProcessExecutor, ProcessRequest, ProcessSignal as ExecutorSignal,
@@ -93,11 +94,7 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
     require_storage_live_env()?;
     let _guard = LIVE_TEST_LOCK.lock().await;
 
-    let temporal_target =
-        std::env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
-    let namespace = std::env::var("TEMPORAL_NAMESPACE")
-        .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
-    let client = connect_temporal(&temporal_target, &namespace).await?;
+    let client = connect_temporal(&TemporalConnectionConfig::from_env()?).await?;
     let stores = DeploymentStores::from_env().await?;
     let suffix = Uuid::new_v4().simple().to_string();
     let universe_id = Uuid::new_v4();
@@ -123,7 +120,7 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
     calling(
         RequestContext::local(api::AccessScope::Deployment),
         operator.create_universe(DeploymentUniverseCreateParams {
-            slug: None,
+            handle: None,
             universe_id: universe_id.to_string(),
         }),
     )
@@ -248,7 +245,8 @@ async fn scenario(
     );
     ephemeral_scenario(runtime, api, universe_id, &gateway, urls, sandbox).await?;
     persistent_scenario(runtime, api, universe_id, &gateway, urls, sandbox).await?;
-    ephemeral_grace_scenario(runtime, api, universe_id, urls, sandbox).await
+    ephemeral_grace_scenario(runtime, api, universe_id, urls, sandbox).await?;
+    declared_scenario(api, universe_id, &gateway, urls, sandbox).await
 }
 
 /// An ephemeral key: admission, the data path, the coarse stamp, immediate
@@ -265,11 +263,13 @@ async fn ephemeral_scenario(
     let store = runtime.state_for(universe_id, false).await?.store.clone();
     let minted = api
         .create_environment_registration_key(EnvironmentRegistrationKeyCreateParams {
+            registration_key_id: None,
             display_name: "registration live pool".to_owned(),
             identity_mode: EnvironmentIdentityModeView::Ephemeral,
             max_active_environments: Some(2),
             ephemeral_disconnect_grace_ms: None,
             offline_close_after_ms: None,
+            declared_only: false,
             expires_at_ms: None,
         })
         .await?
@@ -627,7 +627,7 @@ async fn ephemeral_scenario(
 }
 
 /// A persistent key, dialed under the configured registration URL: the
-/// bounded reconnect wait, startup repair, rotation, the cross-process
+/// bounded reconnect wait, rotation, the cross-process
 /// close at the revocation sweep, and the offline bound with a parked
 /// daemon.
 async fn persistent_scenario(
@@ -641,11 +641,13 @@ async fn persistent_scenario(
     let store = runtime.state_for(universe_id, false).await?.store.clone();
     let minted = api
         .create_environment_registration_key(EnvironmentRegistrationKeyCreateParams {
+            registration_key_id: None,
             display_name: "registration live fleet".to_owned(),
             identity_mode: EnvironmentIdentityModeView::Persistent,
             max_active_environments: Some(3),
             ephemeral_disconnect_grace_ms: None,
             offline_close_after_ms: None,
+            declared_only: false,
             expires_at_ms: None,
         })
         .await?
@@ -728,34 +730,6 @@ async fn persistent_scenario(
     })
     .await?;
     wait_for_receipt_admission(&receipt_p, "reconnected").await?;
-
-    // Startup repair (here for this universe only): a gateway that
-    // restarted held none of the connections its rows still call
-    // connected. The disconnect counts from now, so persistent rows get
-    // their full reconnect wait.
-    let before_repair = now_ms();
-    assert!(store.repair_registered_connections(before_repair).await? >= 1);
-    let repaired = store.read_environment(&environment_id_p).await?;
-    let source = repaired.registered().expect("registered");
-    assert!(!source.connected);
-    assert_eq!(source.connection_changed_at_ms, before_repair);
-    assert!(matches!(
-        repaired.use_gate(before_repair + 1_000),
-        EnvironmentUse::Wait {
-            reason: EnvironmentWaitReason::Disconnected,
-            ..
-        }
-    ));
-    // The daemon's next connection records it again.
-    daemon_p.exit.abort();
-    let daemon_p = spawn_p(None)?;
-    wait_for_environment(
-        api,
-        &environment_p.environment_id,
-        "reconnected after repair",
-        |view| is_connected(view) == Some(true),
-    )
-    .await?;
 
     // Rotation retires the live secret at once and keeps the key: its
     // group, identity mode and environments. Admitted daemons are
@@ -841,6 +815,7 @@ async fn persistent_scenario(
             max_active_environments: Some(3),
             ephemeral_disconnect_grace_ms: None,
             offline_close_after_ms: Some(1_000),
+            declared_only: false,
             expires_at_ms: None,
         })
         .await?
@@ -909,11 +884,13 @@ async fn ephemeral_grace_scenario(
 ) -> anyhow::Result<()> {
     let short = api
         .create_environment_registration_key(EnvironmentRegistrationKeyCreateParams {
+            registration_key_id: None,
             display_name: "registration live short grace".to_owned(),
             identity_mode: EnvironmentIdentityModeView::Ephemeral,
             max_active_environments: None,
             ephemeral_disconnect_grace_ms: Some(1_500),
             offline_close_after_ms: None,
+            declared_only: false,
             expires_at_ms: None,
         })
         .await?
@@ -965,6 +942,287 @@ async fn ephemeral_grace_scenario(
     let short_view = read_key(api, &short_key_id).await?;
     assert_eq!(short_view.active_environment_count, 0);
     assert_eq!(short_view.registered_environment_count, 1);
+    Ok(())
+}
+
+/// Fixed machines declared ahead of their daemons, under a key that admits
+/// only declared machines: a daemon that starts before its declaration is
+/// told to retry and binds once it exists, under the declared id; a second
+/// identity with the same secret and name is never let in until an operator
+/// releases the environment; and closing frees the name.
+async fn declared_scenario(
+    api: &Arc<GatewayAgentApi>,
+    universe_id: Uuid,
+    gateway: &EnvironmentGatewayClientConfig,
+    urls: &Urls<'_>,
+    sandbox: &Path,
+) -> anyhow::Result<()> {
+    const KEY: &str = "runners";
+    let minted = api
+        .create_environment_registration_key(EnvironmentRegistrationKeyCreateParams {
+            registration_key_id: Some(KEY.to_owned()),
+            display_name: "declared live runners".to_owned(),
+            identity_mode: EnvironmentIdentityModeView::Persistent,
+            max_active_environments: Some(3),
+            ephemeral_disconnect_grace_ms: None,
+            offline_close_after_ms: None,
+            declared_only: true,
+            expires_at_ms: None,
+        })
+        .await?
+        .result;
+    assert!(minted.registration_key.declared_only);
+    let secret = minted.secret.0.clone();
+    // Every daemon here presents the same secret and the same name; only
+    // their identities, one per state directory, differ.
+    let spawn = |tag: &str| -> anyhow::Result<(Daemon, std::path::PathBuf)> {
+        let receipt = sandbox.join(format!("receipt-declared-{tag}.json"));
+        let mut config = daemon_config(
+            &workspace(sandbox, &format!("declared-{tag}"))?,
+            &sandbox.join(format!("state-declared-{tag}")),
+            urls.connect,
+            Some(&secret),
+            Some(&receipt),
+            OnClosed::Exit,
+        )?;
+        config
+            .registration
+            .as_mut()
+            .expect("registration")
+            .display_name = Some(DisplayName::new("runner-0")?);
+        Ok((spawn_daemon(config)?, receipt))
+    };
+    let declare = |environment_id: &str, name: &str| {
+        api.put_registered_environment(EnvironmentRegisteredPutParams {
+            environment_id: environment_id.to_owned(),
+            registration_key_id: KEY.to_owned(),
+            name: name.to_owned(),
+            display_name: None,
+            metadata: BTreeMap::new(),
+        })
+    };
+    let daemon_of = |view: &EnvironmentView| match &view.source {
+        EnvironmentSourceView::Registered { daemon_id, .. } => daemon_id.clone(),
+        _ => None,
+    };
+
+    // The daemon is up before its environment is declared. The key admits
+    // nothing undeclared, so no environment appears and the daemon keeps
+    // asking instead of giving up.
+    let (first, first_receipt) = spawn("first")?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(list_by_key(api, KEY, true).await?.is_empty());
+    assert!(
+        !first.exit.is_finished(),
+        "an undeclared daemon under a declared-only key retries"
+    );
+
+    // Declared: it exists at once, away, with its name and no daemon.
+    let declared = declare("build-box", "runner-0").await?.result;
+    assert!(declared.created);
+    let waiting = &declared.environment;
+    assert_eq!(waiting.environment_id, "build-box");
+    assert_eq!(waiting.state, EnvironmentStateView::Open);
+    assert!(matches!(
+        &waiting.source,
+        EnvironmentSourceView::Registered {
+            registration_key_id,
+            name: Some(name),
+            identity_mode: EnvironmentIdentityModeView::Persistent,
+            ..
+        } if registration_key_id == KEY && name == "runner-0"
+    ));
+    assert!(!declare("build-box", "runner-0").await?.result.created);
+    for (environment_id, name) in [("build-box", "runner-1"), ("other-box", "runner-0")] {
+        assert_eq!(
+            declare(environment_id, name).await.unwrap_err().kind,
+            AgentApiErrorKind::Conflict,
+            "{environment_id} as {name}"
+        );
+    }
+
+    // A profile can make it its default before any machine has shown up.
+    api.create_profile(api::ProfileCreateParams {
+        profile: api::AgentProfileInput {
+            profile_id: api::ProfileId::new("declared_live_builder"),
+            display_name: None,
+            description: None,
+            document: api::ProfileDocument {
+                config: Some(api::SessionConfig {
+                    features: Some(api::FeaturesConfig {
+                        environments: Some(api::EnvironmentsFeature {
+                            version: api::CURRENT_FEATURE_VERSION,
+                            selection: false,
+                            prompts: None,
+                            skills: None,
+                            environments: vec![api::EnvironmentAttachment {
+                                environment_id: Some("build-box".into()),
+                                inherit: false,
+                                default: true,
+                                access: api::EnvironmentAccess::Read,
+                                working_directory: None,
+                            }],
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        },
+    })
+    .await?;
+
+    // The daemon's next attempt binds it: the declared id, not a new one.
+    let bound = wait_for_environment(api, "build-box", "bound", |view| {
+        is_connected(view) == Some(true)
+    })
+    .await?;
+    let first_daemon = daemon_of(&bound).expect("a bound environment names its daemon");
+    assert_eq!(bound.status, EnvironmentStatusView::Ready);
+    wait_for_receipt_admission(&first_receipt, "created").await?;
+    let receipt = read_receipt(&first_receipt)?;
+    assert_eq!(receipt["environmentId"], "build-box");
+    assert_eq!(receipt["daemonId"], first_daemon.as_str());
+    assert_eq!(list_by_key(api, KEY, true).await?.len(), 1);
+    let route = RouteKey {
+        universe_id,
+        environment_id: "build-box".to_owned(),
+    };
+    let (client, _) = gateway
+        .connect(&route, gateway.connect_options("registration-live"))
+        .await?;
+    client.get_idle(&GetIdleParams {}).await?;
+    client.close().await?;
+
+    // A second machine with the same secret and name does not displace it.
+    // It is told to ask again, so it is still running.
+    let (second, second_receipt) = spawn("second")?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(!second.exit.is_finished());
+    assert!(!second_receipt.exists());
+    let still = wait_for_environment(api, "build-box", "still bound", |_| true).await?;
+    assert_eq!(daemon_of(&still), Some(first_daemon.clone()));
+    assert_eq!(is_connected(&still), Some(true));
+    assert_eq!(list_by_key(api, KEY, true).await?.len(), 1);
+
+    // Release: the environment forgets its daemon and keeps everything
+    // else. The released daemon's connection ends; it is a stranger now,
+    // and without a key to present it gives up.
+    let released = api
+        .release_registered_environment(EnvironmentRegisteredReleaseParams {
+            environment_id: "build-box".to_owned(),
+        })
+        .await?
+        .result;
+    assert!(released.released);
+    assert_eq!(released.environment.state, EnvironmentStateView::Open);
+    assert_eq!(daemon_of(&released.environment), None);
+    assert_eq!(is_connected(&released.environment), Some(false));
+    let first_exit = tokio::time::timeout(SETTLE, first.exit).await??;
+    assert!(
+        matches!(first_exit, DaemonExit::Refused(_)),
+        "the released daemon ended as {first_exit:?}"
+    );
+
+    // The waiting machine's next attempt takes its place under the same id.
+    let rebound = wait_for_environment(api, "build-box", "bound again", |view| {
+        is_connected(view) == Some(true)
+    })
+    .await?;
+    let second_daemon = daemon_of(&rebound).expect("bound again");
+    assert_ne!(second_daemon, first_daemon);
+    wait_for_receipt_admission(&second_receipt, "created").await?;
+    assert_eq!(read_receipt(&second_receipt)?["environmentId"], "build-box");
+    let (client, _) = gateway
+        .connect(&route, gateway.connect_options("registration-live"))
+        .await?;
+    client.get_idle(&GetIdleParams {}).await?;
+    client.close().await?;
+
+    // Nothing to release where no daemon is bound.
+    assert!(declare("spare-box", "runner-1").await?.result.created);
+    assert!(
+        !api.release_registered_environment(EnvironmentRegisteredReleaseParams {
+            environment_id: "spare-box".to_owned(),
+        })
+        .await?
+        .result
+        .released
+    );
+
+    // The other kinds take a chosen id too. A retry of the same request
+    // returns the same environment; the id is otherwise taken.
+    let external = |request_id: &str, environment_id: &str| {
+        api.create_external_environment(api::EnvironmentExternalCreateParams {
+            environment_id: Some(environment_id.to_owned()),
+            request_id: request_id.to_owned(),
+            endpoint: "ws://127.0.0.1:1/declared-live".to_owned(),
+            display_name: None,
+            metadata: BTreeMap::new(),
+        })
+    };
+    for _ in 0..2 {
+        assert_eq!(
+            external("declared-live-external", "ext-box")
+                .await?
+                .result
+                .environment
+                .environment_id,
+            "ext-box"
+        );
+    }
+    for (request_id, environment_id) in [
+        ("declared-live-external", "ext-other"),
+        ("declared-live-external-2", "ext-box"),
+        ("declared-live-external-3", "build-box"),
+    ] {
+        assert_eq!(
+            external(request_id, environment_id).await.unwrap_err().kind,
+            AgentApiErrorKind::Conflict,
+            "{request_id} as {environment_id}"
+        );
+    }
+    assert_eq!(
+        declare("ext-box", "runner-2").await.unwrap_err().kind,
+        AgentApiErrorKind::Conflict
+    );
+
+    // Closing spends the bound identity and gives the name back; the id
+    // stays with the closed record.
+    api.close_environment(EnvironmentCloseParams {
+        environment_id: "build-box".to_owned(),
+    })
+    .await?;
+    let second_exit = tokio::time::timeout(SETTLE, second.exit).await??;
+    assert!(
+        matches!(second_exit, DaemonExit::EnvironmentClosed),
+        "the closed environment's daemon ended as {second_exit:?}"
+    );
+    assert_eq!(
+        declare("build-box", "runner-0").await.unwrap_err().kind,
+        AgentApiErrorKind::Conflict
+    );
+    assert!(declare("build-box-2", "runner-0").await?.result.created);
+
+    // Revoking the key with its environments closes the waiting ones too.
+    let revoked = api
+        .revoke_environment_registration_key(EnvironmentRegistrationKeyRevokeParams {
+            registration_key_id: KEY.to_owned(),
+            close_environments: true,
+        })
+        .await?
+        .result;
+    let mut closed = revoked.closed_environment_ids.clone();
+    closed.sort();
+    assert_eq!(closed, ["build-box-2", "spare-box"]);
+    for environment_id in ["build-box-2", "spare-box"] {
+        let view = wait_for_state(api, environment_id, EnvironmentStateView::Closed).await?;
+        assert_eq!(
+            view.close_reason,
+            Some(EnvironmentCloseReasonView::KeyRevoked)
+        );
+    }
     Ok(())
 }
 
@@ -1393,7 +1651,9 @@ fn registered_source(view: &EnvironmentView) -> anyhow::Result<RegisteredFacts> 
     };
     Ok(RegisteredFacts {
         registration_key_id: registration_key_id.clone(),
-        daemon_id: daemon_id.clone(),
+        daemon_id: daemon_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("the registered environment has no daemon bound"))?,
         identity_mode: *identity_mode,
         connection_changed_at_ms: *connection_changed_at_ms,
         last_seen_at_ms: *last_seen_at_ms,

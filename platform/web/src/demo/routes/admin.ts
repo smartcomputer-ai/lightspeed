@@ -9,9 +9,10 @@ import type {
   DeploymentEnvironmentProviderView,
   MethodGroup,
 } from "@lightspeed-ai/sdk";
+import { keyIdConflictMessage } from "@lightspeed-ai/platform-shared";
 import { groupsFor } from "@/lib/method-groups";
 import { DEMO_POWER_STATES } from "../fixtures/builders";
-import type { DemoStore, UniverseState } from "../store";
+import { allocatedKeyId, type DemoStore, type UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody } from "./common";
 
 /// What a fresh binding provisions from when no other universe already
@@ -91,20 +92,27 @@ export function adminRoutes(store: DemoStore): Hono {
     const body = await readBody<{
       displayName?: string;
       scope?: { kind: "deployment" } | { kind: "universe"; universeId: string };
-      groups?: MethodGroup[];
+      groups?: MethodGroup[] | "all";
       assertActor?: boolean;
+      keyId?: string;
     }>(c);
     const displayName = body.displayName?.trim();
     if (!displayName || !body.scope) return badRequest(c, "displayName and scope are required");
+    // A key's groups are always stated: a list, or `all`.
+    const groups = body.groups === "all" ? groupsFor(body.scope.kind) : body.groups;
+    if (!Array.isArray(groups) || groups.length === 0) {
+      return badRequest(c, "groups are required: a list of method groups, or \"all\"");
+    }
+    const state = body.scope.kind === "universe" ? store.universes.get(body.scope.universeId) : undefined;
+    if (body.scope.kind === "universe" && !state) return notFound(c, "universe not found");
+    // A chosen id is taken while any key of the scope holds it, revoked or not.
+    const keyId = body.keyId?.trim() || undefined;
+    const holder = (state ? state.apiKeys : store.deploymentKeys).find((key) => key.keyId === keyId);
+    if (keyId && holder) return conflict(c, keyIdConflictMessage(keyId, holder.revokedAtMs != null));
     const secret = `lsk_${crypto.randomUUID().replaceAll("-", "")}`;
-    const key = { keyPrefix: secret.slice(0, 12), displayName, createdAtMs: Date.now(), revokedAtMs: null, lastUsedAtMs: null };
-    const kind = body.scope.kind;
-    const groups = body.groups ?? groupsFor(kind);
+    const key = { keyId: keyId ?? allocatedKeyId(), keyPrefix: secret.slice(0, 12), displayName, createdAtMs: Date.now(), revokedAtMs: null, lastUsedAtMs: null };
     const assertActor = body.assertActor ?? false;
-    if (body.scope.kind === "universe") {
-      const universeId = body.scope.universeId;
-      const state = store.universes.get(universeId);
-      if (!state) return notFound(c, "universe not found");
+    if (state) {
       const apiKey: DeploymentApiKeyView = {
         ...key, scope: { kind: "universe", universeId: state.universe.lightspeedUniverseId }, groups, assertActor,
         createdBy: { kind: "actor", id: store.currentUser.id },
@@ -117,21 +125,25 @@ export function adminRoutes(store: DemoStore): Hono {
     return c.json({ apiKey, secret }, 201);
   });
 
-  app.post("/admin/api-keys/:keyPrefix/rotate", (c) => {
-    const prefix = c.req.param("keyPrefix");
-    const apiKey = [...store.deploymentKeys, ...[...store.universes.values()].flatMap((state) => state.apiKeys)]
-      .find((key) => key.keyPrefix === prefix && key.revokedAtMs == null);
-    if (!apiKey) return notFound(c);
+  /// A key id names a key within its scope: the runtime universe in
+  /// `universeId`, or the deployment when absent.
+  const scopedKey = (keyId: string, universeId: string | undefined) => {
+    const keys = universeId === undefined ? store.deploymentKeys
+      : [...store.universes.values()].find((state) => state.universe.lightspeedUniverseId === universeId)?.apiKeys ?? [];
+    return keys.find((key) => key.keyId === keyId);
+  };
+
+  app.post("/admin/api-keys/:keyId/rotate", (c) => {
+    const apiKey = scopedKey(c.req.param("keyId"), c.req.query("universeId"));
+    if (!apiKey || apiKey.revokedAtMs != null) return notFound(c);
     const secret = `lsk_${crypto.randomUUID().replaceAll("-", "")}`;
     apiKey.keyPrefix = secret.slice(0, 12);
     apiKey.lastUsedAtMs = null;
     return c.json({ apiKey, secret });
   });
 
-  app.delete("/admin/api-keys/:keyPrefix", (c) => {
-    const prefix = c.req.param("keyPrefix");
-    const key = store.deploymentKeys.find((candidate) => candidate.keyPrefix === prefix)
-      ?? [...store.universes.values()].flatMap((state) => state.apiKeys).find((candidate) => candidate.keyPrefix === prefix);
+  app.delete("/admin/api-keys/:keyId", (c) => {
+    const key = scopedKey(c.req.param("keyId"), c.req.query("universeId"));
     if (!key) return notFound(c);
     key.revokedAtMs ??= Date.now();
     return c.json(key);
