@@ -6,17 +6,17 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { DemoModeNote } from "@/components/onboarding/demo-mode-note";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { demoMode } from "@/lib/demo-mode";
-import { dismissWelcome, welcomeDismissed } from "@/lib/welcome";
+import { dismissWelcome, welcomeDismissed, welcomeEnabled } from "@/lib/welcome";
 import chargeImage from "@/assets/onboarding/electric-charge.png";
 import handImage from "@/assets/onboarding/hand-guiding-agent.png";
 
 /// The welcome dialog: shown when the app loads until someone ticks "Don't
-/// show anymore". A start for onboarding that later asks for a theme,
+/// show anymore" (in the demo only for now; see welcomeEnabled). A start for onboarding that later asks for a theme,
 /// preferences and defaults; for now it greets, and in the demo says what
 /// the demo is.
 
 export function WelcomeDialog() {
-  const [open, setOpen] = useState(() => !welcomeDismissed());
+  const [open, setOpen] = useState(() => welcomeEnabled() && !welcomeDismissed());
   const [never, setNever] = useState(false);
   const close = () => {
     if (never) dismissWelcome();

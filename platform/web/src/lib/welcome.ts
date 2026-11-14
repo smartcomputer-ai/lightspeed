@@ -1,7 +1,16 @@
 /// Whether the welcome dialog was turned off ("Don't show anymore"), kept in
 /// local storage. Resetting the demo turns it back on.
 
+import { demoMode } from "@/lib/demo-mode";
+
 const DISMISSED_KEY = "lightspeed:welcome-dismissed";
+
+/// Whether the welcome dialog is shown at all. Only the demo shows it for
+/// now, where it says what the demo is; a real deployment gets it once its
+/// text is ready.
+export function welcomeEnabled(): boolean {
+  return demoMode() !== null;
+}
 
 /// Whether the welcome was turned off; storage that cannot be read counts as not.
 export function welcomeDismissed(): boolean {
