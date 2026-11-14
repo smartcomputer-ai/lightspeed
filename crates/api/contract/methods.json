@@ -15,6 +15,8 @@
         "bots/removed",
         "environments/changed",
         "environments/removed",
+        "workspaces/changed",
+        "workspaces/removed",
         "watch/reset"
       ],
       "params": {
@@ -4045,6 +4047,8 @@
     "bots/removed",
     "environments/changed",
     "environments/removed",
+    "workspaces/changed",
+    "workspaces/removed",
     "watch/reset",
     "session/started",
     "session/event",

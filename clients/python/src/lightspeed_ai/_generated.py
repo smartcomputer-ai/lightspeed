@@ -166,6 +166,8 @@ NOTIFICATIONS = (
     'bots/removed',
     'environments/changed',
     'environments/removed',
+    'workspaces/changed',
+    'workspaces/removed',
     'watch/reset',
     'session/started',
     'session/event',
@@ -175,7 +177,7 @@ NOTIFICATIONS = (
 )
 
 METHOD_INFO = {
-    'universe/watch': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Watch universe list changes', 'description': 'Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Each requested kind requires its own API-key group. Includes sub-agents; visibleTo restricts session access as on session/list.', 'streaming': True, 'notifications': ['session/changed', 'session/removed', 'bots/changed', 'bots/removed', 'environments/changed', 'environments/removed', 'watch/reset']},
+    'universe/watch': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Watch universe list changes', 'description': 'Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Each requested kind requires its own API-key group. Includes sub-agents; visibleTo restricts session access as on session/list.', 'streaming': True, 'notifications': ['session/changed', 'session/removed', 'bots/changed', 'bots/removed', 'environments/changed', 'environments/removed', 'workspaces/changed', 'workspaces/removed', 'watch/reset']},
     'vfs/workspaces/files/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a workspace file', 'description': 'Reads bytes at a path in the current workspace head.', 'streaming': False, 'notifications': []},
     'initialize': {'scope': 'connection', 'access': {'kind': 'connection'}, 'summary': 'Inspect the Lightspeed protocol', 'description': 'Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.', 'streaming': False, 'notifications': []},
     'session/start': {'scope': 'universe', 'access': {'action': 'createSession', 'kind': 'universe'}, 'summary': 'Start a session', 'description': 'Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.', 'streaming': False, 'notifications': []},

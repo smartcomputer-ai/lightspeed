@@ -15,23 +15,28 @@ export function watchRoutes(store: DemoStore): Hono {
     let previous = snapshot(store, universe);
     let timer: ReturnType<typeof setInterval>;
     let close: () => void = () => {};
+    let cancel: () => void = () => {};
     const body = new ReadableStream<Uint8Array>({
       start(output) {
         let closed = false;
-        close = () => {
+        cancel = () => {
           if (closed) return;
           closed = true; clearInterval(timer);
           c.req.raw.signal.removeEventListener("abort", close);
-          output.close();
         };
+        close = () => { if (!closed) { cancel(); output.close(); } };
         const send = (event: AgentNotification) => output.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
         send({ method: "watch/reset", params: {} });
         let ticks = 0;
+        let missed = false;
         timer = setInterval(() => {
           if (c.req.raw.signal.aborted) { close(); return; }
           const current = snapshot(store, universe);
-          if ((output.desiredSize ?? 0) <= 0) { previous = new Map(); return; }
-          if (!previous.size) send({ method: "watch/reset", params: {} });
+          if ((output.desiredSize ?? 0) <= 0) { missed = true; return; }
+          if (missed) {
+            send({ method: "watch/reset", params: {} });
+            previous = current; missed = false; return;
+          }
           for (const [key, item] of current) {
             if (previous.get(key)?.serialized !== item.serialized) send(item.event);
           }
@@ -41,6 +46,7 @@ export function watchRoutes(store: DemoStore): Hono {
               if (event.method === "session/changed") send({ method: "session/removed", params: { sessionId: event.params.session.id } });
               if (event.method === "bots/changed") send({ method: "bots/removed", params: { botId: event.params.bot.botId } });
               if (event.method === "environments/changed") send({ method: "environments/removed", params: { environmentId: event.params.environment.environmentId } });
+              if (event.method === "workspaces/changed") send({ method: "workspaces/removed", params: { workspaceId: event.params.workspace.workspaceId } });
             }
           }
           previous = current;
@@ -49,7 +55,7 @@ export function watchRoutes(store: DemoStore): Hono {
         c.req.raw.signal.addEventListener("abort", close, { once: true });
         if (c.req.raw.signal.aborted) close();
       },
-      cancel() { close(); },
+      cancel() { cancel(); },
     });
     return new Response(body, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
   });
@@ -73,6 +79,9 @@ function snapshot(store: DemoStore, universe: UniverseState) {
   }
   for (const environment of universe.environments.values()) add(`environment:${environment.environmentId}`, {
     method: "environments/changed", params: { environment },
+  });
+  for (const entry of universe.workspaces.values()) add(`workspace:${entry.row.workspaceId}`, {
+    method: "workspaces/changed", params: { workspace: entry.row },
   });
   return rows;
 }

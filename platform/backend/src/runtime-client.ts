@@ -114,7 +114,7 @@ class MemberClient extends LightspeedClient {
 
   override async openWatch(params: UniverseWatchParams = {}, options: CallOptions = {}): Promise<Response> {
     if (!roleAtLeast(this.member.role, "viewer")) throw new GateRefusal(403, "viewer role required");
-    const requested = params.kinds ?? ["session", "bot", "environment"];
+    const requested = params.kinds ?? ["session", "bot", "environment", "workspace"];
     const kinds: WatchKind[] = requested.filter(kind => kind !== "bot" || this.features.bots);
     if (!kinds.length) throw new GateRefusal(403, "no enabled collections requested");
     return super.openWatch({

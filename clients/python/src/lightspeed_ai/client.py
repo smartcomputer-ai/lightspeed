@@ -300,9 +300,9 @@ class AsyncLightspeedClient(GeneratedClient):
                             size += len(field)
                         if size + len(line) > 2 * 1024 * 1024:
                             raise LightspeedTransportError("Watch event exceeded its size limit")
-            except httpx.RequestError:
+            except httpx.RequestError as error:
                 if not reconnect:
-                    raise
+                    raise LightspeedTransportError("Watch stream interrupted", transient=True) from error
             except LightspeedTransportError as error:
                 if not reconnect or not error.transient:
                     raise

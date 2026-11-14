@@ -131,6 +131,8 @@ describe("LightspeedClient", () => {
   it("ships canonical method documentation from the Rust manifest", () => {
     expect(METHOD_INFO["session/config/put"]).toEqual({
       scope: "universe",
+      streaming: false,
+      notifications: [],
       access: { kind: "universe", action: "configureSession" },
       summary: "Replace session configuration",
       description:

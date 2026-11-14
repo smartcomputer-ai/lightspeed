@@ -163,15 +163,17 @@ export class LightspeedClient extends LightspeedHelpers {
     headers.set("accept", "text/event-stream");
     const { fetchImpl } = this;
     let response: Response;
+    const admission = new AbortController();
+    const timer = setTimeout(() => admission.abort(), 15_000);
     try {
       response = await fetchImpl(this.endpoint, {
         method: "POST", headers, body: JSON.stringify({ id: this.nextRequestId(), method: "universe/watch", params }),
-        ...(options.signal ? { signal: options.signal } : {}),
+        signal: options.signal ? AbortSignal.any([options.signal, admission.signal]) : admission.signal,
       });
     } catch (error) {
       options.signal?.throwIfAborted();
       throw new LightspeedTransportError(`Watch connection failed: ${errorMessage(error)}`, { cause: error });
-    }
+    } finally { clearTimeout(timer); }
     if (!response.ok || !response.headers.get("content-type")?.startsWith("text/event-stream")) {
       const body = await this.readBody(response, options.signal);
       if (isRecord(body) && body.error) throw new LightspeedRpcError(body.error as JsonRpcErrorPayload);

@@ -103,7 +103,7 @@ export function WorkspaceTransfers({
   universeId: string;
   workspaceId?: string;
   onRemoved?: (path: string) => void;
-  onRenamed?: (from: string, to: string) => void;
+  onRenamed?: (from: string, to: string, revision: { before: number; after: number }) => void;
   onNewFile?: (parent: string, revision: number) => void;
   onWorkspaceRemoved?: () => void;
   children: ReactNode;
@@ -529,7 +529,7 @@ export function WorkspaceTransfers({
       workspace,
       manifest,
     });
-    onRenamed?.(path, destination);
+    onRenamed?.(path, destination, { before: snapshot.workspace.revision, after: workspace.revision });
   };
   const confirmRename = async () => {
     if (!renaming || !canUpload || uploadLock.current) return;

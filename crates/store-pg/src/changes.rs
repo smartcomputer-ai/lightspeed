@@ -23,6 +23,7 @@ pub enum ChangeKind {
     Session,
     Bot,
     Environment,
+    Workspace,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

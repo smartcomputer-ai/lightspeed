@@ -87,7 +87,8 @@ impl PgStore {
         created_by: Option<&str>,
         bot_id: Option<&str>,
     ) -> Result<Vec<(BotRosterRow, api::ResourceAccessSummary)>, BotError> {
-        self.bot_roster_by_ids(created_by, bot_id.map(|id| vec![id.to_owned()]).as_deref()).await
+        self.bot_roster_by_ids(created_by, bot_id.map(|id| vec![id.to_owned()]).as_deref())
+            .await
     }
 
     /// The same roster projection as bots/list, restricted to changed ids.

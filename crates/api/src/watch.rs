@@ -1,17 +1,20 @@
 use super::*;
 
 /// Collections whose list rows can be watched. Each requires its existing API-key group.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum WatchKind {
     Session,
     Bot,
     Environment,
+    Workspace,
 }
 
 impl WatchKind {
     pub fn all() -> Vec<Self> {
-        vec![Self::Session, Self::Bot, Self::Environment]
+        vec![Self::Session, Self::Bot, Self::Environment, Self::Workspace]
     }
 
     pub fn group(self) -> MethodGroup {
@@ -19,6 +22,7 @@ impl WatchKind {
             Self::Session => MethodGroup::Session,
             Self::Bot => MethodGroup::Bots,
             Self::Environment => MethodGroup::Environments,
+            Self::Workspace => MethodGroup::Vfs,
         }
     }
 }
@@ -26,7 +30,7 @@ impl WatchKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UniverseWatchParams {
-    /// Collections to watch; omission selects all three. Must be nonempty.
+    /// Collections to watch; omission selects all four. Must be nonempty.
     #[serde(default = "WatchKind::all")]
     pub kinds: Vec<WatchKind>,
     /// Restrict session rows to shared sessions and sessions created by this actor,
@@ -41,6 +45,13 @@ pub struct UniverseWatchParams {
 pub struct UniverseWatchResponse {}
 
 pub const WATCH_NOTIFICATIONS: &[&str] = &[
-    "session/changed", "session/removed", "bots/changed", "bots/removed",
-    "environments/changed", "environments/removed", "watch/reset",
+    "session/changed",
+    "session/removed",
+    "bots/changed",
+    "bots/removed",
+    "environments/changed",
+    "environments/removed",
+    "workspaces/changed",
+    "workspaces/removed",
+    "watch/reset",
 ];

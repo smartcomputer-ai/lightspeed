@@ -2,8 +2,13 @@ use super::*;
 
 #[async_trait]
 pub trait AgentApiService: Send + Sync {
-    async fn watch_universe(&self, _params: UniverseWatchParams) -> Result<AgentApiOutcome<UniverseWatchResponse>, AgentApiError> {
-        Err(AgentApiError::invalid_request("universe/watch requires an HTTP event stream"))
+    async fn watch_universe(
+        &self,
+        _params: UniverseWatchParams,
+    ) -> Result<AgentApiOutcome<UniverseWatchResponse>, AgentApiError> {
+        Err(AgentApiError::invalid_request(
+            "universe/watch requires an HTTP event stream",
+        ))
     }
 
     async fn start_transcription(

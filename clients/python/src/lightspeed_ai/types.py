@@ -87,19 +87,28 @@ class AgentNotificationEnvironmentsRemoved(TypedDict):
     params: Params5
 
 
+class Params7(TypedDict):
+    workspaceId: str
+
+
+class AgentNotificationWorkspacesRemoved(TypedDict):
+    method: Literal['workspaces/removed']
+    params: Params7
+
+
 class AgentNotificationWatchReset(TypedDict):
     method: Literal['watch/reset']
     params: dict[str, Any]
 
 
-class Params10(TypedDict):
+class Params12(TypedDict):
     message: str
     sessionId: NotRequired[str | None]
 
 
 class AgentNotificationError(TypedDict):
     method: Literal['error']
-    params: Params10
+    params: Params12
 
 
 ApprovalDecisionFailureKind: TypeAlias = (
@@ -3969,7 +3978,7 @@ shared with the universe once, one way; everything else is shared.
 """
 
 
-WatchKind: TypeAlias = Literal['session', 'bot', 'environment']
+WatchKind: TypeAlias = Literal['session', 'bot', 'environment', 'workspace']
 """
 Collections whose list rows can be watched. Each requires its existing API-key group.
 """
@@ -4222,6 +4231,15 @@ class AgentApiError(TypedDict):
     Present for operationPending on a call that took a submission id, including
     one the server allocated. Retrying with it cannot land the same work twice.
     """
+
+
+class Params6(TypedDict):
+    workspace: VfsWorkspaceView
+
+
+class AgentNotificationWorkspacesChanged(TypedDict):
+    method: Literal['workspaces/changed']
+    params: Params6
 
 
 class AgentProfileSummary(TypedDict):
@@ -6309,7 +6327,7 @@ class UniverseDirectoryGroupMapping(TypedDict):
 class UniverseWatchParams(TypedDict):
     kinds: NotRequired[list[WatchKind]]
     """
-    Collections to watch; omission selects all three. Must be nonempty.
+    Collections to watch; omission selects all four. Must be nonempty.
     """
     visibleTo: NotRequired[str | None]
     """
@@ -7611,13 +7629,13 @@ class AgentNotificationBotsChanged(TypedDict):
     params: Params2
 
 
-class Params7(TypedDict):
+class Params9(TypedDict):
     event: SessionEventView
 
 
 class AgentNotificationSessionEvent(TypedDict):
     method: Literal['session/event']
-    params: Params7
+    params: Params9
 
 
 class AgentProfile(TypedDict):
@@ -7976,28 +7994,28 @@ class SessionView(TypedDict):
     updatedAtMs: int
 
 
-class Params6(TypedDict):
+class Params8(TypedDict):
     session: SessionView
 
 
 class AgentNotificationSessionStarted(TypedDict):
     method: Literal['session/started']
-    params: Params6
+    params: Params8
 
 
-class Params8(TypedDict):
+class Params10(TypedDict):
     run: RunView
     sessionId: str
 
 
 class AgentNotificationSessionRunsStarted(TypedDict):
     method: Literal['session/runs/started']
-    params: Params8
+    params: Params10
 
 
 class AgentNotificationSessionRunsCompleted(TypedDict):
     method: Literal['session/runs/completed']
-    params: Params8
+    params: Params10
 
 
 AgentNotification: TypeAlias = (
@@ -8007,6 +8025,8 @@ AgentNotification: TypeAlias = (
     | AgentNotificationBotsRemoved
     | AgentNotificationEnvironmentsChanged
     | AgentNotificationEnvironmentsRemoved
+    | AgentNotificationWorkspacesChanged
+    | AgentNotificationWorkspacesRemoved
     | AgentNotificationWatchReset
     | AgentNotificationSessionStarted
     | AgentNotificationSessionEvent

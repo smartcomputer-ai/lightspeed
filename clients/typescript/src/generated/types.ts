@@ -111,6 +111,18 @@ export type AgentNotification =
       };
     }
   | {
+      method: "workspaces/changed";
+      params: {
+        workspace: VfsWorkspaceView;
+      };
+    }
+  | {
+      method: "workspaces/removed";
+      params: {
+        workspaceId: string;
+      };
+    }
+  | {
       method: "watch/reset";
       params: {};
     }
@@ -1603,7 +1615,7 @@ export type SessionEventDirection = "forward" | "backward";
 /**
  * Collections whose list rows can be watched. Each requires its existing API-key group.
  */
-export type WatchKind = "session" | "bot" | "environment";
+export type WatchKind = "session" | "bot" | "environment" | "workspace";
 
 /**
  * All JSON-RPC wire types of the Lightspeed agent API.
@@ -2055,6 +2067,23 @@ export interface EnvironmentObservedTargetView {
    * Present only while `phase` is `active`.
    */
   power?: EnvironmentPowerStateView | null;
+}
+export interface VfsWorkspaceView {
+  baseSnapshotRef?: string | null;
+  /**
+   * Total byte size of the head snapshot.
+   */
+  bytes: number;
+  createdAtMs: number;
+  displayName?: string | null;
+  /**
+   * File count of the head snapshot.
+   */
+  files: number;
+  headSnapshotRef: string;
+  revision: number;
+  updatedAtMs: number;
+  workspaceId: string;
 }
 export interface SessionView {
   /**
@@ -5204,23 +5233,6 @@ export interface AgentApiOutcomeOfVfsWorkspaceCreateResponse {
 export interface VfsWorkspaceCreateResponse {
   workspace: VfsWorkspaceView;
 }
-export interface VfsWorkspaceView {
-  baseSnapshotRef?: string | null;
-  /**
-   * Total byte size of the head snapshot.
-   */
-  bytes: number;
-  createdAtMs: number;
-  displayName?: string | null;
-  /**
-   * File count of the head snapshot.
-   */
-  files: number;
-  headSnapshotRef: string;
-  revision: number;
-  updatedAtMs: number;
-  workspaceId: string;
-}
 export interface AgentApiOutcomeOfVfsWorkspaceDeleteResponse {
   notifications?: AgentNotification[];
   result: VfsWorkspaceDeleteResponse;
@@ -6823,7 +6835,7 @@ export interface TranscriptionStartParams {
 }
 export interface UniverseWatchParams {
   /**
-   * Collections to watch; omission selects all three. Must be nonempty.
+   * Collections to watch; omission selects all four. Must be nonempty.
    */
   kinds?: WatchKind[];
   /**

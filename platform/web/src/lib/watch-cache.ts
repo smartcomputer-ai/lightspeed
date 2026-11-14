@@ -1,10 +1,10 @@
 import type { InfiniteData, Query, QueryClient, QueryKey } from "@tanstack/react-query";
 import type { AgentNotification, BotListItem, EnvironmentView, SessionSummaryView } from "@lightspeed-ai/sdk";
-import type { SessionListPage, SessionView } from "@/api";
+import type { SessionListPage, SessionView, WorkspaceRow, WorkspaceTree } from "@/api";
 
 type Pages<T> = InfiniteData<T>;
 type EnvironmentPage = { environments: EnvironmentView[]; nextAfter?: string | null };
-const WATCHED = new Set(["sessions", "session-children", "session", "bots", "bot", "environments"]);
+const WATCHED = new Set(["sessions", "session-children", "session", "bots", "bot", "environments", "workspaces", "workspace-tree"]);
 const MAX_OVERLAPPING_UPDATES = 256;
 
 function sessionMatches(row: SessionSummaryView, key: QueryKey): boolean {
@@ -69,6 +69,8 @@ function notificationKey(event: AgentNotification): string {
     case "bots/removed": return `bot:${event.params.botId}`;
     case "environments/changed": return `environment:${event.params.environment.environmentId}`;
     case "environments/removed": return `environment:${event.params.environmentId}`;
+    case "workspaces/changed": return `workspace:${event.params.workspace.workspaceId}`;
+    case "workspaces/removed": return `workspace:${event.params.workspaceId}`;
     default: return event.method;
   }
 }
@@ -84,6 +86,10 @@ function applies(event: AgentNotification, key: QueryKey): boolean {
       return key[0] === "bots" || (key[0] === "bot" && key[2] === id);
     }
     case "environments/changed": case "environments/removed": return key[0] === "environments" && key[2] === "pages";
+    case "workspaces/changed": case "workspaces/removed": {
+      const id = event.method === "workspaces/changed" ? event.params.workspace.workspaceId : event.params.workspaceId;
+      return key[0] === "workspaces" || (key[0] === "workspace-tree" && key[2] === id);
+    }
     default: return false;
   }
 }
@@ -114,6 +120,21 @@ function patch(data: unknown, key: QueryKey, event: AgentNotification): unknown 
     }
     case "environments/changed": return updateEnvironmentPages(data as Pages<EnvironmentPage>, key, event.params.environment.environmentId, event.params.environment);
     case "environments/removed": return updateEnvironmentPages(data as Pages<EnvironmentPage>, key, event.params.environmentId);
+    case "workspaces/changed": case "workspaces/removed": {
+      const row = event.method === "workspaces/changed" ? event.params.workspace : undefined;
+      const id = event.method === "workspaces/changed" ? event.params.workspace.workspaceId : event.params.workspaceId;
+      if (key[0] === "workspace-tree") {
+        const old = data as WorkspaceTree;
+        // Never label an older manifest with a newer head. Reload that snapshot.
+        return row && row.revision >= old.workspace.revision && row.headSnapshotRef === old.workspace.headSnapshotRef
+          ? { ...old, workspace: row } : data;
+      }
+      const rows = data as WorkspaceRow[];
+      if (row && rows.some(old => old.workspaceId === id && old.revision > row.revision)) return data;
+      const next = rows.filter(old => old.workspaceId !== id);
+      if (row) next.push(row);
+      return next.sort((a, b) => b.updatedAtMs - a.updatedAtMs || a.workspaceId.localeCompare(b.workspaceId));
+    }
     default: return data;
   }
 }
@@ -168,6 +189,12 @@ export class WatchCache {
     if ((event.method === "session/removed" && query.queryKey[0] === "session") ||
         (event.method === "bots/removed" && query.queryKey[0] === "bot")) {
       void this.client.invalidateQueries({ queryKey: query.queryKey, exact: true });
+    }
+    if (query.queryKey[0] === "workspace-tree") {
+      const tree = query.state.data as WorkspaceTree | undefined;
+      const needsRead = event.method === "workspaces/removed" || (event.method === "workspaces/changed" &&
+        (!tree || tree.workspace.revision < event.params.workspace.revision));
+      if (needsRead) void this.client.invalidateQueries({ queryKey: query.queryKey, exact: true }, { cancelRefetch: false });
     }
     // Bound growth when new rows continually enter the loaded range. A fresh
     // server page restores its normal size and authoritative continuation.

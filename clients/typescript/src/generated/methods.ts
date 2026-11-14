@@ -161,7 +161,7 @@ export const METHOD_INFO = {
   "universe/watch": {
     scope: "universe",
     streaming: true,
-    notifications: ["session/changed","session/removed","bots/changed","bots/removed","environments/changed","environments/removed","watch/reset"],
+    notifications: ["session/changed","session/removed","bots/changed","bots/removed","environments/changed","environments/removed","workspaces/changed","workspaces/removed","watch/reset"],
     access: {"action":"read","kind":"universe"},
     summary: "Watch universe list changes",
     description: "Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Each requested kind requires its own API-key group. Includes sub-agents; visibleTo restricts session access as on session/list.",
@@ -1367,6 +1367,8 @@ export const NOTIFICATIONS = [
   "bots/removed",
   "environments/changed",
   "environments/removed",
+  "workspaces/changed",
+  "workspaces/removed",
   "watch/reset",
   "session/started",
   "session/event",

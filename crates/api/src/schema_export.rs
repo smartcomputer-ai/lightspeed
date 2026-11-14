@@ -88,7 +88,12 @@ pub fn export_schemas() -> ExportedSchemas {
         )
         .expect("write string");
         if !spec.notifications.is_empty() {
-            writeln!(api_reference, "- Transport: `text/event-stream`\n- Notifications: {}\n", spec.notifications.join(", ")).expect("write string");
+            writeln!(
+                api_reference,
+                "- Transport: `text/event-stream`\n- Notifications: {}\n",
+                spec.notifications.join(", ")
+            )
+            .expect("write string");
         }
         let schemas = (spec.register_schemas)(&mut generator);
         let params_schema = serde_json::to_value(&schemas.params).expect("schema serializes");
@@ -216,7 +221,14 @@ mod tests {
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 149);
+        assert_eq!(total, 150);
+        let streaming: Vec<_> = manifest
+            .iter()
+            .filter(|spec| !spec.notifications.is_empty())
+            .collect();
+        assert_eq!(streaming.len(), 1);
+        assert_eq!(streaming[0].method, crate::METHOD_UNIVERSE_WATCH);
+        assert_eq!(streaming[0].notifications, crate::WATCH_NOTIFICATIONS);
         assert_eq!(
             manifest
                 .iter()

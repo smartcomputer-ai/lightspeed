@@ -309,8 +309,12 @@ pub struct MethodSchemas {
 }
 
 macro_rules! stream_notifications {
-    () => { &[] };
-    ($value:expr) => { $value };
+    () => {
+        &[]
+    };
+    ($value:expr) => {
+        $value
+    };
 }
 
 macro_rules! api_methods {
@@ -630,8 +634,15 @@ api_methods! {
 /// JSON-RPC notification methods the server can emit, with payloads described
 /// by the [`AgentNotification`] schema.
 pub const NOTIFICATION_METHODS: &[&str] = &[
-    "session/changed", "session/removed", "bots/changed", "bots/removed",
-    "environments/changed", "environments/removed", "watch/reset",
+    "session/changed",
+    "session/removed",
+    "bots/changed",
+    "bots/removed",
+    "environments/changed",
+    "environments/removed",
+    "workspaces/changed",
+    "workspaces/removed",
+    "watch/reset",
     NOTIFY_SESSION_STARTED,
     NOTIFY_SESSION_EVENT,
     NOTIFY_SESSION_RUNS_STARTED,

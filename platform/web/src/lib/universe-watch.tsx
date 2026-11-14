@@ -22,9 +22,11 @@ export function UniverseWatchProvider({ children }: { children: ReactNode }) {
     let attempts = 0;
     const connect = async () => {
       try {
+        const admission = new AbortController();
+        const deadline = setTimeout(() => admission.abort(), 15_000);
         const response = await fetch(`/api/v1/universes/${encodeURIComponent(universeId)}/watch`, {
-          credentials: "same-origin", headers: { accept: "text/event-stream" }, signal: controller.signal,
-        });
+          credentials: "same-origin", headers: { accept: "text/event-stream" }, signal: AbortSignal.any([controller.signal, admission.signal]),
+        }).finally(() => clearTimeout(deadline));
         if (!response.ok || !response.body || !response.headers.get("content-type")?.startsWith("text/event-stream")) {
           await response.body?.cancel();
           if ([401, 403, 404].includes(response.status)) {

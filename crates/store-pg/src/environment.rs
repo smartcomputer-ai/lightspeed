@@ -2164,6 +2164,25 @@ fn metadata_filter_json(metadata: &BTreeMap<String, String>) -> serde_json::Valu
     )
 }
 
+impl PgStore {
+    /// The environment list projection restricted to a batch of changed ids.
+    pub async fn environments_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
+        let query = format!(
+            "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_FROM} WHERE e.universe_id=$1 AND e.environment_id=ANY($2)"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(self.config.universe_id)
+            .bind(ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| sql_error("load changed environments", e))?;
+        rows.iter().map(environment_from_row).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2202,15 +2221,5 @@ mod tests {
             assert!(allowed.contains(&format!("'{kind}'")), "{kind}");
         }
         assert!(!allowed.contains("direct_secret"));
-    }
-}
-
-impl PgStore {
-    /// The environment list projection restricted to a batch of changed ids.
-    pub async fn environments_by_ids(&self, ids: &[String]) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
-        let query = format!("SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_FROM} WHERE e.universe_id=$1 AND e.environment_id=ANY($2)");
-        let rows = sqlx::query(sqlx::AssertSqlSafe(query)).bind(self.config.universe_id)
-            .bind(ids).fetch_all(&self.pool).await.map_err(|e| sql_error("load changed environments", e))?;
-        rows.iter().map(environment_from_row).collect()
     }
 }

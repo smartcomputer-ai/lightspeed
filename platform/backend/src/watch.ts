@@ -31,6 +31,7 @@ export async function proxyWatch(client: LightspeedClient, downstream: AbortSign
       async cancel() {
         abort(); cleanup();
         await reader.cancel().catch(() => {});
+        reader.releaseLock();
       },
     });
     return new Response(body, { headers: {

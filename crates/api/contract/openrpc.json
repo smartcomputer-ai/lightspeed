@@ -2737,6 +2737,54 @@
           {
             "properties": {
               "method": {
+                "const": "workspaces/changed",
+                "type": "string"
+              },
+              "params": {
+                "properties": {
+                  "workspace": {
+                    "$ref": "#/components/schemas/VfsWorkspaceView"
+                  }
+                },
+                "required": [
+                  "workspace"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "method",
+              "params"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "method": {
+                "const": "workspaces/removed",
+                "type": "string"
+              },
+              "params": {
+                "properties": {
+                  "workspaceId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "workspaceId"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "method",
+              "params"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "method": {
                 "const": "watch/reset",
                 "type": "string"
               },
@@ -19743,9 +19791,10 @@
             "default": [
               "session",
               "bot",
-              "environment"
+              "environment",
+              "workspace"
             ],
-            "description": "Collections to watch; omission selects all three. Must be nonempty.",
+            "description": "Collections to watch; omission selects all four. Must be nonempty.",
             "items": {
               "$ref": "#/components/schemas/WatchKind"
             },
@@ -20136,7 +20185,8 @@
         "enum": [
           "session",
           "bot",
-          "environment"
+          "environment",
+          "workspace"
         ],
         "type": "string"
       },
@@ -20700,6 +20750,8 @@
         "bots/removed",
         "environments/changed",
         "environments/removed",
+        "workspaces/changed",
+        "workspaces/removed",
         "watch/reset"
       ],
       "x-lightspeed-role": "viewer",

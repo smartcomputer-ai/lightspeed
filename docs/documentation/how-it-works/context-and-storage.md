@@ -441,3 +441,25 @@ access, and a hash in prose alone is not a retention root.
 
 Together, these views let the model work with a manageable context while
 people inspect retained history and the runtime reconstructs execution state.
+
+
+## Live list updates
+
+`universe/watch` is a streaming JSON-RPC call on `POST /rpc` with
+`Accept: text/event-stream`. It sends current list rows for sessions, bots,
+environments and VFS workspaces. The requested kinds require their existing
+API-key groups. `visibleTo` narrows sessions to the same audience as
+`session/list`; list filters and pagination remain on ordinary reads.
+
+Each gateway batches changed IDs for 250 ms and reads them once per universe,
+then distributes the rows to its subscribers. A bounded queue keeps the latest
+change per row. The initial event, a reconnect or a lost-signal condition sends
+`watch/reset`, meaning refetch the visible data. These notifications are lossy
+hints without a replay cursor, so clients retain slow fallback reads.
+
+The browser shares one connection across pages in its active universe, updates
+cached rows, and refreshes open workspace trees when their head changes. File
+contents are read by immutable blob reference. Platform rotates its proxy every
+60 seconds to recheck membership and feature access; direct runtime streams
+last at most 15 minutes. Session event long-polls and detailed bot state reads
+continue separately.

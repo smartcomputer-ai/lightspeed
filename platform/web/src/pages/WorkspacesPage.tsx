@@ -1,3 +1,4 @@
+import { useWatchConnected } from "@/lib/universe-watch";
 import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
@@ -65,6 +66,7 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
   const [newFile, setNewFile] = useState<{ parent: string; revision: number } | null>(null);
   const [preview, setPreview] = useState(false);
   const [editor, setEditor] = useState({ workspaceId, path: filePath, identity: 0 });
+  const [relocation, setRelocation] = useState<{ identity: number; before: number; after: number } | null>(null);
   const [pendingRename, setPendingRename] = useState<{
     from: string;
     to: string;
@@ -96,9 +98,10 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
     <WorkspaceTransfers key={`${universe.id}:${workspaceId}`} universeId={universe.id} workspaceId={workspaceId}
       onNewFile={(parent, revision) => setNewFile({ parent, revision })}
       onWorkspaceRemoved={() => navigate(`/u/${handle}/workspaces`, { replace: true })}
-      onRenamed={(from, to) => {
+      onRenamed={(from, to, revision) => {
         if (filePath && (filePath === from || filePath.startsWith(`${from}/`))) {
           const path = to + filePath.slice(from.length);
+          setRelocation({ identity: editor.identity, ...revision });
           setPendingRename({ from: filePath, to: path });
           navigate(`/u/${handle}/workspaces/${workspaceId}/files/${path.split("/").map(encodeURIComponent).join("/")}`, { replace: true });
         }
@@ -125,6 +128,7 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
             workspaceId={workspaceId}
             filePath={filePath}
             fileIdentity={editor.identity}
+            relocation={relocation}
             preview={preview}
             onPreviewChange={setPreview}
           />
@@ -174,13 +178,18 @@ function WorkspacePane({
   const navigate = useNavigate();
   const permissions = useActionPermissions(universeId);
   const canCreate = permissions.can("createWorkspace");
+  const watchConnected = useWatchConnected(universeId);
   const workspaces = useQuery({
     queryKey: ["workspaces", universeId],
+    refetchInterval: watchConnected ? 60_000 : 10_000,
+    refetchIntervalInBackground: false,
     queryFn: () =>
       api<WorkspaceRow[]>("GET", `/api/v1/universes/${universeId}/workspaces`),
   });
   const tree = useQuery({
     queryKey: ["workspace-tree", universeId, workspaceId],
+    refetchInterval: watchConnected ? 60_000 : 10_000,
+    refetchIntervalInBackground: false,
     queryFn: () =>
       api<WorkspaceTree>(
         "GET",
@@ -306,6 +315,7 @@ function FileDetail({
   workspaceId,
   filePath,
   fileIdentity,
+  relocation,
   preview,
   onPreviewChange,
 }: {
@@ -314,14 +324,18 @@ function FileDetail({
   workspaceId: string;
   filePath: string;
   fileIdentity: number;
+  relocation: { identity: number; before: number; after: number } | null;
   preview: boolean;
   onPreviewChange: (preview: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const watchConnected = useWatchConnected(universeId);
   const permissions = useActionPermissions(universeId);
   const canEditFiles = permissions.can("useResource");
   const tree = useQuery({
     queryKey: ["workspace-tree", universeId, workspaceId],
+    refetchInterval: watchConnected ? 60_000 : 10_000,
+    refetchIntervalInBackground: false,
     queryFn: () =>
       api<WorkspaceTree>(
         "GET",
@@ -342,7 +356,7 @@ function FileDetail({
     queryFn: () =>
       api<BlobContent>(
         "GET",
-        `/api/v1/universes/${universeId}/workspaces/${encodeURIComponent(workspaceId)}/files/${filePath.split("/").map(encodeURIComponent).join("/")}`,
+        `/api/v1/universes/${universeId}/blobs/${encodeURIComponent(file!.blob_ref)}`,
       ),
     enabled: !!file,
     placeholderData: (previous, query) =>
@@ -369,16 +383,26 @@ function FileDetail({
     identity: number;
     draft: string | null;
     saved: { text: string; previousBlob: string } | null;
+    base: { text: string; revision: number } | null;
     error: string | null;
-  }>({ identity: fileIdentity, draft: null, saved: null, error: null });
+  }>({ identity: fileIdentity, draft: null, saved: null, base: null, error: null });
   if (editor.identity !== fileIdentity) {
     setEditor({
       identity: fileIdentity,
       draft: null,
       saved: null,
+      base: null,
       error: null,
     });
   }
+  // Only a successful local relocation may advance an existing draft's base.
+  // Its compare-and-set proves no intervening workspace write was skipped.
+  useEffect(() => {
+    if (relocation?.identity !== fileIdentity) return;
+    setEditor(current => current.base?.revision === relocation.before
+      ? { ...current, base: { ...current.base, revision: relocation.after } } : current);
+  }, [relocation, fileIdentity]);
+
   // A successful save becomes the baseline immediately. Keep its draft until
   // the refreshed blob is ready, and preserve anything typed during the save.
   useEffect(() => {
@@ -394,6 +418,7 @@ function FileDetail({
       return {
         ...current,
         draft: current.draft === current.saved.text ? null : current.draft,
+        base: current.draft === current.saved.text ? null : current.base,
         saved: null,
       };
     });
@@ -421,7 +446,7 @@ function FileDetail({
       identity: number;
       previousBlob: string;
     }) =>
-      api(
+      api<{ workspace: WorkspaceRow }>(
         "PUT",
         `/api/v1/universes/${universeId}/workspaces/${workspaceId}/files/${submission.path.split("/").map(encodeURIComponent).join("/")}`,
         {
@@ -432,12 +457,13 @@ function FileDetail({
             : {}),
         },
       ),
-    onSuccess: async (_result, submission) => {
+    onSuccess: async (result, submission) => {
       setEditor((current) =>
         current.identity === submission.identity
           ? {
               ...current,
               error: null,
+              base: { text: submission.contentText, revision: result.workspace.revision },
               saved: {
                 text: submission.contentText,
                 previousBlob: submission.previousBlob,
@@ -458,7 +484,7 @@ function FileDetail({
   if (tree.isLoading) {
     return <LoadingNote />;
   }
-  if (tree.data && !file) {
+  if (tree.data && !file && editor.draft === null) {
     return (
       <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
         File not found in this workspace.
@@ -466,9 +492,16 @@ function FileDetail({
     );
   }
 
-  const value = editor.draft ?? text ?? "";
-  const dirty =
-    editor.draft !== null && editor.draft !== (editor.saved?.text ?? text);
+  const value = editor.draft ?? editor.saved?.text ?? text ?? "";
+  const dirty = editor.draft !== null && editor.draft !== (editor.saved?.text ?? editor.base?.text ?? text);
+  const changedExternally = dirty && editor.base !== null &&
+    (tree.error !== null || !file || tree.data?.workspace.revision !== editor.base.revision);
+  const textEditor = editor.draft !== null || decoded?.kind === "text";
+  const canSave = dirty && !save.isPending && !changedExternally && !!file && !blob.isPlaceholderData && !tree.error;
+  const reload = () => {
+    setEditor({ identity: fileIdentity, draft: null, saved: null, base: null, error: null });
+    void invalidate();
+  };
   const blobLink = file ? blobHref(handle, file.blob_ref, {
     name: filePath.split("/").at(-1),
     type: file.media_type ?? mediaTypeFor(filePath),
@@ -479,7 +512,7 @@ function FileDetail({
     save.mutate({
       contentText: value,
       path: filePath,
-      revision: tree.data!.workspace.revision,
+      revision: editor.base?.revision ?? tree.data!.workspace.revision,
       identity: fileIdentity,
       previousBlob: file!.blob_ref,
     });
@@ -490,7 +523,7 @@ function FileDetail({
       onKeyDown={(event) => {
         if (
           !canEditFiles ||
-          decoded?.kind !== "text" ||
+          !textEditor ||
           event.nativeEvent.isComposing ||
           !(event.metaKey || event.ctrlKey) ||
           event.altKey ||
@@ -499,7 +532,7 @@ function FileDetail({
         )
           return;
         event.preventDefault();
-        if (dirty && !save.isPending && !event.repeat) saveCurrent();
+        if (canSave && !event.repeat) saveCurrent();
       }}
     >
       <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b px-4 py-2">
@@ -526,15 +559,15 @@ function FileDetail({
               <ExternalLink />
             </Button>
           )}
-          {decoded?.kind === "text" && (
+          {textEditor && (
             <MarkdownViewToggle preview={preview} onPreviewChange={onPreviewChange} />
           )}
-          {canEditFiles && decoded?.kind === "text" && (
+          {canEditFiles && textEditor && (
             <Button
               size="sm"
               aria-keyshortcuts="Meta+S Control+S"
               title="Save (⌘S / Ctrl+S)"
-              disabled={!dirty || save.isPending}
+              disabled={!canSave}
               onClick={saveCurrent}
             >
               {save.isPending ? "Saving…" : dirty ? "Save" : "Saved"}
@@ -542,6 +575,13 @@ function FileDetail({
           )}
         </div>
       </header>
+      {changedExternally && (
+        <div role="status" className="flex items-center gap-3 border-b px-4 py-2 text-sm">
+          <span>{!file || tree.error ? "The file or workspace is no longer available." : "The workspace changed while you were editing."} Your draft is preserved.</span>
+          <Button variant="outline" size="sm" onClick={reload}>Discard draft and reload</Button>
+        </div>
+      )}
+      {tree.error && !dirty && <p className="p-4 text-sm text-destructive">{tree.error.message}</p>}
       {editor.error && (
         <p className="border-b px-4 py-2 text-sm text-destructive">
           {editor.error}
@@ -556,23 +596,29 @@ function FileDetail({
         {blob.error && (
           <p className="p-4 text-sm text-destructive">{blob.error.message}</p>
         )}
-        {decoded?.kind === "text" && (preview ? (
+        {textEditor && (preview ? (
           <MarkdownContent className="mx-auto max-w-5xl p-4">{value}</MarkdownContent>
         ) : (
           <textarea
             className="h-full w-full resize-none bg-transparent p-4 font-mono text-sm outline-none"
             value={value}
             onChange={(e) =>
-              setEditor((current) => ({ ...current, draft: e.target.value }))
+              setEditor((current) => {
+                const base = current.base ?? { text: text ?? "", revision: tree.data!.workspace.revision };
+                const draft = e.target.value;
+                return draft === base.text && !current.saved
+                  ? { ...current, draft: null, base: null, error: null }
+                  : { ...current, draft, base };
+              })
             }
             spellCheck={false}
-            readOnly={!canEditFiles}
+            readOnly={!canEditFiles || (blob.isPlaceholderData && editor.draft === null)}
             aria-label={
               canEditFiles ? "File contents" : "File contents (read only)"
             }
           />
         ))}
-        {decoded?.kind === "image" && (
+        {!textEditor && decoded?.kind === "image" && (
           <div className="flex items-start p-4">
             <img
               alt={filePath}
@@ -581,10 +627,10 @@ function FileDetail({
             />
           </div>
         )}
-        {decoded?.kind === "pdf" && (
+        {!textEditor && decoded?.kind === "pdf" && (
           <PdfPreview bytes={decoded.bytes} name={filePath} />
         )}
-        {decoded?.kind === "binary" && (
+        {!textEditor && decoded?.kind === "binary" && (
           <p className="p-4 text-sm text-muted-foreground">
             Binary file ({formatBytes(file?.size_bytes ?? 0)}) — no preview.
           </p>

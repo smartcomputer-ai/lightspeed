@@ -75,7 +75,8 @@ use request_headers::{request_headers_from_api, request_headers_view, validate_h
 use skills::skill_list_response;
 #[cfg(test)]
 use tools::skills::SkillMetadata;
-use vfs_api::{commit_vfs_snapshot, read_vfs_snapshot, vfs_workspace_view};
+pub(super) use vfs_api::vfs_workspace_view;
+use vfs_api::{commit_vfs_snapshot, read_vfs_snapshot};
 pub(crate) use workflow::ExecutionLiveness;
 use workflow::{
     ApprovalDecisionOutcome, approval_already_terminal_kind, check_command_status,

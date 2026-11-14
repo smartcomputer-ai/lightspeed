@@ -20,7 +20,7 @@ Requires Accept: text/event-stream. Emits list rows after a short batching windo
 - Result: `AgentApiOutcome<UniverseWatchResponse>`
 
 - Transport: `text/event-stream`
-- Notifications: session/changed, session/removed, bots/changed, bots/removed, environments/changed, environments/removed, watch/reset
+- Notifications: session/changed, session/removed, bots/changed, bots/removed, environments/changed, environments/removed, workspaces/changed, workspaces/removed, watch/reset
 
 ### `vfs/workspaces/files/read`
 

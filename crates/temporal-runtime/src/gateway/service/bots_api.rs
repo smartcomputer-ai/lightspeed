@@ -961,6 +961,23 @@ impl From<AdmitTriggerOutcome> for Option<InsertBotEventOutcome> {
     }
 }
 
+pub(in crate::gateway) fn bot_list_item(
+    row: ::bots::BotRosterRow,
+    access: ResourceAccessSummary,
+) -> BotListItem {
+    BotListItem {
+        status: row.status,
+        open_session_count: row.open_session_count,
+        active_session_count: row.active_session_count,
+        bot: row.bot.view(),
+        access,
+        trigger_count: row.trigger_count,
+        pending_count: row.pending_count,
+        last_event: row.last_event.map(|event| event.view()),
+        activity: row.activity,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1032,18 +1049,4 @@ mod tests {
         );
         assert!(trigger_secrets_view(uuid::Uuid::from_u128(7), &schedule).is_empty());
     }
-}
-
-pub(in crate::gateway) fn bot_list_item(row: ::bots::BotRosterRow, access: ResourceAccessSummary) -> BotListItem {
-    BotListItem {
-                    status: row.status,
-                    open_session_count: row.open_session_count,
-                    active_session_count: row.active_session_count,
-                    bot: row.bot.view(),
-                    access,
-                    trigger_count: row.trigger_count,
-                    pending_count: row.pending_count,
-                    last_event: row.last_event.map(|event| event.view()),
-                    activity: row.activity,
-                }
 }
