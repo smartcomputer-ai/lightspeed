@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  DEFAULT_SHADOW,
+  DEFAULT_SHADOWS,
+  isDefaultShadow,
   EMPTY_OVERRIDES,
   RADIUS_STEPS,
   SHADOW_STEPS,
@@ -50,14 +51,15 @@ afterEach(() => {
 });
 
 describe("design tokens", () => {
-  it("generates index.css's shadow scale from the default parameters", () => {
+  it("generates each theme's shadow scale in index.css from its default parameters", () => {
     const css = readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
-    const generated = shadowValues(DEFAULT_SHADOW);
-    // 2xs has no blur; index.css writes it in Tailwind's short form. The
-    // `@theme inline` aliases (`var(--shadow-xs)`) are skipped.
-    for (const token of SHADOW_TOKENS.filter((name) => name !== "--shadow-2xs")) {
-      const declared = new RegExp(`${token}: (?!var)([^;]+);`).exec(css)?.[1];
-      expect(generated[token], token).toBe(declared);
+    const blocks = { light: /\n:root \{([\s\S]*?)\n\}/.exec(css)![1]!, dark: /\n\.dark \{([\s\S]*?)\n\}/.exec(css)![1]! };
+    for (const theme of ["light", "dark"] as const) {
+      const generated = shadowValues(DEFAULT_SHADOWS[theme]);
+      for (const token of SHADOW_TOKENS) {
+        const declared = new RegExp(`${token}: ([^;]+);`).exec(blocks[theme])?.[1];
+        expect(generated[token], `${theme} ${token}`).toBe(declared);
+      }
     }
   });
 
@@ -67,7 +69,7 @@ describe("design tokens", () => {
     for (const role of SURFACE_ROLES) {
       for (const part of ["background", "border"] as const) {
         const values = declared(surfaceToken(role.key, part));
-        // Declared for :root and again for .dark, so popups with their own dark class re-resolve them.
+        // Declared for :root and again for .dark, so an element with its own dark class re-resolves them.
         expect(values, `${role.key} ${part}`).toHaveLength(2);
         for (const value of values) expect(parseSurfaceColor(value), value).not.toBeNull();
       }
@@ -75,8 +77,9 @@ describe("design tokens", () => {
       expect(width, `${role.key} border width`).toMatch(/^\d+(\.\d+)?px$/);
       const [radius] = declared(surfaceToken(role.key, "radius"));
       expect(RADIUS_STEPS.some((step) => sameCss(step.value, radius!)), radius).toBe(true);
-      const [shadow] = declared(surfaceToken(role.key, "shadow"));
-      expect(SHADOW_STEPS.some((step) => sameCss(step.value, shadow!)), shadow).toBe(true);
+      for (const shadow of declared(surfaceToken(role.key, "shadow"))) {
+        expect(SHADOW_STEPS.some((step) => sameCss(step.value, shadow)), shadow).toBe(true);
+      }
       if (!role.focus) continue;
       for (const part of ["focus-border", "focus-ring", "invalid-ring"] as const) {
         const values = declared(surfaceToken(role.key, part));
@@ -263,7 +266,16 @@ describe("design tokens", () => {
   it("scales shadow alpha and geometry and tints the color", () => {
     const values = shadowValues({ color: "#ff0000", opacity: 2, size: 2 });
     expect(values["--shadow-xs"]).toBe("0 2px 4px 0 rgb(255 0 0 / 0.1)");
-    expect(shadowValues({ ...DEFAULT_SHADOW, opacity: 10 })["--shadow-2xl"]).toContain("/ 1)");
+    expect(shadowValues({ ...DEFAULT_SHADOWS.dark, opacity: 10 })["--shadow-2xl"]).toContain("/ 1)");
+  });
+
+  it("moves shadows up and down by scaling their vertical offset", () => {
+    const lg = (offsetY?: number) => shadowValues({ ...DEFAULT_SHADOWS.light, offsetY })["--shadow-lg"];
+    expect(lg(undefined)).toBe(lg(1));
+    expect(lg(0)).toBe("0 0 7.5px -1.5px rgb(0 0 0 / 0.1), 0 0 3px -2px rgb(0 0 0 / 0.1)");
+    expect(lg(-1)).toBe("0 -5px 7.5px -1.5px rgb(0 0 0 / 0.1), 0 -2px 3px -2px rgb(0 0 0 / 0.1)");
+    expect(isDefaultShadow({ ...DEFAULT_SHADOWS.dark, offsetY: undefined }, "dark")).toBe(true);
+    expect(isDefaultShadow({ ...DEFAULT_SHADOWS.light, offsetY: 0.5 }, "light")).toBe(false);
   });
 
   it("scopes overrides so they outrank index.css in both themes", () => {
@@ -322,9 +334,35 @@ describe("withoutDefaults", () => {
     expect(withoutDefaults(overrides, defaults)).toEqual(overrides);
   });
 
-  it("keeps the shadow inputs only while a shadow variable they made remains", () => {
-    const shadow = { color: "#112233", opacity: 2, size: 1 };
+  it("keeps a theme's shadow inputs only while a shadow variable they made remains", () => {
+    const params = { color: "#112233", opacity: 2, size: 1 };
+    const shadow = { light: params, dark: params };
     expect(withoutDefaults({ ...EMPTY_OVERRIDES, shadow }, defaults).shadow).toBeUndefined();
-    expect(withoutDefaults({ ...EMPTY_OVERRIDES, shared: { [SHADOW_TOKENS[0]]: "0 1px red" }, shadow }, defaults).shadow).toEqual(shadow);
+    expect(withoutDefaults({ ...EMPTY_OVERRIDES, dark: { [SHADOW_TOKENS[0]]: "0 1px red" }, shadow }, defaults).shadow)
+      .toEqual({ dark: params });
+  });
+});
+
+describe("shadow overrides saved before the themes had their own", () => {
+  it("become both themes' shadows", () => {
+    const params = { color: "#112233", opacity: 2, size: 1 };
+    localStorage.setItem("lightspeed:design-overrides", JSON.stringify({
+      shared: { "--radius": "1rem", "--shadow-lg": "0 1px red" },
+      light: {},
+      dark: { "--primary": "red" },
+      shadow: params,
+    }));
+    expect(loadOverrides()).toEqual({
+      shared: { "--radius": "1rem" },
+      light: { "--shadow-lg": "0 1px red" },
+      dark: { "--primary": "red", "--shadow-lg": "0 1px red" },
+      shadow: { light: params, dark: params },
+    });
+  });
+
+  it("leave current overrides alone", () => {
+    const current = { shared: {}, light: { "--shadow-lg": "0 1px red" }, dark: {}, shadow: { light: { color: "#000000", opacity: 2, size: 1 } } };
+    saveOverrides(current);
+    expect(loadOverrides()).toEqual(current);
   });
 });

@@ -9,6 +9,8 @@ import {
   ArrowBendDownRightIcon,
   ArrowClockwiseIcon,
   ArrowCounterClockwiseIcon,
+  LinkSimpleHorizontalBreakIcon,
+  LinkSimpleHorizontalIcon,
   ArrowDownIcon,
   ArrowLeftIcon,
   ArrowSquareOutIcon,
@@ -376,5 +378,7 @@ export const phosphor = {
     ExportCodeIcon: duotone(BracketsCurlyIcon),
     NotificationIcon: duotone(BellIcon),
     EmailIcon: duotone(EnvelopeIcon),
+    ThemesSameIcon: regular(LinkSimpleHorizontalIcon),
+    ThemesDifferIcon: regular(LinkSimpleHorizontalBreakIcon),
   },
 } satisfies IconLibrary;

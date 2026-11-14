@@ -80,7 +80,7 @@ function DialogContent({
             warp={warp}
             transparentBackground
             fade={{ start: 160, end: 760 }}
-            className="pointer-events-none absolute inset-0 invert dark:invert-0"
+            className="pointer-events-none absolute inset-0"
           />
         )}
       </DialogOverlay>

@@ -89,6 +89,7 @@ import {
   RefreshCw,
   Repeat,
   RotateCcw,
+  Unlink2,
   RotateCw,
   ScrollText,
   Search,
@@ -338,5 +339,7 @@ export const lucide = {
     ExportCodeIcon: Code,
     NotificationIcon: Bell,
     EmailIcon: Mail,
+    ThemesSameIcon: Link2,
+    ThemesDifferIcon: Unlink2,
   },
 } satisfies IconLibrary;

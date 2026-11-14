@@ -59,7 +59,7 @@ export function PageNebula({ className, seed = PAGE_NEBULA_SEED }: { className?:
     <div
       aria-hidden
       data-page-nebula=""
-      className={cn("pointer-events-none bg-cover bg-center opacity-(--page-nebula-opacity) invert dark:invert-0", className)}
+      className={cn("pointer-events-none bg-cover bg-center opacity-(--page-nebula-opacity) invert hue-rotate-180 dark:invert-0 dark:hue-rotate-0", className)}
       style={{ backgroundImage: `url(${image})` }}
     />
   );

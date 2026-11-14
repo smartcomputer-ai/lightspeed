@@ -3,6 +3,7 @@ import {
   useContext,
   useEffect,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
@@ -57,4 +58,18 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
 export function useTheme() {
   return useContext(ThemeContext);
+}
+
+function subscribeToDarkClass(onChange: () => void) {
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+  return () => observer.disconnect();
+}
+
+const isDarkNow = () => document.documentElement.classList.contains("dark");
+
+/// Whether the page is drawn dark right now: follows the class on <html>,
+/// whatever sets it (the choice, the OS while in "system", the design editor).
+export function useIsDark(): boolean {
+  return useSyncExternalStore(subscribeToDarkClass, isDarkNow);
 }

@@ -147,17 +147,20 @@
     --font-heading: 'IBM Plex Sans Variable', system-ui, sans-serif;
     --font-sans: 'IBM Plex Sans Variable', system-ui, sans-serif;
     --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    /* Tailwind's default shadow scale. */
-    --shadow-2xs: 0 0.5px 0 0 rgb(0 0 0 / 0.2);
-    --shadow-xs: 0 0.5px 1px 0 rgb(0 0 0 / 0.2);
-    --shadow-sm: 0 0.5px 1.5px 0 rgb(0 0 0 / 0.4), 0 0.5px 1px -0.5px rgb(0 0 0 / 0.4);
-    --shadow-md: 0 2px 3px -0.5px rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
-    --shadow-lg: 0 5px 7.5px -1.5px rgb(0 0 0 / 0.4), 0 2px 3px -2px rgb(0 0 0 / 0.4);
-    --shadow-xl: 0 10px 12.5px -2.5px rgb(0 0 0 / 0.4), 0 4px 5px -3px rgb(0 0 0 / 0.4);
-    --shadow-2xl: 0 12.5px 25px -6px rgb(0 0 0 / 1);
+    /* The shadow scale, per theme: Tailwind's default layers at half size;
+       here at their own opacity and a fifth of their drop, under .dark at
+       four times the opacity (the design configurator's shadow generator
+       writes both). */
+    --shadow-2xs: 0 0.1px 0 0 rgb(0 0 0 / 0.05);
+    --shadow-xs: 0 0.1px 1px 0 rgb(0 0 0 / 0.05);
+    --shadow-sm: 0 0.1px 1.5px 0 rgb(0 0 0 / 0.1), 0 0.1px 1px -0.5px rgb(0 0 0 / 0.1);
+    --shadow-md: 0 0.4px 3px -0.5px rgb(0 0 0 / 0.1), 0 0.2px 2px -1px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 1px 7.5px -1.5px rgb(0 0 0 / 0.1), 0 0.4px 3px -2px rgb(0 0 0 / 0.1);
+    --shadow-xl: 0 2px 12.5px -2.5px rgb(0 0 0 / 0.1), 0 0.8px 5px -3px rgb(0 0 0 / 0.1);
+    --shadow-2xl: 0 2.5px 25px -6px rgb(0 0 0 / 0.25);
     --background: oklch(1 0 0);
     --foreground: oklch(0.141 0.005 285.823);
-    --card: oklch(1 0 0);
+    --card: #f7f7f7;
     --card-foreground: oklch(0.141 0.005 285.823);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.141 0.005 285.823);
@@ -165,7 +168,7 @@
     --primary-foreground: oklch(0.985 0 0);
     --secondary: oklch(0.967 0.001 286.375);
     --secondary-foreground: oklch(0.21 0.006 285.885);
-    --muted: oklch(0.967 0.001 286.375);
+    --muted: #ebebeb;
     --muted-foreground: oklch(0.552 0.016 285.938);
     --accent: oklch(0.967 0.001 286.375);
     --accent-foreground: oklch(0.21 0.006 285.885);
@@ -184,38 +187,38 @@
     --chart-4: oklch(0.37 0.013 285.805);
     --chart-5: oklch(0.274 0.006 286.033);
     --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
+    --sidebar: #ffffff;
     --sidebar-foreground: oklch(0.141 0.005 285.823);
     --sidebar-primary: oklch(0.21 0.006 285.885);
     --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.967 0.001 286.375);
+    --sidebar-accent: oklch(0.93 0 0);
     --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
     --sidebar-border: oklch(0.92 0.004 286.32);
     --sidebar-ring: oklch(0.705 0.015 286.067);
     /* Component surfaces: the background and border color of each family of
-       components. They are declared again under .dark so they re-resolve in
-       popups that carry their own dark class. */
+       components. They are declared again under .dark so they re-resolve in any
+       element that carries its own dark class. */
     --surface-card: var(--card);
-    --surface-card-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --surface-card-border: color-mix(in oklab, var(--foreground) 0%, transparent);
     --surface-dialog: var(--popover);
-    --surface-dialog-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --surface-dialog-border: color-mix(in oklab, var(--foreground) 0%, transparent);
     --surface-popover: var(--popover);
-    --surface-popover-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --surface-popover-border: color-mix(in oklab, var(--foreground) 0%, transparent);
     --surface-menu: var(--popover);
-    --surface-menu-border: color-mix(in oklab, var(--foreground) 10%, transparent);
-    --surface-field: transparent;
+    --surface-menu-border: color-mix(in oklab, var(--foreground) 0%, transparent);
+    --surface-field: color-mix(in oklab, var(--input) 30%, transparent);
     --surface-field-border: var(--input);
     /* A focused field: the color its border turns and the ring around it
        (the field-focus utility below). */
     --surface-field-focus-border: var(--ring);
-    --surface-field-focus-ring: color-mix(in oklab, var(--ring) 50%, transparent);
-    --surface-field-invalid-ring: color-mix(in oklab, var(--destructive) 20%, transparent);
+    --surface-field-focus-ring: color-mix(in oklab, var(--ring) 0%, transparent);
+    --surface-field-invalid-ring: var(--danger);
     /* Component surfaces: border width, corner radius and shadow. Cards,
        dialogs, popovers and menus draw the border inside their edge as an
        inset ring, so it takes no space; fields use a real border. */
     --surface-card-border-width: 1px;
     --surface-card-radius: calc(var(--radius) * 0.6);
-    --surface-card-shadow: var(--shadow-lg);
+    --surface-card-shadow: 0 0 #0000;
     --surface-dialog-border-width: 1px;
     --surface-dialog-radius: calc(var(--radius) * 1.4);
     --surface-dialog-shadow: var(--shadow-xl);
@@ -227,10 +230,10 @@
     --surface-menu-shadow: var(--shadow-2xl);
     --surface-field-border-width: 1px;
     --surface-field-radius: calc(var(--radius) * 0.6);
-    --surface-field-shadow: var(--shadow-xs);
+    --surface-field-shadow: 0 0 #0000;
     --surface-field-focus-ring-width: 1px;
     /* The overlay behind dialogs, alert dialogs and sheets. */
-    --surface-backdrop: color-mix(in oklab, black 60%, transparent);
+    --surface-backdrop: color-mix(in oklab, black 80%, transparent);
     /* Backdrop filters: how the overlay, menus, popovers and dialogs blur and
        saturate what is behind them (the surface-filter-* utilities below).
        Exactly `none` when neither is set: any other value, even
@@ -243,19 +246,20 @@
     /* A sheen over the main sidebar and over list columns (the aside of
        Sessions, Bots, Profiles, Workspaces): a left-to-right gradient from
        transparent to this color, per theme. */
-    --surface-sidebar-gradient: color-mix(in oklab, black 7%, transparent);
-    --surface-list-gradient: color-mix(in oklab, black 5%, transparent);
-    /* The list column's background, under its sheen: the page shows through
-       in light, a neutral charcoal between the page and the sidebar in dark. */
-    --surface-list: transparent;
+    --surface-sidebar-gradient: color-mix(in oklab, black 3%, transparent);
+    --surface-list-gradient: color-mix(in oklab, black 3%, transparent);
+    /* The list column's background, under its sheen: a faint grey between
+       the white sidebar and page in light, a neutral charcoal between the
+       page and the sidebar in dark. */
+    --surface-list: oklch(0.985 0 0);
     /* Where across the surface each sheen starts to rise from transparent. */
     --surface-sidebar-gradient-start: 70%;
     --surface-list-gradient-start: 70%;
     /* The large LS mark behind the bottom of the sidebar: color and opacity
        per theme; rotation, size (times the sidebar width) and how far it
        sinks below the bottom edge (percent of its own height) shared. */
-    --sidebar-logo-color: color-mix(in oklab, var(--sidebar-foreground) 20%, transparent);
-    --sidebar-logo-opacity: 0.4;
+    --sidebar-logo-color: var(--sidebar-foreground);
+    --sidebar-logo-opacity: 0.02;
     --sidebar-logo-rotate: -30deg;
     --sidebar-logo-scale: 1.2;
     --sidebar-logo-offset: -1%;
@@ -276,9 +280,13 @@
     --page-nebula-opacity: 0.65;
     /* The text of list and menu items at rest (list titles, sidebar
        navigation): a little dimmer than foreground, full strength on hover,
-       focus or selection. Declared again under .dark so it re-resolves in
-       popups that carry their own dark class. */
+       focus or selection. Declared again under .dark so it re-resolves in any
+       element that carries its own dark class. */
     --item-foreground-rest: color-mix(in oklab, var(--foreground) 70%, transparent);
+    /* A list row's second line at rest: muted text, fainter still; full
+       --muted-foreground on hover, focus or selection. Declared again under
+       .dark so it re-resolves in any element that carries its own dark class. */
+    --list-second-line-rest: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
     /* The lines and dots that hang nested list rows off their parent; solid
        (mixed into the background, not see-through) so they stay one color
        where they meet. */
@@ -305,17 +313,17 @@
     --scrollbar-thumb-rest: transparent;
     /* Notes (InfoBox): per tone a tinted background, a border, and the
        title and icon color, deeper on light backgrounds. */
-    --note-info-background: color-mix(in oklab, var(--info) 10%, transparent);
-    --note-info-border: color-mix(in oklab, var(--info) 40%, transparent);
+    --note-info-background: color-mix(in oklab, var(--info) 20%, transparent);
+    --note-info-border: color-mix(in oklab, var(--info) 0%, transparent);
     --note-info-title: #1d4ed8;
-    --note-success-background: color-mix(in oklab, var(--success) 10%, transparent);
-    --note-success-border: color-mix(in oklab, var(--success) 40%, transparent);
+    --note-success-background: color-mix(in oklab, var(--success) 20%, transparent);
+    --note-success-border: color-mix(in oklab, var(--success) 0%, transparent);
     --note-success-title: #15803d;
-    --note-warning-background: color-mix(in oklab, var(--warning) 10%, transparent);
-    --note-warning-border: color-mix(in oklab, var(--warning) 40%, transparent);
+    --note-warning-background: color-mix(in oklab, var(--warning) 20%, transparent);
+    --note-warning-border: color-mix(in oklab, var(--warning) 0%, transparent);
     --note-warning-title: #b45309;
-    --note-error-background: color-mix(in oklab, var(--danger) 10%, transparent);
-    --note-error-border: color-mix(in oklab, var(--danger) 40%, transparent);
+    --note-error-background: color-mix(in oklab, var(--danger) 20%, transparent);
+    --note-error-border: color-mix(in oklab, var(--danger) 0%, transparent);
     --note-error-title: #b91c1c;
     /* Font weights of list titles and sidebar menu items: at rest, and when
        selected (the open row, the current page). Each is one of the
@@ -352,6 +360,13 @@
 }
 
 .dark {
+    --shadow-2xs: 0 0.5px 0 0 rgb(0 0 0 / 0.2);
+    --shadow-xs: 0 0.5px 1px 0 rgb(0 0 0 / 0.2);
+    --shadow-sm: 0 0.5px 1.5px 0 rgb(0 0 0 / 0.4), 0 0.5px 1px -0.5px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 2px 3px -0.5px rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 5px 7.5px -1.5px rgb(0 0 0 / 0.4), 0 2px 3px -2px rgb(0 0 0 / 0.4);
+    --shadow-xl: 0 10px 12.5px -2.5px rgb(0 0 0 / 0.4), 0 4px 5px -3px rgb(0 0 0 / 0.4);
+    --shadow-2xl: 0 12.5px 25px -6px rgb(0 0 0 / 1);
     --background: oklch(0.141 0.005 285.823);
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.21 0.006 285.885);
@@ -384,9 +399,10 @@
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.552 0.016 285.938);
     /* Component surfaces: the background and border color of each family of
-       components. They are declared again under .dark so they re-resolve in
-       popups that carry their own dark class. */
+       components. They are declared again under .dark so they re-resolve in any
+       element that carries its own dark class. */
     --item-foreground-rest: color-mix(in oklab, var(--foreground) 70%, transparent);
+    --list-second-line-rest: color-mix(in oklab, var(--muted-foreground) 40%, transparent);
     --list-tree-line: color-mix(in oklab, var(--muted-foreground) 35%, var(--background));
     --id-color-lightness: 0.8;
     --id-color-chroma: 0.17;
@@ -406,6 +422,8 @@
     --note-error-border: color-mix(in oklab, var(--danger) 0%, transparent);
     --note-error-title: var(--danger);
     --surface-card: var(--card);
+    --surface-card-shadow: 0 0 #0000;
+    --surface-field-shadow: 0 0 #0000;
     --surface-card-border: color-mix(in oklab, var(--foreground) 0%, transparent);
     --surface-dialog: var(--popover);
     --surface-dialog-border: color-mix(in oklab, var(--foreground) 0%, transparent);

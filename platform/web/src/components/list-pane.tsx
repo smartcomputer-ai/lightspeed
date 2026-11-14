@@ -726,7 +726,7 @@ export function ListRowLine({
         // A toned line keeps its color; others brighten with their row.
         tone === "destructive"
           ? "text-destructive"
-          : "text-muted-foreground/40 transition-colors duration-(--list-transition-duration) group-hover/row:text-muted-foreground group-focus-visible/row:text-muted-foreground group-data-highlighted/row:text-muted-foreground",
+          : "text-(--list-second-line-rest) transition-colors duration-(--list-transition-duration) group-hover/row:text-muted-foreground group-focus-visible/row:text-muted-foreground group-data-highlighted/row:text-muted-foreground",
         mono && "font-mono",
         className,
       )}

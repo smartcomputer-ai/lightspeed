@@ -254,6 +254,9 @@ export interface IconSet {
   ExportCodeIcon: IconComponent;
   NotificationIcon: IconComponent;
   EmailIcon: IconComponent;
+  /// The design configurator: a token with the same value in light and dark, or different ones.
+  ThemesSameIcon: IconComponent;
+  ThemesDifferIcon: IconComponent;
 }
 
 /// One complete implementation of the contract.

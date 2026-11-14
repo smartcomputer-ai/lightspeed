@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useDocumentTitle } from "@/lib/document-title";
-import { AddIcon, DeleteIcon, ExportCodeIcon, ResetIcon, SearchIcon, SettingsIcon } from "@/icons";
+import { AddIcon, DeleteIcon, ExportCodeIcon, ResetIcon, SearchIcon, SettingsIcon, ThemesDifferIcon, ThemesSameIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { CodeCopy } from "./CodeCopy";
 import {
   COLOR_GROUPS,
-  DEFAULT_SHADOW,
+  DEFAULT_SHADOWS,
   isDefaultShadow,
   EMPTY_OVERRIDES,
   FONT_CHOICES,
@@ -65,6 +65,36 @@ import { InfoBox } from "@/components/ui/info-box";
 
 type Scope = "shared" | ThemeName;
 
+/// Which theme the themed tabs edit: one, or both side by side.
+type ThemeView = ThemeName | "both";
+
+const THEME_LABELS: Record<ThemeView, string> = { light: "Light", dark: "Dark", both: "Both" };
+
+const EDITOR_TABS = [
+  { value: "colors", label: "Colors" },
+  { value: "type", label: "Type" },
+  { value: "surfaces", label: "Surfaces" },
+  { value: "shape", label: "Shape" },
+  { value: "shadows", label: "Shadows" },
+  { value: "transitions", label: "Transitions" },
+  { value: "cursors", label: "Cursors" },
+] as const;
+
+type EditorTab = (typeof EDITOR_TABS)[number]["value"];
+
+/// The tabs with tokens per theme; the others apply to both themes.
+const THEMED_TABS: ReadonlySet<EditorTab> = new Set(["colors", "surfaces", "shadows"]);
+
+/// The editor window's width for two columns side by side.
+const SIDE_BY_SIDE_WIDTH = 1200;
+
+/// One row of a themed tab: a heading, or a control drawn once per theme
+/// with the per-theme tokens it edits (compared for the themes mark). A
+/// card is a whole editor, its mark at its top rather than centred.
+type ThemedRow =
+  | { kind: "heading"; key: string; title: string }
+  | { kind: "control"; key: string; tokens: readonly string[]; card?: boolean; render: (theme: ThemeName) => ReactNode };
+
 /// The design-token editor, opened in its own window from the debug
 /// toolbar's Design button. Every change is saved and broadcast at once, and
 /// each open app window applies it live. This window keeps the stock tokens
@@ -78,11 +108,19 @@ export function DesignConfigurationPage() {
   const receive = useCallback((next: DesignOverrides) => setOverrides(withoutDefaults(next, defaults)), [defaults]);
   const windows = useLiveWindows(channel, receive);
   const { theme } = useTheme();
-  const [colorTheme, setColorTheme] = useState<ThemeName>(() =>
+  const [themeView, setThemeView] = useState<ThemeView>(() =>
     theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light");
+  const [tab, setTab] = useState<EditorTab>("colors");
   const [exportOpen, setExportOpen] = useState(false);
 
   useDocumentTitle(["Design tokens"]);
+
+  // The window draws in the theme being edited, so the controls and their
+  // previews look as they will in the app. Both is light, with the dark
+  // column carrying its own dark class.
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", themeView === "dark");
+  }, [themeView]);
 
   // Keep what was stored in step with the pruned overrides.
   useEffect(() => {
@@ -113,13 +151,74 @@ export function DesignConfigurationPage() {
   });
 
   const changes = Object.keys(overrides.shared).length + Object.keys(overrides.light).length + Object.keys(overrides.dark).length;
+  const themedTab = THEMED_TABS.has(tab);
+
+  const chooseThemeView = (next: ThemeView) => {
+    setThemeView(next);
+    // Two columns need room: widen a narrow editor window (it was opened as
+    // a popup, so it may resize itself).
+    if (next === "both" && window.outerWidth < SIDE_BY_SIDE_WIDTH) {
+      try {
+        window.resizeTo(SIDE_BY_SIDE_WIDTH, window.outerHeight);
+      } catch {
+        // Not a popup: the columns just share the width there is.
+      }
+    }
+  };
+
+  /// Whether every theme token a row edits has the same value in both themes.
+  const differing = (tokens: readonly string[]) =>
+    tokens.filter((name) => !sameCss(valueOf("light", name), valueOf("dark", name)));
+
+  /// A themed tab's rows for one theme, or for both side by side: the light
+  /// column on the left, the dark one on the right (drawn in the dark theme),
+  /// and between each pair a mark for whether the two themes match. Shared
+  /// controls show in both columns and stay in step.
+  const themed = (rows: ThemedRow[]) => {
+    if (themeView !== "both") {
+      return (
+        <div className="grid content-start gap-2.5">
+          {rows.map((row) => row.kind === "heading"
+            ? <RowHeading key={row.key} title={row.title} />
+            : <Fragment key={row.key}>{row.render(themeView)}</Fragment>)}
+        </div>
+      );
+    }
+    return (
+      <div className="-mx-3 -mb-3 grid grid-cols-[minmax(0,1fr)_2rem_minmax(0,1fr)]">
+        <ThemeColumnCell theme="light" className="pb-1">
+          <h2 className="text-xs font-semibold tracking-wide uppercase">{THEME_LABELS.light}</h2>
+        </ThemeColumnCell>
+        <span />
+        <ThemeColumnCell theme="dark" className="pb-1">
+          <h2 className="text-xs font-semibold tracking-wide uppercase">{THEME_LABELS.dark}</h2>
+        </ThemeColumnCell>
+        {rows.map((row) => row.kind === "heading" ? (
+          <Fragment key={row.key}>
+            <ThemeColumnCell theme="light" className="pt-3"><RowHeading title={row.title} /></ThemeColumnCell>
+            <span />
+            <ThemeColumnCell theme="dark" className="pt-3"><RowHeading title={row.title} /></ThemeColumnCell>
+          </Fragment>
+        ) : (
+          <Fragment key={row.key}>
+            <ThemeColumnCell theme="light">{row.render("light")}</ThemeColumnCell>
+            <ThemesMark differing={differing(row.tokens)} card={row.card} />
+            <ThemeColumnCell theme="dark">{row.render("dark")}</ThemeColumnCell>
+          </Fragment>
+        ))}
+        <ThemeColumnCell theme="light" className="pb-3" />
+        <span />
+        <ThemeColumnCell theme="dark" className="pb-3" />
+      </div>
+    );
+  };
 
   return (
-    <div className="flex min-h-svh flex-col bg-background text-foreground">
-      <header className="sticky top-0 z-10 grid gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur">
+    <Tabs value={tab} onValueChange={(next) => setTab(next as EditorTab)} className="min-h-svh gap-0 bg-background text-foreground">
+      <header className="sticky top-0 z-10 grid gap-1.5 border-b bg-background/95 px-3 py-2 backdrop-blur">
         <div className="flex items-center justify-between gap-2">
-          <div className="grid min-w-0">
-            <h1 className="text-base font-semibold">Design tokens</h1>
+          <div className="flex min-w-0 items-baseline gap-2">
+            <h1 className="shrink-0 text-sm font-semibold">Design tokens</h1>
             <p className="truncate text-xs text-muted-foreground" title={windows.join("\n")}>
               {windows.length
                 ? `Live in ${windows.length} app window${windows.length === 1 ? "" : "s"}`
@@ -128,42 +227,41 @@ export function DesignConfigurationPage() {
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             {changes > 0 && <Badge variant="secondary">{changes} changed</Badge>}
-            <Button size="sm" variant="outline" onClick={() => setExportOpen(true)}>
+            <Button size="xs" variant="outline" onClick={() => setExportOpen(true)}>
               <ExportCodeIcon data-icon="inline-start" />
               Export CSS
             </Button>
-            <Button size="sm" variant="ghost" disabled={isEmpty(overrides)} onClick={() => publish(EMPTY_OVERRIDES)}>
+            <Button size="xs" variant="ghost" disabled={isEmpty(overrides)} onClick={() => publish(EMPTY_OVERRIDES)}>
               Reset all
             </Button>
           </div>
         </div>
+        <div className="flex flex-wrap items-center justify-between gap-1.5">
+          <TabsList className="h-8! min-w-0">
+            {EDITOR_TABS.map(({ value, label }) => (
+              <TabsTrigger key={value} value={value} className="px-1.5 text-xs">{label}</TabsTrigger>
+            ))}
+          </TabsList>
+          <ThemeToggle value={themeView} onChange={chooseThemeView} disabled={!themedTab} />
+        </div>
       </header>
 
-      <Tabs defaultValue="colors" className="min-h-0 flex-1 px-4 py-3">
-        <TabsList className="w-full">
-          <TabsTrigger value="colors">Colors</TabsTrigger>
-          <TabsTrigger value="type">Type</TabsTrigger>
-          <TabsTrigger value="surfaces">Surfaces</TabsTrigger>
-          <TabsTrigger value="shape">Shape</TabsTrigger>
-          <TabsTrigger value="shadows">Shadows</TabsTrigger>
-          <TabsTrigger value="transitions">Transitions</TabsTrigger>
-          <TabsTrigger value="cursors">Cursors</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="colors" className="grid content-start gap-6 pt-3">
-          <ThemeToggle value={colorTheme} onChange={setColorTheme}>
-            Each theme has its own colors. Any CSS color works, including oklch().
-          </ThemeToggle>
-          {COLOR_GROUPS.map((group) => (
-            <Group key={group.title} title={group.title}>
-              {group.tokens.map((name) => (
-                <ColorRow key={`${colorTheme}${name}`} name={name} {...token(colorTheme, name)} />
-              ))}
-            </Group>
-          ))}
+      <div className="px-3 py-3">
+        <TabsContent value="colors" className="grid content-start gap-3">
+          <TabNote>Each theme has its own colors. Any CSS color works, including oklch().</TabNote>
+          {themed(COLOR_GROUPS.flatMap((group): ThemedRow[] => [
+            { kind: "heading", key: group.title, title: group.title },
+            ...group.tokens.map((name): ThemedRow => ({
+              kind: "control",
+              key: name,
+              tokens: [name],
+              render: (theme) => <ColorRow key={`${theme}${name}`} name={name} {...token(theme, name)} />,
+            })),
+          ]))}
         </TabsContent>
 
-        <TabsContent value="type" className="grid content-start gap-6 pt-3">
+        <TabsContent value="type" className="grid content-start gap-4">
+          <TabNote>Type applies to both themes.</TabNote>
           <Group title="Font families">
             {FONT_TOKENS.map((font) => (
               <FontRow
@@ -211,79 +309,125 @@ export function DesignConfigurationPage() {
           </Group>
         </TabsContent>
 
-        <TabsContent value="surfaces" className="grid content-start gap-6 pt-3">
-          <ThemeToggle value={colorTheme} onChange={setColorTheme}>
-            Which colors each family of components is drawn with, and its border, corners and shadow. Colors are per theme;
-            the rest applies to both.
-          </ThemeToggle>
-          {SURFACE_ROLES.map((role) => (
-            <SurfaceEditor
-              key={`${colorTheme}${role.key}`}
-              role={role}
-              resolve={(name) => valueOf(colorTheme, name)}
-              background={token(colorTheme, surfaceToken(role.key, "background"))}
-              border={token(colorTheme, surfaceToken(role.key, "border"))}
-              borderWidth={token("shared", surfaceToken(role.key, "border-width"))}
-              radius={token("shared", surfaceToken(role.key, "radius"))}
-              shadow={token("shared", surfaceToken(role.key, "shadow"))}
-              filter={role.effects ? token("shared", surfaceToken(role.key, "filter")) : undefined}
-              focus={role.focus
-                ? {
-                    border: token(colorTheme, surfaceToken(role.key, "focus-border")),
-                    ring: token(colorTheme, surfaceToken(role.key, "focus-ring")),
-                    invalidRing: token(colorTheme, surfaceToken(role.key, "invalid-ring")),
-                    ringWidth: token("shared", surfaceToken(role.key, "focus-ring-width")),
-                  }
-                : undefined}
-            />
-          ))}
-          {SHEEN_ROLES.map((role) => (
-            <SheenEditor
-              key={`${colorTheme}${role.key}`}
-              role={role}
-              resolve={(name) => valueOf(colorTheme, name)}
-              color={token(colorTheme, sheenToken(role.key))}
-              start={token(colorTheme, sheenToken(role.key, "start"))}
-              background={role.background ? token(colorTheme, role.background) : undefined}
-            />
-          ))}
-          <SidebarLogoEditor
-            key={`${colorTheme}sidebar-logo`}
-            resolve={(name) => valueOf(colorTheme, name)}
-            color={token(colorTheme, SIDEBAR_LOGO_TOKENS.color)}
-            opacity={token(colorTheme, SIDEBAR_LOGO_TOKENS.opacity)}
-            rotate={token("shared", SIDEBAR_LOGO_TOKENS.rotate)}
-            scale={token("shared", SIDEBAR_LOGO_TOKENS.scale)}
-            offset={token("shared", SIDEBAR_LOGO_TOKENS.offset)}
-          />
-          <BackdropEditor
-            key={`${colorTheme}backdrop`}
-            resolve={(name) => valueOf(colorTheme, name)}
-            color={token(colorTheme, surfaceToken(BACKDROP_KEY, "background"))}
-            filter={token("shared", surfaceToken(BACKDROP_KEY, "filter"))}
-          />
-          {NOTE_TONES.map(({ tone, label }) => (
-            <NoteEditor
-              key={`${colorTheme}note-${tone}`}
-              tone={tone}
-              label={label}
-              resolve={(name) => valueOf(colorTheme, name)}
-              background={token(colorTheme, noteToken(tone, "background"))}
-              border={token(colorTheme, noteToken(tone, "border"))}
-              title={token(colorTheme, noteToken(tone, "title"))}
-            />
-          ))}
-          <ScrollbarEditor
-            key={`${colorTheme}scrollbar`}
-            resolve={(name) => valueOf(colorTheme, name)}
-            width={token("shared", SCROLLBAR_TOKENS.width)}
-            thumb={token(colorTheme, SCROLLBAR_TOKENS.thumb)}
-            track={token(colorTheme, SCROLLBAR_TOKENS.track)}
-            rest={token(colorTheme, SCROLLBAR_TOKENS.rest)}
-          />
+        <TabsContent value="surfaces" className="grid content-start gap-3">
+          <TabNote>
+            Which colors each family of components is drawn with, and its border, corners and shadow. Colors and the
+            shadow level are per theme; the rest applies to both.
+          </TabNote>
+          {themed([
+            ...SURFACE_ROLES.map((role): ThemedRow => ({
+              kind: "control",
+              key: role.key,
+              card: true,
+              tokens: (["background", "border", "shadow", ...(role.focus ? ["focus-border", "focus-ring", "invalid-ring"] as const : [])] as const)
+                .map((part) => surfaceToken(role.key, part)),
+              render: (theme) => (
+                <SurfaceEditor
+                  key={`${theme}${role.key}`}
+                  role={role}
+                  resolve={(name) => valueOf(theme, name)}
+                  background={token(theme, surfaceToken(role.key, "background"))}
+                  border={token(theme, surfaceToken(role.key, "border"))}
+                  borderWidth={token("shared", surfaceToken(role.key, "border-width"))}
+                  radius={token("shared", surfaceToken(role.key, "radius"))}
+                  shadow={token(theme, surfaceToken(role.key, "shadow"))}
+                  filter={role.effects ? token("shared", surfaceToken(role.key, "filter")) : undefined}
+                  focus={role.focus
+                    ? {
+                        border: token(theme, surfaceToken(role.key, "focus-border")),
+                        ring: token(theme, surfaceToken(role.key, "focus-ring")),
+                        invalidRing: token(theme, surfaceToken(role.key, "invalid-ring")),
+                        ringWidth: token("shared", surfaceToken(role.key, "focus-ring-width")),
+                      }
+                    : undefined}
+                />
+              ),
+            })),
+            ...SHEEN_ROLES.map((role): ThemedRow => ({
+              kind: "control",
+              key: `sheen-${role.key}`,
+              card: true,
+              tokens: [sheenToken(role.key), sheenToken(role.key, "start"), ...(role.background ? [role.background] : [])],
+              render: (theme) => (
+                <SheenEditor
+                  key={`${theme}${role.key}`}
+                  role={role}
+                  resolve={(name) => valueOf(theme, name)}
+                  color={token(theme, sheenToken(role.key))}
+                  start={token(theme, sheenToken(role.key, "start"))}
+                  background={role.background ? token(theme, role.background) : undefined}
+                />
+              ),
+            })),
+            {
+              kind: "control",
+              key: "sidebar-logo",
+              card: true,
+              tokens: [SIDEBAR_LOGO_TOKENS.color, SIDEBAR_LOGO_TOKENS.opacity],
+              render: (theme) => (
+                <SidebarLogoEditor
+                  key={`${theme}sidebar-logo`}
+                  resolve={(name) => valueOf(theme, name)}
+                  color={token(theme, SIDEBAR_LOGO_TOKENS.color)}
+                  opacity={token(theme, SIDEBAR_LOGO_TOKENS.opacity)}
+                  rotate={token("shared", SIDEBAR_LOGO_TOKENS.rotate)}
+                  scale={token("shared", SIDEBAR_LOGO_TOKENS.scale)}
+                  offset={token("shared", SIDEBAR_LOGO_TOKENS.offset)}
+                />
+              ),
+            },
+            {
+              kind: "control",
+              key: "backdrop",
+              card: true,
+              tokens: [surfaceToken(BACKDROP_KEY, "background")],
+              render: (theme) => (
+                <BackdropEditor
+                  key={`${theme}backdrop`}
+                  resolve={(name) => valueOf(theme, name)}
+                  color={token(theme, surfaceToken(BACKDROP_KEY, "background"))}
+                  filter={token("shared", surfaceToken(BACKDROP_KEY, "filter"))}
+                />
+              ),
+            },
+            ...NOTE_TONES.map(({ tone, label }): ThemedRow => ({
+              kind: "control",
+              key: `note-${tone}`,
+              card: true,
+              tokens: (["background", "border", "title"] as const).map((part) => noteToken(tone, part)),
+              render: (theme) => (
+                <NoteEditor
+                  key={`${theme}note-${tone}`}
+                  tone={tone}
+                  label={label}
+                  resolve={(name) => valueOf(theme, name)}
+                  background={token(theme, noteToken(tone, "background"))}
+                  border={token(theme, noteToken(tone, "border"))}
+                  title={token(theme, noteToken(tone, "title"))}
+                />
+              ),
+            })),
+            {
+              kind: "control",
+              key: "scrollbar",
+              card: true,
+              tokens: [SCROLLBAR_TOKENS.thumb, SCROLLBAR_TOKENS.track, SCROLLBAR_TOKENS.rest],
+              render: (theme) => (
+                <ScrollbarEditor
+                  key={`${theme}scrollbar`}
+                  resolve={(name) => valueOf(theme, name)}
+                  width={token("shared", SCROLLBAR_TOKENS.width)}
+                  thumb={token(theme, SCROLLBAR_TOKENS.thumb)}
+                  track={token(theme, SCROLLBAR_TOKENS.track)}
+                  rest={token(theme, SCROLLBAR_TOKENS.rest)}
+                />
+              ),
+            },
+          ])}
         </TabsContent>
 
-        <TabsContent value="shape" className="grid content-start gap-6 pt-3">
+        <TabsContent value="shape" className="grid content-start gap-4">
+          <TabNote>Shape applies to both themes.</TabNote>
           <Group title="Corner radius" note="One base value; rounded-sm to rounded-4xl are multiples of it.">
             <RangeRow
               name="--radius"
@@ -349,7 +493,8 @@ export function DesignConfigurationPage() {
           </Group>
         </TabsContent>
 
-        <TabsContent value="cursors" className="grid content-start gap-6 pt-3">
+        <TabsContent value="cursors" className="grid content-start gap-4">
+          <TabNote>Cursors apply to both themes.</TabNote>
           <Group title="Cursors by role" note="The mouse cursor for each kind of element, for the whole app. Hover a row's sample to see it.">
             {CURSOR_TOKENS.map(({ token: name, label, use }) => (
               <div key={name} className="grid gap-1">
@@ -363,7 +508,8 @@ export function DesignConfigurationPage() {
           </Group>
         </TabsContent>
 
-        <TabsContent value="transitions" className="grid content-start gap-6 pt-3">
+        <TabsContent value="transitions" className="grid content-start gap-4">
+          <TabNote>Transition times apply to both themes.</TabNote>
           <Group title="Standard transition times" note="How long each family of components takes to change state. Everything a token times shares its duration and easing, so it moves together.">
             {TRANSITION_TOKENS.map(({ token: name, label, components }) => (
               <div key={name} className="grid gap-1">
@@ -374,23 +520,35 @@ export function DesignConfigurationPage() {
           </Group>
         </TabsContent>
 
-        <TabsContent value="shadows" className="grid content-start gap-6 pt-3">
-          <ShadowEditor
-            params={overrides.shadow ?? DEFAULT_SHADOW}
-            onChange={(params) => {
-              const shared = { ...overrides.shared };
-              for (const name of SHADOW_TOKENS) delete shared[name];
-              const isDefault = isDefaultShadow(params);
-              if (isDefault) {
-                publish({ ...overrides, shared, shadow: undefined });
-              } else {
-                publish({ ...overrides, shared: { ...shared, ...shadowValues(params) }, shadow: params });
-              }
-            }}
-            values={Object.fromEntries(SHADOW_TOKENS.map((name) => [name, valueOf("shared", name)]))}
-          />
+        <TabsContent value="shadows" className="grid content-start gap-3">
+          <TabNote>Each theme has its own shadow scale, for the page its shadows fall on.</TabNote>
+          {themed([{
+            kind: "control",
+            key: "shadow-scale",
+            card: true,
+            tokens: SHADOW_TOKENS,
+            render: (theme) => (
+              <ShadowEditor
+                key={theme}
+                theme={theme}
+                params={overrides.shadow?.[theme] ?? DEFAULT_SHADOWS[theme]}
+                onChange={(params) => {
+                  const values = { ...overrides[theme] };
+                  for (const name of SHADOW_TOKENS) delete values[name];
+                  const shadow = { ...overrides.shadow };
+                  delete shadow[theme];
+                  if (!isDefaultShadow(params, theme)) {
+                    Object.assign(values, shadowValues(params));
+                    shadow[theme] = params;
+                  }
+                  publish({ ...overrides, [theme]: values, shadow: Object.keys(shadow).length ? shadow : undefined });
+                }}
+                values={Object.fromEntries(SHADOW_TOKENS.map((name) => [name, valueOf(theme, name)]))}
+              />
+            ),
+          }])}
         </TabsContent>
-      </Tabs>
+      </div>
 
       <Dialog open={exportOpen} onOpenChange={setExportOpen}>
         <DialogContent className="sm:max-w-xl">
@@ -401,7 +559,7 @@ export function DesignConfigurationPage() {
           <CodeCopy title="index.css" code={exportCss(overrides)} />
         </DialogContent>
       </Dialog>
-    </div>
+    </Tabs>
   );
 }
 
@@ -439,7 +597,7 @@ function useLiveWindows(
 
 function Group({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
   return (
-    <section className="grid gap-2.5">
+    <section className="grid gap-2">
       <div className="grid gap-0.5">
         <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{title}</h2>
         {note && <p className="text-xs text-muted-foreground">{note}</p>}
@@ -589,25 +747,64 @@ function RangeRow({ name, value, changed, onChange, onReset, min, max, step, uni
   );
 }
 
-function ThemeToggle({ value, onChange, children }: { value: ThemeName; onChange: (theme: ThemeName) => void; children: ReactNode }) {
+/// The theme the themed tabs edit, or both side by side. Off on the tabs
+/// whose tokens apply to both themes.
+function ThemeToggle({ value, onChange, disabled }: { value: ThemeView; onChange: (view: ThemeView) => void; disabled: boolean }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <p className="text-xs text-muted-foreground">{children}</p>
-      <div className="flex shrink-0 gap-1 rounded-lg bg-muted p-1" role="radiogroup" aria-label="Theme to edit">
-        {(["light", "dark"] as const).map((name) => (
-          <Button
-            key={name}
-            size="xs"
-            role="radio"
-            aria-checked={value === name}
-            variant={value === name ? "outline" : "ghost"}
-            onClick={() => onChange(name)}
-          >
-            {name === "light" ? "Light" : "Dark"}
-          </Button>
-        ))}
-      </div>
+    <div
+      className={cn("flex shrink-0 gap-0.5 rounded-lg bg-muted p-[3px]", disabled && "opacity-50")}
+      role="radiogroup"
+      aria-label="Theme to edit"
+      title={disabled ? "This tab applies to both themes" : undefined}
+    >
+      {(["light", "dark", "both"] as const).map((name) => (
+        <Button
+          key={name}
+          size="xs"
+          role="radio"
+          aria-checked={value === name}
+          disabled={disabled}
+          variant={value === name ? "outline" : "ghost"}
+          title={name === "both" ? "Light and dark side by side" : undefined}
+          onClick={() => onChange(name)}
+        >
+          {THEME_LABELS[name]}
+        </Button>
+      ))}
     </div>
+  );
+}
+
+function TabNote({ children }: { children: ReactNode }) {
+  return <p className="text-xs text-muted-foreground">{children}</p>;
+}
+
+function RowHeading({ title }: { title: string }) {
+  return <h2 className="pt-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase first:pt-0">{title}</h2>;
+}
+
+/// One theme's cell in the side-by-side view; the dark cells draw in the
+/// dark theme and meet edge to edge, so the right side reads as one column.
+function ThemeColumnCell({ theme, className, children }: { theme: ThemeName; className?: string; children?: ReactNode }) {
+  return (
+    <div className={cn("grid min-w-0 content-start gap-3 px-3 py-1", theme === "dark" && "dark bg-background text-foreground", className)}>
+      {children}
+    </div>
+  );
+}
+
+/// Between a light and a dark cell: linked when every per-theme token of
+/// the row has the same value in both themes, broken (and faint) when not,
+/// naming the tokens that differ.
+function ThemesMark({ differing, card }: { differing: string[]; card?: boolean }) {
+  const same = differing.length === 0;
+  const label = same ? "Same in light and dark" : `Differs between light and dark: ${differing.join(", ")}`;
+  return (
+    <span className={cn("flex justify-center", card ? "pt-4" : "items-center")} title={label} aria-label={label} role="img">
+      {same
+        ? <ThemesSameIcon className="size-4 text-foreground/70" />
+        : <ThemesDifferIcon className="size-4 text-muted-foreground/40" />}
+    </span>
   );
 }
 
@@ -643,9 +840,11 @@ function SurfaceEditor({ role, resolve, background, border, borderWidth, radius,
       className="grid h-12 w-20 shrink-0 place-items-center text-xs"
       style={{
         background: color(background),
+        color: literalColor("var(--foreground)", resolve) ?? undefined,
         border: `${borderWidth.value} solid ${focused && focus ? color(focus.border) : color(border)}`,
         borderRadius: radius.value,
-        boxShadow: shadow.value,
+        // In the edited theme's shadow scale, not this window's.
+        boxShadow: resolveVars(shadow.value, resolve),
         // The ring as the app draws it: an outline pulled in over the border.
         ...(focused && focus
           ? { outline: `${focus.ringWidth.value} solid ${color(focus.ring)}`, outlineOffset: `calc(-1 * ${focus.ringWidth.value})` }
@@ -656,7 +855,7 @@ function SurfaceEditor({ role, resolve, background, border, borderWidth, radius,
     </div>
   );
   return (
-    <section className="grid gap-3 rounded-lg border p-3">
+    <section className="grid gap-2.5 rounded-lg border p-2.5">
       <div className="flex items-start justify-between gap-3">
         <div className="grid min-w-0 gap-0.5">
           <h2 className="text-sm font-medium">{role.title}</h2>
@@ -683,7 +882,7 @@ function SurfaceEditor({ role, resolve, background, border, borderWidth, radius,
 /// over that border, and the ring an invalid field shows instead.
 function FocusRows({ role, resolve, border, ring, invalidRing, ringWidth }: FocusControls & { role: string; resolve: (token: string) => string }) {
   return (
-    <div className="grid gap-3 border-t pt-3">
+    <div className="grid gap-2.5 border-t pt-2.5">
       <div className="grid gap-0.5">
         <h3 className="text-xs font-medium">Focus</h3>
         <p className="text-xs text-muted-foreground">
@@ -736,7 +935,7 @@ function SheenEditor({ role, resolve, color, start, background }: {
   const end = literalColor(color.value, resolve) ?? color.value;
   const fill = background ? literalColor(background.value, resolve) ?? background.value : undefined;
   return (
-    <section className="grid gap-3 rounded-lg border p-3">
+    <section className="grid gap-2.5 rounded-lg border p-2.5">
       <div className="flex items-start justify-between gap-3">
         <div className="grid min-w-0 gap-0.5">
           <h2 className="text-sm font-medium">{role.title}</h2>
@@ -778,7 +977,7 @@ function SidebarLogoEditor({ resolve, color, opacity, rotate, scale, offset }: {
   offset: TokenControl;
 }) {
   return (
-    <section className="grid gap-3 rounded-lg border p-3">
+    <section className="grid gap-2.5 rounded-lg border p-2.5">
       <div className="flex items-start justify-between gap-3">
         <div className="grid min-w-0 gap-0.5">
           <h2 className="text-sm font-medium">Sidebar logo</h2>
@@ -826,7 +1025,7 @@ function NoteEditor({ tone, label, resolve, background, border, title }: {
   title: TokenControl;
 }) {
   return (
-    <section className="grid gap-3 rounded-lg border p-3">
+    <section className="grid gap-2.5 rounded-lg border p-2.5">
       <div className="grid min-w-0 gap-0.5">
         <h2 className="text-sm font-medium">{label} note</h2>
         <p className="text-xs text-muted-foreground">InfoBox tone="{tone}"</p>
@@ -849,7 +1048,7 @@ function ScrollbarEditor({ resolve, width, thumb, track, rest }: {
   rest: TokenControl;
 }) {
   return (
-    <section className="grid gap-3 rounded-lg border p-3">
+    <section className="grid gap-2.5 rounded-lg border p-2.5">
       <div className="flex items-start justify-between gap-3">
         <div className="grid min-w-0 gap-0.5">
           <h2 className="text-sm font-medium">Scrollbars</h2>
@@ -874,7 +1073,7 @@ function BackdropEditor({ resolve, color, filter }: {
   filter: TokenControl;
 }) {
   return (
-    <section className="grid gap-3 rounded-lg border p-3">
+    <section className="grid gap-2.5 rounded-lg border p-2.5">
       <div className="flex items-start justify-between gap-3">
         <div className="grid min-w-0 gap-0.5">
           <h2 className="text-sm font-medium">Backdrop</h2>
@@ -1021,12 +1220,13 @@ function StepRow({ label, name, steps, value, changed, onChange, onReset }: Toke
   );
 }
 
-function ShadowEditor({ params, values, onChange }: {
+function ShadowEditor({ theme, params, values, onChange }: {
+  theme: ThemeName;
   params: ShadowParams;
   values: Record<string, string>;
   onChange: (params: ShadowParams) => void;
 }) {
-  const changed = !isDefaultShadow(params);
+  const changed = !isDefaultShadow(params, theme);
   return (
     <>
       <Group title="Shadow scale" note="Shapes all seven levels, shadow-2xs to shadow-2xl, from Tailwind's defaults.">
@@ -1064,9 +1264,23 @@ function ShadowEditor({ params, values, onChange }: {
             onChange={(event) => onChange({ ...params, size: Number(event.target.value) })}
           />
           <span className="text-right font-mono text-xs tabular-nums">{params.size.toFixed(2)}</span>
+          <span className="text-xs text-muted-foreground" title="1 keeps each level's offset, 0 centres the shadows, negative moves them up">
+            Y offset ×
+          </span>
+          <input
+            type="range"
+            aria-label="Shadow Y offset"
+            min={-2}
+            max={3}
+            step={0.05}
+            value={params.offsetY ?? 1}
+            className="w-full accent-primary"
+            onChange={(event) => onChange({ ...params, offsetY: Number(event.target.value) })}
+          />
+          <span className="text-right font-mono text-xs tabular-nums">{(params.offsetY ?? 1).toFixed(2)}</span>
         </div>
         <div>
-          <Button size="sm" variant="ghost" disabled={!changed} onClick={() => onChange(DEFAULT_SHADOW)}>
+          <Button size="sm" variant="ghost" disabled={!changed} onClick={() => onChange(DEFAULT_SHADOWS[theme])}>
             <ResetIcon data-icon="inline-start" />
             Reset shadows
           </Button>

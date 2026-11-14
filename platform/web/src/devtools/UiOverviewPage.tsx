@@ -108,7 +108,7 @@ import { LightspeedLogo, LightspeedMark } from "@/components/brand/lightspeed-lo
 import { Starscape } from "@/components/starscape/starscape";
 import { PAGE_NEBULA_SEED, PageNebula } from "@/components/starscape/page-nebula";
 import { UniverseIcon } from "@/components/universe-icon";
-import { HEADER_STARSCAPE_CLASS, HEADER_STARSCAPE_CONFIG, HEADER_STARSCAPE_FADE } from "@/components/universe-switcher";
+import { HEADER_STARSCAPE_FADE, HeaderStarscape } from "@/components/universe-switcher";
 import { collectRoleUsage, iconRoles, libraryGlyphs, type IconRole, type RoleGlyph } from "./icon-usage";
 import { MetaBotExample, MetaModesExample, MetaSessionListExample, MetaSessionPageExample } from "./meta-toolbar-examples";
 
@@ -331,7 +331,7 @@ function BrandingSection() {
       <div className="grid gap-5 sm:grid-cols-2">
         <Specimen title="Logo on the starscape" note="anchor, fade 60–480px, transparentBackground" className="p-0">
           <div className="relative grid h-72 w-full place-items-center overflow-hidden rounded-xl">
-            <Starscape anchor={markRef} fade={{ start: 60, end: 480 }} transparentBackground className="absolute inset-0 invert dark:invert-0" />
+            <Starscape anchor={markRef} fade={{ start: 60, end: 480 }} transparentBackground className="absolute inset-0" />
             <div ref={markRef} className="relative">
               <LightspeedMark title="Lightspeed" className="h-16 w-auto" />
             </div>
@@ -343,7 +343,7 @@ function BrandingSection() {
           className="p-0"
         >
           <div className="relative h-72 w-full overflow-hidden rounded-xl bg-sidebar text-sidebar-foreground">
-            <Starscape anchor={iconRef} fade={HEADER_STARSCAPE_FADE} config={HEADER_STARSCAPE_CONFIG} transparentBackground className={HEADER_STARSCAPE_CLASS} />
+            <HeaderStarscape iconRef={iconRef} />
             <div className="relative flex h-16 items-center gap-2 px-4">
               <UniverseIcon ref={iconRef} />
               <span className="text-sm font-medium">Universe</span>

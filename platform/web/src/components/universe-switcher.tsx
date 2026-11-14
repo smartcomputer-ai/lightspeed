@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { AddIcon, SelectedIcon, SwitcherIcon } from "@/icons";
 import { UniverseIcon } from "@/components/universe-icon";
 import { Starscape } from "@/components/starscape/starscape";
+import { useIsDark } from "@/lib/theme";
 import { api, type Universe } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,9 +47,25 @@ export const HEADER_STARSCAPE_FADE = { start: 16, end: 100, inner: { start: 10, 
 /// blue tint on the sidebar, and how much shows changes with every seed.
 export const HEADER_STARSCAPE_CONFIG = { nebulaAmount: 0 };
 
-/// Covers the fade circle around the icon. The stars are drawn without a sky
-/// and inverted in light mode, where they become dark streaks.
-export const HEADER_STARSCAPE_CLASS = "absolute inset-x-0 top-0 h-32 invert dark:invert-0";
+/// Covers the fade circle around the icon.
+export const HEADER_STARSCAPE_CLASS = "absolute inset-x-0 top-0 h-32";
+
+/// The header's sky, centred on the universe icon and fading out around it,
+/// the stars straight on the sidebar. Dark theme only: on a light sidebar
+/// the white stars would not show.
+export function HeaderStarscape({ iconRef }: { iconRef: RefObject<HTMLElement | null> }) {
+  const dark = useIsDark();
+  if (!dark) return null;
+  return (
+    <Starscape
+      anchor={iconRef}
+      fade={HEADER_STARSCAPE_FADE}
+      config={HEADER_STARSCAPE_CONFIG}
+      transparentBackground
+      className={HEADER_STARSCAPE_CLASS}
+    />
+  );
+}
 
 /// Top-of-sidebar universe switcher. Lists memberships only; platform
 /// admins reach the full inventory via Admin → Universes. Creation lives
@@ -72,7 +89,7 @@ export function UniverseSwitcher({
   return (
     <>
       {/* The header's sky: centred on the universe icon, fading out around it. */}
-      <Starscape anchor={iconRef} fade={HEADER_STARSCAPE_FADE} config={HEADER_STARSCAPE_CONFIG} transparentBackground className={HEADER_STARSCAPE_CLASS} />
+      <HeaderStarscape iconRef={iconRef} />
       <SidebarMenu className="relative">
         <SidebarMenuItem>
           <DropdownMenu>
@@ -171,7 +188,7 @@ export function UniverseSwitcherPreview({ universe, scale = 1, className }: {
         className="relative isolate flex h-(--pane-bar-height) origin-top-left flex-col justify-center p-(--sidebar-header-padding) text-sidebar-foreground"
         style={{ width: SWITCHER_PREVIEW_WIDTH, transform: `scale(${scale})` }}
       >
-        <Starscape anchor={iconRef} fade={HEADER_STARSCAPE_FADE} config={HEADER_STARSCAPE_CONFIG} transparentBackground className={HEADER_STARSCAPE_CLASS} />
+        <HeaderStarscape iconRef={iconRef} />
         <div className={cn(sidebarMenuButtonVariants({ size: "lg" }), SWITCHER_BUTTON_CLASS, "relative")}>
           <SwitcherFace universe={universe} iconRef={iconRef} />
         </div>

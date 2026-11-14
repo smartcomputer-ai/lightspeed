@@ -13,15 +13,20 @@ export interface ShadowParams {
   opacity: number;
   /// Multiplies each layer's offsets, blur and spread.
   size: number;
+  /// Multiplies each layer's vertical offset on top of `size`: 1 keeps it,
+  /// 0 centres the shadow under its surface, negative moves it up. Missing
+  /// in inputs saved before it existed, which is 1.
+  offsetY?: number;
 }
 
 export interface DesignOverrides {
-  /// Variables shared by both themes: radius, spacing, type, shadows.
+  /// Variables shared by both themes: radius, spacing, type.
   shared: Record<string, string>;
   light: Record<string, string>;
   dark: Record<string, string>;
-  /// The generator inputs behind the shadow variables, kept to restore the controls.
-  shadow?: ShadowParams;
+  /// Per theme, the generator inputs behind that theme's shadow variables,
+  /// kept to restore the controls.
+  shadow?: Partial<Record<ThemeName, ShadowParams>>;
 }
 
 export const EMPTY_OVERRIDES: DesignOverrides = { shared: {}, light: {}, dark: {} };
@@ -43,7 +48,7 @@ export const COLOR_GROUPS: ColorGroup[] = [
   },
   { title: "Status", tokens: ["--destructive", "--success", "--warning", "--danger", "--info"] },
   { title: "Borders and focus", tokens: ["--border", "--input", "--ring"] },
-  { title: "Lists and menus", tokens: ["--item-foreground-rest"] },
+  { title: "Lists and menus", tokens: ["--item-foreground-rest", "--list-second-line-rest"] },
   {
     title: "Sidebar",
     tokens: [
@@ -160,7 +165,6 @@ export const SURFACE_ROLES: SurfaceRole[] = [
     key: "menu",
     title: "Menus",
     components: "Dropdown menu, Select list, Combobox list",
-    note: "Menus always render in the dark theme, so their colors take effect under Dark.",
     effects: true,
   },
   { key: "field", title: "Inputs", components: "Input, Textarea, Select trigger, Input group, Combobox chips; focus also the session composer", focus: true },
@@ -382,23 +386,33 @@ const SHADOW_LAYERS: Record<(typeof SHADOW_TOKENS)[number], ShadowLayer[]> = {
   "--shadow-2xl": [[0, 25, 50, -12, 0.25]],
 };
 
-/// The generator inputs behind index.css's shadow scale: Tailwind's layers
-/// at half size and four times the opacity (capped at 1).
-export const DEFAULT_SHADOW: ShadowParams = { color: "#000000", opacity: 4, size: 0.5 };
+/// The generator inputs behind index.css's shadow scales: Tailwind's layers
+/// at half size; in light at their own opacity and a fifth of their drop, in
+/// dark at four times the opacity (capped at 1).
+export const DEFAULT_SHADOWS: Record<ThemeName, ShadowParams> = {
+  light: { color: "#000000", opacity: 1, size: 0.5, offsetY: 0.2 },
+  dark: { color: "#000000", opacity: 4, size: 0.5, offsetY: 1 },
+};
 
-export function isDefaultShadow(params: ShadowParams): boolean {
-  return params.color.toLowerCase() === DEFAULT_SHADOW.color && params.opacity === DEFAULT_SHADOW.opacity && params.size === DEFAULT_SHADOW.size;
+export function isDefaultShadow(params: ShadowParams, theme: ThemeName): boolean {
+  const fallback = DEFAULT_SHADOWS[theme];
+  return params.color.toLowerCase() === fallback.color && params.opacity === fallback.opacity && params.size === fallback.size
+    && (params.offsetY ?? 1) === (fallback.offsetY ?? 1);
 }
 
 export function shadowValues(params: ShadowParams): Record<string, string> {
   const hex = /^#?([0-9a-f]{6})$/i.exec(params.color)?.[1] ?? "000000";
   const [r, g, b] = [0, 2, 4].map((index) => parseInt(hex.slice(index, index + 2), 16));
-  const px = (value: number) => (value === 0 ? "0" : `${round(value * params.size)}px`);
+  const px = (value: number) => {
+    const scaled = round(value * params.size);
+    return scaled === 0 ? "0" : `${scaled}px`;
+  };
+  const offsetY = params.offsetY ?? 1;
   const values: Record<string, string> = {};
   for (const token of SHADOW_TOKENS) {
     values[token] = SHADOW_LAYERS[token]
       .map(([x, y, blur, spread, alpha]) =>
-        `${px(x)} ${px(y)} ${px(blur)} ${px(spread)} rgb(${r} ${g} ${b} / ${round(Math.min(1, alpha * params.opacity))})`)
+        `${px(x)} ${px(y * offsetY)} ${px(blur)} ${px(spread)} rgb(${r} ${g} ${b} / ${round(Math.min(1, alpha * params.opacity))})`)
       .join(", ");
   }
   return values;
@@ -482,17 +496,25 @@ export function exportCss(overrides: DesignOverrides): string {
 /// The overrides without the ones index.css now makes its defaults (a value
 /// kept after the stylesheet adopted it), so they no longer count as
 /// changes or export. Shared tokens compare with the light (`:root`)
-/// defaults, as the editor does. The shadow generator's inputs go when none
-/// of the shadow variables they made remain.
+/// defaults, as the editor does. A theme's shadow generator inputs go when
+/// none of the shadow variables they made remain.
 export function withoutDefaults(overrides: DesignOverrides, defaults: Record<ThemeName, Record<string, string>>): DesignOverrides {
   const prune = (values: Record<string, string>, theme: ThemeName) =>
     Object.fromEntries(Object.entries(values).filter(([token, value]) => {
       const fallback = defaults[theme][token];
       return fallback === undefined || !sameCss(value, fallback);
     }));
-  const shared = prune(overrides.shared, "light");
-  const pruned: DesignOverrides = { shared, light: prune(overrides.light, "light"), dark: prune(overrides.dark, "dark") };
-  if (overrides.shadow && SHADOW_TOKENS.some((token) => token in shared)) pruned.shadow = overrides.shadow;
+  const pruned: DesignOverrides = {
+    shared: prune(overrides.shared, "light"),
+    light: prune(overrides.light, "light"),
+    dark: prune(overrides.dark, "dark"),
+  };
+  const shadow: Partial<Record<ThemeName, ShadowParams>> = {};
+  for (const theme of ["light", "dark"] as const) {
+    const params = overrides.shadow?.[theme];
+    if (params && SHADOW_TOKENS.some((token) => token in pruned[theme])) shadow[theme] = params;
+  }
+  if (Object.keys(shadow).length) pruned.shadow = shadow;
   return pruned;
 }
 
@@ -512,11 +534,32 @@ export type DesignMessage =
 export function loadOverrides(): DesignOverrides {
   try {
     const parsed = JSON.parse(localStorage.getItem(DESIGN_STORAGE_KEY) ?? "null") as DesignOverrides | null;
-    if (parsed && typeof parsed === "object" && parsed.shared && parsed.light && parsed.dark) return parsed;
+    if (parsed && typeof parsed === "object" && parsed.shared && parsed.light && parsed.dark) return withThemedShadows(parsed);
   } catch {
     // Missing, unreadable or malformed: start from the stylesheet defaults.
   }
   return EMPTY_OVERRIDES;
+}
+
+/// Overrides saved while both themes shared one shadow scale kept it under
+/// `shared`, with one set of generator inputs: it becomes each theme's own.
+function withThemedShadows(overrides: DesignOverrides): DesignOverrides {
+  const stored: unknown = overrides.shadow;
+  const legacy = stored && typeof stored === "object" && "color" in stored ? stored as ShadowParams : undefined;
+  const sharedShadows = SHADOW_TOKENS.filter((token) => token in overrides.shared);
+  if (!legacy && !sharedShadows.length) return overrides;
+  const shared = { ...overrides.shared };
+  const moved: Record<string, string> = {};
+  for (const token of sharedShadows) {
+    moved[token] = shared[token]!;
+    delete shared[token];
+  }
+  return {
+    shared,
+    light: { ...overrides.light, ...moved },
+    dark: { ...overrides.dark, ...moved },
+    ...(legacy ? { shadow: { light: legacy, dark: legacy } } : overrides.shadow ? { shadow: overrides.shadow } : {}),
+  };
 }
 
 export function saveOverrides(overrides: DesignOverrides): void {
