@@ -3,7 +3,7 @@ import { createDemoStore } from "./fixtures";
 import { SOFTWARE_FACTORY_UNIVERSE_ID } from "./fixtures/software-factory";
 import { decideApprovals, startRun } from "./engine";
 import { debugTurn } from "./debug-commands";
-import type { DemoStore, SessionRecord, UniverseState } from "./store";
+import { sessionSummary, type DemoStore, type SessionRecord, type UniverseState } from "./store";
 
 /// Each command through a real demo store: a message is sent, time passes,
 /// and the state the UI reads has changed.
@@ -87,6 +87,9 @@ describe("demo debug commands", () => {
       send(`debug: stop ${words}`);
       vi.advanceTimersByTime(5_000);
       expect(session.view.executionFailure).toBe(failure);
+      // The list and the watch stream read the summary: without the failure
+      // there, the next live update would clear it from the open page.
+      expect(sessionSummary(session).executionFailure).toBe(failure);
     },
   );
 
@@ -101,6 +104,7 @@ describe("demo debug commands", () => {
     vi.advanceTimersByTime(5_000);
     expect(run.status).toBe("failed");
     expect(session.events.at(-1)?.kind).toMatchObject({ type: "runFailed", kind: "modelFailure" });
+    expect(sessionSummary(session).lastRun).toMatchObject({ runId: run.id, status: "failed" });
   });
 
   it("queues follow-ups that run one after another", () => {

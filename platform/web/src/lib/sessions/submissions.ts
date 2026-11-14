@@ -39,6 +39,14 @@ export function submissionReducer(state: LocalSubmission[], action: SubmissionAc
 const steeringKey = (runId: string, steeringId: string) => JSON.stringify([runId, steeringId]);
 type Message = Extract<TranscriptEntry, { kind: "message" }>;
 
+/** A confirmed entry under its local identity, by the loaded entry it stands
+ * for. A projection runs on every transcript change, and a memoized run
+ * section compares its entries by identity: the same loaded entry and
+ * submission must give the same object, or every run sent from this view
+ * draws again on each event.
+ */
+const confirmedEntries = new WeakMap<Message, { id: string; media: TranscriptMedia[] | undefined; entry: Message }>();
+
 /** One projection owns echo visibility, queue placement, and stable render keys.
  * Only loaded transcript outcomes retire an unmaterialized echo: a newer HTTP
  * snapshot can report completion before the event reader has reached its input.
@@ -96,11 +104,15 @@ export function projectSubmissions(state: TranscriptState, submissions: LocalSub
   const entries = state.entries.map(entry => {
     const item = aliases.get(entry.key);
     if (!item || entry.kind !== "message") return entry;
+    const known = confirmedEntries.get(entry);
+    if (known && known.id === item.id && known.media === item.media) return known.entry;
     // Keep already-loaded attachment previews during confirmation too.
     const media = entry.media?.map(media => ({ ...media,
       localUrl: item.media?.find(local => local.blobRef === media.blobRef)?.localUrl ?? media.localUrl,
     }));
-    return { ...entry, key: item.id, local: true, ...(media ? { media } : {}) };
+    const confirmed: Message = { ...entry, key: item.id, local: true, ...(media ? { media } : {}) };
+    confirmedEntries.set(entry, { id: item.id, media: item.media, entry: confirmed });
+    return confirmed;
   });
   const sections = sectionsByRun(entries, state.activeRun);
   const runs = new Map<string, RunSection>();

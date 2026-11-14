@@ -5,6 +5,8 @@ import type { BotControllerSnapshot, BotControllerStatus, BotEventOutcome, BotVi
 import { cn } from "@/lib/utils";
 
 export type BotTone = "live" | "waiting" | "idle" | "paused" | "attention" | "closed";
+/// Every tone a status dot draws: a bot's, and a session's parked run.
+export type StatusTone = BotTone | "awaiting";
 
 /** An event's outcome as a person reads it. */
 export function outcomeLabel(outcome: BotEventOutcome): string {
@@ -59,8 +61,9 @@ function utcMidnightLabel(): string {
 }
 
 /// Each tone's color, as the text color the dot (and its ring) is drawn in.
-const STATUS_DOT_COLOR: Record<BotTone, string> = {
+const STATUS_DOT_COLOR: Record<StatusTone, string> = {
   live: "text-emerald-500",
+  awaiting: "text-emerald-500",
   waiting: "text-amber-500",
   idle: "text-muted-foreground/50",
   paused: "text-amber-500",
@@ -81,10 +84,10 @@ export function StatusDotRings() {
 }
 
 /// A status dot in its tone's color. How it is drawn and moves (the live
-/// pulse, the rings, the hollow paused dot) is all CSS: .status-dot in
+/// pulse, the rings, the hollow paused and awaiting dots) is all CSS: .status-dot in
 /// index.css, by data-tone. It always holds three ring elements; the CSS
 /// shows and moves as many as the tone sends (none, one, or three for live).
-export function StatusDot({ tone, className }: { tone: BotTone; className?: string }) {
+export function StatusDot({ tone, className }: { tone: StatusTone; className?: string }) {
   return (
     <span
       data-tone={tone}

@@ -394,6 +394,7 @@ export function universeApiKey(
 export function sessionSummary(record: SessionRecord): SessionSummary {
   const view = record.view;
   const lastMessagePreview = lastMessagePreviewOf(record.events);
+  const lastRun = lastRunOf(record);
   return {
     id: view.id,
     displayName: view.displayName ?? null,
@@ -408,8 +409,21 @@ export function sessionSummary(record: SessionRecord): SessionSummary {
     access: view.access,
     activity: view.activity,
     ...(lastMessagePreview ? { lastMessagePreview } : {}),
+    ...(view.executionFailure ? { executionFailure: view.executionFailure } : {}),
+    ...(lastRun ? { lastRun } : {}),
     ...(view.activeEnvironmentId ? { activeEnvironmentId: view.activeEnvironmentId } : {}),
   };
+}
+
+/// The run that ended last, as the core summary reports it: the session
+/// list marks a failed one.
+function lastRunOf(record: SessionRecord): SessionSummary["lastRun"] {
+  let last: RunView | undefined;
+  for (const run of record.runs.values()) {
+    if (run.finishedAtMs == null || !(run.status === "completed" || run.status === "cancelled" || run.status === "failed")) continue;
+    if (!last || run.finishedAtMs >= last.finishedAtMs!) last = run;
+  }
+  return last ? { runId: last.id, status: last.status, finishedAtMs: last.finishedAtMs! } : null;
 }
 
 const PREVIEW_LIMIT = 200;

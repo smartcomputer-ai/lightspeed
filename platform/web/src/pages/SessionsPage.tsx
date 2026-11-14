@@ -3,7 +3,7 @@ import { DeleteSessionDialog } from "@/components/session/delete-session-dialog"
 import { useSessionCompaction } from "@/lib/sessions/compaction";
 import { useDictationAvailability } from "@/lib/use-dictation";
 import { ShareSessionDialog, useCanShareSession, useSessionOwner } from "@/components/session/sharing";
-import { ActivityDot } from "@/components/activity-dot";
+import { SessionDot } from "@/components/activity-dot";
 import { SessionActionsMenu } from "@/components/session/session-actions-menu";
 import { requestRowMenu } from "@/lib/row-menu";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type FormEvent } from "react";
@@ -920,7 +920,7 @@ function SessionListItem({
         ? { checked: isSelected, onToggle: () => onToggle(session.id), label: `Select ${session.displayName ?? session.id}`, actions: selectionActions }
         : undefined}
       tree={tree}
-      indicator={<ActivityDot activity={session.activity} closed={session.lifecycleStatus === "closed"} />}
+      indicator={<SessionDot session={session} />}
       title={displayName || session.id}
       // A sub-agent row is marked by its indent and ↳; its lineage is the
       // title's tooltip.

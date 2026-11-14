@@ -92,7 +92,7 @@ import { InfoBox } from "@/components/ui/info-box";
 import { Todo } from "@/components/todo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { EmptyState, PageHeader, SectionHeader } from "@/components/page";
-import { StatusDot, type BotTone } from "@/components/bot/status";
+import { StatusDot, type BotTone, type StatusTone } from "@/components/bot/status";
 import { useTheme, type Theme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import * as Icons from "@/icons";
@@ -665,7 +665,7 @@ function ButtonsSection() {
   );
 }
 
-const TONES: BotTone[] = ["live", "waiting", "idle", "paused", "attention", "closed"];
+const TONES: StatusTone[] = ["live", "awaiting", "waiting", "idle", "paused", "attention", "closed"];
 
 function BadgesSection() {
   return (

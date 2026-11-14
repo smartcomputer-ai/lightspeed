@@ -32,7 +32,8 @@
    out from the dot that grow and fade, each a 1px line grown by its inset so
    the line stays thin, every one at the same speed (the pulse interval, 2s):
    waiting and attention one, live all three, a third apart, so three are
-   out at once. Paused is a hollow dot. Nothing moves under reduced motion. In
+   out at once. Paused and awaiting are hollow dots. Nothing moves under reduced
+   motion. In
    the components layer, so a utility on the dot (its size, say) still wins. */
 @keyframes status-dot-pulse {
     50% { background-color: color-mix(in oklab, currentColor 50%, transparent); }
@@ -49,7 +50,7 @@
         background-color: currentColor;
     }
 
-    .status-dot[data-tone="paused"] {
+    .status-dot:is([data-tone="paused"], [data-tone="awaiting"]) {
         background-color: transparent;
         border: 1px solid currentColor;
     }

@@ -1,5 +1,4 @@
 import { PageHeader } from "@/components/page";
-import { Todo } from "@/components/todo";
 import { DemoModeNote } from "@/components/onboarding/demo-mode-note";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +22,6 @@ export function PreferencesPage() {
       <div className="grid gap-6">
         <ThemeCard />
         <DemoDataCard />
-        <Todo description="Your personal preferences: which notifications reach you, defaults for new sessions, and similar settings." />
       </div>
     </>
   );
