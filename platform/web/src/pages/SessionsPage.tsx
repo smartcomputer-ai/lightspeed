@@ -2145,7 +2145,7 @@ export function SessionDetail({
         <DetailHeader
           back={{ to: backTo, label: "Back to sessions" }}
           title={title}
-          tags={meta.length > 0 && <MetaToolbar items={meta} place="header" expandOnHover label="Session details" className="grow" />}
+          tags={meta.length > 0 && <MetaToolbar items={meta} place="header" full label="Session details" className="grow" />}
           actions={[{
             kind: "custom",
             key: "session",

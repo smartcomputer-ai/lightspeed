@@ -1693,6 +1693,9 @@ function UniverseIconZoomSpecimen() {
                 <span aria-hidden="true" data-universe-icon-crosshair className="pointer-events-none absolute -inset-2">
                   <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-danger/70" />
                   <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-danger/70" />
+                  {/* Fainter guides at a tenth of the icon's height from its top and bottom edges. */}
+                  <span className="absolute inset-x-0 top-[calc(0.5rem+(100%-1rem)*0.1)] h-px -translate-y-1/2 bg-danger/35" />
+                  <span className="absolute inset-x-0 top-[calc(0.5rem+(100%-1rem)*0.9)] h-px -translate-y-1/2 bg-danger/35" />
                 </span>
               )}
             </span>

@@ -251,7 +251,7 @@ export function MetaSessionPageExample() {
           <div className="overflow-hidden rounded-lg border" style={{ width }}>
             <DetailHeader
               title="Fix the flaky deploy test"
-              tags={<MetaToolbar items={items} place="header" expandOnHover label="Session details" className="grow" />}
+              tags={<MetaToolbar items={items} place="header" full label="Session details" className="grow" />}
               actions={[{ key: "share", label: "Share", icon: <SharedIcon />, onSelect: () => act("Share") }]}
             />
             <div className="border-b bg-muted/30 px-4 py-1.5">
@@ -300,7 +300,7 @@ export function MetaBotExample() {
             <DetailHeader
               leading={<Avatar className="size-6"><AvatarFallback>R</AvatarFallback></Avatar>}
               title="Release planner"
-              tags={<MetaToolbar items={items} place="header" expandOnHover label="Bot details" className="grow" />}
+              tags={<MetaToolbar items={items} place="header" full label="Bot details" className="grow" />}
             />
             <div className="border-b bg-muted/30 px-4 py-1.5">
               <MetaToolbar items={items} place="strip" label="Bot setup" />

@@ -267,6 +267,14 @@ describe("MetaToolbar", () => {
     expect(container.querySelectorAll("[data-slot=meta-toolbar] [data-slot=tooltip-trigger]").length).toBeGreaterThan(0);
   });
 
+  it("draws a full header as tags, with no toggle or lock", async () => {
+    await render(<MetaToolbar items={items} place="header" full />);
+    const toolbar = container.querySelector("[data-slot=meta-toolbar]")!;
+    expect(toolbar.getAttribute("data-mode")).toBe("full");
+    expect(container.querySelector('[aria-label="Environment: build-box"]')!.textContent).toBe("build-box");
+    expect(container.querySelector("button[aria-pressed]")).toBeNull();
+  });
+
   it("renders nothing without items for the place", async () => {
     await render(<MetaToolbar items={[items[1]!]} place="header" />);
     expect(container.querySelector("[data-slot=meta-toolbar]")).toBeNull();

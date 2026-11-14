@@ -527,7 +527,7 @@ function FileDetail({
               unsaved: dirty,
             })}
             place="header"
-            expandOnHover
+            full
             label="File details"
             className="grow"
           />

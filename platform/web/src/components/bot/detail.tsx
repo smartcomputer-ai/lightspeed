@@ -198,7 +198,7 @@ export function BotDetail({
               activityHref: `${base}/activity`,
             })}
             place="header"
-            expandOnHover
+            full
             label="Bot details"
             className="grow"
           />

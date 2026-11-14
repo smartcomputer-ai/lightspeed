@@ -469,6 +469,7 @@ export function MetaToolbar({
   tint = place === "list" ? "highlight" : "always",
   expandable = false,
   expandOnHover = false,
+  full = false,
   expanded: expandedProp,
   defaultExpanded = false,
   onExpandedChange,
@@ -494,6 +495,8 @@ export function MetaToolbar({
    * expanded it offers a lock that keeps every such toolbar expanded.
    */
   expandOnHover?: boolean;
+  /** Always draws the items as tags, as the strip does: no toggle, hover or lock. */
+  full?: boolean;
   /** Whether it draws tags, when the caller keeps that state. */
   expanded?: boolean;
   defaultExpanded?: boolean;
@@ -531,7 +534,7 @@ export function MetaToolbar({
   // The lock, one setting for the whole app: hover-expanding toolbars start expanded.
   const { keepMetaExpanded, setKeepMetaExpanded } = useUserPreferences();
   const locked = expandOnHover && keepMetaExpanded;
-  const expanded = toggled || locked || (expandOnHover && (peeking || openPopovers > 0));
+  const expanded = full || toggled || locked || (expandOnHover && (peeking || openPopovers > 0));
   const showLock = expandOnHover && expanded && !toggled;
   /// Collapses at once, and keeps hover from reopening it until the pointer
   /// leaves and comes back.
@@ -555,7 +558,7 @@ export function MetaToolbar({
     : undefined;
   const mode = expanded ? "full" : MODE[place];
   // The room it asks for: a hover keeps the collapsed room.
-  const roomMode = toggled || locked ? "full" : MODE[place];
+  const roomMode = full || toggled || locked ? "full" : MODE[place];
   const shown = metaItemsFor(items, place);
   const gap = GAP[mode];
   const layer = useRef<HTMLDivElement>(null);
