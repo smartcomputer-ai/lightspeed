@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { CopiedIcon, CopyIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FieldLabel } from "@/components/ui/field";
@@ -32,7 +32,7 @@ export function ApiKeySecret({ secret, keyPrefix, onDone }: { secret: string; ke
             onFocus={(event) => event.currentTarget.select()}
           />
           <Button type="button" variant="outline" onClick={() => void copy()}>
-            {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
+            {copied ? <CopiedIcon data-icon="inline-start" /> : <CopyIcon data-icon="inline-start" />}
             {copied ? "Copied" : "Copy"}
           </Button>
         </div>

@@ -97,20 +97,17 @@ describe("demo router", () => {
     }
   });
 
-  it("starts demo universes with distinct icons and colors while new universes use defaults", async () => {
+  it("starts demo universes with their own icons in the default color, while new universes use defaults", async () => {
     const { call } = await boot();
     const response = await call("GET", "/api/v1/universes");
     expect(response.status).toBe(200);
     const universes = response.json as Universe[];
     expect(universes).toHaveLength(3);
-    expect(new Set(universes.map(universe => universe.icon)).size).toBe(universes.length);
-    expect(new Set(universes.map(universe => universe.iconColor)).size).toBe(universes.length);
-    for (const universe of universes) {
-      expect(universe.icon).toBeTruthy();
-      expect(universe.icon).not.toBe("orbit");
-      expect(universe.iconColor).toBeTruthy();
-      expect(universe.iconColor).not.toBe("default");
-    }
+    expect(Object.fromEntries(universes.map(universe => [universe.name, [universe.icon, universe.iconColor]]))).toEqual({
+      "Software Factory": ["mobius", "violet"],
+      "Technical Support": ["support", "amber"],
+      "Personal Assistant": ["personal-assistant", "blue"],
+    });
     const created = await call("POST", "/api/v1/universes", { name: "New universe" });
     expect(created.status).toBe(201);
     expect(created.json).toMatchObject({ icon: "orbit", iconColor: "default" });
@@ -134,13 +131,14 @@ describe("demo router", () => {
   it("saves shared universe appearance and validates choices", async () => {
     const { call } = await boot();
     const path = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
-    expect((await call("PATCH", path, { icon: "rocket", iconColor: "violet" })).status).toBe(200);
-    expect((await call("GET", path)).json).toMatchObject({ icon: "rocket", iconColor: "violet" });
+    expect((await call("PATCH", path, { icon: "network", iconColor: "violet" })).status).toBe(200);
+    expect((await call("GET", path)).json).toMatchObject({ icon: "network", iconColor: "violet" });
     expect((await call("GET", "/api/v1/universes")).json).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: SOFTWARE_FACTORY_UNIVERSE_ID, icon: "rocket", iconColor: "violet" }),
+      expect.objectContaining({ id: SOFTWARE_FACTORY_UNIVERSE_ID, icon: "network", iconColor: "violet" }),
     ]));
-    expect((await call("PATCH", path, { icon: "star", iconColor: "invalid" })).status).toBe(400);
-    expect((await call("GET", path)).json).toMatchObject({ icon: "rocket", iconColor: "violet" });
+    expect((await call("PATCH", path, { icon: "security", iconColor: "invalid" })).status).toBe(400);
+    expect((await call("PATCH", path, { icon: "unknown", iconColor: "blue" })).status).toBe(400);
+    expect((await call("GET", path)).json).toMatchObject({ icon: "network", iconColor: "violet" });
   });
   it("keeps model defaults universe-scoped and revision-safe while preserving existing session models", async () => {
     const { store, call } = await boot();
@@ -263,6 +261,49 @@ describe("demo router", () => {
     expect(shared.json).toMatchObject({ access: { visibility: "universe" } });
     expect(universe.sessions.get("session-flaky-scheduler")!.view.access.visibility).toBe("universe");
     expect((await call("POST", `${path}/share`)).status).toBe(409);
+  });
+
+  it("lists each session with its active environment", async () => {
+    const { store, call } = await boot();
+    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const listed = (await call("GET", `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as {
+      sessions: { id: string; activeEnvironmentId?: string }[];
+    };
+    expect(listed.sessions.length).toBeGreaterThan(0);
+    for (const entry of listed.sessions) {
+      expect(entry.activeEnvironmentId ?? null).toBe(universe.sessions.get(entry.id)!.view.activeEnvironmentId ?? null);
+    }
+    expect(listed.sessions.some((entry) => entry.activeEnvironmentId)).toBe(true);
+  });
+
+  it("lists each session with its latest message as one plain, bounded line", async () => {
+    const { store, call } = await boot();
+    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const session = universe.sessions.get("session-flaky-scheduler")!;
+    const list = async () => {
+      const listed = (await call("GET", `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as {
+        sessions: { id: string; lastMessagePreview?: string }[];
+      };
+      return new Map(listed.sessions.map((entry) => [entry.id, entry.lastMessagePreview]));
+    };
+
+    appendScriptedRun(store, session, {
+      at: Date.now(),
+      user: "Is the scheduler fixed?",
+      steps: [{ text: "## Done\n\nThe **scheduler** suite passes:\n\n```ts\nawait run();\n```\n\nSee [PR #487](https://example.test/487) for `retry_policy`." }],
+    });
+    // The agent's reply is the latest message: Markdown reduced to its words, code dropped.
+    expect((await list()).get(session.view.id)).toBe("Done The scheduler suite passes: See PR #487 for retry_policy.");
+
+    appendScriptedRun(store, session, { at: Date.now(), user: "Thanks!", steps: [{ text: "x".repeat(500) }] });
+    const long = (await list()).get(session.view.id)!;
+    expect(long).toHaveLength(200);
+    expect(long.endsWith("…")).toBe(true);
+
+    // Every seeded session with messages has one; none spans lines.
+    for (const preview of (await list()).values()) {
+      if (preview !== undefined) expect(preview).not.toMatch(/\n|```/);
+    }
   });
 
   it("uploads an attachment and runs it through the transcript as input media", async () => {

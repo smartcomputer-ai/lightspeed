@@ -25,6 +25,7 @@ import {
 } from "@/components/session/session-config-editor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -304,9 +305,9 @@ function LiveSessionSetup({
             {instructions.isLoading ? (
               <p className="text-sm text-muted-foreground">Loading instructions…</p>
             ) : (
-              <textarea
+              <Textarea
                 readOnly={!canConfigure}
-                className="min-h-32 w-full resize-y rounded-lg border border-input bg-transparent p-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                className="min-h-32 resize-y field-sizing-fixed p-3"
                 value={instructionsDraft ?? ""}
                 onChange={(event) => setInstructionsDraft(event.target.value)}
                 placeholder="No custom instructions — the managed fallback applies."

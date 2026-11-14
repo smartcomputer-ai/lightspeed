@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { LoaderCircle } from "lucide-react";
+import { LoadingIcon } from "@/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, botLabel, type BotControllerSnapshot, type BotStateView, type BotView } from "@/api";
 import { useActionPermissions } from "@/lib/permissions";
@@ -58,7 +58,7 @@ export function BotChat({
     const degraded = controller?.setupStatus === "degraded" || Boolean(controller?.lastError);
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
-        {bot.closedAtMs != null || degraded ? null : <LoaderCircle className="size-4 animate-spin" />}
+        {bot.closedAtMs != null || degraded ? null : <LoadingIcon className="size-4 animate-spin" />}
         {bot.closedAtMs != null ? (
           "This bot is closed; its conversations were released."
         ) : degraded ? (

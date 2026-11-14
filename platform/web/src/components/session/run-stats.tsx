@@ -1,4 +1,4 @@
-import { ChevronDown, TriangleAlert } from "lucide-react";
+import { DropdownCaretIcon, WarningIcon } from "@/icons";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   formatDuration,
@@ -38,7 +38,7 @@ export function RunStatsTrigger({ summary, className }: { summary: TranscriptRun
         {contextTokens !== undefined && <span>Context {formatTokens(contextTokens)}</span>}
         {contextTokens !== undefined && total !== undefined && <span aria-hidden="true">·</span>}
         {total !== undefined && <span>Usage {formatTokens(total)}</span>}
-        <ChevronDown className="size-3! shrink-0" />
+        <DropdownCaretIcon className="size-3! shrink-0" />
       </PopoverTrigger>
       <PopoverContent className="w-[min(21rem,calc(100vw-2rem))] p-4" aria-label="Run statistics" side="top">
         <RunStatsDetails summary={summary} />
@@ -75,7 +75,7 @@ export function RunOutcomeLine({
     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-2 text-xs text-muted-foreground">
       {status === "failed" ? (
         <span className="flex min-w-0 items-start gap-1.5 text-destructive">
-          <TriangleAlert className="mt-px size-3.5 shrink-0" />
+          <WarningIcon className="mt-px size-3.5 shrink-0" />
           <span className="[overflow-wrap:anywhere]">{runFailureText(summary)}</span>
         </span>
       ) : status === "cancelled" ? (

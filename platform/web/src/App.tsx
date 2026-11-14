@@ -1,6 +1,6 @@
 import { UniverseWatchProvider } from "@/lib/universe-watch";
 import { PermissionIdentityProvider } from "@/lib/permissions";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import type { SessionUser } from "./auth.js";
@@ -27,6 +27,7 @@ import { LoginPage } from "@/pages/LoginPage";
 import { McpServersPage } from "@/pages/McpServersPage";
 import { MembersPage } from "@/pages/MembersPage";
 import { ModelsPage } from "@/pages/ModelsPage";
+import { PreferencesPage } from "@/pages/PreferencesPage";
 import { ProfilesPage } from "@/pages/ProfilesPage";
 import { SessionsPage } from "@/pages/SessionsPage";
 import { SetupsPage } from "@/pages/SetupsPage";
@@ -35,6 +36,11 @@ import { BlobPage } from "@/pages/BlobPage";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
 import { FeatureGate } from "@/components/feature-gate";
 import { finishAutomaticSignIn } from "@/lib/automatic-sign-in";
+import { debugModeEnabled } from "@/devtools/debug-mode";
+
+// Tool pages under /debug: the UI overview in development builds, the
+// design-token editor in debug mode. Builds with neither never load them.
+const DebugRoutes = import.meta.env.DEV || debugModeEnabled ? lazy(() => import("@/devtools/DebugRoutes")) : null;
 
 function UniverseIndexRedirect() {
   const { universe } = useActiveUniverse();
@@ -62,6 +68,10 @@ export function App() {
   const me = useQuery({ queryKey: ["me", session.data?.user.id], enabled: !!session.data,
     queryFn: () => api<{ user: SessionUser }>("GET", "/api/v1/me"), retry: false,
   });
+
+  if (DebugRoutes && location.pathname.startsWith("/debug/")) {
+    return <Suspense fallback={null}><DebugRoutes /></Suspense>;
+  }
 
   // While unauthenticated on /login, always render the form and never
   // unmount it: the session hook revalidates on window focus (isPending
@@ -164,6 +174,7 @@ export function App() {
           </>
         )}
         <Route path="account" element={<AccountPage user={user} />} />
+        <Route path="preferences" element={<PreferencesPage />} />
         <Route path="login" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

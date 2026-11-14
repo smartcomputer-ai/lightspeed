@@ -2,7 +2,7 @@ import { ResourceActions } from "@/components/resource-details-dialog";
 import { useActionPermissions } from "@/lib/permissions";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { RefreshCw, Search } from "lucide-react";
+import { RefreshIcon, SearchIcon } from "@/icons";
 import {
   api,
   type ModelEndpointConfig,
@@ -728,7 +728,7 @@ export function ProviderModelList({
           disabled={discovery.isFetching}
           onClick={() => void discovery.refetch()}
         >
-          <RefreshCw
+          <RefreshIcon
             className={discovery.isFetching ? "animate-spin" : undefined}
           />
         </Button>
@@ -736,7 +736,7 @@ export function ProviderModelList({
 
       {allModels.length > 8 && (
         <div className="relative">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}

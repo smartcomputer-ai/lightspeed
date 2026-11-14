@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sectionActivity, sectionsByRun, type RunSection } from "./run-sections";
+import { sameRunSection, sectionActivity, sectionsByRun, type RunSection } from "./run-sections";
 import type { TranscriptEntry, TranscriptToolCall } from "./transcript";
 
 const user = (key: string, runId?: string, steering = false): TranscriptEntry =>
@@ -117,6 +117,21 @@ describe("run sections", () => {
     const ended = sectionsByRun(entries, null);
     expect(ended).toMatchObject([{ kind: "run", live: false, reply: entries[2] }]);
     expect((ended[0] as RunSection).summary).toBeUndefined();
+  });
+
+  it("treats a rebuilt finished run as unchanged until one of its entries changes", () => {
+    const done = [user("ask", "r1"), tools("batch", "r1", [call("c1", "edit")]), assistant("reply", "r1"), summary("done", "r1")];
+    const next = [user("next", "r2"), thinking("think", "r2")];
+    const active = { runId: "r2", label: "thinking", cancelling: false };
+    const before = sectionsByRun([...done, ...next], active) as RunSection[];
+    const after = sectionsByRun([...done, ...next, tools("more", "r2", [call("c2", "read")])], active) as RunSection[];
+    expect(after[0]).not.toBe(before[0]);
+    expect(sameRunSection(before[0]!, after[0]!)).toBe(true);
+    expect(sameRunSection(before[1]!, after[1]!)).toBe(false);
+
+    const replaced = [...done];
+    replaced[1] = tools("batch", "r1", [call("c1", "edit", "failed")]);
+    expect(sameRunSection(before[0]!, (sectionsByRun([...replaced, ...next], active) as RunSection[])[0]!)).toBe(false);
   });
 
   it("stands in an empty live section for a run that has produced nothing yet", () => {

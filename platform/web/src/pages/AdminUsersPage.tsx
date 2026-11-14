@@ -1,7 +1,7 @@
 import { ReadError } from "@/components/read-error";
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus } from "lucide-react";
+import { AddIcon, EditIcon } from "@/icons";
 import { authClient, useLoginConfig, type SessionUser } from "@/auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,7 +63,7 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
         description={config.data?.sso ? "Company users appear after their first admitted sign-in. Manage universe roles on Members." : "Platform accounts. Signup is closed — accounts are created here."}
         actions={
           config.data && config.data.password !== "off" && <Button onClick={() => setCreateOpen(true)}>
-            <Plus data-icon="inline-start" />
+            <AddIcon data-icon="inline-start" />
             {config.data.sso ? "Create emergency admin" : "Create user"}
           </Button>
         }
@@ -123,7 +123,7 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
                       aria-label={`Edit ${user.email}`}
                       onClick={() => setEditing(user)}
                     >
-                      <Pencil />
+                      <EditIcon />
                     </Button>
                   </TableActionsCell>
                 </TableRow>

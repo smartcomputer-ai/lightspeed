@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ChevronDown, Minimize2, Ellipsis, LoaderCircle, Share2, SlidersHorizontal } from "lucide-react";
+import { CompactIcon, ConfigureIcon, DropdownCaretIcon, LoadingIcon, MoreIcon, ShareIcon } from "@/icons";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { SessionMenuIdentity, SessionMenuMetadata } from "@/components/session/session-menu-details";
 import { SessionMenuPreferences } from "@/components/session/session-menu-preferences";
+import { useRowMenu } from "@/lib/row-menu";
 
 /**
  * One menu for a session, on the Sessions page (behind ⋯) and on a bot's
@@ -19,7 +20,8 @@ import { SessionMenuPreferences } from "@/components/session/session-menu-prefer
  * (settings, sharing, where else it opens), then view preferences and session
  * details. Within the action group, bot compaction follows reset and session
  * compaction precedes close/delete. Pages pass lifecycle items
- * (close and delete, or reset) and own every confirmation.
+ * (close and delete, or reset) and own every confirmation. The page's ⋯
+ * menu is also its list row's right-click menu, opened at the pointer.
  */
 export function SessionActionsMenu({
   sessionId,
@@ -44,14 +46,15 @@ export function SessionActionsMenu({
   lifecycle?: ReactNode;
 }) {
   const navigate = useNavigate();
+  const rowMenu = useRowMenu(variant === "more" ? "session" : null, sessionId);
   const compactItem = onCompact && (
     <DropdownMenuItem onClick={onCompact} disabled={Boolean(compactionLabel)}>
-      {compactionLabel ? <LoaderCircle className="animate-spin" /> : <Minimize2 />}
+      {compactionLabel ? <LoadingIcon className="animate-spin" /> : <CompactIcon />}
       {compactionLabel ?? "Compact context"}
     </DropdownMenuItem>
   );
   return (
-    <DropdownMenu>
+    <DropdownMenu open={rowMenu.open} onOpenChange={rowMenu.onOpenChange}>
       <DropdownMenuTrigger
         render={
           variant === "more" ? (
@@ -73,13 +76,14 @@ export function SessionActionsMenu({
         }
       >
         {variant === "more" ? (
-          <Ellipsis />
+          <MoreIcon />
         ) : (
-          <ChevronDown className="size-3.5" />
+          <DropdownCaretIcon className="size-3.5" />
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent
-        align={variant === "more" ? "end" : "start"}
+        anchor={rowMenu.anchor}
+        align={variant === "more" && !rowMenu.anchor ? "end" : "start"}
         className="max-h-[min(28rem,calc(100vh-1rem))] w-80 max-w-[calc(100vw-1rem)]"
       >
         {(onSettings || onShare || open || lifecycle || onCompact) && (
@@ -87,12 +91,12 @@ export function SessionActionsMenu({
             <DropdownMenuGroup>
               {onSettings && (
                 <DropdownMenuItem onClick={onSettings}>
-                  <SlidersHorizontal /> Session settings
+                  <ConfigureIcon /> Session settings
                 </DropdownMenuItem>
               )}
               {onShare && (
                 <DropdownMenuItem onClick={onShare}>
-                  <Share2 /> Share with universe…
+                  <ShareIcon /> Share with universe…
                 </DropdownMenuItem>
               )}
               {open && (

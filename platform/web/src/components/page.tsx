@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import { Plus } from "lucide-react";
+import { AddIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 
@@ -82,7 +82,7 @@ export function DetailPrompt({
       <span>{children}</span>
       {create && (
         <Button size="sm" variant="outline" onClick={create.onClick}>
-          <Plus data-icon="inline-start" /> {create.label}
+          <AddIcon data-icon="inline-start" /> {create.label}
         </Button>
       )}
     </div>
@@ -133,7 +133,7 @@ export function ShowHiddenToggle({
 }) {
   if (count === 0) return null;
   return (
-    <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+    <label className="flex w-fit cursor-action items-center gap-2 text-sm text-muted-foreground">
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
       {label} ({count})
     </label>

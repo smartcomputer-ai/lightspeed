@@ -110,17 +110,21 @@ async function render() {
   );
   await waitForUi(() => expect(container.querySelector("textarea")).not.toBeNull());
 }
-const link = () =>
-  container.querySelector<HTMLAnchorElement>(
-    'header a[aria-label="Open in blob viewer (new tab)"]',
-  );
+/// The blob viewer link, in the content hash item's popover (opened first;
+/// the popover renders outside the page container).
+const link = async () => {
+  const item = container.querySelector<HTMLButtonElement>('header [data-meta-item="content"]')!;
+  if (item.getAttribute("aria-expanded") !== "true") await act(async () => item.click());
+  return openLink();
+};
+const openLink = () => document.querySelector<HTMLAnchorElement>('a[aria-label="Open in blob viewer (new tab)"]');
 
 it.each([true, false])(
   "opens the saved blob in a separate tab with filename and type hints (editable: %s)",
   async (editable) => {
     mocks.editable = editable;
     await render();
-    const anchor = link()!;
+    const anchor = (await link())!;
     const url = new URL(anchor.href);
     expect(url.pathname).toBe(
       `${import.meta.env.BASE_URL.replace(/\/$/, "")}/u/test/blobs/${digest}`,
@@ -146,8 +150,8 @@ it("keeps unsaved edits local and updates the link when the saved blob changes",
     )!.set!.call(editor, "unsaved edit");
     editor.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  expect(link()!.href).toContain(digest);
-  expect(link()!.title).toContain("saved version");
+  expect((await link())!.href).toContain(digest);
+  expect((await link())!.title).toContain("saved version");
   expect(mocks.api.mock.calls.every(([method]) => method === "GET")).toBe(true);
   const nextDigest = "b".repeat(64);
   await act(async () => {
@@ -155,7 +159,7 @@ it("keeps unsaved edits local and updates the link when the saved blob changes",
     client.setQueryData(["workspace-tree", "u", "ws"], tree());
   });
   await waitForUi(() => {
-    expect(link()!.href).toContain(nextDigest);
+    expect(openLink()!.href).toContain(nextDigest);
   });
   expect(editor.value).toBe("unsaved edit");
 });
@@ -163,7 +167,7 @@ it("keeps unsaved edits local and updates the link when the saved blob changes",
 it("does not offer a broken link for a malformed blob reference", async () => {
   blobRef = "invalid";
   await render();
-  expect(link()).toBeNull();
+  expect(await link()).toBeNull();
 });
 
 const button = (label: string) =>
@@ -196,7 +200,7 @@ it("previews unsaved edits, preserves them in source, and saves the draft from p
   await act(async () => button("Preview").click());
   expect(container.querySelector("strong")?.textContent).toBe("Keep this");
   expect(button("Save").disabled).toBe(false);
-  expect(link()!.title).toContain("saved version");
+  expect((await link())!.title).toContain("saved version");
   await act(async () => button("Source").click());
   expect(container.querySelector("textarea")!.value).toBe(draft);
   expect(mocks.api.mock.calls.every(([method]) => method === "GET")).toBe(true);

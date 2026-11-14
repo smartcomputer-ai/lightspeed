@@ -4,7 +4,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { LoginConfig, SessionUser } from "@/auth";
-import { ThemeProvider } from "@/lib/theme";
 import { AccountPage } from "./AccountPage";
 import { waitForUi } from "@/test/wait-for-ui";
 
@@ -25,7 +24,6 @@ let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query, addEventListener: () => undefined, removeEventListener: () => undefined }));
-  localStorage.clear();
   mocks.config = { sso: false, autoSignIn: false, providerId: null, password: "local" };
   mocks.updateUser.mockReset().mockResolvedValue({ error: null });
   mocks.changePassword.mockReset().mockResolvedValue({ error: null });
@@ -38,14 +36,12 @@ afterEach(async () => {
   await act(async () => root.unmount());
   client.clear();
   container.remove();
-  localStorage.clear();
-  document.documentElement.classList.remove("dark");
   vi.unstubAllGlobals();
 });
 
 async function show(user: SessionUser = local) {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><ThemeProvider><AccountPage user={user} /></ThemeProvider></QueryClientProvider>,
+    <QueryClientProvider client={client}><AccountPage user={user} /></QueryClientProvider>,
   ));
 }
 const input = (id: string) => container.querySelector<HTMLInputElement>(`#${id}`);
@@ -130,14 +126,4 @@ it.each([
   mocks.config = { ...mocks.config, ...config };
   await show(user);
   expect(container.querySelector("#security") !== null).toBe(shown);
-});
-
-it("remembers the chosen theme and applies it", async () => {
-  await show();
-  await act(async () => button("Dark")!.click());
-  expect(localStorage.getItem("lightspeed:theme")).toBe("dark");
-  expect(document.documentElement.classList.contains("dark")).toBe(true);
-  await act(async () => button("Light")!.click());
-  expect(localStorage.getItem("lightspeed:theme")).toBe("light");
-  expect(document.documentElement.classList.contains("dark")).toBe(false);
 });

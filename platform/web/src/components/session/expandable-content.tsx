@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import { LoadingIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 
 export type FullTextLoader = (blobRef: string) => Promise<string>;
@@ -42,7 +42,7 @@ export function ExpandableContent({
           <span>Truncated preview.</span>
           {expandable && (
             <Button variant="link" size="xs" className="h-auto px-0" disabled={loading} onClick={expand}>
-              {loading && <Loader2 className="animate-spin" />}
+              {loading && <LoadingIcon className="animate-spin" />}
               {loading ? "Loading…" : "Expand full entry"}
             </Button>
           )}

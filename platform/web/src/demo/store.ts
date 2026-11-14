@@ -1,5 +1,6 @@
 /// In-memory state behind the browser demo. Fixtures fill it at boot, the
 /// stub routes read and mutate it, and nothing survives a reload.
+import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
 import { effectiveFeatures, mergeFeatureOverrides, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor } from "@lightspeed-ai/platform-shared";
 import type {
   BlobContent,
@@ -36,6 +37,7 @@ import type {
   DeploymentApiKeyView,
   DeploymentEnvironmentProviderView,
   MethodGroup,
+  RunFailureKindView,
   RunView,
   SessionEventView,
   SessionSummaryView,
@@ -72,7 +74,30 @@ export interface DemoTurn {
   thinking?: string;
   tools?: DemoToolCall[];
   text: string;
+  /// How long the model generates before the turn lands (its tool calls,
+  /// or its reply when it calls none); by default a second or so.
+  thinkMs?: number;
+  /// Runs once the turn's reply has landed (debug commands change state here).
+  landed?: (at: number) => void;
+  /// Parks the run on an MCP tool call that needs approval; the decision
+  /// picks the turn that follows.
+  approval?: {
+    serverId: string;
+    serverLabel: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+    then: (approved: boolean) => DemoTurn;
+  };
+  /// Fails the run after this turn instead of completing it.
+  fail?: { kind: RunFailureKindView; message: string };
+  /// Runs once the run has finished, whichever way.
+  finished?: (run: RunView) => void;
 }
+
+/// What a debug message (`debug: …`) runs instead of the scripted reply:
+/// a turn, or null for an ordinary message. Installed by the demo entry in
+/// debug mode only.
+export type DemoDebugHandler = (input: string, context: ResponderContext & { run: RunView }) => DemoTurn | null;
 
 export interface ResponderContext {
   store: DemoStore;
@@ -106,6 +131,16 @@ export interface SessionRecord {
   /// User turns so far (drives scripted responders).
   turns: number;
   responder?: DemoResponder;
+  /// Runs parked on an approval, each with what deciding it resumes.
+  parked?: Map<string, (approved: boolean) => void>;
+  /// The active run's next timed step: when it lands and how to move it
+  /// sooner (see hurryRun).
+  pendingStep?: { timer: ReturnType<typeof setTimeout>; dueAtMs: number; rearm: (delayMs: number) => void };
+  /// Every step of the active run lands by then (see hurryRun).
+  hurryUntilMs?: number;
+  /// Called when someone opens the session (reads it); scripted sessions
+  /// use it to react to being looked at.
+  onOpen?: () => void;
 }
 
 export interface WorkspaceRecord {
@@ -146,6 +181,8 @@ export interface UniverseState {
   apiKeys: DeploymentApiKeyView[];
   profiles: Map<string, ProfileDocument>;
   sessions: Map<string, SessionRecord>;
+  /// Called once, the first time someone lists the universe's sessions.
+  onSessionsViewed?: () => void;
   workspaces: Map<string, WorkspaceRecord>;
   environments: Map<string, Environment>;
   /// Registration keys (core wire shape) with the secret the demo minted,
@@ -207,6 +244,8 @@ export class DemoStore {
   channelsStatus: ChannelsStatus = { connectors: [] };
   readonly blobs = new Map<string, BlobContent>();
   readonly defaultInstructionsRef: string;
+  /// Debug commands (`debug: …` messages); see debug-commands.ts.
+  debug?: DemoDebugHandler;
   private readonly counters = new Map<string, number>();
 
   constructor(currentUser: DemoUser) {
@@ -354,6 +393,7 @@ export function universeApiKey(
 
 export function sessionSummary(record: SessionRecord): SessionSummary {
   const view = record.view;
+  const lastMessagePreview = lastMessagePreviewOf(record.events);
   return {
     id: view.id,
     displayName: view.displayName ?? null,
@@ -367,7 +407,38 @@ export function sessionSummary(record: SessionRecord): SessionSummary {
     origin: view.origin ?? null,
     access: view.access,
     activity: view.activity,
+    ...(lastMessagePreview ? { lastMessagePreview } : {}),
+    ...(view.activeEnvironmentId ? { activeEnvironmentId: view.activeEnvironmentId } : {}),
   };
+}
+
+const PREVIEW_LIMIT = 200;
+
+/// The latest user or agent message of a session as one line of plain text:
+/// what the session list shows under each title. Read from the same
+/// transcript the session page draws, so it matches the last bubble.
+export function lastMessagePreviewOf(events: SessionRecord["events"]): string | undefined {
+  const entries = applyEvents(emptyTranscript(), events).entries;
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index]!;
+    if (entry.kind !== "message") continue;
+    const text = plainLine(entry.text);
+    if (text) return text.length > PREVIEW_LIMIT ? `${text.slice(0, PREVIEW_LIMIT - 1).trimEnd()}…` : text;
+  }
+  return undefined;
+}
+
+/// Markdown reduced to the words: code blocks dropped, links to their text,
+/// emphasis, headings, quotes and list markers removed, lines joined.
+/// Underscores stay, so snake_case names survive.
+function plainLine(markdown: string): string {
+  return markdown
+    .replace(/```[\s\S]*?(```|$)/g, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/gm, "")
+    .replace(/(\*\*|~~|\*|`)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export function bytesToBase64(bytes: Uint8Array): string {

@@ -7,7 +7,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SessionUser } from "@/auth";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
-import { AppShell } from "./app-shell";
+import { AppShell, shellTitleTrail } from "./app-shell";
+import { documentTitle } from "@/lib/document-title";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -18,8 +19,8 @@ vi.mock("@/lib/universes", async (original) => ({
 vi.mock("@/components/universe-switcher", () => ({ UniverseSwitcher: () => null }));
 vi.mock("@/components/user-menu", () => ({ UserMenu: () => null }));
 
-const WORK = ["Bots", "Sessions"];
-const SETUP = ["Profiles", "Workspaces", "Environments", "MCP servers", "Models"];
+const WORK = ["Bots", "Sessions", "Workspaces"];
+const SETUP = ["Profiles", "Environments", "MCP servers", "Models"];
 
 let root: Root;
 let container: HTMLDivElement;
@@ -102,16 +103,42 @@ it("leaves switched-off channels out of the menu", async () => {
 
 it("leaves bots, and the channels they need, out of the menu", async () => {
   expect(await sidebarFor("admin", { bots: false, channels: false })).toMatchObject({
-    "": ["Sessions"],
+    "": ["Sessions", "Workspaces"],
     Settings: ["General", "Templates"],
   });
+});
+
+it("titles the tab with the page and its universe, read backwards", async () => {
+  await sidebarFor("admin");
+  expect(document.title).toBe(documentTitle(["Bots", "Test"]));
+});
+
+it.each([
+  ["/u/test/sessions", ["Sessions", "Test"]],
+  ["/u/test/sessions/s-1", ["Sessions", "Test"]],
+  ["/u/test/workspaces/w-1/files/src/main.rs", ["Workspaces", "Test"]],
+  ["/u/test/mcp-servers", ["MCP servers", "Test"]],
+  ["/u/test/settings/general", ["General", "Settings", "Test"]],
+  ["/u/test/blobs/abc", ["Test"]],
+  ["/admin/audit", ["Audit log", "Platform admin"]],
+  ["/admin/environment-providers", ["Environment providers", "Platform admin"]],
+  ["/account", ["Your account"]],
+  ["/preferences", ["Preferences"]],
+  ["/accounts-elsewhere", []],
+  ["/", []],
+])("names %s from the menu", (path, trail) => {
+  expect(shellTitleTrail(path, "Test")).toEqual(trail);
+});
+
+it("leaves the universe out until it has loaded", () => {
+  expect(shellTitleTrail("/u/test/sessions", undefined)).toEqual(["Sessions"]);
 });
 
 it("links each page at its flat route", async () => {
   await sidebarFor("admin");
   expect([...container.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
-    "/u/test/bots", "/u/test/sessions",
-    "/u/test/profiles", "/u/test/workspaces", "/u/test/environments", "/u/test/mcp-servers", "/u/test/models",
+    "/u/test/bots", "/u/test/sessions", "/u/test/workspaces",
+    "/u/test/profiles", "/u/test/environments", "/u/test/mcp-servers", "/u/test/models",
     "/u/test/credentials", "/u/test/api-keys", "/u/test/members",
     "/u/test/settings/general", "/u/test/settings/channels", "/u/test/settings/templates",
   ]);

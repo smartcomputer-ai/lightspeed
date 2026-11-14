@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { LockKeyhole, Users } from "lucide-react";
+import { PrivateIcon, SharedIcon } from "@/icons";
 import type { ResourceAccessSummary } from "@lightspeed-ai/sdk";
 import { api } from "@/api";
 import {
@@ -30,7 +30,7 @@ export function SharingMark({
   if (!access) return null;
   const shared = access.visibility === "universe";
   if (quiet && !shared) return null;
-  const Icon = shared ? Users : LockKeyhole;
+  const Icon = shared ? SharedIcon : PrivateIcon;
   return (
     <Tooltip>
       <TooltipTrigger

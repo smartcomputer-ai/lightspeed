@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useDocumentTitle } from "@/lib/document-title";
 import { authClient, useLoginConfig } from "@/auth";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { beginAutomaticSignIn } from "@/lib/automatic-sign-in";
 
 export function LoginPage() {
+  useDocumentTitle(["Sign in"]);
   const config = useLoginConfig();
   const [emergency, setEmergency] = useState(false);
   const [email, setEmail] = useState("");

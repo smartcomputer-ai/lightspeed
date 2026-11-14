@@ -22,15 +22,83 @@
 
 @media (prefers-reduced-motion: no-preference) {
     .transcript-enter {
-        animation: transcript-enter 200ms ease-out;
+        animation: transcript-enter var(--content-transition-duration) ease-out;
     }
 }
 
+/* Status dots (StatusDot): all in CSS. The dot is its tone's text color
+   (currentColor); live pulses, fading its fill (not its opacity, which would
+   fade its rings too). Its three ring children (.status-dot-ring) send rings
+   out from the dot that grow and fade, each a 1px line grown by its inset so
+   the line stays thin, every one at the same speed (the pulse interval, 2s):
+   waiting and attention one, live all three, a third apart, so three are
+   out at once. Paused is a hollow dot. Nothing moves under reduced motion. In
+   the components layer, so a utility on the dot (its size, say) still wins. */
+@keyframes status-dot-pulse {
+    50% { background-color: color-mix(in oklab, currentColor 50%, transparent); }
+}
+
+@keyframes status-dot-ring {
+    from { inset: 0; opacity: 0.9; }
+    to { inset: -0.375rem; opacity: 0; }
+}
+
+@layer components {
+    .status-dot {
+        position: relative;
+        background-color: currentColor;
+    }
+
+    .status-dot[data-tone="paused"] {
+        background-color: transparent;
+        border: 1px solid currentColor;
+    }
+
+    .status-dot-ring {
+        display: none;
+        position: absolute;
+        inset: 0;
+        border-radius: 9999px;
+        border: 1px solid currentColor;
+        pointer-events: none;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+        .status-dot[data-tone="live"] {
+            animation: status-dot-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        .status-dot:is([data-tone="waiting"], [data-tone="attention"]) > .status-dot-ring:first-child,
+        .status-dot[data-tone="live"] > .status-dot-ring {
+            display: block;
+            animation: status-dot-ring 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+
+        /* Live's rings a third of the interval apart. */
+        .status-dot[data-tone="live"] > .status-dot-ring:nth-child(2) { animation-delay: calc(-2s / 3); }
+        .status-dot[data-tone="live"] > .status-dot-ring:nth-child(3) { animation-delay: calc(-4s / 3); }
+    }
+}
+
+/* Fonts and shadows resolve through the variables in :root, like the colors,
+   so they can be changed at runtime (the debug design-token editor does).
+   Tailwind would otherwise compile their values into each utility. */
 @theme inline {
-    --font-heading: 'IBM Plex Sans Variable', system-ui, sans-serif;
-    --font-sans: 'IBM Plex Sans Variable', system-ui, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    /* Every transition that names no duration of its own (buttons, fields,
+       checkboxes, switches, tabs, badges, table rows, toggles) runs on the
+       control time. */
+    --default-transition-duration: var(--control-transition-duration);
+    --font-heading: var(--font-heading);
+    --font-sans: var(--font-sans);
+    --font-mono: var(--font-mono);
     --font-mono--font-feature-settings: "liga" 0, "calt" 0;
+    --shadow-2xs: var(--shadow-2xs);
+    --shadow-xs: var(--shadow-xs);
+    --shadow-sm: var(--shadow-sm);
+    --shadow-md: var(--shadow-md);
+    --shadow-lg: var(--shadow-lg);
+    --shadow-xl: var(--shadow-xl);
+    --shadow-2xl: var(--shadow-2xl);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,6 +116,10 @@
     --color-input: var(--input);
     --color-border: var(--border);
     --color-destructive: var(--destructive);
+    --color-success: var(--success);
+    --color-warning: var(--warning);
+    --color-danger: var(--danger);
+    --color-info: var(--info);
     --color-accent-foreground: var(--accent-foreground);
     --color-accent: var(--accent);
     --color-muted-foreground: var(--muted-foreground);
@@ -72,9 +144,23 @@
 }
 
 :root {
+    --font-heading: 'IBM Plex Sans Variable', system-ui, sans-serif;
+    --font-sans: 'IBM Plex Sans Variable', system-ui, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    /* The shadow scale, per theme: Tailwind's default layers at half size;
+       here at their own opacity and a fifth of their drop, under .dark at
+       four times the opacity (the design configurator's shadow generator
+       writes both). */
+    --shadow-2xs: 0 0.1px 0 0 rgb(0 0 0 / 0.05);
+    --shadow-xs: 0 0.1px 1px 0 rgb(0 0 0 / 0.05);
+    --shadow-sm: 0 0.1px 1.5px 0 rgb(0 0 0 / 0.1), 0 0.1px 1px -0.5px rgb(0 0 0 / 0.1);
+    --shadow-md: 0 0.4px 3px -0.5px rgb(0 0 0 / 0.1), 0 0.2px 2px -1px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 1px 7.5px -1.5px rgb(0 0 0 / 0.1), 0 0.4px 3px -2px rgb(0 0 0 / 0.1);
+    --shadow-xl: 0 2px 12.5px -2.5px rgb(0 0 0 / 0.1), 0 0.8px 5px -3px rgb(0 0 0 / 0.1);
+    --shadow-2xl: 0 2.5px 25px -6px rgb(0 0 0 / 0.25);
     --background: oklch(1 0 0);
     --foreground: oklch(0.141 0.005 285.823);
-    --card: oklch(1 0 0);
+    --card: #f7f7f7;
     --card-foreground: oklch(0.141 0.005 285.823);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.141 0.005 285.823);
@@ -82,11 +168,16 @@
     --primary-foreground: oklch(0.985 0 0);
     --secondary: oklch(0.967 0.001 286.375);
     --secondary-foreground: oklch(0.21 0.006 285.885);
-    --muted: oklch(0.967 0.001 286.375);
+    --muted: #ebebeb;
     --muted-foreground: oklch(0.552 0.016 285.938);
     --accent: oklch(0.967 0.001 286.375);
     --accent-foreground: oklch(0.21 0.006 285.885);
-    --destructive: oklch(0.577 0.245 27.325);
+    --destructive: #cb2a2a;
+    /* Status colors, the same in both themes. */
+    --success: #4ade80;
+    --warning: #fbbf24;
+    --danger: #f87171;
+    --info: #60a5fa;
     --border: oklch(0.92 0.004 286.32);
     --input: oklch(0.92 0.004 286.32);
     --ring: oklch(0.705 0.015 286.067);
@@ -96,22 +187,191 @@
     --chart-4: oklch(0.37 0.013 285.805);
     --chart-5: oklch(0.274 0.006 286.033);
     --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
+    --sidebar: #ffffff;
     --sidebar-foreground: oklch(0.141 0.005 285.823);
     --sidebar-primary: oklch(0.21 0.006 285.885);
     --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.967 0.001 286.375);
+    --sidebar-accent: oklch(0.93 0 0);
     --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
     --sidebar-border: oklch(0.92 0.004 286.32);
     --sidebar-ring: oklch(0.705 0.015 286.067);
+    /* Component surfaces: the background and border color of each family of
+       components. They are declared again under .dark so they re-resolve in any
+       element that carries its own dark class. */
+    --surface-card: var(--card);
+    --surface-card-border: color-mix(in oklab, var(--foreground) 0%, transparent);
+    --surface-dialog: var(--popover);
+    --surface-dialog-border: color-mix(in oklab, var(--foreground) 0%, transparent);
+    --surface-popover: var(--popover);
+    --surface-popover-border: color-mix(in oklab, var(--foreground) 0%, transparent);
+    --surface-menu: var(--popover);
+    --surface-menu-border: color-mix(in oklab, var(--foreground) 0%, transparent);
+    --surface-field: color-mix(in oklab, var(--input) 30%, transparent);
+    --surface-field-border: var(--input);
+    /* A focused field: the color its border turns and the ring around it
+       (the field-focus utility below). */
+    --surface-field-focus-border: var(--ring);
+    --surface-field-focus-ring: color-mix(in oklab, var(--ring) 0%, transparent);
+    --surface-field-invalid-ring: var(--danger);
+    /* Component surfaces: border width, corner radius and shadow. Cards,
+       dialogs, popovers and menus draw the border inside their edge as an
+       inset ring, so it takes no space; fields use a real border. */
+    --surface-card-border-width: 1px;
+    --surface-card-radius: calc(var(--radius) * 0.6);
+    --surface-card-shadow: 0 0 #0000;
+    --surface-dialog-border-width: 1px;
+    --surface-dialog-radius: calc(var(--radius) * 1.4);
+    --surface-dialog-shadow: var(--shadow-xl);
+    --surface-popover-border-width: 1px;
+    --surface-popover-radius: calc(var(--radius) * 0.8);
+    --surface-popover-shadow: var(--shadow-2xl);
+    --surface-menu-border-width: 1px;
+    --surface-menu-radius: calc(var(--radius) * 0.8);
+    --surface-menu-shadow: var(--shadow-2xl);
+    --surface-field-border-width: 1px;
+    --surface-field-radius: calc(var(--radius) * 0.6);
+    --surface-field-shadow: 0 0 #0000;
+    --surface-field-focus-ring-width: 1px;
+    /* The overlay behind dialogs, alert dialogs and sheets. */
+    --surface-backdrop: color-mix(in oklab, black 80%, transparent);
+    /* Backdrop filters: how the overlay, menus, popovers and dialogs blur and
+       saturate what is behind them (the surface-filter-* utilities below).
+       Exactly `none` when neither is set: any other value, even
+       blur(0px) saturate(100%), still makes a stacking context and a
+       containing block and costs an offscreen pass. */
+    --surface-backdrop-filter: saturate(45%);
+    --surface-menu-filter: none;
+    --surface-popover-filter: none;
+    --surface-dialog-filter: none;
+    /* A sheen over the main sidebar and over list columns (the aside of
+       Sessions, Bots, Profiles, Workspaces): a left-to-right gradient from
+       transparent to this color, per theme. */
+    --surface-sidebar-gradient: color-mix(in oklab, black 3%, transparent);
+    --surface-list-gradient: color-mix(in oklab, black 3%, transparent);
+    /* The list column's background, under its sheen: a faint grey between
+       the white sidebar and page in light, a neutral charcoal between the
+       page and the sidebar in dark. */
+    --surface-list: oklch(0.985 0 0);
+    /* Where across the surface each sheen starts to rise from transparent. */
+    --surface-sidebar-gradient-start: 70%;
+    --surface-list-gradient-start: 70%;
+    /* The large LS mark behind the bottom of the sidebar: color and opacity
+       per theme; rotation, size (times the sidebar width) and how far it
+       sinks below the bottom edge (percent of its own height) shared. */
+    --sidebar-logo-color: var(--sidebar-foreground);
+    --sidebar-logo-opacity: 0.02;
+    --sidebar-logo-rotate: -30deg;
+    --sidebar-logo-scale: 1.2;
+    --sidebar-logo-offset: -1%;
+    /* The sidebar header (the universe button and the padding around it)
+       sets the height of the pane bars beside it, the list and detail
+       headers: their titles sit on the universe name's line and their
+       bottom edges meet the header's. */
+    --sidebar-header-button-height: 2.25rem;
+    --sidebar-header-padding: calc(var(--spacing) * 2);
+    --pane-bar-height: calc(var(--sidebar-header-button-height) + 2 * var(--sidebar-header-padding));
+    /* Every row of a list pane (Sessions, Bots, Profiles) is at least this
+       tall, one line or two: a fifth taller than the pane bar above it. */
+    --list-row-height: calc(var(--pane-bar-height) * 1.2);
+    /* A row of a compressed list (its title alone, no second line). */
+    --list-row-height-compressed: calc(var(--pane-bar-height) * 0.75);
+    /* How strongly the nebula shows behind the content area and pages (a
+       subtle wash; drawn dark in the light theme). */
+    --page-nebula-opacity: 0.65;
+    /* The text of list and menu items at rest (list titles, sidebar
+       navigation): a little dimmer than foreground, full strength on hover,
+       focus or selection. Declared again under .dark so it re-resolves in any
+       element that carries its own dark class. */
+    --item-foreground-rest: color-mix(in oklab, var(--foreground) 70%, transparent);
+    /* A list row's second line at rest: muted text, fainter still; full
+       --muted-foreground on hover, focus or selection. Declared again under
+       .dark so it re-resolves in any element that carries its own dark class. */
+    --list-second-line-rest: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
+    /* The lines and dots that hang nested list rows off their parent; solid
+       (mixed into the background, not see-through) so they stay one color
+       where they meet. */
+    --list-tree-line: color-mix(in oklab, var(--muted-foreground) 35%, var(--background));
+    /* Id colours (lib/identity-colors idColor, e.g. each bot's): a hue from
+       the id at this lightness and chroma. Saturated like the run steps'
+       colours: deep here, bright in the dark theme. */
+    --id-color-lightness: 0.53;
+    --id-color-chroma: 0.19;
+    /* Scrollbars (standard scrollbar-width and scrollbar-color only): thin,
+       and nothing at rest; hovering a scroll area (or focusing it from the
+       keyboard) shows its thumb, over the track color. */
+    --scrollbar-width: thin;
+    /* Mouse cursors, one per role: anything clickable, text to type or
+       select, everything else, the page while an action blocks it, and the
+       page while work goes on in the background. */
+    --cursor-action: pointer;
+    --cursor-text: text;
+    --cursor-default: default;
+    --cursor-wait: wait;
+    --cursor-progress: progress;
+    --scrollbar-thumb: color-mix(in oklab, var(--foreground) 22%, transparent);
+    --scrollbar-track: transparent;
+    --scrollbar-thumb-rest: transparent;
+    /* Notes (InfoBox): per tone a tinted background, a border, and the
+       title and icon color, deeper on light backgrounds. */
+    --note-info-background: color-mix(in oklab, var(--info) 20%, transparent);
+    --note-info-border: color-mix(in oklab, var(--info) 0%, transparent);
+    --note-info-title: #1d4ed8;
+    --note-success-background: color-mix(in oklab, var(--success) 20%, transparent);
+    --note-success-border: color-mix(in oklab, var(--success) 0%, transparent);
+    --note-success-title: #15803d;
+    --note-warning-background: color-mix(in oklab, var(--warning) 20%, transparent);
+    --note-warning-border: color-mix(in oklab, var(--warning) 0%, transparent);
+    --note-warning-title: #b45309;
+    --note-error-background: color-mix(in oklab, var(--danger) 20%, transparent);
+    --note-error-border: color-mix(in oklab, var(--danger) 0%, transparent);
+    --note-error-title: #b91c1c;
+    /* Font weights of list titles and sidebar menu items: at rest, and when
+       selected (the open row, the current page). Each is one of the
+       --font-weight-* steps; hover keeps the rest weight so text never
+       shifts under the pointer. */
+    --list-title-font-weight: var(--font-weight-normal);
+    --list-title-font-weight-selected: var(--font-weight-semibold);
+    --menu-item-font-weight: var(--font-weight-normal);
+    --menu-item-font-weight-selected: var(--font-weight-semibold);
+    /* Tailwind's normal and medium weights (font-normal, font-medium and
+       the weights above): IBM Plex Sans is variable, so any weight renders. */
+    --font-weight-normal: 430;
+    --font-weight-medium: 520;
+    /* The standard transition times, one per family of components. Everything
+       a time covers shares it and the standard easing, so it moves together.
+       Controls: buttons, badges, fields (the composer too), checkboxes,
+       switches, tabs, table rows, toggles: every transition without its own
+       duration. Lists: a list row's background, title and second line.
+       Menu: a sidebar item's background, text, weight and icon. Popovers:
+       popovers, dropdown menus, Select and Combobox lists, tooltips.
+       Dialogs: dialogs, alert dialogs, sheets and their backdrop. Layout:
+       the sidebar collapsing and expanding. Content: transcript entries,
+       composer chips and the scroll-to-bottom button arriving. */
+    --control-transition-duration: 150ms;
+    --list-transition-duration: 150ms;
+    --menu-transition-duration: 150ms;
+    --popover-transition-duration: 100ms;
+    --dialog-transition-duration: 150ms;
+    --layout-transition-duration: 200ms;
+    --content-transition-duration: 200ms;
+    /* Scales every icon (lucide, tabler and the app's own marks) from the
+       size its classes give it. */
+    --icon-scale: 0.9;
 }
 
 .dark {
+    --shadow-2xs: 0 0.5px 0 0 rgb(0 0 0 / 0.2);
+    --shadow-xs: 0 0.5px 1px 0 rgb(0 0 0 / 0.2);
+    --shadow-sm: 0 0.5px 1.5px 0 rgb(0 0 0 / 0.4), 0 0.5px 1px -0.5px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 2px 3px -0.5px rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 5px 7.5px -1.5px rgb(0 0 0 / 0.4), 0 2px 3px -2px rgb(0 0 0 / 0.4);
+    --shadow-xl: 0 10px 12.5px -2.5px rgb(0 0 0 / 0.4), 0 4px 5px -3px rgb(0 0 0 / 0.4);
+    --shadow-2xl: 0 12.5px 25px -6px rgb(0 0 0 / 1);
     --background: oklch(0.141 0.005 285.823);
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.21 0.006 285.885);
     --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.21 0.006 285.885);
+    --popover: oklch(0.269 0 0); /* rgb(38 38 38), a step above the sidebar */
     --popover-foreground: oklch(0.985 0 0);
     --primary: oklch(0.92 0.004 286.32);
     --primary-foreground: oklch(0.21 0.006 285.885);
@@ -121,7 +381,7 @@
     --muted-foreground: oklch(0.705 0.015 286.067);
     --accent: oklch(0.274 0.006 286.033);
     --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
+    --destructive: #cb2a2a;
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.552 0.016 285.938);
@@ -130,7 +390,7 @@
     --chart-3: oklch(0.442 0.017 285.786);
     --chart-4: oklch(0.37 0.013 285.805);
     --chart-5: oklch(0.274 0.006 286.033);
-    --sidebar: oklch(0.21 0.006 285.885);
+    --sidebar: oklch(0.239 0 0); /* rgb(31 31 31), a neutral charcoal */
     --sidebar-foreground: oklch(0.985 0 0);
     --sidebar-primary: oklch(0.488 0.243 264.376);
     --sidebar-primary-foreground: oklch(0.985 0 0);
@@ -138,11 +398,172 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.552 0.016 285.938);
+    /* Component surfaces: the background and border color of each family of
+       components. They are declared again under .dark so they re-resolve in any
+       element that carries its own dark class. */
+    --item-foreground-rest: color-mix(in oklab, var(--foreground) 70%, transparent);
+    --list-second-line-rest: color-mix(in oklab, var(--muted-foreground) 40%, transparent);
+    --list-tree-line: color-mix(in oklab, var(--muted-foreground) 35%, var(--background));
+    --id-color-lightness: 0.8;
+    --id-color-chroma: 0.17;
+    --scrollbar-thumb: color-mix(in oklab, var(--foreground) 22%, transparent);
+    --scrollbar-track: transparent;
+    --scrollbar-thumb-rest: transparent;
+    --note-info-background: color-mix(in oklab, var(--info) 15%, transparent);
+    --note-info-border: color-mix(in oklab, var(--info) 0%, transparent);
+    --note-info-title: var(--info);
+    --note-success-background: color-mix(in oklab, var(--success) 15%, transparent);
+    --note-success-border: color-mix(in oklab, var(--success) 0%, transparent);
+    --note-success-title: var(--success);
+    --note-warning-background: color-mix(in oklab, var(--warning) 15%, transparent);
+    --note-warning-border: color-mix(in oklab, var(--warning) 0%, transparent);
+    --note-warning-title: var(--warning);
+    --note-error-background: color-mix(in oklab, var(--danger) 15%, transparent);
+    --note-error-border: color-mix(in oklab, var(--danger) 0%, transparent);
+    --note-error-title: var(--danger);
+    --surface-card: var(--card);
+    --surface-card-shadow: 0 0 #0000;
+    --surface-field-shadow: 0 0 #0000;
+    --surface-card-border: color-mix(in oklab, var(--foreground) 0%, transparent);
+    --surface-dialog: var(--popover);
+    --surface-dialog-border: color-mix(in oklab, var(--foreground) 0%, transparent);
+    --surface-popover: var(--popover);
+    --surface-popover-border: color-mix(in oklab, var(--foreground) 0%, transparent);
+    --surface-menu: var(--popover);
+    --surface-menu-border: color-mix(in oklab, var(--foreground) 0%, transparent);
+    --surface-field: color-mix(in oklab, var(--input) 30%, transparent);
+    --surface-field-border: var(--input);
+    --surface-field-focus-border: var(--ring);
+    --surface-field-focus-ring: color-mix(in oklab, var(--ring) 0%, transparent);
+    --surface-field-invalid-ring: var(--danger);
+    --surface-backdrop: color-mix(in oklab, black 70%, transparent);
+    --surface-sidebar-gradient: color-mix(in oklab, white 0%, transparent);
+    --surface-list-gradient: color-mix(in oklab, white 4%, transparent);
+    --surface-list: oklch(0.2 0 0); /* rgb(22 22 22) */
+    --surface-sidebar-gradient-start: 50%;
+    --surface-list-gradient-start: 30%;
+    --sidebar-logo-color: var(--sidebar-foreground);
+    --sidebar-logo-opacity: 0.05;
+}
+
+/* A surface's backdrop filter, from its --surface-<role>-filter token. It
+   sits on the surface itself, so the surface's background and inset border
+   paint over the filtered backdrop and stay sharp, and it does not scroll
+   away with the content of a long menu. */
+@utility surface-filter-backdrop {
+    -webkit-backdrop-filter: var(--surface-backdrop-filter);
+    backdrop-filter: var(--surface-backdrop-filter);
+}
+@utility surface-filter-menu {
+    -webkit-backdrop-filter: var(--surface-menu-filter);
+    backdrop-filter: var(--surface-menu-filter);
+}
+@utility surface-filter-popover {
+    -webkit-backdrop-filter: var(--surface-popover-filter);
+    backdrop-filter: var(--surface-popover-filter);
+}
+@utility surface-filter-dialog {
+    -webkit-backdrop-filter: var(--surface-dialog-filter);
+    backdrop-filter: var(--surface-dialog-filter);
+}
+
+/* A focused field (input, textarea, select trigger, input group, combobox
+   chips, the session composer): applied under the focus variant that fits
+   the field, such as `focus-visible:field-focus`. The ring is an outline
+   pulled in over the field's own border: it starts at the outer edge and
+   covers the border, takes no space, follows the corners and is never
+   hidden by what the field holds. A field nested in another that draws the
+   ring sets the width to 0px. */
+/* Cursors by role (see --cursor-* above). */
+@utility cursor-action {
+    cursor: var(--cursor-action);
+}
+@utility cursor-select {
+    cursor: var(--cursor-text);
+}
+
+@utility field-focus {
+    border-color: var(--surface-field-focus-border);
+    outline: var(--surface-field-focus-ring-width) solid var(--surface-field-focus-ring);
+    outline-offset: calc(-1 * var(--surface-field-focus-ring-width));
+}
+
+/* An invalid field: the same ring in its own color, under the field's invalid
+   variant, such as `aria-invalid:field-invalid`. It wins over field-focus. */
+@utility field-invalid {
+    outline: var(--surface-field-focus-ring-width) solid var(--surface-field-invalid-ring);
+    outline-offset: calc(-1 * var(--surface-field-focus-ring-width));
+}
+
+/* The sheens over the sidebar and the list columns, drawn on top of their
+   background color. */
+@utility sheen-sidebar {
+    background-image: linear-gradient(90deg, transparent var(--surface-sidebar-gradient-start), var(--surface-sidebar-gradient) 100%);
+}
+@utility sidebar-logo {
+    left: 50%;
+    bottom: 0;
+    width: calc(var(--sidebar-logo-scale) * 100%);
+    height: auto;
+    color: var(--sidebar-logo-color);
+    opacity: var(--sidebar-logo-opacity);
+    transform: translateX(-50%) translateY(var(--sidebar-logo-offset)) rotate(var(--sidebar-logo-rotate));
+}
+@utility sheen-list {
+    background-image: linear-gradient(90deg, transparent var(--surface-list-gradient-start), var(--surface-list-gradient) 100%);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    }
+  /* One scrollbar for every scroll area (dialogs, text areas, lists, the
+     transcript): thin, its thumb hidden until the area is hovered or
+     keyboard-focused. Standard properties only, so there is no telling the
+     scrollbar itself from its area; the track shows its color with the
+     thumb. A utility on an element (no-scrollbar, scrollbar-thumb-*) wins. */
+  * {
+    scrollbar-width: var(--scrollbar-width);
+    scrollbar-color: var(--scrollbar-thumb-rest) transparent;
+    }
+  *:hover,
+  *:focus-visible {
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+    }
+  /* Cursors. The page rests on the default cursor (not the browser's text
+     cursor over any text); what can be clicked shows the action cursor,
+     what can be typed in or is meant to be copied the text cursor. A
+     component's cursor-* class wins over these. */
+  html {
+    cursor: var(--cursor-default);
+    }
+  a[href], button:not(:disabled), summary, select:not(:disabled),
+  label:has(> input:not(:disabled), > button:not(:disabled)),
+  input:is([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"]):not(:disabled),
+  [role="button"]:not([aria-disabled="true"]), [role="link"], [role="tab"]:not([aria-disabled="true"]),
+  [role="menuitem"]:not([aria-disabled="true"], [data-disabled]), [role="menuitemcheckbox"]:not([aria-disabled="true"], [data-disabled]),
+  [role="menuitemradio"]:not([aria-disabled="true"], [data-disabled]), [role="option"]:not([aria-disabled="true"], [data-disabled]),
+  [role="checkbox"]:not([aria-disabled="true"], [data-disabled]), [role="radio"]:not([aria-disabled="true"], [data-disabled]),
+  [role="switch"]:not([aria-disabled="true"], [data-disabled]), [role="combobox"]:not(input) {
+    cursor: var(--cursor-action);
+    }
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="hidden"]),
+  textarea, [contenteditable]:not([contenteditable="false"]),
+  pre, code, kbd, samp, [role="alert"],
+  [data-slot="dialog-description"], [data-slot="alert-dialog-description"], [data-slot="sheet-description"] {
+    cursor: var(--cursor-text);
+    }
+  /* While an action blocks the UI, the whole page waits; while work goes on
+     in the background, the page shows progress but stays usable (what sets
+     its own cursor keeps it). Set on <html> by BusyCursor. */
+  html[data-cursor="progress"] {
+    cursor: var(--cursor-progress);
+    }
+  html[data-cursor="wait"], html[data-cursor="wait"] * {
+    cursor: var(--cursor-wait) !important;
+    }
+  svg[data-icon-role] {
+    zoom: var(--icon-scale);
     }
   body {
     @apply bg-background text-foreground;

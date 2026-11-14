@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { StepDoneIcon } from "@/icons";
 import { cn } from "@/lib/utils";
 
 export function ProgressSteps<T extends string | number>({
@@ -42,7 +42,7 @@ export function ProgressSteps<T extends string | number>({
                     active && "border-primary text-primary",
                   )}
                 >
-                  {done ? <Check className="size-3" /> : index + 1}
+                  {done ? <StepDoneIcon className="size-3" /> : index + 1}
                 </span>
                 {step.label}
               </button>

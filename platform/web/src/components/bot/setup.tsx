@@ -1,7 +1,7 @@
 import { defaultEnvironmentAttachment } from "@/lib/sessions/resource-features";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, ChevronRight, SlidersHorizontal } from "lucide-react";
+import { ConfigureIcon, ExpandIcon, GoToIcon } from "@/icons";
 import { Link, useNavigate } from "react-router-dom";
 import {
   api,
@@ -199,7 +199,7 @@ function SetupSection({
           aria-expanded={open}
           className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left"
         >
-          <ChevronRight
+          <ExpandIcon
             className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")}
           />
           <span className="min-w-0 flex-1">
@@ -279,7 +279,7 @@ function IdentitySection({ universeId, bot, manage }: { universeId: string; bot:
       summary={`${botLabel(bot)} · ${bot.botId}${bot.description ? ` · ${bot.description}` : ""}`}
     >
       <div className="grid gap-4 sm:grid-cols-[auto_minmax(0,1fr)]">
-        <BotAvatar botId={bot.botId} size={56} className="rounded-xl" />
+        <BotAvatar botId={bot.botId} size={48} />
         <div className="grid gap-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field>
@@ -598,7 +598,7 @@ function ProfileSwitcher({
             size="sm"
             nativeButton={false} render={<Link to={`/u/${handle}/profiles/${encodeURIComponent(bot.profileId)}`} />}
           >
-            Open on the Profiles page <ArrowUpRight data-icon="inline-end" />
+            Open on the Profiles page <GoToIcon data-icon="inline-end" />
           </Button>
         )}
       </div>
@@ -902,7 +902,7 @@ function OtherBotsSection({
               onClick={() => setEditingInbox(true)}
               title={!inbox || inboxDirty ? "Save first, then set routing and batching." : undefined}
             >
-              <SlidersHorizontal data-icon="inline-start" /> Routing &amp; batching…
+              <ConfigureIcon data-icon="inline-start" /> Routing &amp; batching…
             </Button>
             <span className="text-xs text-muted-foreground">
               {!inbox || inboxDirty

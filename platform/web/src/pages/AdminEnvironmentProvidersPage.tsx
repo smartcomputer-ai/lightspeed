@@ -1,7 +1,7 @@
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { AddIcon, DeleteIcon, EditIcon } from "@/icons";
 import type {
   EnvironmentProviderBindingView,
   DeploymentEnvironmentProviderView,
@@ -118,7 +118,7 @@ export function AdminEnvironmentProvidersPage() {
         description="Physical compute providers registered on this deployment, and which universes may provision from them."
         actions={
           <Button onClick={() => setRegisterOpen(true)}>
-            <Plus data-icon="inline-start" />
+            <AddIcon data-icon="inline-start" />
             Register provider
           </Button>
         }
@@ -189,11 +189,11 @@ export function AdminEnvironmentProvidersPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" onClick={() => setEditing(provider)}>
-                    <Pencil data-icon="inline-start" />
+                    <EditIcon data-icon="inline-start" />
                     Edit
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => setBindingFor(provider)}>
-                    <Plus data-icon="inline-start" />
+                    <AddIcon data-icon="inline-start" />
                     Bind universe
                   </Button>
                   <AlertDialog>
@@ -206,7 +206,7 @@ export function AdminEnvironmentProvidersPage() {
                         />
                       }
                     >
-                      <Trash2 />
+                      <DeleteIcon />
                       Delete
                     </AlertDialogTrigger>
                     <AlertDialogContent>

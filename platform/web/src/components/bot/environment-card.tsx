@@ -1,6 +1,6 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight } from "lucide-react";
+import { GoToIcon } from "@/icons";
 import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { EnvironmentPowerControls } from "@/components/environment/power-controls";
@@ -69,7 +69,7 @@ export function BotEnvironmentCard({
                 className="inline-flex items-center gap-1 font-mono text-xs hover:underline"
               >
                 {current.displayName ?? current.environmentId}
-                <ArrowUpRight className="size-3" />
+                <GoToIcon className="size-3" />
               </Link>
             }
           />

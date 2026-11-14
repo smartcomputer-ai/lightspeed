@@ -1,13 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import {
-  ChevronsUpDown,
-  LogOut,
-  Monitor,
-  Moon,
-  ShieldCheck,
-  Sun,
-  UserRound,
-} from "lucide-react";
+import { AdminIcon, DarkThemeIcon, LightThemeIcon, SettingsIcon, SignOutIcon, SwitcherIcon, SystemThemeIcon, UserIcon } from "@/icons";
 import type { SessionUser } from "@/auth";
 import { authClient } from "@/auth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -69,20 +61,24 @@ export function UserMenu({ user, admin }: { user: SessionUser; admin: boolean })
               <span className="truncate text-sm font-medium">{user.name}</span>
               <span className="truncate text-xs text-muted-foreground">{user.email}</span>
             </div>
-            <ChevronsUpDown className="ml-auto size-4" />
+            <SwitcherIcon className="ml-auto size-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent className="min-w-56" side="top" align="start">
             <DropdownMenuGroup>
               <DropdownMenuLabel className="truncate">{user.email}</DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuItem onClick={() => navigate("/account")}>
-              <UserRound />
+              <UserIcon />
               Account
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/preferences")}>
+              <SettingsIcon />
+              Preferences
             </DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
-                <Sun className="dark:hidden" />
-                <Moon className="hidden dark:block" />
+                <LightThemeIcon className="dark:hidden" />
+                <DarkThemeIcon className="hidden dark:block" />
                 Theme
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
@@ -91,13 +87,13 @@ export function UserMenu({ user, admin }: { user: SessionUser; admin: boolean })
                   onValueChange={(value) => setTheme(value as Theme)}
                 >
                   <DropdownMenuRadioItem value="light">
-                    <Sun /> Light
+                    <LightThemeIcon /> Light
                   </DropdownMenuRadioItem>
                   <DropdownMenuRadioItem value="dark">
-                    <Moon /> Dark
+                    <DarkThemeIcon /> Dark
                   </DropdownMenuRadioItem>
                   <DropdownMenuRadioItem value="system">
-                    <Monitor /> System
+                    <SystemThemeIcon /> System
                   </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
               </DropdownMenuSubContent>
@@ -106,7 +102,7 @@ export function UserMenu({ user, admin }: { user: SessionUser; admin: boolean })
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => navigate("/admin/users")}>
-                  <ShieldCheck />
+                  <AdminIcon />
                   Platform admin
                 </DropdownMenuItem>
               </>
@@ -119,7 +115,7 @@ export function UserMenu({ user, admin }: { user: SessionUser; admin: boolean })
                 );
               }}
             >
-              <LogOut />
+              <SignOutIcon />
               Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>

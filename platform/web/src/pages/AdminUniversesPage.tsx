@@ -3,7 +3,7 @@ import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { AddIcon } from "@/icons";
 import {
   api,
   type EngineUniverse,
@@ -117,7 +117,7 @@ export function AdminUniversesPage() {
               {syncHandles.isPending ? "Syncing…" : "Sync from runtime"}
             </Button>
             <Button onClick={() => setCreateOpen(true)}>
-              <Plus data-icon="inline-start" />
+              <AddIcon data-icon="inline-start" />
               New universe
             </Button>
           </div>

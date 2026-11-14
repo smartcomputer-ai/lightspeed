@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { NavLink } from "react-router-dom";
-import { ChevronRight, File, FolderOpen } from "lucide-react";
 import type { VfsTreeEntry } from "@/api";
+import { ListLayout, ListRow, type ListRowTree } from "@/components/list-pane";
+import type { MetaItem } from "@/components/meta-toolbar";
+import { ExecuteToolIcon } from "@/icons";
+import { formatBytes } from "@/lib/composer-attachments";
 import {
-  WorkspaceActionsMenu,
+  WorkspaceContextMenu,
   useWorkspaceDropTarget,
   useWorkspaceEntryDrag,
 } from "@/components/workspace-transfers";
@@ -15,17 +17,57 @@ type TreeProps = {
   workspaceId: string;
   activePath: string | undefined;
 };
-type EntriesProps = TreeProps & {
-  basePath: string;
-  focusedPath: string | null;
-  onFocusPath: (path: string) => void;
-};
 
+/// A workspace's files as a list in files mode: one compressed row per file
+/// and folder, folders opening and closing in place (their rows hang off
+/// tree lines), each with its type's icon and its actions menu. A keyboard
+/// tree: the items are a flat list with their level, position and set, one
+/// of them focusable at a time; arrows move, open and close, Enter opens.
+/// Right-click (or a long press) opens an item's actions at the pointer, and
+/// on empty space the workspace's; Shift+F10 or the context-menu key opens
+/// the focused item's at it.
 export function WorkspaceFileTree(props: TreeProps) {
   const tree = useRef<HTMLUListElement>(null);
   const [focusedPath, setFocusedPath] = useState<string | null>(
     props.activePath ?? null,
   );
+  // Folders start closed, so a large workspace renders only its top level;
+  // the folders holding the file being viewed open so it stays visible, also
+  // when it changes later.
+  const [open, setOpen] = useState<Set<string>>(() =>
+    ancestors(props.activePath),
+  );
+  useEffect(() => {
+    const holding = ancestors(props.activePath);
+    if (holding.size === 0) return;
+    setOpen((current) =>
+      [...holding].every((path) => current.has(path))
+        ? current
+        : new Set([...current, ...holding]),
+    );
+  }, [props.activePath]);
+  // The item the context menu was opened on (none: the workspace), lit
+  // while the menu is open, and focused again when it closes.
+  const [menuFor, setMenuFor] = useState<{ path: string; kind: "workspace" | "folder" | "file" }>({ path: "", kind: "workspace" });
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuItem = useRef<HTMLElement | null>(null);
+  const aim = (target: EventTarget) => {
+    const item = (target as Element).closest<HTMLElement>('[role="treeitem"]');
+    menuItem.current = item;
+    setMenuFor(
+      item?.dataset.treePath
+        ? { path: item.dataset.treePath, kind: item.hasAttribute("aria-expanded") ? "folder" : "file" }
+        : { path: "", kind: "workspace" },
+    );
+  };
+  const flip = (path: string) =>
+    setOpen((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+
   useEffect(() => {
     const items = [
       ...tree.current!.querySelectorAll<HTMLElement>('[role="treeitem"]'),
@@ -38,14 +80,13 @@ export function WorkspaceFileTree(props: TreeProps) {
           null,
       );
     }
-  }, [props.entries, props.activePath, focusedPath]);
+  }, [props.entries, props.activePath, focusedPath, open]);
 
   const key = (event: KeyboardEvent<HTMLUListElement>) => {
     const target = event.target as HTMLElement;
     // Menu popups use a portal but still bubble through the React tree.
     if (
       !event.currentTarget.contains(target) ||
-      target.closest("[data-workspace-actions]") ||
       event.altKey ||
       event.ctrlKey ||
       event.metaKey
@@ -93,9 +134,22 @@ export function WorkspaceFileTree(props: TreeProps) {
         toggle();
         break;
       case "F10":
-        if (!event.shiftKey) return;
-        current.querySelector<HTMLElement>("[data-workspace-actions]")?.click();
+      case "ContextMenu": {
+        if (event.key === "F10" && !event.shiftKey) return;
+        // The item's context menu, opened at its row as a right-click there
+        // would.
+        const row = current.getBoundingClientRect();
+        current.dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            button: 2,
+            clientX: row.left + 24,
+            clientY: row.bottom,
+          }),
+        );
         break;
+      }
       default:
         return;
     }
@@ -103,166 +157,240 @@ export function WorkspaceFileTree(props: TreeProps) {
     event.stopPropagation();
     next?.focus();
   };
+
+  const rows = withNextOpen(visibleEntries(props.entries, open));
   return (
-    <ul
-      ref={tree}
-      role="tree"
-      aria-label="Workspace files"
-      className="grid min-w-0 grid-cols-1 gap-0.5"
-      onKeyDown={key}
-      onFocus={(event) => {
-        if (event.currentTarget.contains(event.target)) {
-          const path = (event.target as HTMLElement).closest<HTMLElement>(
-            '[role="treeitem"]',
-          )?.dataset.treePath;
-          if (path) setFocusedPath(path);
-        }
-      }}
-    >
-      <Entries
-        {...props}
-        basePath=""
-        focusedPath={focusedPath}
-        onFocusPath={setFocusedPath}
-      />
-    </ul>
+    <ListLayout mode="files" compressed>
+      <WorkspaceContextMenu target={menuFor} onOpenChange={setMenuOpen} returnFocus={menuItem}>
+      <ul
+        ref={tree}
+        role="tree"
+        aria-label="Workspace files"
+        className="min-w-0"
+        onKeyDown={key}
+        // What a right-click (or the long press before it) lands on.
+        onPointerDownCapture={(event) => aim(event.target)}
+        onContextMenuCapture={(event) => aim(event.target)}
+        onFocus={(event) => {
+          if (event.currentTarget.contains(event.target)) {
+            const path = (event.target as HTMLElement).closest<HTMLElement>(
+              '[role="treeitem"]',
+            )?.dataset.treePath;
+            if (path) setFocusedPath(path);
+          }
+        }}
+      >
+        {rows.map((row) => (
+          <EntryRow
+            key={row.path}
+            {...row}
+            handle={props.handle}
+            workspaceId={props.workspaceId}
+            active={props.activePath === row.path}
+            focused={focusedPath === row.path}
+            open={open.has(row.path)}
+            onFlip={() => flip(row.path)}
+            onFocusPath={setFocusedPath}
+            menuOpen={menuOpen && menuFor.path === row.path}
+          />
+        ))}
+      </ul>
+      </WorkspaceContextMenu>
+    </ListLayout>
   );
 }
 
-function Entries({ entries, basePath, ...props }: EntriesProps) {
-  const drag = useWorkspaceEntryDrag();
+/// One shown file or folder: its path, its parent's, its place in the tree
+/// (for the lines and the tree item's level and position).
+type VisibleEntry = {
+  name: string;
+  path: string;
+  parent: string;
+  directory: boolean;
+  entry: VfsTreeEntry;
+  tree: ListRowTree;
+  position: number;
+  siblings: number;
+};
+
+/// The rows that show: each entry, folders first and then by name, and the
+/// contents of the open folders after them.
+function visibleEntries(
+  entries: Record<string, VfsTreeEntry>,
+  open: Set<string>,
+  parent = "",
+  depth = 0,
+  lines: boolean[] = [],
+): VisibleEntry[] {
   const names = Object.keys(entries).sort((a, b) => {
     const aDir = entries[a]!.kind === "directory";
     const bDir = entries[b]!.kind === "directory";
     return aDir !== bDir ? (aDir ? -1 : 1) : a.localeCompare(b);
   });
-  return names.map((name) => {
+  return names.flatMap((name, index) => {
     const entry = entries[name]!;
-    const path = basePath ? `${basePath}/${name}` : name;
-    const focused = props.focusedPath === path;
-    return entry.kind === "directory" ? (
-      <Directory
-        key={path}
-        {...props}
-        name={name}
-        path={path}
-        basePath={basePath}
-        entries={entry.entries}
-      />
-    ) : (
-      <li
-        key={path}
-        role="treeitem"
-        tabIndex={focused ? 0 : -1}
-        aria-label={name}
-        aria-selected={props.activePath === path}
-        data-tree-path={path}
-        data-tree-parent={basePath}
-        data-active={props.activePath === path || undefined}
-        className={cn(
-          "group/tree-row relative flex min-h-8 min-w-0 items-center rounded-md hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          props.activePath === path && "bg-muted",
-        )}
-      >
-        <NavLink
-          draggable={drag.draggable}
-          onDragStart={(event) => drag.onDragStart(event, path)}
-          data-tree-entry
-          tabIndex={-1}
-          to={`/u/${props.handle}/workspaces/${props.workspaceId}/files/${path.split("/").map(encodeURIComponent).join("/")}`}
-          title={name}
-          onClick={() => props.onFocusPath(path)}
-          className={cn(
-            "flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-sm [@media(hover:none)]:pr-10 [@media(pointer:coarse)]:pr-10",
-            props.activePath === path && "font-medium",
-          )}
-        >
-          <File className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="truncate">{name}</span>
-        </NavLink>
-        <WorkspaceActionsMenu
-          path={path}
-          kind="file"
-          tabIndex={focused ? 0 : -1}
-        />
-      </li>
-    );
+    const path = parent ? `${parent}/${name}` : name;
+    const last = index === names.length - 1;
+    const shown =
+      entry.kind === "directory" && open.has(path) ? entry.entries : {};
+    const row: VisibleEntry = {
+      name,
+      path,
+      parent,
+      directory: entry.kind === "directory",
+      entry,
+      tree: { depth, last, lines, children: Object.keys(shown).length > 0 },
+      position: index + 1,
+      siblings: names.length,
+    };
+    return [
+      row,
+      ...visibleEntries(
+        shown,
+        open,
+        path,
+        depth + 1,
+        depth === 0 ? [] : [...lines, !last],
+      ),
+    ];
   });
 }
 
-function Directory({
+/// Marks each row whose next row is an open folder (its block's line).
+function withNextOpen(rows: VisibleEntry[]): VisibleEntry[] {
+  return rows.map((row, index) => ({
+    ...row,
+    tree: { ...row.tree, nextOpen: rows[index + 1]?.tree.children ?? false },
+  }));
+}
+
+/// What a row's meta toolbar says: a file's size (and whether it runs), its
+/// exact bytes and media type in the tooltip; a folder's item count, with
+/// the files and bytes it holds in all in the tooltip. (The tree has no
+/// times per file.)
+function entryMarks(entry: VfsTreeEntry): MetaItem[] {
+  if (entry.kind === "directory") {
+    const items = Object.keys(entry.entries).length;
+    const { files, bytes } = folderTotals(entry);
+    return [{
+      key: "items",
+      label: "Contents",
+      value: `${items} ${items === 1 ? "item" : "items"}`,
+      tooltip: `${files} ${files === 1 ? "file" : "files"} · ${formatBytes(bytes)} in all`,
+      priority: 10,
+    }];
+  }
+  const marks: MetaItem[] = [];
+  if (entry.executable) {
+    marks.push({ key: "executable", label: "Executable", icon: ExecuteToolIcon, tooltip: "Executable", priority: 5 });
+  }
+  marks.push({
+    key: "size",
+    label: "Size",
+    value: formatBytes(entry.size_bytes),
+    tooltip: [`${entry.size_bytes.toLocaleString()} bytes`, entry.media_type].filter(Boolean).join(" · "),
+    priority: 10,
+  });
+  return marks;
+}
+
+/// The files and bytes a folder holds, at any depth.
+function folderTotals(entry: VfsTreeEntry): { files: number; bytes: number } {
+  if (entry.kind === "file") return { files: 1, bytes: entry.size_bytes };
+  return Object.values(entry.entries).reduce(
+    (total, child) => {
+      const inner = folderTotals(child);
+      return { files: total.files + inner.files, bytes: total.bytes + inner.bytes };
+    },
+    { files: 0, bytes: 0 },
+  );
+}
+
+/// The folders holding a path, outermost first.
+function ancestors(path: string | undefined): Set<string> {
+  const segments = path?.split("/").slice(0, -1) ?? [];
+  return new Set(segments.map((_, index) => segments.slice(0, index + 1).join("/")));
+}
+
+function EntryRow({
   name,
   path,
-  basePath,
-  entries,
-  ...props
-}: Omit<EntriesProps, "entries"> & {
-  name: string;
-  path: string;
-  entries: Record<string, VfsTreeEntry>;
+  parent,
+  directory,
+  entry,
+  tree,
+  position,
+  siblings,
+  handle,
+  workspaceId,
+  active,
+  focused,
+  open,
+  onFlip,
+  onFocusPath,
+  menuOpen,
+}: VisibleEntry & {
+  handle: string;
+  workspaceId: string;
+  active: boolean;
+  focused: boolean;
+  open: boolean;
+  onFlip: () => void;
+  onFocusPath: (path: string) => void;
+  /** Its context menu is open: the row stays lit. */
+  menuOpen: boolean;
 }) {
   const drag = useWorkspaceEntryDrag();
-  // Folders start collapsed so a large workspace renders only its top level;
-  // the folders holding the file being viewed open so it stays visible.
-  const holdsActive = props.activePath?.startsWith(`${path}/`) ?? false;
-  const [open, setOpen] = useState(holdsActive);
-  useEffect(() => {
-    if (holdsActive) setOpen(true);
-  }, [holdsActive, props.activePath]);
-  const focused = props.focusedPath === path;
-  const dropTarget = useWorkspaceDropTarget() === path;
+  const dropTarget = useWorkspaceDropTarget() === path && directory;
   return (
-    <li
-      role="treeitem"
-      tabIndex={focused ? 0 : -1}
-      aria-label={name}
-      aria-expanded={open}
-      data-tree-path={path}
-      data-tree-parent={basePath}
-      data-workspace-folder={path}
-      className="min-w-0 focus-visible:outline-none [&:focus-visible>div:first-child]:ring-2 [&:focus-visible>div:first-child]:ring-inset [&:focus-visible>div:first-child]:ring-ring"
-    >
-      <div
-        data-workspace-drop-target={dropTarget || undefined}
-        className={cn(
-          "group/tree-row relative flex min-h-8 min-w-0 items-center rounded-md hover:bg-muted/50",
+    <ListRow
+      title={name}
+      titleHint={name}
+      fileName={name}
+      marks={entryMarks(entry)}
+      tree={tree}
+      active={active}
+      to={
+        directory
+          ? undefined
+          : `/u/${handle}/workspaces/${workspaceId}/files/${path.split("/").map(encodeURIComponent).join("/")}`
+      }
+      toggle={directory ? { open, onToggle: onFlip } : undefined}
+      // The item is the tree item: focused by the keyboard, labelled, with
+      // its level, position and set (the list is flat), and the folder a
+      // drop on it lands in: a folder itself, a file its folder (the rows are
+      // siblings, so a file cannot rely on its folder around it).
+      itemProps={{
+        role: "treeitem",
+        tabIndex: focused ? 0 : -1,
+        "aria-label": name,
+        "aria-level": tree.depth + 1,
+        "aria-posinset": position,
+        "aria-setsize": siblings,
+        "aria-expanded": directory ? open : undefined,
+        "aria-selected": directory ? undefined : active,
+        "data-tree-path": path,
+        "data-tree-parent": parent,
+        "data-workspace-folder": directory ? path : parent,
+        className:
+          "outline-none [&:focus-visible>:first-child]:ring-2 [&:focus-visible>:first-child]:ring-inset [&:focus-visible>:first-child]:ring-ring",
+      }}
+      // The entry is what is clicked and dragged; the item, not it, takes
+      // keyboard focus (its expanded state is the item's).
+      entryProps={{
+        "data-tree-entry": true,
+        "data-workspace-drop-target": dropTarget || undefined,
+        "aria-expanded": undefined,
+        tabIndex: -1,
+        draggable: drag.draggable,
+        onDragStart: (event) => drag.onDragStart(event, path),
+        onClick: () => onFocusPath(path),
+        "data-menu-open": menuOpen || undefined,
+        className: cn(
+          menuOpen && "bg-muted/50",
           dropTarget && "bg-primary/10! ring-2 ring-inset ring-primary/60",
-        )}
-      >
-        <button
-          draggable={drag.draggable}
-          onDragStart={(event) => drag.onDragStart(event, path)}
-          data-tree-entry
-          type="button"
-          tabIndex={-1}
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-sm [@media(hover:none)]:pr-10 [@media(pointer:coarse)]:pr-10"
-          onClick={() => {
-            props.onFocusPath(path);
-            setOpen((value) => !value);
-          }}
-        >
-          <ChevronRight
-            className={cn(
-              "size-3.5 shrink-0 transition-transform",
-              open && "rotate-90",
-            )}
-          />
-          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="truncate">{name}</span>
-        </button>
-        <WorkspaceActionsMenu
-          path={path}
-          kind="folder"
-          tabIndex={focused ? 0 : -1}
-        />
-      </div>
-      {open && (
-        <div className="min-w-0 pl-4">
-          <ul role="group" className="grid min-w-0 grid-cols-1 gap-0.5">
-            <Entries {...props} entries={entries} basePath={path} />
-          </ul>
-        </div>
-      )}
-    </li>
+        ),
+      }}
+    />
   );
 }

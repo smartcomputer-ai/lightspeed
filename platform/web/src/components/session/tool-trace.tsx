@@ -3,28 +3,7 @@ import { filesFromAttachments } from "@/lib/file-references";
 import { useContext, useEffect, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
 import { MediaStrip } from "@/components/session/media";
 import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/transcript-links";
-import {
-  Brain,
-  Check,
-  CircleAlert,
-  CircleMinus,
-  Clock3,
-  Copy,
-  ExternalLink,
-  FileCode2,
-  GitFork,
-  Hourglass,
-  Layers,
-  LoaderCircle,
-  PencilLine,
-  Plug,
-  Repeat,
-  Search,
-  Send,
-  SquareTerminal,
-  Wrench,
-} from "lucide-react";
-import { BotIcon } from "@/components/icons/bot";
+import { AwaitToolIcon, BotEventIcon, CancelledIcon, CodeToolIcon, CopiedIcon, CopyIcon, DelegateToolIcon, EditToolIcon, EmitToSelfIcon, ExecuteToolIcon, ExploreToolIcon, FailedIcon, LoadingIcon, McpToolIcon, MessageToolIcon, NewTabIcon, OtherToolIcon, ThinkingIcon, ToolGroupIcon, WaitingIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MarkdownContent } from "@/components/session/markdown-content";
@@ -59,15 +38,15 @@ interface GroupStyle {
 }
 
 const GROUP_STYLES: Record<ToolCallDisplayGroup, GroupStyle> = {
-  explore: { icon: Search, text: "text-cyan-700 dark:text-cyan-300", tile: "bg-cyan-500/10" },
-  edit: { icon: PencilLine, text: "text-amber-700 dark:text-amber-300", tile: "bg-amber-500/10" },
-  execute: { icon: SquareTerminal, text: "text-blue-700 dark:text-blue-300", tile: "bg-blue-500/10" },
-  code: { icon: FileCode2, text: "text-fuchsia-700 dark:text-fuchsia-300", tile: "bg-fuchsia-500/10" },
-  mcp: { icon: Plug, text: "text-violet-700 dark:text-violet-300", tile: "bg-violet-500/10" },
-  agent: { icon: GitFork, text: "text-indigo-700 dark:text-indigo-300", tile: "bg-indigo-500/10" },
-  bot: { icon: BotIcon, text: "text-teal-700 dark:text-teal-300", tile: "bg-teal-500/10" },
-  message: { icon: Send, text: "text-emerald-700 dark:text-emerald-300", tile: "bg-emerald-500/10" },
-  other: { icon: Wrench, text: "text-foreground/75", tile: "bg-muted" },
+  explore: { icon: ExploreToolIcon, text: "text-cyan-700 dark:text-cyan-300", tile: "bg-cyan-500/10" },
+  edit: { icon: EditToolIcon, text: "text-amber-700 dark:text-amber-300", tile: "bg-amber-500/10" },
+  execute: { icon: ExecuteToolIcon, text: "text-blue-700 dark:text-blue-300", tile: "bg-blue-500/10" },
+  code: { icon: CodeToolIcon, text: "text-fuchsia-700 dark:text-fuchsia-300", tile: "bg-fuchsia-500/10" },
+  mcp: { icon: McpToolIcon, text: "text-violet-700 dark:text-violet-300", tile: "bg-violet-500/10" },
+  agent: { icon: DelegateToolIcon, text: "text-indigo-700 dark:text-indigo-300", tile: "bg-indigo-500/10" },
+  bot: { icon: BotEventIcon, text: "text-teal-700 dark:text-teal-300", tile: "bg-teal-500/10" },
+  message: { icon: MessageToolIcon, text: "text-emerald-700 dark:text-emerald-300", tile: "bg-emerald-500/10" },
+  other: { icon: OtherToolIcon, text: "text-foreground/75", tile: "bg-muted" },
 };
 
 /// Display order of activity families on a folded run strip.
@@ -86,8 +65,8 @@ export function ActivityIcon({ group, className }: { group?: string | null; clas
 
 function callIcon(call: TranscriptToolCall): IconComponent {
   const display = call.display;
-  if (display?.group === "bot" && display.verb === "Emit" && display.target === "to self") return Repeat;
-  if (display?.group === "agent" && display.verb === "Await") return Hourglass;
+  if (display?.group === "bot" && display.verb === "Emit" && display.target === "to self") return EmitToSelfIcon;
+  if (display?.group === "agent" && display.verb === "Await") return AwaitToolIcon;
   return groupStyle(display?.group).icon;
 }
 
@@ -202,7 +181,7 @@ export function StepRow({
 export function ReasoningTrace({ text }: { text: string }) {
   return (
     <StepRow
-      icon={<Brain />}
+      icon={<ThinkingIcon />}
       tone="text-muted-foreground"
       verb="Thinking"
       target={reasoningTitle(text)}
@@ -249,7 +228,7 @@ export function ToolGroupTrace({
             single ? groupStyle(single).text : "text-muted-foreground",
           )}
         >
-          {single ? <ActivityIcon group={single} /> : <Layers aria-hidden="true" />}
+          {single ? <ActivityIcon group={single} /> : <ToolGroupIcon aria-hidden="true" />}
         </span>
         <span className="min-w-0 truncate font-medium">{batchTitle(group.calls)}</span>
         <span
@@ -260,10 +239,10 @@ export function ToolGroupTrace({
         >
           {active
             ? waiting
-              ? <><Clock3 aria-hidden="true" />waiting</>
-              : <><LoaderCircle className="motion-safe:animate-spin" aria-hidden="true" />{completed} of {group.calls.length}</>
+              ? <><WaitingIcon aria-hidden="true" />waiting</>
+              : <><LoadingIcon className="motion-safe:animate-spin" aria-hidden="true" />{completed} of {group.calls.length}</>
             : failed > 0
-              ? <><CircleAlert aria-hidden="true" />{failed} failed</>
+              ? <><FailedIcon aria-hidden="true" />{failed} failed</>
               : durationMs !== undefined ? formatDuration(durationMs) : null}
         </span>
       </div>
@@ -314,7 +293,7 @@ function ToolCallRow({
   const running = !terminal && !waiting;
   const elapsed = useElapsed(call.startedAtMs, running);
 
-  const Icon = running ? LoaderCircle : callIcon(call);
+  const Icon = running ? LoadingIcon : callIcon(call);
   const verb = call.continuation ? "Tool activity" : (display?.verb ?? call.toolName);
   const rawTarget = display?.target ?? toolTarget(call.argumentsJson);
   const target = rawTarget ? presentTarget(call, rawTarget, links) : null;
@@ -324,15 +303,15 @@ function ToolCallRow({
 
   let right: ReactNode = null;
   if (cancelled) {
-    right = <><CircleMinus aria-label="Cancelled" />cancelled</>;
+    right = <><CancelledIcon aria-label="Cancelled" />cancelled</>;
   } else if (failed) {
     right = <>
-      <CircleAlert aria-label="Failed" className={cn(!highlightFailure && "text-amber-700 dark:text-amber-300")} />
+      <FailedIcon aria-label="Failed" className={cn(!highlightFailure && "text-amber-700 dark:text-amber-300")} />
       <span className={cn(!highlightFailure && "text-amber-700 dark:text-amber-300")}>failed</span>
       {call.durationMs !== undefined ? ` · ${formatDuration(call.durationMs)}` : ""}
     </>;
   } else if (waiting && !terminal) {
-    right = <><Clock3 aria-label="Waiting" />waiting</>;
+    right = <><WaitingIcon aria-label="Waiting" />waiting</>;
   } else if (running) {
     right = elapsed !== undefined ? formatDuration(elapsed) : null;
   } else if (call.durationMs !== undefined) {
@@ -365,7 +344,7 @@ function ToolCallRow({
           }}
           className="flex shrink-0 items-center gap-1 text-xs text-primary underline underline-offset-4 [&_svg]:size-3"
         >
-          <ExternalLink aria-hidden="true" />open session
+          <NewTabIcon aria-hidden="true" />open session
         </a>
       )}
       note={errorLine && (
@@ -524,7 +503,7 @@ function DetailBlock({ value, tone = "default" }: { value: string; tone?: "defau
           }).catch(() => undefined);
         }}
       >
-        {copied ? <Check /> : <Copy />}
+        {copied ? <CopiedIcon /> : <CopyIcon />}
       </Button>
     </div>
   );

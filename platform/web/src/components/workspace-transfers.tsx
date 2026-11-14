@@ -4,21 +4,11 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
   type DragEvent,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  SquarePen,
-  Download,
-  Ellipsis,
-  LoaderCircle,
-  FilePlus,
-  FolderPlus,
-  FolderUp,
-  Trash2,
-  Upload,
-  Pencil,
-} from "lucide-react";
+import { DeleteIcon, DownloadIcon, EditFilesIcon, EditIcon, LoadingIcon, MoreIcon, NewFileIcon, NewFolderIcon, UploadFolderIcon, UploadIcon } from "@/icons";
 import {
   DEFAULT_WORKSPACE_UPLOAD_LIMITS,
   validWorkspaceTransferPath,
@@ -56,6 +46,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 
 type UploadReview = {
@@ -686,7 +677,7 @@ export function WorkspaceTransfers({
               role="status"
               className="flex min-w-0 max-w-full items-center gap-2 rounded-lg border border-primary/40 bg-popover px-3 py-2 text-sm text-popover-foreground shadow-md"
             >
-              <FolderUp className="size-4 shrink-0 text-primary" />
+              <UploadFolderIcon className="size-4 shrink-0 text-primary" />
               <span className="min-w-0 break-words">
                 {movingEntry ? "Drop to move into" : "Drop to upload into"}{" "}
                 <span className="font-medium [overflow-wrap:anywhere]">
@@ -1163,7 +1154,6 @@ export function WorkspaceActionsMenu({
 }) {
   const transfers = useContext(Transfers);
   if (!transfers) return null;
-  const directory = kind !== "file";
   const label =
     kind === "workspace"
       ? "Workspace actions"
@@ -1179,11 +1169,9 @@ export function WorkspaceActionsMenu({
             data-workspace-actions
             tabIndex={tabIndex}
             title={label}
-            className={cn(
-              "shrink-0 text-muted-foreground",
-              kind !== "workspace" &&
-                "absolute right-0 top-1/2 -translate-y-1/2 bg-background group-hover/tree-row:bg-[color-mix(in_oklch,var(--muted)_50%,var(--background))] group-data-[active=true]/tree-row:bg-muted hover:bg-[color-mix(in_oklch,var(--foreground)_15%,var(--background))]! aria-expanded:bg-[color-mix(in_oklch,var(--foreground)_15%,var(--background))]! [@media(hover:hover)_and_(pointer:fine)]:opacity-0 group-hover/tree-row:opacity-100! data-popup-open:opacity-100! focus-visible:opacity-100!",
-            )}
+            // A file's or folder's sits in its list row's actions, which place
+            // and show it.
+            className="shrink-0 text-muted-foreground"
           />
         }
       >
@@ -1191,120 +1179,172 @@ export function WorkspaceActionsMenu({
           <>
             {transfers.activity ? (
               <>
-                <LoaderCircle className="animate-spin" />
+                <LoadingIcon className="animate-spin" />
                 <span className="sr-only" role="status">
                   {transfers.activity}
                 </span>
               </>
             ) : (
-              <SquarePen />
+              <EditFilesIcon />
             )}
           </>
         ) : (
-          <Ellipsis />
+          <MoreIcon />
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        {transfers.canUpload && (
-          <>
-            {directory && (
-              <DropdownMenuItem
-                disabled={transfers.busy || disabled}
-                onClick={() => transfers.newFile(path)}
-              >
-                <FilePlus />
-                New file
-              </DropdownMenuItem>
-            )}
-            {directory && (
-              <DropdownMenuItem
-                disabled={transfers.busy || disabled}
-                onClick={() => transfers.newFolder(path)}
-              >
-                <FolderPlus />
-                New folder
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem
-              disabled={transfers.busy || disabled}
-              onClick={() => transfers.choose(false, path, !directory)}
-            >
-              <Upload />
-              {directory ? "Upload files" : "Upload replacement…"}
-            </DropdownMenuItem>
-            {directory && (
-              <DropdownMenuItem
-                disabled={transfers.busy || disabled}
-                onClick={() => transfers.choose(true, path)}
-              >
-                <FolderUp />
-                Upload folder
-              </DropdownMenuItem>
-            )}
-          </>
-        )}
-        <DropdownMenuItem
-          disabled={transfers.downloading}
-          onClick={() => transfers.download(path, directory)}
-        >
-          <Download />
-          {directory ? "Download as ZIP" : "Download"}
-        </DropdownMenuItem>
-        {path && transfers.canUpload && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled={transfers.busy || disabled}
-              onClick={() => transfers.rename(path, directory)}
-            >
-              <Pencil />
-              Rename…
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              disabled={transfers.busy || disabled}
-              onClick={() => transfers.remove(path, directory)}
-            >
-              <Trash2 />
-              {directory ? "Delete folder…" : "Delete file…"}
-            </DropdownMenuItem>
-          </>
-        )}
-        {kind === "workspace" && transfers.canConfigureWorkspace && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled={transfers.busy || disabled}
-              onClick={transfers.renameWorkspace}
-            >
-              <Pencil />
-              Rename workspace…
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              disabled={transfers.busy || disabled}
-              onClick={transfers.removeWorkspace}
-            >
-              <Trash2 />
-              Delete workspace…
-            </DropdownMenuItem>
-          </>
-        )}
-        {kind === "workspace" && fileCount !== undefined && (
-          <>
-            <DropdownMenuSeparator />
-            <dl
-              aria-label="Workspace information"
-              className="px-2 py-1.5 text-xs text-muted-foreground"
-            >
-              <div className="flex items-center justify-between gap-4">
-                <dt>Files</dt>
-                <dd>{fileCount.toLocaleString()}</dd>
-              </div>
-            </dl>
-          </>
-        )}
+        <WorkspaceActionsItems path={path} kind={kind} disabled={disabled} fileCount={fileCount} />
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/// What can be done to the workspace, a folder or a file: the items of its
+/// menu, whether a dropdown or a context menu shows them.
+function WorkspaceActionsItems({
+  path,
+  kind,
+  disabled,
+  fileCount,
+}: {
+  path: string;
+  kind: "workspace" | "folder" | "file";
+  disabled: boolean;
+  fileCount?: number;
+}) {
+  const transfers = useContext(Transfers);
+  if (!transfers) return null;
+  const directory = kind !== "file";
+  return (
+    <>
+    {transfers.canUpload && (
+      <>
+        {directory && (
+          <DropdownMenuItem
+            disabled={transfers.busy || disabled}
+            onClick={() => transfers.newFile(path)}
+          >
+            <NewFileIcon />
+            New file
+          </DropdownMenuItem>
+        )}
+        {directory && (
+          <DropdownMenuItem
+            disabled={transfers.busy || disabled}
+            onClick={() => transfers.newFolder(path)}
+          >
+            <NewFolderIcon />
+            New folder
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem
+          disabled={transfers.busy || disabled}
+          onClick={() => transfers.choose(false, path, !directory)}
+        >
+          <UploadIcon />
+          {directory ? "Upload files" : "Upload replacement…"}
+        </DropdownMenuItem>
+        {directory && (
+          <DropdownMenuItem
+            disabled={transfers.busy || disabled}
+            onClick={() => transfers.choose(true, path)}
+          >
+            <UploadFolderIcon />
+            Upload folder
+          </DropdownMenuItem>
+        )}
+      </>
+    )}
+    <DropdownMenuItem
+      disabled={transfers.downloading}
+      onClick={() => transfers.download(path, directory)}
+    >
+      <DownloadIcon />
+      {directory ? "Download as ZIP" : "Download"}
+    </DropdownMenuItem>
+    {path && transfers.canUpload && (
+      <>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          disabled={transfers.busy || disabled}
+          onClick={() => transfers.rename(path, directory)}
+        >
+          <EditIcon />
+          Rename…
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          variant="destructive"
+          disabled={transfers.busy || disabled}
+          onClick={() => transfers.remove(path, directory)}
+        >
+          <DeleteIcon />
+          {directory ? "Delete folder…" : "Delete file…"}
+        </DropdownMenuItem>
+      </>
+    )}
+    {kind === "workspace" && transfers.canConfigureWorkspace && (
+      <>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          disabled={transfers.busy || disabled}
+          onClick={transfers.renameWorkspace}
+        >
+          <EditIcon />
+          Rename workspace…
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          variant="destructive"
+          disabled={transfers.busy || disabled}
+          onClick={transfers.removeWorkspace}
+        >
+          <DeleteIcon />
+          Delete workspace…
+        </DropdownMenuItem>
+      </>
+    )}
+    {kind === "workspace" && fileCount !== undefined && (
+      <>
+        <DropdownMenuSeparator />
+        <dl
+          aria-label="Workspace information"
+          className="px-2 py-1.5 text-xs text-muted-foreground"
+        >
+          <div className="flex items-center justify-between gap-4">
+            <dt>Files</dt>
+            <dd>{fileCount.toLocaleString()}</dd>
+          </div>
+        </dl>
+      </>
+    )}
+    </>
+  );
+}
+
+/// The workspace's actions as a context menu: right-click (or a long press)
+/// in `children` opens the actions of `target` (what was clicked, which the
+/// caller tracks) at the pointer. `returnFocus` gets the focus back when it
+/// closes. Without the workspace's transfers it is just `children`.
+export function WorkspaceContextMenu({
+  target,
+  onOpenChange,
+  returnFocus,
+  className,
+  children,
+}: {
+  target: { path: string; kind: "workspace" | "folder" | "file" };
+  onOpenChange?: (open: boolean) => void;
+  returnFocus?: RefObject<HTMLElement | null>;
+  className?: string;
+  children: ReactNode;
+}) {
+  const transfers = useContext(Transfers);
+  if (!transfers) return <>{children}</>;
+  return (
+    <ContextMenu onOpenChange={(open) => onOpenChange?.(open)}>
+      <ContextMenuTrigger className={className}>{children}</ContextMenuTrigger>
+      <ContextMenuContent className="w-56" finalFocus={returnFocus}>
+        <WorkspaceActionsItems path={target.path} kind={target.kind} disabled={false} />
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }

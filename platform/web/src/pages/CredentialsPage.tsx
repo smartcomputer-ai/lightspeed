@@ -3,7 +3,7 @@ import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, KeyRound, LockKeyhole, Plus, RotateCw, ShieldOff } from "lucide-react";
+import { AddIcon, CredentialIcon, GitHubLogo, RevokeIcon, RotateSecretIcon, RowLinkIcon, SecretIcon } from "@/icons";
 import {
   api,
   type GitHubApp,
@@ -68,7 +68,6 @@ import {
   GitHubAppForm,
   GitHubAppStatusBadge,
 } from "@/components/credentials/github-app";
-import { GitHubLogo } from "@/components/icons/logos";
 import { isSubscriptionGrant } from "@/lib/subscriptions";
 import { useActiveUniverse } from "@/lib/universes";
 
@@ -157,12 +156,12 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
         actions={
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button />}>
-              <Plus data-icon="inline-start" />
+              <AddIcon data-icon="inline-start" />
               Add credential
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => setPasteOpen(true)}>
-                <KeyRound />
+                <SecretIcon />
                 Paste a token or secret
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setGitHubOpen(true)}>
@@ -187,7 +186,7 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
         <p className="mb-4 text-sm text-destructive">{revokeGrant.error.message}</p>
       )}
       {inventory.data && reusable.length === 0 && (
-        <EmptyState icon={LockKeyhole} title="No credentials yet">
+        <EmptyState icon={CredentialIcon} title="No credentials yet">
           Tokens, environment secrets and GitHub App installations live here, for MCP servers,
           bot triggers and environments to reference. Values are never shown again; an
           environment's processes receive the ones assigned to it.
@@ -248,7 +247,7 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
                         title="Replace value"
                         onClick={() => setReplacing(grant)}
                       >
-                        <RotateCw />
+                        <RotateSecretIcon />
                       </Button>
                     )}
                     {grant.status !== "revoked" && (
@@ -263,7 +262,7 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
                             />
                           }
                         >
-                          <ShieldOff />
+                          <RevokeIcon />
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
@@ -338,7 +337,7 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
                   return (
                     <TableRow
                       key={app.providerId}
-                      className="cursor-pointer"
+                      className="cursor-action"
                       onClick={() => setSelectedApp(app.providerId)}
                     >
                       <TableCell>
@@ -358,7 +357,7 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
                         <GitHubAppStatusBadge app={app} />
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        <ChevronRight className="size-4" />
+                        <RowLinkIcon className="size-4" />
                       </TableCell>
                     </TableRow>
                   );

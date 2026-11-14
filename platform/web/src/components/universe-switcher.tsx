@@ -1,9 +1,11 @@
 import { UNIVERSE_HANDLE_MAX_LENGTH, universeHandleFromName, universeHandleSchema } from "@lightspeed-ai/platform-shared";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent, type RefObject } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { AddIcon, SelectedIcon, SwitcherIcon } from "@/icons";
 import { UniverseIcon } from "@/components/universe-icon";
+import { Starscape } from "@/components/starscape/starscape";
+import { useIsDark } from "@/lib/theme";
 import { api, type Universe } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,8 +31,41 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  sidebarMenuButtonVariants,
 } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
 import { memberships, universeHome, useUniverses } from "@/lib/universes";
+
+/// The sky behind the universe icon fades out over this radius, in CSS px.
+/// It reaches past the header into the navigation, which the shell keeps
+/// stacked above it.
+/// The centre is cleared too, so the stars thin out gradually toward the
+/// 40px icon: gone within 10px, fully back only by 44px.
+export const HEADER_STARSCAPE_FADE = { start: 16, end: 100, inner: { start: 10, end: 44 } };
+
+/// Stars and streaks only: without a sky behind it the nebula reads as a
+/// blue tint on the sidebar, and how much shows changes with every seed.
+export const HEADER_STARSCAPE_CONFIG = { nebulaAmount: 0 };
+
+/// Covers the fade circle around the icon.
+export const HEADER_STARSCAPE_CLASS = "absolute inset-x-0 top-0 h-32";
+
+/// The header's sky, centred on the universe icon and fading out around it,
+/// the stars straight on the sidebar. Dark theme only: on a light sidebar
+/// the white stars would not show.
+export function HeaderStarscape({ iconRef }: { iconRef: RefObject<HTMLElement | null> }) {
+  const dark = useIsDark();
+  if (!dark) return null;
+  return (
+    <Starscape
+      anchor={iconRef}
+      fade={HEADER_STARSCAPE_FADE}
+      config={HEADER_STARSCAPE_CONFIG}
+      transparentBackground
+      className={HEADER_STARSCAPE_CLASS}
+    />
+  );
+}
 
 /// Top-of-sidebar universe switcher. Lists memberships only; platform
 /// admins reach the full inventory via Admin → Universes. Creation lives
@@ -49,67 +84,121 @@ export function UniverseSwitcher({
   // Universe creation is platform-admin-only today; the plan is to open
   // this up — flip this gate, nothing else moves.
   const canCreate = admin;
+  const iconRef = useRef<HTMLSpanElement>(null);
 
   return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <SidebarMenuButton
-                size="lg"
-                className="data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-accent-foreground"
-              />
-            }
-          >
-            <UniverseIcon icon={active?.icon} iconColor={active?.iconColor} />
-            <div className="grid flex-1 text-left leading-tight">
-              <span className="truncate text-sm font-medium">
-                {active?.name ?? "Select universe"}
-              </span>
-              <span className="truncate text-xs text-muted-foreground">
-                {active
-                  ? active.status === "archived"
-                    ? "archived"
-                    : "universe"
-                  : "Lightspeed"}
-              </span>
-            </div>
-            <ChevronsUpDown className="ml-auto size-4" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="min-w-56" align="start">
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>Universes</DropdownMenuLabel>
-            </DropdownMenuGroup>
-            {mine.map((universe) => (
-              <DropdownMenuItem
-                key={universe.id}
-                onClick={() => navigate(universeHome(universe))}
-              >
-                <UniverseIcon icon={universe.icon} iconColor={universe.iconColor} className="size-6 rounded-md" />
-                <span className="truncate">{universe.name}</span>
-                {universe.id === active?.id && <Check className="ml-auto size-4" />}
-              </DropdownMenuItem>
-            ))}
-            {mine.length === 0 && (
-              <DropdownMenuItem disabled>No universes yet</DropdownMenuItem>
-            )}
-            {canCreate && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setCreateOpen(true)}>
-                  <Plus />
-                  New universe
+    <>
+      {/* The header's sky: centred on the universe icon, fading out around it. */}
+      <HeaderStarscape iconRef={iconRef} />
+      <SidebarMenu className="relative">
+        <SidebarMenuItem>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <SidebarMenuButton
+                  size="lg"
+                  className={cn(SWITCHER_BUTTON_CLASS, "data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-accent-foreground")}
+                />
+              }
+            >
+              <SwitcherFace universe={active} iconRef={iconRef} />
+              <SwitcherIcon className="ml-auto size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="min-w-56" align="start">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Universes</DropdownMenuLabel>
+              </DropdownMenuGroup>
+              {mine.map((universe) => (
+                <DropdownMenuItem
+                  key={universe.id}
+                  onClick={() => navigate(universeHome(universe))}
+                >
+                  <UniverseIcon icon={universe.icon} iconColor={universe.iconColor} className="size-6 rounded-md" />
+                  <span className="truncate">{universe.name}</span>
+                  {universe.id === active?.id && <SelectedIcon className="ml-auto size-4" />}
                 </DropdownMenuItem>
-              </>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <NewUniverseDialog open={createOpen} onOpenChange={setCreateOpen} />
-      </SidebarMenuItem>
-    </SidebarMenu>
+              ))}
+              {mine.length === 0 && (
+                <DropdownMenuItem disabled>No universes yet</DropdownMenuItem>
+              )}
+              {canCreate && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setCreateOpen(true)}>
+                    <AddIcon />
+                    New universe
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <NewUniverseDialog open={createOpen} onOpenChange={setCreateOpen} />
+        </SidebarMenuItem>
+      </SidebarMenu>
+    </>
   );
 }
+
+/// Half the usual left padding, so the large icon sits near the edge. The
+/// icon is taller than the button and reaches into the header's padding, so
+/// the button does not clip.
+const SWITCHER_BUTTON_CLASS = "h-(--sidebar-header-button-height) overflow-visible pl-1";
+
+/// What the switcher's button shows: the universe's icon and name.
+function SwitcherFace({ universe, iconRef }: { universe: Pick<Universe, "name" | "icon" | "iconColor" | "status"> | undefined; iconRef: RefObject<HTMLSpanElement | null> }) {
+  return (
+    <>
+      <UniverseIcon
+        ref={iconRef}
+        icon={universe?.icon}
+        iconColor={universe?.iconColor}
+        // The collapsed sidebar's buttons are size-8.
+        className="size-11 group-data-[collapsible=icon]:size-8"
+      />
+      <div className="grid flex-1 text-left leading-tight">
+        <span className="truncate text-sm font-medium">
+          {universe?.name ?? "Select universe"}
+        </span>
+        {universe?.status === "archived" && (
+          <span className="truncate text-xs text-muted-foreground">archived</span>
+        )}
+      </div>
+    </>
+  );
+}
+
+/// The switcher as the sidebar header draws it, sky and all, for a preview
+/// of a universe's appearance: without its menu or chevron, and inert. It
+/// needs no sidebar around it. Sized as the header (sidebar width, pane bar
+/// height); `scale` enlarges it, and the space it takes, by a factor.
+export function UniverseSwitcherPreview({ universe, scale = 1, className }: {
+  universe: Pick<Universe, "name" | "icon" | "iconColor" | "status">;
+  scale?: number;
+  className?: string;
+}) {
+  const iconRef = useRef<HTMLSpanElement>(null);
+  return (
+    <div
+      inert
+      data-universe-switcher-preview=""
+      className={cn("pointer-events-none overflow-hidden rounded-lg border bg-sidebar select-none", className)}
+      style={{ width: `calc(${SWITCHER_PREVIEW_WIDTH} * ${scale})`, height: `calc(var(--pane-bar-height) * ${scale})` }}
+    >
+      <div
+        className="relative isolate flex h-(--pane-bar-height) origin-top-left flex-col justify-center p-(--sidebar-header-padding) text-sidebar-foreground"
+        style={{ width: SWITCHER_PREVIEW_WIDTH, transform: `scale(${scale})` }}
+      >
+        <HeaderStarscape iconRef={iconRef} />
+        <div className={cn(sidebarMenuButtonVariants({ size: "lg" }), SWITCHER_BUTTON_CLASS, "relative")}>
+          <SwitcherFace universe={universe} iconRef={iconRef} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/// The sidebar's width, which the preview takes as the header does.
+const SWITCHER_PREVIEW_WIDTH = "16rem";
 
 export function NewUniverseDialog({
   open,

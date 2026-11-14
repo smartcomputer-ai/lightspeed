@@ -1,7 +1,7 @@
 import { defaultEnvironmentAttachment } from "@/lib/sessions/resource-features";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2 } from "lucide-react";
+import { DeleteIcon } from "@/icons";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   api,
@@ -398,9 +398,9 @@ function Wizard({
       icon={
         <BotAvatar
           botId={botId.trim() || "new-bot"}
-          size={36}
-          className={cn(!botId.trim() && "text-muted-foreground")}
-          color={botId.trim() ? undefined : "var(--muted)"}
+          size={30}
+          // Without an id yet, a muted face.
+          color={botId.trim() ? undefined : "var(--muted-foreground)"}
         />
       }
       title="New bot"
@@ -543,7 +543,7 @@ function Wizard({
                                 setWakeups((current) => current.filter((entry) => entry.key !== draft.key))
                               }
                             >
-                              <Trash2 />
+                              <DeleteIcon />
                             </Button>
                           )}
                         />
@@ -796,9 +796,8 @@ function TemplateCard({
       <span className="flex min-w-0 items-center gap-3">
         <BotAvatar
           botId={faceId}
-          size={36}
-          className={cn("rounded-lg", blank && "text-muted-foreground")}
-          color={blank ? "var(--muted)" : botColor(faceId)}
+          size={30}
+          color={blank ? "var(--muted-foreground)" : botColor(faceId)}
         />
         <span className="grid min-w-0 gap-0.5">
           <span className="truncate text-sm font-semibold">{template.name}</span>

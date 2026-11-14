@@ -58,21 +58,41 @@ function utcMidnightLabel(): string {
   return next.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
+/// Each tone's color, as the text color the dot (and its ring) is drawn in.
+const STATUS_DOT_COLOR: Record<BotTone, string> = {
+  live: "text-emerald-500",
+  waiting: "text-amber-500",
+  idle: "text-muted-foreground/50",
+  paused: "text-amber-500",
+  attention: "text-destructive",
+  closed: "text-muted-foreground/30",
+};
+
+/// The ring elements every status dot holds (here and in the meta toolbar):
+/// the CSS shows and moves as many as its data-tone sends.
+export function StatusDotRings() {
+  return (
+    <>
+      <span className="status-dot-ring" />
+      <span className="status-dot-ring" />
+      <span className="status-dot-ring" />
+    </>
+  );
+}
+
+/// A status dot in its tone's color. How it is drawn and moves (the live
+/// pulse, the rings, the hollow paused dot) is all CSS: .status-dot in
+/// index.css, by data-tone. It always holds three ring elements; the CSS
+/// shows and moves as many as the tone sends (none, one, or three for live).
 export function StatusDot({ tone, className }: { tone: BotTone; className?: string }) {
   return (
     <span
-      className={cn(
-        "inline-block size-2 shrink-0 rounded-full",
-        tone === "live" && "animate-pulse bg-emerald-500 motion-reduce:animate-none",
-        tone === "waiting" && "bg-amber-500",
-        tone === "idle" && "bg-muted-foreground/50",
-        tone === "paused" && "border border-amber-500 bg-transparent",
-        tone === "attention" && "bg-destructive",
-        tone === "closed" && "bg-muted-foreground/30",
-        className,
-      )}
+      data-tone={tone}
+      className={cn("status-dot inline-block size-2 shrink-0 rounded-full", STATUS_DOT_COLOR[tone], className)}
       aria-hidden
-    />
+    >
+      <StatusDotRings />
+    </span>
   );
 }
 

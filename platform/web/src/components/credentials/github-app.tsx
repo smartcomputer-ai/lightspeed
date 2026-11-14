@@ -1,6 +1,6 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
+import { RefreshIcon } from "@/icons";
 import { api, type GitHubApp, type GitHubInstallation, type SecretGrant } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -259,7 +259,7 @@ export function GitHubAppDetails({
             onClick={() => void installations.refetch()}
             disabled={installations.isFetching}
           >
-            <RefreshCw className={installations.isFetching ? "animate-spin" : undefined} />
+            <RefreshIcon className={installations.isFetching ? "animate-spin" : undefined} />
             Refresh
           </Button>
         </div>

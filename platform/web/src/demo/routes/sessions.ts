@@ -22,6 +22,7 @@ import {
   PROFILE_INSTRUCTIONS_KEY,
   cancelRun,
   closeSession,
+  decideApprovals,
   findRun,
   modelOf,
   newSession,
@@ -82,6 +83,12 @@ export function sessionRoutes(store: DemoStore): Hono {
     const lifecycleControlled = booleanQuery(c.req.query("lifecycleControlled"));
     const subagent = booleanQuery(c.req.query("subagent"));
     const parent = c.req.query("parent") || null;
+    // The Sessions page's list (not a lineage lookup) counts as a look.
+    if (!parent && universe.onSessionsViewed) {
+      const viewed = universe.onSessionsViewed;
+      universe.onSessionsViewed = undefined;
+      viewed();
+    }
     const metadata = metadataQueryFilter(c.req.queries("metadata"));
     const all = [...universe.sessions.values()]
       .filter((record) => !parent || record.view.origin?.parentSessionId === parent)
@@ -160,6 +167,7 @@ export function sessionRoutes(store: DemoStore): Hono {
 
   app.get("/:id/sessions/:sessionId", (c) => {
     const found = lookup(c);
+    found?.session.onOpen?.();
     return found ? c.json(found.session.view) : notFound(c, "not found in engine");
   });
 
@@ -229,10 +237,12 @@ export function sessionRoutes(store: DemoStore): Hono {
     return c.json(session.view);
   });
 
-  /// Nothing in the demo has an execution to lose, so it is always running.
+  /// Nothing in the demo has an execution to lose; a restart clears the
+  /// stopped workflow a debug command can fake.
   app.post("/:id/sessions/:sessionId/restart", (c) => {
     const found = lookup(c);
     if (!found) return notFound(c, "not found in engine");
+    found.session.view.executionFailure = null;
     return c.json(found.session.view);
   });
 
@@ -504,26 +514,10 @@ export function sessionRoutes(store: DemoStore): Hono {
     if (!Array.isArray(body.decisions) || body.decisions.length === 0) {
       return badRequest(c, "decisions are required");
     }
-    const pending = new Map((run.pendingApprovals ?? []).map((approval) => [approval.approvalId, approval]));
-    const results = body.decisions.map((decision) => {
-      const approvalId = typeof decision.approvalId === "string" ? decision.approvalId : "";
-      if (!pending.delete(approvalId)) {
-        return {
-          approvalId,
-          status: "failed" as const,
-          failure: { kind: "unknown", message: "approval was not found" },
-        };
-      }
-      pushEvent(found.session, {
-        type: "approvalDecided",
-        runId,
-        approvalId,
-        decision: decision.decision === "approve" ? "approve" : "reject",
-      });
-      return { approvalId, status: "decided" as const };
-    });
-    run.pendingApprovals = [...pending.values()];
-    if (run.pendingApprovals.length === 0 && run.status === "parked") run.status = "running";
+    const results = decideApprovals(found.session, run, body.decisions.map((decision) => ({
+      approvalId: typeof decision.approvalId === "string" ? decision.approvalId : "",
+      decision: decision.decision === "approve" ? "approve" as const : "reject" as const,
+    })));
     return c.json({ results, run });
   });
 

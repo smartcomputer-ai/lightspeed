@@ -1,5 +1,6 @@
 import type { SessionActivity } from "@lightspeed-ai/sdk";
 import { StatusDot, type BotTone } from "@/components/bot/status";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** The dot for what a session is doing: working, waiting, idle or closed. */
 export function activityTone(activity: SessionActivity | undefined, closed = false): BotTone {
@@ -13,6 +14,13 @@ export function activityTone(activity: SessionActivity | undefined, closed = fal
 export function activityLabel(activity: SessionActivity | undefined): string | null {
   if (activity === "waiting") return "Waiting for approval";
   if (activity === "working") return "Working";
+  return null;
+}
+
+/** What an active session is doing, for the dot's tooltip. */
+function activityHint(activity: SessionActivity | undefined): string | null {
+  if (activity === "waiting") return "Waiting for approval: a run is paused until someone decides on a tool call";
+  if (activity === "working") return "Working: a run is in progress";
   return null;
 }
 
@@ -43,9 +51,13 @@ export function ActivityDot({
 }) {
   const tone = activityTone(activity, closed);
   if (quiet && (tone === "idle" || tone === "closed")) return null;
+  const label = activityLabel(activity);
+  const dot = <StatusDot tone={tone} className={className} />;
+  if (!label) return <span className="inline-flex">{dot}</span>;
   return (
-    <span title={activityLabel(activity) ?? undefined} className="inline-flex">
-      <StatusDot tone={tone} className={className} />
-    </span>
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex" aria-label={label} />}>{dot}</TooltipTrigger>
+      <TooltipContent>{activityHint(activity)}</TooltipContent>
+    </Tooltip>
   );
 }

@@ -130,7 +130,7 @@ export function MarkdownContent({
   return (
     <div
       className={cn(
-        "min-w-0 max-w-full text-sm leading-relaxed [overflow-wrap:anywhere]",
+        "min-w-0 max-w-full cursor-select text-sm leading-relaxed [overflow-wrap:anywhere]",
         "[&_p]:my-3 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0",
         "[&_h1]:mb-3 [&_h1]:mt-5 [&_h1]:text-xl [&_h1]:font-semibold [&_h1:first-child]:mt-0",
         "[&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:text-lg [&_h2]:font-semibold [&_h2:first-child]:mt-0",

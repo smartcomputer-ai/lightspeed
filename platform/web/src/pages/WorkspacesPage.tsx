@@ -1,17 +1,12 @@
 import { useWatchConnected } from "@/lib/universe-watch";
 import { useActionPermissions } from "@/lib/permissions";
+import { useDocumentTitle } from "@/lib/document-title";
 import { ReadError } from "@/components/read-error";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { NavLink, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { slugify, workspaceCreateSchema, validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
-import {
-  ChevronRight,
-  File,
-  FolderGit2,
-  Plus,
-  ExternalLink,
-} from "lucide-react";
+import { AddIcon, FileIcon, WorkspaceIcon } from "@/icons";
 import {
   api,
   type BlobContent,
@@ -44,10 +39,13 @@ import { useCreateParam } from "@/lib/create-param";
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { appHref, blobHref } from "@/lib/blob-view";
-import { ListPane } from "@/components/list-pane";
+import { DetailHeader } from "@/components/detail-header";
+import { MetaToolbar } from "@/components/meta-toolbar";
+import { formatBytes } from "@/lib/composer-attachments";
+import { fileMetaItems } from "@/components/workspace-file-meta";
+import { ListPane, ListPaneHeader, ListPaneToolbar } from "@/components/list-pane";
 import { WorkspaceFileTree } from "@/components/workspace-file-tree";
 import { PdfPreview } from "@/components/pdf-preview";
-import { MarkdownViewToggle } from "@/components/markdown-view-toggle";
 import { MarkdownContent } from "@/components/session/markdown-content";
 import { WorkspaceTransfers, WorkspaceActionsMenu, WorkspaceDropArea } from "@/components/workspace-transfers";
 
@@ -134,12 +132,12 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
           />
         ) : (
           workspaceId ? (
-            <DetailPrompt icon={<File className="size-10 text-muted-foreground/60" />}>
+            <DetailPrompt icon={<FileIcon className="size-10 text-muted-foreground/60" />}>
               {permissions.can("useResource") ? "Pick a file, or drop files and folders into this workspace." : "Pick a file."}
             </DetailPrompt>
           ) : (
             <DetailPrompt
-              icon={<FolderGit2 className="size-10 text-muted-foreground/60" />}
+              icon={<WorkspaceIcon className="size-10 text-muted-foreground/60" />}
               create={permissions.can("createWorkspace") ? { label: "New workspace", onClick: () => setCreateOpen(true) } : undefined}
             >
               Pick a workspace{permissions.can("createWorkspace") ? ", or create one" : ""}.
@@ -197,6 +195,11 @@ function WorkspacePane({
       ),
     enabled: workspaceId !== undefined,
   });
+  const workspaceName = workspaceId && workspaces.data
+    ? (workspaces.data.find((w) => w.workspaceId === workspaceId)?.displayName ?? workspaceId)
+    : undefined;
+  // The open file's path, deepest folder first, then its workspace.
+  useDocumentTitle([...(filePath?.split("/").reverse() ?? []), workspaceName]);
   const [createOpen, setCreateOpen] = useCreateParam("workspace");
 
   // Auto-select the first workspace when landing on bare /workspaces.
@@ -210,21 +213,17 @@ function WorkspacePane({
 
   return (
     <>
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
-        <h1 className="text-sm font-semibold">Workspaces</h1>
-        {canCreate && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="ml-auto"
-            onClick={() => setCreateOpen(true)}
-            aria-label="New workspace"
-          >
-            <Plus />
+      <ListPaneHeader
+        title="Workspaces"
+        count={workspaces.data?.length}
+        actions={canCreate && (
+          <Button variant="ghost" size="icon-sm" onClick={() => setCreateOpen(true)} aria-label="New workspace">
+            <AddIcon />
           </Button>
         )}
-      </div>
-      <div className="flex min-w-0 items-center gap-2 border-b p-3">
+      />
+      {/* Which workspace the tree shows. */}
+      <ListPaneToolbar className="flex-nowrap p-3 text-sm">
         <div className="min-w-0 flex-1">
         {workspaces.data && workspaces.data.length > 0 ? (
           <Select
@@ -232,18 +231,26 @@ function WorkspacePane({
             onValueChange={(value) => navigate(`/u/${handle}/workspaces/${value}`)}
           >
             <SelectTrigger className="w-full" aria-label="Workspace">
-              <FolderGit2 className="size-4 shrink-0 text-muted-foreground" />
               <SelectValue>
                 {(value: string) => {
                   const label = workspaces.data?.find((w) => w.workspaceId === value)?.displayName ?? value;
+                  // The icon is part of the value, as it is of each option,
+                  // so the open list lines its icons and names up with it.
                   // Text directly inside the flex value cannot ellipsize.
-                  return <span className="min-w-0 truncate" title={label}>{label}</span>;
+                  return (
+                    <>
+                      <WorkspaceIcon className="size-4 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 truncate" title={label}>{label}</span>
+                    </>
+                  );
                 }}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {workspaces.data.map((workspace) => (
                 <SelectItem key={workspace.workspaceId} value={workspace.workspaceId}>
+                  {/* As in the trigger's value, so each option lines up under it. */}
+                  <WorkspaceIcon className="size-4 shrink-0 text-muted-foreground" />
                   <span className="truncate">{workspace.displayName ?? workspace.workspaceId}</span>
                 </SelectItem>
               ))}
@@ -256,13 +263,15 @@ function WorkspacePane({
         )}
         </div>
         {tree.data && <WorkspaceActionsMenu kind="workspace" fileCount={tree.data.workspace.files} />}
-      </div>
-      <WorkspaceDropArea className="min-h-0 min-w-0 flex-1 overflow-y-auto p-2">
+      </ListPaneToolbar>
+      {/* The scrolling body is the drop target, so a drop anywhere below the
+          tree lands in the workspace root. */}
+      <WorkspaceDropArea className="min-h-0 min-w-0 flex-1 overflow-y-auto">
         {tree.error && (
-          <ReadError error={tree.error} loading={!tree.data} className="p-2" />
+          <ReadError error={tree.error} loading={!tree.data} className="p-4" />
         )}
         {tree.data && Object.keys(tree.data.manifest.root.entries).length === 0 && (
-          <p className="p-2 text-sm text-muted-foreground">
+          <p className="p-4 text-sm text-muted-foreground">
             Empty workspace.
           </p>
         )}
@@ -535,46 +544,58 @@ function FileDetail({
         if (canSave && !event.repeat) saveCurrent();
       }}
     >
-      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b px-4 py-2">
-        <NavLink
-          to={`/u/${handle}/workspaces/${workspaceId}`}
-          className="md:hidden"
-        >
-          <ChevronRight className="size-4 rotate-180" />
-        </NavLink>
-        <h1 className="min-w-0 flex-1 truncate font-mono text-sm">{filePath}</h1>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {file ? formatBytes(file.size_bytes) : ""}
-        </span>
-        <div className="ml-auto flex shrink-0 basis-full items-center justify-end gap-1.5 sm:basis-auto">
-          {blobLink && (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              nativeButton={false}
-              render={<a href={appHref(blobLink)} target="_blank" rel="noopener noreferrer" />}
-              aria-label="Open in blob viewer (new tab)"
-              title={dirty ? "Open saved version in blob viewer (new tab)" : "Open in blob viewer (new tab)"}
-            >
-              <ExternalLink />
-            </Button>
-          )}
-          {textEditor && (
-            <MarkdownViewToggle preview={preview} onPreviewChange={onPreviewChange} />
-          )}
-          {canEditFiles && textEditor && (
-            <Button
-              size="sm"
-              aria-keyshortcuts="Meta+S Control+S"
-              title="Save (⌘S / Ctrl+S)"
-              disabled={!canSave}
-              onClick={saveCurrent}
-            >
-              {save.isPending ? "Saving…" : dirty ? "Save" : "Saved"}
-            </Button>
-          )}
-        </div>
-      </header>
+      <DetailHeader
+        back={{ to: `/u/${handle}/workspaces/${workspaceId}`, label: "Back to files" }}
+        title={filePath}
+        titleHint={filePath}
+        titleClassName="font-mono font-normal"
+        tags={file && (
+          <MetaToolbar
+            items={fileMetaItems({
+              name: filePath.split("/").at(-1) ?? filePath,
+              file,
+              text,
+              revision: tree.data?.workspace.revision,
+              blobViewerHref: blobLink ? appHref(blobLink) : null,
+              unsaved: dirty,
+            })}
+            place="header"
+            full
+            label="File details"
+            className="grow"
+          />
+        )}
+        actions={[
+          ...(textEditor
+            ? [{
+                kind: "choice" as const,
+                key: "view",
+                label: "Markdown view",
+                value: preview ? "preview" : "source",
+                options: [
+                  { value: "source", label: "Source" },
+                  { value: "preview", label: "Preview", hint: "Preview Markdown" },
+                ],
+                onChange: (value: string) => onPreviewChange(value === "preview"),
+              }]
+            : []),
+          ...(canEditFiles && textEditor
+            ? [{
+                key: "save",
+                label: "Save",
+                text: save.isPending ? "Saving…" : dirty ? "Save" : "Saved",
+                hint: "Save (⌘S / Ctrl+S)",
+                keyShortcuts: "Meta+S Control+S",
+                primary: true,
+                disabled: !canSave,
+                onSelect: saveCurrent,
+              }]
+            : []),
+          // The file's actions (rename, download, delete, …), as its row's
+          // right-click menu in the list has them.
+          { kind: "custom" as const, key: "file-actions", node: <WorkspaceActionsMenu path={filePath} kind="file" /> },
+        ]}
+      />
       {changedExternally && (
         <div role="status" className="flex items-center gap-3 border-b px-4 py-2 text-sm">
           <span>{!file || tree.error ? "The file or workspace is no longer available." : "The workspace changed while you were editing."} Your draft is preserved.</span>
@@ -600,7 +621,7 @@ function FileDetail({
           <MarkdownContent className="mx-auto max-w-5xl p-4">{value}</MarkdownContent>
         ) : (
           <textarea
-            className="h-full w-full resize-none bg-transparent p-4 font-mono text-sm outline-none"
+            className="block h-full w-full resize-none bg-transparent p-4 font-mono text-sm outline-none"
             value={value}
             onChange={(e) =>
               setEditor((current) => {
@@ -914,19 +935,4 @@ function classify(
     }
   }
   return "text";
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  const units = ["KiB", "MiB", "GiB"];
-  let value = bytes;
-  let unit = "B";
-  for (const next of units) {
-    if (value < 1024) break;
-    value /= 1024;
-    unit = next;
-  }
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${unit}`;
 }
