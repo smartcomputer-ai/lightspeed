@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { memo, useState } from "react";
 import { ExpandIcon, LoadingIcon, ThinkingIcon, WarningIcon } from "@/icons";
 import type { FullTextLoader } from "@/components/session/expandable-content";
 import { RunOutcomeLine, RunStatsRow, RunStatsTrigger } from "@/components/session/run-stats";
 import { ActivityIcon, GROUP_ORDER, groupStyle, useElapsed } from "@/components/session/tool-trace";
 import { SystemChips, TranscriptEntryView } from "@/components/session/transcript-view";
-import { sectionActivity, type RunSection } from "@/lib/sessions/run-sections";
+import { sameRunSection, sectionActivity, type RunSection } from "@/lib/sessions/run-sections";
 import { formatDuration, runFailureText, type ActiveRun, type TranscriptEntry } from "@/lib/sessions/transcript";
 import { cn } from "@/lib/utils";
 import { TranscriptEntrance } from "./transcript-motion";
@@ -12,8 +12,9 @@ import { TranscriptEntrance } from "./transcript-motion";
 /// A run as the transcript shows it: the input band, the work, the reply.
 /// Live work streams inside a soft frame with a status row at its foot. A
 /// finished run's work folds behind one strip that names what happened;
-/// the last reply stays visible below it.
-export function RunSectionView({
+/// the last reply stays visible below it. Memoized: a new event rebuilds
+/// every section, but only the ones whose entries changed draw again.
+export const RunSectionView = memo(function RunSectionView({
   section,
   activeRun,
   loadFullText,
@@ -21,16 +22,17 @@ export function RunSectionView({
   collapseCompletedRuns,
 }: {
   section: RunSection;
+  /** Only read by a live section, which draws the run's status row. */
   activeRun: ActiveRun | null;
   loadFullText?: FullTextLoader;
   showRunStatistics: boolean;
   collapseCompletedRuns: boolean;
 }) {
   // A click on the strip overrides the preference for this run; changing
-  // the preference applies it to every run again.
-  const [override, setOverride] = useState<boolean | null>(null);
-  useEffect(() => setOverride(null), [collapseCompletedRuns]);
-  const open = override ?? !collapseCompletedRuns;
+  // the preference applies it to every run again, so an override only
+  // counts under the preference it was made under.
+  const [override, setOverride] = useState<{ open: boolean; collapse: boolean } | null>(null);
+  const open = override?.collapse === collapseCompletedRuns ? override.open : !collapseCompletedRuns;
 
   return (
     <div className="flex min-w-0 flex-col gap-3">
@@ -45,7 +47,7 @@ export function RunSectionView({
           <RunStrip
             section={section}
             open={open}
-            onToggle={() => setOverride(!open)}
+            onToggle={() => setOverride({ open: !open, collapse: collapseCompletedRuns })}
             showRunStatistics={showRunStatistics}
           />
           {open && (
@@ -61,7 +63,12 @@ export function RunSectionView({
       {section.reply && <TranscriptEntryView entry={section.reply} loadFullText={loadFullText} copyable />}
     </div>
   );
-}
+}, (previous, next) =>
+  sameRunSection(previous.section, next.section)
+  && (!next.section.live || previous.activeRun === next.activeRun)
+  && previous.loadFullText === next.loadFullText
+  && previous.showRunStatistics === next.showRunStatistics
+  && previous.collapseCompletedRuns === next.collapseCompletedRuns);
 
 /// The folded run: chevron, the activity families it touched, what
 /// happened and how long it took, and from medium widths up the statistics

@@ -767,10 +767,24 @@ function turnSteps(
     pushEvent(session, { type: "turnPlanned", runId, turnId }, joins(), at);
     pushEvent(session, { type: "turnGenerationRequested", runId, turnId }, joins(), at);
   };
-  const closeGeneration = (at: number) => {
+  // Token usage like a provider reports it, so run statistics have figures:
+  // the active context plus a fixed instruction and tool overhead in, the
+  // generation's own entries out, mostly cached after the first generation.
+  let generation = 0;
+  const closeGeneration = (at: number, output: ContextEntryView[]) => {
+    generation += 1;
+    const inputTokens = 4_800 + Math.ceil(entryChars(session.activeContext.entries) / 4);
+    const cachedInputTokens = Math.round(inputTokens * (generation === 1 ? 0.71 : 0.94));
+    const outputTokens = Math.max(40, Math.round(entryChars(output) / 4));
     pushEvent(
       session,
-      { type: "turnGenerationCompleted", runId, turnId, status: "succeeded" },
+      {
+        type: "turnGenerationCompleted",
+        runId,
+        turnId,
+        status: "succeeded",
+        usage: { inputTokens, cachedInputTokens, outputTokens },
+      },
       joins(),
       at,
     );
@@ -791,7 +805,7 @@ function turnSteps(
           entries.push(contextToolCall(store.nextId("entry"), call.callId, call.toolName));
         }
         applyEntries(session, entries, joins(), at);
-        closeGeneration(at);
+        closeGeneration(at, entries);
         pushEvent(
           session,
           { type: "toolBatchStarted", runId, turnId, batchId, calls },
@@ -853,7 +867,7 @@ function turnSteps(
       }
       if (turn.text) entries.push(contextMessage(store.nextId("entry"), "assistant", turn.text));
       applyEntries(session, entries, joins(), at);
-      closeGeneration(at);
+      closeGeneration(at, entries);
       turn.landed?.(at);
     },
   });

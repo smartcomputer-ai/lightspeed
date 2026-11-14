@@ -161,6 +161,17 @@ export function sectionsByRun(
   return sections;
 }
 
+/// Whether two builds of a section draw the same. Sections are rebuilt on
+/// every transcript change, but the reducer keeps unchanged entries by
+/// identity, so a finished run compares equal and can skip rendering.
+export function sameRunSection(a: RunSection, b: RunSection): boolean {
+  return a === b || (
+    a.key === b.key && a.runId === b.runId && a.live === b.live
+    && a.input === b.input && a.reply === b.reply && a.summary === b.summary
+    && a.work.length === b.work.length && a.work.every((entry, index) => entry === b.work[index])
+  );
+}
+
 /// Completions splits fields of one native message into separate entries.
 /// Present its reasoning before its text, within that turn only. Providers
 /// with ordered output items retain their original order.
