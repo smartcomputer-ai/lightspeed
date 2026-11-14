@@ -103,8 +103,8 @@ describe("demo router", () => {
     const universes = response.json as Universe[];
     expect(universes).toHaveLength(3);
     expect(Object.fromEntries(universes.map(universe => [universe.name, [universe.icon, universe.iconColor]]))).toEqual({
-      "Software Factory": ["box-in-box", "violet"],
-      "Technical Support": ["shield", "amber"],
+      "Software Factory": ["mobius", "violet"],
+      "Technical Support": ["support", "amber"],
       "Personal Assistant": ["personal-assistant", "blue"],
     });
     const created = await call("POST", "/api/v1/universes", { name: "New universe" });
@@ -119,7 +119,7 @@ describe("demo router", () => {
     expect((await call("GET", "/api/v1/universes")).json).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: SOFTWARE_FACTORY_UNIVERSE_ID, icon: "network", iconColor: "violet" }),
     ]));
-    expect((await call("PATCH", path, { icon: "shield", iconColor: "invalid" })).status).toBe(400);
+    expect((await call("PATCH", path, { icon: "security", iconColor: "invalid" })).status).toBe(400);
     expect((await call("PATCH", path, { icon: "unknown", iconColor: "blue" })).status).toBe(400);
     expect((await call("GET", path)).json).toMatchObject({ icon: "network", iconColor: "violet" });
   });

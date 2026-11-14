@@ -5,11 +5,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Universe } from "@/api";
-import { DEFAULT_UNIVERSE_ICON, RETIRED_UNIVERSE_ICONS, UNIVERSE_ICONS } from "@lightspeed-ai/platform-shared";
+import { DEFAULT_UNIVERSE_ICON, RETIRED_UNIVERSE_ICONS, UNIVERSE_ICON_REPLACEMENTS, UNIVERSE_ICONS } from "@lightspeed-ai/platform-shared";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { GeneralSettingsPage } from "@/pages/GeneralSettingsPage";
 import { UniverseAppearanceCard, label } from "./universe-appearance-card";
-import { UNIVERSE_ILLUSTRATIONS } from "./universe-illustrations";
+import { UNIVERSE_ILLUSTRATIONS, offeredUniverseIcon } from "./universe-illustrations";
 import { waitForUi } from "@/test/wait-for-ui";
 import { UniverseIcon } from "./universe-icon";
 
@@ -81,13 +81,26 @@ it("has an illustration for every offered icon and offers every illustration", (
   expect(Object.keys(UNIVERSE_ILLUSTRATIONS).sort()).toEqual([...UNIVERSE_ICONS].sort());
 });
 
-it.each(RETIRED_UNIVERSE_ICONS)("draws the retired %s icon as the default, in its color, without offering it", async icon => {
+it.each(RETIRED_UNIVERSE_ICONS)("draws the retired %s icon as its replacement (else the default), in its color, without offering it", async icon => {
+  const drawn = UNIVERSE_ICON_REPLACEMENTS[icon] ?? DEFAULT_UNIVERSE_ICON;
   await render(<UniverseIcon icon={icon} iconColor="blue" />);
-  expect(container.querySelector(`img[data-universe-icon=${DEFAULT_UNIVERSE_ICON}]`)).not.toBeNull();
+  expect(container.querySelector(`img[data-universe-icon=${drawn}]`)).not.toBeNull();
   expect(container.querySelector("[data-universe-icon-tint=blue]")).not.toBeNull();
   await render(<UniverseAppearanceCard universe={{ ...mocks.universe, icon }} />);
   expect(container.querySelector(`button[aria-label="${label(icon)} icon"]`)).toBeNull();
-  expect(button(`${label(DEFAULT_UNIVERSE_ICON)} icon`).getAttribute("aria-pressed")).toBe("true");
+  expect(button(`${label(drawn)} icon`).getAttribute("aria-pressed")).toBe("true");
+});
+
+it("maps the demo universes' earlier glyphs to their illustrations", () => {
+  expect(offeredUniverseIcon("code")).toBe("mobius");
+  expect(offeredUniverseIcon("sparkles")).toBe("personal-assistant");
+  // An earlier name an illustration now carries draws that illustration.
+  expect(offeredUniverseIcon("shield")).toBe("shield");
+  expect(offeredUniverseIcon("orbit")).toBe(DEFAULT_UNIVERSE_ICON);
+});
+
+it("replaces retired names only with offered icons", () => {
+  for (const replacement of Object.values(UNIVERSE_ICON_REPLACEMENTS)) expect(UNIVERSE_ICONS).toContain(replacement);
 });
 
 it("puts back the saved appearance when a save fails, and saves again on the next choice", async () => {
@@ -95,7 +108,7 @@ it("puts back the saved appearance when a save fails, and saves again on the nex
   await render(<UniverseAppearanceCard universe={mocks.universe} />);
   await click("Network icon");
   await waitForUi(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe("Unable to save"));
-  expect(button("Box in box icon").getAttribute("aria-pressed")).toBe("true");
+  expect(button(`${label(DEFAULT_UNIVERSE_ICON)} icon`).getAttribute("aria-pressed")).toBe("true");
   expect(button("Network icon").getAttribute("aria-pressed")).toBe("false");
   expect(client.getQueryData<Universe[]>(["universes"])![0]).toMatchObject({ icon: "orbit", iconColor: "default" });
   await click("Network icon");
@@ -108,7 +121,7 @@ it("saves without a save or reset button, and not for the current choice", async
   const labels = Array.from(container.querySelectorAll("button")).map(element => element.textContent);
   expect(labels).not.toContain("Save appearance");
   expect(labels).not.toContain("Reset to default");
-  await click("Box in box icon"); await click("Default color");
+  await click(`${label(DEFAULT_UNIVERSE_ICON)} icon`); await click("Default color");
   expect(mocks.api).not.toHaveBeenCalled();
 });
 
@@ -123,7 +136,7 @@ it.each([false, true])("offers appearance on General settings for an authorized 
   mocks.universe.role = platformAdmin ? null : "admin";
   await render(<PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}><GeneralSettingsPage admin={platformAdmin} /></PermissionIdentityProvider>);
   expect(container.textContent).toContain("Appearance");
-  expect(button("Box in box icon")).toBeDefined();
+  expect(button(`${label(DEFAULT_UNIVERSE_ICON)} icon`)).toBeDefined();
 });
 
 it("renders the default badge when appearance is absent", async () => {

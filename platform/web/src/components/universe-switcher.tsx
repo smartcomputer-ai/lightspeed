@@ -1,5 +1,5 @@
 import { slugify, universeSlugSchema } from "@lightspeed-ai/platform-shared";
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent, type RefObject } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { AddIcon, SelectedIcon, SwitcherIcon } from "@/icons";
@@ -30,7 +30,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  sidebarMenuButtonVariants,
 } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
 import { memberships, universeHome, useUniverses } from "@/lib/universes";
 
 /// The sky behind the universe icon fades out over this radius, in CSS px.
@@ -78,28 +80,11 @@ export function UniverseSwitcher({
               render={
                 <SidebarMenuButton
                   size="lg"
-                  // Half the usual left padding, so the large icon sits near the edge.
-                  // The icon is taller than the button and reaches into the header's
-                  // padding, so the button does not clip.
-                  className="h-(--sidebar-header-button-height) overflow-visible pl-1 data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-accent-foreground"
+                  className={cn(SWITCHER_BUTTON_CLASS, "data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-accent-foreground")}
                 />
               }
             >
-              <UniverseIcon
-                ref={iconRef}
-                icon={active?.icon}
-                iconColor={active?.iconColor}
-                // The collapsed sidebar's buttons are size-8.
-                className="size-10 group-data-[collapsible=icon]:size-8"
-              />
-              <div className="grid flex-1 text-left leading-tight">
-                <span className="truncate text-sm font-medium">
-                  {active?.name ?? "Select universe"}
-                </span>
-                {active?.status === "archived" && (
-                  <span className="truncate text-xs text-muted-foreground">archived</span>
-                )}
-              </div>
+              <SwitcherFace universe={active} iconRef={iconRef} />
               <SwitcherIcon className="ml-auto size-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent className="min-w-56" align="start">
@@ -136,6 +121,67 @@ export function UniverseSwitcher({
     </>
   );
 }
+
+/// Half the usual left padding, so the large icon sits near the edge. The
+/// icon is taller than the button and reaches into the header's padding, so
+/// the button does not clip.
+const SWITCHER_BUTTON_CLASS = "h-(--sidebar-header-button-height) overflow-visible pl-1";
+
+/// What the switcher's button shows: the universe's icon and name.
+function SwitcherFace({ universe, iconRef }: { universe: Pick<Universe, "name" | "icon" | "iconColor" | "status"> | undefined; iconRef: RefObject<HTMLSpanElement | null> }) {
+  return (
+    <>
+      <UniverseIcon
+        ref={iconRef}
+        icon={universe?.icon}
+        iconColor={universe?.iconColor}
+        // The collapsed sidebar's buttons are size-8.
+        className="size-11 group-data-[collapsible=icon]:size-8"
+      />
+      <div className="grid flex-1 text-left leading-tight">
+        <span className="truncate text-sm font-medium">
+          {universe?.name ?? "Select universe"}
+        </span>
+        {universe?.status === "archived" && (
+          <span className="truncate text-xs text-muted-foreground">archived</span>
+        )}
+      </div>
+    </>
+  );
+}
+
+/// The switcher as the sidebar header draws it, sky and all, for a preview
+/// of a universe's appearance: without its menu or chevron, and inert. It
+/// needs no sidebar around it. Sized as the header (sidebar width, pane bar
+/// height); `scale` enlarges it, and the space it takes, by a factor.
+export function UniverseSwitcherPreview({ universe, scale = 1, className }: {
+  universe: Pick<Universe, "name" | "icon" | "iconColor" | "status">;
+  scale?: number;
+  className?: string;
+}) {
+  const iconRef = useRef<HTMLSpanElement>(null);
+  return (
+    <div
+      inert
+      data-universe-switcher-preview=""
+      className={cn("pointer-events-none overflow-hidden rounded-lg border bg-sidebar select-none", className)}
+      style={{ width: `calc(${SWITCHER_PREVIEW_WIDTH} * ${scale})`, height: `calc(var(--pane-bar-height) * ${scale})` }}
+    >
+      <div
+        className="relative isolate flex h-(--pane-bar-height) origin-top-left flex-col justify-center p-(--sidebar-header-padding) text-sidebar-foreground"
+        style={{ width: SWITCHER_PREVIEW_WIDTH, transform: `scale(${scale})` }}
+      >
+        <Starscape anchor={iconRef} fade={HEADER_STARSCAPE_FADE} config={HEADER_STARSCAPE_CONFIG} transparentBackground className={HEADER_STARSCAPE_CLASS} />
+        <div className={cn(sidebarMenuButtonVariants({ size: "lg" }), SWITCHER_BUTTON_CLASS, "relative")}>
+          <SwitcherFace universe={universe} iconRef={iconRef} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/// The sidebar's width, which the preview takes as the header does.
+const SWITCHER_PREVIEW_WIDTH = "16rem";
 
 export function NewUniverseDialog({
   open,

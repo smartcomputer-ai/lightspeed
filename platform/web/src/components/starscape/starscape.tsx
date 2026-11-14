@@ -143,8 +143,11 @@ function StarscapeCanvas({
       const height = host.clientHeight;
       const hostBox = host.getBoundingClientRect();
       const anchorBox = anchor?.current?.getBoundingClientRect();
-      const cx = anchorBox ? anchorBox.left + anchorBox.width / 2 - hostBox.left : (center?.x ?? width / 2);
-      const cy = anchorBox ? anchorBox.top + anchorBox.height / 2 - hostBox.top : (center?.y ?? height / 2);
+      // The boxes are on screen, the canvas in the host's own pixels: under
+      // a scale transform the two differ by the scale.
+      const zoom = width > 0 && hostBox.width > 0 ? hostBox.width / width : 1;
+      const cx = anchorBox ? (anchorBox.left + anchorBox.width / 2 - hostBox.left) / zoom : (center?.x ?? width / 2);
+      const cy = anchorBox ? (anchorBox.top + anchorBox.height / 2 - hostBox.top) / zoom : (center?.y ?? height / 2);
 
       const ratio = window.devicePixelRatio >= 1.5 ? 2 : 1;
       const area = starscapeWindow({ width, height, cx, cy, fade, scale, ratio, config: starscape.config });

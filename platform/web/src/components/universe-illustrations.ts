@@ -1,6 +1,5 @@
 import {
-  DEFAULT_UNIVERSE_ICON,
-  UNIVERSE_ICONS,
+  currentUniverseIcon,
   type OfferedUniverseIconName,
   type UniverseIconName,
 } from "@lightspeed-ai/platform-shared";
@@ -13,10 +12,8 @@ export const UNIVERSE_ILLUSTRATIONS: Partial<Record<OfferedUniverseIconName, str
   Object.entries(files).map(([path, url]) => [path.slice(path.lastIndexOf("/") + 1, -".webp".length), url]),
 );
 
-/// The icon a stored name draws as: itself when offered, otherwise (no icon,
-/// or a retired name) the default.
+/// The icon a stored name draws as: itself when offered, a retired name's
+/// replacement, otherwise (no icon, or no replacement) the default.
 export function offeredUniverseIcon(icon: UniverseIconName | null | undefined): OfferedUniverseIconName {
-  return (UNIVERSE_ICONS as readonly string[]).includes(icon ?? "")
-    ? (icon as OfferedUniverseIconName)
-    : DEFAULT_UNIVERSE_ICON;
+  return currentUniverseIcon(icon);
 }

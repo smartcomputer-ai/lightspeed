@@ -709,6 +709,7 @@ export {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  sidebarMenuButtonVariants,
   SidebarMenuSkeleton,
   SidebarMenuSub,
   SidebarMenuSubButton,

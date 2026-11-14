@@ -5,6 +5,7 @@ import { api, type Universe } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { UniverseIcon } from "@/components/universe-icon";
+import { UniverseSwitcherPreview } from "@/components/universe-switcher";
 import { offeredUniverseIcon } from "@/components/universe-illustrations";
 import { cn } from "@/lib/utils";
 
@@ -47,9 +48,9 @@ export function UniverseAppearanceCard({ universe }: { universe: Universe }) {
       </CardHeader>
       <CardContent>
         <div className="grid gap-5">
-          <div className="flex items-center gap-3" aria-label="Universe appearance preview">
-            <UniverseIcon icon={shown.icon} iconColor={shown.iconColor} className="size-11" />
-            <span className="truncate text-sm font-medium">{universe.name}</span>
+          {/* The switcher itself, as the sidebar draws it, enlarged. */}
+          <div className="flex flex-wrap items-center gap-4" aria-label="Universe appearance preview">
+            <UniverseSwitcherPreview universe={{ ...universe, icon: shown.icon, iconColor: shown.iconColor }} scale={1.5} />
             {save.isPending && <span className="text-xs text-muted-foreground">Saving…</span>}
           </div>
           <fieldset className="grid gap-2">

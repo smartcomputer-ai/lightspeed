@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useDocumentTitle } from "@/lib/document-title";
 import { Link, NavLink, useParams } from "react-router-dom";
-import { DEFAULT_UNIVERSE_ICON, UNIVERSE_ICONS } from "@lightspeed-ai/platform-shared";
+import { DEFAULT_UNIVERSE_ICON, UNIVERSE_ICON_COLORS, UNIVERSE_ICONS, type UniverseIconColor } from "@lightspeed-ai/platform-shared";
 import { AddIcon, BotIcon, CopyIcon, CopyLinkIcon, DarkThemeIcon, DeleteIcon, DownloadIcon, EditIcon, EmailIcon, InboxIcon, MoreIcon, NewFileIcon, NewFolderIcon, LightThemeIcon, NotificationIcon, RefreshIcon, SearchIcon, SelectModeIcon, SettingsIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1649,7 +1649,59 @@ function IconsSection() {
           ))}
         </Specimen>
       )}
+      {!needle && <UniverseIconZoomSpecimen />}
     </Category>
+  );
+}
+
+/// The non-default universe colours, which a zoomed icon is shown in.
+const ZOOM_COLORS = UNIVERSE_ICON_COLORS.filter((color) => color !== "default");
+
+function randomZoomColors(): UniverseIconColor[] {
+  return UNIVERSE_ICONS.map(() => ZOOM_COLORS[Math.floor(Math.random() * ZOOM_COLORS.length)]!);
+}
+
+/// Each universe icon as the sidebar's universe switcher draws it, on the
+/// sidebar's background, at twice its size (the switcher's icon is
+/// size-11), each in a random colour. The center lines cross at the icon
+/// box's middle, to check that an illustration is centred.
+function UniverseIconZoomSpecimen() {
+  const [colors, setColors] = useState(randomZoomColors);
+  const [crosshair, setCrosshair] = useState(false);
+  return (
+    <Specimen
+      title="Universe icons, zoomed"
+      note="As in the universe switcher, at twice its size (size-22), each in a random colour"
+      className="grid gap-4"
+    >
+      <div className="flex flex-wrap items-center gap-4">
+        <Button type="button" variant="outline" size="sm" onClick={() => setColors(randomZoomColors())}>
+          <RefreshIcon data-icon="inline-start" />
+          Shuffle colours
+        </Button>
+        <Label className="gap-2 font-normal">
+          <Switch checked={crosshair} onCheckedChange={setCrosshair} aria-label="Center lines" />
+          Center lines
+        </Label>
+      </div>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-2">
+        {UNIVERSE_ICONS.map((name, index) => (
+          <span key={name} className="grid justify-items-center gap-2 rounded-lg border bg-sidebar px-2 py-4 text-sidebar-foreground">
+            <span className="relative" data-universe-icon-zoom={name}>
+              <UniverseIcon icon={name} iconColor={colors[index]} className="size-22" />
+              {crosshair && (
+                <span aria-hidden="true" data-universe-icon-crosshair className="pointer-events-none absolute -inset-2">
+                  <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-danger/70" />
+                  <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-danger/70" />
+                </span>
+              )}
+            </span>
+            <span className="font-mono text-[11px]">{name}</span>
+            <Caption>{colors[index]}</Caption>
+          </span>
+        ))}
+      </div>
+    </Specimen>
   );
 }
 
