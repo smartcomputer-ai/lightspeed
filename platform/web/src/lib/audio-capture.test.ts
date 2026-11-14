@@ -34,6 +34,20 @@ it("chooses a supported format and releases the microphone after stopping", asyn
   expect(capture.name).toBe("dictation.m4a");
   expect(track.stop).toHaveBeenCalled();
 });
+it("records without initializing audio output devices", async () => {
+  const audioContext = vi.fn(function () { throw new Error("Audio output is unavailable"); });
+  vi.stubGlobal("AudioContext", audioContext);
+  vi.stubGlobal("webkitAudioContext", audioContext);
+
+  const capture = await startAudioCapture(new AbortController().signal, vi.fn());
+  expect(mock.instances[0].state).toBe("recording");
+  mock.instances[0].ondataavailable({ data: new Blob(["audio"], { type: "audio/mp4" }) });
+  capture.stop();
+
+  expect((await capture.result).size).toBe(5);
+  expect(track.stop).toHaveBeenCalled();
+  expect(audioContext).not.toHaveBeenCalled();
+});
 it("releases a microphone granted after cancellation", async () => {
   let grant!: (value: unknown) => void;
   getUserMedia.mockImplementation(() => new Promise((resolve) => { grant = resolve; }));
