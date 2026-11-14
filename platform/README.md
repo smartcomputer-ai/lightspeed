@@ -272,6 +272,33 @@ backend in the repository, so a new API route needs a stub under
 `web/src/demo/routes/` (an unstubbed route answers 404 with a `demo:` message
 so the gap is visible in the UI) and demo content belongs in a fixture module.
 
+To reach states the scripted fixtures do not, a chat message (or steering)
+that starts with `debug:` runs a debug command instead of the scripted reply.
+The commands come with debug mode (`VITE_ENABLE_DEBUG_MODE=true`, see
+`web/src/devtools/debug-mode.ts`); without it their code is not loaded and
+such messages get the scripted reply. They live in
+`web/src/demo/debug-commands.ts`, and `debug: help` lists them:
+
+| Command | What it does |
+| --- | --- |
+| `debug: long think` | Thinks for 15 seconds, then answers. |
+| `debug: approval` | Asks to approve an MCP tool call; the session waits for approval, and the decision picks the reply. |
+| `debug: stop <failed\|timed out\|terminated\|missing>` | Stops the session's workflow that way; Restart clears it. |
+| `debug: close` | Closes the session after the reply. |
+| `debug: queue <n>` | Queues n follow-up runs behind this one (default 3). |
+| `debug: subagents <n>` | Delegates to n sub-agents, which work and finish one after another (default 3). |
+| `debug: tools` | Calls one tool of each kind, one of them failing. |
+| `debug: error` | Fails the run with a provider error. |
+| `debug: long reply` | Answers with a long Markdown reply (lists, a table, code). |
+| `debug: env <ready\|provisioning\|paused\|suspended\|stopped\|away\|failed\|unknown>` | Sets the status of the session's active environment. |
+| `debug: mcp <auth\|ok>` | Marks the session's MCP server as needing authentication, or active again. |
+| `debug: bot <idle\|working\|waiting\|paused\|attention\|budget\|closed>` | In a bot's chat: puts the bot in that state (`waiting` asks for an approval). |
+| `debug: bot events <n>` | In a bot's chat: adds n events waiting for the bot (default 3). |
+| `debug: bot failed` | In a bot's chat: makes the bot's latest event fail. |
+
+Pages read some of these on their own refresh (environments every 30
+seconds), so a change can take a moment to show.
+
 Development defaults use `admin@lightspeed.dev` and
 `lightspeed-dev-password`. Override them with
 `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`.
@@ -352,3 +379,26 @@ Visual tests are not part of the automatic test process and should not be added
 to `npm test`, `npm run check`, or CI. Use them as a review tool: to see what a
 change does to the UI and UX, and to show it to others before merging. A
 changed screen is a prompt to look, not a failure.
+
+### Debug tools
+
+Development builds serve a component catalogue at `/debug/ui-overview`: every
+component under `web/src/components/ui` with its variants, grouped by category,
+in light and dark. It needs no sign-in, and production builds leave it out.
+
+Debug mode adds tools for reviewing the UI. Enable it in
+`platform/web/.env.local` (git-ignored), then restart the dev server:
+
+```bash
+VITE_ENABLE_DEBUG_MODE=true
+```
+
+Press Ctrl+D to show or hide the debug toolbar in the bottom-right corner:
+
+- **Feedback**: click any element to get a copyable report that identifies it
+  (page, component slots, text, React components).
+- **Design**: edit the design tokens in a separate window with live preview,
+  then export the changes as CSS for `web/src/index.css`.
+
+The tools live in `web/src/devtools/`. The folder is not called `debug` because
+the root `.gitignore` ignores that name, which would also hide it from Tailwind.

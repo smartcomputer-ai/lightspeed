@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { PowerOff } from "lucide-react";
+import { FeatureOffIcon } from "@/icons";
 import { FEATURES, type FeatureKey } from "@lightspeed-ai/platform-shared";
 import { EmptyState } from "@/components/page";
 import { useActionPermissions } from "@/lib/permissions";
@@ -23,7 +23,7 @@ export function FeatureGate({ feature, children }: { feature: FeatureKey; childr
   const { label } = FEATURES[feature];
   return (
     <div className="p-6">
-      <EmptyState icon={PowerOff} title={`${label} are turned off in this universe`}>
+      <EmptyState icon={FeatureOffIcon} title={`${label} are turned off in this universe`}>
         {permissions.can("manageAccess") ? (
           <>
             <Link to={`/u/${handle}/settings/general`} className="font-medium text-foreground underline">

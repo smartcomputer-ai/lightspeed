@@ -1,7 +1,7 @@
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Plus, RotateCw, ShieldOff } from "lucide-react";
+import { AddIcon, ApiKeyIcon, RevokeIcon, RotateSecretIcon } from "@/icons";
 import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/sdk";
 import { isKeyIdConflict, KeyIdField } from "@/components/api-keys/key-id-field";
 import { GroupSummary, KeyPresetField, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
@@ -96,7 +96,7 @@ function ApiKeyList({ universeId }: { universeId: string }) {
         description="Universe credentials for remote agents and the public Configurator MCP endpoint."
         actions={
           <Button onClick={() => setCreateOpen(true)}>
-            <Plus data-icon="inline-start" />
+            <AddIcon data-icon="inline-start" />
             Create key
           </Button>
         }
@@ -107,7 +107,7 @@ function ApiKeyList({ universeId }: { universeId: string }) {
         <p className="mb-3 text-sm text-destructive">{revoke.error.message}</p>
       )}
       {keys.data && allRows.length === 0 && (
-        <EmptyState icon={KeyRound} title="No API keys yet">
+        <EmptyState icon={ApiKeyIcon} title="No API keys yet">
           Keys let external agents and clients reach this universe and call the method groups
           they were minted with. A key's secret is shown only once.
         </EmptyState>
@@ -156,7 +156,7 @@ function ApiKeyList({ universeId }: { universeId: string }) {
                     <TableActionsCell>
                       {!revoked && !key.assertActor && (
                         <Button variant="ghost" size="icon-sm" aria-label={`Rotate ${key.displayName ?? key.keyPrefix}`} onClick={() => setRotatingKey(key)}>
-                          <RotateCw />
+                          <RotateSecretIcon />
                         </Button>
                       )}
                       {!revoked && (
@@ -171,7 +171,7 @@ function ApiKeyList({ universeId }: { universeId: string }) {
                               />
                             }
                           >
-                            <ShieldOff />
+                            <RevokeIcon />
                           </AlertDialogTrigger>
                           <AlertDialogContent>
                             <AlertDialogHeader>

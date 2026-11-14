@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { AddIcon, DeleteIcon } from "@/icons";
 import { api, type AuthGrantOption } from "@/api";
 import { Button } from "@/components/ui/button";
 import { FieldDescription } from "@/components/ui/field";
@@ -96,7 +96,7 @@ export function RequestHeaderEditor({
                 aria-label={`Remove header ${position}`}
                 onClick={() => onChange(rows.filter((candidate) => candidate.key !== row.key))}
               >
-                <Trash2 />
+                <DeleteIcon />
               </Button>
             </div>
             <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)]">
@@ -162,7 +162,7 @@ export function RequestHeaderEditor({
           size="sm"
           onClick={() => onChange([...rows, emptyRequestHeaderRow(rows)])}
         >
-          <Plus data-icon="inline-start" />Add header
+          <AddIcon data-icon="inline-start" />Add header
         </Button>
       </div>
     </div>

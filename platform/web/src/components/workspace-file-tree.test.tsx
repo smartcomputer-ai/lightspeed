@@ -1,29 +1,27 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { VfsTreeEntry } from "@/api";
 import { WorkspaceFileTree } from "./workspace-file-tree";
 
-const menuClick = vi.hoisted(() => vi.fn());
+const menuOpened = vi.hoisted(() => vi.fn());
 vi.mock("./workspace-transfers", () => ({
   useWorkspaceDropTarget: () => null,
   useWorkspaceEntryDrag: () => ({ draggable: false, onDragStart: () => {} }),
-  WorkspaceActionsMenu: ({
-    path,
-    tabIndex,
+  // Says what its menu is for, and counts the right-clicks that open it.
+  WorkspaceContextMenu: ({
+    target,
+    children,
   }: {
-    path: string;
-    tabIndex?: number;
+    target: { path: string; kind: string };
+    children: ReactNode;
   }) => (
-    <button
-      data-workspace-actions
-      tabIndex={tabIndex}
-      onClick={() => menuClick(path)}
-    >
-      More
-    </button>
+    <div onContextMenu={() => menuOpened()}>
+      <span data-menu-target>{`${target.kind}:${target.path}`}</span>
+      {children}
+    </div>
   ),
 }));
 let root: Root;
@@ -58,7 +56,7 @@ async function render(activePath: string | undefined) {
 }
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  menuClick.mockReset();
+  menuOpened.mockReset();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -162,20 +160,25 @@ it("handles arrows after focusing a file link and opens the focused file with En
   );
 });
 
-it("offers the focused item's menu via Tab or Shift+F10 without stealing its arrow keys", async () => {
+it("opens an item's actions by right-click, Shift+F10 or the context-menu key", async () => {
+  const target = () => container.querySelector("[data-menu-target]")!.textContent;
   await expandDocs();
+  await act(async () =>
+    item("z.txt").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })),
+  );
+  expect(menuOpened).toHaveBeenCalledTimes(1);
+  expect(target()).toBe("file:z.txt");
+
   await act(async () => item("docs/one.txt").focus());
-  const menu = item("docs/one.txt").querySelector<HTMLElement>(
-    "[data-workspace-actions]",
-  )!;
-  expect(menu.tabIndex).toBe(0);
-  expect(
-    item("z.txt").querySelector<HTMLElement>("[data-workspace-actions]")!
-      .tabIndex,
-  ).toBe(-1);
-  await key("F10", document.activeElement!, true);
-  expect(menuClick).toHaveBeenCalledWith("docs/one.txt");
-  await act(async () => menu.focus());
-  expect((await key("ArrowDown")).defaultPrevented).toBe(false);
-  expect(document.activeElement).toBe(menu);
+  expect((await key("F10", document.activeElement!, true)).defaultPrevented).toBe(true);
+  expect(menuOpened).toHaveBeenCalledTimes(2);
+  expect(target()).toBe("file:docs/one.txt");
+  // F10 alone is not the menu.
+  await key("F10");
+  expect(menuOpened).toHaveBeenCalledTimes(2);
+
+  await key("ArrowUp");
+  await key("ContextMenu");
+  expect(menuOpened).toHaveBeenCalledTimes(3);
+  expect(target()).toBe("folder:docs");
 });

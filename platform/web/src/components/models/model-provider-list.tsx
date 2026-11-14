@@ -1,5 +1,5 @@
 import { EmptyState } from "@/components/page";
-import { BrainCircuit } from "lucide-react";
+import { ModelIcon } from "@/icons";
 import { TableCell } from "@/components/ui/table";
 import { ResourceIdentityCell, ResourceRow, ResourceStatus, ResourceTable, ResourceValue } from "@/components/resource-table";
 import { modelProviderDefinition } from "./catalog";
@@ -12,7 +12,7 @@ export function ModelProviderList({ providers, onSelect, showEmpty = true }: {
 }) {
   if (providers.length === 0) {
     return showEmpty ? (
-      <EmptyState icon={BrainCircuit} title="No model providers yet">
+      <EmptyState icon={ModelIcon} title="No model providers yet">
         Provider API keys, compatible endpoints and coding-agent subscriptions that sessions call models through.
       </EmptyState>
     ) : null;

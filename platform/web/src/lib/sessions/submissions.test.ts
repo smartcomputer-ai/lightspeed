@@ -3,6 +3,7 @@ import type { SessionEvent } from "@/api";
 import { applyEvents, emptyTranscript, reconcileRuns } from "./transcript";
 import { projectSubmissions, submissionReducer, type LocalSubmission } from "./submissions";
 import { TranscriptWindow } from "./transcript-window";
+import { sameRunSection, type RunSection } from "./run-sections";
 
 const local = (kind: "run" | "steering" = "run"): LocalSubmission => ({
   id: "local", kind, text: "same text", queued: false, runId: kind === "run" ? null : "1",
@@ -123,4 +124,28 @@ it("a lost POST response does not remove already confirmed input or change its i
   })]);
   const withdrawn = submissionReducer([local()], { type: "withdrawn", id: "local" });
   expect(projectSubmissions(state, withdrawn).sections[0]).toMatchObject({ key: "local", input: { key: "local", text: "same text" } });
+});
+
+it("gives a confirmed send the same entry on every projection, so its finished run need not draw again", () => {
+  const confirmedInput = event(2, {
+    type: "contextEntriesApplied", baseRevision: 0, revision: 1, entries: [{
+      id: "server", kind: { type: "message", role: "user" }, text: "same text", content: { blobRef: "text" },
+      source: { type: "runInput", runId: "1", inputIndex: 0 },
+    }],
+  });
+  let state = applyEvents(emptyTranscript(), [accepted, confirmedInput, event(3, { type: "runCompleted", runId: "1" })]);
+  const submissions = submissionReducer([local()], { type: "accepted", id: "local", runId: "1", status: "completed" });
+  const first = projectSubmissions(state, submissions).sections[0] as RunSection;
+  expect(first).toMatchObject({ key: "local", input: { key: "local", local: true } });
+
+  // A later run's events leave this run's loaded entries as they were.
+  state = applyEvents(state, [event(4, { type: "runAccepted", runId: "2", source: { type: "input", entries: [] } })]);
+  const second = projectSubmissions(state, submissions).sections[0] as RunSection;
+  expect(second.input).toBe(first.input);
+  expect(sameRunSection(first, second)).toBe(true);
+
+  // Another submission claiming the entry is another identity.
+  const other = projectSubmissions(state, [{ ...submissions[0]!, id: "other" }]).sections[0] as RunSection;
+  expect(other.input).toMatchObject({ key: "other" });
+  expect(other.input).not.toBe(first.input);
 });

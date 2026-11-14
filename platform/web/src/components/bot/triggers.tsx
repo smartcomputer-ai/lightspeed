@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, CalendarClock, Check, ChevronDown, ChevronRight, Copy, Inbox, MessageCircle, Pause, Play, Plus, RefreshCw, RotateCw, Send, Terminal, Trash2, Webhook } from "lucide-react";
+import { AddIcon, BackIcon, ChatTriggerIcon, CollapseIcon, CommandIcon, CopiedIcon, CopyIcon, DeleteIcon, ExpandIcon, InboxIcon, PauseIcon, PollIcon, ResumeIcon, RotateSecretIcon, ScheduleIcon, SendIcon, WebhookIcon } from "@/icons";
 import {
   api,
   botLabel,
@@ -305,11 +305,11 @@ export function TriggerKindIcon({
   className?: string;
 }) {
   const classes = cn("size-3.5 shrink-0 text-muted-foreground", className);
-  if (kind === "schedule") return <CalendarClock className={classes} />;
-  if (kind === "bot") return <Inbox className={classes} />;
-  if (kind === "chat") return <MessageCircle className={classes} />;
-  if (kind === "poll") return exec ? <Terminal className={classes} /> : <RefreshCw className={classes} />;
-  return <Webhook className={classes} />;
+  if (kind === "schedule") return <ScheduleIcon className={classes} />;
+  if (kind === "bot") return <InboxIcon className={classes} />;
+  if (kind === "chat") return <ChatTriggerIcon className={classes} />;
+  if (kind === "poll") return exec ? <CommandIcon className={classes} /> : <PollIcon className={classes} />;
+  return <WebhookIcon className={classes} />;
 }
 
 /**
@@ -383,9 +383,9 @@ export function TriggerFormCard({
           disabled={!expandable}
         >
           {expandable && (open ? (
-              <ChevronDown className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <CollapseIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             ) : (
-              <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <ExpandIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             ))}
           <TriggerKindIcon kind={kind} exec={exec} className="mt-0.5" />
           <span className="min-w-0 flex-1">
@@ -867,7 +867,7 @@ export function TriggersSection({
                 setAddOpen(true);
               }}
             >
-              <Plus data-icon="inline-start" /> Add trigger
+              <AddIcon data-icon="inline-start" /> Add trigger
             </Button>
           )}
         </div>
@@ -923,7 +923,7 @@ export function TriggersSection({
                       disabled={sample.isPending || !enabled}
                       title="Post a sample payload to this webhook"
                     >
-                      <Send data-icon="inline-start" /> Send sample
+                      <SendIcon data-icon="inline-start" /> Send sample
                     </Button>
                   )}
                   <Button
@@ -933,7 +933,7 @@ export function TriggersSection({
                     disabled={toggle.isPending}
                     aria-label={enabled ? "Pause trigger" : "Resume trigger"}
                   >
-                    {enabled ? <Pause /> : <Play />}
+                    {enabled ? <PauseIcon /> : <ResumeIcon />}
                   </Button>
                   {pendingDelete === trigger.triggerId ? (
                     <Button
@@ -951,7 +951,7 @@ export function TriggersSection({
                       onClick={() => setPendingDelete(trigger.triggerId)}
                       aria-label="Delete trigger"
                     >
-                      <Trash2 />
+                      <DeleteIcon />
                     </Button>
                   )}
               </>
@@ -992,7 +992,7 @@ export function TriggersSection({
             setAddOpen(true);
           }}
         >
-          <Plus data-icon="inline-start" /> Add trigger
+          <AddIcon data-icon="inline-start" /> Add trigger
         </Button>
       )}
       {manage && (
@@ -1267,7 +1267,7 @@ function WebhookRowDetail({
               });
             }}
           >
-            {copied ? <Check /> : <Copy />}
+            {copied ? <CopiedIcon /> : <CopyIcon />}
           </Button>
         </div>
       )}
@@ -1393,7 +1393,7 @@ function ChatRowDetail({
               });
             }}
           >
-            {copied ? <Check /> : <Copy />}
+            {copied ? <CopiedIcon /> : <CopyIcon />}
           </Button>
           <Button
             variant="ghost"
@@ -1403,7 +1403,7 @@ function ChatRowDetail({
             disabled={rotate.isPending}
             onClick={() => rotate.mutate()}
           >
-            <RotateCw />
+            <RotateSecretIcon />
           </Button>
           {rotate.error && <span className="text-destructive">{rotate.error.message}</span>}
         </div>
@@ -2487,20 +2487,20 @@ export function TriggerKindPicker({
   return (
     <div className={cn("grid content-start gap-3 sm:grid-cols-2", className)}>
       <TriggerKindChoice
-        icon={<CalendarClock className="size-5" />}
+        icon={<ScheduleIcon className="size-5" />}
         title="Schedule"
         description="At fixed times: every morning, weekdays at nine, once next Tuesday."
         onClick={() => onPick("schedule")}
       />
       <TriggerKindChoice
-        icon={<Webhook className="size-5" />}
+        icon={<WebhookIcon className="size-5" />}
         title="Webhook"
         description="When something happens elsewhere: GitHub, an alerting tool, your own systems."
         onClick={() => onPick("webhook")}
       />
       {channelsOn && !exclude.includes("chat") && (
         <TriggerKindChoice
-          icon={<MessageCircle className="size-5" />}
+          icon={<ChatTriggerIcon className="size-5" />}
           title="Chat account"
           description="Messages from people on Telegram or WhatsApp; each conversation becomes a thread."
           onClick={() => onPick("chat")}
@@ -2508,20 +2508,20 @@ export function TriggerKindPicker({
       )}
       {!exclude.includes("bot") && (
         <TriggerKindChoice
-          icon={<Inbox className="size-5" />}
+          icon={<InboxIcon className="size-5" />}
           title="Other bots"
           description="Let bots in this universe message this one (at most one inbox)."
           onClick={() => onPick("bot")}
         />
       )}
       <TriggerKindChoice
-        icon={<RefreshCw className="size-5" />}
+        icon={<PollIcon className="size-5" />}
         title="Check a URL"
         description="Fetch an HTTP endpoint on a timer and wake only for new items."
         onClick={() => onPick("poll", { pollSource: "http" })}
       />
       <TriggerKindChoice
-        icon={<Terminal className="size-5" />}
+        icon={<CommandIcon className="size-5" />}
         title="Run a command"
         description="Run a command in the bot's environment on a timer; its JSON output is diffed."
         disabled={env.kind !== "existing"}
@@ -2652,7 +2652,7 @@ function AddTriggerInline({
       footer={(
         <>
           <Button type="button" variant="outline" onClick={() => setKind(null)}>
-            <ArrowLeft data-icon="inline-start" /> Back
+            <BackIcon data-icon="inline-start" /> Back
           </Button>
           <Button
             type="button"

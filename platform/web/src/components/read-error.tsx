@@ -28,7 +28,7 @@ export function ReadError({ error, transient = isTransientReadError(error), retr
   const message = transient
     ? retrying ? "Connection lost — retrying…" : "Connection unavailable."
     : error instanceof Error ? error.message : String(error);
-  return <p role={transient ? "status" : "alert"} className={cn("text-sm", transient ? "text-muted-foreground" : "text-destructive", className)}>
+  return <p role={transient ? "status" : "alert"} className={cn("cursor-select text-sm", transient ? "text-muted-foreground" : "text-destructive", className)}>
     {prefix && `${prefix}: `}{message}
   </p>;
 }

@@ -72,7 +72,7 @@ export function SettingsDisclosure({
           aria-label={label}
           disabled={forceOpen}
           onClick={() => setOpen(!open)}
-          className="w-fit shrink-0 cursor-pointer rounded-sm text-left text-xs text-muted-foreground underline decoration-muted-foreground/40 underline-offset-4 outline-none hover:text-foreground hover:decoration-current focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:no-underline disabled:opacity-60"
+          className="w-fit shrink-0 cursor-action rounded-sm text-left text-xs text-muted-foreground underline decoration-muted-foreground/40 underline-offset-4 outline-none hover:text-foreground hover:decoration-current focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:no-underline disabled:opacity-60"
         >
           {shown ? "Hide" : action}
         </button>

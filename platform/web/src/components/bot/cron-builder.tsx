@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { SlidersHorizontal } from "lucide-react";
+import { ConfigureIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -150,7 +150,7 @@ export function CronBuilder({ value, onChange }: { value: string; onChange: (val
       <PopoverTrigger
         render={<Button type="button" variant="outline" size="xs" />}
       >
-        <SlidersHorizontal className="size-3.5" />
+        <ConfigureIcon className="size-3.5" />
         Build visually
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={8}>

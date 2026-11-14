@@ -7,7 +7,7 @@ import { environmentStatus, resourceTimestamp } from "@/lib/resource-status";
 import { ReadError } from "@/components/read-error";
 import { useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, Check, ChevronDown, Copy, KeyRound, Pencil, Plus, RotateCw, Trash2, Unplug } from "lucide-react";
+import { AddIcon, CopiedIcon, CopyIcon, DeleteIcon, DisconnectIcon, DropdownCaretIcon, EditIcon, EnvironmentIcon, RotateSecretIcon, SecretIcon } from "@/icons";
 import {
   api,
   type Environment,
@@ -29,7 +29,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { TableCell } from "@/components/ui/table";
+import { IdText, Table, TableBody, TableCard, TableCell, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -216,7 +217,7 @@ function EnvironmentList({ universeId }: { universeId: string }) {
         <ReadError error={secrets.error} loading={!secrets.data} prefix="Access credentials unavailable" />
       )}
       {environments.data && environmentRows.length === 0 && (
-        <EmptyState icon={Boxes} title={showClosed ? "No environments yet" : "No open environments"}>
+        <EmptyState icon={EnvironmentIcon} title={showClosed ? "No environments yet" : "No open environments"}>
           Machines agents run commands on: created from a provider template, or registered by
           running <span className="font-mono">lightspeed-envd</span> on a machine of your own.
         </EmptyState>
@@ -248,7 +249,7 @@ function EnvironmentList({ universeId }: { universeId: string }) {
             {environments.isFetchingNextPage ? "Loading…" : "Load more"}
           </Button>
         )}
-        <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+        <label className="flex w-fit cursor-action items-center gap-2 text-sm text-muted-foreground">
           <Switch checked={showClosed} onCheckedChange={setShowClosed} />
           Show closed environments
         </label>
@@ -428,7 +429,7 @@ function EnvironmentDetails({
           <CloseEnvironmentButton universeId={universeId} environment={environment} />
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-              <Pencil data-icon="inline-start" />
+              <EditIcon data-icon="inline-start" />
               Rename…
             </Button>
             {source.type === "registered" && source.name && source.daemonId && (
@@ -562,7 +563,7 @@ function EnvironmentCredentials({
                         />
                       }
                     >
-                      <Trash2 />
+                      <DeleteIcon />
                     </AlertDialogTrigger>
                     <AlertDialogContent>
                       <AlertDialogHeader>
@@ -657,7 +658,7 @@ function AssignCredentialDialog({
           setOpen(true);
         }}
       >
-        <Plus data-icon="inline-start" />
+        <AddIcon data-icon="inline-start" />
         Assign credential
       </Button>
       <Dialog
@@ -678,9 +679,9 @@ function AssignCredentialDialog({
           <div className="grid gap-4">
             <Field>
               <FieldLabel htmlFor="credential-env-name">Environment variable</FieldLabel>
-              <input
+              <Input
                 id="credential-env-name"
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 font-mono text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                className="font-mono"
                 value={envName}
                 onChange={(event) => {
                   setEnvName(event.target.value);
@@ -765,7 +766,7 @@ function RegistrationKeys({
       <section className="rounded-xl border p-4">
         <CollapsibleTrigger className="flex w-full items-center gap-2 text-left text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
           Registration keys ({keys.length})
-          <ChevronDown aria-hidden="true" className={`ml-auto size-4 transition-transform ${open ? "rotate-180" : ""}`} />
+          <DropdownCaretIcon aria-hidden="true" className={`ml-auto size-4 transition-transform ${open ? "rotate-180" : ""}`} />
         </CollapsibleTrigger>
         <CollapsibleContent>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -801,13 +802,13 @@ function RegistrationKeys({
                 )}
                 {key.status !== "revoked" && (
                   <Button variant="outline" size="xs" onClick={() => setEditing(key)}>
-                    <Pencil data-icon="inline-start" />
+                    <EditIcon data-icon="inline-start" />
                     Edit
                   </Button>
                 )}
                 {key.status === "active" && key.identityMode === "persistent" && (
                   <Button variant="outline" size="xs" onClick={() => setDeclaring(key)}>
-                    <Plus data-icon="inline-start" />
+                    <AddIcon data-icon="inline-start" />
                     Declare environment
                   </Button>
                 )}
@@ -1035,7 +1036,7 @@ function RotateRegistrationKeyButton({
   return (
     <>
       <Button variant="outline" size="xs" onClick={() => { rotate.reset(); setConfirming(true); }}>
-        <RotateCw data-icon="inline-start" />
+        <RotateSecretIcon data-icon="inline-start" />
         Rotate
       </Button>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
@@ -1248,14 +1249,14 @@ function RegistrationSecret({
               void navigator.clipboard.writeText(created.secret).then(() => setCopied(true));
             }}
           >
-            {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
+            {copied ? <CopiedIcon data-icon="inline-start" /> : <CopyIcon data-icon="inline-start" />}
             {copied ? "Copied" : "Copy"}
           </Button>
         </div>
         <FieldLabel htmlFor="registration-key-bootstrap">Bootstrap</FieldLabel>
-        <textarea
+        <Textarea
           id="registration-key-bootstrap"
-          className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs outline-none"
+          className="min-h-20 field-sizing-fixed font-mono text-xs md:text-xs"
           value={bootstrap}
           readOnly
           onFocus={(event) => event.currentTarget.select()}
@@ -1305,7 +1306,7 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
   return (
     <>
       <Button variant="outline" onClick={() => { reset(); setOpen(true); }}>
-        <KeyRound data-icon="inline-start" />
+        <SecretIcon data-icon="inline-start" />
         Registration key
       </Button>
       <Dialog open={open} onOpenChange={(next) => { if (!next) reset(); }}>
@@ -1433,39 +1434,43 @@ function ProviderBindings({ bindings }: { bindings: EnvironmentProviderBinding[]
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <section className="mt-6 rounded-xl border">
+      <TableCard className="mt-6">
         <CollapsibleTrigger className="flex w-full items-center gap-3 px-4 py-3 text-left outline-none hover:bg-muted/30 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/50 md:px-5">
           <span className="text-sm font-medium">Provider configuration</span>
           <span className="text-xs text-muted-foreground">
             {enabled} enabled · {bindings.length} total
           </span>
-          <ChevronDown className={`ml-auto size-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+          <DropdownCaretIcon className={`ml-auto size-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="divide-y border-t">
-            {bindings.map((binding) => (
-              <div key={binding.providerId} className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:px-5">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm font-medium">{humanizeIdentifier(binding.providerId)}</p>
-                    {binding.enabled ? (
-                      <Badge variant="secondary">enabled</Badge>
-                    ) : (
-                      <Badge variant="outline" className="border-destructive/50 text-destructive">disabled</Badge>
-                    )}
-                  </div>
-                  <p className="mt-2 font-mono text-xs text-muted-foreground">
-                    {binding.providerId}
-                  </p>
-                </div>
-                <div className="text-xs text-muted-foreground md:text-right">
-                  <p>Updated {relativeTime(binding.updatedAtMs)}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+          {/* A table without a header: the provider's name, its state and id, and
+              when it changed. */}
+          <Table aria-label="Provider configuration" className="border-t [&_td]:px-4 [&_td]:py-3 md:[&_td]:px-5">
+            <TableBody>
+              {bindings.map((binding) => (
+                <TableRow key={binding.providerId} className="hover:bg-transparent">
+                  <TableCell className="w-full max-w-0">
+                    <div className="grid min-w-0 gap-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{humanizeIdentifier(binding.providerId)}</span>
+                        {binding.enabled ? (
+                          <Badge variant="secondary">enabled</Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-destructive/50 text-destructive">disabled</Badge>
+                        )}
+                      </div>
+                      <IdText className="text-muted-foreground">{binding.providerId}</IdText>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">
+                    Updated {relativeTime(binding.updatedAtMs)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </CollapsibleContent>
-      </section>
+      </TableCard>
     </Collapsible>
   );
 }
@@ -1530,7 +1535,7 @@ function ReleaseDaemonButton({
   return (
     <>
       <Button variant="outline" size="sm" onClick={() => { release.reset(); setConfirming(true); }}>
-        <Unplug data-icon="inline-start" />
+        <DisconnectIcon data-icon="inline-start" />
         Release daemon
       </Button>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
@@ -1750,7 +1755,7 @@ function CreateEnvironmentDialog({
           setOpen(true);
         }}
       >
-        <Plus data-icon="inline-start" />
+        <AddIcon data-icon="inline-start" />
         New environment
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
@@ -1794,9 +1799,8 @@ function CreateEnvironmentDialog({
             </Field>
             <Field>
               <FieldLabel htmlFor="environment-display-name">Display name</FieldLabel>
-              <input
+              <Input
                 id="environment-display-name"
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
                 value={displayName}
                 onChange={(event) => setDisplayName(event.target.value)}
                 placeholder={selectedTemplate?.displayName ?? "Development environment"}
@@ -1927,9 +1931,9 @@ function RegisterExternalEnvironmentDialog({
           <div className="grid gap-4">
             <Field>
               <FieldLabel htmlFor="external-endpoint">Daemon endpoint</FieldLabel>
-              <input
+              <Input
                 id="external-endpoint"
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 font-mono text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                className="font-mono"
                 value={endpoint}
                 onChange={(event) => {
                   setEndpoint(event.target.value);
@@ -1946,9 +1950,8 @@ function RegisterExternalEnvironmentDialog({
             </Field>
             <Field>
               <FieldLabel htmlFor="external-display-name">Display name</FieldLabel>
-              <input
+              <Input
                 id="external-display-name"
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
                 value={displayName}
                 onChange={(event) => setDisplayName(event.target.value)}
                 placeholder="Local daemon"

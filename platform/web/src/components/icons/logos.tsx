@@ -5,7 +5,7 @@ import type { SVGProps } from "react";
 /// (simple-icons, CC0). Marks are trademarks of their owners and are used
 /// only to identify the respective service.
 
-type LogoProps = SVGProps<SVGSVGElement> & { size?: number };
+type LogoProps = SVGProps<SVGSVGElement> & { size?: number | string };
 
 export function GitHubLogo({ size = 20, ...props }: LogoProps) {
   return (

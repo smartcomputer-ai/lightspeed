@@ -2,7 +2,7 @@ import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { AddIcon, DeleteIcon, EditIcon } from "@/icons";
 import { api, type Member, type Universe } from "@/api";
 import { UNIVERSE_ROLES, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import {
@@ -106,7 +106,7 @@ function MemberList({ universeId, writable, configuration }: { universeId: strin
         actions={
           writable ? (
             <Button onClick={() => setCreateOpen(true)}>
-              <Plus data-icon="inline-start" />
+              <AddIcon data-icon="inline-start" />
               Add member
             </Button>
           ) : undefined
@@ -156,7 +156,7 @@ function MemberList({ universeId, writable, configuration }: { universeId: strin
                         aria-label={`Edit role for ${member.name || member.email}`}
                         onClick={() => setEditing(member)}
                       >
-                        <Pencil />
+                        <EditIcon />
                       </Button>
                       <AlertDialog>
                         <AlertDialogTrigger
@@ -168,7 +168,7 @@ function MemberList({ universeId, writable, configuration }: { universeId: strin
                             />
                           }
                         >
-                          <Trash2 />
+                          <DeleteIcon />
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>

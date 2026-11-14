@@ -1,7 +1,6 @@
 import { useContext, useId, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Check, Inbox, Loader2, ShieldQuestion, TriangleAlert, X } from "lucide-react";
+import { ApprovalIcon, ApproveIcon, BotEventIcon, CancelIcon, InboxIcon, LoadingIcon, RejectIcon, ShowLessIcon, ShowMoreIcon, WarningIcon } from "@/icons";
 import type { PendingApprovalView } from "@lightspeed-ai/sdk";
-import { BotIcon } from "@/components/icons/bot";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
@@ -55,13 +54,13 @@ export function TranscriptEntryView({
       return entry.tone === "error" ? (
         <Marker className="text-destructive" role="alert">
           <MarkerIcon>
-            <TriangleAlert />
+            <WarningIcon />
           </MarkerIcon>
           <MarkerContent>{entry.text}</MarkerContent>
         </Marker>
       ) : (
         <Marker variant="separator" role={entry.pending ? "status" : undefined}>
-          {entry.pending && <MarkerIcon><Loader2 className="animate-spin" /></MarkerIcon>}
+          {entry.pending && <MarkerIcon><LoadingIcon className="animate-spin" /></MarkerIcon>}
           <MarkerContent>{entry.text}</MarkerContent>
         </Marker>
       );
@@ -213,8 +212,8 @@ export function UserBand({
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
                   <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-foreground">
                     {event.source?.startsWith("bot:")
-                      ? <BotIcon size={14} className="shrink-0 text-teal-700 dark:text-teal-300" />
-                      : <Inbox className="size-3.5 shrink-0 text-teal-700 dark:text-teal-300" />}
+                      ? <BotEventIcon size={14} className="shrink-0 text-teal-700 dark:text-teal-300" />
+                      : <InboxIcon className="size-3.5 shrink-0 text-teal-700 dark:text-teal-300" />}
                     <span className="[overflow-wrap:anywhere]">{eventSourceLabel(event.source, links.botName)}</span>
                   </span>
                   {event.kind && <><span aria-hidden="true">·</span><span className="font-mono text-[11px] [overflow-wrap:anywhere]">{event.kind}</span></>}
@@ -265,7 +264,7 @@ export function UserBand({
                   )}
                 >
                   {expanded ? "Show less" : "Show more"}
-                  {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+                  {expanded ? <ShowLessIcon className="size-3.5" /> : <ShowMoreIcon className="size-3.5" />}
                 </button>
               </div>
             )}
@@ -355,7 +354,7 @@ export function QueuedRunsBar({
               </Button>
             )}
             {item.cancelling || item.steering ? (
-              <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+              <LoadingIcon className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
             ) : onCancel ? (
               <Button
                 variant="ghost"
@@ -365,7 +364,7 @@ export function QueuedRunsBar({
                 title={item.runId ? "Remove from the queue" : "Waiting for the engine to accept this message"}
                 onClick={() => item.runId && onCancel(item.runId)}
               >
-                <X />
+                <CancelIcon />
               </Button>
             ) : null}
           </li>
@@ -399,7 +398,7 @@ export function ApprovalCards({
             className="rounded-lg border border-amber-500/35 bg-amber-500/5 p-4"
           >
             <div className="flex items-start gap-3">
-              <ShieldQuestion className="mt-0.5 size-4 shrink-0 text-amber-600" />
+              <ApprovalIcon className="mt-0.5 size-4 shrink-0 text-amber-600" />
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">Approve MCP tool call?</p>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -416,9 +415,9 @@ export function ApprovalCards({
                     onClick={() => onDecide(approval.approvalId, "approve")}
                   >
                     {busy && deciding?.decision === "approve" ? (
-                      <Loader2 className="animate-spin" />
+                      <LoadingIcon className="animate-spin" />
                     ) : (
-                      <Check />
+                      <ApproveIcon />
                     )}
                     Approve
                   </Button>
@@ -429,9 +428,9 @@ export function ApprovalCards({
                     onClick={() => onDecide(approval.approvalId, "reject")}
                   >
                     {busy && deciding?.decision === "reject" ? (
-                      <Loader2 className="animate-spin" />
+                      <LoadingIcon className="animate-spin" />
                     ) : (
-                      <X />
+                      <RejectIcon />
                     )}
                     Reject
                   </Button>

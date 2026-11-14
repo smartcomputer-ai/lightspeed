@@ -1,9 +1,9 @@
-import { ReadError } from "@/components/read-error";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useDocumentTitle } from "@/lib/document-title";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { NavLink, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { slugify } from "@lightspeed-ai/platform-shared";
-import { ChevronRight, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
+import { AddIcon, DeleteIcon, ProfileIcon } from "@/icons";
 import {
   api,
   type ProfileDocument,
@@ -18,7 +18,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +35,7 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { SettingsDisclosure } from "@/components/ui/settings-disclosure";
 import {
   Select,
@@ -44,8 +44,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DetailPrompt, ListNote, LoadingNote, UniverseNotFound } from "@/components/page";
+import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
 import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
 import {
@@ -55,7 +54,8 @@ import {
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { useActionPermissions } from "@/lib/permissions";
-import { ListPane } from "@/components/list-pane";
+import { DetailHeader } from "@/components/detail-header";
+import { ListPane, ListPaneBody, ListPaneHeader, ListPaneState, ListRow, ListRowLine } from "@/components/list-pane";
 
 /// Structured profile editor. Pane = profile list; detail = sectioned form
 /// with a reusable SessionConfig editor and a permanent Edit-as-JSON tab.
@@ -95,7 +95,7 @@ export function ProfilesPage(_props: { admin: boolean }) {
           />
         ) : (
           <DetailPrompt
-            icon={<SlidersHorizontal className="size-10 text-muted-foreground/60" />}
+            icon={<ProfileIcon className="size-10 text-muted-foreground/60" />}
             create={canCreate ? { label: "New profile", onClick: () => setCreateOpen(true) } : undefined}
           >
             Pick a profile{canCreate ? ", or create one" : ""}.
@@ -125,57 +125,39 @@ function ProfilePane({
 
   return (
     <>
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
-        <h1 className="text-sm font-semibold">Profiles</h1>
-        {canCreate && (
-          <Button
-          variant="ghost"
-          size="icon-sm"
-          className="ml-auto"
-          onClick={() => setCreateOpen(true)}
-          aria-label="New profile"
-        >
-            <Plus />
+      <ListPaneHeader
+        title="Profiles"
+        count={profiles.data?.length}
+        actions={canCreate && (
+          <Button variant="ghost" size="icon-sm" onClick={() => setCreateOpen(true)} aria-label="New profile">
+            <AddIcon />
           </Button>
         )}
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {profiles.isLoading && <p className="p-4 text-sm text-muted-foreground">Loading…</p>}
-        {profiles.error && (
-          <ReadError error={profiles.error} loading={!profiles.data} className="p-4" />
-        )}
-        {profiles.data && profiles.data.length === 0 && (
-          <ListNote>No profiles yet.</ListNote>
-        )}
+      />
+      <ListPaneBody>
+        <ListPaneState
+          loading={profiles.isLoading}
+          error={profiles.error}
+          hasData={Boolean(profiles.data)}
+          empty={profiles.data?.length === 0 && "No profiles yet."}
+        />
         <ul>
           {profiles.data?.map((profile) => (
-            <li key={profile.profileId}>
-              <NavLink
-                to={`/u/${handle}/profiles/${profile.profileId}`}
-                className={cn(
-                  "flex flex-col gap-0.5 border-b px-4 py-2.5 text-sm hover:bg-muted/50",
-                  profile.profileId === activeId && "bg-muted",
-                )}
-              >
-                <span className="flex items-center gap-2">
-                  <span className="truncate font-medium">
-                    {profile.displayName ?? profile.profileId}
-                  </span>
-                  {!permissions.can("manageProfile") && (
-                    <span className="shrink-0 text-xs text-muted-foreground">Read only</span>
-                  )}
-                  <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                    r{profile.revision}
-                  </span>
-                </span>
-                <span className="truncate text-xs text-muted-foreground">
-                  {profile.description ?? profile.profileId}
-                </span>
-              </NavLink>
-            </li>
+            <ListRow
+              key={profile.profileId}
+              to={`/u/${handle}/profiles/${profile.profileId}`}
+              active={profile.profileId === activeId}
+              title={profile.displayName ?? profile.profileId}
+              badges={!permissions.can("manageProfile") && (
+                <span className="shrink-0 text-xs text-muted-foreground">Read only</span>
+              )}
+              meta={`r${profile.revision}`}
+            >
+              <ListRowLine>{profile.description ?? profile.profileId}</ListRowLine>
+            </ListRow>
           ))}
         </ul>
-      </div>
+      </ListPaneBody>
       {canCreate && (
         <NewProfileDialog
           universeId={universeId}
@@ -212,6 +194,7 @@ function ProfileEditor({
   const [original, setOriginal] = useState<ProfileDocument | null>(null);
   const [draft, setDraft] = useState<ProfileDocument | null>(null);
   const [tab, setTab] = useState<"form" | "json">("form");
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [jsonText, setJsonText] = useState("");
   const [configError, setConfigError] = useState<string | null>(null);
   const [retentionError, setRetentionError] = useState<string | null>(null);
@@ -329,6 +312,8 @@ function ProfileEditor({
     }
   };
 
+  useDocumentTitle([(draft?.displayName as string | undefined) || profileId]);
+
   if (doc.isLoading || !draft) {
     return (
       <div className="p-6">
@@ -343,60 +328,63 @@ function ProfileEditor({
 
   return (
     <>
-      <header className="flex h-12 min-w-0 shrink-0 items-center gap-1.5 border-b px-2 md:gap-3 md:px-4">
-        <NavLink to={`/u/${handle}/profiles`} className="flex size-8 shrink-0 items-center justify-center md:hidden" aria-label="Back to profiles">
-          <ChevronRight className="size-4 rotate-180" />
-        </NavLink>
-        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
-          {(draft.displayName as string) || profileId}
-        </h1>
-        <code className="hidden max-w-48 truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground md:block">
-          {profileId}
-        </code>
-        <span className="hidden shrink-0 text-xs text-muted-foreground md:inline">
-          r{(draft.revision as number) ?? "?"}
-        </span>
-        <div className="ml-auto flex shrink-0 items-center gap-1 md:gap-2">
-          <Tabs value={tab} onValueChange={(v) => switchTab(v as "form" | "json")}>
-            <TabsList className="group-data-horizontal/tabs:h-8 md:group-data-horizontal/tabs:h-9">
-              <TabsTrigger value="form" className="px-1.5 text-xs md:px-2 md:text-sm">Form</TabsTrigger>
-              <TabsTrigger value="json" className="px-1.5 text-xs md:px-2 md:text-sm">JSON</TabsTrigger>
-            </TabsList>
-          </Tabs>
-          {manage && (
-            <Button size="sm" className="px-2 text-xs md:px-2.5 md:text-sm" disabled={!dirty || save.isPending} onClick={submit}>
-              {save.isPending ? "Saving…" : dirty ? "Save" : "Saved"}
-            </Button>
-          )}
-          {manage && <AlertDialog>
-            <AlertDialogTrigger
-              render={
-                <Button variant="ghost" size="icon-sm" className="text-destructive" aria-label="Delete profile" />
-              }
+      <DetailHeader
+        back={{ to: `/u/${handle}/profiles`, label: "Back to profiles" }}
+        title={(draft.displayName as string) || profileId}
+        details={<>
+          <code className="max-w-48 truncate rounded bg-muted px-1.5 py-0.5 font-mono">{profileId}</code>
+          <span>r{(draft.revision as number) ?? "?"}</span>
+        </>}
+        actions={[
+          {
+            kind: "choice",
+            key: "view",
+            label: "Edit as",
+            value: tab,
+            options: [{ value: "form", label: "Form" }, { value: "json", label: "JSON" }],
+            onChange: (value) => switchTab(value as "form" | "json"),
+          },
+          ...(manage
+            ? [
+                {
+                  key: "save",
+                  label: "Save",
+                  text: save.isPending ? "Saving…" : dirty ? "Save" : "Saved",
+                  primary: true,
+                  disabled: !dirty || save.isPending,
+                  onSelect: submit,
+                },
+                {
+                  key: "delete",
+                  label: "Delete profile",
+                  icon: <DeleteIcon />,
+                  destructive: true,
+                  onSelect: () => setDeleteOpen(true),
+                },
+              ]
+            : []),
+        ]}
+      />
+      <AlertDialog open={deleteOpen && manage} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete profile {profileId}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Bots referencing this profile id fall back to the default
+              configuration.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={() => remove.mutate()}
             >
-              <Trash2 />
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete profile {profileId}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Bots referencing this profile id fall back to the default
-                  configuration.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  className="bg-destructive text-white hover:bg-destructive/90"
-                  onClick={() => remove.mutate()}
-                >
-                  Delete
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>}
-        </div>
-      </header>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {!manage && (
         <p className="border-b px-4 py-2 text-xs text-muted-foreground">
           Read only — you can view this profile, but cannot change it.
@@ -406,7 +394,7 @@ function ProfileEditor({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === "json" ? (
           <textarea
-            className="h-full w-full resize-none bg-transparent p-4 font-mono text-xs outline-none"
+            className="block h-full w-full resize-none bg-transparent p-4 font-mono text-xs outline-none"
             readOnly={!manage}
             aria-label="Profile JSON"
             value={jsonText}
@@ -529,8 +517,8 @@ function InstructionsSection({
 
   return (
     <Section title="Instructions" description="System prompt applied to sessions.">
-      <textarea
-        className="min-h-32 w-full resize-y rounded-lg border border-input bg-transparent p-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+      <Textarea
+        className="min-h-32 resize-y field-sizing-fixed p-3"
         readOnly={readOnly}
         value={instructions?.text ?? ""}
         onChange={(e) =>

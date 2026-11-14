@@ -1,21 +1,7 @@
 import { AGENT_MODEL_API_KINDS } from "@lightspeed-ai/platform-shared";
 import { createContext, useContext, useEffect, useId, useState, type ReactNode } from "react";
 import type { WorkspaceAttachmentDraft } from "@/api";
-import {
-  ChevronDown,
-  ChevronRight,
-  CalendarClock,
-  Clock3,
-  Code2,
-  FolderOpen,
-  Globe2,
-  Network,
-  Plus,
-  Server,
-  Tags,
-  Trash2,
-  Wrench,
-} from "lucide-react";
+import { AddIcon, CodeModeIcon, CollapseIcon, DeleteIcon, EnvironmentIcon, ExpandIcon, MetadataIcon, RetentionIcon, SubAgentIcon, TimerIcon, ToolsIcon, WebIcon, WorkspaceIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -126,42 +112,42 @@ type ModelChoice = {
 
 const featureInfo: Record<
   FeatureName,
-  { title: string; description: string; icon: typeof FolderOpen }
+  { title: string; description: string; icon: typeof WorkspaceIcon }
 > = {
   vfs: {
     title: "Virtual File System: Files, Instructions, Skills",
     description: "Grant access to workspace-attached files and source instructions or skills from them.",
-    icon: FolderOpen,
+    icon: WorkspaceIcon,
   },
   web: {
     title: "Web",
     description: "Grant independent web search and fetch capabilities.",
-    icon: Globe2,
+    icon: WebIcon,
   },
   subagents: {
     title: "Sub-agents",
     description: "Let the agent run listed profiles as sub-agents (agent_run / agent_spawn) within root-scoped limits.",
-    icon: Network,
+    icon: SubAgentIcon,
   },
   codeMode: {
     title: "Code mode",
     description: "Let the agent compose its available tools with JavaScript, including loops and parallel calls.",
-    icon: Code2,
+    icon: CodeModeIcon,
   },
   timers: {
     title: "Timers",
     description: "Allow delayed work and promise controls such as sleep and await.",
-    icon: Clock3,
+    icon: TimerIcon,
   },
   environments: {
     title: "Environments",
     description: "Grant access to universe environments and active-environment tools.",
-    icon: Server,
+    icon: EnvironmentIcon,
   },
   mcp: {
     title: "MCP Servers",
     description: "Declare remote tools from the universe MCP catalog.",
-    icon: Wrench,
+    icon: ToolsIcon,
   },
 };
 
@@ -716,7 +702,7 @@ export function SessionConfigEditor({
               <ExpandableSetupPanel
                 title="Session metadata"
                 description={metadataDescription}
-                icon={Tags}
+                icon={MetadataIcon}
               >
                 {metadataSetup}
               </ExpandableSetupPanel>
@@ -725,7 +711,7 @@ export function SessionConfigEditor({
               <ExpandableSetupPanel
                 title="Automatic deletion"
                 description={retentionDescription}
-                icon={CalendarClock}
+                icon={RetentionIcon}
               >
                 {retentionSetup}
               </ExpandableSetupPanel>
@@ -745,7 +731,7 @@ function ExpandableSetupPanel({
 }: {
   title: string;
   description: string;
-  icon: typeof Tags;
+  icon: typeof MetadataIcon;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -754,7 +740,7 @@ function ExpandableSetupPanel({
       <button
         type="button"
         aria-expanded={open}
-        className="flex min-h-16 w-full min-w-0 cursor-pointer items-center gap-3 rounded-md px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex min-h-16 w-full min-w-0 cursor-action items-center gap-3 rounded-md px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => setOpen((value) => !value)}
       >
         <Icon className="size-4 shrink-0 text-muted-foreground" />
@@ -763,7 +749,7 @@ function ExpandableSetupPanel({
           <span className="block text-xs text-muted-foreground">{description}</span>
         </span>
         <span className="flex size-8 shrink-0 items-center justify-center" aria-hidden="true">
-          {open ? <ChevronDown /> : <ChevronRight />}
+          {open ? <CollapseIcon /> : <ExpandIcon />}
         </span>
       </button>
       {open && <div className="min-w-0 border-t px-4 py-4">{children}</div>}
@@ -1332,7 +1318,7 @@ function FeaturePanel({
           aria-expanded={enabled && configurable ? open : undefined}
           className={cn(
             "-mr-2 flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            enabled && configurable && "cursor-pointer",
+            enabled && configurable && "cursor-action",
           )}
           onClick={() => setOpen((value) => !value)}
         >
@@ -1348,7 +1334,7 @@ function FeaturePanel({
           </div>
           {enabled && configurable && (
             <span className="flex size-8 shrink-0 items-center justify-center" aria-hidden="true">
-              {open ? <ChevronDown /> : <ChevronRight />}
+              {open ? <CollapseIcon /> : <ExpandIcon />}
             </span>
           )}
         </button>
@@ -1422,7 +1408,7 @@ function VfsFields({
               },
             ])}
           >
-            <Plus data-icon="inline-start" />
+            <AddIcon data-icon="inline-start" />
             Add workspace
           </Button>
         </div>
@@ -1523,7 +1509,7 @@ function VfsFields({
                 aria-label="Remove workspace attachment"
                 onClick={() => updateAttachments(attachments.filter((_, attachmentIndex) => attachmentIndex !== index))}
               >
-                <Trash2 />
+                <DeleteIcon />
               </Button>
             </div>
           );
@@ -1964,7 +1950,7 @@ function EnvironmentFields({
             })
           }
         >
-          <Plus data-icon="inline-start" />
+          <AddIcon data-icon="inline-start" />
           Add environment
         </Button>
       </div>
@@ -2072,7 +2058,7 @@ function EnvironmentFields({
                   })
                 }
               >
-                <Trash2 />
+                <DeleteIcon />
               </Button>
             </div>
             <div className="flex items-center gap-2">
@@ -2170,7 +2156,7 @@ function McpFields({
           size="xs"
           onClick={() => updateAttachments([...attachments, { serverId: firstServerId }])}
         >
-          <Plus data-icon="inline-start" />
+          <AddIcon data-icon="inline-start" />
           Add server
         </Button>
       </div>
@@ -2232,7 +2218,7 @@ function McpFields({
             aria-label="Remove MCP server"
             onClick={() => updateAttachments(attachments.filter((_, attachmentIndex) => attachmentIndex !== index))}
           >
-            <Trash2 />
+            <DeleteIcon />
           </Button>
         </div>
       ))}

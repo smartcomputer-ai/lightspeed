@@ -10,6 +10,7 @@ import type {
   LlmUsageView,
   RunAcceptedSourceView,
   ResourceAccessSummary,
+  RunFailureKindView,
   RunSummaryView,
   RunView,
   SessionEventKindView,
@@ -379,7 +380,7 @@ export function findRun(session: SessionRecord, runId: string): RunView | null {
 
 export function activeRun(session: SessionRecord): RunView | null {
   return [...session.runs.values()].find(
-    (run) => run.status === "running" || run.status === "cancelling",
+    (run) => run.status === "running" || run.status === "cancelling" || run.status === "parked",
   ) ?? null;
 }
 
@@ -398,6 +399,9 @@ export interface RunInput {
   source?: RunView["source"];
   /// Called once the run reaches a terminal state.
   onFinished?: (run: RunView) => void;
+  /// Plays the first turn at once, without timers: for seeding a run that
+  /// is already under way (or parked) when the demo opens.
+  instant?: boolean;
 }
 
 type DemoRun = RunView & RunSummaryView;
@@ -456,11 +460,12 @@ export function startRun(
       joins,
     );
     const respond = session.responder ?? universe.responder;
+    const context = { store, universe, session, turn: session.turns };
     const turn =
-      input.turn ?? respond(responderText(input.text, input.media ?? []), { store, universe, session, turn: session.turns });
-    schedule(session, run, turnSteps(store, session, run, turn, 1), () =>
-      afterTurns(store, universe, session, run, 2, input.onFinished),
-    );
+      input.turn
+      ?? store.debug?.(input.text, { ...context, run })
+      ?? respond(responderText(input.text, input.media ?? []), context);
+    playTurn(store, universe, session, run, turn, 1, input.onFinished, input.instant);
   };
   if (activeRun(session)) {
     session.queue.push({ runId: run.id, begin });
@@ -496,10 +501,99 @@ function afterTurns(
     { runId: run.id },
   );
   const respond = session.responder ?? universe.responder;
-  const turn = respond(responderText(steer.text, steer.media ?? []), { store, universe, session, turn: session.turns });
-  schedule(session, run, turnSteps(store, session, run, turn, turnIndex), () =>
-    afterTurns(store, universe, session, run, turnIndex + 1, onFinished),
-  );
+  const context = { store, universe, session, turn: session.turns };
+  const turn = store.debug?.(steer.text, { ...context, run })
+    ?? respond(responderText(steer.text, steer.media ?? []), context);
+  playTurn(store, universe, session, run, turn, turnIndex, onFinished);
+}
+
+/// Plays one turn of a run, then what it asks for: the next turn (steering)
+/// or the end of the run, a failure, or a park on an approval.
+function playTurn(
+  store: DemoStore,
+  universe: UniverseState,
+  session: SessionRecord,
+  run: RunView,
+  turn: DemoTurn,
+  turnIndex: number,
+  onFinished?: (run: RunView) => void,
+  instant = false,
+): void {
+  const finished = (done: RunView) => {
+    onFinished?.(done);
+    turn.finished?.(done);
+  };
+  (instant ? playNow : schedule)(session, run, turnSteps(store, session, run, turn, turnIndex), () => {
+    if (turn.fail) {
+      finishRun(session, run, "failed", Date.now(), turn.fail);
+      finished(run);
+    } else if (turn.approval) {
+      parkForApproval(store, universe, session, run, turn.approval, turnIndex + 1, finished);
+    } else {
+      afterTurns(store, universe, session, run, turnIndex + 1, finished);
+    }
+  });
+}
+
+/// Parks a run on one MCP tool call awaiting a decision; deciding it
+/// (see decideApprovals) unparks the run with the turn the decision picks.
+function parkForApproval(
+  store: DemoStore,
+  universe: UniverseState,
+  session: SessionRecord,
+  run: RunView,
+  approval: NonNullable<DemoTurn["approval"]>,
+  turnIndex: number,
+  onFinished: (run: RunView) => void,
+): void {
+  const approvalId = store.nextId("approval");
+  const at = Date.now();
+  const subject = {
+    kind: "mcpToolCall" as const,
+    serverId: approval.serverId,
+    serverLabel: approval.serverLabel,
+    toolName: approval.toolName,
+    argumentsPreview: JSON.stringify(approval.arguments),
+    argumentsRef: store.putText(JSON.stringify(approval.arguments, null, 2)),
+  };
+  run.status = "parked";
+  run.pendingApprovals = [{ approvalId, requestedAtMs: at, subject }];
+  session.view.activity = "waiting";
+  pushEvent(session, { type: "approvalRequested", runId: run.id, approvalId, subject }, { runId: run.id }, at);
+  pushEvent(session, { type: "approvalRunParked", runId: run.id }, { runId: run.id }, at);
+  session.parked ??= new Map();
+  session.parked.set(run.id, (approved) => {
+    session.parked?.delete(run.id);
+    run.status = "running";
+    session.view.activity = "working";
+    pushEvent(session, { type: "approvalRunUnparked", runId: run.id }, { runId: run.id });
+    playTurn(store, universe, session, run, approval.then(approved), turnIndex, onFinished);
+  });
+}
+
+/// Decides a run's pending approvals; once none is left, a parked run goes on.
+export function decideApprovals(
+  session: SessionRecord,
+  run: RunView,
+  decisions: Array<{ approvalId: string; decision: "approve" | "reject" }>,
+): Array<{ approvalId: string; status: "decided" } | { approvalId: string; status: "failed"; failure: { kind: string; message: string } }> {
+  const pending = new Map((run.pendingApprovals ?? []).map((approval) => [approval.approvalId, approval]));
+  let approved = true;
+  const results = decisions.map(({ approvalId, decision }) => {
+    if (!pending.delete(approvalId)) {
+      return { approvalId, status: "failed" as const, failure: { kind: "unknown", message: "approval was not found" } };
+    }
+    if (decision !== "approve") approved = false;
+    pushEvent(session, { type: "approvalDecided", runId: run.id, approvalId, decision });
+    return { approvalId, status: "decided" as const };
+  });
+  run.pendingApprovals = [...pending.values()];
+  if (run.pendingApprovals.length === 0 && run.status === "parked") {
+    const resume = session.parked?.get(run.id);
+    if (resume) resume(approved);
+    else run.status = "running";
+  }
+  return results;
 }
 
 export function finishRun(
@@ -507,11 +601,16 @@ export function finishRun(
   run: RunView,
   status: "completed" | "cancelled" | "failed",
   at = Date.now(),
+  failure: { kind: RunFailureKindView; message: string } = { kind: "internal", message: "demo run failed" },
 ): void {
   for (const timer of session.timers) clearTimeout(timer);
   session.timers.clear();
+  session.pendingStep = undefined;
+  session.hurryUntilMs = undefined;
   run.status = status;
   run.finishedAtMs = at;
+  run.pendingApprovals = [];
+  session.parked?.delete(run.id);
   const joins = { runId: run.id };
   if (status === "completed") {
     completeRunOutput(session, run, at);
@@ -520,7 +619,7 @@ export function finishRun(
   } else {
     pushEvent(
       session,
-      { type: "runFailed", runId: run.id, kind: "internal", message: "demo run failed" },
+      { type: "runFailed", runId: run.id, kind: failure.kind, message: failure.message },
       joins,
       at,
     );
@@ -554,6 +653,8 @@ export function cancelRun(session: SessionRecord, runId: string): RunView | null
   if (run.status !== "running") return run;
   for (const timer of session.timers) clearTimeout(timer);
   session.timers.clear();
+  session.pendingStep = undefined;
+  session.hurryUntilMs = undefined;
   run.status = "cancelling";
   pushEvent(session, { type: "runCancellationRequested", runId }, { runId });
   const timer = setTimeout(() => {
@@ -667,10 +768,24 @@ function turnSteps(
     pushEvent(session, { type: "turnPlanned", runId, turnId }, joins(), at);
     pushEvent(session, { type: "turnGenerationRequested", runId, turnId }, joins(), at);
   };
-  const closeGeneration = (at: number) => {
+  // Token usage like a provider reports it, so run statistics have figures:
+  // the active context plus a fixed instruction and tool overhead in, the
+  // generation's own entries out, mostly cached after the first generation.
+  let generation = 0;
+  const closeGeneration = (at: number, output: ContextEntryView[]) => {
+    generation += 1;
+    const inputTokens = 4_800 + Math.ceil(entryChars(session.activeContext.entries) / 4);
+    const cachedInputTokens = Math.round(inputTokens * (generation === 1 ? 0.71 : 0.94));
+    const outputTokens = Math.max(40, Math.round(entryChars(output) / 4));
     pushEvent(
       session,
-      { type: "turnGenerationCompleted", runId, turnId, status: "succeeded" },
+      {
+        type: "turnGenerationCompleted",
+        runId,
+        turnId,
+        status: "succeeded",
+        usage: { inputTokens, cachedInputTokens, outputTokens },
+      },
       joins(),
       at,
     );
@@ -683,7 +798,7 @@ function turnSteps(
     const calls = toolCallEvents(store, tools);
     const batchId = store.nextId("batch");
     steps.push({
-      delayMs: 700,
+      delayMs: turn.thinkMs ?? 700,
       apply: (at) => {
         const entries: ContextEntryView[] = [];
         if (turn.thinking) entries.push(contextReasoning(store.nextId("entry"), turn.thinking));
@@ -691,7 +806,7 @@ function turnSteps(
           entries.push(contextToolCall(store.nextId("entry"), call.callId, call.toolName));
         }
         applyEntries(session, entries, joins(), at);
-        closeGeneration(at);
+        closeGeneration(at, entries);
         pushEvent(
           session,
           { type: "toolBatchStarted", runId, turnId, batchId, calls },
@@ -745,15 +860,16 @@ function turnSteps(
   }
 
   steps.push({
-    delayMs: tools.length > 0 ? 900 : turn.thinking ? 1_200 : 800,
+    delayMs: tools.length > 0 ? 900 : turn.thinkMs ?? (turn.thinking ? 1_200 : 800),
     apply: (at) => {
       const entries: ContextEntryView[] = [];
       if (turn.thinking && tools.length === 0) {
         entries.push(contextReasoning(store.nextId("entry"), turn.thinking));
       }
-      entries.push(contextMessage(store.nextId("entry"), "assistant", turn.text));
+      if (turn.text) entries.push(contextMessage(store.nextId("entry"), "assistant", turn.text));
       applyEntries(session, entries, joins(), at);
-      closeGeneration(at);
+      closeGeneration(at, entries);
+      turn.landed?.(at);
     },
   });
   return steps;
@@ -768,15 +884,48 @@ function schedule(session: SessionRecord, run: RunView, steps: Step[], done: () 
       done();
       return;
     }
-    const timer = setTimeout(() => {
-      session.timers.delete(timer);
-      if (run.status !== "running") return;
-      step.apply(Date.now());
-      next();
-    }, step.delayMs);
-    session.timers.add(timer);
+    const arm = (requestedMs: number) => {
+      const delayMs = session.hurryUntilMs === undefined
+        ? requestedMs
+        : Math.min(requestedMs, Math.max(0, session.hurryUntilMs - Date.now()));
+      const timer = setTimeout(() => {
+        session.timers.delete(timer);
+        if (session.pendingStep?.timer === timer) session.pendingStep = undefined;
+        if (run.status !== "running") return;
+        step.apply(Date.now());
+        next();
+      }, delayMs);
+      session.timers.add(timer);
+      session.pendingStep = { timer, dueAtMs: Date.now() + delayMs, rearm: arm };
+    };
+    arm(step.delayMs);
   };
   next();
+}
+
+/// Applies every step at once, then what follows them.
+function playNow(_session: SessionRecord, run: RunView, steps: Step[], done: () => void): void {
+  const at = Date.now();
+  for (const step of steps) {
+    if (run.status !== "running") return;
+    step.apply(at);
+  }
+  done();
+}
+
+/// Makes the active run land within `withinMs`, as a model answering
+/// sooner would: its pending step and every one after it are due by then.
+/// Steps due sooner keep their time; an earlier deadline is kept.
+export function hurryRun(session: SessionRecord, withinMs: number): void {
+  if (!activeRun(session)) return;
+  const deadline = Date.now() + withinMs;
+  if (session.hurryUntilMs !== undefined && session.hurryUntilMs <= deadline) return;
+  session.hurryUntilMs = deadline;
+  const pending = session.pendingStep;
+  if (!pending || pending.dueAtMs <= deadline) return;
+  clearTimeout(pending.timer);
+  session.timers.delete(pending.timer);
+  pending.rearm(withinMs);
 }
 
 // ---------------------------------------------------------------------------

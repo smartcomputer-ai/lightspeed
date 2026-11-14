@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { BackIcon } from "@/icons";
 import type { SecretProvider, SubscriptionImportResult } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -80,7 +80,7 @@ export function AddModelProviderDialog({
                 aria-label="Back to catalog"
                 onClick={() => setSelected(null)}
               >
-                <ArrowLeft />
+                <BackIcon />
               </Button>
             )}
             {definition ? (

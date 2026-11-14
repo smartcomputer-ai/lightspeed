@@ -5,6 +5,7 @@ import { api, ApiError, type ModelConfig, type ModelDefaults, type ModelDefaults
 import { modelDefaultsKey, modelLabel, useModelDefaults, useModelDiscovery } from "@/lib/model-defaults";
 import { summarizeProviderReadiness } from "@/lib/provider-readiness";
 import { Button } from "@/components/ui/button";
+import { Table, TableActionsCell, TableBody, TableCard, TableCell, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -41,34 +42,44 @@ export function ModelDefaultsSection({ universeId, writable, onEdit }: { univers
       <div className="mb-3">
         <h2 id="model-defaults-heading" className="text-sm font-semibold">Defaults</h2>
       </div>
-      <div className="divide-y rounded-xl border">
-        {slots.map(({ slot, label, description }) => {
-          const model = defaults.data?.[slot];
-          const readiness = summarizeProviderReadiness(model, discovery.error ? undefined : discovery.data?.providers, slot);
-          return (
-            <div key={slot} role="group" aria-label={label} className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-              <div className="min-w-0 space-y-1">
-                <h3 className="text-sm font-medium">{label}</h3>
-                <p className="text-xs text-muted-foreground">{description}</p>
-                <p className="break-words text-sm">{defaults.isLoading ? "Loading…" : defaults.error ? "Default unavailable" : model ? modelLabel(model) : "No default selected"}</p>
-                {model && <p className="text-xs text-muted-foreground">{apiLabels[model.apiKind] ?? model.apiKind}</p>}
-                {model && <p role="status" className={`text-xs ${readiness.blocked ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>
-                  {discovery.isLoading ? "Checking provider…" : readiness.message}
-                </p>}
-              </div>
-              {writable && defaults.data && !defaults.error && <div className="flex gap-2">
-                <Button variant="outline" size="sm" disabled={clear.isPending} onClick={() => { clear.reset(); onEdit(defaults.data!, slot); }}>{model ? "Change" : "Choose model"}</Button>
-                {model && <Button variant="ghost" size="sm" disabled={clear.isPending} onClick={() => clear.mutate({ revision: defaults.data!.revision, slot })}>{clear.isPending ? "Clearing…" : "Clear"}</Button>}
-              </div>}
-            </div>
-          );
-        })}
-        {defaults.error && <div className="flex items-center gap-3 px-5 pb-4 text-sm text-destructive" role="alert">
-          <span>Could not load defaults: {defaults.error.message}</span>
-          <Button variant="outline" size="sm" onClick={() => void defaults.refetch()}>Retry</Button>
-        </div>}
-        {clear.error && <p role="alert" className="px-5 pb-4 text-sm text-destructive">{clear.error instanceof ApiError && clear.error.status === 409 ? "Defaults changed elsewhere. Review the current selection before clearing it." : clear.error.message}</p>}
-      </div>
+      {/* One row per slot, without a header: the slot's name and description
+          head its own row. */}
+      <TableCard>
+        <Table aria-labelledby="model-defaults-heading" className="[&_td]:px-4 [&_td]:py-3">
+          <TableBody>
+            {slots.map(({ slot, label, description }) => {
+              const model = defaults.data?.[slot];
+              const readiness = summarizeProviderReadiness(model, discovery.error ? undefined : discovery.data?.providers, slot);
+              return (
+                <TableRow key={slot} aria-label={label} className="hover:bg-transparent">
+                  <TableCell className="whitespace-normal">
+                    <div className="min-w-0 space-y-1">
+                      <h3 className="text-sm font-medium">{label}</h3>
+                      <p className="text-xs text-muted-foreground">{description}</p>
+                      <p className="break-words text-sm">{defaults.isLoading ? "Loading…" : defaults.error ? "Default unavailable" : model ? modelLabel(model) : "No default selected"}</p>
+                      {model && <p className="text-xs text-muted-foreground">{apiLabels[model.apiKind] ?? model.apiKind}</p>}
+                      {model && <p role="status" className={`text-xs ${readiness.blocked ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>
+                        {discovery.isLoading ? "Checking provider…" : readiness.message}
+                      </p>}
+                    </div>
+                  </TableCell>
+                  <TableActionsCell>
+                    {writable && defaults.data && !defaults.error && <div className="flex justify-end gap-2">
+                      <Button variant="outline" size="sm" disabled={clear.isPending} onClick={() => { clear.reset(); onEdit(defaults.data!, slot); }}>{model ? "Change" : "Choose model"}</Button>
+                      {model && <Button variant="ghost" size="sm" disabled={clear.isPending} onClick={() => clear.mutate({ revision: defaults.data!.revision, slot })}>{clear.isPending ? "Clearing…" : "Clear"}</Button>}
+                    </div>}
+                  </TableActionsCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </TableCard>
+      {defaults.error && <div className="mt-3 flex items-center gap-3 text-sm text-destructive" role="alert">
+        <span>Could not load defaults: {defaults.error.message}</span>
+        <Button variant="outline" size="sm" onClick={() => void defaults.refetch()}>Retry</Button>
+      </div>}
+      {clear.error && <p role="alert" className="mt-3 text-sm text-destructive">{clear.error instanceof ApiError && clear.error.status === 409 ? "Defaults changed elsewhere. Review the current selection before clearing it." : clear.error.message}</p>}
     </section>
   );
 }

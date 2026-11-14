@@ -95,7 +95,7 @@ it.each(["more", "tab"] as const)("offers compaction in the %s menu and prevents
     expect(busy.disabled).toBe(true);
     const trigger = container.querySelector('[data-testid="menu-trigger"]')!;
     expect(trigger.querySelector(".animate-spin")).toBeNull();
-    expect(trigger.querySelector(variant === "more" ? ".lucide-ellipsis" : ".lucide-chevron-down")).not.toBeNull();
+    expect(trigger.querySelector(variant === "more" ? "[data-icon-role=MoreIcon]" : "[data-icon-role=DropdownCaretIcon]")).not.toBeNull();
     await act(async () => busy.click());
     expect(compact).toHaveBeenCalledTimes(1);
   }

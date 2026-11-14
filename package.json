@@ -14,6 +14,7 @@
     "platform/web"
   ],
   "scripts": {
+    "git:change-stats": "node scripts/git-change-stats.mjs",
     "release:prepare": "node scripts/release/prepare-version.mjs",
     "dev:docs": "npm run dev --workspace @lightspeed-ai/docs --",
     "build:docs": "npm run build --workspace @lightspeed-ai/docs",

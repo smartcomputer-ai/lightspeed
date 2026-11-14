@@ -19,6 +19,9 @@ export interface UserPreferences {
   /** The dragged width of every page's list column, so it holds from page
    * to page; null keeps the default. */
   listWidth: number | null;
+  /** Meta toolbars that expand on hover (page headers) stay expanded, as
+   * tags, until unlocked. Set from the lock beside any of them. */
+  keepMetaExpanded: boolean;
 }
 
 const DEFAULTS: UserPreferences = {
@@ -28,6 +31,7 @@ const DEFAULTS: UserPreferences = {
   sidebarWidth: null,
   sidebarCollapsed: false,
   listWidth: null,
+  keepMetaExpanded: false,
 };
 
 function storedWidth(value: unknown): number | null {
@@ -41,6 +45,7 @@ const Context = createContext<UserPreferences & {
   setSidebarWidth: (width: number | null) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setListWidth: (width: number | null) => void;
+  setKeepMetaExpanded: (keep: boolean) => void;
 }>({
   ...DEFAULTS,
   setShowRunStatistics: () => {},
@@ -49,6 +54,7 @@ const Context = createContext<UserPreferences & {
   setSidebarWidth: () => {},
   setSidebarCollapsed: () => {},
   setListWidth: () => {},
+  setKeepMetaExpanded: () => {},
 });
 
 export function readUserPreferences(userId: string): UserPreferences {
@@ -66,6 +72,7 @@ export function readUserPreferences(userId: string): UserPreferences {
       sidebarWidth: storedWidth(record.sidebarWidth),
       sidebarCollapsed: record.sidebarCollapsed === true,
       listWidth: storedWidth(record.listWidth),
+      keepMetaExpanded: record.keepMetaExpanded === true,
     };
   } catch {
     return DEFAULTS;
@@ -106,6 +113,7 @@ function AccountPreferences({ userId, children }: { userId: string; children: Re
         setSidebarWidth: (sidebarWidth) => update({ sidebarWidth }),
         setSidebarCollapsed: (sidebarCollapsed) => update({ sidebarCollapsed }),
         setListWidth: (listWidth) => update({ listWidth }),
+        setKeepMetaExpanded: (keepMetaExpanded) => update({ keepMetaExpanded }),
       }}
     >
       {children}

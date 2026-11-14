@@ -1,5 +1,5 @@
 import { useEffect, useState, type RefObject } from "react";
-import { Check, ChevronDown, Copy, TriangleAlert } from "lucide-react";
+import { CopiedIcon, CopyIcon, DropdownCaretIcon, WarningIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { replyFormatted, replyMarkdown } from "./reply-copy";
@@ -47,9 +47,9 @@ export function ReplyCopyMenu({ contentRef, text, citations }: {
         <DropdownMenuTrigger render={<Button variant="ghost" size="xs" aria-label="Copy reply" title={feedback || "Copy reply"}
           className="h-6 gap-1 px-1.5 text-muted-foreground opacity-0 group-hover/message:opacity-100 group-focus-within/message:opacity-100 aria-expanded:opacity-100 hover:text-foreground focus-visible:text-foreground aria-expanded:text-foreground"
           disabled={copying} />}>
-          {feedback === "Copied" ? <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" />
-            : feedback ? <TriangleAlert className="size-3.5 text-destructive" /> : <Copy className="size-3.5" />}
-          <ChevronDown className="size-3" />
+          {feedback === "Copied" ? <CopiedIcon className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+            : feedback ? <WarningIcon className="size-3.5 text-destructive" /> : <CopyIcon className="size-3.5" />}
+          <DropdownCaretIcon className="size-3" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-44">
           <DropdownMenuItem onClick={() => void copy(false)}>Copy as Markdown</DropdownMenuItem>

@@ -18,6 +18,7 @@ export function DeleteSessionDialog({ universeId, sessionId, onCancel, onDeleted
   const [permanent, setPermanent] = useState(false);
   const [softDeleted, setSoftDeleted] = useState(false);
   const deletion = useMutation({
+    meta: { blocking: true },
     mutationFn: async () => {
       if (permanent && !platformAdmin) throw new Error("Platform admin access is required for permanent deletion.");
       if (!softDeleted) {

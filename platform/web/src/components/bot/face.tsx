@@ -1,19 +1,15 @@
-import { BotFace } from "@/components/icons/bot";
+import { BotIcon } from "@/icons";
+import { idColor } from "@/lib/identity-colors";
 import { cn } from "@/lib/utils";
-import { identityColor } from "@/lib/identity-colors";
 
-/// A bot keeps one colour everywhere it appears — roster, header, threads —
-/// derived from its immutable id, so renaming never changes the face.
-export function botHue(botId: string): number {
-  let hash = 7;
-  for (const char of botId) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return hash % 360;
-}
-
+/// A bot keeps one colour everywhere it appears (roster, header, threads):
+/// its id's colour, so renaming never changes the face.
 export function botColor(botId: string): string {
-  return identityColor(botHue(botId));
+  return idColor(botId);
 }
 
+/// A bot's avatar, wherever a bot is shown (its list, setup, creation, …):
+/// its round face outlined in its colour. `size` is the face's diameter.
 export function BotAvatar({
   botId,
   size = 24,
@@ -23,16 +19,22 @@ export function BotAvatar({
   botId: string;
   size?: number;
   className?: string;
-  /** Override the derived colour (a template that has no identity yet). */
+  /** Override the derived colour (e.g. a bot with no id yet). */
   color?: string;
 }) {
   return (
-    <span
-      className={cn("inline-grid shrink-0 place-items-center rounded-md text-white", className)}
-      style={{ width: size, height: size, background: color ?? botColor(botId) }}
+    <BotIcon
+      size={size}
+      // Cropped to the round body and its line (radius 8 on the 24 grid,
+      // plus half the stroke), in a lighter line than the icon's, which
+      // would be heavy at avatar sizes.
+      viewBox="3.25 3.25 17.5 17.5"
+      strokeWidth={1.5}
+      className={cn("shrink-0", className)}
+      // An avatar at its size, not an interface icon: the icon scale
+      // (--icon-scale) does not apply.
+      style={{ color: color ?? botColor(botId), zoom: 1 }}
       aria-hidden
-    >
-      <BotFace size={Math.round(size * 0.72)} />
-    </span>
+    />
   );
 }

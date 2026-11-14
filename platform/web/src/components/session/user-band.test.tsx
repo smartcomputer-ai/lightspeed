@@ -115,7 +115,7 @@ it("names non-bot event sources by their family and leaves unknown headers alone
   await act(async () => root.render(<TranscriptEntryView entry={{ kind: "message", key: "event", role: "user", text, origin: "event" }} />));
   expect(container.textContent).toContain("github webhook");
   expect(container.textContent).toContain("PR #12 opened.");
-  expect(container.querySelector(".lucide-inbox")?.getAttribute("class")).toContain("text-teal-700 dark:text-teal-300");
+  expect(container.querySelector("[data-icon-role=InboxIcon]")?.getAttribute("class")).toContain("text-teal-700 dark:text-teal-300");
   await act(async () => root.render(<TranscriptEntryView entry={{ kind: "message", key: "plain", role: "user", text: "just text", origin: "event" }} />));
   expect(container.textContent).toBe("just text");
 });

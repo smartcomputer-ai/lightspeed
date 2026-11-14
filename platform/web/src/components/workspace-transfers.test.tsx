@@ -92,6 +92,13 @@ vi.mock("@/components/ui/dropdown-menu", async () => {
       );
     },
     DropdownMenuSeparator: () => <hr />,
+    // The detail header's collapsed ⋯ menu: groups of view choices.
+    DropdownMenuGroup: ({ children }: { children: ReactNode }) => <div role="group">{children}</div>,
+    DropdownMenuLabel: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    DropdownMenuRadioGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    DropdownMenuRadioItem: ({ children }: { children: ReactNode }) => (
+      <button role="menuitemradio">{children}</button>
+    ),
   };
 });
 let root: Root;
@@ -219,6 +226,14 @@ const item = (text: string) =>
 async function menu(label: string) {
   await click(container.querySelector(`[aria-label="${label}"]`));
 }
+/// Right-clicks a file or folder in the tree: its actions' context menu.
+async function contextMenu(path: string) {
+  const row = container.querySelector(`[role="treeitem"][data-tree-path="${path}"] [data-tree-entry]`);
+  if (!row) throw new Error(`No tree row for ${path}`);
+  await act(async () => {
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: 10, clientY: 10 }));
+  });
+}
 async function select(files: File[], replacement = false) {
   const input = container.querySelector(
     `[aria-label="${replacement ? "Select replacement file" : "Select files to upload"}"]`,
@@ -257,7 +272,7 @@ it("highlights the exact drop destination and uploads to the folder shown", asyn
   await render(true);
   const rootArea = container.querySelector("[data-workspace-root]")!;
   const folderRow = (path: string) =>
-    container.querySelector(`[data-tree-path="${path}"] > div`)!;
+    container.querySelector(`[data-tree-path="${path}"] > [data-tree-entry]`)!;
   const highlighted = () =>
     container.querySelectorAll('[data-workspace-drop-target="true"]');
   await drag("dragenter", rootArea);
@@ -271,7 +286,7 @@ it("highlights the exact drop destination and uploads to the folder shown", asyn
     "/docs",
   );
   const nested = folderRow("docs/nested");
-  await drag("dragover", nested.querySelector("button")!);
+  await drag("dragover", nested.querySelector("span")!);
   expect([...highlighted()]).toEqual([nested]);
   expect(container.querySelector('[role="status"]')?.textContent).toContain(
     "/docs/nested",
@@ -292,7 +307,7 @@ it("highlights the exact drop destination and uploads to the folder shown", asyn
 it("switches back to the root destination and clears the hint when dragging leaves or ends", async () => {
   await render(true);
   const rootArea = container.querySelector("[data-workspace-root]")!;
-  const row = container.querySelector('[data-tree-path="docs"] > div')!;
+  const row = container.querySelector('[data-tree-path="docs"] > [data-tree-entry]')!;
   await drag("dragenter", row);
   await drag("dragover", rootArea);
   expect(rootArea.getAttribute("data-workspace-drop-target")).toBe("true");
@@ -964,7 +979,7 @@ it("downloads from the file menu with the original filename", async () => {
   await waitForUi(() => expect(names).toEqual(["a #?.txt"]));
 });
 
-it("places the open file’s actions in the tree, not its detail header", async () => {
+it("offers the open file’s actions in its detail header and on its row’s right-click", async () => {
   const snapshot = deferred<ReturnType<typeof tree>>();
   const content = deferred<{ bytesBase64: string; bytes: number }>();
   const workspace = {
@@ -1014,10 +1029,13 @@ it("places the open file’s actions in the tree, not its detail header", async 
     '[aria-label="File actions: docs/a #?.txt"]',
   );
   expect(menus).toHaveLength(1);
-  expect(menus[0]!.closest("li")).not.toBeNull();
-  expect(
-    container.querySelector('header [aria-label^="File actions:"]'),
-  ).toBeNull();
+  expect(menus[0]!.closest("header")).not.toBeNull();
+  expect(container.querySelector("li [aria-label^=\"File actions:\"]")).toBeNull();
+  await contextMenu("docs/a #?.txt");
+  await waitForUi(() => expect(item("Rename…")).toBeDefined());
+  await act(async () => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
   expect(
     container.querySelector('textarea[aria-label="File contents"]'),
   ).not.toBeNull();
@@ -1096,7 +1114,8 @@ it.each(["", "docs"])(
       ),
     );
     await waitForEditor();
-    await menu(parent ? `Folder actions: ${parent}` : "Workspace actions");
+    if (parent) await contextMenu(parent);
+    else await menu("Workspace actions");
     await click(item("New file"));
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
       `Create a file in ${parent || "the workspace root"}`,
@@ -1211,9 +1230,8 @@ it.each(["file", "folder", "move-file", "move-folder"])(
       await entryDrag("dragstart", treeEntry(kind === "move-file" ? "docs/a #?.txt" : "docs"), transfer);
       await entryDrag("drop", treeEntry("archive"), transfer);
     } else {
-    await menu(
-      kind === "file" ? "File actions: docs/a #?.txt" : "Folder actions: docs",
-    );
+    if (kind === "file") await menu("File actions: docs/a #?.txt");
+    else await contextMenu("docs");
     await click(item("Rename…"));
     await folderName(kind === "file" ? "renamed #?.txt" : "renamed #?");
     await click(button("Rename"));

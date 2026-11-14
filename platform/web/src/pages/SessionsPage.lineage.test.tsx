@@ -5,7 +5,23 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SessionListPage, SessionOrigin, SessionSummary } from "@/api";
-import { SessionLineage } from "./SessionsPage";
+import { MetaToolbar } from "@/components/meta-toolbar";
+import { hasLineage, sessionMetaItems, useSessionLineage } from "@/components/session/session-meta";
+
+/// The strip under a session header, with only its lineage: the parent and
+/// each sub-agent, drawn while there is any.
+function SessionLineage({ universeId, handle, sessionId, origin, runRevision }: {
+  universeId: string; handle: string; sessionId: string; origin: SessionOrigin | null; runRevision: number;
+}) {
+  const lineage = useSessionLineage({ universeId, sessionId, origin, runRevision });
+  if (!hasLineage(lineage)) return null;
+  const items = sessionMetaItems({
+    session: { id: sessionId, lifecycleStatus: "open", lifecycleControlled: false, activity: "idle", retention: { rootSessionId: sessionId }, origin } as never,
+    lineage,
+    lineageHref: (id) => `/u/${handle}/sessions/${id}`,
+  });
+  return <div><MetaToolbar items={items} place="strip" /></div>;
+}
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({
@@ -88,14 +104,14 @@ it.each([false, true])("keeps the lineage mounted during delayed run refreshes (
   for (const revision of [1, 2]) {
     await show(revision, withParent);
     expect(requests).toHaveLength(revision + 1);
-    expect(container.textContent).toContain("Sub-agents (1)");
+    expect(container.querySelectorAll('a[href*="/sessions/"]')).toHaveLength(withParent ? 2 : 1);
     expect(container.querySelector('a[href$="/sessions/child"]')).toBe(link);
     expect(container.firstElementChild).toBe(strip);
     if (withParent) expect(container.textContent).toContain("Parent session");
     await respond(revision, [child("child", revision === 2 ? "closed" : "open")]);
     expect(container.querySelector('a[href$="/sessions/child"]')).toBe(link);
   }
-  expect(link.querySelector('[aria-hidden="true"]')?.className).toContain("bg-muted-foreground/50");
+  expect(link.querySelector('span.rounded-full[aria-hidden="true"]')?.className).toContain("text-muted-foreground/50");
 });
 
 it("retains the header on a refresh error and applies a later successful empty result", async () => {
@@ -106,7 +122,7 @@ it("retains the header on a refresh error and applies a later successful empty r
   await act(async () => requests[1]!.reject(new Error("Temporary network failure")));
   await flush();
   expect(container.querySelector("a")).toBe(link);
-  expect(container.textContent).toContain("Sub-agents (1)");
+  expect(container.querySelectorAll('a[href*="/sessions/"]')).toHaveLength(1);
 
   await show(2);
   await respond(2, []);

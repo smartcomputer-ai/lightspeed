@@ -28,6 +28,7 @@ environment and then applies the defaults from `scripts/dev/env.sh`.
 | `LIGHTSPEED_CONFIGURATOR_MCP_*` | Configurator MCP service. |
 | `LIGHTSPEED_ENVD_*` | Environment daemon. |
 | `OPENAI_*` / `ANTHROPIC_*` | Provider transport and live-test overrides. |
+| `VITE_*` | Platform web UI build flags, read by Vite and compiled into the browser bundle. Never put secrets in them. |
 | Unprefixed infrastructure names | Local Docker Compose only unless their component section says otherwise. |
 
 ## Core runtime
@@ -481,6 +482,16 @@ The `full` and `runtime` development profiles warn when neither
 API keys can be added per universe from the Platform UI (**Models → Add provider**); the Sessions view shows a banner until a usable key exists.
 Pass `./dev.sh --require-api-keys` to make a missing deployment key fatal
 (useful in CI). `--allow-missing-api-keys` is still accepted and is a no-op.
+
+### Web UI debug mode
+
+Vite reads these from the environment or from `platform/web/.env.local`
+(git-ignored) when the dev server starts or a build runs, and compiles them into
+the browser bundle. Restart the dev server after a change.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `VITE_ENABLE_DEBUG_MODE` | Unset (off) | `true`, `1`, `yes` or `on` enables the web UI debug toolbar (Ctrl+D) with its element feedback picker and the design-token editor at `/debug/design-configuration`. Development only; leave it unset in deployed builds. |
 
 ### Docker infrastructure
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Download } from "lucide-react";
+import { DownloadIcon } from "@/icons";
 import { buttonVariants } from "@/components/ui/button";
 
 export function PdfPreview({
@@ -42,7 +42,7 @@ export function PdfPreview({
         download={name.split("/").at(-1) || "document.pdf"}
         className={buttonVariants({ variant: "outline", size: "sm" })}
       >
-        <Download />
+        <DownloadIcon />
         Download PDF
       </a>
     </div>

@@ -1,6 +1,4 @@
-import type { ComponentType, SVGProps } from "react";
-import { Sparkles } from "lucide-react";
-import { AnthropicLogo, OpenAiLogo } from "@/components/icons/logos";
+import { AnthropicLogo, CompatibleProviderLogo, OpenAiLogo, type IconComponent } from "@/icons";
 
 /// Every kind of model provider a universe can add on the Models page.
 /// Adding one = an entry here plus its form/details components; the page
@@ -17,7 +15,7 @@ export interface ModelProviderDefinition {
   name: string;
   /// One line for the picker card.
   tagline: string;
-  Logo: ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
+  Logo: IconComponent;
   /// Whether more than one instance can be connected per universe.
   multiple: boolean;
 }
@@ -41,7 +39,7 @@ export const MODEL_PROVIDER_CATALOG: ModelProviderDefinition[] = [
     kind: "openAiCompatible",
     name: "OpenAI-compatible provider",
     tagline: "Connect OpenRouter, vLLM, Ollama, or another compatible endpoint.",
-    Logo: Sparkles,
+    Logo: CompatibleProviderLogo,
     multiple: true,
   },
   {

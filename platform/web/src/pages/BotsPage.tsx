@@ -1,9 +1,8 @@
 import { useWatchConnected } from "@/lib/universe-watch";
 import type { BotReadResponse } from "@lightspeed-ai/sdk";
-import { ReadError } from "@/components/read-error";
 import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
-import { NavLink, useParams } from "react-router-dom";
+import { AddIcon, BotAvatarIcon } from "@/icons";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   api,
   botLabel,
@@ -16,14 +15,24 @@ import { BotDetail, type BotTab } from "@/components/bot/detail";
 import { BotCreateDialog } from "@/pages/BotCreatePage";
 import { BotAvatar } from "@/components/bot/face";
 import { StatusDot, outcomeLabel, relativeTime, type BotTone } from "@/components/bot/status";
-import { BotFace } from "@/components/icons/bot";
 import { Button } from "@/components/ui/button";
-import { DetailPrompt, ListNote, LoadingNote, UniverseNotFound } from "@/components/page";
+import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { useActionPermissions } from "@/lib/permissions";
-import { ListPane } from "@/components/list-pane";
+import {
+  ListGroupLabel,
+  ListPane,
+  ListPaneBody,
+  ListPaneHeader,
+  ListPaneState,
+  ListMark,
+  ListRow,
+  ListRowLine,
+} from "@/components/list-pane";
+import { requestRowMenu } from "@/lib/row-menu";
+import { botMetaItems } from "@/components/bot/bot-meta";
 
 const ROSTER_REFRESH_MS = 5_000;
 
@@ -67,7 +76,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
           />
         ) : (
           <DetailPrompt
-            icon={<BotFace size={40} className="text-muted-foreground/60" />}
+            icon={<BotAvatarIcon size={40} className="text-muted-foreground/60" />}
             create={create ? { label: "New bot", onClick: () => setCreateOpen(true) } : undefined}
           >
             Pick a bot{create ? ", or create one" : ""}.
@@ -88,6 +97,16 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
 
 /// One line of "what it is doing", from the event log alone: the newest
 /// event and whether anything is still unresolved.
+/// What a bot's status dot means, for its tooltip.
+const TONE_LABEL: Record<BotTone, string> = {
+  live: "Working",
+  waiting: "Waiting for approval",
+  idle: "Idle",
+  paused: "Paused",
+  attention: "Needs attention: its last event failed",
+  closed: "Closed",
+};
+
 export function rosterLine(bot: BotListItem): { text: string; tone: BotTone } {
   if (bot.closedAtMs != null) return { text: "Closed", tone: "closed" };
   if (bot.enabled === false) {
@@ -150,80 +169,62 @@ function BotsPane({
   });
   const roster = bots.data?.bots ?? [];
   const groups = rosterGroups(roster);
+  const navigate = useNavigate();
 
   return (
     <>
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
-        <h1 className="text-sm font-semibold">Bots</h1>
-        {bots.data && <span className="text-xs text-muted-foreground">{roster.length}</span>}
-        {create && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="ml-auto"
-            onClick={onCreate}
-            aria-label="New bot"
-          >
-            <Plus />
+      <ListPaneHeader
+        title="Bots"
+        count={bots.data ? roster.length : undefined}
+        actions={create && (
+          <Button variant="ghost" size="icon-sm" onClick={onCreate} aria-label="New bot">
+            <AddIcon />
           </Button>
         )}
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {bots.isLoading && <p className="p-4 text-sm text-muted-foreground">Loading…</p>}
-        {bots.error && <ReadError error={bots.error} loading={!bots.data} className="p-4" />}
-        {bots.data && roster.length === 0 && (
-          <ListNote>No bots yet.</ListNote>
-        )}
+      />
+      <ListPaneBody>
+        <ListPaneState
+          loading={bots.isLoading}
+          error={bots.error}
+          hasData={Boolean(bots.data)}
+          empty={roster.length === 0 && "No bots yet."}
+        />
         {groups.map((group) => (
           <div key={group.title}>
-            {groups.length > 1 && (
-              <div className="px-4 pt-3 pb-1 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-                {group.title}
-              </div>
-            )}
+            {groups.length > 1 && <ListGroupLabel>{group.title}</ListGroupLabel>}
             <ul>
               {group.bots.map((bot) => {
                 const line = rosterLine(bot);
                 return (
-                  <li key={bot.botId}>
-                    <NavLink
-                      to={`/u/${handle}/bots/${bot.botId}`}
-                      className={cn(
-                        "grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2.5 border-b px-4 py-2.5 text-sm hover:bg-muted/50",
-                        bot.botId === activeId && "bg-muted",
-                      )}
-                    >
-                      <BotAvatar botId={bot.botId} size={28} className="row-span-2" />
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <StatusDot tone={line.tone} />
-                        <span className="min-w-0 truncate font-medium">{botLabel(bot)}</span>
-                      </span>
-                      <span className="text-right text-[11px] text-muted-foreground">
-                        {bot.pendingCount > 0 && bot.closedAtMs == null ? (
-                          <span className="inline-block min-w-4 rounded-full bg-primary px-1.5 text-center font-semibold text-primary-foreground">
-                            {bot.pendingCount}
-                          </span>
-                        ) : (
-                          bot.lastEvent && relativeTime(bot.lastEvent.receivedAtMs)
-                        )}
-                      </span>
-                      <span
-                        className={cn(
-                          "col-span-2 min-w-0 truncate text-xs text-muted-foreground",
-                          line.tone === "attention" && "text-destructive",
-                        )}
-                        title={line.text}
-                      >
-                        {line.text}
-                      </span>
-                    </NavLink>
-                  </li>
+                  <ListRow
+                    key={bot.botId}
+                    to={`/u/${handle}/bots/${bot.botId}`}
+                    active={bot.botId === activeId}
+                    // Right-click: the bot (opened if it is not) and its
+                    // page's ⋯ menu, at the pointer.
+                    entryProps={{
+                      onContextMenu: (event) => {
+                        event.preventDefault();
+                        if (bot.botId !== activeId) navigate(`/u/${handle}/bots/${bot.botId}`);
+                        requestRowMenu("bot", bot.botId, event);
+                      },
+                    }}
+                    leading={<BotAvatar botId={bot.botId} size={30} />}
+                    indicator={<ListMark label={TONE_LABEL[line.tone]} tip={TONE_LABEL[line.tone]}><StatusDot tone={line.tone} /></ListMark>}
+                    title={botLabel(bot)}
+                    marks={botMetaItems({ status: { label: line.text, tone: line.tone }, pending: bot.pendingCount, closed: bot.closedAtMs != null })}
+                    meta={bot.lastEvent && relativeTime(bot.lastEvent.receivedAtMs)}
+                  >
+                    <ListRowLine tone={line.tone === "attention" ? "destructive" : undefined} title={line.text}>
+                      {line.text}
+                    </ListRowLine>
+                  </ListRow>
                 );
               })}
             </ul>
           </div>
         ))}
-      </div>
+      </ListPaneBody>
     </>
   );
 }

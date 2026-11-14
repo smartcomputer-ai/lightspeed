@@ -9,7 +9,7 @@
 import type { Environment, GitHubApp, SecretGrant, SessionOrigin, UniverseSetup } from "@/api";
 import type { BotEventOutcome, ModelConfig, SessionSummaryView } from "@lightspeed-ai/sdk";
 import { groupsFor } from "@/lib/method-groups";
-import { appendExchange, appendScriptedRun, closeSession, newSession, refreshDemoCompactionView } from "../engine";
+import { activeRun, appendExchange, appendScriptedRun, closeSession, hurryRun, newSession, refreshDemoCompactionView, startRun } from "../engine";
 import { universeApiKey, type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type SessionRecord, type UniverseState } from "../store";
 import {
   BOT_TOOLS,
@@ -38,6 +38,7 @@ import {
   hex,
   inboxTrigger,
   controlledSession,
+  mcpCall,
   mcpServer,
   member,
   modelDiscovery,
@@ -102,6 +103,7 @@ const GRANT = {
   linear: "grant-linear-api",
   linearWebhook: "grant-linear-webhook-secret",
   anthropic: "grant-anthropic-api-key",
+  octopus: "grant-octopus-api-key",
 } as const;
 const GITHUB_WEBHOOK_TOKEN = "9f4c2e7ab1d84c0f8e3a5b6d7c2f1e0a";
 const LINEAR_WEBHOOK_TOKEN = "3b8d1f6e0c2a4e7b9d5f8a1c3e6b0d4f";
@@ -128,6 +130,7 @@ const SESSION = {
   audit: "session-scheduler-audit",
   auth: "session-auth-middleware",
   ci: "session-ci-slow",
+  release: "session-release-v2-14-1",
   specsSpike: "session-specs-migration-spike",
   intakeMain: `bot:v1:${BOT.intake}`,
   intake1418: keyed(BOT.intake, "lin-1418"),
@@ -450,6 +453,16 @@ const REVIEWER_CONFIG: Record<string, unknown> = {
     mcp: { servers: [{ serverId: "github" }] },
     subagents: { agents: [{ profileId: PROFILE.explorer }], maxDepth: 1, maxConcurrent: 2, runTimeoutMs: 15 * MINUTE_MS },
     web: { fetch: {} },
+  },
+};
+
+const RELEASE_CONFIG: Record<string, unknown> = {
+  model: OPUS,
+  generation: { reasoningEffort: "high" },
+  features: {
+    environments: { environments: [{ environmentId: ENV.ci, default: true, access: "exec" }] },
+    mcp: { servers: [{ serverId: "octopus" }] },
+    vfs: { workspaces: [link(WORKSPACE.web, "read"), link(WORKSPACE.runbooks, "read")] },
   },
 };
 
@@ -1003,7 +1016,8 @@ Before promoting a release tag to production:
 - [ ] Scheduler dead-letter count is flat.
 - [ ] Someone other than the deployer has read the notes and can roll back.
 
-Promote with: gh workflow run promote.yml -f tag=vX.Y.Z
+Promote in Octopus Deploy: deploy the release to Production. The deploy waits for
+approval from a second person, who has read the notes and can roll back.
 
 Watch /healthz, the error rate, and scheduler lag for fifteen minutes. If any of them
 moves, roll back first and investigate second.
@@ -1351,6 +1365,25 @@ function seedIntegrations(universe: UniverseState): void {
     }),
   );
 
+  universe.mcpServers.set(
+    "octopus",
+    mcpServer({
+      serverId: "octopus",
+      displayName: "Octopus Deploy",
+      serverUrl: "https://acme.octopus.app/mcp",
+      description: "Releases and deployments of acme-web. Promoting a release to Production goes through here, so every call needs a person's approval.",
+      allowedTools: ["list_releases", "get_release", "deploy_release", "get_deployment"],
+      approval: "always",
+      deferLoading: false,
+      authPolicy: { type: "requiredBearer" },
+      credential: { type: "authGrant", grantId: GRANT.octopus },
+      status: "active",
+      revision: 1,
+      createdAtMs: ago(2 * DAY_MS),
+      updatedAtMs: ago(2 * DAY_MS),
+    }),
+  );
+
   const githubApp: GitHubApp = {
     providerId: "github",
     providerKind: "gitHubApp",
@@ -1425,6 +1458,24 @@ function seedIntegrations(universe: UniverseState): void {
       metadata: {},
       createdAtMs: ago(31 * DAY_MS),
       updatedAtMs: ago(31 * DAY_MS),
+    },
+    {
+      grantId: GRANT.octopus,
+      providerId: "octopus",
+      providerKind: "staticToken",
+      displayName: "Octopus Deploy API key (acme-web)",
+      subjectHint: "lightspeed service account · acme-web project",
+      status: "active",
+      exposure: "brokered",
+      createdBy: { kind: "actor", id: "user-ada" },
+      scopes: [],
+      hasAccessToken: true,
+      hasRefreshToken: false,
+      lastLeasedAtMs: null,
+      leaseCount: 0,
+      metadata: { note: "Deploy rights on the acme-web project only. The Octopus Deploy MCP server asks for approval on every call." },
+      createdAtMs: ago(2 * DAY_MS),
+      updatedAtMs: ago(2 * DAY_MS),
     },
     {
       grantId: GRANT.anthropic,
@@ -1830,6 +1881,108 @@ function seedSessions(store: DemoStore, universe: UniverseState): void {
       ].join("\n"),
     },
   });
+
+  // Waiting on an approval from the moment the demo opens: promoting the
+  // release to Production, which Octopus Deploy only does once a person agrees.
+  // Two runs, as a person would have it: the checklist first, then the
+  // go-ahead. Approving folds only the second run's work, so the checklist
+  // stays in view.
+  const release = newSession(store, universe, {
+    id: SESSION.release,
+    displayName: "Promote v2.14.1 to production",
+    config: RELEASE_CONFIG,
+    activeEnvironmentId: ENV.ci,
+    createdAtMs: ago(9 * MINUTE_MS),
+  });
+  appendExchange(store, universe, release, {
+    at: ago(8 * MINUTE_MS),
+    user: "Promote v2.14.1 to production. Go through the deploy checklist first.",
+    turn: {
+      thinking: "**Walking the deploy checklist**\n\nRead the checklist and the release's changelog entry, and see what staging runs and for how long. What I can't see from here I'll name rather than tick.",
+      tools: [
+        vfsReadFile("/runbooks/deploy-checklist.md", RUNBOOK_DEPLOY),
+        vfsReadFile("/acme-web/CHANGELOG.md", CHANGELOG_WITH_ENTRY),
+        runCommand(["curl", "-s", "https://staging.acme.example/healthz"], '{"status":"ok","version":"2.14.1","uptimeSeconds":22710}'),
+      ],
+      text: [
+        "The checklist for v2.14.1:",
+        "",
+        "- **Staging soak:** staging has run 2.14.1 for 6 h 18 min and `/healthz` is ok. ✓",
+        "- **Migrations:** none. Per the changelog, the release is the retry-test fix (#487) and the CI cache (#486). ✓",
+        "- **Release notes:** the v2.14.1 entry is in `CHANGELOG.md`, but I can't see whether the notes PR under `docs/releases/` is merged.",
+        "- **Sentry and the dead-letter count:** I can't see either from here.",
+        "- **A second person:** whoever approves the deploy in Octopus Deploy.",
+        "",
+        "Check the three I couldn't, and say go when you're happy.",
+      ].join("\n"),
+    },
+  });
+  const deploy = { project: "acme-web", release: "2.14.1", environment: "Production" };
+  startRun(store, universe, release, {
+    instant: true,
+    text: "Sentry is quiet, the dead-letter count is flat, and the notes PR is merged. Go ahead.",
+    turn: {
+      thinking: "**Promoting the release**\n\nEverything on the checklist is covered now. Deploy 2.14.1 to Production through Octopus Deploy, which waits for the approval.",
+      text: "Promoting v2.14.1 to Production. Octopus Deploy deploys it once you approve.",
+      approval: {
+        serverId: "octopus",
+        serverLabel: "Octopus Deploy",
+        toolName: "deploy_release",
+        arguments: deploy,
+        then: (approved) => approved
+          ? {
+            tools: [
+              mcpCall("octopus.deploy_release", deploy, { deploymentId: "Deployments-2041", release: "2.14.1", environment: "Production", state: "Success", duration: "3m 52s" }),
+              runCommand(["curl", "-s", "https://api.acme.example/healthz"], '{"status":"ok","version":"2.14.1","uptimeSeconds":41}'),
+            ],
+            text: "v2.14.1 is live in Production (Deployments-2041, 3 min 52 s) and `/healthz` reports 2.14.1. Keep an eye on the error rate and scheduler lag for the next fifteen minutes; if either moves, redeploy 2.14.0.",
+          }
+          : { text: "Held. v2.14.1 stays on staging and Production keeps 2.14.0. Say when you want to try again." },
+      },
+    },
+  });
+
+  // Thinks from the first look at the Sessions page for about 25 s, or 5 s
+  // once the session is opened: a follow-up the demo user sent just before.
+  let adrRunId: string | null = null;
+  const startAdr = () => {
+    if (adrRunId) return;
+    adrRunId = startRun(store, universe, auth, {
+      text: "Write that up as a short ADR for service tokens, so the next service caller doesn't have to ask.",
+      turn: {
+        thinking: [
+          "**Turning the answer into an ADR**",
+          "",
+          "Three decisions are worth recording: service callers use the bearer path, their tokens carry `aud: \"service\"` that the middleware checks, and they live minutes because expiry is the only revocation the middleware has. The repo's ADRs go up to ADR-0007, so this is ADR-0008: context, decision, consequences, nothing more.",
+        ].join("\n"),
+        thinkMs: 25_000,
+        text: [
+          "## ADR-0008: Service-to-service tokens",
+          "",
+          "**Status:** proposed",
+          "",
+          "**Context.** `requireSession` accepts the same signed claims as a bearer token or the `acme_session` cookie. The first service-to-service caller is being added, and the middleware has no revocation list.",
+          "",
+          "**Decision.**",
+          "",
+          "1. Service callers authenticate on the **bearer path** only.",
+          "2. Service tokens carry `aud: \"service\"`; the middleware rejects a service token on the cookie path and a browser token where a service is expected.",
+          "3. Tokens live **5–15 minutes** and are minted per caller from the signing endpoint with the service's own credential; callers may cache one until `exp - 60s`.",
+          "4. Every service caller sends its own `X-Api-Key`, so it gets its own rate-limit bucket.",
+          "",
+          "**Consequences.** A leaked service token is useful for minutes, not days, and can't be replayed as a browser session. Each caller makes one signing call every ten minutes or so.",
+          "",
+          "Want me to add it as `docs/adr-0008.md` and add the `aud` check to the middleware?",
+        ].join("\n"),
+      },
+    }).id;
+  };
+  universe.onSessionsViewed = startAdr;
+  // Only the scripted run is hurried, so the user's own runs here never are.
+  auth.onOpen = () => {
+    startAdr();
+    if (activeRun(auth)?.id === adrRunId) hurryRun(auth, 5_000);
+  };
 
   // The spike that moved specs into a workspace, a month ago; its sandbox
   // closed with it and is the deprecated environment on the list.
@@ -4390,8 +4543,8 @@ export function seedSoftwareFactory(store: DemoStore): void {
     id: SOFTWARE_FACTORY_UNIVERSE_ID,
     handle: SOFTWARE_FACTORY_HANDLE,
     name: "Software Factory",
-    icon: "code",
-    iconColor: "blue",
+    icon: "mobius",
+    iconColor: "violet",
     lightspeedUniverseId: ENGINE_UNIVERSE_ID,
     role: "admin",
     createdAt: agoIso(70 * DAY_MS),

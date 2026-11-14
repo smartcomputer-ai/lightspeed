@@ -39,7 +39,7 @@ describe("step rows", () => {
       display: { group: "code", verb: "Run code", target: "JavaScript", detail: "1 line" },
     })]));
     expect(text(html)).toBe("Run code JavaScript 1 line");
-    expect(html).toContain("lucide-file-code-2");
+    expect(html).toContain('data-icon-role="CodeToolIcon"');
     expect(html).toContain("text-fuchsia-700");
     expect(html).not.toContain("secret");
   });
@@ -72,7 +72,7 @@ describe("step rows", () => {
       expect(text(html)).toBe("Run cargo clippy failed · 12s");
       expect(html).toContain('class="text-amber-700 dark:text-amber-300">failed</span>');
       expect(html).not.toContain("destructive");
-      expect(html).toContain("lucide-circle-alert");
+      expect(html).toContain('data-icon-role="FailedIcon"');
       expect(html).not.toContain("exit 101");
     },
   );
@@ -85,7 +85,7 @@ describe("step rows", () => {
     expect(text(html)).toContain("2 failed");
     expect(html).toContain("text-amber-700 dark:text-amber-300");
     expect(html).not.toContain("destructive");
-    expect(html).toContain("lucide-circle-alert");
+    expect(html).toContain('data-icon-role="FailedIcon"');
   });
 
   it("emphasizes a mixed batch when an external tool fails", () => {
@@ -95,7 +95,7 @@ describe("step rows", () => {
     ], "completedWithErrors"));
     expect(text(html)).toContain("2 failed");
     expect(html).toContain("text-destructive");
-    expect(html).toContain("lucide-circle-alert");
+    expect(html).toContain('data-icon-role="FailedIcon"');
   });
 
   it("shows cancelled and waiting states without inventing a duration", () => {

@@ -259,9 +259,9 @@ it("keeps the code activity icon on a folded run and its row when expanded", asy
     display: { group: "code", verb: "Run code", target: "JavaScript", detail: "1 line" },
   })] }];
   await render(section);
-  expect(strip().querySelector(".lucide-file-code-2")).not.toBeNull();
+  expect(strip().querySelector("[data-icon-role=CodeToolIcon]")).not.toBeNull();
   expect(strip().innerHTML).toContain("text-fuchsia-700");
   await act(async () => strip().click());
   expect(container.textContent).toContain("Run codeJavaScript1 line");
-  expect(container.querySelector('button[aria-label="Run code JavaScript"] .lucide-file-code-2')).not.toBeNull();
+  expect(container.querySelector('button[aria-label="Run code JavaScript"] [data-icon-role=CodeToolIcon]')).not.toBeNull();
 });

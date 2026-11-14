@@ -41,6 +41,8 @@ async function pin(page: Page, theme: Theme) {
   await page.clock.setFixedTime(FIXED_TIME);
   await page.addInitScript((stored) => {
     localStorage.setItem("lightspeed:theme", stored);
+    // The welcome dialog would cover every screen; it is dismissed for good.
+    localStorage.setItem("lightspeed:welcome-dismissed", "true");
     // Seeded PRNG and counter UUIDs: ids and jitter repeat run to run.
     let seed = 0x2f6b9a1d;
     Math.random = () => {

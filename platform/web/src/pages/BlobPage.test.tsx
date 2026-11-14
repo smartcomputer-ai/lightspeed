@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { waitForUi } from "@/test/wait-for-ui";
+import { documentTitle } from "@/lib/document-title";
 import { BlobPage } from "./BlobPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
@@ -78,7 +79,7 @@ it("shows stored text exactly as stored, named from the link, with its source se
   expect(container.querySelector("script")).toBeNull();
   await waitForUi(() => expect(container.textContent).toContain("Linked from session: HIT login debugging"));
   expect(container.querySelector('header a[href="/u/acme/sessions/s1"]')!.textContent).toBe("HIT login debugging");
-  expect(document.title).toBe("Profile instructions");
+  expect(document.title).toBe(documentTitle(["Profile instructions"]));
 });
 
 it("hands images to the browser and names unnamed blobs by digest", async () => {

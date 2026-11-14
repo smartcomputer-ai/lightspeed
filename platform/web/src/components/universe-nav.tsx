@@ -1,21 +1,7 @@
 import type { ComponentType } from "react";
-import {
-  Boxes,
-  BrainCircuit,
-  FolderGit2,
-  KeyRound,
-  LockKeyhole,
-  MessagesSquare,
-  PackageOpen,
-  RadioTower,
-  Server,
-  Settings,
-  SlidersHorizontal,
-  Users,
-} from "lucide-react";
+import { ApiKeyIcon, BotIcon, ChannelIcon, CredentialIcon, EnvironmentIcon, McpServerIcon, MemberIcon, ModelIcon, ProfileIcon, SessionIcon, SettingsIcon, TemplateIcon, WorkspaceIcon } from "@/icons";
 import { Navigate } from "react-router-dom";
 import type { FeatureKey, FeatureStates } from "@lightspeed-ai/platform-shared";
-import { BotFaceIcon } from "@/components/icons/bot";
 import { useActionPermissions, type PermissionAction } from "@/lib/permissions";
 import { universeHome, useActiveUniverse } from "@/lib/universes";
 
@@ -46,43 +32,55 @@ export interface UniverseNavGroup {
 
 /// The universe's own configuration, in the order `/settings` resolves.
 const SETTINGS_NAV: UniverseNavItem[] = [
-  { path: "settings/general", label: "General", icon: Settings, action: "manageAccess" },
-  { path: "settings/channels", label: "Channels", icon: RadioTower, action: "configureResource", feature: "channels" },
-  { path: "settings/templates", label: "Templates", icon: PackageOpen, action: "configureResource" },
+  { path: "settings/general", label: "General", icon: SettingsIcon, action: "manageAccess" },
+  { path: "settings/channels", label: "Channels", icon: ChannelIcon, action: "configureResource", feature: "channels" },
+  { path: "settings/templates", label: "Templates", icon: TemplateIcon, action: "configureResource" },
 ];
 
-/// The work itself, the setup agents are made from, access (credentials,
+/// The work itself (with the workspaces that hold it), the setup agents are made from, access (credentials,
 /// keys and members), and the universe's settings. A group renders only when
 /// one of its items is visible.
 export const UNIVERSE_NAV: UniverseNavGroup[] = [
   {
     // Unlabelled: the universe switcher above already names the universe.
     items: [
-      { path: "bots", label: "Bots", icon: BotFaceIcon, action: "read", feature: "bots" },
-      { path: "sessions", label: "Sessions", icon: MessagesSquare, action: "read" },
+      { path: "bots", label: "Bots", icon: BotIcon, action: "read", feature: "bots" },
+      { path: "sessions", label: "Sessions", icon: SessionIcon, action: "read" },
+      { path: "workspaces", label: "Workspaces", icon: WorkspaceIcon, action: "read" },
     ],
   },
   {
     // What a session's setup attaches; a profile is the saved recipe.
     label: "Setup",
     items: [
-      { path: "profiles", label: "Profiles", icon: SlidersHorizontal, action: "read" },
-      { path: "workspaces", label: "Workspaces", icon: FolderGit2, action: "read" },
-      { path: "environments", label: "Environments", icon: Boxes, action: "read" },
-      { path: "mcp-servers", label: "MCP servers", icon: Server, action: "read" },
-      { path: "models", label: "Models", icon: BrainCircuit, action: "read" },
+      { path: "profiles", label: "Profiles", icon: ProfileIcon, action: "read" },
+      { path: "environments", label: "Environments", icon: EnvironmentIcon, action: "read" },
+      { path: "mcp-servers", label: "MCP servers", icon: McpServerIcon, action: "read" },
+      { path: "models", label: "Models", icon: ModelIcon, action: "read" },
     ],
   },
   {
     label: "Access",
     items: [
-      { path: "credentials", label: "Credentials", icon: LockKeyhole, action: "configureResource" },
-      { path: "api-keys", label: "API keys", icon: KeyRound, action: "manageAccess" },
-      { path: "members", label: "Members", icon: Users, action: "read" },
+      { path: "credentials", label: "Credentials", icon: CredentialIcon, action: "configureResource" },
+      { path: "api-keys", label: "API keys", icon: ApiKeyIcon, action: "manageAccess" },
+      { path: "members", label: "Members", icon: MemberIcon, action: "read" },
     ],
   },
   { label: "Settings", items: SETTINGS_NAV },
 ];
+
+/// The sidebar's names for a universe page, most specific first, given the
+/// path below `/u/:handle/`: ["Sessions"], or ["General", "Settings"] for a
+/// page under its own group's path. Groups like Setup and Access are only
+/// headings in the menu, not part of the path. Unknown pages yield [].
+export function universeSectionTrail(path: string): string[] {
+  for (const group of UNIVERSE_NAV) {
+    const item = group.items.find((candidate) => path === candidate.path || path.startsWith(`${candidate.path}/`));
+    if (item) return item.path.includes("/") && group.label ? [item.label, group.label] : [item.label];
+  }
+  return [];
+}
 
 /// Bare `/settings`: the first settings page the caller may see, else the
 /// universe's home.

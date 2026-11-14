@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, RotateCcw, Webhook } from "lucide-react";
+import { CollapseIcon, ExpandIcon, ReplayIcon, SendIcon } from "@/icons";
 import { Link } from "react-router-dom";
 import {
   api,
@@ -167,7 +167,7 @@ export function BotActivity({
           </span>
           {invoke && bot.closedAtMs == null && (
             <Button variant="outline" size="xs" className="ml-auto" onClick={() => setEventOpen(true)}>
-              <Webhook data-icon="inline-start" /> Send a test event
+              <SendIcon data-icon="inline-start" /> Send a test event
             </Button>
           )}
         </div>
@@ -390,7 +390,7 @@ function EventRow({
             {chip}
           </Badge>
           <span className="w-16 text-right text-muted-foreground">{timeLabel(event.receivedAtMs)}</span>
-          {open ? <ChevronDown className="size-3.5 text-muted-foreground" /> : <ChevronRight className="size-3.5 text-muted-foreground" />}
+          {open ? <CollapseIcon className="size-3.5 text-muted-foreground" /> : <ExpandIcon className="size-3.5 text-muted-foreground" />}
         </span>
       </button>
       {open && (
@@ -422,7 +422,7 @@ function EventRow({
           {onReplay && (
             <div>
               <Button variant="outline" size="xs" onClick={onReplay}>
-                <RotateCcw data-icon="inline-start" /> Replay this event
+                <ReplayIcon data-icon="inline-start" /> Replay this event
               </Button>
               <span className="ml-2">Creates a new delivery from the same payload.</span>
             </div>

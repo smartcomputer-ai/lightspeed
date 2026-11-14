@@ -2,7 +2,7 @@ import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, PackageOpen, RefreshCw, Sparkles } from "lucide-react";
+import { GenerateIcon, RefreshIcon, SuccessIcon, TemplateIcon } from "@/icons";
 import type { DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/sdk";
 import { api, type UniverseSetup } from "@/api";
 import { KeyPresetField, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
@@ -134,7 +134,7 @@ function SetupCard({
       <CardHeader>
         <div className="mb-2 flex items-start justify-between gap-3">
           <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <PackageOpen className="size-5" />
+            <TemplateIcon className="size-5" />
           </div>
           <SetupStatus setup={setup} />
         </div>
@@ -145,7 +145,7 @@ function SetupCard({
         {ready && setup.resources?.profileId && (
           <div className="rounded-lg bg-muted p-3 text-sm">
             <div className="flex items-center gap-2 font-medium">
-              <CheckCircle2 className="size-4 text-primary" />
+              <SuccessIcon className="size-4 text-primary" />
               Ready to use
             </div>
             <p className="mt-1 text-muted-foreground">
@@ -191,11 +191,11 @@ function SetupCard({
           variant={ready && !upgradeAvailable ? "outline" : "default"}
         >
           {installing ? (
-            <RefreshCw className="animate-spin" data-icon="inline-start" />
+            <RefreshIcon className="animate-spin" data-icon="inline-start" />
           ) : ready ? (
-            <RefreshCw data-icon="inline-start" />
+            <RefreshIcon data-icon="inline-start" />
           ) : (
-            <Sparkles data-icon="inline-start" />
+            <GenerateIcon data-icon="inline-start" />
           )}
           {installing ? "Installing…" : action}
         </Button>
