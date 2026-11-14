@@ -54,7 +54,7 @@ export function WelcomeDialog() {
 /// the stage's top offset below).
 const LOGO_DROP_REM = 1.5;
 
-/// The ls.bot hero as a landscape: the starscape around the Lightspeed
+/// The `https://ls.bot` hero as a landscape: the starscape around the Lightspeed
 /// logo, with the hand guiding the agent and the charge between them, the
 /// edges vignetted into black. The same art and proportions as the site's
 /// stage, placed so the logo sits just below the band's centre (the stage
