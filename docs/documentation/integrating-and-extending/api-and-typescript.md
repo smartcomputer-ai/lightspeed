@@ -244,6 +244,99 @@ Use `nextCursor` as `before` to load older history, and use the initial page's
 directions separate. Pages can split a run or tool batch, so retain enough
 projection state to join their pieces.
 
+## Build transcript authors and times
+
+The TypeScript SDK exports `transcriptMetadata` and `transcriptAuthor`. They are
+pure helpers over the existing public event types: no requests, stored timestamps,
+React state or rendering decisions. The Platform web already imports this SDK;
+its transcript fold can use these helpers when adding author and time display.
+
+```ts
+import { transcriptMetadata } from "@lightspeed-ai/sdk";
+
+// loadedEvents is the union of history pages and live SessionEventView events.
+const metadataByEntryId = transcriptMetadata(sessionId, loadedEvents);
+
+// Reuse the projection for every displayed message.
+const metadata = metadataByEntryId.get(entry.id);
+```
+
+Pass the union of the loaded history pages and live events, then look up each
+message by its context entry ID. The helper ignores other sessions and handles
+unsorted, overlapping pages. Recompute when older history or live events arrive;
+it does not retain previous calls. It performs one indexing pass and one pass over
+message entries. The returned map supplies metadata, not transcript order.
+
+| Result field | Meaning |
+| --- | --- |
+| `sentAtMs` | Server acceptance time for run or steering input, otherwise the earliest loaded context event carrying the message. |
+| `timeSource` | `runAccepted`, `runSteeringAccepted`, or `contextEvent`. The last is provisional for input whose acceptance event is not loaded. |
+| `author` | An actor `{ kind: "actor", id, source }`, a bot delivery `{ kind: "event" }`, or `null`. Assistant messages have no user author. |
+| `requestedBy` | Full attribution from the matching acceptance event, or `null`; preserves actor, key, local and internal cases. |
+
+If input is accepted at 10:00 and enters context at 10:02 after waiting in the
+queue, its `sentAtMs` is 10:00. Steering joins by both run ID and steering ID;
+assistant output and context edits do not borrow a run's acceptance time. When
+an older page supplies the missing acceptance, recomputing corrects the time and
+author. Repeated context entries use their earliest loaded sequence, even if a
+later event's wall clock is lower. A queued message not yet applied to context has
+no entry ID and is not returned; its acceptance event still contains its input.
+
+For user messages, an authenticated `requestedBy` actor takes precedence over a
+`user:<id>` origin. The author's `source` distinguishes those cases. Other
+attribution kinds are not converted into people, and `origin=event` stays a bot
+delivery. `transcriptAuthor(origin, requestedBy?)` exposes the author rule alone,
+which also works for a user-role list preview. Origin is display metadata, never
+proof of identity or permission.
+
+Platform sets `user:<id>` from the signed-in user on message and steering input.
+Its event endpoint preserves the runtime fields, and
+`GET /api/v1/universes/:id/members` supplies IDs, current names and roles; only
+admins receive emails. Resolve actor IDs through that data in the application.
+An unmatched ID may be a former member or an external application's actor, so do
+not assume it identifies a former Platform member. Names, labels, date formatting
+and which authors to show remain presentation decisions.
+
+## Keep session and resource lists current
+
+The Platform browser calls its cookie-authenticated `/api/v1` routes. Platform
+checks membership and session visibility, then calls the Rust runtime through the
+SDK with its service key and the member's actor ID. The browser uses SDK types and
+pure helpers without holding that service key.
+
+| View | Available data and refresh path |
+| --- | --- |
+| Session list | `SessionSummaryView` from `session/list` and `session/changed`: activity, `activityPhase`, `activitySinceMs`, last run, execution failure, message preview/role/origin/time, attached resource IDs and revision. |
+| Bot roster | `BotListItem` from `bots/list` and `bots/changed`: status, activity and counts. Detailed controller state still uses `bots/state/read`. |
+| Environments | `EnvironmentView` from `environments/list` and `environments/changed`. |
+| Workspaces | `VfsWorkspaceView` from `vfs/workspaces/list` and `workspaces/changed`: name, revision, head snapshot and totals. Refresh an open tree when its head changes; load files by immutable blob reference. |
+| Transcript | Paginated `session/events/read` plus its forward long-poll tail. List notifications do not replace transcript events. |
+
+Session summaries are materialized with store writes; callers do not reconstruct
+activity or preview text by replaying history. `lastMessageAtMs` is when that
+preview entered context, so it can differ from input acceptance time. Use
+`lastMessageRole` before interpreting `lastMessageOrigin` as a user author. An
+empty or unavailable message can leave the previous preview intact. Display
+elapsed activity time locally from `activitySinceMs`.
+
+`universe/watch` is a streaming POST to `/rpc` with `Accept: text/event-stream`;
+the TypeScript and Python SDKs expose watch iterators. Platform offers
+`GET /api/v1/universes/:id/watch`. The current web provider shares one connection
+across pages in the active universe of each tab. It receives all authorized
+session rows, including ones excluded by the current list filters. Ordinary list
+reads still perform filtering and pagination on the server; clients apply the
+same view filters when updating cached rows.
+
+Replace changed rows by ID, remove rows on `removed`, and refetch visible queries
+on `watch/reset`, including the reset that starts each connection. Restricted
+streams receive reset rather than a deleted session ID whose access is no longer
+known. Session and workspace revisions reject older updates. If a change overlaps
+an HTTP fetch, preserve it until that response has been applied; the current web
+watch cache already handles this. Keep slow fallback reads because signals are
+lossy and have no replay cursor. Platform rotates connections after 60 seconds to
+recheck membership and feature access; direct runtime streams last at most 15
+minutes. These streams carry resource rows, not model tokens.
+
 ## Read content through the public projection
 
 `session/read` returns stored session state and a bounded recent run-summary page,

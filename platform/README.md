@@ -51,6 +51,10 @@ body-supplied origin claims. Bot deliveries use `event`; other API clients
 may supply their own strings. Authorization and requester attribution are
 explained in [Access and security](../docs/documentation/access-and-security/overview.md).
 
+The SDK [transcript metadata helpers and session-view data guide](../docs/documentation/integrating-and-extending/api-and-typescript.md#build-transcript-authors-and-times)
+describe author/time derivation, materialized list fields and watch integration.
+The helpers are available independently of the current UI presentation.
+
 The [history loader](web/src/components/session/history-loader.tsx) starts
 with recent events, while the [live reader](web/src/lib/sessions/tail.ts)
 follows from that window's head. Older pages load as the reader scrolls up.
