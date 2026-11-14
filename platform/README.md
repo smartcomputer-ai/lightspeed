@@ -64,6 +64,12 @@ live session controls. Changing sessions cancels both read paths. Transient
 read failures retain existing content while retrying, and authorization or
 integrity errors remain visible immediately.
 
+[Submission reconciliation](web/src/lib/sessions/submissions.ts) combines local
+sends with event history in one projection. Local render keys survive confirmation;
+input stays visible while the event tail catches up with HTTP receipts. Steering
+matches submission and steering IDs and renders within its run from the start.
+Local messages appear immediately; incoming messages retain entrance motion.
+
 [Run sections](web/src/lib/sessions/run-sections.ts) select the final answer
 from the run's recorded output reference, so loading older history cannot
 promote an interim message to the final answer. Partially loaded runs must

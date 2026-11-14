@@ -1367,6 +1367,9 @@ pub struct EventJoinsView {
     pub tool_batch_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Client submission identifier, when present. Run and steering acceptance
+    /// events expose this join so clients can match local input to its accepted
+    /// run or steering identifier without comparing message text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submission_id: Option<String>,
 }

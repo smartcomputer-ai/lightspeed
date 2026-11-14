@@ -2003,6 +2003,11 @@ class EventCursor(TypedDict):
 class EventJoinsView(TypedDict):
     runId: NotRequired[str | None]
     submissionId: NotRequired[str | None]
+    """
+    Client submission identifier, when present. Run and steering acceptance
+    events expose this join so clients can match local input to its accepted
+    run or steering identifier without comparing message text.
+    """
     toolBatchId: NotRequired[str | None]
     toolCallId: NotRequired[str | None]
     turnId: NotRequired[str | None]

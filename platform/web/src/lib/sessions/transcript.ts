@@ -42,6 +42,9 @@ export type TranscriptEntry =
       /// A user message injected into a running run (steering) rather than
       /// the input that started it.
       steering?: boolean;
+      steeringId?: string;
+      /// Locally submitted in this view; preserve identity and skip entrance motion.
+      local?: boolean;
     }
   | {
       kind: "system";
@@ -179,6 +182,8 @@ export interface TranscriptState {
   seenItems: Set<string>;
   seenEvents: Set<number>;
   runPhases: Map<string, RunPhase>;
+  /// Terminal events actually consumed by the tail, independent of newer snapshots.
+  finishedRuns: Set<string>;
   /// Accepted runs with no start, retained after queue removal. A terminal
   /// snapshot can arrive before the cancellation event and clear queuedRuns.
   unstartedRuns: Set<string>;
@@ -186,6 +191,8 @@ export interface TranscriptState {
   /// optimistic send resolve its run before its own POST returns (the tail
   /// is usually faster than the gateway's acceptance poll).
   runBySubmission: Map<string, string>;
+  /// Client submission id → steering id, from `runSteeringAccepted`.
+  steeringBySubmission: Map<string, string>;
   /// Tool event metadata, context items, and results arrive separately.
   /// These indexes merge them into one stable group in the transcript.
   toolCallByCallId: Map<string, ToolCallLocation>;
@@ -222,8 +229,10 @@ export function emptyTranscript(): TranscriptState {
     seenItems: new Set(),
     seenEvents: new Set(),
     runPhases: new Map(),
+    finishedRuns: new Set(),
     unstartedRuns: new Set(),
     runBySubmission: new Map(),
+    steeringBySubmission: new Map(),
     toolCallByCallId: new Map(),
     toolGroupByBatchId: new Map(),
     runUsage: new Map(),
@@ -277,8 +286,10 @@ export function applyEvents(
     seenItems: state.seenItems,
     seenEvents: state.seenEvents,
     runPhases: state.runPhases,
+    finishedRuns: state.finishedRuns,
     unstartedRuns: state.unstartedRuns,
     runBySubmission: state.runBySubmission,
+    steeringBySubmission: state.steeringBySubmission,
     toolCallByCallId: state.toolCallByCallId,
     toolGroupByBatchId: state.toolGroupByBatchId,
     runUsage: state.runUsage,
@@ -317,8 +328,9 @@ export function applyEvents(
         }
         break;
       case "runSteeringAccepted":
-        // The steering text lands as a context entry once it materializes;
-        // nothing to fold yet beyond the revision bump for the page.
+        if (event.joins.submissionId) {
+          next.steeringBySubmission.set(event.joins.submissionId, kind.steeringId);
+        }
         next.runRevision += 1;
         break;
       case "approvalRequested":
@@ -400,6 +412,7 @@ export function applyEvents(
         break;
       case "runCompleted": {
         const runId = String(kind.runId);
+        next.finishedRuns.add(runId);
         finishRun(next, runId);
         next.entries.push({
           ...runSummary(next, event, runId, "completed"),
@@ -409,6 +422,7 @@ export function applyEvents(
       }
       case "runFailed": {
         const runId = String(kind.runId);
+        next.finishedRuns.add(runId);
         finishRun(next, runId);
         next.entries.push({
           ...runSummary(next, event, runId, "failed"),
@@ -419,6 +433,7 @@ export function applyEvents(
       }
       case "runCancelled": {
         const runId = String(kind.runId);
+        next.finishedRuns.add(runId);
         const wasQueued = next.unstartedRuns.has(runId)
           || next.queuedRuns.some((run) => run.runId === runId);
         finishRun(next, runId);
@@ -783,7 +798,7 @@ function applyNonToolCallItem(
             ? { citations: item.citations }
             : {}),
           ...(runId ? { runId } : {}),
-          ...(source?.type === "steering" ? { steering: true } : {}),
+          ...(source?.type === "steering" ? { steering: true, steeringId: source.steeringId } : {}),
         });
       }
       break;
@@ -945,7 +960,7 @@ function inputEntry(
     text: "",
     ...(item.origin ? { origin: item.origin } : {}),
     ...(runId ? { runId } : {}),
-    ...(source?.type === "steering" ? { steering: true } : {}),
+    ...(source?.type === "steering" ? { steering: true, steeringId: source.steeringId } : {}),
   });
   return state.entries.length - 1;
 }

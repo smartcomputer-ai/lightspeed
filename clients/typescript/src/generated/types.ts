@@ -2771,6 +2771,11 @@ export interface EventCursor {
 }
 export interface EventJoinsView {
   runId?: string | null;
+  /**
+   * Client submission identifier, when present. Run and steering acceptance
+   * events expose this join so clients can match local input to its accepted
+   * run or steering identifier without comparing message text.
+   */
   submissionId?: string | null;
   toolBatchId?: string | null;
   toolCallId?: string | null;

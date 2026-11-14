@@ -12143,6 +12143,7 @@
           ]
         },
         "submissionId": {
+          "description": "Client submission identifier, when present. Run and steering acceptance\nevents expose this join so clients can match local input to its accepted\nrun or steering identifier without comparing message text.",
           "type": [
             "string",
             "null"

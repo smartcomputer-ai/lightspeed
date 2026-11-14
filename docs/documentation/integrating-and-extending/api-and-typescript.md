@@ -297,6 +297,14 @@ An unmatched ID may be a former member or an external application's actor, so do
 not assume it identifies a former Platform member. Names, labels, date formatting
 and which authors to show remain presentation decisions.
 
+For optimistic sends, keep a stable local render key and attach backend IDs as
+acknowledgements arrive. Run acceptance exposes `submissionId`; steering acceptance
+exposes it in `joins.submissionId`, alongside `kind.steeringId`. Context entries carry
+the matching run/steering source. Use those IDs for reconciliation, not message text.
+A POST receipt can precede the corresponding transcript events, including when it
+already reports completion; retain the local message until the event reader catches
+up. These render identities belong to the current view, not durable session state.
+
 ## Keep session and resource lists current
 
 The Platform browser calls its cookie-authenticated `/api/v1` routes. Platform

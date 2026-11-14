@@ -922,7 +922,7 @@ describe("session transcript run control", () => {
         role: "user",
         text: "also mention the moon",
         runId: "run_1",
-        steering: true,
+        steering: true, steeringId: "steering_1",
         origin: "user:operator",
       },
     ]);

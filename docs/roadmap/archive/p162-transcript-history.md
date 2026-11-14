@@ -10,18 +10,37 @@ Status: implemented and verified.
   change on acceptance. Failed sends remove the optimistic message and show
   an error in the composer.
   DOM regression coverage
-  checks both acknowledgement orders, delayed input, pending-state cleanup,
-  and preservation of expanded long messages through run completion.
+  checks both acknowledgement orders, delayed input, separate acceptance/start
+  batches, terminal HTTP snapshots ahead of the tail, and preservation of expanded
+  long messages through run completion. One local submission collection and a pure
+  display projection own identity, visibility and queue placement. Acceptance alone
+  cannot move an idle queue-head echo into the queue. When the tail reveals another
+  run ahead, the local input moves into the queue with cancel and steering controls.
+  Queued inputs leave the queue when execution starts or a completed/failed receipt
+  arrives. Echo retirement waits for durable input or a consumed
+  terminal event; an HTTP completion receipt alone does not erase the message.
+  Steering uses submission and steering IDs, including repeated text and attachments,
+  and occupies its run's work list from the first render through confirmation. An
+  early terminal snapshot preserves interim-note order while steering is pending.
+  Local submissions belong to the keyed session view; the display projection is
+  memoized so summary-only watch updates do not fold the transcript again. The
+  public steering acceptance event exposes its existing submission ID through
+  `joins.submissionId`. The demo supplies the same join.
   Backend-loaded runs use stable run-ID keys; only locally submitted inputs
   use submission-ID keys. History prepend coverage verifies that discovering
   an older input or acknowledgement preserves mounted activity and expansion.
-  New messages and activity boxes use a restrained 200 ms opacity/translation
-  entrance with reduced-motion support. Arrival tracking excludes initial and
+  Incoming messages and activity boxes use a restrained 200 ms opacity/translation
+  entrance with reduced-motion support. Locally submitted messages appear immediately. Arrival tracking excludes initial and
   older history, records hidden work, and prevents replay on text updates or
   final-answer promotion. Component tests cover these transitions.
   Nested message entrances stay suppressed until the activity box animation
   ends or is cancelled, including messages arriving in later renders during
-  that interval. Reduced-motion mode does not wait for an animation event.
+  that interval. Local steering stops a still-running parent entrance immediately
+  so it cannot inherit a fade. Reduced-motion mode does not wait for an animation event.
+  Verified with the web suite, focused DOM/motion regressions, API projection tests,
+  type checking, workspace Clippy and a browser preview. Browser checks delayed POST
+  receipts and split event delivery; local input and steering kept one mounted,
+  expanded message at full opacity through confirmation.
 
 - Completed runs identify their reply using the recorded output reference and
   run identity, including when reasoning follows the reply in stored history.

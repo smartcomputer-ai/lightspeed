@@ -751,11 +751,18 @@ impl<'a> CoreAgentProjector<'a> {
         session_id: &SessionId,
         entry: &CoreAgentEntry,
     ) -> Result<SessionEventView, AgentApiError> {
+        let mut joins = event_joins_to_api(&entry.joins);
+        // Steering carries its submission identity in the durable event. Expose
+        // it through the same public join used to reconcile ordinary run input.
+        if let CoreAgentEvent::Run(RunEvent::SteeringAccepted { submission_id, .. }) = &entry.event
+        {
+            joins.submission_id = Some(submission_id.as_str().to_owned());
+        }
         Ok(SessionEventView {
             cursor: event_cursor(entry.position.seq),
             session_id: session_id.as_str().to_owned(),
             observed_at_ms: entry.observed_at_ms,
-            joins: event_joins_to_api(&entry.joins),
+            joins,
             kind: self.project_event_kind(&entry.event).await?,
         })
     }
@@ -4073,6 +4080,41 @@ mod tests {
                 tool_call_with_status(ToolItemStatus::Running),
             ]),
             ToolItemStatus::Running
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn steering_events_expose_the_submission_join_for_client_reconciliation() {
+        let blobs = InMemoryBlobStore::new();
+        let projector = CoreAgentProjector::new(&blobs);
+        let entry = CoreAgentEntry {
+            position: SessionPosition {
+                seq: EventSeq::new(1),
+            },
+            observed_at_ms: 1,
+            joins: CoreAgentJoins {
+                run_id: Some(RunId::new(2)),
+                ..Default::default()
+            },
+            event: CoreAgentEvent::Run(RunEvent::SteeringAccepted {
+                run_id: RunId::new(2),
+                steering_id: harness::SteeringId::new(3),
+                submission_id: harness::SubmissionId::new("local-steer"),
+                input: vec![],
+                requested_by: None,
+            }),
+        };
+        let projected = projector
+            .project_entry(&SessionId::new("session"), &entry)
+            .await
+            .unwrap();
+        assert_eq!(
+            projected.joins.submission_id.as_deref(),
+            Some("local-steer")
+        );
+        assert_eq!(projected.joins.run_id.as_deref(), Some("run_2"));
+        assert!(
+            matches!(projected.kind, SessionEventKindView::RunSteeringAccepted { steering_id, .. } if steering_id == "steering_3")
         );
     }
 

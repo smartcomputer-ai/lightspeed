@@ -83,9 +83,9 @@ describe("demo router", () => {
         { type: "media", ...attachment }, { type: "text", text: "Use these notes" },
       ] } });
       expect((await call("POST", `${path}/runs/${queued.id}/cancel`, {})).json).toEqual({ run: { id: queued.id, status: "cancelled" } });
-      expect((await call("POST", `${path}/runs/${active.id}/steer`, { text: "Use these notes", attachments: [attachment] })).status).toBe(200);
+      expect((await call("POST", `${path}/runs/${active.id}/steer`, { text: "Use these notes", attachments: [attachment], submissionId: "local-steer" })).status).toBe(200);
       expect(session.queue.some((entry) => entry.runId === queued.id)).toBe(false);
-      expect(session.events.some((event) => event.kind.type === "runSteeringAccepted" && event.kind.runId === active.id)).toBe(true);
+      expect(session.events.find((event) => event.kind.type === "runSteeringAccepted" && event.kind.runId === active.id)?.joins.submissionId).toBe("local-steer");
       expect((await call("GET", `${path}/runs/missing`)).status).toBe(404);
       await vi.runAllTimersAsync();
       const rejected = await call("POST", `${path}/runs/${active.id}/steer`, { text: "Too late" });

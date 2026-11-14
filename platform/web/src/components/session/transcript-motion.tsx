@@ -6,9 +6,8 @@ const MotionContext = createContext<(key: string) => boolean>(() => false);
 
 /// Remember arrivals, including hidden work, so history and remounted replies
 /// never replay their entrance. The first live snapshot is the baseline.
-export function TranscriptMotionProvider({ sections, pendingKeys, ready, historyRevision, children }: {
+export function TranscriptMotionProvider({ sections, ready, historyRevision, children }: {
   sections: TranscriptSection[];
-  pendingKeys: string[];
   ready: boolean;
   historyRevision: number;
   children: ReactNode;
@@ -29,25 +28,29 @@ export function TranscriptMotionProvider({ sections, pendingKeys, ready, history
         seen.add(section.entry.key);
       }
     }
-    for (const key of pendingKeys) seen.add(key);
     previous.current.ready = ready;
     previous.current.historyRevision = historyRevision;
-  }, [sections, pendingKeys, ready, historyRevision]);
+  }, [sections, ready, historyRevision]);
 
   return <MotionContext.Provider value={canAnimate}>{children}</MotionContext.Provider>;
 }
 
-export function TranscriptEntrance({ motionKey, className, children }: {
+export function TranscriptEntrance({ motionKey, immediate = false, className, children }: {
   motionKey: string;
+  immediate?: boolean;
   className?: string;
   children: ReactNode;
 }) {
   const canAnimate = useContext(MotionContext);
-  const [entering, setEntering] = useState(() => canAnimate(motionKey));
+  const [entering, setEntering] = useState(() => !immediate && canAnimate(motionKey));
   const element = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const node = element.current;
     if (!entering || !node) return;
+    if (immediate) {
+      setEntering(false);
+      return;
+    }
     const finish = (event: AnimationEvent) => {
       if (event.target === node && event.animationName === "transcript-enter") setEntering(false);
     };
@@ -64,12 +67,12 @@ export function TranscriptEntrance({ motionKey, className, children }: {
       node.removeEventListener("animationcancel", finish);
       reducedMotion?.removeEventListener("change", checkMotion);
     };
-  }, [entering]);
+  }, [entering, immediate]);
   // When a whole activity box arrives, its contents move with it. Later
   // messages can enter individually only after its animation has finished.
   return (
     <MotionContext.Provider value={(key) => !entering && canAnimate(key)}>
-      <div ref={element} className={cn("min-w-0", className, entering && "transcript-enter")}>{children}</div>
+      <div ref={element} className={cn("min-w-0", className, entering && !immediate && "transcript-enter")}>{children}</div>
     </MotionContext.Provider>
   );
 }
