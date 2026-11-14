@@ -5368,6 +5368,7 @@ dependencies = [
  "futures",
  "futures-util",
  "harness",
+ "hmac",
  "http",
  "jsonschema",
  "llm-clients",

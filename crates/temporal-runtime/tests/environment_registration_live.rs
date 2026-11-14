@@ -13,7 +13,7 @@
 //! the next revocation sweep. The registered sweep closes ephemeral rows
 //! after their grace and persistent rows after the key's offline bound; a
 //! parked daemon waits for its stop signal instead of exiting. Rotation
-//! keeps the key's group, startup repair marks connected rows disconnected,
+//! keeps the key's group,
 //! and a configured registration URL is an accepted signature origin.
 
 mod support;
@@ -627,7 +627,7 @@ async fn ephemeral_scenario(
 }
 
 /// A persistent key, dialed under the configured registration URL: the
-/// bounded reconnect wait, startup repair, rotation, the cross-process
+/// bounded reconnect wait, rotation, the cross-process
 /// close at the revocation sweep, and the offline bound with a parked
 /// daemon.
 async fn persistent_scenario(
@@ -730,34 +730,6 @@ async fn persistent_scenario(
     })
     .await?;
     wait_for_receipt_admission(&receipt_p, "reconnected").await?;
-
-    // Startup repair (here for this universe only): a gateway that
-    // restarted held none of the connections its rows still call
-    // connected. The disconnect counts from now, so persistent rows get
-    // their full reconnect wait.
-    let before_repair = now_ms();
-    assert!(store.repair_registered_connections(before_repair).await? >= 1);
-    let repaired = store.read_environment(&environment_id_p).await?;
-    let source = repaired.registered().expect("registered");
-    assert!(!source.connected);
-    assert_eq!(source.connection_changed_at_ms, before_repair);
-    assert!(matches!(
-        repaired.use_gate(before_repair + 1_000),
-        EnvironmentUse::Wait {
-            reason: EnvironmentWaitReason::Disconnected,
-            ..
-        }
-    ));
-    // The daemon's next connection records it again.
-    daemon_p.exit.abort();
-    let daemon_p = spawn_p(None)?;
-    wait_for_environment(
-        api,
-        &environment_p.environment_id,
-        "reconnected after repair",
-        |view| is_connected(view) == Some(true),
-    )
-    .await?;
 
     // Rotation retires the live secret at once and keeps the key: its
     // group, identity mode and environments. Admitted daemons are

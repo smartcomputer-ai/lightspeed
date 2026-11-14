@@ -387,7 +387,7 @@ docker logs --tail 100 lightspeed-platform
 | A universe cannot be created | Platform administrator role, runtime connectivity, and a Platform deployment key with `deployment/universes` access |
 | A run is accepted but makes no progress | Temporal namespace, session workers, and matching task queues |
 | Model calls fail | The universe's provider credential and the session's selected model |
-| A daemon connects but process calls cannot route | The two public WebSocket paths, internal environment gateway URL/token, and the single environment-gateway process |
+| A daemon connects but process calls cannot route | The two public WebSocket paths, internal environment gateway URL/token, and replica peer reachability and leases |
 
 Use [Operations](operations.md) for monitoring, role scaling, and retention,
 and [Troubleshooting](troubleshooting.md) for a failing request path.

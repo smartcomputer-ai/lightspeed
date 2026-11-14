@@ -11,9 +11,9 @@ pub enum Role {
     Gateway,
     /// The environment data plane: the public routes outbound daemons dial,
     /// the internal route workers use to reach environments, the lifecycle
-    /// reconciler, and the registered-environment sweep. Registered daemons
-    /// hold their connection in this process, so run exactly one replica of
-    /// it.
+    /// reconciler, and the registered-environment sweep. Replicas advertise
+    /// their direct peer addresses and route to the process holding each
+    /// live connection.
     EnvironmentGateway,
     /// Session, sub-agent, and environment-job workflows with their
     /// activities and the promise reaper.

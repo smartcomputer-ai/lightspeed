@@ -668,6 +668,21 @@ impl EnvironmentStore for PgStore {
         if !live {
             return Err(request.secret_retired());
         }
+        // Another admission may have created this identity while we waited
+        // for the key lock. Converge before counting capacity: reconnecting
+        // that identity consumes no additional slot.
+        let existing_query = format!(
+            "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_FROM} WHERE e.universe_id = $1 AND e.daemon_public_key = $2"
+        );
+        if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(existing_query))
+            .bind(self.config.universe_id)
+            .bind(&request.daemon_public_key)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| sql_error("recheck registered identity", error))?
+        {
+            return environment_from_row(&row);
+        }
         if let Some(limit) = key.max_active_environments {
             let active: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM environments WHERE universe_id = $1 AND registration_key_id = $2 AND state <> 'closed'",
@@ -1714,7 +1729,9 @@ async fn update_environment_row(
             observed_phase = $15, observed_power = $16, observed_message = $17,
             observed_at_ms = $18, public_endpoint = $19,
             connected = $20, connection_changed_at_ms = $21, last_seen_at_ms = $22,
-            updated_at_ms = $23, closed_at_ms = $24, daemon_public_key = $25
+            updated_at_ms = $23, closed_at_ms = $24, daemon_public_key = $25,
+            owner_instance_id = CASE WHEN $20 AND $3 = 'open' THEN owner_instance_id ELSE NULL END,
+            control_connection_id = CASE WHEN $20 AND $3 = 'open' THEN control_connection_id ELSE NULL END
         WHERE universe_id = $1 AND environment_id = $2
         "#,
     )

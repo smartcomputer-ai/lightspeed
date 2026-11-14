@@ -43,6 +43,7 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "environments",
     "mcp_server_headers",
     "mcp_servers",
+    "runtime_instances",
     "session_checkpoints",
     "session_events",
     "session_summary",
@@ -176,9 +177,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "session_summaries",
         sql: include_str!("../migrations/023_session_summaries.sql"),
     },
+    EmbeddedMigration {
+        version: 24,
+        name: "environment_gateway_replicas",
+        sql: include_str!("../migrations/024_environment_gateway_replicas.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 23;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 24;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

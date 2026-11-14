@@ -43,7 +43,7 @@ They do not configure the TypeScript Platform backend.
 | `LIGHTSPEED_POSTGRES_URL` | **Required**; falls back to `LIGHTSPEED_TEST_POSTGRES_URL` | PostgreSQL connection URL used by the runtime, migration commands, and schema diagnostics. Production must use this name. TLS is supported; use `sslmode=verify-full` for remote databases to verify the certificate and hostname. |
 | `LIGHTSPEED_POSTGRES_AUTH_MODE` | `password` | `password` or `workload_identity`. With `workload_identity`, the Runtime logs in with a Microsoft Entra token using the [`AZURE_*` settings](#object-storage). The URL must name the identity as its user, hold no password, and set `sslmode=verify-full`. |
 | `LIGHTSPEED_PG_UNIVERSE_ID` | **Required in `single` auth mode** | UUID of the sole universe in a single-tenant deployment. Not used to auto-create universes in multi-tenant modes. |
-| `LIGHTSPEED_ROLES` | `gateway,environment-gateway,sessions,bots,channels` | Roles this process runs, a comma-separated subset of `gateway` (JSON-RPC, OAuth callbacks, webhook hooks), `environment-gateway` (worker environment routes, the public daemon registration routes, the lifecycle reconciler that creates and closes provisioned environments, and the registered-environment sweep), `sessions` (session workflows plus the promise-repair reaper, the session-retention reaper, both every five minutes, and the hourly CAS blob sweeper), `bots`, `channels` (also `--roles`). Each worker role polls its own task queue with that subsystem's workflows, activities, and background loops. Run exactly one `environment-gateway` process per deployment. |
+| `LIGHTSPEED_ROLES` | `gateway,environment-gateway,sessions,bots,channels` | Roles this process runs, a comma-separated subset of `gateway` (JSON-RPC, OAuth callbacks, webhook hooks), `environment-gateway` (worker environment routes, the public daemon registration routes, the lifecycle reconciler that creates and closes provisioned environments, and the registered-environment sweep), `sessions` (session workflows plus the promise-repair reaper, the session-retention reaper, both every five minutes, and the hourly CAS blob sweeper), `bots`, `channels` (also `--roles`). Each worker role polls its own task queue with that subsystem's workflows, activities, and background loops. Environment gateway replicas require individual peer URLs and a shared gateway token. |
 | `LIGHTSPEED_TASK_QUEUE` | `lightspeed-sessions` | Sessions task queue shared by the gateway and the `sessions` role. Deployments sharing a Temporal namespace must use distinct queues. |
 | `LIGHTSPEED_TASK_QUEUE_BOTS` | `lightspeed-bots` | Task queue of the `bots` role (bot controllers, trigger fires, bot activities). |
 | `LIGHTSPEED_TASK_QUEUE_CHANNELS` | `lightspeed-channels` | Task queue of the `channels` role (conversation workflows and core channel activities). Connector activities run on the per-account `lightspeed-connector-*` queues served by the connector host. |
@@ -205,30 +205,39 @@ model. Session input must already be transcribed; see
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
 | `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` | **Required unless the process runs `environment-gateway`** | Stable environment-gateway base URL used by workers and `gateway`-only processes for environment data routes. |
-| `LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN` | **Required unless the process runs `environment-gateway`** | Shared deployment bearer token for worker-to-gateway routing. |
+| `LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN` | **Required for separate workers and whenever a peer URL is configured** | Shared deployment bearer token for worker and peer routing; also authenticates stream pairing tokens. All replicas must use the same value. |
+| `LIGHTSPEED_ENVIRONMENT_GATEWAY_PEER_URL` | Unset; **required on every replica in a multi-replica gateway deployment** | This process's direct HTTP(S) origin, advertised in PostgreSQL for other gateways. Use the pod/host address and listener port, without a path, credentials, query, or fragment. A single gateway can omit it. |
 
 A process running the `environment-gateway` role derives a local environment
 route automatically. Every other process, including one that runs only the
 `gateway` role, must provide both values.
 
-The `environment-gateway` role serves the worker route above plus the public
-registration routes `/environment-gateway/connect` and
-`/environment-gateway/data` that outbound `lightspeed-envd` daemons dial. It
-also runs the lifecycle reconciler, which creates and closes provisioned
-environments, and every 30 seconds a sweep that marks registered daemons
-disconnected when their connection lapsed and closes registered environments
-under their key's disconnect policy. A registered daemon's control
-connection lives in the process that accepted it, and the worker route for
-that environment must reach the same process: **run exactly one
-`environment-gateway` process per deployment** until multi-replica owner
-routing is implemented. At startup the process marks every registered
-environment disconnected until its daemon reconnects. `gateway`-only
-processes and workers may scale freely; they hold no daemon connections and
-do not answer the registration routes at all. Expose the two public routes
-through TLS on the host named by `LIGHTSPEED_PUBLIC_BASE_URL`; the daemon
-refuses plain `ws://` toward anything but loopback unless
-`LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY` is set, and derives the data route
-from its connect URL.
+The `environment-gateway` role serves worker routes, private peer endpoints,
+and the public registration routes `/environment-gateway/connect` and
+`/environment-gateway/data`. Replicas register their own direct peer URL in
+`runtime_instances`, renew a 20-second lease every five seconds, and record
+the owner and control connection ID on each registered environment. Workers
+may reach any replica through the shared URL. A dial-back landing on another
+replica is relayed to the process holding the worker connection.
+
+Starting a replica leaves existing connections alone. Lease expiry invalidates
+an owner; a process unable to renew closes its sockets and exits. Each
+background lifecycle, display, and registered sweep loop has one advisory-lock
+leader. The registered sweep runs every 30 seconds and also applies the
+registration key's disconnect policy. Local ownership and route checks run
+on lease renewal, every five seconds.
+
+Use `/ready` to exclude draining or expired gateways from new traffic;
+`/health` remains a liveness endpoint. Shutdown drains for up to ten seconds,
+then closes control connections so daemons reconnect with their normal
+backoff. Streams may be interrupted; gateway failover does not automatically
+repeat tool operations.
+
+Expose only the two public daemon routes through TLS on the host named by
+`LIGHTSPEED_PUBLIC_BASE_URL`; keep `/environment-gateway/routes/` and
+`/environment-gateway/peer/` private. The daemon refuses plain `ws://` toward
+anything but loopback unless `LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY` is set,
+and derives the data route from its connect URL.
 
 Provider controllers are not configured through environment variables. Each
 provider's controller endpoint, optional data route base, and optional

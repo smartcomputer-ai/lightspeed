@@ -212,10 +212,14 @@ another role's activities. Connector hosts provide the provider-specific chat
 transport and activity workers; they have no database access or authority to
 choose which bot owns a conversation.
 
-The environment gateway is currently a singleton because its connected daemon
-sockets are held by that process. The other runtime roles can be scaled
-separately. See [Operations](../deployment/operations.md) for the supported
-topology and its current limits.
+Environment gateways share a PostgreSQL registry of leased process identities
+and daemon connection ownership. Sockets stay local to each process. The
+replica accepting a worker route asks the daemon's owner to open a stream;
+if the daemon's dial-back lands elsewhere, that receiver relays it to the
+acceptor. A data stream crosses at most two gateway processes. Ownership
+checks prevent a stale connection from modifying or serving its successor.
+Background environment loops each have one PostgreSQL advisory-lock leader.
+See [Operations](../deployment/operations.md) for scaling and shutdown behavior.
 
 A deployment can serve several universes over shared processes, database
 connections, and provider clients. Universe-bound queries, object references,
