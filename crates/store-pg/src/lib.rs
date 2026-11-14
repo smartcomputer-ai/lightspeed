@@ -23,6 +23,7 @@ mod oauth;
 mod object;
 mod profile;
 mod providers;
+mod runtime_instances;
 mod s3;
 mod session;
 pub use session::PurgeSessionError;
@@ -343,6 +344,12 @@ pub use migrations::{
     MIGRATIONS, REQUIRED_SCHEMA_REVISION, SchemaStatus, schema_status, verify_schema,
 };
 pub use object::{delete_objects_under_prefix, universe_cas_object_prefix};
+pub use runtime_instances::{
+    RegisteredConnectionOwner, RuntimeInstance, RuntimeLoop, RuntimeLoopLeader,
+    delete_runtime_instance, disconnect_runtime_instance_connections, read_live_runtime_instance,
+    read_registered_connection_owner, read_registered_connection_owners, register_runtime_instance,
+    renew_runtime_instance, sweep_expired_registered_connections,
+};
 
 /// Deployment-level universe listing for admin surfaces.
 pub async fn list_universes(pool: &PgPool) -> Result<Vec<(Uuid, String)>, PgStoreError> {

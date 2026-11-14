@@ -123,8 +123,10 @@ environment gateway's Service directly:
    cross the cluster network in the clear, so restrict that path with a
    network policy.
 
-The Service must route to the single environment-gateway process, and both
-`/environment-gateway/connect` and `/environment-gateway/data` must reach it.
+The Service can route to multiple environment-gateway replicas. Publish both
+`/environment-gateway/connect` and `/environment-gateway/data`; they may land
+on different replicas. Configure each gateway's direct peer URL and the shared
+gateway token as described in [networking and ingress](networking-and-ingress.md).
 
 ## Provide the daemon binary
 

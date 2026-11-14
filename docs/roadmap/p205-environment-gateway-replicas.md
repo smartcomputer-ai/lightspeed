@@ -1,8 +1,9 @@
 # P205 — Environment gateway replicas
 
-**Status:** Proposed, 2026-11-13. Not started. Independent of
-[P202](p202-session-summaries-and-change-signals.md), which only makes two
-steps here faster.
+**Status:** Implemented and focused validation passed, 2026-11-14.
+The environment change feed from [P202](p202-session-summaries-and-change-signals.md)
+continues to accelerate environment revocation; ownership revalidation runs
+on each lease renewal.
 
 Addresses
 [#164](https://github.com/smartcomputer-ai/lightspeed/issues/164).
@@ -10,13 +11,14 @@ Addresses
 ## Goal
 
 Several `environment-gateway` processes behind one address. Losing one
-affects only the daemons connected to it, and those reconnect to another
-without operator action. Workers keep one gateway URL. The daemon protocol
-does not change.
+interrupts the control connections and data routes passing through it. Its
+daemons reconnect to another without operator action, and new worker routes
+can use surviving replicas. Workers keep one gateway URL. The daemon protocol
+does not change; existing streams are not migrated between processes.
 
-## Current state
+## Starting point
 
-A deployment must run exactly one `environment-gateway` process, because
+Before this change, a deployment had to run exactly one `environment-gateway` process, because
 this state lives in its memory (`RegisteredConnections` in
 `crates/temporal-runtime/src/gateway/registration.rs`):
 
@@ -69,24 +71,32 @@ acceptor, and two otherwise. It never crosses three.
 
 A new table, `runtime_instances`: instance id (generated at start), roles,
 peer URL, start time and lease expiry. Each `environment-gateway` process
-renews its lease every 5 s; a lease lasts 20 s (proposed values).
+renews its lease every 5 s; a lease lasts 20 s. PostgreSQL supplies lease
+timestamps; the process also keeps a conservative monotonic deadline. An
+expired instance cannot renew its identity and must restart with a new ID.
 
 The peer URL is the address other replicas use to reach this process, from
-a new setting (proposed: `LIGHTSPEED_ENVIRONMENT_GATEWAY_PEER_URL`, for
-example built from the pod IP). A single-replica deployment does not need
-it.
+`LIGHTSPEED_ENVIRONMENT_GATEWAY_PEER_URL`, for example built automatically
+from the pod IP. This is the process's own advertised HTTP(S) origin. All
+replicas share an explicitly configured gateway token. A single-replica
+deployment does not need a peer URL.
 
 A replica that cannot renew its lease for a full lease period closes its
-control connections. Its daemons reconnect elsewhere, and no two replicas
-believe they own the same daemon for long.
+control connections and data routes, fails readiness, and exits. Its daemons
+reconnect elsewhere. Ownership comparisons discard superseded handles on
+every renewal.
 
 ### Ownership
 
 `environments` gains `owner_instance_id` and `control_connection_id`.
 
-- **Admission** writes both, with `connected`.
+- **Admission** writes both, with `connected` and daemon build metadata,
+  conditional on a live lease and the expected bound daemon identity.
+  In-flight local admissions are excluded from background ownership scans.
 - **Disconnect** clears them only where both still match, so a replica
-  cannot clear a newer connection made on another replica.
+  cannot clear a newer connection made on another replica. Heartbeat writes
+  use the same fence and cannot restore a stale connection. An ephemeral
+  daemon's deliberate departure closes its environment under that same fence.
 - **Supersede across replicas.** A daemon that reconnects to another
   replica overwrites the owner. The old replica drops its stale handle when
   it next compares its handles with the rows it owns, on every lease
@@ -97,28 +107,30 @@ believe they own the same daemon for long.
 
 ### Opening a route
 
-1. A worker dials the gateway URL as today and reaches the acceptor.
-2. The acceptor reads the environment row, as it already does for the use
-   gate, and with it the owner and the owner's peer URL. No live owner
-   means the `disconnected` refusal of today.
-3. The acceptor creates a token that names itself, registers the pending
-   stream locally, and asks the owner to open a stream: a local call when
-   it is the owner, otherwise a peer request.
-4. The owner sends `registration/openStream` with that token on the control
-   connection and answers with its control connection id.
-5. The daemon dials `/environment-gateway/data` through the public address
-   and reaches the receiver.
-6. The receiver reads the acceptor from the token. If it is the acceptor it
-   pairs locally, as today. Otherwise it connects to the acceptor's peer
-   URL and relays the socket.
-7. The acceptor pipes the worker socket to the data socket.
+1. A worker dials the gateway URL and reaches the acceptor.
+2. The acceptor reads the live owner, its peer URL, and the expected control
+   connection ID. No live owner means a `disconnected` refusal.
+3. The acceptor creates a token naming itself and records the pending stream
+   with both ownership IDs before asking the owner to open the stream.
+4. The owner verifies that the expected connection is still current and sends
+   `registration/openStream`. A local owner uses the same control queue;
+   a remote owner is reached through `POST /environment-gateway/peer/streams`.
+5. The daemon dials `/environment-gateway/data` through the shared address.
+   The receiver verifies the token MAC and expiry before looking up a peer.
+6. If the receiver is the acceptor, it pairs locally. Otherwise it connects
+   to the acceptor's `peer/data` endpoint and relays the socket once. The
+   acceptor consumes the pending token and verifies its issuing connection
+   against the database before upgrading the socket.
+7. The daemon acknowledges `openStream` after its data upgrade succeeds.
+   The owner then completes the peer request. The acceptor joins the worker
+   to the paired data socket. This ordering handles a dial-back arriving
+   before the owner's HTTP response without waiting on an unknown ID.
 
-The token is opaque to the daemon (`OpenStreamParams.token`), so the
-protocol is unchanged. Its proposed form is
-`<acceptor instance id>.<nonce>.<mac>`, where the MAC is keyed from the
-deployment gateway token. A receiver verifies the MAC before it connects to
-a peer, so an unauthenticated dial cannot make replicas open connections to
-each other. The token stays one-time and short-lived.
+The token remains opaque to the daemon (`OpenStreamParams.token`). Its form
+is `<acceptor instance id>.<expiry>.<nonce>.<mac>`, with a domain-separated
+HMAC keyed from the deployment gateway token. It is one-time and short-lived.
+Only the acceptor consumes it; the internal data endpoint cannot relay again.
+Timeout and cancellation cleanup remove pending tokens and route watches.
 
 Client-IP affinity at the load balancer is a useful optimization where it
 is available. It is not required for correctness.
@@ -143,29 +155,35 @@ disconnected and the worker retries as today.
 Today a route ends when its environment is revoked or its control
 connection ends. Both are in-process signals.
 
-- The acceptor records the control connection id from step 4. The periodic
-  `revoke_ended_routes` check also ends a route whose row no longer shows
-  that connection id.
+- The acceptor pins the control connection ID before dispatching the stream
+  request. Its batched ownership check on each lease renewal ends routes
+  whose owner or connection ID no longer matches.
 - `data_upgrade` rejects a dial whose issuing control connection is no
   longer current. With an acceptor on another replica, that check moves to
   the acceptor and compares against the row.
-- With P202, an `environment` change signal ends such routes at once. The
-  periodic check remains the fallback.
+- Environment change signals accelerate revocation when an environment
+  closes. Ownership changes are checked every 5 s. Cancellation interrupts
+  proxy writes even when a peer has stopped reading.
 
 ### Background loops
 
-The lifecycle reconciler, the SQL part of the registered sweep and the
-power reaper each run under a session-level advisory lock, following
+The lifecycle reconciler, provider display sweep, and SQL part of the
+registered sweep each run under a session-level advisory lock, following
 `CasSweepLeader` in `crates/store-pg/src/cas_sweep.rs`. Each replica keeps
-running the part of the sweep that ends its own local routes.
+running the part of the sweep that ends its own local routes. Losing the
+lock session cancels that leader's work; provider controllers already own
+power policy, so there is no separate runtime power reaper.
 
 ### Start and shutdown
 
 - **Start:** register the instance and begin renewing the lease. No repair.
-- **Graceful shutdown:** stop accepting connections, send
-  `registration/closed` to each daemon so it reconnects to another replica
-  at once, keep open data streams until the shutdown deadline, mark owned
-  rows disconnected, delete the instance row.
+- **Graceful shutdown:** fail `/ready`, refuse new registrations and worker
+  routes, and drain existing streams for up to 10 s while renewing the lease.
+  Then close control sockets normally, mark only still-owned rows disconnected,
+  and delete the instance row. Daemons reconnect with their existing backoff.
+  `registration/closed` is terminal and is never used for a rolling handover.
+  `/health` remains process liveness. Control sockets close before database
+  cleanup, so a stalled database cannot delay daemon reconnection.
 
 ### Failed-registration limiter
 
@@ -202,11 +220,13 @@ security boundary.
 ## Implementation order
 
 1. `runtime_instances`, the lease, and leader locks for the three loops.
+   Implemented by migration 024 and `gateway/replica.rs`.
 2. Ownership columns; conditional connect and disconnect; lease-expiry
    sweep in place of the startup repair; supersede across replicas.
 3. Tokens that name the acceptor; the two peer endpoints; relayed
    dial-backs.
-4. Graceful shutdown with handover.
+4. Bounded graceful shutdown followed by reconnect, preserving the existing
+   daemon protocol.
 5. Documentation that states the one-process rule, after sign-off:
    `docs/documentation/deployment/operations.md`,
    `docs/documentation/deployment/overview.md`,
@@ -228,8 +248,8 @@ Steps 1 and 2 are safe with one replica and can ship before step 3.
   nothing.
 - **Leadership:** each loop runs on one replica and moves when that replica
   stops.
-- **Shutdown:** daemons receive `registration/closed` and reconnect to the
-  other replica.
+- **Shutdown:** ordinary socket closure makes the same daemon reconnect to
+  another replica; no terminal notification is sent.
 - **Live:** the existing environment suites pass with two replicas behind
   one address.
 
@@ -240,15 +260,45 @@ Steps 1 and 2 are safe with one replica and can ship before step 3.
 - Replicating the public `gateway` role, which already holds no connection
   state.
 
-## Open questions
+## Validation and remaining limits
 
-- **Worker retries.** When a route closes mid-stream because a replica
-  died, confirm what each tool execution class does today and whether a
-  running process's output can be resumed.
-- **Concurrent admission.** Confirm that the capacity limit
-  (`max_active_environments`) and the ownership write hold when the same
-  key admits daemons on two replicas at once.
-- **Provider routes.** They hold no daemon connection and should already
-  work from any replica. Confirm.
-- **Direct dialling.** Is a later optimization where workers dial the owner
-  worth the extra addressing?
+Implementation lives in `crates/store-pg/src/runtime_instances.rs`,
+`crates/temporal-runtime/src/gateway/{replica,peers,registration}.rs`, and the
+runtime startup and background-loop wiring. Ownership is private store
+metadata; public API DTOs and the daemon wire protocol remain unchanged.
+Migration 024 advances the required schema revision to 24. Deployment,
+networking, architecture, and configuration documentation was updated with
+user sign-off.
+
+Focused coverage includes store concurrency tests in
+`crates/store-pg/tests/runtime_instances_live.rs` and an actual-daemon,
+three-replica scenario in
+`crates/temporal-runtime/tests/environment_gateway_replicas_live.rs`.
+Validation passed: scoped all-target Cargo checks, 26 runtime unit tests,
+five PostgreSQL concurrency tests, the three-replica live scenario, formatting,
+and release metadata checks. The full workspace and legacy live suites were
+not run.
+
+Both suites use isolated PostgreSQL schemas. The latter exercises distinct
+owner, acceptor, and receiver instances, local pairing, authentication,
+startup noninterference, and daemon reconnection after draining an owner.
+
+- **Worker recovery:** a process wait interrupted by transport failure returns
+  its handle and already received output, allowing a later `continue_process`
+  call. A failed start acknowledgement is reported without blindly repeating
+  the command. Durable job activities retry with stable request IDs and daemon
+  deduplication. Filesystem transport failures surface as tool errors;
+  interrupted mutations can have uncertain outcomes. Gateway reconnection
+  alone promises no transparent replay of arbitrary operations.
+- **Concurrent admission:** the registration-key row lock serializes capacity
+  decisions. A concurrent registration of the same daemon is rechecked under
+  that lock before charging capacity. Ownership claims, disconnects,
+  heartbeats, and departures are fenced by connection identity.
+- **Provider routes:** their existing direct provider connection works from
+  any replica. They participate in local draining without daemon ownership.
+- **Direct dialling:** workers still use one URL. Direct owner routing remains
+  an optional future optimization and is not required for correctness.
+- **Failure timing:** owner validity is checked when opening and pairing a
+  route; existing route ownership is rechecked every 5 s. Expired-owner rows
+  are repaired by the 30-second registered sweep. A crashed gateway does not
+  preserve sockets or migrate streams to a surviving replica.

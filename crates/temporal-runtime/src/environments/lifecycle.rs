@@ -601,12 +601,16 @@ impl EnvironmentService {
                 continue;
             };
             let service = self.clone();
+            let work = work.clone();
             tokio::spawn(async move {
-                let outcome = service
-                    .reconciler()
-                    .work_provider(provider_id, rows, now_ms)
-                    .await;
-                claim.finish(outcome.into_result());
+                let reconciler = service.reconciler();
+                tokio::select! {
+                    biased;
+                    _ = work.cancelled() => {}
+                    outcome = reconciler.work_provider(provider_id, rows, now_ms) => {
+                        claim.finish(outcome.into_result());
+                    }
+                }
             });
             started += 1;
         }
@@ -1351,9 +1355,29 @@ impl Reconciler<'_> {
 
 /// The provider work passes in flight, one per universe and provider at a
 /// time, and the rate limit of their failure warnings.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct ProviderWork {
     inner: std::sync::Arc<std::sync::Mutex<ProviderWorkState>>,
+    cancelled: tokio::sync::watch::Sender<bool>,
+}
+
+impl Default for ProviderWork {
+    fn default() -> Self {
+        Self {
+            inner: Default::default(),
+            cancelled: tokio::sync::watch::channel(false).0,
+        }
+    }
+}
+
+/// The leadership loop owns this guard. Cancelling that loop also stops
+/// its detached provider passes, including when it is aborted on shutdown.
+pub(crate) struct ProviderWorkCancellation(tokio::sync::watch::Sender<bool>);
+
+impl Drop for ProviderWorkCancellation {
+    fn drop(&mut self) {
+        self.0.send_replace(true);
+    }
 }
 
 #[derive(Default)]
@@ -1366,6 +1390,15 @@ struct ProviderWorkState {
 }
 
 impl ProviderWork {
+    pub(crate) fn cancel_on_drop(&self) -> ProviderWorkCancellation {
+        ProviderWorkCancellation(self.cancelled.clone())
+    }
+
+    async fn cancelled(&self) {
+        let mut cancelled = self.cancelled.subscribe();
+        let _ = cancelled.wait_for(|cancelled| *cancelled).await;
+    }
+
     /// Claim the provider's next pass in the universe; `None` while one is
     /// in flight.
     fn claim(
@@ -1587,6 +1620,30 @@ mod tests {
         drop(sibling);
         assert_eq!(work.in_flight(), 0);
         assert!(work.claim(universe, &provider).is_some());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ending_leadership_cancels_provider_work_and_releases_its_claim() {
+        let work = ProviderWork::default();
+        let leadership = work.cancel_on_drop();
+        let claim = work
+            .claim(
+                uuid::Uuid::new_v4(),
+                &EnvironmentProviderId::new("provider"),
+            )
+            .unwrap();
+        let worker = work.clone();
+        let task = tokio::spawn(async move {
+            let _claim = claim;
+            worker.cancelled().await;
+        });
+        assert_eq!(work.in_flight(), 1);
+        drop(leadership);
+        tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .expect("leadership loss must cancel provider work")
+            .unwrap();
+        assert_eq!(work.in_flight(), 0);
     }
 
     struct Fixture {

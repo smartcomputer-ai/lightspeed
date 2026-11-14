@@ -50,7 +50,7 @@ use uuid::Uuid;
 use crate::{
     config::GatewayAuthMode,
     environments::{
-        gateway::{NO_WAKE_HEADER, ROUTE_PATH_PREFIX, RouteKey, bearer_matches, close_message},
+        gateway::{NO_WAKE_HEADER, ROUTE_PATH_PREFIX, RouteKey, bearer_matches},
         signals::EnvironmentSignals,
     },
     universe::{UniverseError, UniverseRuntime},
@@ -99,6 +99,8 @@ pub struct GatewayState {
     registration_origins: Vec<CanonicalOrigin>,
     /// Revocation of live environment routes and control connections.
     signals: Arc<EnvironmentSignals>,
+    replica: Arc<super::replica::GatewayReplica>,
+    peer_http: reqwest::Client,
 }
 
 /// Which route families one HTTP listener serves, derived from the
@@ -133,6 +135,8 @@ impl GatewayState {
             registrations: Arc::new(RegisteredConnections::new()),
             registration_origins,
             signals,
+            replica: Arc::new(super::replica::GatewayReplica::local()),
+            peer_http: super::peers::http_client(),
         }
     }
 
@@ -141,6 +145,26 @@ impl GatewayState {
     pub fn with_registration_origins(mut self, origins: Vec<CanonicalOrigin>) -> Self {
         self.registration_origins = origins;
         self
+    }
+
+    pub fn with_replica(mut self, replica: Arc<super::replica::GatewayReplica>) -> Self {
+        self.replica = replica;
+        self
+    }
+
+    pub fn replica(&self) -> &Arc<super::replica::GatewayReplica> {
+        &self.replica
+    }
+
+    pub(super) fn peer_http(&self) -> &reqwest::Client {
+        &self.peer_http
+    }
+
+    pub(super) fn pool(&self) -> &sqlx::PgPool {
+        match &self.resolution {
+            UniverseResolution::FixedApi { api } => api.store().pool(),
+            UniverseResolution::Multi { runtime, .. } => runtime.stores().pool(),
+        }
     }
 
     pub(super) fn registrations(&self) -> &Arc<RegisteredConnections> {
@@ -234,6 +258,8 @@ impl GatewayState {
             registrations: Arc::new(RegisteredConnections::new()),
             registration_origins,
             signals,
+            replica: Arc::new(super::replica::GatewayReplica::local()),
+            peer_http: super::peers::http_client(),
         }
     }
 
@@ -330,7 +356,7 @@ impl GatewayState {
         }
     }
 
-    fn environment_gateway_token(&self) -> &str {
+    pub(super) fn environment_gateway_token(&self) -> &str {
         match &self.resolution {
             UniverseResolution::FixedApi { api } => api.environment_gateway.deployment_token(),
             UniverseResolution::Multi { runtime, .. } => {
@@ -463,7 +489,9 @@ pub fn gateway_router(
     max_request_body_bytes: usize,
     routes: GatewayRoutes,
 ) -> Router {
-    let mut router = Router::new().route("/health", get(|| async { "ok" }));
+    let mut router = Router::new()
+        .route("/health", get(|| async { "ok" }))
+        .route("/ready", get(readiness));
     if routes.api {
         router = router
             .route("/rpc", post(rpc))
@@ -481,11 +509,21 @@ pub fn gateway_router(
                 get(environment_route_upgrade),
             )
             .route(CONNECT_PATH, get(registration::connect_upgrade))
-            .route(DATA_PATH, get(registration::data_upgrade));
+            .route(DATA_PATH, get(registration::data_upgrade))
+            .route(super::peers::STREAMS_PATH, post(super::peers::open_stream))
+            .route(super::peers::DATA_PATH, get(super::peers::data_upgrade));
     }
     router
         .layer(DefaultBodyLimit::max(max_request_body_bytes))
         .with_state(state)
+}
+
+async fn readiness(State(state): State<Arc<GatewayState>>) -> StatusCode {
+    if state.replica().is_accepting() {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
 }
 
 /// Public webhook ingress for bot triggers. No RPC auth: the URL token is
@@ -582,6 +620,9 @@ async fn environment_route_upgrade(
     if !bearer_matches(&headers, state.environment_gateway_token()) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    if !state.replica().is_accepting() {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     let Ok(universe_id) = Uuid::parse_str(&universe) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
@@ -628,8 +669,15 @@ async fn environment_route_upgrade(
                     Ok(upstream) => upstream,
                     Err(failure) => return failure.respond(endpoint.as_str()),
                 };
+            let guard = state.registrations().track_proxy();
             upgrade
-                .on_upgrade(move |socket| proxy_upstream(revoked, socket, upstream))
+                .on_upgrade(move |socket| async move {
+                    let _guard = guard;
+                    tokio::select! {
+                        _ = state.replica().stopped() => {},
+                        _ = proxy_upstream(revoked, socket, upstream) => {},
+                    }
+                })
                 .into_response()
         }
         environments::EnvironmentSource::Provisioned(source) => {
@@ -652,8 +700,15 @@ async fn environment_route_upgrade(
                 Ok(upstream) => upstream,
                 Err(failure) => return failure.respond(&endpoint),
             };
+            let guard = state.registrations().track_proxy();
             upgrade
-                .on_upgrade(move |socket| proxy_upstream(revoked, socket, upstream))
+                .on_upgrade(move |socket| async move {
+                    let _guard = guard;
+                    tokio::select! {
+                        _ = state.replica().stopped() => {},
+                        _ = proxy_upstream(revoked, socket, upstream) => {},
+                    }
+                })
                 .into_response()
         }
         environments::EnvironmentSource::Registered(_) => {
@@ -1034,7 +1089,7 @@ async fn proxy_upstream(revoked: watch::Receiver<u64>, worker: WebSocket, upstre
 /// Pipe one worker route and its upstream frame for frame, pings and pongs
 /// included, until either side ends or the environment's routes are
 /// revoked (close code 1008).
-async fn proxy_frames<S>(
+pub(super) async fn proxy_frames<S>(
     mut revoked: watch::Receiver<u64>,
     mut worker: WebSocket,
     upstream: WebSocketStream<S>,
@@ -1042,48 +1097,51 @@ async fn proxy_frames<S>(
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let (mut upstream_writer, mut upstream_reader) = upstream.split();
-    loop {
-        tokio::select! {
-            // A dropped revocation sender fails closed like a revocation.
-            _ = revoked.changed() => {
-                let _ = worker.send(close_message("environment route revoked")).await;
-                break;
-            }
-            message = worker.recv() => {
-                let Some(Ok(message)) = message else { break };
-                let close = matches!(message, Message::Close(_));
-                let message = match message {
-                    Message::Text(value) => UpstreamMessage::Text(value.to_string().into()),
-                    Message::Binary(value) => UpstreamMessage::Binary(value),
-                    Message::Ping(value) => UpstreamMessage::Ping(value),
-                    Message::Pong(value) => UpstreamMessage::Pong(value),
-                    Message::Close(_) => UpstreamMessage::Close(None),
-                };
-                if upstream_writer.send(message).await.is_err() || close { break }
-            }
-            message = upstream_reader.next() => {
-                let Some(Ok(message)) = message else { break };
-                let close = matches!(message, UpstreamMessage::Close(_));
-                let message = match message {
-                    UpstreamMessage::Text(value) => Some(Message::Text(value.to_string().into())),
-                    UpstreamMessage::Binary(value) => Some(Message::Binary(value)),
-                    UpstreamMessage::Ping(value) => Some(Message::Ping(value)),
-                    UpstreamMessage::Pong(value) => Some(Message::Pong(value)),
-                    UpstreamMessage::Close(_) => Some(Message::Close(None)),
-                    UpstreamMessage::Frame(_) => None,
-                };
-                if let Some(message) = message
-                    && worker.send(message).await.is_err()
-                { break }
-                if close { break }
+    let copy = async {
+        loop {
+            tokio::select! {
+                message = worker.recv() => {
+                    let Some(Ok(message)) = message else { break };
+                    let close = matches!(message, Message::Close(_));
+                    let message = match message {
+                        Message::Text(value) => UpstreamMessage::Text(value.to_string().into()),
+                        Message::Binary(value) => UpstreamMessage::Binary(value),
+                        Message::Ping(value) => UpstreamMessage::Ping(value),
+                        Message::Pong(value) => UpstreamMessage::Pong(value),
+                        Message::Close(_) => UpstreamMessage::Close(None),
+                    };
+                    if upstream_writer.send(message).await.is_err() || close { break }
+                }
+                message = upstream_reader.next() => {
+                    let Some(Ok(message)) = message else { break };
+                    let close = matches!(message, UpstreamMessage::Close(_));
+                    let message = match message {
+                        UpstreamMessage::Text(value) => Some(Message::Text(value.to_string().into())),
+                        UpstreamMessage::Binary(value) => Some(Message::Binary(value)),
+                        UpstreamMessage::Ping(value) => Some(Message::Ping(value)),
+                        UpstreamMessage::Pong(value) => Some(Message::Pong(value)),
+                        UpstreamMessage::Close(_) => Some(Message::Close(None)),
+                        UpstreamMessage::Frame(_) => None,
+                    };
+                    if let Some(message) = message
+                        && worker.send(message).await.is_err()
+                    { break }
+                    if close { break }
+                }
             }
         }
+    };
+    tokio::select! {
+        _ = revoked.changed() => {},
+        _ = copy => {},
     }
-    // Whichever leg ended first, complete the WebSocket closing handshake on
-    // both sides instead of dropping the opposite stream abruptly; a worker
-    // that vanished without a close frame never tears envd down abruptly.
-    let _ = upstream_writer.send(UpstreamMessage::Close(None)).await;
-    let _ = worker.send(Message::Close(None)).await;
+    let _ = tokio::time::timeout(Duration::from_secs(1), async {
+        let _ = tokio::join!(
+            upstream_writer.send(UpstreamMessage::Close(None)),
+            worker.send(Message::Close(None))
+        );
+    })
+    .await;
 }
 
 fn now_ms() -> i64 {

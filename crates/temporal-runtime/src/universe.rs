@@ -269,14 +269,20 @@ impl UniverseRuntime {
         Ok(state)
     }
 
-    /// Run the one active environment reconciler (environment-gateway
-    /// role): the work loop and the display sweep, concurrently. Provider
-    /// calls are idempotent per owner, so a process restart resumes every
-    /// scheduled row.
+    /// Run the lifecycle and display loops under independent deployment
+    /// leadership locks. Provider calls remain idempotent per owner.
     pub async fn run_environment_reconciler(self: Arc<Self>) {
         tokio::join!(
-            self.clone().run_environment_work_loop(),
-            self.run_environment_display_loop(),
+            crate::gateway::replica::run_as_leader(
+                self.stores.pool(),
+                store_pg::RuntimeLoop::EnvironmentLifecycle,
+                || self.clone().run_environment_work_loop(),
+            ),
+            crate::gateway::replica::run_as_leader(
+                self.stores.pool(),
+                store_pg::RuntimeLoop::EnvironmentDisplaySweep,
+                || self.clone().run_environment_display_loop(),
+            ),
         );
     }
 
@@ -290,6 +296,7 @@ impl UniverseRuntime {
         let mut interval = tokio::time::interval(WORK_TICK);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let work = ProviderWork::default();
+        let _cancel_work = work.cancel_on_drop();
         let mut changes = self.stores.changes().subscribe_all();
         let mut failures = crate::gateway::ReconcileFailureLog::default();
         loop {

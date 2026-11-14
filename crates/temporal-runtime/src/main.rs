@@ -9,7 +9,7 @@ use temporal_runtime::{
     gateway::{
         DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_TEMPORAL_NAMESPACE,
         DEFAULT_TEMPORAL_TARGET, GatewayRoutes, GatewayState, TemporalConnectionSettings,
-        gateway_router, prewarm_single_universe, registration,
+        gateway_router, prewarm_single_universe, registration, replica::GatewayReplica,
     },
     roles::{Role, RoleSet},
     universe::UniverseRuntime,
@@ -187,8 +187,8 @@ enum ApiKeyCommand {
 #[derive(Clone, Debug, Args)]
 struct RunArgs {
     /// Roles this process runs: a comma-separated subset of gateway,
-    /// environment-gateway, sessions, bots, channels, code (default: all). Run
-    /// exactly one environment-gateway process per deployment.
+    /// environment-gateway, sessions, bots, channels, code (default: all).
+    /// Environment gateway replicas advertise their own direct peer URLs.
     #[arg(long, env = "LIGHTSPEED_ROLES")]
     roles: Option<String>,
 
@@ -781,6 +781,34 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     );
     prewarm_single_universe(&mode, &universes).await?;
 
+    // Bind before publishing this instance's address. No connections are
+    // accepted until its lease and the role workers have been initialized.
+    let listener = if roles.serves_http() {
+        Some(tokio::net::TcpListener::bind(args.bind).await?)
+    } else {
+        None
+    };
+    let gateway_state = if roles.serves_http() {
+        let mut state = GatewayState::multi(mode, universes.clone(), public_base_url)
+            .with_registration_origins(registration_origins);
+        if roles.has(Role::EnvironmentGateway) {
+            let peer_url = GatewayReplica::peer_url_from_env()?;
+            let instance_roles: Vec<_> =
+                roles.iter().map(|role| role.as_str().to_owned()).collect();
+            let replica = GatewayReplica::register(
+                universes.stores().pool(),
+                &instance_roles,
+                peer_url.as_deref(),
+            )
+            .await?;
+            tracing::info!(instance = %replica.instance_id(), peer_url = ?replica.peer_url(), "environment gateway instance registered");
+            state = state.with_replica(replica);
+        }
+        Some(Arc::new(state))
+    } else {
+        None
+    };
+
     tracing::info!(
         target: "temporal_runtime",
         roles = %roles,
@@ -800,14 +828,12 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     let mut workers: Vec<(Role, temporalio_sdk::Worker)> = Vec::new();
 
     if roles.has(Role::EnvironmentGateway) {
-        // Before the listener accepts connections: this process held every
-        // registered connection the rows still call connected.
-        let repaired = registration::repair_registered_connections(&universes).await?;
-        tracing::info!(
-            target: "temporal_runtime",
-            repaired,
-            "registered environments marked disconnected until their daemons reconnect"
-        );
+        let state = gateway_state
+            .as_ref()
+            .expect("environment role has an HTTP listener");
+        background.push(tokio::spawn(
+            state.replica().clone().maintain(state.clone()),
+        ));
         background.push(tokio::spawn(universes.clone().run_environment_reconciler()));
         background.push(tokio::spawn(registration::run_registered_sweep(
             universes.clone(),
@@ -897,17 +923,12 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     }
 
     let gateway_future: std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>>>> =
-        if roles.serves_http() {
+        if let (Some(state), Some(listener)) = (gateway_state.clone(), listener) {
             let routes = GatewayRoutes {
                 api: roles.has(Role::Gateway),
                 environment: roles.has(Role::EnvironmentGateway),
             };
-            let gateway_state = Arc::new(
-                GatewayState::multi(mode, universes, public_base_url)
-                    .with_registration_origins(registration_origins),
-            );
-            let app = gateway_router(gateway_state, args.max_request_body_bytes, routes);
-            let listener = tokio::net::TcpListener::bind(args.bind).await?;
+            let app = gateway_router(state.clone(), args.max_request_body_bytes, routes);
             tracing::info!(
                 target: "temporal_runtime",
                 bind = %args.bind,
@@ -916,9 +937,32 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
                 "gateway listening"
             );
             Box::pin(async move {
-                axum::serve(listener, app)
-                    .with_graceful_shutdown(shutdown_signal())
-                    .await?;
+                use std::future::IntoFuture as _;
+                let (stop_http, http_stopped) = tokio::sync::oneshot::channel();
+                let server = axum::serve(listener, app)
+                    .with_graceful_shutdown(async {
+                        let _ = http_stopped.await;
+                    })
+                    .into_future();
+                tokio::pin!(server);
+                let lease_lost = tokio::select! {
+                    result = server.as_mut() => return result.map_err(anyhow::Error::from),
+                    _ = shutdown_signal() => false,
+                    _ = state.replica().stopped(), if routes.environment => true,
+                };
+                if routes.environment {
+                    // Keep the listener running so readiness probes and
+                    // already-issued daemon dial-backs can finish during drain.
+                    tokio::select! {
+                        result = server.as_mut() => return result.map_err(anyhow::Error::from),
+                        _ = state.replica().drain(&state) => {},
+                    }
+                }
+                let _ = stop_http.send(());
+                tokio::time::timeout(Duration::from_secs(5), server.as_mut())
+                    .await
+                    .map_err(|_| anyhow::anyhow!("gateway HTTP shutdown exceeded 5 seconds"))??;
+                anyhow::ensure!(!lease_lost, "environment gateway instance lease expired");
                 Ok(())
             })
         } else {
@@ -935,41 +979,42 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
         }
     };
 
-    if worker_futures.is_empty() {
-        let result = gateway_future.await;
-        stop_background(&background);
-        return result;
-    }
-
-    let workers_future = futures::future::select_all(worker_futures);
-    tokio::pin!(workers_future);
-    tokio::select! {
+    let result = if worker_futures.is_empty() {
+        gateway_future.await
+    } else {
+        let workers_future = futures::future::select_all(worker_futures);
+        tokio::pin!(workers_future);
+        tokio::select! {
         (worker_result, _index, remaining) = workers_future.as_mut() => {
-            stop_background(&background);
             for shutdown in shutdowns {
                 shutdown();
             }
             let _ = tokio::time::timeout(Duration::from_secs(10), futures::future::join_all(remaining)).await;
             match worker_result {
-                (role, Ok(())) => anyhow::bail!("{role} worker stopped while the process was still running"),
+                (role, Ok(())) => Err(anyhow::anyhow!("{role} worker stopped while the process was still running")),
                 (role, Err(error)) => Err(anyhow::Error::from(error).context(format!("{role} worker failed"))),
             }
         }
         gateway_result = gateway_future.as_mut() => {
-            stop_background(&background);
             for shutdown in shutdowns {
                 shutdown();
             }
-            tokio::time::timeout(Duration::from_secs(10), async {
+            let workers_stopped = tokio::time::timeout(Duration::from_secs(10), async {
                 let (_first, _index, remaining) = workers_future.as_mut().await;
                 futures::future::join_all(remaining).await;
             })
             .await
-            .map_err(|_| anyhow::anyhow!("Temporal workers did not shut down within 10 seconds"))?;
-            gateway_result?;
-            Ok(())
+            .map_err(|_| anyhow::anyhow!("Temporal workers did not shut down within 10 seconds"));
+            gateway_result.and(workers_stopped)
         }
+        }
+    };
+    if let Some(state) = gateway_state.filter(|_| roles.has(Role::EnvironmentGateway)) {
+        state.replica().drain(&state).await;
+        state.replica().unregister(universes.stores().pool()).await;
     }
+    stop_background(&background);
+    result
 }
 
 /// Resolves on SIGINT from a terminal or SIGTERM from a process manager such as

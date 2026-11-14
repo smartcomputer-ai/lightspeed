@@ -84,11 +84,14 @@ and activities together on its own task queue. Select roles to deploy them
 separately and add replicas of the worker roles that need more capacity.
 Cross-component work reaches other workflows through starts and signals.
 
-Run exactly one `environment-gateway` process per deployment. It owns live
-daemon connections, and worker requests for those daemons must reach that
-process. Other roles can have multiple workers. If you share a Temporal
-namespace between deployments, assign distinct session, bot, and channel task
-queues to each deployment.
+Environment gateways can run as replicas behind one shared address. Each
+replica advertises its own direct peer URL and renews a PostgreSQL lease;
+replicas forward stream setup and dial-back connections to the process that
+holds the required socket. Workers keep one gateway URL. Configure the same
+gateway token on all replicas and allow private traffic between their peer
+listeners; see [networking and ingress](../environments/networking-and-ingress.md).
+If you share a Temporal namespace between deployments, assign distinct session,
+bot, and channel task queues to each deployment.
 
 A deployment that does not use bots should not run them. Start the runtime
 without the `bots` and `channels` roles and leave the **Bots** and
