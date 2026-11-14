@@ -479,6 +479,23 @@ export function exportCss(overrides: DesignOverrides): string {
   return blocks.length ? blocks.join("\n\n") : "/* No changes yet. */";
 }
 
+/// The overrides without the ones index.css now makes its defaults (a value
+/// kept after the stylesheet adopted it), so they no longer count as
+/// changes or export. Shared tokens compare with the light (`:root`)
+/// defaults, as the editor does. The shadow generator's inputs go when none
+/// of the shadow variables they made remain.
+export function withoutDefaults(overrides: DesignOverrides, defaults: Record<ThemeName, Record<string, string>>): DesignOverrides {
+  const prune = (values: Record<string, string>, theme: ThemeName) =>
+    Object.fromEntries(Object.entries(values).filter(([token, value]) => {
+      const fallback = defaults[theme][token];
+      return fallback === undefined || !sameCss(value, fallback);
+    }));
+  const shared = prune(overrides.shared, "light");
+  const pruned: DesignOverrides = { shared, light: prune(overrides.light, "light"), dark: prune(overrides.dark, "dark") };
+  if (overrides.shadow && SHADOW_TOKENS.some((token) => token in shared)) pruned.shadow = overrides.shadow;
+  return pruned;
+}
+
 export function isEmpty(overrides: DesignOverrides): boolean {
   return !Object.keys(overrides.shared).length && !Object.keys(overrides.light).length && !Object.keys(overrides.dark).length;
 }

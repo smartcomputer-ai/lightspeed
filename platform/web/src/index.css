@@ -283,7 +283,6 @@
        (mixed into the background, not see-through) so they stay one color
        where they meet. */
     --list-tree-line: color-mix(in oklab, var(--muted-foreground) 35%, var(--background));
-    --list-tree-dot: color-mix(in oklab, var(--muted-foreground) 70%, var(--background));
     /* Id colours (lib/identity-colors idColor, e.g. each bot's): a hue from
        the id at this lightness and chroma. Saturated like the run steps'
        colours: deep here, bright in the dark theme. */
@@ -389,7 +388,6 @@
        popups that carry their own dark class. */
     --item-foreground-rest: color-mix(in oklab, var(--foreground) 70%, transparent);
     --list-tree-line: color-mix(in oklab, var(--muted-foreground) 35%, var(--background));
-    --list-tree-dot: color-mix(in oklab, var(--muted-foreground) 70%, var(--background));
     --id-color-lightness: 0.8;
     --id-color-chroma: 0.17;
     --scrollbar-thumb: color-mix(in oklab, var(--foreground) 22%, transparent);

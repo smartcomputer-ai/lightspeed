@@ -27,6 +27,7 @@ import {
   applyOverrides,
   exportCss,
   loadOverrides,
+  withoutDefaults,
   overridesStyleSheet,
   parseSurfaceColor,
   sameCss,
@@ -297,5 +298,33 @@ describe("design tokens", () => {
     expect(localStorage.getItem("lightspeed:design-overrides")).toBeNull();
     localStorage.setItem("lightspeed:design-overrides", "{not json");
     expect(loadOverrides()).toEqual(EMPTY_OVERRIDES);
+  });
+});
+
+describe("withoutDefaults", () => {
+  const defaults = {
+    light: { "--radius": "0.6rem", "--note-info-border": "color-mix(in oklab, var(--info) 40%, transparent)" },
+    dark: { "--radius": "0.6rem", "--note-info-border": "color-mix(in oklab, var(--info) 0%, transparent)" },
+  };
+
+  it("drops overrides the stylesheet has made its defaults, so they no longer count or export", () => {
+    const pruned = withoutDefaults({
+      shared: { "--radius": " 0.6rem", "--spacing": "0.3rem" },
+      light: { "--note-info-border": "color-mix(in oklab, var(--info) 40%, transparent)" },
+      dark: { "--note-info-border": "color-mix(in oklab,  var(--info) 0%, transparent)" },
+    }, defaults);
+    expect(pruned).toEqual({ shared: { "--spacing": "0.3rem" }, light: {}, dark: {} });
+    expect(exportCss(pruned)).not.toContain("--note-info-border");
+  });
+
+  it("keeps changes from the defaults, per theme", () => {
+    const overrides = { shared: {}, light: {}, dark: { "--note-info-border": "color-mix(in oklab, var(--info) 40%, transparent)" } };
+    expect(withoutDefaults(overrides, defaults)).toEqual(overrides);
+  });
+
+  it("keeps the shadow inputs only while a shadow variable they made remains", () => {
+    const shadow = { color: "#112233", opacity: 2, size: 1 };
+    expect(withoutDefaults({ ...EMPTY_OVERRIDES, shadow }, defaults).shadow).toBeUndefined();
+    expect(withoutDefaults({ ...EMPTY_OVERRIDES, shared: { [SHADOW_TOKENS[0]]: "0 1px red" }, shadow }, defaults).shadow).toEqual(shadow);
   });
 });

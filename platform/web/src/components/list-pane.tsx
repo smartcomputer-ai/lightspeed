@@ -239,14 +239,21 @@ export interface ListRowTree {
 const LIST_INSET_REM = 1.5;
 
 /// Where a row's dot sits, from its content start (a root's in the middle
-/// of the list's inset): its status dot (the
-/// indicator), else a plain dot in a tree. It is the row's node in a tree:
+/// of the list's inset): its status dot (the indicator, in lists that show
+/// one, as Sessions and Bots do), else a small plain dot in the lines'
+/// color. It is the row's node in a tree:
 /// every parent, a root as any other, drops its line to its children from
 /// it, and each child's branch ends at it. Lines stop at its edge, so a
 /// translucent or hollow status dot shows no line through it. Each level
 /// indents by TREE_BRANCH_REM, so every branch is that long.
 const ROW_DOT_REM = -LIST_INSET_REM / 2;
+/// A status dot's radius, and a plain dot's: lines end at the dot's edge.
 const ROW_DOT_RADIUS_PX = 4;
+const PLAIN_DOT_RADIUS_PX = 1.5;
+/// A nested row's plain dot sits this far right of its node: the lines keep
+/// their places, so each branch reaches this much further. A root's dot
+/// stays on its line.
+const PLAIN_DOT_STUB_PX = 4;
 const TREE_BRANCH_REM = 0.875;
 /// A selection checkbox sits mostly in the list's inset (pulled left by
 /// 1rem, so it starts 8px from the edge). Exported so a select-all checkbox
@@ -272,14 +279,19 @@ const TREE_VERTICAL = "absolute w-px -translate-x-1/2 bg-(--list-tree-line)";
 /// last child, else running on) and its branch to the dot, the lines of
 /// ancestors that run past it, and, when it has children, the line it drops
 /// to them from the dot. A root has no parent: only the line down. Without
-/// a status dot it draws a plain one. `contentLeft` is where the row's
+/// a status dot it draws a small plain one, in the lines' color, so it reads
+/// as part of them, a nested row's a little (PLAIN_DOT_STUB_PX) right of
+/// where the lines meet. `contentLeft` is where the row's
 /// content starts. Lines and dots are solid colors, so where they meet
 /// nothing shows through darker.
 function TreeLines({ tree, plainDot, contentLeft }: { tree: ListRowTree; plainDot: boolean; contentLeft: string }) {
   const { depth, last = false, lines = [], children = false } = tree;
   const trunk = (level: number) => treeTrunk(level, depth);
   const own = trunk(depth);
-  const branch = `calc(${ROW_DOT_REM - own}rem - ${ROW_DOT_RADIUS_PX}px)`;
+  const radius = plainDot ? PLAIN_DOT_RADIUS_PX : ROW_DOT_RADIUS_PX;
+  // How far right of the node the dot sits (a nested row's plain dot only).
+  const stub = plainDot && depth > 0 ? PLAIN_DOT_STUB_PX : 0;
+  const branch = `calc(${ROW_DOT_REM - own}rem + ${stub - radius}px)`;
   return (
     <span aria-hidden className="pointer-events-none absolute inset-y-0" style={{ left: contentLeft }}>
       {lines.map((runs, index) => runs && (
@@ -297,12 +309,16 @@ function TreeLines({ tree, plainDot, contentLeft }: { tree: ListRowTree; plainDo
         </>
       ))}
       {children && (
-        <span className={TREE_VERTICAL} style={{ left: `${ROW_DOT_REM}rem`, top: `calc(50% + ${ROW_DOT_RADIUS_PX}px)`, bottom: 0 }} />
+        // Down from the dot, or, beside it, from where the branch passes the node.
+        <span
+          className={TREE_VERTICAL}
+          style={{ left: `${ROW_DOT_REM}rem`, top: stub > 0 ? "calc(50% - 0.5px)" : `calc(50% + ${radius}px)`, bottom: 0 }}
+        />
       )}
       {plainDot && (
         <span
-          className="absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-(--list-tree-dot)"
-          style={{ left: `${ROW_DOT_REM}rem` }}
+          className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-(--list-tree-line)"
+          style={{ left: `calc(${ROW_DOT_REM}rem + ${stub}px)`, width: PLAIN_DOT_RADIUS_PX * 2, height: PLAIN_DOT_RADIUS_PX * 2 }}
         />
       )}
     </span>

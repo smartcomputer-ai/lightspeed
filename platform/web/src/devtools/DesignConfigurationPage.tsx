@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useDocumentTitle } from "@/lib/document-title";
 import { AddIcon, DeleteIcon, ExportCodeIcon, ResetIcon, SearchIcon, SettingsIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +48,7 @@ import {
   readDefaults,
   sameCss,
   saveOverrides,
+  withoutDefaults,
   shadowValues,
   surfaceColorValue,
   sheenToken,
@@ -70,15 +71,25 @@ type Scope = "shared" | ThemeName;
 /// so its own controls stay put while the app changes.
 export function DesignConfigurationPage() {
   const defaults = useMemo(() => readDefaults(), []);
-  const [overrides, setOverrides] = useState<DesignOverrides>(loadOverrides);
+  // Overrides the stylesheet has since made its defaults are dropped, so
+  // they neither count as changes nor export.
+  const [overrides, setOverrides] = useState<DesignOverrides>(() => withoutDefaults(loadOverrides(), defaults));
   const channel = useRef<BroadcastChannel | null>(null);
-  const windows = useLiveWindows(channel, setOverrides);
+  const receive = useCallback((next: DesignOverrides) => setOverrides(withoutDefaults(next, defaults)), [defaults]);
+  const windows = useLiveWindows(channel, receive);
   const { theme } = useTheme();
   const [colorTheme, setColorTheme] = useState<ThemeName>(() =>
     theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light");
   const [exportOpen, setExportOpen] = useState(false);
 
   useDocumentTitle(["Design tokens"]);
+
+  // Keep what was stored in step with the pruned overrides.
+  useEffect(() => {
+    if (JSON.stringify(overrides) !== JSON.stringify(loadOverrides())) saveOverrides(overrides);
+    // Once, on open: later changes save as they are made.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const publish = (next: DesignOverrides) => {
     setOverrides(next);
