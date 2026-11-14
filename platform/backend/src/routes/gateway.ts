@@ -1,3 +1,4 @@
+import { proxyWatch } from "../watch.js";
 import { UniverseHandleCacheConflict } from "../universe-handles.js";
 import { deploymentClient, GatewayUnconfigured, GateRefusal, memberClient } from "../runtime-client.js";
 import { Hono } from "hono";
@@ -469,6 +470,12 @@ export function gatewayRoutes(ctx: AppContext) {
   // One set of limits for the body cap, the schema, and what the web is told.
   const uploadLimits = ctx.env.workspaceUploadLimits ?? DEFAULT_WORKSPACE_UPLOAD_LIMITS;
   const uploadSchema = workspaceUploadSchemaFor(uploadLimits);
+
+  app.get("/:id/watch", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) return c.json({ error: "not found" }, 404);
+    return withGateway(c, async () => proxyWatch(engineClientFor(ctx, access), c.req.raw.signal));
+  });
 
   app.get("/:id/profiles", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));

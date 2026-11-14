@@ -178,6 +178,39 @@ returns the raw bytes. Both work in a browser.
 To keep a view current, follow the run with `awaitRun` and read it again when
 `onEvent` fires, rather than building the view from events yourself.
 
+## Derive transcript authors and times
+
+`transcriptMetadata(sessionId, events)` returns message metadata keyed by context
+entry ID. Supply the union of loaded history and live events; order and overlapping
+pages do not matter. Rerun it when that union grows, since older pages can supply
+an input's acceptance event. It performs no requests and changes no input.
+
+```ts
+import { transcriptMetadata } from "@lightspeed-ai/sdk";
+
+// Compute once for the loaded event window, then reuse for every message.
+const metadataByEntryId = transcriptMetadata(sessionId, loadedEvents);
+const metadata = metadataByEntryId.get(entry.id);
+```
+
+The result contains `sentAtMs`, `timeSource`, `author`, and `requestedBy`. Input
+uses its run or steering acceptance time; other messages use the earliest loaded
+context event carrying the entry. These are existing server event times, not a
+new timestamp or a read receipt. A queued input without an applied entry has no
+entry ID to look up yet. This helper supplies metadata, not transcript ordering
+or rendering.
+
+An actor author includes its opaque `id` and a `source`: `requestedBy` is the
+recorded authenticated attribution; `origin` is an unverified `user:<id>` display
+claim. `origin=event` produces `{ kind: "event" }` for bot deliveries. Assistant
+messages have no user author. The full acceptance attribution remains in
+`requestedBy`, including service keys and internal work.
+
+`transcriptAuthor(origin, requestedBy?)` exposes the same author rule separately,
+for example for a user-role session-list preview. Resolve names and decide labels
+in your application. See [session view data](../../docs/documentation/integrating-and-extending/api-and-typescript.md#build-transcript-authors-and-times)
+for Platform integration and live list updates.
+
 ## Serve a browser UI
 
 Mount `createRpcProxy` on your server. It holds the key, and the browser uses an

@@ -905,14 +905,7 @@ impl GatewayAgentApi {
         Ok(BotListResponse {
             bots: rows
                 .into_iter()
-                .map(|(row, access)| BotListItem {
-                    bot: row.bot.view(),
-                    access,
-                    trigger_count: row.trigger_count,
-                    pending_count: row.pending_count,
-                    last_event: row.last_event.map(|event| event.view()),
-                    activity: row.activity,
-                })
+                .map(|(row, access)| bot_list_item(row, access))
                 .collect(),
         })
     }
@@ -965,6 +958,23 @@ impl From<AdmitTriggerOutcome> for Option<InsertBotEventOutcome> {
             }
             AdmitTriggerOutcome::Filtered { .. } => None,
         }
+    }
+}
+
+pub(in crate::gateway) fn bot_list_item(
+    row: ::bots::BotRosterRow,
+    access: ResourceAccessSummary,
+) -> BotListItem {
+    BotListItem {
+        status: row.status,
+        open_session_count: row.open_session_count,
+        active_session_count: row.active_session_count,
+        bot: row.bot.view(),
+        access,
+        trigger_count: row.trigger_count,
+        pending_count: row.pending_count,
+        last_event: row.last_event.map(|event| event.view()),
+        activity: row.activity,
     }
 }
 

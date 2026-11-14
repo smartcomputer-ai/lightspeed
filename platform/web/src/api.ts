@@ -1,6 +1,7 @@
 import type { FeatureStates, UniverseRole, UniverseIconName, UniverseIconColor } from "@lightspeed-ai/platform-shared";
 export type { ToolAttachmentView, ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/sdk";
 import type {
+  SessionSummaryView as WireSessionSummary,
   Attribution,
   ResourceAccessSummary,
   SessionActivity,
@@ -449,22 +450,7 @@ export interface SessionOrigin {
   limits: { maxDepth: number; maxConcurrent: number; runTimeoutMs?: number };
 }
 
-export interface SessionSummary {
-  access: ResourceAccessSummary;
-  /// What the session is doing now: idle, working, or waiting for approval.
-  activity: SessionActivity;
-  id: string;
-  displayName?: string | null;
-  /// Descriptive key/value metadata; absent or empty when none was set.
-  metadata?: Record<string, string>;
-  createdAtMs: number;
-  updatedAtMs: number;
-  closedAtMs?: number | null;
-  lifecycleStatus: "new" | "open" | "closed";
-  retention: SessionRetention;
-  lifecycleControlled: boolean;
-  origin?: SessionOrigin | null;
-}
+export type SessionSummary = WireSessionSummary;
 
 export interface SessionRetention {
   rootSessionId: string;

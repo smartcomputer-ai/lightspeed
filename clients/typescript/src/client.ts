@@ -1,3 +1,5 @@
+import { readEventStream } from "./event-stream.js";
+import type { AgentNotification, UniverseWatchParams } from "./generated/types.js";
 import type {
   EventCursor,
   InputItem,
@@ -66,6 +68,11 @@ interface JsonRpcResponse {
   error?: JsonRpcErrorPayload;
 }
 
+export interface WatchOptions extends CallOptions {
+  /** Reconnect after stream completion or transient transport errors. Defaults to true. */
+  reconnect?: boolean;
+}
+
 export interface StartRunOptions extends CallOptions {
   config?: RunStartConfig | null;
   submissionId?: string | null;
@@ -104,6 +111,8 @@ export interface AwaitRunResult {
   /** Where to resume reading the session's events. Null if none were read. */
   cursor: EventCursor | null;
 }
+
+const WATCH_METHODS: readonly string[] = METHOD_INFO["universe/watch"].notifications;
 
 const AWAIT_RUN_WAIT_MS = 30_000;
 const AWAIT_RUN_MIN_WAIT_MS = 1_000;
@@ -148,11 +157,67 @@ export class LightspeedClient extends LightspeedHelpers {
     return new LightspeedClient({ ...this.options, actor });
   }
 
+  /** Open one authenticated watch. Useful to proxy its body; cancel it on disconnect. */
+  async openWatch(params: UniverseWatchParams = {}, options: CallOptions = {}): Promise<Response> {
+    const headers = await this.buildHeaders(options.headers);
+    headers.set("accept", "text/event-stream");
+    const { fetchImpl } = this;
+    let response: Response;
+    const admission = new AbortController();
+    const timer = setTimeout(() => admission.abort(), 15_000);
+    try {
+      response = await fetchImpl(this.endpoint, {
+        method: "POST", headers, body: JSON.stringify({ id: this.nextRequestId(), method: "universe/watch", params }),
+        signal: options.signal ? AbortSignal.any([options.signal, admission.signal]) : admission.signal,
+      });
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      throw new LightspeedTransportError(`Watch connection failed: ${errorMessage(error)}`, { cause: error });
+    } finally { clearTimeout(timer); }
+    if (!response.ok || !response.headers.get("content-type")?.startsWith("text/event-stream")) {
+      const body = await this.readBody(response, options.signal);
+      if (isRecord(body) && body.error) throw new LightspeedRpcError(body.error as JsonRpcErrorPayload);
+      throw new LightspeedTransportError("Watch response was not an event stream", { body });
+    }
+    if (!response.body) throw new LightspeedTransportError("Watch response has no body");
+    return response;
+  }
+
+  /** Watch list rows. Refetch on watch/reset and periodically; there is no resume cursor. */
+  async *watch(params: UniverseWatchParams = {}, options: WatchOptions = {}): AsyncGenerator<AgentNotification> {
+    let attempts = 0;
+    while (!options.signal?.aborted) {
+      try {
+        const response = await this.openWatch(params, options);
+        for await (const data of readEventStream(response.body!)) {
+          let message: unknown;
+          try { message = JSON.parse(data); } catch { throw new LightspeedTransportError("Invalid watch JSON"); }
+          if (!isRecord(message)) throw new LightspeedTransportError("Invalid watch event");
+          if (message.error) throw new LightspeedRpcError(message.error as JsonRpcErrorPayload);
+          if ("result" in message) break;
+          if (typeof message.method !== "string" || !WATCH_METHODS.includes(message.method)) {
+            throw new LightspeedTransportError("Unknown watch notification", { body: message });
+          }
+          attempts = 0;
+          yield message as unknown as AgentNotification;
+        }
+      } catch (error) {
+        if (options.signal?.aborted) return;
+        if (error instanceof LightspeedRpcError || options.reconnect === false ||
+            (error instanceof LightspeedTransportError && !error.transient)) throw error;
+      }
+      if (options.reconnect === false) return;
+      try { await sleep(Math.min(30_000, 1_000 * 2 ** Math.min(attempts++, 5)), options.signal); }
+      catch (error) { if (options.signal?.aborted) return; throw error; }
+    }
+  }
+
   async call<M extends Method>(
     method: M,
     params: MethodParams<M>,
     options: CallOptions = {},
   ): Promise<MethodResult<M>> {
+    if (METHOD_INFO[method].streaming) throw new LightspeedTransportError("Use watch() for universe/watch");
     const id = this.nextRequestId();
     const headers = await this.buildHeaders(options.headers);
     if (METHOD_INFO[method].scope === "connection" || METHOD_INFO[method].scope === "deployment") {

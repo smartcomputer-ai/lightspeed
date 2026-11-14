@@ -7,6 +7,7 @@ pub mod http;
 pub mod registration;
 pub mod request_context;
 pub(crate) mod service;
+mod watch;
 
 pub use crate::config::pg_store_from_env;
 pub use deployment::GatewayDeploymentApi;

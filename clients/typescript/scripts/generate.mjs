@@ -154,6 +154,8 @@ const methodLines = [
   ...methods.flatMap((entry) => [
     `  ${q(entry.method)}: {`,
     `    scope: ${q(entry.scope)},`,
+    `    streaming: ${entry.streaming},`,
+    `    notifications: ${JSON.stringify(entry.notifications)},`,
     `    access: ${JSON.stringify(entry.access)},`,
     `    summary: ${q(entry.summary)},`,
     `    description: ${q(entry.description)},`,

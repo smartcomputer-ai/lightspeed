@@ -1,3 +1,4 @@
+import { useWatchConnected } from "@/lib/universe-watch";
 import type { BotReadResponse } from "@lightspeed-ai/sdk";
 import { ReadError } from "@/components/read-error";
 import { useQuery } from "@tanstack/react-query";
@@ -95,6 +96,8 @@ export function rosterLine(bot: BotListItem): { text: string; tone: BotTone } {
       tone: "paused",
     };
   }
+  if (bot.status === "attention") return { text: "Needs attention", tone: "attention" };
+  if (bot.status === "budget") return { text: "Budget exhausted", tone: "attention" };
   const last = bot.lastEvent;
   if (bot.activity === "waiting") return { text: "Waiting for approval", tone: "waiting" };
   if (bot.pendingCount > 0) {
@@ -138,10 +141,11 @@ function BotsPane({
   create: boolean;
   onCreate: () => void;
 }) {
+  const watchConnected = useWatchConnected(universeId);
   const bots = useQuery({
     queryKey: ["bots", universeId],
     queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
-    refetchInterval: ROSTER_REFRESH_MS,
+    refetchInterval: watchConnected ? 60_000 : ROSTER_REFRESH_MS,
     refetchIntervalInBackground: false,
   });
   const roster = bots.data?.bots ?? [];

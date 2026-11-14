@@ -51,6 +51,10 @@ body-supplied origin claims. Bot deliveries use `event`; other API clients
 may supply their own strings. Authorization and requester attribution are
 explained in [Access and security](../docs/documentation/access-and-security/overview.md).
 
+The SDK [transcript metadata helpers and session-view data guide](../docs/documentation/integrating-and-extending/api-and-typescript.md#build-transcript-authors-and-times)
+describe author/time derivation, materialized list fields and watch integration.
+The helpers are available independently of the current UI presentation.
+
 The [history loader](web/src/components/session/history-loader.tsx) starts
 with recent events, while the [live reader](web/src/lib/sessions/tail.ts)
 follows from that window's head. Older pages load as the reader scrolls up.
@@ -59,6 +63,12 @@ streams by event and entry ID; historical lifecycle events must not overwrite
 live session controls. Changing sessions cancels both read paths. Transient
 read failures retain existing content while retrying, and authorization or
 integrity errors remain visible immediately.
+
+[Submission reconciliation](web/src/lib/sessions/submissions.ts) combines local
+sends with event history in one projection. Local render keys survive confirmation;
+input stays visible while the event tail catches up with HTTP receipts. Steering
+matches submission and steering IDs and renders within its run from the start.
+Local messages appear immediately; incoming messages retain entrance motion.
 
 [Run sections](web/src/lib/sessions/run-sections.ts) select the final answer
 from the run's recorded output reference, so loading older history cannot

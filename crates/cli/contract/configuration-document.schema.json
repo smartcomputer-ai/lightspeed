@@ -1325,7 +1325,7 @@
       "type": "object"
     },
     "MethodGroup": {
-      "description": "The methods a key may call, by group. Every public method but\n`initialize` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
+      "description": "The methods a key may call, by group. Every public method but\n`initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
       "oneOf": [
         {
           "enum": [

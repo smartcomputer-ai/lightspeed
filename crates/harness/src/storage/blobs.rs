@@ -380,6 +380,17 @@ struct InMemoryBlobStoreInner {
 }
 
 impl InMemoryBlobStore {
+    pub(crate) fn summary_text(&self, blob_ref: &BlobRef) -> Option<String> {
+        let inner = self.inner.read().expect("blob store lock poisoned");
+        let bytes = inner.bytes_by_ref.get(blob_ref)?;
+        if bytes.len() > 64 * 1024 {
+            return None;
+        }
+        let prefix = &bytes[..bytes.len().min(4096)];
+        let length = std::str::from_utf8(prefix).map_or_else(|error| error.valid_up_to(), str::len);
+        Some(String::from_utf8_lossy(&prefix[..length]).into_owned())
+    }
+
     pub fn new() -> Self {
         Self::with_clock(Arc::new(unix_now_ms))
     }

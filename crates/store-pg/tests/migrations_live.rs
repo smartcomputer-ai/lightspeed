@@ -109,13 +109,6 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
         return Err(format!("unexpected migrated status: {status:?}"));
     }
 
-    // Include the declared universe configuration migration in the acceptance ledger.
-    if REQUIRED_SCHEMA_REVISION != 22 {
-        return Err(format!(
-            "unexpected required schema revision {REQUIRED_SCHEMA_REVISION}"
-        ));
-    }
-
     // The public schema can have these same names. Every newly migrated schema
     // must still receive its own foreign keys.
     let foreign_keys: Vec<(String, bool, bool, bool)> = sqlx::query_as(

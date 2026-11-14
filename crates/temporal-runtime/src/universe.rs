@@ -290,11 +290,15 @@ impl UniverseRuntime {
         let mut interval = tokio::time::interval(WORK_TICK);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let work = ProviderWork::default();
+        let mut changes = self.stores.changes().subscribe_all();
         let mut failures = crate::gateway::ReconcileFailureLog::default();
         loop {
             tokio::select! {
                 _ = interval.tick() => {}
                 _ = self.environment_signals.work_nudged() => {}
+                change = changes.recv() => {
+                    if matches!(change, Ok(Some(ref change)) if change.kind != store_pg::changes::ChangeKind::Environment) { continue; }
+                }
             }
             let now = clock_ms();
             let universe_ids = match store_pg::list_universes_with_environment_work(

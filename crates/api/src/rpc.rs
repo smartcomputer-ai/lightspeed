@@ -288,6 +288,8 @@ impl MethodScope {
 /// [`schemars::SchemaGenerator`]. Produced by the same macro invocation that
 /// generates the method's dispatcher, so the manifest cannot drift from it.
 pub struct MethodSpec {
+    /// Nonempty for streaming methods; these notifications precede the final response.
+    pub notifications: &'static [&'static str],
     pub method: &'static str,
     pub scope: MethodScope,
     pub access: MethodAccess,
@@ -306,9 +308,18 @@ pub struct MethodSchemas {
     pub result: schemars::Schema,
 }
 
+macro_rules! stream_notifications {
+    () => {
+        &[]
+    };
+    ($value:expr) => {
+        $value
+    };
+}
+
 macro_rules! api_methods {
     ($($method_const:ident => $service_fn:ident($params:ty) -> $response:ty =>
-        [$summary:expr, $description:expr], access: $access:expr),+ $(,)?) => {
+        [$summary:expr, $description:expr], $(streaming: $emits:expr,)? access: $access:expr),+ $(,)?) => {
         pub(crate) fn universe_method_access(method: &str) -> Option<MethodAccess> {
             match method {
                 $($method_const => Some($access),)+
@@ -341,6 +352,7 @@ macro_rules! api_methods {
                 $(
                     MethodSpec {
                         method: $method_const,
+                        notifications: stream_notifications!($($emits)?),
                         scope: ($access).scope(),
                         access: $access,
                         summary: $summary,
@@ -359,6 +371,8 @@ macro_rules! api_methods {
 }
 
 api_methods! {
+    METHOD_UNIVERSE_WATCH => watch_universe(UniverseWatchParams) -> UniverseWatchResponse =>
+        ["Watch universe list changes", "Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Each requested kind requires its own API-key group. Includes sub-agents; visibleTo restricts session access as on session/list."], streaming: WATCH_NOTIFICATIONS, access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_VFS_WORKSPACES_FILES_READ => read_vfs_workspace_file(VfsWorkspaceFileReadParams) -> BlobReadResponse =>
         ["Read a workspace file", "Reads bytes at a path in the current workspace head."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_INITIALIZE => initialize(InitializeParams) -> InitializeResponse =>
@@ -620,6 +634,15 @@ api_methods! {
 /// JSON-RPC notification methods the server can emit, with payloads described
 /// by the [`AgentNotification`] schema.
 pub const NOTIFICATION_METHODS: &[&str] = &[
+    "session/changed",
+    "session/removed",
+    "bots/changed",
+    "bots/removed",
+    "environments/changed",
+    "environments/removed",
+    "workspaces/changed",
+    "workspaces/removed",
+    "watch/reset",
     NOTIFY_SESSION_STARTED,
     NOTIFY_SESSION_EVENT,
     NOTIFY_SESSION_RUNS_STARTED,

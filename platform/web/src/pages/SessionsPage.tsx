@@ -1,10 +1,11 @@
+import { useWatchConnected } from "@/lib/universe-watch";
 import { DeleteSessionDialog } from "@/components/session/delete-session-dialog";
 import { useSessionCompaction } from "@/lib/sessions/compaction";
 import { useDictationAvailability } from "@/lib/use-dictation";
 import { ShareSessionDialog, SharingMark, useCanShareSession, useSessionOwner } from "@/components/session/sharing";
 import { ActivityDot, activityLabel } from "@/components/activity-dot";
 import { SessionActionsMenu } from "@/components/session/session-actions-menu";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   type InfiniteData,
   useInfiniteQuery,
@@ -96,13 +97,12 @@ import {
   QueuedRunsBar,
   SystemChips,
   TranscriptEntryView,
-  UserBand,
   type QueuedRunItem,
 } from "@/components/session/transcript-view";
 import { RunSectionView } from "@/components/session/run-section";
-import { TranscriptEntrance, TranscriptMotionProvider } from "@/components/session/transcript-motion";
+import { TranscriptMotionProvider } from "@/components/session/transcript-motion";
 import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/tool-trace";
-import { sectionsByRun, withPendingRunInputs } from "@/lib/sessions/run-sections";
+import { projectSubmissions, submissionReducer, type LocalSubmission } from "@/lib/sessions/submissions";
 import { DetailPrompt, ListNote, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
 import { ReadError } from "@/components/read-error";
@@ -222,6 +222,7 @@ function SessionList({
   const filterEntries = Object.entries(metadataFilter);
   const [preferences, setPreferences] = useState(() => readSessionListPreferences(universeId));
   const { showClosed, showSubagents, showControlledSessions, showSessionIds, metadataKeys } = preferences;
+  const watchConnected = useWatchConnected(universeId);
   const listQuery = new URLSearchParams({ limit: "50" });
   if (!showClosed) listQuery.set("closed", "false");
   if (!showControlledSessions) listQuery.set("lifecycleControlled", "false");
@@ -242,7 +243,7 @@ function SessionList({
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     // Sessions can be created by runtime workflows (not only by this browser),
     // so frontend mutation invalidation alone cannot keep this list current.
-    refetchInterval: SESSION_LIST_REFRESH_MS,
+    refetchInterval: watchConnected ? 60_000 : SESSION_LIST_REFRESH_MS,
     refetchIntervalInBackground: false,
   });
   const [createOpen, setCreateOpen] = useCreateParam("session");
@@ -856,6 +857,8 @@ function SessionListItem({
       <span className="flex min-w-0 items-center gap-2">
         {depth > 0 && <span className="shrink-0 text-muted-foreground">↳</span>}
         <ActivityDot activity={session.activity} quiet />
+        {(session.executionFailure || session.lastRun?.status === "failed") && <Badge variant="destructive">Failed</Badge>}
+        {session.activityPhase === "awaiting" && <Badge variant="outline">Awaiting</Badge>}
         <span className="min-w-0 flex-1 truncate font-medium" title={displayName ? undefined : session.id}>
           {displayName || session.id}
         </span>
@@ -898,6 +901,7 @@ function SessionListItem({
           {key}={value}
         </span>
       ))}
+      {session.lastMessagePreview && <span className="block truncate text-xs text-muted-foreground" title={session.lastMessagePreview}>{session.lastMessagePreview}</span>}
     </>
   );
   const rowClass = cn(
@@ -1313,6 +1317,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+/** Key by sessionDraftKey: local submissions and render identities belong to this mount. */
 export function SessionDetail({
   universeId,
   handle,
@@ -1351,15 +1356,13 @@ export function SessionDetail({
   const compaction = useSessionCompaction(universeId, sessionId, session.data);
   const owner = useSessionOwner(universeId, session.data?.access);
   const canShare = useCanShareSession(universeId, session.data?.access, Boolean(session.data?.origin));
-  const [pending, setPending] = useState<PendingMessage[]>([]);
-  // Retain only this view's local submission identities after pending cleanup.
-  // Historical acknowledgements must never rekey a backend-loaded run. Scope
-  // these records because run ids repeat across sessions.
-  const [localSubmissions, setLocalSubmissions] = useState<Map<string, Map<string, string | null>>>(() => new Map());
+  const [submissions, updateSubmission] = useReducer(submissionReducer, []);
   const submissionScope = JSON.stringify([universeId, sessionId]);
-  const currentScope = useRef(submissionScope);
-  currentScope.current = submissionScope;
-  const [pendingSteers, setPendingSteers] = useState<PendingSteer[]>([]);
+  const currentScope = useRef<string | null>(submissionScope);
+  useEffect(() => {
+    currentScope.current = submissionScope;
+    return () => { currentScope.current = null; };
+  }, [submissionScope]);
   const [notices, setNotices] = useState<{ id: string; text: string }[]>([]);
   const [stoppingRunId, setStoppingRunId] = useState<string | null>(null);
   const [cancellingQueued, setCancellingQueued] = useState<Set<string>>(() => new Set());
@@ -1412,7 +1415,6 @@ export function SessionDetail({
   const activeRun = tail.transcript.activeRun;
   const queuedRuns = tail.transcript.queuedRuns;
   const runRevision = tail.transcript.runRevision;
-  const sections = useMemo(() => sectionsByRun(entries, activeRun), [entries, activeRun]);
 
   // The session view is authoritative for run state; fold it into the tail
   // whenever it arrives (forward moves only), and refresh it on every run
@@ -1435,88 +1437,13 @@ export function SessionDetail({
     }
   }, [runRevision, refetchSession]);
 
-  // An optimistic send learns its run id from whichever arrives first: the
-  // POST response, or the tail's `runAccepted` carrying our submission id.
-  const runBySubmission = tail.transcript.runBySubmission;
-  useEffect(() => {
-    setPending((prev) => {
-      let changed = false;
-      const next = prev.map((message) => {
-        if (message.runId) {
-          return message;
-        }
-        const runId = runBySubmission.get(message.id);
-        if (!runId) {
-          return message;
-        }
-        changed = true;
-        return { ...message, runId };
-      });
-      return changed ? next : prev;
-    });
-  }, [runRevision, runBySubmission]);
+  const submissionView = useMemo(
+    () => projectSubmissions(tail.transcript, submissions),
+    [tail.transcript, submissions],
+  );
+  const { sections: displaySections, inlinePending: pendingInTranscript, pendingRuns: resolvedPending } = submissionView;
 
-  // Reconcile optimistic echoes against the engine's own entries. A sent
-  // message is confirmed by the run input entry carrying its run id (the
-  // id can arrive after the entry, so this re-runs when pending changes
-  // too); a steer by a steering entry with the same text on its run.
-  const pendingRunIds = pending.map((message) => message.runId ?? "").join("|");
   useEffect(() => {
-    setPending((prev) => {
-      if (prev.length === 0) {
-        return prev;
-      }
-      const confirmedRuns = new Set(
-        entries
-          .filter((entry) => entry.kind === "message" && entry.role === "user" && !entry.steering)
-          .map((entry) => (entry as { runId?: string }).runId)
-          .filter((runId): runId is string => Boolean(runId)),
-      );
-      const next = prev.filter((message) => !(message.runId && confirmedRuns.has(message.runId)));
-      return next.length === prev.length ? prev : next;
-    });
-    setPendingSteers((prev) => {
-      if (prev.length === 0) {
-        return prev;
-      }
-      const confirmed = new Set(
-        entries
-          .filter((entry) => entry.kind === "message" && entry.role === "user" && entry.steering)
-          .map((entry) => `${(entry as { runId?: string }).runId ?? ""}\u0000${(entry as { text: string }).text.trim()}`),
-      );
-      const next = prev.filter((steer) => !confirmed.has(`${steer.runId}\u0000${steer.text.trim()}`));
-      return next.length === prev.length ? prev : next;
-    });
-  }, [entries, pendingRunIds]);
-
-  // A pending message whose run the tail now knows is no longer optimistic
-  // for status purposes; drop the ones whose run ended without ever
-  // materializing input (cancelled while queued).
-  useEffect(() => {
-    setPending((prev) => {
-      const next = prev.filter(
-        (message) => !(message.runId && tail.transcript.runPhases.get(message.runId) === "terminal"),
-      );
-      return next.length === prev.length ? prev : next;
-    });
-    setPendingSteers((prev) => {
-      const dropped = prev.filter(
-        (steer) => tail.transcript.runPhases.get(steer.runId) === "terminal",
-      );
-      if (dropped.length === 0) {
-        return prev;
-      }
-      // A steer that never materialized before its run ended was not
-      // seen by the model; say so instead of letting it vanish.
-      setNotices((current) => [
-        ...current,
-        ...dropped.map((steer) => ({
-          id: steer.id,
-          text: `steering not delivered — the run ended before its next turn: “${steer.text}”`,
-        })),
-      ]);
-      return prev.filter((steer) => !dropped.includes(steer));
-    });
     if (stoppingRunId && tail.transcript.runPhases.get(stoppingRunId) === "terminal") {
       setStoppingRunId(null);
     }
@@ -1531,46 +1458,6 @@ export function SessionDetail({
     });
   }, [runRevision, tail.transcript.runPhases, stoppingRunId]);
 
-  // Resolve run ids synchronously for rendering (the effect above persists
-  // them a render later); otherwise the optimistic row and the tail's row
-  // coexist for one frame under different keys and the list flickers.
-  const resolvedPending: PendingMessage[] = pending.map((message) =>
-    message.runId ? message : { ...message, runId: runBySubmission.get(message.id) ?? null },
-  );
-  const queuedIds = new Set(queuedRuns.map((run) => run.runId));
-  // A message sent while a run was already live will be queued by the
-  // engine; show it in the queue from the start rather than as a
-  // transcript echo that jumps into the queue a moment later.
-  const isQueuedPending = (message: PendingMessage) =>
-    message.status === "queued" ||
-    (message.status === "sending" && message.expectQueued) ||
-    (message.runId !== null && queuedIds.has(message.runId));
-  // Hide an echo the same frame its engine entry shows (the effect above
-  // removes it from state a render later).
-  const confirmedInputRuns = new Set(
-    entries
-      .filter((entry) => entry.kind === "message" && entry.role === "user" && !entry.steering)
-      .map((entry) => (entry as { runId?: string }).runId)
-      .filter((runId): runId is string => Boolean(runId)),
-  );
-  const pendingInTranscript = resolvedPending.filter(
-    (message) =>
-      !isQueuedPending(message) && !(message.runId && confirmedInputRuns.has(message.runId)),
-  );
-  const submissionKeys = new Map<string, string>();
-  for (const [submissionId, acknowledgedRunId] of localSubmissions.get(submissionScope) ?? []) {
-    const runId = acknowledgedRunId ?? runBySubmission.get(submissionId);
-    if (runId) submissionKeys.set(runId, submissionId);
-  }
-  const displaySections = withPendingRunInputs(sections, pendingInTranscript, submissionKeys);
-  const confirmedSteers = new Set(
-    entries
-      .filter((entry) => entry.kind === "message" && entry.role === "user" && entry.steering)
-      .map((entry) => `${(entry as { runId?: string }).runId ?? ""}\u0000${(entry as { text: string }).text.trim()}`),
-  );
-  const visiblePendingSteers = pendingSteers.filter(
-    (steer) => !confirmedSteers.has(`${steer.runId}\u0000${steer.text.trim()}`),
-  );
   // The run to steer or stop: the tail's active run, or — before the tail
   // has reported it — the run the engine just accepted as running.
   const steerTargetRunId =
@@ -1578,15 +1465,16 @@ export function SessionDetail({
     resolvedPending.find(
       (message) =>
         message.runId &&
-        (message.status === "running" ||
-          tail.transcript.runPhases.get(message.runId) === "running"),
+        (tail.transcript.runPhases.has(message.runId)
+          ? tail.transcript.runPhases.get(message.runId) === "running"
+          : message.status === "running" || message.status === "parked"),
     )?.runId ??
     null;
-  const runActive = runInProgress(tail.transcript) || pending.length > 0;
+  const runActive = runInProgress(tail.transcript) || resolvedPending.length > 0;
   const stopping = stoppingRunId !== null && steerTargetRunId === stoppingRunId;
   const canSteer = canControl && steerTargetRunId !== null && !(activeRun?.cancelling ?? false) && !stopping;
   const queuedItems: QueuedRunItem[] = [
-    ...queuedRuns.map((run) => {
+    ...submissionView.queuedRuns.map((run) => {
       const sent = resolvedPending.find((message) => message.runId === run.runId);
       return {
         key: sent?.id ?? run.runId,
@@ -1599,8 +1487,8 @@ export function SessionDetail({
     ...resolvedPending
       .filter(
         (message) =>
-          isQueuedPending(message) &&
-          !(message.runId && tail.transcript.runPhases.has(message.runId)),
+          submissionView.queued.has(message.id) &&
+          !submissionView.queuedRuns.some(run => run.runId === message.runId),
       )
       .map((message) => ({
         key: message.id,
@@ -1697,14 +1585,9 @@ export function SessionDetail({
     const media = echoMedia(message.attachments);
     // The submission id doubles as the engine idempotency key: a retried
     // POST returns the original run instead of starting a second one.
-    const expectQueued = runActive;
-    setLocalSubmissions((previous) => new Map(previous).set(
-      submissionScope, new Map(previous.get(submissionScope)).set(submissionId, null),
-    ));
-    if (currentScope.current === submissionScope) setPending((prev) => [
-      ...prev,
-      { id: submissionId, text, media, runId: null, status: "sending", expectQueued },
-    ]);
+    updateSubmission({ type: "send", submission: {
+      id: submissionId, kind: "run", text, media, runId: null, queued: runActive,
+    } });
     try {
       const accepted = await postUntilAccepted(
         () => api<SessionRunAccepted>(
@@ -1721,25 +1604,13 @@ export function SessionDetail({
       );
       if (!accepted) return true;
       if (currentScope.current === submissionScope) setFollowRequest((request) => request + 1);
-      setLocalSubmissions((previous) => new Map(previous).set(
-        submissionScope, new Map(previous.get(submissionScope)).set(submissionId, accepted.run.id),
-      ));
-      if (currentScope.current === submissionScope) {
-        // An idempotent retry can return a run that already finished.
-        const terminal = ["completed", "cancelled", "failed"].includes(accepted.run.status);
-        setPending((prev) => terminal
-          ? prev.filter((message) => message.id !== submissionId)
-          : prev.map((message) => message.id === submissionId ? {
-            ...message,
-            runId: message.runId ?? accepted.run.id,
-            status: accepted.run.status === "queued" ? "queued" : "running",
-          } : message));
-        if (terminal) void session.refetch();
-      }
+      updateSubmission({ type: "accepted", id: submissionId,
+        runId: accepted.run.id, status: accepted.run.status });
+      if (["completed", "cancelled", "failed"].includes(accepted.run.status)) void session.refetch();
       return true;
     } catch (error) {
       if (currentScope.current === submissionScope) {
-        setPending((prev) => prev.filter((message) => message.id !== submissionId));
+        updateSubmission({ type: "withdrawn", id: submissionId });
         setSendError(error instanceof Error ? error.message : String(error));
       }
       return false;
@@ -1757,10 +1628,12 @@ export function SessionDetail({
     }
     const id = crypto.randomUUID();
     if (currentScope.current === submissionScope) {
-      setPendingSteers((prev) => [...prev, { id, runId, text, media: echoMedia(attachments) }]);
+      updateSubmission({ type: "send", submission: {
+        id, kind: "steering", runId, text, media: echoMedia(attachments), queued: false,
+      } });
     }
     try {
-      await postUntilAccepted(
+      const accepted = await postUntilAccepted(
         () => api<SessionRunSteered>(
           "POST",
           `/api/v1/universes/${universeId}/sessions/${sessionId}/runs/${runId}/steer`,
@@ -1772,10 +1645,12 @@ export function SessionDetail({
         ),
         () => currentScope.current === submissionScope,
       );
+      if (accepted) updateSubmission({ type: "accepted", id,
+        runId, steeringId: accepted.steeringId });
       if (currentScope.current === submissionScope) setFollowRequest((request) => request + 1);
       return { ok: true };
     } catch (error) {
-      setPendingSteers((prev) => prev.filter((steer) => steer.id !== id));
+      updateSubmission({ type: "withdrawn", id });
       return { ok: false, error };
     }
   };
@@ -1854,6 +1729,10 @@ export function SessionDetail({
       });
       return;
     }
+    if (response.run.status === "cancelled" && response.run.startedAtMs == null) {
+      const sent = resolvedPending.find(item => item.runId === runId);
+      if (sent) updateSubmission({ type: "withdrawn", id: sent.id });
+    }
     void session.refetch();
   };
 
@@ -1886,7 +1765,8 @@ export function SessionDetail({
         throw new Error("The queued message started before it could be converted. Steering was not sent.");
       }
       if (currentScope.current === submissionScope) {
-        setPending((prev) => prev.filter((pending) => (pending.runId ?? runBySubmission.get(pending.id)) !== runId));
+        const sent = resolvedPending.find(item => item.runId === runId);
+        if (sent) updateSubmission({ type: "withdrawn", id: sent.id });
         reconcileRuns([{ id: runId, status: "cancelled", acceptedAtMs: 0, source: { type: "input" } }]);
       }
       // Keep the original target even if the tail reports a different active run.
@@ -2226,7 +2106,7 @@ export function SessionDetail({
       />
       <TranscriptLinksContext.Provider value={transcriptLinks}>
       <MessageScrollerProvider key={`${universeId}/${sessionId}`} autoScroll defaultScrollPosition="end">
-        <TranscriptMotionProvider sections={displaySections} pendingKeys={visiblePendingSteers.map((steer) => steer.id)} ready={tail.phase === "live"} historyRevision={tail.historyRevision}>
+        <TranscriptMotionProvider sections={displaySections} ready={tail.phase === "live"} historyRevision={tail.historyRevision}>
         <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport preserveScrollOnPrepend>
             <SessionHistoryLoader tail={tail} />
@@ -2262,12 +2142,7 @@ export function SessionDetail({
                   )}
                 </MessageScrollerItem>
               ))}
-              {visiblePendingSteers.map((steer) => (
-                <MessageScrollerItem key={steer.id} messageId={steer.id}>
-                  <TranscriptEntrance motionKey={steer.id}><UserBand text={steer.text} media={steer.media} steering /></TranscriptEntrance>
-                </MessageScrollerItem>
-              ))}
-              {notices.map((notice) => (
+              {[...notices, ...submissionView.notices].map((notice) => (
                 <MessageScrollerItem key={notice.id} messageId={notice.id}>
                   <TranscriptEntryView
                     entry={{ kind: "marker", key: notice.id, text: notice.text, tone: "muted" }}
@@ -2402,25 +2277,6 @@ export function SessionDetail({
   );
 }
 
-interface PendingMessage {
-  id: string;
-  text: string;
-  /// Attachments sent with the message, previewed from local files.
-  media?: TranscriptMedia[];
-  /// Engine run id once the POST returned; null while in flight.
-  runId: string | null;
-  status: "sending" | "running" | "queued";
-  /// Sent while a run was already live, so the engine will queue it.
-  expectQueued: boolean;
-}
-
-interface PendingSteer {
-  id: string;
-  runId: string;
-  text: string;
-  media?: TranscriptMedia[];
-}
-
 /// The attachment fields the message routes accept.
 function wireAttachment({ blobRef, mime, kind, name }: SentAttachment) {
   return { blobRef, mime, kind, name };
@@ -2451,7 +2307,7 @@ function attachmentSummary(media: TranscriptMedia[] | undefined): string {
 function queuedRunText(
   runId: string,
   runs: SessionRunView[] | undefined,
-  pending: PendingMessage[],
+  pending: LocalSubmission[],
 ): string {
   const run = runs?.find((candidate) => String(candidate.id) === runId);
   if (run?.source.type === "input") {

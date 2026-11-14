@@ -417,3 +417,56 @@ def test_readme_documents_every_helper():
     ]
     missing = [name for name in [*CLIENT_HELPERS, *hand_written] if f"`{name}`" not in readme]
     assert not missing
+
+
+class WatchBody(httpx.AsyncByteStream):
+    def __init__(self, content):
+        self.content = content
+        self.closed = False
+
+    async def __aiter__(self):
+        for byte in self.content.encode():
+            yield bytes([byte])
+
+    async def aclose(self):
+        self.closed = True
+
+
+async def test_watch_auth_multiline_utf8_final_response_and_close():
+    event = {"method": "workspaces/removed", "params": {"workspaceId": "hé"}}
+    body = WatchBody(': heartbeat\r\ndata: {"method":"watch/reset",\r\ndata: "params":{}}\r\n\r\n'
+                     + 'data: ' + json.dumps(event, ensure_ascii=False) + '\n\n'
+                     + 'data: {"id":1,"result":{"result":{}}}\n\n')
+
+    def handle(request):
+        assert request.method == "POST"
+        assert request.headers["accept"] == "text/event-stream"
+        assert request.headers["authorization"] == "Bearer secret"
+        assert request.headers["x-lightspeed-universe"] == "u"
+        assert json.loads(request.content)["params"] == {"kinds": ["workspace"]}
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        client = AsyncLightspeedClient("http://core/rpc", api_key="secret", universe="u", http_client=http)
+        events = [item async for item in client.watch({"kinds": ["workspace"]}, reconnect=False)]
+    assert events == [{"method": "watch/reset", "params": {}}, event]
+    assert body.closed
+
+
+async def test_watch_iterator_close_and_typed_refusal():
+    body = WatchBody('data: {"method":"watch/reset","params":{}}\n\n')
+    gateway = ScriptedGateway(httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=body),
+                              httpx.Response(403, json={"error": {"code": -32003, "message": "forbidden"}}),
+                              httpx.ReadError("lost"))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(gateway)) as http:
+        client = AsyncLightspeedClient("http://core/rpc", http_client=http)
+        watch = client.watch()
+        assert (await anext(watch))["method"] == "watch/reset"
+        await watch.aclose()
+        assert body.closed
+        with pytest.raises(LightspeedRpcError):
+            await anext(client.watch())
+        with pytest.raises(LightspeedTransportError) as caught:
+            await anext(client.watch(reconnect=False))
+        assert caught.value.transient
+    assert len(gateway.calls) == 3

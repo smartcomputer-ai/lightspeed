@@ -389,6 +389,104 @@ async fn temporal_live_session_start_then_run_start_completes_fake_runs() -> any
 }
 
 #[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local Temporal + PostgreSQL"]
+async fn temporal_live_event_long_poll_wakes_across_connections_and_falls_back_without_signals()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    require_storage_live_env()?;
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, |client, task_queue, session_id| async move {
+        use harness::{
+            CoreAgentCodec, CoreAgentEvent, EnvironmentEvent, UncommittedCoreAgentEvent,
+            storage::{AppendSessionEvents, CreateSession},
+        };
+        use std::{
+            sync::Arc,
+            time::{Duration, Instant},
+        };
+        let writer = pg_store_from_env().await?;
+        let bus = store_pg::changes::ChangeBus::postgres(writer.pool().clone());
+        let mut ready = bus.subscribe_all();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if matches!(ready.recv().await, Ok(None)) {
+                    break;
+                }
+            }
+        })
+        .await?;
+        let reader = Arc::new(
+            store_pg::PgStore::new(writer.pool().clone(), writer.config().clone())
+                .with_changes(bus),
+        );
+        let api = GatewayAgentApi::builder(client, reader)
+            .with_task_queue(task_queue)
+            .build();
+        writer
+            .create_session(CreateSession {
+                session_id: session_id.clone(),
+                display_name: None,
+                metadata: Default::default(),
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await?;
+        let params = |after, wait_ms| SessionEventsReadParams {
+            session_id: session_id.to_string(),
+            direction: Default::default(),
+            after,
+            before: None,
+            limit: Some(10),
+            wait_ms: Some(wait_ms),
+        };
+        let append = async |store: &store_pg::PgStore, at| -> anyhow::Result<()> {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let head = store.head(&session_id).await?;
+            let entry = CoreAgentCodec.encode_uncommitted(&UncommittedCoreAgentEvent {
+                observed_at_ms: at,
+                joins: Default::default(),
+                event: CoreAgentEvent::Environment(EnvironmentEvent::ActiveEnvironmentCleared),
+            })?;
+            store
+                .append(AppendSessionEvents {
+                    session_id: session_id.clone(),
+                    expected_head: head,
+                    events: vec![entry],
+                })
+                .await?;
+            Ok(())
+        };
+        let started = Instant::now();
+        let (page, written) = tokio::join!(
+            api.read_session_events(params(None, 5_000)),
+            append(writer.as_ref(), 2)
+        );
+        written?;
+        let page = page?.result;
+        assert_eq!(page.events.len(), 1);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "notification should beat the five-second fallback"
+        );
+        // A publisher with local delivery only cannot wake the reader's bus.
+        let silent = store_pg::PgStore::new(writer.pool().clone(), writer.config().clone());
+        let (page, written) = tokio::join!(
+            api.read_session_events(params(page.head_cursor, 250)),
+            append(&silent, 3)
+        );
+        written?;
+        assert_eq!(
+            page?.result.events.len(),
+            1,
+            "the deadline re-read must find writes even without a signal"
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres + MinIO env"]
 async fn temporal_live_session_checkpoints_and_bounded_run_reads() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
@@ -464,7 +562,7 @@ async fn temporal_live_session_read_needs_no_worker_and_reports_a_dead_execution
                 Some(api::SessionExecutionFailureView::Terminated)
             );
 
-            // A list stays on the stored projection, so it does not notice.
+            // The read records its observation, so lists now show it without querying Temporal.
             let listed = api
                 .list_sessions(SessionListParams {
                     limit: Some(100),
@@ -478,6 +576,10 @@ async fn temporal_live_session_read_needs_no_worker_and_reports_a_dead_execution
                 .find(|session| session.id == session_id.as_str())
                 .expect("listed");
             assert_eq!(row.lifecycle_status, SessionLifecycleStatus::Open);
+            assert_eq!(
+                row.details.execution_failure,
+                Some(api::SessionExecutionFailureView::Terminated)
+            );
 
             // Force close reconciles the store, and a closed row skips the check.
             api.close_session(api::SessionCloseParams {

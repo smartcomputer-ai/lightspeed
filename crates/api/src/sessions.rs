@@ -1034,6 +1034,11 @@ pub struct SessionListResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummaryView {
+    /// Monotonic revision of visible summary fields; log-only appends do not advance it.
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(flatten)]
+    pub details: SessionSummaryDetails,
     pub id: SessionId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
@@ -1362,6 +1367,9 @@ pub struct EventJoinsView {
     pub tool_batch_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Client submission identifier, when present. Run and steering acceptance
+    /// events expose this join so clients can match local input to its accepted
+    /// run or steering identifier without comparing message text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submission_id: Option<String>,
 }
@@ -1822,4 +1830,57 @@ mod compaction_wire_tests {
             assert_eq!(serde_json::to_value(decoded).unwrap(), value);
         }
     }
+}
+
+/// Display fields materialized with the session log.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SessionSummaryDetails {
+    /// Open vocabulary: awaiting while a run is parked on promises. Approval waiting remains in activity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity_phase: Option<String>,
+    /// When the current non-idle activity or phase began; absent while idle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity_since_ms: Option<u64>,
+    /// Most recent terminal run, independent of the current activity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_run: Option<SessionLastRunView>,
+    /// Last observed stopped workflow execution, cleared on recovery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_failure: Option<SessionExecutionFailureView>,
+    /// Latest nonempty user or assistant message reduced to one plain line of at most 200 Unicode characters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_message_preview: Option<String>,
+    /// Role of the message represented by lastMessagePreview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_message_role: Option<ContextMessageRoleView>,
+    /// Observation time when the preview message entered the event log.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_message_at_ms: Option<u64>,
+    /// Application-supplied display provenance of the preview message; not authenticated identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_message_origin: Option<String>,
+    /// Environment selected by the session event log.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_environment_id: Option<EnvironmentId>,
+    /// Attached catalog resource ids, grouped by kind.
+    pub attachments: SessionAttachmentsView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SessionAttachmentsView {
+    pub workspaces: Vec<String>,
+    pub environments: Vec<EnvironmentId>,
+    pub mcp_servers: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLastRunView {
+    pub run_id: RunId,
+    pub status: RunStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<RunFailureKindView>,
+    pub finished_at_ms: u64,
 }

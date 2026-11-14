@@ -474,6 +474,10 @@ impl PgStore {
         tx.commit()
             .await
             .map_err(|error| sql_error(action, error))?;
+        self.changed(
+            crate::changes::ChangeKind::Environment,
+            candidate.environment_id.as_str(),
+        );
         Ok((candidate, true))
     }
 
@@ -527,6 +531,10 @@ impl PgStore {
             tx.commit()
                 .await
                 .map_err(|error| sql_error("commit environment create", error))?;
+            self.changed(
+                crate::changes::ChangeKind::Environment,
+                record.environment_id.as_str(),
+            );
             return Ok(record);
         }
         drop(tx);
@@ -683,6 +691,10 @@ impl EnvironmentStore for PgStore {
                 tx.commit()
                     .await
                     .map_err(|error| sql_error("commit registered environment create", error))?;
+                self.changed(
+                    crate::changes::ChangeKind::Environment,
+                    record.environment_id.as_str(),
+                );
                 Ok(record)
             }
             Err(error) if constraint_of(&error) == Some("environments_daemon_public_key_idx") => {
@@ -756,6 +768,10 @@ impl EnvironmentStore for PgStore {
             tx.commit()
                 .await
                 .map_err(|error| sql_error("commit environment declaration", error))?;
+            self.changed(
+                crate::changes::ChangeKind::Environment,
+                record.environment_id.as_str(),
+            );
             return Ok((record, DeclaredOutcome::Updated));
         }
         let record = request.record(&key)?;
@@ -782,6 +798,10 @@ impl EnvironmentStore for PgStore {
         tx.commit()
             .await
             .map_err(|error| sql_error("commit environment declaration", error))?;
+        self.changed(
+            crate::changes::ChangeKind::Environment,
+            record.environment_id.as_str(),
+        );
         Ok((record, DeclaredOutcome::Created))
     }
 
@@ -833,6 +853,10 @@ impl EnvironmentStore for PgStore {
         tx.commit()
             .await
             .map_err(|error| sql_error("commit registered environment bind", error))?;
+        self.changed(
+            crate::changes::ChangeKind::Environment,
+            record.environment_id.as_str(),
+        );
         Ok(record)
     }
 
@@ -2138,6 +2162,25 @@ fn metadata_filter_json(metadata: &BTreeMap<String, String>) -> serde_json::Valu
             .map(|(key, value)| (key.clone(), serde_json::Value::String(value.clone())))
             .collect(),
     )
+}
+
+impl PgStore {
+    /// The environment list projection restricted to a batch of changed ids.
+    pub async fn environments_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
+        let query = format!(
+            "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_FROM} WHERE e.universe_id=$1 AND e.environment_id=ANY($2)"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(self.config.universe_id)
+            .bind(ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| sql_error("load changed environments", e))?;
+        rows.iter().map(environment_from_row).collect()
+    }
 }
 
 #[cfg(test)]

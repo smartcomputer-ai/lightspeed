@@ -69,10 +69,11 @@ beforeEach(() => {
   stored = "x";
   mocks.api
     .mockReset()
-    .mockImplementation(async (_method: string, path: string) => {
+    .mockImplementation(async (method: string, path: string) => {
       if (path.endsWith("/workspaces")) return [tree().workspace];
       if (path.endsWith("/tree")) return tree();
-      if (path.includes("/files/"))
+      if (method === "PUT") return { workspace: { ...tree().workspace, revision: 4 } };
+      if (path.includes("/blobs/"))
         return { blobRef, bytesBase64: btoa(stored), bytes: stored.length };
       throw new Error(`Unexpected request: ${path}`);
     });

@@ -2452,6 +2452,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfUniverseWatchResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/UniverseWatchResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfVfsSnapshotCommitResponse": {
       "properties": {
         "notifications": {
@@ -2573,6 +2590,214 @@
     },
     "AgentNotification": {
       "oneOf": [
+        {
+          "properties": {
+            "method": {
+              "const": "session/changed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "session": {
+                  "$ref": "#/definitions/SessionSummaryView"
+                }
+              },
+              "required": [
+                "session"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "session/removed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "sessionId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sessionId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "bots/changed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "bot": {
+                  "$ref": "#/definitions/BotListItem"
+                }
+              },
+              "required": [
+                "bot"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "bots/removed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "botId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "botId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "environments/changed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "environment": {
+                  "$ref": "#/definitions/EnvironmentView"
+                }
+              },
+              "required": [
+                "environment"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "environments/removed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "environmentId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "environmentId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "workspaces/changed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "workspace": {
+                  "$ref": "#/definitions/VfsWorkspaceView"
+                }
+              },
+              "required": [
+                "workspace"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "workspaces/removed",
+              "type": "string"
+            },
+            "params": {
+              "properties": {
+                "workspaceId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "workspaceId"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "watch/reset",
+              "type": "string"
+            },
+            "params": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
         {
           "properties": {
             "method": {
@@ -5466,6 +5691,12 @@
         "access": {
           "$ref": "#/definitions/ResourceAccessSummary"
         },
+        "activeSessionCount": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "activity": {
           "allOf": [
             {
@@ -5553,6 +5784,12 @@
             }
           ]
         },
+        "openSessionCount": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "pendingCount": {
           "description": "Events whose delivery has not finished.",
           "format": "uint64",
@@ -5589,6 +5826,15 @@
           "default": false,
           "description": "Capability grant: the mutating self-configuration tools\n(`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).",
           "type": "boolean"
+        },
+        "status": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/BotListStatus"
+            }
+          ],
+          "default": "idle",
+          "description": "Display precedence: closed, paused, waiting, attention, budget, working, idle."
         },
         "triggerCount": {
           "format": "uint32",
@@ -5637,6 +5883,18 @@
         }
       },
       "type": "object"
+    },
+    "BotListStatus": {
+      "enum": [
+        "closed",
+        "paused",
+        "waiting",
+        "attention",
+        "budget",
+        "working",
+        "idle"
+      ],
+      "type": "string"
     },
     "BotPutParams": {
       "properties": {
@@ -5692,6 +5950,14 @@
         },
         "bot": {
           "$ref": "#/definitions/BotView"
+        },
+        "status": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/BotListStatus"
+            }
+          ],
+          "default": "idle"
         }
       },
       "required": [
@@ -11877,6 +12143,7 @@
           ]
         },
         "submissionId": {
+          "description": "Client submission identifier, when present. Run and steering acceptance\nevents expose this join so clients can match local input to its accepted\nrun or steering identifier without comparing message text.",
           "type": [
             "string",
             "null"
@@ -13173,7 +13440,7 @@
       ]
     },
     "MethodGroup": {
-      "description": "The methods a key may call, by group. Every public method but\n`initialize` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
+      "description": "The methods a key may call, by group. Every public method but\n`initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
       "oneOf": [
         {
           "enum": [
@@ -15070,6 +15337,32 @@
           "type": "string"
         }
       ]
+    },
+    "SessionAttachmentsView": {
+      "properties": {
+        "environments": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mcpServers": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "workspaces": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
     },
     "SessionCloseParams": {
       "properties": {
@@ -17444,6 +17737,37 @@
       ],
       "type": "object"
     },
+    "SessionLastRunView": {
+      "properties": {
+        "failureKind": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RunFailureKindView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finishedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/RunStatus"
+        }
+      },
+      "required": [
+        "runId",
+        "status",
+        "finishedAtMs"
+      ],
+      "type": "object"
+    },
     "SessionLifecycleStatus": {
       "enum": [
         "new",
@@ -17937,6 +18261,7 @@
       "type": "object"
     },
     "SessionSummaryView": {
+      "description": "Display fields materialized with the session log.",
       "properties": {
         "access": {
           "allOf": [
@@ -17946,6 +18271,13 @@
           ],
           "description": "The audience of the session's root: whether it is shared with the\nuniverse, and who created it."
         },
+        "activeEnvironmentId": {
+          "description": "Environment selected by the session event log.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "activity": {
           "allOf": [
             {
@@ -17953,6 +18285,35 @@
             }
           ],
           "description": "What the session is doing now: idle, working on a run, or waiting for\nan approval."
+        },
+        "activityPhase": {
+          "description": "Open vocabulary: awaiting while a run is parked on promises. Approval waiting remains in activity.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activitySinceMs": {
+          "description": "When the current non-idle activity or phase began; absent while idle.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "attachments": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SessionAttachmentsView"
+            }
+          ],
+          "default": {
+            "environments": [],
+            "mcpServers": [],
+            "workspaces": []
+          },
+          "description": "Attached catalog resource ids, grouped by kind."
         },
         "closedAtMs": {
           "format": "uint64",
@@ -17973,8 +18334,64 @@
             "null"
           ]
         },
+        "executionFailure": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SessionExecutionFailureView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Last observed stopped workflow execution, cleared on recovery."
+        },
         "id": {
           "type": "string"
+        },
+        "lastMessageAtMs": {
+          "description": "Observation time when the preview message entered the event log.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "lastMessageOrigin": {
+          "description": "Application-supplied display provenance of the preview message; not authenticated identity.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastMessagePreview": {
+          "description": "Latest nonempty user or assistant message reduced to one plain line of at most 200 Unicode characters.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastMessageRole": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextMessageRoleView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Role of the message represented by lastMessagePreview."
+        },
+        "lastRun": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SessionLastRunView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Most recent terminal run, independent of the current activity."
         },
         "lifecycleControlled": {
           "description": "True only when the session's integration names a lifecycle controller.",
@@ -18003,6 +18420,13 @@
         },
         "retention": {
           "$ref": "#/definitions/SessionRetentionView"
+        },
+        "revision": {
+          "default": 0,
+          "description": "Monotonic revision of visible summary fields; log-only appends do not advance it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "updatedAtMs": {
           "format": "uint64",
@@ -19361,6 +19785,36 @@
       ],
       "type": "string"
     },
+    "UniverseWatchParams": {
+      "additionalProperties": false,
+      "properties": {
+        "kinds": {
+          "default": [
+            "session",
+            "bot",
+            "environment",
+            "workspace"
+          ],
+          "description": "Collections to watch; omission selects all four. Must be nonempty.",
+          "items": {
+            "$ref": "#/definitions/WatchKind"
+          },
+          "type": "array"
+        },
+        "visibleTo": {
+          "description": "Restrict session rows to shared sessions and sessions created by this actor,\nas on session/list. Includes delegated children through their root's access.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "UniverseWatchResponse": {
+      "description": "Final response when a watch reaches its lifetime. Reconnect and refetch on\nwatch/reset; notifications are lossy hints and have no durable resume cursor.",
+      "type": "object"
+    },
     "VfsFeature": {
       "additionalProperties": false,
       "description": "Grants the session virtual filesystem. Workspace attachments declare the\nsession-visible namespace and the VFS catalog is surfaced. The file tool\nsurface is derived from the attachments: any attachment installs the read\ntools, any `edit` attachment adds the write tools, and with the\nenvironments feature granted the matching transfer tools appear. `{}`\ngrants a VFS with no attachments, no tools, and no sourcing.",
@@ -19724,6 +20178,16 @@
       "enum": [
         "universe",
         "restricted"
+      ],
+      "type": "string"
+    },
+    "WatchKind": {
+      "description": "Collections whose list rows can be watched. Each requires its existing API-key group.",
+      "enum": [
+        "session",
+        "bot",
+        "environment",
+        "workspace"
       ],
       "type": "string"
     },

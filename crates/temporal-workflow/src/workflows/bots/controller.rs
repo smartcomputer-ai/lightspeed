@@ -221,6 +221,7 @@ impl BotControllerWorkflow {
 
 async fn run_controller(ctx: &mut Ctx) -> WorkflowResult<()> {
     let ctx: &Ctx = &*ctx;
+    let mut last_status = None;
     let mut lanes: Vec<LaneFuture> = ctx
         .state(|state| state.waiting_lanes())
         .into_iter()
@@ -229,8 +230,10 @@ async fn run_controller(ctx: &mut Ctx) -> WorkflowResult<()> {
 
     loop {
         tick_clock(ctx);
+        publish_status(ctx, &mut last_status).await;
         if ctx.state(|state| state.close_requested()) {
             with_lanes(&mut lanes, teardown(ctx)).await;
+            publish_status(ctx, &mut last_status).await;
             return Ok(());
         }
         with_lanes(&mut lanes, process_emissions(ctx)).await;
@@ -265,7 +268,39 @@ async fn run_controller(ctx: &mut Ctx) -> WorkflowResult<()> {
         if ctx.state(|state| state.can_continue_as_new(suggested, lanes.len())) {
             return request_continue_as_new(ctx);
         }
+        with_lanes(&mut lanes, publish_status(ctx, &mut last_status)).await;
         park(ctx, &mut lanes).await;
+    }
+}
+
+async fn publish_status(ctx: &Ctx, last: &mut Option<bots::BotStatusProjection>) {
+    let now = now_ms(ctx);
+    let status = ctx.state(|state| bots::BotStatusProjection {
+        setup: state.setup_status,
+        budget_exhausted: state.budget_exhausted_view(now),
+        last_error: state.last_error.clone(),
+        closing: state.closing,
+        closed: state.closed_done,
+    });
+    if last.as_ref() == Some(&status) {
+        return;
+    }
+    let (universe_id, bot_id) =
+        ctx.state(|state| (state.config.universe_id, state.config.bot_id.clone()));
+    if activity(
+        ctx,
+        BotActivities::record_status,
+        super::types::BotRecordStatusRequest {
+            universe_id,
+            bot_id,
+            status: status.clone(),
+            observed_at_ms: now,
+        },
+    )
+    .await
+    .is_ok()
+    {
+        *last = Some(status);
     }
 }
 

@@ -751,11 +751,18 @@ impl<'a> CoreAgentProjector<'a> {
         session_id: &SessionId,
         entry: &CoreAgentEntry,
     ) -> Result<SessionEventView, AgentApiError> {
+        let mut joins = event_joins_to_api(&entry.joins);
+        // Steering carries its submission identity in the durable event. Expose
+        // it through the same public join used to reconcile ordinary run input.
+        if let CoreAgentEvent::Run(RunEvent::SteeringAccepted { submission_id, .. }) = &entry.event
+        {
+            joins.submission_id = Some(submission_id.as_str().to_owned());
+        }
         Ok(SessionEventView {
             cursor: event_cursor(entry.position.seq),
             session_id: session_id.as_str().to_owned(),
             observed_at_ms: entry.observed_at_ms,
-            joins: event_joins_to_api(&entry.joins),
+            joins,
             kind: self.project_event_kind(&entry.event).await?,
         })
     }
@@ -3505,6 +3512,52 @@ fn llm_usage_to_api(usage: &harness::LlmUsage) -> LlmUsageView {
     }
 }
 
+/// Convert the store display projection without reading payload blobs.
+pub fn session_summary_details(
+    summary: &harness::storage::summary::SessionSummary,
+) -> api::SessionSummaryDetails {
+    api::SessionSummaryDetails {
+        activity_phase: summary.activity_phase.clone(),
+        activity_since_ms: summary.activity_since_ms,
+        last_run: summary
+            .last_run
+            .as_ref()
+            .map(|run| api::SessionLastRunView {
+                run_id: api_run_id(run.run_id),
+                status: core_run_status_to_api_status(run.status),
+                failure_kind: run.failure_kind.clone().map(run_failure_kind_to_api),
+                finished_at_ms: run.finished_at_ms,
+            }),
+        execution_failure: summary.execution_failure.map(|failure| match failure {
+            harness::storage::summary::ExecutionFailure::Failed => {
+                api::SessionExecutionFailureView::Failed
+            }
+            harness::storage::summary::ExecutionFailure::Terminated => {
+                api::SessionExecutionFailureView::Terminated
+            }
+            harness::storage::summary::ExecutionFailure::TimedOut => {
+                api::SessionExecutionFailureView::TimedOut
+            }
+            harness::storage::summary::ExecutionFailure::Missing => {
+                api::SessionExecutionFailureView::Missing
+            }
+        }),
+        last_message_preview: summary.last_message_preview.clone(),
+        last_message_role: summary
+            .last_message_role
+            .as_ref()
+            .map(context_message_role_to_api),
+        last_message_at_ms: summary.last_message_at_ms,
+        last_message_origin: summary.last_message_origin.clone(),
+        active_environment_id: summary.active_environment_id.clone(),
+        attachments: api::SessionAttachmentsView {
+            workspaces: summary.attachments.workspaces.clone(),
+            environments: summary.attachments.environments.clone(),
+            mcp_servers: summary.attachments.mcp_servers.clone(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use harness::{
@@ -4031,6 +4084,41 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn steering_events_expose_the_submission_join_for_client_reconciliation() {
+        let blobs = InMemoryBlobStore::new();
+        let projector = CoreAgentProjector::new(&blobs);
+        let entry = CoreAgentEntry {
+            position: SessionPosition {
+                seq: EventSeq::new(1),
+            },
+            observed_at_ms: 1,
+            joins: CoreAgentJoins {
+                run_id: Some(RunId::new(2)),
+                ..Default::default()
+            },
+            event: CoreAgentEvent::Run(RunEvent::SteeringAccepted {
+                run_id: RunId::new(2),
+                steering_id: harness::SteeringId::new(3),
+                submission_id: harness::SubmissionId::new("local-steer"),
+                input: vec![],
+                requested_by: None,
+            }),
+        };
+        let projected = projector
+            .project_entry(&SessionId::new("session"), &entry)
+            .await
+            .unwrap();
+        assert_eq!(
+            projected.joins.submission_id.as_deref(),
+            Some("local-steer")
+        );
+        assert_eq!(projected.joins.run_id.as_deref(), Some("run_2"));
+        assert!(
+            matches!(projected.kind, SessionEventKindView::RunSteeringAccepted { steering_id, .. } if steering_id == "steering_3")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn each_call_of_a_batch_shows_how_far_it_got() {
         let blobs = InMemoryBlobStore::new();
         let long = "x".repeat(MAX_INLINE_TEXT_BYTES + 1);
@@ -4472,6 +4560,8 @@ mod tests {
         let session_id = SessionId::new("integrated-session");
         let state = CoreAgentState::new();
         let record = SessionRecord {
+            revision: 1,
+            summary: Default::default(),
             metadata: Default::default(),
             session_id: session_id.clone(),
             display_name: None,

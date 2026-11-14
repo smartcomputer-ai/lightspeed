@@ -88,6 +88,7 @@ enum UniverseResolution {
 }
 
 pub struct GatewayState {
+    watches: Arc<super::watch::WatchRegistry>,
     resolution: UniverseResolution,
     /// Live registered-daemon connections on this replica.
     registrations: Arc<RegisteredConnections>,
@@ -127,6 +128,7 @@ impl GatewayState {
             .collect();
         let signals = api.environment_signals().clone();
         Self {
+            watches: Arc::default(),
             resolution: UniverseResolution::FixedApi { api },
             registrations: Arc::new(RegisteredConnections::new()),
             registration_origins,
@@ -221,6 +223,7 @@ impl GatewayState {
             .collect();
         let signals = runtime.environment_signals().clone();
         Self {
+            watches: Arc::default(),
             resolution: UniverseResolution::Multi {
                 mode,
                 runtime,
@@ -1240,10 +1243,46 @@ fn refused_before_body(error: AgentApiError) -> Response {
 }
 
 async fn rpc(State(state): State<Arc<GatewayState>>, request: Request) -> Response {
+    let accepts_stream = request
+        .headers()
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(',')
+                .any(|part| part.trim().split(';').next() == Some("text/event-stream"))
+        });
     let (context, request) = match receive_rpc(state.rpc_admission(), request).await {
         ReceivedRpc::Request { context, request } => (context, request),
         ReceivedRpc::Refused(response) => return response,
     };
+    if request.method == api::METHOD_UNIVERSE_WATCH {
+        let result = request_context::with_request_context(context.clone(), async {
+            if !accepts_stream {
+                return Err(AgentApiError::invalid_request(
+                    "universe/watch requires Accept: text/event-stream",
+                ));
+            }
+            let params = serde_json::from_value::<api::UniverseWatchParams>(
+                request
+                    .params
+                    .clone()
+                    .unwrap_or_else(|| serde_json::json!({})),
+            )
+            .map_err(|e| AgentApiError::invalid_request(e.to_string()))?;
+            let api = state.api_for_request(&context).await?;
+            api.authorize_method(api::METHOD_UNIVERSE_WATCH, None)
+                .await?;
+            state
+                .watches
+                .subscribe(api.store().clone(), &context, params)
+        })
+        .await;
+        return match result {
+            Ok(subscription) => subscription.response(request.id),
+            Err(error) => no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into())),
+        };
+    }
     let method = request.method.clone();
     let response =
         request_context::with_request_context(context.clone(), state.dispatch(&context, request))

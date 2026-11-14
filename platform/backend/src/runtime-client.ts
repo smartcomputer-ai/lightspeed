@@ -5,6 +5,8 @@ import {
   type Method,
   type MethodParams,
   type MethodResult,
+  type UniverseWatchParams,
+  type WatchKind,
 } from "@lightspeed-ai/sdk";
 import {
   FEATURES,
@@ -108,6 +110,17 @@ class MemberClient extends LightspeedClient {
     private readonly features: FeatureStates,
   ) {
     super(options);
+  }
+
+  override async openWatch(params: UniverseWatchParams = {}, options: CallOptions = {}): Promise<Response> {
+    if (!roleAtLeast(this.member.role, "viewer")) throw new GateRefusal(403, "viewer role required");
+    const requested = params.kinds ?? ["session", "bot", "environment", "workspace"];
+    const kinds: WatchKind[] = requested.filter(kind => kind !== "bot" || this.features.bots);
+    if (!kinds.length) throw new GateRefusal(403, "no enabled collections requested");
+    return super.openWatch({
+      kinds,
+      ...(this.member.role === "admin" ? (params.visibleTo ? { visibleTo: params.visibleTo } : {}) : { visibleTo: this.member.userId }),
+    }, options);
   }
 
   override async call<M extends Method>(method: M, params: MethodParams<M>, options: CallOptions = {}): Promise<MethodResult<M>> {

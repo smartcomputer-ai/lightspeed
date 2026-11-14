@@ -382,6 +382,33 @@ running, and reports `executionFailure` if not. If Temporal cannot answer, the r
 logs a warning and reports stored state, so a session can read as healthy during an
 outage.
 
+`session/list` reads a small projection maintained in the event append
+transaction. `sessions` holds the catalog, lifecycle, log head and visible
+revision. `session_summary` holds activity and its start time, the last run,
+a bounded message preview, selected environment and attachment IDs. The summary
+persists when idle; lists do not replay events or load message blobs. A history
+fork projects its inherited prefix, while a configuration clone starts from its
+own opening events.
+
+The list revision advances for visible changes, including name, metadata,
+access and retention changes; log-only appends advance only the event head and
+append timestamp. Execution failures are stored observations: the reaper and
+session reads record them conditionally, and a confirmed restart or later run
+transition clears them. A delayed failure observation cannot overwrite a newer
+revision. These observations are not part of deterministic event replay.
+
+After a committed change, the store publishes an identifier-only invalidation.
+Runtime processes share these through PostgreSQL `LISTEN`/`NOTIFY`. Waiters
+subscribe before reading and retain fallback timers because notifications can
+be lost. Event long-polls fall back after five seconds; command waits retain
+500 ms checks for workflow refusals that produce no event. Each runtime process
+uses one listening connection, requiring a direct database connection or a
+session-mode pooler.
+
+Bot lists combine controller facts stored on `bots` with session activity and
+pending bot events. `bots/list` and `bots/read` do not query Temporal;
+`bots/state/read` still queries the controller for its detailed state.
+
 Run summaries come from reduced state for the last 256 finished runs and from the
 log for older ones. `session/runs/read` projects one run from its events. A run past
 the server's detail limit keeps its opening and its latest whole turns and sets
@@ -414,3 +441,25 @@ access, and a hash in prose alone is not a retention root.
 
 Together, these views let the model work with a manageable context while
 people inspect retained history and the runtime reconstructs execution state.
+
+
+## Live list updates
+
+`universe/watch` is a streaming JSON-RPC call on `POST /rpc` with
+`Accept: text/event-stream`. It sends current list rows for sessions, bots,
+environments and VFS workspaces. The requested kinds require their existing
+API-key groups. `visibleTo` narrows sessions to the same audience as
+`session/list`; list filters and pagination remain on ordinary reads.
+
+Each gateway batches changed IDs for 250 ms and reads them once per universe,
+then distributes the rows to its subscribers. A bounded queue keeps the latest
+change per row. The initial event, a reconnect or a lost-signal condition sends
+`watch/reset`, meaning refetch the visible data. These notifications are lossy
+hints without a replay cursor, so clients retain slow fallback reads.
+
+The browser shares one connection across pages in its active universe, updates
+cached rows, and refreshes open workspace trees when their head changes. File
+contents are read by immutable blob reference. Platform rotates its proxy every
+60 seconds to recheck membership and feature access; direct runtime streams
+last at most 15 minutes. Session event long-polls and detailed bot state reads
+continue separately.

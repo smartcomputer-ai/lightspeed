@@ -183,7 +183,7 @@ def render_client(models: str, manifest: dict, schema: dict) -> str:
         "METHOD_INFO = {",
     ]
     for method, entry in methods.items():
-        info = {key: entry[key] for key in ("scope", "access", "summary", "description")}
+        info = {key: entry[key] for key in ("scope", "access", "summary", "description", "streaming", "notifications")}
         lines.append(f"    {method!r}: {info!r},")
     lines.extend(["}", "", "CLIENT_HELPERS = {"])
     lines.extend(f"    {snake_case(name)!r}: {method!r}," for method, name, *_ in helpers)

@@ -1,4 +1,4 @@
-import type { ActiveRun, TranscriptEntry, TranscriptMedia, TranscriptRunSummary } from "./transcript";
+import type { ActiveRun, TranscriptEntry, TranscriptRunSummary } from "./transcript";
 import { isEmphasizedToolFailure } from "./tool-failures";
 
 /// One level of structure over the flat transcript: the entries a run
@@ -31,41 +31,6 @@ export type TranscriptSection =
   /// Consecutive instruction and catalog entries between runs, one chips row.
   | { kind: "system"; key: string; entries: TranscriptSystemEntry[] }
   | { kind: "entry"; key: string; entry: TranscriptEntry };
-
-/// Render local sends in the same section and component position as their
-/// eventual run input. Only local sends use submission keys; backend-loaded
-/// runs use their run id even when older history later reveals their input.
-export function withPendingRunInputs(
-  sections: TranscriptSection[],
-  pending: { id: string; text: string; runId: string | null; media?: TranscriptMedia[] }[],
-  submissionKeys: ReadonlyMap<string, string>,
-): TranscriptSection[] {
-  const attached = new Set<string>();
-  const result = sections.map((section) => {
-    if (section.kind !== "run") return section;
-    const message = pending.find((message) => message.runId !== null && message.runId === section.runId);
-    if (message) attached.add(message.id);
-    return {
-      ...section,
-      key: section.runId ? submissionKeys.get(section.runId) ?? `run-${section.runId}` : section.key,
-      ...(!section.input && message ? {
-        input: pendingInput(message),
-      } : {}),
-    };
-  });
-  for (const message of pending) {
-    if (attached.has(message.id)) continue;
-    result.push({
-      kind: "run", key: message.id, runId: message.runId ?? undefined,
-      input: pendingInput(message), work: [], live: false,
-    });
-  }
-  return result;
-}
-
-function pendingInput(message: { id: string; text: string; media?: TranscriptMedia[] }): TranscriptMessage {
-  return { kind: "message", key: message.id, role: "user", text: message.text, ...(message.media?.length ? { media: message.media } : {}) };
-}
 
 /// Group entries into run sections. Session-level markers outside any run
 /// stay top-level. A run whose end is not loaded (window cut, session closed

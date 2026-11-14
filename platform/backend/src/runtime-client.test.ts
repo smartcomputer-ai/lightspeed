@@ -368,3 +368,20 @@ describe("trigger secrets", () => {
     expect(METHOD_ROLES["bots/triggers/list"]).toBe("viewer");
   });
 });
+
+it("gates watch collections and forces the member's session visibility", async () => {
+  const calls: { params: unknown; headers: Headers }[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
+    expect(init.redirect).toBe("error");
+    calls.push({ params: JSON.parse(String(init.body)).params, headers: new Headers(init.headers) });
+    return new Response("data: {\"method\":\"watch/reset\",\"params\":{}}\n\n", { headers: { "content-type": "text/event-stream" } });
+  }));
+  const viewer = memberClient(env, { ...universe, features: { bots: false } }, { userId: "alice", role: "viewer" });
+  await (await viewer.openWatch({ visibleTo: "bob" })).body!.cancel();
+  await (await memberClient(env, { ...universe, features: { bots: true } }, { userId: "carol", role: "admin" }).openWatch()).body!.cancel();
+  expect(calls[0]!.params).toEqual({ kinds: ["session", "environment", "workspace"], visibleTo: "alice" });
+  expect(calls[1]!.params).toEqual({ kinds: ["session", "bot", "environment", "workspace"] });
+  expect(calls[0]!.headers.get("x-lightspeed-actor")).toBe("alice");
+  await expect(viewer.openWatch({ kinds: ["bot"] })).rejects.toBeInstanceOf(GateRefusal);
+  expect(calls).toHaveLength(2);
+});

@@ -139,7 +139,9 @@ impl VfsWorkspaceStore for PgStore {
                 id: record.workspace_id.to_string(),
             });
         };
-        workspace_record_from_row(&row)
+        let workspace = workspace_record_from_row(&row)?;
+        self.publish_workspace(&workspace);
+        Ok(workspace)
     }
 
     async fn read_workspace(
@@ -262,7 +264,9 @@ impl VfsWorkspaceStore for PgStore {
         tx.commit()
             .await
             .map_err(|error| catalog_sql_error("commit vfs workspace transaction", error))?;
-        workspace_record_from_row(&row)
+        let workspace = workspace_record_from_row(&row)?;
+        self.publish_workspace(&workspace);
+        Ok(workspace)
     }
 
     async fn delete_workspace(
@@ -291,7 +295,9 @@ impl VfsWorkspaceStore for PgStore {
                 id: workspace_id.to_string(),
             });
         };
-        workspace_record_from_row(&row)
+        let workspace = workspace_record_from_row(&row)?;
+        self.publish_workspace(&workspace);
+        Ok(workspace)
     }
 }
 
@@ -416,5 +422,34 @@ fn catalog_store_error(action: &str, error: crate::PgStoreError) -> VfsCatalogEr
 fn catalog_sql_error(action: &str, error: sqlx::Error) -> VfsCatalogError {
     VfsCatalogError::Store {
         message: format!("{action}: {error}"),
+    }
+}
+
+impl PgStore {
+    fn publish_workspace(&self, workspace: &VfsWorkspaceRecord) {
+        let mut change = crate::changes::Change::new(
+            self.config.universe_id,
+            crate::changes::ChangeKind::Workspace,
+            workspace.workspace_id.as_str(),
+        );
+        change.rev = Some(workspace.revision);
+        self.changes.publish(change);
+    }
+
+    /// Workspace list rows for one batch of committed changes; snapshots stay immutable.
+    pub async fn workspaces_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<VfsWorkspaceRecord>, VfsCatalogError> {
+        let query = format!(
+            "SELECT {WORKSPACE_COLUMNS} FROM vfs_workspaces WHERE universe_id=$1 AND workspace_id=ANY($2)"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(self.config.universe_id)
+            .bind(ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| catalog_sql_error("load changed workspaces", e))?;
+        rows.iter().map(workspace_record_from_row).collect()
     }
 }

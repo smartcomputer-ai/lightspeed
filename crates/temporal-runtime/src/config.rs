@@ -237,6 +237,7 @@ pub fn task_queues_from_env() -> anyhow::Result<TaskQueues> {
 /// instances are stamped out of this via [`DeploymentStores::store_for`].
 #[derive(Clone)]
 pub struct DeploymentStores {
+    changes: Arc<store_pg::changes::ChangeBus>,
     pool: PgPool,
     object_store: Option<Arc<dyn ObjectStore>>,
     object_prefix: Option<String>,
@@ -261,6 +262,7 @@ impl DeploymentStores {
             None => None,
         };
         Ok(Self {
+            changes: store_pg::changes::ChangeBus::postgres(pool.clone()),
             pool,
             object_store,
             object_prefix: optional_env("LIGHTSPEED_OBJECT_STORE_PREFIX"),
@@ -275,6 +277,10 @@ impl DeploymentStores {
     pub fn with_blob_cache(mut self, blob_cache: Option<Arc<BlobCache>>) -> Self {
         self.blob_cache = blob_cache;
         self
+    }
+
+    pub fn changes(&self) -> &Arc<store_pg::changes::ChangeBus> {
+        &self.changes
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -322,7 +328,7 @@ impl DeploymentStores {
             Some(blob_cache) => store.with_blob_cache(blob_cache.clone()),
             None => store,
         };
-        Arc::new(store)
+        Arc::new(store.with_changes(self.changes.clone()))
     }
 }
 

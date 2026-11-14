@@ -33,7 +33,7 @@ fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a str
 
 /// An actor is an opaque identifier: non-empty, bounded, and free of control
 /// characters so it can be stored and logged verbatim.
-fn valid_actor(value: &str) -> bool {
+pub(super) fn valid_actor(value: &str) -> bool {
     !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
 }
 

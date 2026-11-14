@@ -33,7 +33,7 @@ export function TranscriptEntryView({
 }) {
   switch (entry.kind) {
     case "message":
-      return <TranscriptEntrance motionKey={entry.key}>{entry.role === "user" ? (
+      return <TranscriptEntrance motionKey={entry.key} immediate={entry.local}>{entry.role === "user" ? (
         <UserBand
           text={entry.text}
           origin={entry.origin}

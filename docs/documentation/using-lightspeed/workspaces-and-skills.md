@@ -20,6 +20,12 @@ Create or select a workspace under **Workspaces**. **New file** accepts a path
 relative to that workspace, and creates directories in the path as needed.
 Open a file, edit its contents, and choose **Save**.
 
+The workspace picker, file tree and saved file contents update when an agent
+or another browser changes the workspace. If you have unsaved edits, the editor
+preserves your draft and blocks saving against the changed revision. Copy any
+text you want to keep, then choose **Discard draft and reload** to load the
+latest version.
+
 To bring existing files into the workspace, open **Workspace actions** or a
 folder's actions menu and choose **Upload files** or **Upload folder**. You
 can also drop files and folders onto the workspace or a destination folder.

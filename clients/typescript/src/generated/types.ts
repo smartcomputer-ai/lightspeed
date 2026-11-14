@@ -75,6 +75,58 @@ export type AgentApiErrorKind =
 export type ModelDefaultSlot = "agentRun" | "speechToText";
 export type AgentNotification =
   | {
+      method: "session/changed";
+      params: {
+        session: SessionSummaryView;
+      };
+    }
+  | {
+      method: "session/removed";
+      params: {
+        sessionId: string;
+      };
+    }
+  | {
+      method: "bots/changed";
+      params: {
+        bot: BotListItem;
+      };
+    }
+  | {
+      method: "bots/removed";
+      params: {
+        botId: string;
+      };
+    }
+  | {
+      method: "environments/changed";
+      params: {
+        environment: EnvironmentView;
+      };
+    }
+  | {
+      method: "environments/removed";
+      params: {
+        environmentId: string;
+      };
+    }
+  | {
+      method: "workspaces/changed";
+      params: {
+        workspace: VfsWorkspaceView;
+      };
+    }
+  | {
+      method: "workspaces/removed";
+      params: {
+        workspaceId: string;
+      };
+    }
+  | {
+      method: "watch/reset";
+      params: {};
+    }
+  | {
       method: "session/started";
       params: {
         session: SessionView;
@@ -129,6 +181,151 @@ export type Attribution =
       component: string;
       kind: "internal";
     };
+/**
+ * What a session is doing now. A queued run counts as idle until it starts;
+ * a closed session is idle.
+ */
+export type SessionActivity = "idle" | "working" | "waiting";
+/**
+ * How an open session's workflow execution stopped. A session that closed
+ * normally never reports one.
+ */
+export type SessionExecutionFailureView = "failed" | "terminated" | "timedOut" | "missing";
+export type ContextMessageRoleView = "user" | "assistant";
+/**
+ * Why a run failed, as the harness classified it.
+ */
+export type RunFailureKindView =
+  | "contextFailure"
+  | "modelFailure"
+  | "requestRejected"
+  | "outputTruncated"
+  | "contentFiltered"
+  | "limitExceeded"
+  | "internal";
+export type RunStatus =
+  "queued" | "running" | "parked" | "cancelling" | "completed" | "failed" | "cancelled";
+export type SessionLifecycleStatus = "new" | "open" | "closed";
+export type ProfileId = string;
+export type SessionOriginKind = "subagent";
+export type BotId = string;
+export type BotEventMediaKind = "image" | "audio" | "document";
+/**
+ * What came of an event: the model's decision (`handled`, `deferred`,
+ * `ignored`, `blocked`) or the system's when no decision was possible.
+ * `archived` rows were stored for the record and never delivered.
+ */
+export type BotEventOutcome =
+  | "handled"
+  | "deferred"
+  | "ignored"
+  | "blocked"
+  | "unresolved"
+  | "runFailed"
+  | "steered"
+  | "appended"
+  | "archived";
+export type BotTriggerId = string;
+export type BotListStatus =
+  "closed" | "paused" | "waiting" | "attention" | "budget" | "working" | "idle";
+/**
+ * Why an environment is closing or closed.
+ */
+export type EnvironmentCloseReasonView =
+  "requested" | "keyRevoked" | "ephemeralGrace" | "departed" | "offlineTimeout" | "providerEnded";
+export type EnvironmentSourceView =
+  | {
+      /**
+       * The create-time idle policy, when one replaced the template's.
+       */
+      idle?: EnvironmentIdlePolicyView | null;
+      /**
+       * Absent until the provider first reported the target.
+       */
+      observed?: EnvironmentObservedTargetView | null;
+      providerId: string;
+      /**
+       * The public endpoint the provider last reported.
+       */
+      publicEndpoint?: string | null;
+      /**
+       * The provider's handle for the target; absent until the provider
+       * accepted the create.
+       */
+      targetId?: string | null;
+      templateId: string;
+      type: "provisioned";
+    }
+  | {
+      /**
+       * `ws://`, `wss://` or `unix://` URL Lightspeed dials envd at.
+       */
+      endpoint: string;
+      type: "external";
+    }
+  | {
+      /**
+       * The daemon's control connection is up.
+       */
+      connected: boolean;
+      /**
+       * When the daemon last connected or disconnected.
+       */
+      connectionChangedAtMs: number;
+      /**
+       * Absent while a declared environment has no daemon bound: it is
+       * waiting for its machine, or its machine was released.
+       */
+      daemonId?: string | null;
+      /**
+       * The admitting key's identity mode.
+       */
+      identityMode: EnvironmentIdentityModeView;
+      /**
+       * When the gateway last recorded the daemon's control connection:
+       * at connect, at disconnect, and at most every five minutes while
+       * connected.
+       */
+      lastSeenAtMs: number;
+      /**
+       * Set on a declared environment: the name its daemon registers
+       * under.
+       */
+      name?: string | null;
+      registrationKeyId: string;
+      type: "registered";
+    };
+/**
+ * Lifecycle phase of a provider target, as the provider reports it.
+ */
+export type EnvironmentTargetPhaseView =
+  "provisioning" | "active" | "closing" | "closed" | "failed" | "unknown";
+/**
+ * Power state of a provisioned environment's target.
+ */
+export type EnvironmentPowerStateView = "running" | "paused" | "suspended" | "stopped";
+/**
+ * What happens to a registered environment while its daemon is
+ * disconnected. Policy of the registration key that admitted it.
+ */
+export type EnvironmentIdentityModeView = "persistent" | "ephemeral";
+/**
+ * The lifecycle Lightspeed owns. External and registered environments are
+ * only ever `open` or `closed`.
+ */
+export type EnvironmentStateView = ("open" | "closed") | "provisioning" | "closing" | "failed";
+/**
+ * Display status derived from `state` and the latest observation; never
+ * stored. Tools that use a paused, suspended or stopped environment wake
+ * it.
+ */
+export type EnvironmentStatusView =
+  | ("provisioning" | "ready" | "closing" | "closed" | "failed")
+  | "paused"
+  | "suspended"
+  | "stopped"
+  | "unknown"
+  | "away";
 export type ContextCompactionMode = "disabled" | "providerTriggered" | "providerStandalone";
 export type ContextCompactionStrategy =
   "disabled" | "providerTriggered" | "modelSummary" | "nativePreferred";
@@ -178,7 +375,6 @@ export type ContextEntryKindView =
       approve: boolean;
       type: "mcpApprovalResponse";
     };
-export type ContextMessageRoleView = "user" | "assistant";
 export type ContextEntrySourceView =
   | {
       type: "contextEdit";
@@ -220,17 +416,6 @@ export type ContextEntrySourceView =
       type: "runtime";
     };
 export type TokenEstimateQualityView = "exact" | "providerCounted" | "estimated";
-/**
- * Why a run failed, as the harness classified it.
- */
-export type RunFailureKindView =
-  | "contextFailure"
-  | "modelFailure"
-  | "requestRejected"
-  | "outputTruncated"
-  | "contentFiltered"
-  | "limitExceeded"
-  | "internal";
 export type ApprovalSubjectView = {
   argumentsPreview: string;
   argumentsRef: string;
@@ -245,13 +430,6 @@ export type RunSummarySourceView = {
   previewTruncated?: boolean;
   type: "input";
 };
-export type RunStatus =
-  "queued" | "running" | "parked" | "cancelling" | "completed" | "failed" | "cancelled";
-/**
- * What a session is doing now. A queued run counts as idle until it starts;
- * a closed session is idle.
- */
-export type SessionActivity = "idle" | "working" | "waiting";
 export type CompactionPolicy =
   | {
       mode: "disabled";
@@ -272,7 +450,6 @@ export type CompactionPolicy =
  * read-only files with commands is deliberately not expressible.
  */
 export type EnvironmentAccess = "read" | "edit" | "exec" | "jobs";
-export type ProfileId = string;
 /**
  * Per-attachment VFS access; `edit` implies `read`.
  */
@@ -295,11 +472,6 @@ export type ToolChoice =
       toolId: string;
       type: "specific";
     };
-/**
- * How an open session's workflow execution stopped. A session that closed
- * normally never reports one.
- */
-export type SessionExecutionFailureView = "failed" | "terminated" | "timedOut" | "missing";
 /**
  * Completion contract for one workflow-tool invocation. Joined tools park
  * the original call on one runtime-owned reply; Promises exposes handles for
@@ -375,8 +547,6 @@ export type WorkflowToolTargetInput =
  * How an invocation of a bound workflow tool reaches its receiver.
  */
 export type BoundWorkflowToolDispatchInput = "pull" | "push";
-export type SessionLifecycleStatus = "new" | "open" | "closed";
-export type SessionOriginKind = "subagent";
 export type SessionEventKindView =
   | {
       model?: ModelConfig | null;
@@ -874,7 +1044,6 @@ export type RequestHeader =
       type: "credential";
     };
 export type AuthProviderStatus = "active" | "needsConfiguration" | "disabled";
-export type BotId = string;
 /**
  * The whole configuration of one trigger, replaced with an expected
  * revision.
@@ -933,7 +1102,6 @@ export type BotTriggerRoute =
   | {
       policy: "perEvent";
     };
-export type BotTriggerId = string;
 export type BotTriggerView1 =
   | {
       /**
@@ -1059,22 +1227,6 @@ export type ChatScope = "direct" | "group";
  * Whether a conversation must present a pairing code before it connects.
  */
 export type ChatPairing = "code" | "open";
-export type BotEventMediaKind = "image" | "audio" | "document";
-/**
- * What came of an event: the model's decision (`handled`, `deferred`,
- * `ignored`, `blocked`) or the system's when no decision was possible.
- * `archived` rows were stored for the record and never delivered.
- */
-export type BotEventOutcome =
-  | "handled"
-  | "deferred"
-  | "ignored"
-  | "blocked"
-  | "unresolved"
-  | "runFailed"
-  | "steered"
-  | "appended"
-  | "archived";
 export type BotControllerStatus =
   | "initializing"
   | "degraded"
@@ -1104,7 +1256,7 @@ export type ContextRemoveStatus = "removed" | "absent" | "failed";
 export type ContextReplaceStatus = ("replaced" | "failed") | "unchanged" | "absent";
 /**
  * The methods a key may call, by group. Every public method but
- * `initialize` belongs to exactly one group, derived from its name, so a
+ * `initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a
  * new method never changes what an existing key reaches beyond its group.
  */
 export type MethodGroup =
@@ -1130,104 +1282,6 @@ export type MethodGroup =
   | "deployment/environment-providers"
   | "deployment/channels";
 export type UniverseMemberRole = "viewer" | "contributor" | "operator" | "admin";
-/**
- * Why an environment is closing or closed.
- */
-export type EnvironmentCloseReasonView =
-  "requested" | "keyRevoked" | "ephemeralGrace" | "departed" | "offlineTimeout" | "providerEnded";
-export type EnvironmentSourceView =
-  | {
-      /**
-       * The create-time idle policy, when one replaced the template's.
-       */
-      idle?: EnvironmentIdlePolicyView | null;
-      /**
-       * Absent until the provider first reported the target.
-       */
-      observed?: EnvironmentObservedTargetView | null;
-      providerId: string;
-      /**
-       * The public endpoint the provider last reported.
-       */
-      publicEndpoint?: string | null;
-      /**
-       * The provider's handle for the target; absent until the provider
-       * accepted the create.
-       */
-      targetId?: string | null;
-      templateId: string;
-      type: "provisioned";
-    }
-  | {
-      /**
-       * `ws://`, `wss://` or `unix://` URL Lightspeed dials envd at.
-       */
-      endpoint: string;
-      type: "external";
-    }
-  | {
-      /**
-       * The daemon's control connection is up.
-       */
-      connected: boolean;
-      /**
-       * When the daemon last connected or disconnected.
-       */
-      connectionChangedAtMs: number;
-      /**
-       * Absent while a declared environment has no daemon bound: it is
-       * waiting for its machine, or its machine was released.
-       */
-      daemonId?: string | null;
-      /**
-       * The admitting key's identity mode.
-       */
-      identityMode: EnvironmentIdentityModeView;
-      /**
-       * When the gateway last recorded the daemon's control connection:
-       * at connect, at disconnect, and at most every five minutes while
-       * connected.
-       */
-      lastSeenAtMs: number;
-      /**
-       * Set on a declared environment: the name its daemon registers
-       * under.
-       */
-      name?: string | null;
-      registrationKeyId: string;
-      type: "registered";
-    };
-/**
- * Lifecycle phase of a provider target, as the provider reports it.
- */
-export type EnvironmentTargetPhaseView =
-  "provisioning" | "active" | "closing" | "closed" | "failed" | "unknown";
-/**
- * Power state of a provisioned environment's target.
- */
-export type EnvironmentPowerStateView = "running" | "paused" | "suspended" | "stopped";
-/**
- * What happens to a registered environment while its daemon is
- * disconnected. Policy of the registration key that admitted it.
- */
-export type EnvironmentIdentityModeView = "persistent" | "ephemeral";
-/**
- * The lifecycle Lightspeed owns. External and registered environments are
- * only ever `open` or `closed`.
- */
-export type EnvironmentStateView = ("open" | "closed") | "provisioning" | "closing" | "failed";
-/**
- * Display status derived from `state` and the latest observation; never
- * stored. Tools that use a paused, suspended or stopped environment wake
- * it.
- */
-export type EnvironmentStatusView =
-  | ("provisioning" | "ready" | "closing" | "closed" | "failed")
-  | "paused"
-  | "suspended"
-  | "stopped"
-  | "unknown"
-  | "away";
 export type EnvironmentCredentialSourceView =
   | {
       grantId: string;
@@ -1558,6 +1612,10 @@ export type RunStartSource = {
   type: "input";
 };
 export type SessionEventDirection = "forward" | "backward";
+/**
+ * Collections whose list rows can be watched. Each requires its existing API-key group.
+ */
+export type WatchKind = "session" | "bot" | "environment" | "workspace";
 
 /**
  * All JSON-RPC wire types of the Lightspeed agent API.
@@ -1599,6 +1657,433 @@ export interface AgentApiError {
 export interface AgentApiOutcomeOfAuthClientCreateResponse {
   notifications?: AgentNotification[];
   result: AuthClientCreateResponse;
+}
+/**
+ * Display fields materialized with the session log.
+ */
+export interface SessionSummaryView {
+  /**
+   * The audience of the session's root: whether it is shared with the
+   * universe, and who created it.
+   */
+  access: ResourceAccessSummary;
+  /**
+   * Environment selected by the session event log.
+   */
+  activeEnvironmentId?: string | null;
+  /**
+   * What the session is doing now: idle, working on a run, or waiting for
+   * an approval.
+   */
+  activity: SessionActivity;
+  /**
+   * Open vocabulary: awaiting while a run is parked on promises. Approval waiting remains in activity.
+   */
+  activityPhase?: string | null;
+  /**
+   * When the current non-idle activity or phase began; absent while idle.
+   */
+  activitySinceMs?: number | null;
+  /**
+   * Attached catalog resource ids, grouped by kind.
+   */
+  attachments?: SessionAttachmentsView;
+  closedAtMs?: number | null;
+  createdAtMs: number;
+  displayName?: string | null;
+  /**
+   * Last observed stopped workflow execution, cleared on recovery.
+   */
+  executionFailure?: SessionExecutionFailureView | null;
+  id: string;
+  /**
+   * Observation time when the preview message entered the event log.
+   */
+  lastMessageAtMs?: number | null;
+  /**
+   * Application-supplied display provenance of the preview message; not authenticated identity.
+   */
+  lastMessageOrigin?: string | null;
+  /**
+   * Latest nonempty user or assistant message reduced to one plain line of at most 200 Unicode characters.
+   */
+  lastMessagePreview?: string | null;
+  /**
+   * Role of the message represented by lastMessagePreview.
+   */
+  lastMessageRole?: ContextMessageRoleView | null;
+  /**
+   * Most recent terminal run, independent of the current activity.
+   */
+  lastRun?: SessionLastRunView | null;
+  /**
+   * True only when the session's integration names a lifecycle controller.
+   */
+  lifecycleControlled: boolean;
+  lifecycleStatus: SessionLifecycleStatus;
+  /**
+   * Descriptive key/value metadata; empty when none was set.
+   */
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * Sub-agent lineage; absent for root sessions.
+   */
+  origin?: SessionOriginView | null;
+  retention: SessionRetentionView;
+  /**
+   * Monotonic revision of visible summary fields; log-only appends do not advance it.
+   */
+  revision?: number;
+  updatedAtMs: number;
+}
+/**
+ * The audience of a session's or bot's root as views show it: whether it is
+ * shared with the universe, and who created it. A bot's session and a
+ * delegated child show their root's.
+ */
+export interface ResourceAccessSummary {
+  /**
+   * Absent for work whose creator was not recorded.
+   */
+  createdBy?: Attribution | null;
+  visibility: Visibility;
+}
+export interface SessionAttachmentsView {
+  environments?: string[];
+  mcpServers?: string[];
+  workspaces?: string[];
+}
+export interface SessionLastRunView {
+  failureKind?: RunFailureKindView | null;
+  finishedAtMs: number;
+  runId: string;
+  status: RunStatus;
+}
+/**
+ * Typed provenance of a delegated (sub-agent) session: who created it,
+ * under which root, at what depth, and the effective limits it was spawned
+ * with. Provenance, never ownership — the child is an ordinary session.
+ */
+export interface SessionOriginView {
+  agent: SubagentAgentPin;
+  /**
+   * Absolute depth from the root; a root's direct child is 1.
+   */
+  depth: number;
+  /**
+   * The workflow-tool invocation that created the child.
+   */
+  invocationId: string;
+  kind: SessionOriginKind;
+  limits: SubagentLimitsView;
+  parentRunId: string;
+  parentSessionId: string;
+  /**
+   * Nearest ancestor without an origin; root-scoped limits count every
+   * session naming this root.
+   */
+  rootSessionId: string;
+}
+/**
+ * The profile a sub-agent was spawned from, pinned at its revision.
+ */
+export interface SubagentAgentPin {
+  profileId: ProfileId;
+  revision: number;
+}
+export interface SubagentLimitsView {
+  maxConcurrent: number;
+  maxDepth: number;
+  /**
+   * Absent when a child's run has no time limit.
+   */
+  runTimeoutMs?: number | null;
+}
+/**
+ * Effective tree-owned retention for a session. Delegated children name their
+ * owning root and project that root's policy and deadline.
+ */
+export interface SessionRetentionView {
+  deleteAfterCloseMs?: number | null;
+  deleteAtMs?: number | null;
+  rootSessionId: string;
+}
+/**
+ * Roster row: the bot plus what the console needs at a glance.
+ */
+export interface BotListItem {
+  access: ResourceAccessSummary;
+  activeSessionCount?: number;
+  /**
+   * What the bot's sessions are doing now: waiting when one waits for an
+   * approval, else working when one is running, else idle.
+   */
+  activity: SessionActivity;
+  botId: BotId;
+  breaker?: BotBreaker | null;
+  /**
+   * Standing instructions appended to the profile's instructions — the
+   * bot's job description.
+   */
+  brief?: string | null;
+  /**
+   * Terminal: set once by `bots/close`; a closed bot keeps its record
+   * and history but refuses events and cannot be re-enabled.
+   */
+  closedAtMs?: number | null;
+  /**
+   * Sessions the controller force-closed on the way out; `bots/delete`
+   * erases them.
+   */
+  closedSessions?: string[];
+  createdAtMs: number;
+  /**
+   * One line other bots read in the directory.
+   */
+  description?: string | null;
+  /**
+   * Mutable label for humans; the bot id stays the identity.
+   */
+  displayName?: string | null;
+  /**
+   * Capability grant: `bot_emit` — events to itself or another bot's
+   * inbox. Emitting bots are rate-capped.
+   */
+  emit?: boolean;
+  /**
+   * Reversible pause: sessions and chat context stay, nothing is
+   * delivered.
+   */
+  enabled?: boolean;
+  /**
+   * Highest `#N` admitted so far.
+   */
+  eventSeq: number;
+  lastEvent?: BotEventView | null;
+  openSessionCount?: number;
+  /**
+   * Events whose delivery has not finished.
+   */
+  pendingCount: number;
+  profileId: ProfileId;
+  revision: number;
+  /**
+   * Close routed (`perKey` / `perEvent`) sessions idle longer than this;
+   * absent keeps them open. A trigger's `sessionCloseAfterMs` overrides it.
+   */
+  routedSessionCloseAfterMs?: number | null;
+  /**
+   * Budget: runs started per UTC day (sub-agent descendants count);
+   * absent means unlimited.
+   */
+  runsPerDay?: number | null;
+  /**
+   * Capability grant: the mutating self-configuration tools
+   * (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
+   */
+  selfConfig?: boolean;
+  /**
+   * Display precedence: closed, paused, waiting, attention, budget, working, idle.
+   */
+  status?: BotListStatus & string;
+  triggerCount: number;
+  updatedAtMs: number;
+}
+/**
+ * Per-trigger flood breaker: a trigger that admits more than `fires`
+ * events inside `window_ms` is disabled until a human re-enables it.
+ */
+export interface BotBreaker {
+  fires: number;
+  windowMs: number;
+}
+/**
+ * One row of the bot's event log. Grouped like the `bot_events` table:
+ * identity, what arrived, the delivery plan, federation, and the
+ * write-once outcome. The receiver route is private and never shown.
+ */
+export interface BotEventView {
+  /**
+   * CAS ref of the full envelope document.
+   */
+  documentRef: string;
+  /**
+   * Dedupe identity: provider delivery id where known, otherwise
+   * derived.
+   */
+  eventId: string;
+  /**
+   * Bot-to-bot hops from the world.
+   */
+  hops?: number;
+  inReplyTo?: BotEventReplyRef | null;
+  /**
+   * Event kind as authored by the source (`github.push`,
+   * `schedule.fire`, `chat.message`, `bot.reply`).
+   */
+  kind: string;
+  media?: BotEventMedia[];
+  /**
+   * When the source says it happened.
+   */
+  occurredAtMs: number;
+  /**
+   * Absent while the delivery is pending.
+   */
+  outcome?: BotEventOutcome | null;
+  outcomeDetail?: string | null;
+  /**
+   * CAS ref of the model-facing rendering; what the session saw.
+   */
+  promptRef?: string | null;
+  /**
+   * Admission time; the log is ordered by it.
+   */
+  receivedAtMs: number;
+  resolvedAtMs?: number | null;
+  /**
+   * Run that resolved the event, when one was started.
+   */
+  runId?: string | null;
+  /**
+   * Sending bot for bot-originated events (self or addressed).
+   */
+  senderBotId?: BotId | null;
+  /**
+   * Per-bot sequence number: the only event handle shown to models and
+   * humans.
+   */
+  seq: number;
+  /**
+   * The routed session; absent means the bot's main session.
+   */
+  session?: BotRoutedSessionView | null;
+  summary: string;
+  /**
+   * Admitting trigger; absent for an operator admit.
+   */
+  triggerId?: BotTriggerId | null;
+}
+/**
+ * Public correlation of a receipt: the asked event's `#N` at the answering
+ * bot.
+ */
+export interface BotEventReplyRef {
+  bot: BotId;
+  seq: number;
+}
+/**
+ * A prepared attachment appended to the run input after the rendering;
+ * bytes live in the CAS.
+ */
+export interface BotEventMedia {
+  blobRef: string;
+  kind: BotEventMediaKind;
+  mime: string;
+  name?: string | null;
+  /**
+   * Optional prepared UTF-8 text; the source attachment remains in blobRef.
+   */
+  textRef?: string | null;
+}
+/**
+ * The routed session an event was admitted to.
+ */
+export interface BotRoutedSessionView {
+  label: string;
+  sessionId: string;
+}
+export interface EnvironmentView {
+  /**
+   * Present exactly while `state` is `closing` or `closed`.
+   */
+  closeReason?: EnvironmentCloseReasonView | null;
+  closedAtMs?: number | null;
+  createdAtMs: number;
+  /**
+   * The envd build serving the environment; absent until known.
+   */
+  daemon?: EnvironmentDaemonView | null;
+  displayName?: string | null;
+  environmentId: string;
+  /**
+   * Caller metadata.
+   */
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * The caller's retry identity; absent for registered environments.
+   */
+  requestId?: string | null;
+  source: EnvironmentSourceView;
+  state: EnvironmentStateView;
+  /**
+   * When `state` last changed.
+   */
+  stateChangedAtMs: number;
+  /**
+   * Why the environment failed, or what provisioning or closing is
+   * waiting on.
+   */
+  stateMessage?: string | null;
+  status: EnvironmentStatusView;
+  updatedAtMs: number;
+}
+/**
+ * The envd build serving an environment, from its registration or
+ * Lightspeed's open handshake.
+ */
+export interface EnvironmentDaemonView {
+  gitSha?: string | null;
+  protocolVersion: number;
+  version?: string | null;
+}
+/**
+ * Staged idle policy the provider applies. Thresholds are milliseconds of
+ * envd-reported idle time (running processes, jobs and leftover process
+ * groups hold it at zero) and must be non-decreasing in the order pause,
+ * suspend, stop, close. Stages whose power state the template does not
+ * support are skipped.
+ */
+export interface EnvironmentIdlePolicyView {
+  closeAfterMs?: number | null;
+  pauseAfterMs?: number | null;
+  stopAfterMs?: number | null;
+  suspendAfterMs?: number | null;
+}
+/**
+ * What the provider last reported about a provisioned environment's
+ * target. Display only: Lightspeed never converges it, and it may be up to
+ * a few minutes old.
+ */
+export interface EnvironmentObservedTargetView {
+  message?: string | null;
+  observedAtMs: number;
+  phase: EnvironmentTargetPhaseView;
+  /**
+   * Present only while `phase` is `active`.
+   */
+  power?: EnvironmentPowerStateView | null;
+}
+export interface VfsWorkspaceView {
+  baseSnapshotRef?: string | null;
+  /**
+   * Total byte size of the head snapshot.
+   */
+  bytes: number;
+  createdAtMs: number;
+  displayName?: string | null;
+  /**
+   * File count of the head snapshot.
+   */
+  files: number;
+  headSnapshotRef: string;
+  revision: number;
+  updatedAtMs: number;
+  workspaceId: string;
 }
 export interface SessionView {
   /**
@@ -1668,18 +2153,6 @@ export interface SessionView {
   retention: SessionRetentionView;
   runs?: RunSummaryView[];
   updatedAtMs: number;
-}
-/**
- * The audience of a session's or bot's root as views show it: whether it is
- * shared with the universe, and who created it. A bot's session and a
- * delegated child show their root's.
- */
-export interface ResourceAccessSummary {
-  /**
-   * Absent for work whose creator was not recorded.
-   */
-  createdBy?: Attribution | null;
-  visibility: Visibility;
 }
 export interface ContextView {
   compaction?: ContextCompactionView | null;
@@ -2286,55 +2759,6 @@ export interface WorkflowStartRefInput {
   recipeRef: string;
   recipeRevision: number;
 }
-/**
- * Typed provenance of a delegated (sub-agent) session: who created it,
- * under which root, at what depth, and the effective limits it was spawned
- * with. Provenance, never ownership — the child is an ordinary session.
- */
-export interface SessionOriginView {
-  agent: SubagentAgentPin;
-  /**
-   * Absolute depth from the root; a root's direct child is 1.
-   */
-  depth: number;
-  /**
-   * The workflow-tool invocation that created the child.
-   */
-  invocationId: string;
-  kind: SessionOriginKind;
-  limits: SubagentLimitsView;
-  parentRunId: string;
-  parentSessionId: string;
-  /**
-   * Nearest ancestor without an origin; root-scoped limits count every
-   * session naming this root.
-   */
-  rootSessionId: string;
-}
-/**
- * The profile a sub-agent was spawned from, pinned at its revision.
- */
-export interface SubagentAgentPin {
-  profileId: ProfileId;
-  revision: number;
-}
-export interface SubagentLimitsView {
-  maxConcurrent: number;
-  maxDepth: number;
-  /**
-   * Absent when a child's run has no time limit.
-   */
-  runTimeoutMs?: number | null;
-}
-/**
- * Effective tree-owned retention for a session. Delegated children name their
- * owning root and project that root's policy and deadline.
- */
-export interface SessionRetentionView {
-  deleteAfterCloseMs?: number | null;
-  deleteAtMs?: number | null;
-  rootSessionId: string;
-}
 export interface SessionEventView {
   cursor: EventCursor;
   joins: EventJoinsView;
@@ -2347,6 +2771,11 @@ export interface EventCursor {
 }
 export interface EventJoinsView {
   runId?: string | null;
+  /**
+   * Client submission identifier, when present. Run and steering acceptance
+   * events expose this join so clients can match local input to its accepted
+   * run or steering identifier without comparing message text.
+   */
   submissionId?: string | null;
   toolBatchId?: string | null;
   toolCallId?: string | null;
@@ -2893,14 +3322,6 @@ export interface BotView {
   selfConfig?: boolean;
   updatedAtMs: number;
 }
-/**
- * Per-trigger flood breaker: a trigger that admits more than `fires`
- * events inside `window_ms` is disabled until a human re-enables it.
- */
-export interface BotBreaker {
-  fires: number;
-  windowMs: number;
-}
 export interface AgentApiOutcomeOfBotCreateResponse {
   notifications?: AgentNotification[];
   result: BotCreateResponse;
@@ -3020,102 +3441,6 @@ export interface BotEventAdmitResponse {
   duplicate: boolean;
   event: BotEventView;
 }
-/**
- * One row of the bot's event log. Grouped like the `bot_events` table:
- * identity, what arrived, the delivery plan, federation, and the
- * write-once outcome. The receiver route is private and never shown.
- */
-export interface BotEventView {
-  /**
-   * CAS ref of the full envelope document.
-   */
-  documentRef: string;
-  /**
-   * Dedupe identity: provider delivery id where known, otherwise
-   * derived.
-   */
-  eventId: string;
-  /**
-   * Bot-to-bot hops from the world.
-   */
-  hops?: number;
-  inReplyTo?: BotEventReplyRef | null;
-  /**
-   * Event kind as authored by the source (`github.push`,
-   * `schedule.fire`, `chat.message`, `bot.reply`).
-   */
-  kind: string;
-  media?: BotEventMedia[];
-  /**
-   * When the source says it happened.
-   */
-  occurredAtMs: number;
-  /**
-   * Absent while the delivery is pending.
-   */
-  outcome?: BotEventOutcome | null;
-  outcomeDetail?: string | null;
-  /**
-   * CAS ref of the model-facing rendering; what the session saw.
-   */
-  promptRef?: string | null;
-  /**
-   * Admission time; the log is ordered by it.
-   */
-  receivedAtMs: number;
-  resolvedAtMs?: number | null;
-  /**
-   * Run that resolved the event, when one was started.
-   */
-  runId?: string | null;
-  /**
-   * Sending bot for bot-originated events (self or addressed).
-   */
-  senderBotId?: BotId | null;
-  /**
-   * Per-bot sequence number: the only event handle shown to models and
-   * humans.
-   */
-  seq: number;
-  /**
-   * The routed session; absent means the bot's main session.
-   */
-  session?: BotRoutedSessionView | null;
-  summary: string;
-  /**
-   * Admitting trigger; absent for an operator admit.
-   */
-  triggerId?: BotTriggerId | null;
-}
-/**
- * Public correlation of a receipt: the asked event's `#N` at the answering
- * bot.
- */
-export interface BotEventReplyRef {
-  bot: BotId;
-  seq: number;
-}
-/**
- * A prepared attachment appended to the run input after the rendering;
- * bytes live in the CAS.
- */
-export interface BotEventMedia {
-  blobRef: string;
-  kind: BotEventMediaKind;
-  mime: string;
-  name?: string | null;
-  /**
-   * Optional prepared UTF-8 text; the source attachment remains in blobRef.
-   */
-  textRef?: string | null;
-}
-/**
- * The routed session an event was admitted to.
- */
-export interface BotRoutedSessionView {
-  label: string;
-  sessionId: string;
-}
 export interface AgentApiOutcomeOfBotEventListResponse {
   notifications?: AgentNotification[];
   result: BotEventListResponse;
@@ -3193,81 +3518,6 @@ export interface AgentApiOutcomeOfBotListResponse {
 export interface BotListResponse {
   bots?: BotListItem[];
 }
-/**
- * Roster row: the bot plus what the console needs at a glance.
- */
-export interface BotListItem {
-  access: ResourceAccessSummary;
-  /**
-   * What the bot's sessions are doing now: waiting when one waits for an
-   * approval, else working when one is running, else idle.
-   */
-  activity: SessionActivity;
-  botId: BotId;
-  breaker?: BotBreaker | null;
-  /**
-   * Standing instructions appended to the profile's instructions — the
-   * bot's job description.
-   */
-  brief?: string | null;
-  /**
-   * Terminal: set once by `bots/close`; a closed bot keeps its record
-   * and history but refuses events and cannot be re-enabled.
-   */
-  closedAtMs?: number | null;
-  /**
-   * Sessions the controller force-closed on the way out; `bots/delete`
-   * erases them.
-   */
-  closedSessions?: string[];
-  createdAtMs: number;
-  /**
-   * One line other bots read in the directory.
-   */
-  description?: string | null;
-  /**
-   * Mutable label for humans; the bot id stays the identity.
-   */
-  displayName?: string | null;
-  /**
-   * Capability grant: `bot_emit` — events to itself or another bot's
-   * inbox. Emitting bots are rate-capped.
-   */
-  emit?: boolean;
-  /**
-   * Reversible pause: sessions and chat context stay, nothing is
-   * delivered.
-   */
-  enabled?: boolean;
-  /**
-   * Highest `#N` admitted so far.
-   */
-  eventSeq: number;
-  lastEvent?: BotEventView | null;
-  /**
-   * Events whose delivery has not finished.
-   */
-  pendingCount: number;
-  profileId: ProfileId;
-  revision: number;
-  /**
-   * Close routed (`perKey` / `perEvent`) sessions idle longer than this;
-   * absent keeps them open. A trigger's `sessionCloseAfterMs` overrides it.
-   */
-  routedSessionCloseAfterMs?: number | null;
-  /**
-   * Budget: runs started per UTC day (sub-agent descendants count);
-   * absent means unlimited.
-   */
-  runsPerDay?: number | null;
-  /**
-   * Capability grant: the mutating self-configuration tools
-   * (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
-   */
-  selfConfig?: boolean;
-  triggerCount: number;
-  updatedAtMs: number;
-}
 export interface AgentApiOutcomeOfBotPutResponse {
   notifications?: AgentNotification[];
   result: BotPutResponse;
@@ -3285,6 +3535,7 @@ export interface BotReadResponse {
    */
   access: ResourceAccessSummary;
   bot: BotView;
+  status?: BotListStatus & string;
 }
 export interface AgentApiOutcomeOfBotSessionRotateResponse {
   notifications?: AgentNotification[];
@@ -3372,39 +3623,6 @@ export interface BotSessionSnapshot {
   label: string;
   lastActiveAtMs?: number | null;
   sessionId: string;
-}
-export interface SessionSummaryView {
-  /**
-   * The audience of the session's root: whether it is shared with the
-   * universe, and who created it.
-   */
-  access: ResourceAccessSummary;
-  /**
-   * What the session is doing now: idle, working on a run, or waiting for
-   * an approval.
-   */
-  activity: SessionActivity;
-  closedAtMs?: number | null;
-  createdAtMs: number;
-  displayName?: string | null;
-  id: string;
-  /**
-   * True only when the session's integration names a lifecycle controller.
-   */
-  lifecycleControlled: boolean;
-  lifecycleStatus: SessionLifecycleStatus;
-  /**
-   * Descriptive key/value metadata; empty when none was set.
-   */
-  metadata?: {
-    [k: string]: string;
-  };
-  /**
-   * Sub-agent lineage; absent for root sessions.
-   */
-  origin?: SessionOriginView | null;
-  retention: SessionRetentionView;
-  updatedAtMs: number;
 }
 export interface AgentApiOutcomeOfBotTriggerDeleteResponse {
   notifications?: AgentNotification[];
@@ -3961,79 +4179,6 @@ export interface AgentApiOutcomeOfEnvironmentCloseResponse {
 }
 export interface EnvironmentCloseResponse {
   environment: EnvironmentView;
-}
-export interface EnvironmentView {
-  /**
-   * Present exactly while `state` is `closing` or `closed`.
-   */
-  closeReason?: EnvironmentCloseReasonView | null;
-  closedAtMs?: number | null;
-  createdAtMs: number;
-  /**
-   * The envd build serving the environment; absent until known.
-   */
-  daemon?: EnvironmentDaemonView | null;
-  displayName?: string | null;
-  environmentId: string;
-  /**
-   * Caller metadata.
-   */
-  metadata?: {
-    [k: string]: string;
-  };
-  /**
-   * The caller's retry identity; absent for registered environments.
-   */
-  requestId?: string | null;
-  source: EnvironmentSourceView;
-  state: EnvironmentStateView;
-  /**
-   * When `state` last changed.
-   */
-  stateChangedAtMs: number;
-  /**
-   * Why the environment failed, or what provisioning or closing is
-   * waiting on.
-   */
-  stateMessage?: string | null;
-  status: EnvironmentStatusView;
-  updatedAtMs: number;
-}
-/**
- * The envd build serving an environment, from its registration or
- * Lightspeed's open handshake.
- */
-export interface EnvironmentDaemonView {
-  gitSha?: string | null;
-  protocolVersion: number;
-  version?: string | null;
-}
-/**
- * Staged idle policy the provider applies. Thresholds are milliseconds of
- * envd-reported idle time (running processes, jobs and leftover process
- * groups hold it at zero) and must be non-decreasing in the order pause,
- * suspend, stop, close. Stages whose power state the template does not
- * support are skipped.
- */
-export interface EnvironmentIdlePolicyView {
-  closeAfterMs?: number | null;
-  pauseAfterMs?: number | null;
-  stopAfterMs?: number | null;
-  suspendAfterMs?: number | null;
-}
-/**
- * What the provider last reported about a provisioned environment's
- * target. Display only: Lightspeed never converges it, and it may be up to
- * a few minutes old.
- */
-export interface EnvironmentObservedTargetView {
-  message?: string | null;
-  observedAtMs: number;
-  phase: EnvironmentTargetPhaseView;
-  /**
-   * Present only while `phase` is `active`.
-   */
-  power?: EnvironmentPowerStateView | null;
 }
 export interface AgentApiOutcomeOfEnvironmentCreateResponse {
   notifications?: AgentNotification[];
@@ -5058,6 +5203,15 @@ export interface TranscriptionFailure {
   kind: TranscriptionFailureKind;
   message: string;
 }
+export interface AgentApiOutcomeOfUniverseWatchResponse {
+  notifications?: AgentNotification[];
+  result: UniverseWatchResponse;
+}
+/**
+ * Final response when a watch reaches its lifetime. Reconnect and refetch on
+ * watch/reset; notifications are lossy hints and have no durable resume cursor.
+ */
+export interface UniverseWatchResponse {}
 export interface AgentApiOutcomeOfVfsSnapshotCommitResponse {
   notifications?: AgentNotification[];
   result: VfsSnapshotCommitResponse;
@@ -5083,23 +5237,6 @@ export interface AgentApiOutcomeOfVfsWorkspaceCreateResponse {
 }
 export interface VfsWorkspaceCreateResponse {
   workspace: VfsWorkspaceView;
-}
-export interface VfsWorkspaceView {
-  baseSnapshotRef?: string | null;
-  /**
-   * Total byte size of the head snapshot.
-   */
-  bytes: number;
-  createdAtMs: number;
-  displayName?: string | null;
-  /**
-   * File count of the head snapshot.
-   */
-  files: number;
-  headSnapshotRef: string;
-  revision: number;
-  updatedAtMs: number;
-  workspaceId: string;
 }
 export interface AgentApiOutcomeOfVfsWorkspaceDeleteResponse {
   notifications?: AgentNotification[];
@@ -6700,6 +6837,17 @@ export interface TranscriptionStartParams {
   language?: string | null;
   model?: ModelConfig | null;
   prompt?: string | null;
+}
+export interface UniverseWatchParams {
+  /**
+   * Collections to watch; omission selects all four. Must be nonempty.
+   */
+  kinds?: WatchKind[];
+  /**
+   * Restrict session rows to shared sessions and sessions created by this actor,
+   * as on session/list. Includes delegated children through their root's access.
+   */
+  visibleTo?: string | null;
 }
 export interface VfsSnapshotCommitParams {
   manifest: unknown;

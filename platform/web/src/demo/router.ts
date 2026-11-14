@@ -1,3 +1,4 @@
+import { watchRoutes } from "./routes/watch";
 /// The in-browser stand-in for the platform backend: one Hono app the fetch
 /// shim hands every same-origin `/api/*` request to.
 import { Hono } from "hono";
@@ -59,6 +60,7 @@ export function createDemoRouter(store: DemoStore): Hono {
   api.route("/", platformRoutes(store));
   api.route("/", adminRoutes(store));
   for (const routes of [
+    watchRoutes,
     sessionRoutes,
     transcriptionRoutes,
     profileRoutes,

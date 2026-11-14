@@ -2223,6 +2223,8 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionListResponse {
             sessions: vec![SessionSummaryView {
+                revision: 0,
+                details: Default::default(),
                 access: test_access_summary(),
                 activity: SessionActivity::Idle,
                 metadata: Default::default(),
@@ -2246,6 +2248,8 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionRenameResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionRenameResponse {
             session: SessionSummaryView {
+                revision: 0,
+                details: Default::default(),
                 access: test_access_summary(),
                 activity: SessionActivity::Idle,
                 metadata: Default::default(),
@@ -2268,6 +2272,8 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionMetadataPutResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionMetadataPutResponse {
             session: SessionSummaryView {
+                revision: 0,
+                details: Default::default(),
                 access: test_access_summary(),
                 activity: SessionActivity::Idle,
                 retention: test_session_retention(&params.session_id),
@@ -2306,6 +2312,8 @@ impl AgentApiService for TestService {
     ) -> Result<AgentApiOutcome<SessionDeleteResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(SessionDeleteResponse {
             session: SessionSummaryView {
+                revision: 0,
+                details: Default::default(),
                 access: test_access_summary(),
                 activity: SessionActivity::Idle,
                 metadata: Default::default(),

@@ -13,6 +13,10 @@ use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionRecord {
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub summary: super::summary::SessionSummary,
     pub session_id: SessionId,
     /// Human-readable name. Store metadata only — never part of the event
     /// log or deterministic replay.
@@ -35,8 +39,8 @@ pub struct SessionRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed_at_ms: Option<u64>,
     /// What the session is doing now, projected from run events for lists.
-    /// Stores keep it apart from the catalog row; the event log remains
-    /// authoritative.
+    /// Stores keep it with the display summary, apart from the catalog row;
+    /// the event log remains authoritative.
     #[serde(default)]
     pub activity: SessionActivity,
     /// Immutable owner of this session's retention tree. Fresh sessions and
@@ -513,8 +517,8 @@ pub trait SessionStore: Send + Sync {
     /// Remove a session that never opened: a row with no events, lifecycle
     /// `new`. Such a row holds a delegation slot and blocks its tree's deletion,
     /// and it cannot be closed because it has no log. Answers whether a row went.
-    /// An opened or missing session is left alone, so this cannot lose an opening
-    /// that lands first.
+    /// Opened or missing sessions and rows with dependent children are left
+    /// alone, so this cannot lose an opening or orphan a child that lands first.
     async fn discard_unopened_session(
         &self,
         session_id: &SessionId,
@@ -552,6 +556,22 @@ pub trait SessionStore: Send + Sync {
     ) -> Result<SessionRecord, SessionStoreError>;
 
     async fn safe_fork_seq(&self, session_id: &SessionId) -> Result<EventSeq, SessionStoreError>;
+
+    /// Store metadata observed outside the log. An observation is accepted only
+    /// while its catalog revision is current. A recovery write is a barrier
+    /// against older in-flight probes, including when no failure was recorded.
+    async fn record_execution_failure(
+        &self,
+        session_id: &SessionId,
+        expected_revision: Option<u64>,
+        failure: Option<super::summary::ExecutionFailure>,
+        at_ms: u64,
+    ) -> Result<bool, SessionStoreError> {
+        let _ = (session_id, expected_revision, failure, at_ms);
+        Err(SessionStoreError::Store {
+            message: "execution observations unsupported by this store".into(),
+        })
+    }
 
     async fn append(
         &self,
@@ -618,6 +638,7 @@ pub trait SessionStore: Send + Sync {
 
 #[derive(Clone, Default)]
 pub struct InMemorySessionStore {
+    blobs: Option<super::InMemoryBlobStore>,
     inner: Arc<RwLock<InMemorySessionStoreInner>>,
 }
 
@@ -629,6 +650,11 @@ struct InMemorySessionStoreInner {
 }
 
 impl InMemorySessionStore {
+    pub fn with_blobs(mut self, blobs: super::InMemoryBlobStore) -> Self {
+        self.blobs = Some(blobs);
+        self
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -681,6 +707,8 @@ impl SessionStore for InMemorySessionStore {
                 |parent| parent.retention_root_session_id.clone(),
             );
         let record = SessionRecord {
+            revision: 1,
+            summary: Default::default(),
             session_id: request.session_id.clone(),
             display_name: request.display_name,
             metadata: request.metadata,
@@ -806,6 +834,9 @@ impl SessionStore for InMemorySessionStore {
                 session_id: session_id.clone(),
             }
         })?;
+        if record.display_name != display_name {
+            record.revision += 1;
+        }
         record.display_name = display_name;
         Ok(record.clone())
     }
@@ -823,6 +854,9 @@ impl SessionStore for InMemorySessionStore {
                 session_id: session_id.clone(),
             }
         })?;
+        if record.metadata != metadata {
+            record.revision += 1;
+        }
         record.metadata = metadata;
         Ok(record.clone())
     }
@@ -851,9 +885,19 @@ impl SessionStore for InMemorySessionStore {
                 retention_root_session_id: record.retention_root_session_id.clone(),
             });
         }
+        if record.delete_after_close_ms == delete_after_close_ms {
+            return Ok(record.clone());
+        }
+        record.revision += 1;
         record.delete_after_close_ms = delete_after_close_ms;
         refresh_delete_at(record);
-        Ok(record.clone())
+        let result = record.clone();
+        for child in inner.records.values_mut().filter(|child| {
+            child.retention_root_session_id == *session_id && child.session_id != *session_id
+        }) {
+            child.revision += 1;
+        }
+        Ok(result)
     }
 
     async fn list_retention_roots_due_for_deletion(
@@ -903,11 +947,26 @@ impl SessionStore for InMemorySessionStore {
         let unopened = inner.records.get(session_id).is_some_and(|record| {
             record.lifecycle_status == SessionLifecycleStatus::New && record.head.is_none()
         });
-        if unopened {
+        let has_children = inner.records.values().any(|record| {
+            record
+                .origin
+                .as_ref()
+                .is_some_and(|origin| origin.parent_session_id == *session_id)
+                || (record.source_seq.is_some()
+                    && record.source_session_id.as_ref() == Some(session_id))
+        });
+        let discarded = unopened && !has_children;
+        if discarded {
             inner.records.remove(session_id);
             inner.entries.remove(session_id);
+            inner.checkpoints.remove(session_id);
+            for clone in inner.records.values_mut().filter(|record| {
+                record.source_seq.is_none() && record.source_session_id.as_ref() == Some(session_id)
+            }) {
+                clone.source_session_id = None;
+            }
         }
-        Ok(unopened)
+        Ok(discarded)
     }
 
     async fn delete_closed_sessions(
@@ -1010,6 +1069,8 @@ impl SessionStore for InMemorySessionStore {
         }
 
         let mut record = SessionRecord {
+            revision: 1,
+            summary: Default::default(),
             metadata: Default::default(),
             session_id: request.session_id.clone(),
             display_name: None,
@@ -1031,7 +1092,8 @@ impl SessionStore for InMemorySessionStore {
         for event in &request.opening_events {
             super::blob_roots::check_typed_walk_sees_every_ref(&event.event)?;
         }
-        let committed = commit_uncommitted_events(&mut record, request.opening_events);
+        let committed =
+            commit_uncommitted_events(&mut record, request.opening_events, self.blobs.as_ref());
         inner.entries.insert(record.session_id.clone(), committed);
         inner
             .records
@@ -1070,7 +1132,14 @@ impl SessionStore for InMemorySessionStore {
         let (lifecycle_status, closed_at_seq) = lifecycle_at_fork(source, request.source_seq);
         let closed_at_ms = closed_at_seq.and(source.closed_at_ms);
         let head = position_from_nonzero_seq(request.source_seq);
-        let record = SessionRecord {
+        let inherited = effective_entries_up_to(
+            &inner,
+            &request.source_session_id,
+            request.source_seq.as_u64(),
+        )?;
+        let mut record = SessionRecord {
+            revision: 1,
+            summary: Default::default(),
             metadata: Default::default(),
             session_id: request.session_id,
             display_name: None,
@@ -1089,6 +1158,13 @@ impl SessionStore for InMemorySessionStore {
             created_at_ms: request.created_at_ms,
             updated_at_ms: request.created_at_ms,
         };
+        for entry in &inherited {
+            super::summary::project_summary(&mut record, entry, |message| {
+                self.blobs
+                    .as_ref()
+                    .and_then(|blobs| blobs.summary_text(&message.content.content_ref))
+            });
+        }
         inner.entries.insert(record.session_id.clone(), Vec::new());
         inner
             .records
@@ -1105,6 +1181,35 @@ impl SessionStore for InMemorySessionStore {
             &entries,
             effective_head_u64(&inner, session_id)?,
         ))
+    }
+
+    async fn record_execution_failure(
+        &self,
+        session_id: &SessionId,
+        expected_revision: Option<u64>,
+        failure: Option<super::summary::ExecutionFailure>,
+        at_ms: u64,
+    ) -> Result<bool, SessionStoreError> {
+        let mut inner = self.inner.write().map_err(|_| SessionStoreError::Store {
+            message: "session store write lock poisoned".into(),
+        })?;
+        let record = inner.records.get_mut(session_id).ok_or_else(|| {
+            SessionStoreError::SessionNotFound {
+                session_id: session_id.clone(),
+            }
+        })?;
+        if record.lifecycle_status == SessionLifecycleStatus::Closed
+            || expected_revision.is_some_and(|rev| rev != record.revision)
+        {
+            return Ok(false);
+        }
+        if failure.is_some() && failure == record.summary.execution_failure {
+            return Ok(false);
+        }
+        record.summary.execution_failure = failure;
+        record.summary.execution_failure_at_ms = failure.map(|_| at_ms);
+        record.revision += 1;
+        Ok(true)
     }
 
     async fn append(
@@ -1137,7 +1242,18 @@ impl SessionStore for InMemorySessionStore {
             .records
             .get_mut(&request.session_id)
             .expect("validated session record");
-        let committed = commit_uncommitted_events(record, request.events);
+        let closed_before = record.closed_at_ms;
+        let committed = commit_uncommitted_events(record, request.events, self.blobs.as_ref());
+        let closed_root = closed_before != record.closed_at_ms
+            && record.session_id == record.retention_root_session_id;
+        if closed_root {
+            for child in inner.records.values_mut().filter(|child| {
+                child.retention_root_session_id == request.session_id
+                    && child.session_id != request.session_id
+            }) {
+                child.revision += 1;
+            }
+        }
 
         let entries = inner
             .entries
@@ -1402,6 +1518,7 @@ pub fn is_terminal_run_entry(entry: &StoredSessionEntry) -> bool {
 fn commit_uncommitted_events(
     record: &mut SessionRecord,
     events: Vec<UncommittedStoredEvent>,
+    blobs: Option<&super::InMemoryBlobStore>,
 ) -> Vec<StoredSessionEntry> {
     let mut committed = Vec::with_capacity(events.len());
     for event in events {
@@ -1418,7 +1535,9 @@ fn commit_uncommitted_events(
             joins: event.joins,
             event: event.event,
         };
-        apply_lifecycle_projection(record, &entry);
+        super::summary::project_summary(record, &entry, |message| {
+            blobs.and_then(|blobs| blobs.summary_text(&message.content.content_ref))
+        });
         record.head = Some(position);
         record.updated_at_ms = entry.observed_at_ms;
         committed.push(entry);

@@ -60,14 +60,55 @@ AgentApiErrorKind: TypeAlias = (
 )
 
 
-class Params4(TypedDict):
+class Params1(TypedDict):
+    sessionId: str
+
+
+class AgentNotificationSessionRemoved(TypedDict):
+    method: Literal['session/removed']
+    params: Params1
+
+
+class Params3(TypedDict):
+    botId: str
+
+
+class AgentNotificationBotsRemoved(TypedDict):
+    method: Literal['bots/removed']
+    params: Params3
+
+
+class Params5(TypedDict):
+    environmentId: str
+
+
+class AgentNotificationEnvironmentsRemoved(TypedDict):
+    method: Literal['environments/removed']
+    params: Params5
+
+
+class Params7(TypedDict):
+    workspaceId: str
+
+
+class AgentNotificationWorkspacesRemoved(TypedDict):
+    method: Literal['workspaces/removed']
+    params: Params7
+
+
+class AgentNotificationWatchReset(TypedDict):
+    method: Literal['watch/reset']
+    params: dict[str, Any]
+
+
+class Params12(TypedDict):
     message: str
     sessionId: NotRequired[str | None]
 
 
 class AgentNotificationError(TypedDict):
     method: Literal['error']
-    params: Params4
+    params: Params12
 
 
 ApprovalDecisionFailureKind: TypeAlias = (
@@ -503,6 +544,11 @@ class BotListParams(TypedDict):
     """
     Only bots this actor created.
     """
+
+
+BotListStatus: TypeAlias = Literal[
+    'closed', 'paused', 'waiting', 'attention', 'budget', 'working', 'idle'
+]
 
 
 class BotReadParams(TypedDict):
@@ -1957,6 +2003,11 @@ class EventCursor(TypedDict):
 class EventJoinsView(TypedDict):
     runId: NotRequired[str | None]
     submissionId: NotRequired[str | None]
+    """
+    Client submission identifier, when present. Run and steering acceptance
+    events expose this join so clients can match local input to its accepted
+    run or steering identifier without comparing message text.
+    """
     toolBatchId: NotRequired[str | None]
     toolCallId: NotRequired[str | None]
     turnId: NotRequired[str | None]
@@ -2281,7 +2332,7 @@ MethodGroup: TypeAlias = (
 )
 """
 The methods a key may call, by group. Every public method but
-`initialize` belongs to exactly one group, derived from its name, so a
+`initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a
 new method never changes what an existing key reaches beyond its group.
 """
 
@@ -2785,6 +2836,12 @@ SessionActivity: TypeAlias = Literal['idle'] | Literal['working'] | Literal['wai
 What a session is doing now. A queued run counts as idle until it starts;
 a closed session is idle.
 """
+
+
+class SessionAttachmentsView(TypedDict):
+    environments: NotRequired[list[str]]
+    mcpServers: NotRequired[list[str]]
+    workspaces: NotRequired[list[str]]
 
 
 class SessionCloseParams(TypedDict):
@@ -3335,6 +3392,13 @@ class SessionJobSummaryView(TypedDict):
     """
 
 
+class SessionLastRunView(TypedDict):
+    failureKind: NotRequired[RunFailureKindView | None]
+    finishedAtMs: int
+    runId: str
+    status: RunStatus
+
+
 SessionLifecycleStatus: TypeAlias = Literal['new', 'open', 'closed']
 
 
@@ -3810,6 +3874,13 @@ may do and which role a gate built on the contract should require.
 UniverseMemberRole: TypeAlias = Literal['viewer', 'contributor', 'operator', 'admin']
 
 
+class UniverseWatchResponse(TypedDict):
+    """
+    Final response when a watch reaches its lifetime. Reconnect and refetch on
+    watch/reset; notifications are lossy hints and have no durable resume cursor.
+    """
+
+
 class VfsPromptsConfig(TypedDict):
     roots: NotRequired[list[str] | None]
     """
@@ -3909,6 +3980,12 @@ Visibility: TypeAlias = Literal['universe', 'restricted']
 """
 Who sees a root's tree. Sessions start unshared (`restricted`) and are
 shared with the universe once, one way; everything else is shared.
+"""
+
+
+WatchKind: TypeAlias = Literal['session', 'bot', 'environment', 'workspace']
+"""
+Collections whose list rows can be watched. Each requires its existing API-key group.
 """
 
 
@@ -4159,6 +4236,15 @@ class AgentApiError(TypedDict):
     Present for operationPending on a call that took a submission id, including
     one the server allocated. Retrying with it cannot land the same work twice.
     """
+
+
+class Params6(TypedDict):
+    workspace: VfsWorkspaceView
+
+
+class AgentNotificationWorkspacesChanged(TypedDict):
+    method: Literal['workspaces/changed']
+    params: Params6
 
 
 class AgentProfileSummary(TypedDict):
@@ -6063,20 +6149,64 @@ class SessionShareResponse(TypedDict):
 
 
 class SessionSummaryView(TypedDict):
+    """
+    Display fields materialized with the session log.
+    """
+
     access: ResourceAccessSummary
     """
     The audience of the session's root: whether it is shared with the
     universe, and who created it.
+    """
+    activeEnvironmentId: NotRequired[str | None]
+    """
+    Environment selected by the session event log.
     """
     activity: SessionActivity
     """
     What the session is doing now: idle, working on a run, or waiting for
     an approval.
     """
+    activityPhase: NotRequired[str | None]
+    """
+    Open vocabulary: awaiting while a run is parked on promises. Approval waiting remains in activity.
+    """
+    activitySinceMs: NotRequired[int | None]
+    """
+    When the current non-idle activity or phase began; absent while idle.
+    """
+    attachments: NotRequired[SessionAttachmentsView]
+    """
+    Attached catalog resource ids, grouped by kind.
+    """
     closedAtMs: NotRequired[int | None]
     createdAtMs: int
     displayName: NotRequired[str | None]
+    executionFailure: NotRequired[SessionExecutionFailureView | None]
+    """
+    Last observed stopped workflow execution, cleared on recovery.
+    """
     id: str
+    lastMessageAtMs: NotRequired[int | None]
+    """
+    Observation time when the preview message entered the event log.
+    """
+    lastMessageOrigin: NotRequired[str | None]
+    """
+    Application-supplied display provenance of the preview message; not authenticated identity.
+    """
+    lastMessagePreview: NotRequired[str | None]
+    """
+    Latest nonempty user or assistant message reduced to one plain line of at most 200 Unicode characters.
+    """
+    lastMessageRole: NotRequired[ContextMessageRoleView | None]
+    """
+    Role of the message represented by lastMessagePreview.
+    """
+    lastRun: NotRequired[SessionLastRunView | None]
+    """
+    Most recent terminal run, independent of the current activity.
+    """
     lifecycleControlled: bool
     """
     True only when the session's integration names a lifecycle controller.
@@ -6091,6 +6221,10 @@ class SessionSummaryView(TypedDict):
     Sub-agent lineage; absent for root sessions.
     """
     retention: SessionRetentionView
+    revision: NotRequired[int]
+    """
+    Monotonic revision of visible summary fields; log-only appends do not advance it.
+    """
     updatedAtMs: int
 
 
@@ -6195,6 +6329,18 @@ class UniverseDirectoryGroupMapping(TypedDict):
     role: UniverseMemberRole
 
 
+class UniverseWatchParams(TypedDict):
+    kinds: NotRequired[list[WatchKind]]
+    """
+    Collections to watch; omission selects all four. Must be nonempty.
+    """
+    visibleTo: NotRequired[str | None]
+    """
+    Restrict session rows to shared sessions and sessions created by this actor,
+    as on session/list. Includes delegated children through their root's access.
+    """
+
+
 class VfsFeature(TypedDict):
     """
     Grants the session virtual filesystem. Workspace attachments declare the
@@ -6293,6 +6439,24 @@ class WorkflowToolDefinitionInput(TypedDict):
     The workflow-tool namespace: what invocations and bindings are keyed on. The
     registry identity the model sees through `activeTools` is `tool.name`.
     """
+
+
+class Params(TypedDict):
+    session: SessionSummaryView
+
+
+class AgentNotificationSessionChanged(TypedDict):
+    method: Literal['session/changed']
+    params: Params
+
+
+class Params4(TypedDict):
+    environment: EnvironmentView
+
+
+class AgentNotificationEnvironmentsChanged(TypedDict):
+    method: Literal['environments/changed']
+    params: Params4
 
 
 class AuthClientCreateResponse(TypedDict):
@@ -6574,6 +6738,7 @@ class BotListItem(TypedDict):
     """
 
     access: ResourceAccessSummary
+    activeSessionCount: NotRequired[int]
     activity: SessionActivity
     """
     What the bot's sessions are doing now: waiting when one waits for an
@@ -6620,6 +6785,7 @@ class BotListItem(TypedDict):
     Highest `#N` admitted so far.
     """
     lastEvent: NotRequired[BotEventView | None]
+    openSessionCount: NotRequired[int]
     pendingCount: int
     """
     Events whose delivery has not finished.
@@ -6641,6 +6807,10 @@ class BotListItem(TypedDict):
     Capability grant: the mutating self-configuration tools
     (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
     """
+    status: NotRequired[BotListStatus]
+    """
+    Display precedence: closed, paused, waiting, attention, budget, working, idle.
+    """
     triggerCount: int
     updatedAtMs: int
 
@@ -6659,6 +6829,7 @@ class BotReadResponse(TypedDict):
     The bot's audience, always the universe, and who created it.
     """
     bot: BotView
+    status: NotRequired[BotListStatus]
 
 
 class BotStateView(TypedDict):
@@ -7454,13 +7625,22 @@ class WorkflowToolDeclarationInput(TypedDict):
     target: WorkflowToolTargetInput
 
 
-class Params1(TypedDict):
+class Params2(TypedDict):
+    bot: BotListItem
+
+
+class AgentNotificationBotsChanged(TypedDict):
+    method: Literal['bots/changed']
+    params: Params2
+
+
+class Params9(TypedDict):
     event: SessionEventView
 
 
 class AgentNotificationSessionEvent(TypedDict):
     method: Literal['session/event']
-    params: Params1
+    params: Params9
 
 
 class AgentProfile(TypedDict):
@@ -7819,32 +7999,41 @@ class SessionView(TypedDict):
     updatedAtMs: int
 
 
-class Params(TypedDict):
+class Params8(TypedDict):
     session: SessionView
 
 
 class AgentNotificationSessionStarted(TypedDict):
     method: Literal['session/started']
-    params: Params
+    params: Params8
 
 
-class Params2(TypedDict):
+class Params10(TypedDict):
     run: RunView
     sessionId: str
 
 
 class AgentNotificationSessionRunsStarted(TypedDict):
     method: Literal['session/runs/started']
-    params: Params2
+    params: Params10
 
 
 class AgentNotificationSessionRunsCompleted(TypedDict):
     method: Literal['session/runs/completed']
-    params: Params2
+    params: Params10
 
 
 AgentNotification: TypeAlias = (
-    AgentNotificationSessionStarted
+    AgentNotificationSessionChanged
+    | AgentNotificationSessionRemoved
+    | AgentNotificationBotsChanged
+    | AgentNotificationBotsRemoved
+    | AgentNotificationEnvironmentsChanged
+    | AgentNotificationEnvironmentsRemoved
+    | AgentNotificationWorkspacesChanged
+    | AgentNotificationWorkspacesRemoved
+    | AgentNotificationWatchReset
+    | AgentNotificationSessionStarted
     | AgentNotificationSessionEvent
     | AgentNotificationSessionRunsStarted
     | AgentNotificationSessionRunsCompleted
@@ -8566,6 +8755,11 @@ class AgentApiOutcomeOfSkillListResponse(TypedDict):
 class AgentApiOutcomeOfTranscriptionResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: TranscriptionResponse
+
+
+class AgentApiOutcomeOfUniverseWatchResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: UniverseWatchResponse
 
 
 class AgentApiOutcomeOfVfsSnapshotCommitResponse(TypedDict):

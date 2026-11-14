@@ -5,6 +5,7 @@ pub(crate) mod auth_api;
 pub(crate) mod authorization;
 mod blobs;
 mod bots_api;
+pub(super) use bots_api::bot_list_item;
 mod catalogs;
 pub(crate) mod channels_api;
 mod common;
@@ -74,7 +75,8 @@ use request_headers::{request_headers_from_api, request_headers_view, validate_h
 use skills::skill_list_response;
 #[cfg(test)]
 use tools::skills::SkillMetadata;
-use vfs_api::{commit_vfs_snapshot, read_vfs_snapshot, vfs_workspace_view};
+pub(super) use vfs_api::vfs_workspace_view;
+use vfs_api::{commit_vfs_snapshot, read_vfs_snapshot};
 pub(crate) use workflow::ExecutionLiveness;
 use workflow::{
     ApprovalDecisionOutcome, approval_already_terminal_kind, check_command_status,
@@ -202,7 +204,7 @@ fn session_retention_view(
     }
 }
 
-fn session_summary_view(
+pub(super) fn session_summary_view(
     record: harness::storage::SessionRecord,
     root: &harness::storage::SessionRecord,
     access: ResourceAccessSummary,
@@ -210,6 +212,8 @@ fn session_summary_view(
     let retention = session_retention_view(&record, root);
     let activity = api_projection::record_activity(&record);
     SessionSummaryView {
+        revision: record.revision,
+        details: api_projection::session_summary_details(&record.summary),
         access,
         id: record.session_id.as_str().to_owned(),
         display_name: record.display_name,
@@ -1604,14 +1608,17 @@ impl AgentApiService for GatewayAgentApi {
             Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
         )
         .await?;
-        let bot = ::bots::BotStore::read_bot(self.store.as_ref(), &params.bot_id)
+        let (row, access) = self
+            .store
+            .bot_roster_filtered(None, Some(params.bot_id.as_str()))
             .await
-            .map_err(crate::bots::map_bot_error)?;
-        let access = self
-            .access_summary(&ResourceRef::Bot(params.bot_id.as_str().to_owned()))
-            .await?;
+            .map_err(crate::bots::map_bot_error)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| AgentApiError::not_found("bot not found"))?;
         Ok(AgentApiOutcome::new(BotReadResponse {
-            bot: bot.view(),
+            status: row.status,
+            bot: row.bot.view(),
             access,
         }))
     }
@@ -2441,6 +2448,11 @@ impl AgentApiService for GatewayAgentApi {
         // observe closes as a normal wakeup.
         let wait = Duration::from_millis(params.wait_ms.unwrap_or(0)).min(self.events_wait_cap);
         let deadline = Instant::now() + wait;
+        let mut changes = self.store.changes().subscribe(
+            self.universe_id(),
+            store_pg::changes::ChangeKind::Session,
+            session_id.as_str(),
+        );
         loop {
             let page = self
                 .store
@@ -2455,11 +2467,11 @@ impl AgentApiService for GatewayAgentApi {
                 .map_err(map_session_store_error)?;
             let remaining = deadline.saturating_duration_since(Instant::now());
             if page.entries.is_empty() && !remaining.is_zero() {
-                let poll = self
-                    .poll_interval
-                    .min(Duration::from_millis(250))
-                    .min(remaining);
-                tokio::time::sleep(poll).await;
+                store_pg::changes::wait_for_change(
+                    &mut changes,
+                    Duration::from_secs(5).min(remaining),
+                )
+                .await;
                 continue;
             }
             let head_cursor = self
