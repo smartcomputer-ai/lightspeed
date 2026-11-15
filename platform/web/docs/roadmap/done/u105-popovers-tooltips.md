@@ -1,6 +1,6 @@
 # U105: Popovers and Tooltips
 
-Status: [todo]
+Status: [done]
 
 Update popovers for the session and bot meta toolbars that open up a popover on click so that the popover has a little notch on the top left or top right that aligns with the element that opened it up (sort of like a tooltip). 
 

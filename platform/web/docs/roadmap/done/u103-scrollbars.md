@@ -1,6 +1,6 @@
 # U103: Scrollbars
 
-Status: [todo]
+Status: [done]
 
 Create a unified scrollbar design system where the track is usually never visible. Only on hover does the track become visible and only the scrollbar itself is visible when hovering over the scroll area itself. Sort of like how Mac does it, use a narrower design as well and use official CSS styling only. 
 

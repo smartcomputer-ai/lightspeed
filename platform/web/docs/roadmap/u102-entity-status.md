@@ -1,6 +1,6 @@
 # U102: Entity Status's
 
-Status: [todo]
+Status: [in progress]
 
 Update the existing stages system And bot stages component:
 

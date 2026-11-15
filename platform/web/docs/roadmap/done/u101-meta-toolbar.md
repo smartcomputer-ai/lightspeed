@@ -1,6 +1,6 @@
 # U101: Meta Toolbar
 
-Status: [in progress]
+Status: [done]
 
 In the listing where all the icons are, refactor this to an official component called meta Toolbar Which also can be used in other places .
 
