@@ -143,11 +143,13 @@ export function BotDetail({
               closed: bot.closedAtMs != null,
               activity: { open: () => setActivityOpen(true), latest: latestEvent.data?.events?.[0] ?? null },
               ...(access ? { access, viewerId } : {}),
-              subAgents: {
-                sessions: (state?.sessions ?? []).filter((session) => session.origin),
-                href: sessionHref,
-                parentOf,
-              },
+              // The sub-agents item is left out of the header for now; the
+              // bot's conversation list shows its sub-agents.
+              // subAgents: {
+              //   sessions: (state?.sessions ?? []).filter((session) => session.origin),
+              //   href: sessionHref,
+              //   parentOf,
+              // },
             })}
             place="header"
             full
