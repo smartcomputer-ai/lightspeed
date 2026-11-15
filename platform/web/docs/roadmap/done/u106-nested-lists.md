@@ -1,6 +1,6 @@
 # U106: Nested Lists
 
-Status: [todo]
+Status: [done]
 
 Update the lists control, which is used, for example, on the bots listing, session listing, and profile listing, etc:
 

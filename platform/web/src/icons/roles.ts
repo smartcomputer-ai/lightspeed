@@ -57,6 +57,7 @@ export interface IconSet {
   // What a session can use.
   ToolsIcon: IconComponent;
   SubAgentIcon: IconComponent;
+  ParentAgentIcon: IconComponent;
   CodeModeIcon: IconComponent;
   WebIcon: IconComponent;
   TimerIcon: IconComponent;

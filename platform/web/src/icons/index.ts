@@ -38,7 +38,7 @@ export const {
   SettingsIcon, FeatureOffIcon, BotIcon, BotAvatarIcon, UserIcon, SecurityIcon, SecretIcon, AppearanceIcon,
   AdminIcon, ManagedIcon, PrivateIcon, SharedIcon, SignInIcon, SignOutIcon, RevokeIcon, DisconnectIcon,
   LightThemeIcon, DarkThemeIcon, SystemThemeIcon, GitHubLogo, OpenAiLogo, AnthropicLogo, CompatibleProviderLogo,
-  ToolsIcon, SubAgentIcon, CodeModeIcon, WebIcon, TimerIcon, MetadataIcon, RetentionIcon, ThinkingIcon,
+  ToolsIcon, SubAgentIcon, ParentAgentIcon, CodeModeIcon, WebIcon, TimerIcon, MetadataIcon, RetentionIcon, ThinkingIcon,
   ExploreToolIcon, EditToolIcon, ExecuteToolIcon, CodeToolIcon, McpToolIcon, DelegateToolIcon, AwaitToolIcon,
   EmitToSelfIcon, MessageToolIcon, OtherToolIcon, ToolGroupIcon, BotEventIcon, ScheduleIcon, WebhookIcon,
   ChatTriggerIcon, InboxIcon, PollIcon, CommandIcon, ActivityIcon, AddIcon, AttachIcon, EditIcon, EditFilesIcon,

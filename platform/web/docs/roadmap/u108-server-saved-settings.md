@@ -1,6 +1,6 @@
 # U108: Server-Saved Settings
 
-Status: [todo]
+Status: [in progress]
 
 In the live version, user settings are currently saved only in the browser's `localStorage`. This means they don't follow the user to another browser or device, and they are lost when site data is cleared. Only the profile name and password are saved on the server (through the auth client).
 

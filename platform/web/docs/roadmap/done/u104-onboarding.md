@@ -1,6 +1,6 @@
 # U104: Onboarding
 
-Status: [todo]
+Status: [done]
 
 Let's completely revamp the onboarding system with a new welcome dialog that can be built out later for more onboarding tools and settings (like asking the user which theme, what kind of preferences, setting up some defaults, etc.). 
 

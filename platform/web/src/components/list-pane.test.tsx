@@ -88,3 +88,20 @@ it("puts a row's actions beside its link, not inside it", async () => {
   expect(link.contains(button)).toBe(false);
   expect(button.closest("li")).toBe(link.closest("li"));
 });
+
+it("draws a muted row's title in its second line's colours", async () => {
+  await act(async () => root.render(
+    <MemoryRouter>
+      <ul>
+        <ListRow to="/open" title="Open session" />
+        <ListRow to="/closed" title="Closed session" muted />
+      </ul>
+    </MemoryRouter>,
+  ));
+  const title = (id: string) => [...row(id).querySelectorAll("span")].reverse().find((span) => span.textContent === `${id[0]!.toUpperCase()}${id.slice(1)} session`)!;
+  expect(title("open").className).toContain("text-(--item-foreground-rest)");
+  expect(title("open").dataset.muted).toBeUndefined();
+  expect(title("closed").className).toContain("text-(--list-second-line-rest)");
+  expect(title("closed").className).toContain("group-hover/row:text-muted-foreground");
+  expect(title("closed").dataset.muted).toBe("true");
+});

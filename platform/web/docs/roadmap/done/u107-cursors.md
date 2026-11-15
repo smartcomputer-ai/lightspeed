@@ -1,6 +1,6 @@
 # U107: Mouse Cursors
 
-Status: [todo]
+Status: [done]
 
 Align all the mouse cursor usages. 
 
