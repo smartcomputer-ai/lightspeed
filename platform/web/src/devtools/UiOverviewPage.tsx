@@ -111,6 +111,7 @@ import { UniverseIcon } from "@/components/universe-icon";
 import { HEADER_STARSCAPE_FADE, HeaderStarscape } from "@/components/universe-switcher";
 import { collectRoleUsage, iconRoles, libraryGlyphs, type IconRole, type RoleGlyph } from "./icon-usage";
 import { MetaBotExample, MetaModesExample, MetaSessionListExample, MetaSessionPageExample } from "./meta-toolbar-examples";
+import { MetaDetailsInToolbarExample, MetaDetailsLongListExample, MetaDetailsPartsExample, MetaDetailsUsagesExample } from "./meta-details-examples";
 
 /// Every shared UI component and its variations, one page per category,
 /// for reviewing the design system in both themes: the overview's tiles
@@ -128,6 +129,7 @@ const CATEGORIES = [
   { id: "buttons", title: "Buttons", summary: "Variants, sizes, icons and states." },
   { id: "badges", title: "Badges & status", summary: "Badges, info boxes and status dots." },
   { id: "meta", title: "Meta toolbar", summary: "An entity's facts in rows, headers and strips." },
+  { id: "meta-details", title: "Meta details", summary: "What a meta item's popover shows: headings, rows, notes and actions." },
   { id: "inputs", title: "Inputs", summary: "Text inputs, text areas, input groups and labels." },
   { id: "selects", title: "Selects & comboboxes", summary: "Selects and comboboxes." },
   { id: "toggles", title: "Checkboxes & switches", summary: "Checkboxes and switches." },
@@ -154,6 +156,7 @@ const SECTIONS: Record<CategoryId, () => ReactNode> = {
   buttons: ButtonsSection,
   badges: BadgesSection,
   meta: MetaToolbarSection,
+  "meta-details": MetaDetailsSection,
   inputs: InputsSection,
   selects: SelectsSection,
   toggles: TogglesSection,
@@ -665,7 +668,7 @@ function ButtonsSection() {
   );
 }
 
-const TONES: StatusTone[] = ["live", "awaiting", "waiting", "idle", "paused", "attention", "closed"];
+const TONES: StatusTone[] = ["live", "awaiting", "ready", "waiting", "idle", "paused", "attention", "closed"];
 
 function BadgesSection() {
   return (
@@ -732,6 +735,28 @@ function MetaToolbarSection() {
       </Specimen>
       <Specimen title="Bot" note="row, header and strip from one list of items" className="block">
         <MetaBotExample />
+      </Specimen>
+    </Category>
+  );
+}
+
+function MetaDetailsSection() {
+  return (
+    <Category
+      id="meta-details"
+      description="components/meta-details: the content of a meta item's popover (MetaItem.details), in shared parts. The meta toolbar draws the popover around it; these parts give every item the same heading, rows, dots and actions. Not used by the app yet: each usage below is drawn with the parts, open on the popover surface."
+    >
+      <Specimen title="In a toolbar" note="Real meta items: click one to open its details" className="block">
+        <MetaDetailsInToolbarExample />
+      </Specimen>
+      <Specimen title="Every usage" note="Session resources, sub-agents, a workspace file's content and a bot's channels, drawn open" className="block">
+        <MetaDetailsUsagesExample />
+      </Specimen>
+      <Specimen title="A long list" note="MetaDetailsList scrolls past its height; load more keeps the popover open" className="block">
+        <MetaDetailsLongListExample />
+      </Specimen>
+      <Specimen title="Parts" note="Each part and its options" className="block">
+        <MetaDetailsPartsExample />
       </Specimen>
     </Category>
   );
@@ -1792,6 +1817,7 @@ const RESOURCE_ENTITIES: PlainEntity[] = [
   { entity: "Workspace", icon: Icons.WorkspaceIcon, source: "session/session-resources.tsx" },
   { entity: "Tools", icon: Icons.ToolsIcon, source: "session/session-resources.tsx" },
   { entity: "Sub-agents", icon: Icons.SubAgentIcon, source: "session/session-resources.tsx" },
+  { entity: "Parent agent", icon: Icons.ParentAgentIcon, source: "session/session-meta.tsx" },
   { entity: "Code mode", icon: Icons.CodeModeIcon, source: "session/session-resources.tsx" },
   { entity: "Web", icon: Icons.WebIcon, source: "session/session-resources.tsx" },
   { entity: "Timers", icon: Icons.TimerIcon, source: "session/session-resources.tsx" },

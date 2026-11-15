@@ -5,8 +5,9 @@ import type { BotControllerSnapshot, BotControllerStatus, BotEventOutcome, BotVi
 import { cn } from "@/lib/utils";
 
 export type BotTone = "live" | "waiting" | "idle" | "paused" | "attention" | "closed";
-/// Every tone a status dot draws: a bot's, and a session's parked run.
-export type StatusTone = BotTone | "awaiting";
+/// Every tone a status dot draws: a bot's, a session's parked run, and a
+/// resource that is up with nothing under way (ready: a steady green dot).
+export type StatusTone = BotTone | "awaiting" | "ready";
 
 /** An event's outcome as a person reads it. */
 export function outcomeLabel(outcome: BotEventOutcome): string {
@@ -64,6 +65,7 @@ function utcMidnightLabel(): string {
 const STATUS_DOT_COLOR: Record<StatusTone, string> = {
   live: "text-emerald-500",
   awaiting: "text-emerald-500",
+  ready: "text-emerald-500",
   waiting: "text-amber-500",
   idle: "text-muted-foreground/50",
   paused: "text-amber-500",

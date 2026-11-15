@@ -1,8 +1,18 @@
 import { useEffect, type ReactNode } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { api, type SessionListPage, type SessionOrigin, type SessionSummary, type SessionView } from "@/api";
+import { sessionDotState } from "@/components/activity-dot";
 import { botColor } from "@/components/bot/face";
-import { BotIcon, ManagedIcon, PrivateIcon, SessionCloseIcon, SessionIcon, SharedIcon, SubAgentIcon } from "@/icons";
+import { relativeTime } from "@/components/bot/status";
+import {
+  MetaDetails,
+  MetaDetailsAction,
+  MetaDetailsFooter,
+  MetaDetailsHeading,
+  MetaDetailsList,
+  MetaDetailsRow,
+} from "@/components/meta-details";
+import { BotIcon, ManagedIcon, ParentAgentIcon, PrivateIcon, SessionCloseIcon, SharedIcon, ShowMoreIcon, SubAgentIcon } from "@/icons";
 import type { MetaItem, MetaPlace, MetaTone } from "@/components/meta-toolbar";
 
 /// The places of the page: its header and the strip under it.
@@ -13,14 +23,14 @@ const PAGE: MetaPlace[] = ["header", "strip"];
 /// header more, the strip under the header everything.
 ///
 ///                list  header  strip
+///   parent agent  -      x      x     leftmost; its state on click
 ///   activity      -      x      x     Stopped, Working, Waiting (a row has its dot)
 ///   closed        x      x      x
 ///   controller    x      x      x     the bot or integration that drives it
-///   sub-agents    x      x      -     how many; the strip names each
+///   sub-agents    x      x      -     how many, the first by name; on the page it lists them on click
 ///   sharing      (x)     x      x     a row marks a shared root session only
 ///   environment   x      x      x
 ///   resources     -      x      x     workspaces, MCP servers, tools
-///   parent        -      x      x
 ///   each sub-agent -     -      x
 
 /// What a session's meta items are built from: the summary any list has,
@@ -28,8 +38,9 @@ const PAGE: MetaPlace[] = ["header", "strip"];
 export interface SessionMetaInput {
   session: Pick<SessionSummary, "id" | "access" | "activity" | "lifecycleStatus" | "lifecycleControlled" | "closedAtMs" | "retention" | "origin">
     & Partial<Pick<SessionView, "executionFailure">>;
-  /// Sub-agent sessions under it, when known; `more` when there are more than counted.
-  subAgents?: { count: number; more?: boolean };
+  /// Sub-agent sessions under it, when known; `more` when there are more
+  /// than counted, `first` the first one's name.
+  subAgents?: { count: number; more?: boolean; first?: string };
   /// Who drives a controlled session, when known. Without it, a session id
   /// minted by a bot names "a bot", any other "an integration".
   /// `href` opens the conversation in its bot; `botId` colours its icon.
@@ -81,6 +92,18 @@ export function compactSessionId(id: string, length = 18): string {
 export function sessionMetaItems({ session, subAgents, controller, lineage, lineageHref, resources = [] }: SessionMetaInput): MetaItem[] {
   const items: MetaItem[] = [];
   const closed = session.lifecycleStatus === "closed";
+
+  // The agent that delegated to it, leftmost: where this session came from.
+  if (lineage?.parent && lineageHref) {
+    const parent = lineage.parent;
+    items.push({
+      key: "parent", label: `Parent agent: ${parent.label}`, icon: ParentAgentIcon, text: "Parent agent",
+      tooltip: `Parent agent: ${parent.label}`,
+      ...(parent.session ? lineageTone(parent.session) : parent.closed ? { tone: "muted" as const } : {}),
+      priority: 9, places: PAGE,
+      details: <ParentAgentDetails parent={parent} href={lineageHref} />,
+    });
+  }
 
   // State: a stopped workflow, a closed session, or what a run is doing.
   if (!closed && session.executionFailure) {
@@ -135,16 +158,21 @@ export function sessionMetaItems({ session, subAgents, controller, lineage, line
     }
   }
 
-  // How many it delegated to; the strip names each instead.
+  // How many it delegated to, the first by name. On its page a click lists
+  // each, to open one; the strip names each instead.
   const count = subAgents?.count ?? lineage?.children.length ?? 0;
   if (count > 0) {
     const more = subAgents?.more ?? lineage?.more ?? false;
     const many = `${count}${more ? "+" : ""}`;
+    const first = subAgents?.first ?? (lineage?.children[0] && sessionName(lineage.children[0]));
     items.push({
       key: "subagents", label: plural(count, "sub-agent"), icon: SubAgentIcon, value: many,
       text: `${many} sub-agent${count === 1 && !more ? "" : "s"}`,
-      tooltip: `${many} sub-agent${count === 1 && !more ? "" : "s"} delegated by this session`,
+      tooltip: subAgentsTip(first, count, more),
       priority: 6, places: ["list", "header"],
+      ...(lineage && lineageHref && lineage.children.length > 0
+        ? { details: <SubAgentList lineage={lineage} href={lineageHref} /> }
+        : {}),
     });
   }
 
@@ -161,15 +189,8 @@ export function sessionMetaItems({ session, subAgents, controller, lineage, line
 
   items.push(...resources);
 
-  // Its lineage, in the strip.
+  // Each sub-agent, in the strip.
   if (lineage && lineageHref) {
-    if (lineage.parent) {
-      items.push({
-        key: "parent", label: `Parent session: ${lineage.parent.label}`, icon: SessionIcon, text: lineage.parent.label,
-        tooltip: "The session that delegated to this one", href: lineageHref(lineage.parent.id),
-        ...(lineage.parent.closed ? { tone: "muted" as const } : {}), priority: 7, places: PAGE,
-      });
-    }
     for (const child of lineage.children) {
       const name = child.displayName?.trim();
       items.push({
@@ -188,10 +209,96 @@ export function sessionMetaItems({ session, subAgents, controller, lineage, line
   return items;
 }
 
+/// A session as a person reads it: its name, else its shortened id.
+export function sessionName(session: Pick<SessionSummary, "id" | "displayName">): string {
+  return session.displayName?.trim() || compactSessionId(session.id);
+}
+
+/// The sub-agent count's tooltip: the one sub-agent by name, or the first
+/// and how many more. Without a name, how many.
+export function subAgentsTip(first: string | undefined, count: number, more: boolean): string {
+  if (!first) return `${count}${more ? "+" : ""} sub-agent${count === 1 && !more ? "" : "s"} delegated by this session`;
+  if (count === 1 && !more) return `Sub-agent: ${first}`;
+  return `Sub-agents: ${first} and ${count - 1}${more ? "+" : ""} more`;
+}
+
+/// A session's facts for a lineage row: its profile, its state and when it
+/// last changed.
+function lineageFacts(session: Pick<SessionSummary, "activity" | "lifecycleStatus" | "updatedAtMs" | "origin">
+  & Partial<Pick<SessionSummary, "executionFailure" | "activityPhase" | "lastRun">>) {
+  const state = sessionDotState(session);
+  const closed = session.lifecycleStatus === "closed";
+  return {
+    tone: state.tone,
+    closed,
+    facts: [session.origin?.agent?.profileId, state.label ?? (closed ? "Closed" : "Idle"), ago(session.updatedAtMs)],
+  };
+}
+
+/// The parent agent's popover: the session that delegated to this one, with
+/// its state, opening it.
+function ParentAgentDetails({ parent, href }: { parent: NonNullable<SessionLineage["parent"]>; href: (sessionId: string) => string }) {
+  const facts = parent.session ? lineageFacts(parent.session) : undefined;
+  return (
+    <MetaDetails>
+      <MetaDetailsHeading title="Parent agent" description="The session that delegated work to this one." />
+      <MetaDetailsList label="Parent agent">
+        <MetaDetailsRow
+          primary={parent.label}
+          secondary={facts?.facts}
+          tone={facts?.tone}
+          muted={facts?.closed ?? parent.closed}
+          href={href(parent.id)}
+        />
+      </MetaDetailsList>
+    </MetaDetails>
+  );
+}
+
+/// How long ago, as "5m ago" or "just now".
+function ago(ms: number): string {
+  const since = relativeTime(ms);
+  return since === "now" ? "just now" : since && `${since} ago`;
+}
+
+/// The sub-agents a session delegated to, as the popover of its sub-agent
+/// item: each with its state, profile and last change, opening its session.
+function SubAgentList({ lineage, href }: { lineage: SessionLineage; href: (sessionId: string) => string }) {
+  return (
+    <MetaDetails>
+      <MetaDetailsHeading title="Sub-agents" description="Sessions this one delegated work to." />
+      <MetaDetailsList label="Sub-agents">
+        {lineage.children.map((child) => {
+          const name = child.displayName?.trim();
+          const { tone, closed, facts } = lineageFacts(child);
+          return (
+            <MetaDetailsRow
+              key={child.id}
+              primary={name || <span className="font-mono text-xs">{compactSessionId(child.id)}</span>}
+              secondary={facts}
+              tone={tone}
+              muted={closed}
+              href={href(child.id)}
+            />
+          );
+        })}
+      </MetaDetailsList>
+      {lineage.more && lineage.loadMore && (
+        <MetaDetailsFooter>
+          <MetaDetailsAction icon={ShowMoreIcon} onSelect={lineage.loadMore} keepOpen busy={lineage.loadingMore}>
+            {lineage.loadingMore ? "Loading…" : "Load more sub-agents"}
+          </MetaDetailsAction>
+        </MetaDetailsFooter>
+      )}
+    </MetaDetails>
+  );
+}
+
 /// A session's place in a delegation tree: the session that delegated to it
 /// and the sub-agents it delegated to.
 export interface SessionLineage {
-  parent?: { id: string; label: string; closed: boolean };
+  /// The session that delegated to it; `session` once read.
+  parent?: { id: string; label: string; closed: boolean; session?: SessionView };
   children: SessionSummary[];
   /// There are more sub-agents than loaded.
   more: boolean;
@@ -231,7 +338,7 @@ export function useSessionLineage({ universeId, sessionId, origin, runRevision }
   const parentName = parent.data?.displayName?.trim();
   return {
     ...(parentId
-      ? { parent: { id: parentId, label: parentName || compactSessionId(parentId), closed: parent.data?.lifecycleStatus === "closed" } }
+      ? { parent: { id: parentId, label: parentName || compactSessionId(parentId), closed: parent.data?.lifecycleStatus === "closed", ...(parent.data ? { session: parent.data } : {}) } }
       : {}),
     children: children.data?.pages.flatMap((page) => page.sessions) ?? [],
     more: Boolean(children.hasNextPage),

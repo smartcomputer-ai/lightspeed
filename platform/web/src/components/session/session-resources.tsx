@@ -1,21 +1,26 @@
 import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import { openEnvironmentsQuery } from "@/lib/environments";
 import type { McpServerOption, WorkspaceOption } from "@/components/session/session-config-editor";
-import { CodeModeIcon, ConfigureIcon, EnvironmentIcon, SubAgentIcon, TimerIcon, ToolsIcon, WebIcon, WorkspaceIcon, type IconComponent } from "@/icons";
+import { CodeModeIcon, ConfigureIcon, EnvironmentIcon, GoToIcon, SubAgentIcon, TimerIcon, ToolsIcon, WebIcon, WorkspaceIcon, type IconComponent } from "@/icons";
 import { environmentTone, sessionResources, type ResourceTone, type SessionResources } from "@/lib/sessions/session-resources";
 import type { Environment } from "@/api";
 import type { MetaItem, MetaTone } from "@/components/meta-toolbar";
-import { cn } from "@/lib/utils";
+import {
+  MetaDetails,
+  MetaDetailsAction,
+  MetaDetailsEmpty,
+  MetaDetailsFooter,
+  MetaDetailsHeading,
+  MetaDetailsList,
+  MetaDetailsNote,
+  MetaDetailsRow,
+  RESOURCE_STATUS_TONE,
+} from "@/components/meta-details";
 
-const TONE_DOT: Record<ResourceTone, string> = {
-  ok: "bg-emerald-500",
-  idle: "bg-muted-foreground/50",
-  busy: "bg-amber-500 animate-pulse",
-  problem: "bg-destructive",
-};
+/// A resource's tone as a row's status dot; a resource without one has none.
+const dot = (tone: ResourceTone | undefined) => (tone ? RESOURCE_STATUS_TONE[tone] : undefined);
 const TONE_RANK: Record<ResourceTone, number> = { ok: 0, idle: 1, busy: 2, problem: 3 };
 const worst = (tones: ResourceTone[]) => tones.reduce<ResourceTone>((a, b) => (TONE_RANK[b] > TONE_RANK[a] ? b : a), "ok");
 
@@ -81,23 +86,27 @@ export function sessionResourceItems({ resources, handle, onConfigure }: {
     <Footer onConfigure={onConfigure} page={page} />
   );
   const environmentDetails = () => environments && (
-    <>
-      <Heading title="Environment" detail={environments.selection
+    <MetaDetails>
+      <MetaDetailsHeading title="Environment" description={environments.selection
         ? "The agent may switch between the attached environments."
         : "Commands, jobs, and machine files run here."} />
       {environments.items.length === 0
-        ? <Empty>No environments are attached.</Empty>
-        : environments.items.map((item) => (
-          <Row key={item.key} tone={item.tone}
-            primary={item.label}
-            secondary={[item.status ? ENV_STATUS[item.status] ?? item.status : "Closed or not in this universe's list", item.access && `${item.access} access`].filter(Boolean).join(" · ")}
-            badges={[item.active && "Active", item.isDefault && "Default"]} />
-        ))}
+        ? <MetaDetailsEmpty>No environments are attached.</MetaDetailsEmpty>
+        : (
+          <MetaDetailsList label="Environments">
+            {environments.items.map((item) => (
+              <MetaDetailsRow key={item.key} tone={dot(item.tone)}
+                primary={item.label}
+                secondary={[item.status ? ENV_STATUS[item.status] ?? item.status : "Closed or not in this universe's list", item.access && `${item.access} access`]}
+                badges={[item.active && "Active", item.isDefault && "Default"]} />
+            ))}
+          </MetaDetailsList>
+        )}
       {(environments.instructions || environments.skills) && (
-        <Note>{sources(environments.instructions, environments.skills)} load from the active environment.</Note>
+        <MetaDetailsNote>{sources(environments.instructions, environments.skills)} load from the active environment.</MetaDetailsNote>
       )}
       {footer({ to: `/u/${handle}/environments`, label: "Environments" })}
-    </>
+    </MetaDetails>
   );
   const items: Array<MetaItem | false | null | undefined> = [
     // The active environment shows in list rows too.
@@ -108,82 +117,96 @@ export function sessionResourceItems({ resources, handle, onConfigure }: {
     ),
     files && chip(
       { key: "files", icon: WorkspaceIcon, label: files.workspaces.length === 1 ? files.workspaces[0]!.label : files.workspaces.length ? plural(files.workspaces.length, "workspace") : "No workspaces", tone: files.workspaces.some((workspace) => workspace.missing) ? "problem" : undefined, muted: files.workspaces.length === 0, title: "Files" },
-      <>
-        <Heading title="Files" detail="Workspaces mounted into the agent's virtual file system." />
+      <MetaDetails>
+        <MetaDetailsHeading title="Files" description="Workspaces mounted into the agent's virtual file system." />
         {files.workspaces.length === 0
-          ? <Empty>No workspaces are attached.</Empty>
-          : files.workspaces.map((workspace) => (
-            <Row key={workspace.path} tone={workspace.missing ? "problem" : undefined}
-              primary={workspace.workspaceId && !workspace.missing
-                ? <Link to={`/u/${handle}/workspaces/${encodeURIComponent(workspace.workspaceId)}`} className="hover:underline">{workspace.label}</Link>
-                : workspace.label}
-              secondary={[<span key="path" className="font-mono">{workspace.path}</span>, `${workspace.access === "edit" ? "read and edit" : "read only"}`, workspace.pinned && "pinned snapshot", workspace.missing && "not found"]}
-            />
-          ))}
+          ? <MetaDetailsEmpty>No workspaces are attached.</MetaDetailsEmpty>
+          : (
+            <MetaDetailsList label="Workspaces">
+              {files.workspaces.map((workspace) => (
+                <MetaDetailsRow key={workspace.path} tone={workspace.missing ? dot("problem") : undefined}
+                  primary={workspace.label}
+                  href={workspace.workspaceId && !workspace.missing
+                    ? `/u/${handle}/workspaces/${encodeURIComponent(workspace.workspaceId)}`
+                    : undefined}
+                  secondary={[<span key="path" className="font-mono">{workspace.path}</span>, `${workspace.access === "edit" ? "read and edit" : "read only"}`, workspace.pinned && "pinned snapshot", workspace.missing && "not found"]}
+                />
+              ))}
+            </MetaDetailsList>
+          )}
         {(files.instructions || files.skills) && (
-          <Note>{sources(files.instructions, files.skills)} load from these workspaces.</Note>
+          <MetaDetailsNote>{sources(files.instructions, files.skills)} load from these workspaces.</MetaDetailsNote>
         )}
         {footer({ to: `/u/${handle}/workspaces`, label: "Workspaces" })}
-      </>,
+      </MetaDetails>,
     ),
     mcp && chip(
       { key: "mcp", icon: ToolsIcon, label: mcp.servers.length === 1 ? mcp.servers[0]!.label : mcp.servers.length ? plural(mcp.servers.length, "MCP server") : "No MCP servers", tone: mcp.servers.length && worst(mcp.servers.map((server) => server.tone)) !== "ok" ? worst(mcp.servers.map((server) => server.tone)) : undefined, muted: mcp.servers.length === 0, title: "MCP servers" },
-      <>
-        <Heading title="MCP servers" detail="Remote tools from the universe catalog." />
+      <MetaDetails>
+        <MetaDetailsHeading title="MCP servers" description="Remote tools from the universe catalog." />
         {mcp.servers.length === 0
-          ? <Empty>No servers are attached.</Empty>
-          : mcp.servers.map((server) => (
-            <Row key={server.serverId} tone={server.tone}
-              primary={server.label}
-              secondary={[
-                server.tools ? `${server.tools.length}${server.toolTotal ? ` of ${server.toolTotal}` : ""} tools` : "All allowed tools",
-                server.status && MCP_STATUS[server.status],
-                server.tone === "problem" && !server.status && "Not in the catalog",
-              ]}
-              badges={[server.approval && "Asks approval"]} />
-          ))}
+          ? <MetaDetailsEmpty>No servers are attached.</MetaDetailsEmpty>
+          : (
+            <MetaDetailsList label="MCP servers">
+              {mcp.servers.map((server) => (
+                <MetaDetailsRow key={server.serverId} tone={dot(server.tone)}
+                  primary={server.label}
+                  secondary={[
+                    server.tools ? `${server.tools.length}${server.toolTotal ? ` of ${server.toolTotal}` : ""} tools` : "All allowed tools",
+                    server.status && MCP_STATUS[server.status],
+                    server.tone === "problem" && !server.status && "Not in the catalog",
+                  ]}
+                  badges={[server.approval && "Asks approval"]} />
+              ))}
+            </MetaDetailsList>
+          )}
         {footer({ to: `/u/${handle}/mcp-servers`, label: "MCP servers" })}
-      </>,
+      </MetaDetails>,
     ),
     agents && chip(
       { key: "agents", icon: SubAgentIcon, label: plural(agents.profiles.length, "agent"), muted: agents.profiles.length === 0, title: "Sub-agent profiles" },
-      <>
-        <Heading title="Sub-agent profiles" detail="Profiles the agent may run as sub-agents." />
+      <MetaDetails>
+        <MetaDetailsHeading title="Sub-agent profiles" description="Profiles the agent may run as sub-agents." />
         {agents.profiles.length === 0
-          ? <Empty>No profiles are listed.</Empty>
-          : agents.profiles.map((profile) => (
-            <Row key={profile}
-              primary={<Link to={`/u/${handle}/profiles/${encodeURIComponent(profile)}`} className="font-mono hover:underline">{profile}</Link>} />
-          ))}
+          ? <MetaDetailsEmpty>No profiles are listed.</MetaDetailsEmpty>
+          : (
+            <MetaDetailsList label="Sub-agent profiles">
+              {agents.profiles.map((profile) => (
+                <MetaDetailsRow key={profile} primary={profile} mono href={`/u/${handle}/profiles/${encodeURIComponent(profile)}`} />
+              ))}
+            </MetaDetailsList>
+          )}
         {(agents.maxDepth !== undefined || agents.maxConcurrent !== undefined) && (
-          <Note>{[agents.maxDepth !== undefined && `Up to ${agents.maxDepth} levels deep`, agents.maxConcurrent !== undefined && `${agents.maxConcurrent} open at once`].filter(Boolean).join(" · ")}.</Note>
+          <MetaDetailsNote>{[agents.maxDepth !== undefined && `Up to ${agents.maxDepth} levels deep`, agents.maxConcurrent !== undefined && `${agents.maxConcurrent} open at once`].filter(Boolean).join(" · ")}.</MetaDetailsNote>
         )}
         {footer()}
-      </>,
+      </MetaDetails>,
     ),
     codeMode && chip(
       { key: "codeMode", icon: CodeModeIcon, label: "Code mode", title: "Code mode" },
-      <>
-        <Heading title="Code mode" detail="The agent may compose its available tools with JavaScript." />
-        <Note>Ordinary tool calls remain available alongside code execution.</Note>
+      <MetaDetails>
+        <MetaDetailsHeading title="Code mode" description="The agent may compose its available tools with JavaScript." />
+        <MetaDetailsNote>Ordinary tool calls remain available alongside code execution.</MetaDetailsNote>
         {footer()}
-      </>,
+      </MetaDetails>,
     ),
     web && chip(
       { key: "web", icon: WebIcon, label: web.search && web.fetch ? "Web" : web.search ? "Web search" : web.fetch ? "Web fetch" : "Web", title: "Web" },
-      <>
-        <Heading title="Web" detail="Independent of MCP servers and the environment's network." />
-        <Row primary="Search" secondary={web.search ? "Enabled" : "Off"} tone={web.search ? "ok" : "idle"} />
-        <Row primary="Fetch pages" secondary={web.fetch ? "Enabled" : "Off"} tone={web.fetch ? "ok" : "idle"} />
+      <MetaDetails>
+        <MetaDetailsHeading title="Web" description="Independent of MCP servers and the environment's network." />
+        <MetaDetailsList label="Web tools">
+          <MetaDetailsRow primary="Search" secondary={web.search ? "Enabled" : "Off"} tone={dot(web.search ? "ok" : "idle")} />
+          <MetaDetailsRow primary="Fetch pages" secondary={web.fetch ? "Enabled" : "Off"} tone={dot(web.fetch ? "ok" : "idle")} />
+        </MetaDetailsList>
         {footer()}
-      </>,
+      </MetaDetails>,
     ),
     timers && chip(
       { key: "timers", icon: TimerIcon, label: "Timers", title: "Timers" },
-      <>
-        <Heading title="Timers" detail="The agent may wait, sleep, and await delayed work." />
+      <MetaDetails>
+        <MetaDetailsHeading title="Timers" description="The agent may wait, sleep, and await delayed work." />
         {footer()}
-      </>,
+      </MetaDetails>,
     ),
   ];
   return items.filter((item): item is MetaItem => Boolean(item));
@@ -248,61 +271,14 @@ function chip(
 
 const RESOURCE_PRIORITY: Record<string, number> = { environments: 5, mcp: 4, files: 3, agents: 2, codeMode: 1, web: 1, timers: 0 };
 
-function Heading({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div className="px-2 pt-1 pb-1.5">
-      <p className="text-sm font-medium">{title}</p>
-      <p className="text-xs text-muted-foreground">{detail}</p>
-    </div>
-  );
-}
-
-function Row({ primary, secondary, tone, badges = [] }: {
-  primary: ReactNode;
-  secondary?: ReactNode | ReactNode[];
-  tone?: ResourceTone;
-  badges?: Array<string | false | undefined>;
-}) {
-  const parts = (Array.isArray(secondary) ? secondary : [secondary]).filter((part) => part !== undefined && part !== false && part !== "");
-  return (
-    <div className="flex items-start gap-2 rounded-md px-2 py-1.5">
-      <span className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", tone ? TONE_DOT[tone] : "bg-transparent")} aria-hidden />
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-1.5 text-sm">
-          <span className="min-w-0 truncate">{primary}</span>
-          {badges.filter(Boolean).map((badge) => (
-            <span key={badge as string} className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{badge}</span>
-          ))}
-        </div>
-        {parts.length > 0 && (
-          <p className="text-xs text-muted-foreground">
-            {parts.map((part, index) => <span key={index}>{index > 0 && " · "}{part}</span>)}
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Empty({ children }: { children: ReactNode }) {
-  return <p className="px-2 py-1.5 text-xs text-muted-foreground">{children}</p>;
-}
-
-function Note({ children }: { children: ReactNode }) {
-  return <p className="mx-2 mt-1 border-t pt-1.5 text-xs text-muted-foreground">{children}</p>;
-}
-
+/// A resource popover's actions: change it in the session's settings, and
+/// open its page in the universe.
 function Footer({ onConfigure, page }: { onConfigure?: () => void; page?: { to: string; label: string } }) {
   if (!onConfigure && !page) return null;
   return (
-    <div className="mt-1 flex items-center gap-2 border-t px-2 pt-1.5 pb-0.5 text-xs">
-      {onConfigure && (
-        <button type="button" onClick={onConfigure} className="inline-flex items-center gap-1 font-medium hover:underline">
-          <ConfigureIcon className="size-3" aria-hidden />
-          Change in session settings
-        </button>
-      )}
-      {page && <Link to={page.to} className="ml-auto text-muted-foreground hover:text-foreground hover:underline">{page.label}</Link>}
-    </div>
+    <MetaDetailsFooter>
+      {onConfigure && <MetaDetailsAction icon={ConfigureIcon} onSelect={onConfigure}>Change in session settings</MetaDetailsAction>}
+      {page && <MetaDetailsAction icon={GoToIcon} href={page.to}>{page.label}</MetaDetailsAction>}
+    </MetaDetailsFooter>
   );
 }

@@ -444,7 +444,7 @@
     --surface-sidebar-gradient-start: 50%;
     --surface-list-gradient-start: 30%;
     --sidebar-logo-color: var(--sidebar-foreground);
-    --sidebar-logo-opacity: 0.025;
+    --sidebar-logo-opacity: 0.02;
 }
 
 /* A surface's backdrop filter, from its --surface-<role>-filter token. It

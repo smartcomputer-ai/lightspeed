@@ -89,7 +89,7 @@ import { sessionDraftKey } from "@/lib/sessions/draft";
 import { SessionComposer, type ComposerMessage, type ComposerMode } from "@/components/session/composer";
 import { activeEnvironmentItems, sessionResourceItems, useSessionResources } from "@/components/session/session-resources";
 import { openEnvironmentsQuery } from "@/lib/environments";
-import { hasLineage, SESSION_META, sessionMetaItems, useSessionLineage } from "@/components/session/session-meta";
+import { hasLineage, SESSION_META, sessionMetaItems, sessionName, useSessionLineage } from "@/components/session/session-meta";
 import { MetaToolbar } from "@/components/meta-toolbar";
 import { hasResources } from "@/lib/sessions/session-resources";
 import { findFileReference, filesByHandle } from "@/lib/file-references";
@@ -851,6 +851,7 @@ function SessionTreeItem({
         active={node.session.id === activeId}
         tree={{ depth, last, lines, children: node.children.length > 0 }}
         subAgentCount={node.children.length}
+        firstSubAgent={node.children[0] && sessionName(node.children[0].session)}
         {...controls}
       />
       {node.children.map((child, index) => (
@@ -875,6 +876,7 @@ function SessionListItem({
   active,
   tree,
   subAgentCount = 0,
+  firstSubAgent,
   selecting,
   selected,
   onToggle,
@@ -891,6 +893,8 @@ function SessionListItem({
   tree: ListRowTree;
   /// Sub-agent sessions listed directly under this row.
   subAgentCount?: number;
+  /// The first sub-agent's name, for the count's tooltip.
+  firstSubAgent?: string;
 } & SessionRowControls) {
   const origin = session.origin ?? null;
   const isSelected = selected.has(session.id);
@@ -922,6 +926,8 @@ function SessionListItem({
       tree={tree}
       indicator={<SessionDot session={session} />}
       title={displayName || session.id}
+      // A closed session's title fades to its second line's colour.
+      muted={session.lifecycleStatus === "closed"}
       // A sub-agent row is marked by its indent and ↳; its lineage is the
       // title's tooltip.
       titleHint={origin
@@ -929,7 +935,7 @@ function SessionListItem({
         : displayName ? undefined : session.id}
       marks={sessionMetaItems({
         session,
-        subAgents: { count: subAgentCount },
+        subAgents: { count: subAgentCount, first: firstSubAgent },
         resources: activeEnvironmentItems(session.activeEnvironmentId, environments),
       })}
       meta={relativeTime(session.updatedAtMs)}

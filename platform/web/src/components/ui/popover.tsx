@@ -12,6 +12,11 @@ function PopoverTrigger({ ...props }: PopoverPrimitive.Trigger.Props) {
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
 }
 
+/// Closes its popover when clicked, e.g. a link in it that navigates away.
+function PopoverClose({ ...props }: PopoverPrimitive.Close.Props) {
+  return <PopoverPrimitive.Close data-slot="popover-close" {...props} />
+}
+
 /// A popover. It points at the element that opened it with a notch on its
 /// edge (over that element's centre, so near the popover's start or end
 /// corner when aligned to it); `notch={false}` leaves it off.
@@ -57,4 +62,4 @@ function PopoverContent({
   )
 }
 
-export { Popover, PopoverContent, PopoverTrigger }
+export { Popover, PopoverClose, PopoverContent, PopoverTrigger }

@@ -2,6 +2,14 @@ import { useState } from "react";
 import { CopiedIcon, CopyIcon, ExecuteToolIcon, NewTabIcon } from "@/icons";
 import type { VfsFileEntry } from "@/api";
 import type { MetaItem } from "@/components/meta-toolbar";
+import {
+  MetaDetails,
+  MetaDetailsAction,
+  MetaDetailsFooter,
+  MetaDetailsHeading,
+  MetaDetailsList,
+  MetaDetailsRow,
+} from "@/components/meta-details";
 import { fileIcon } from "@/components/file-icon";
 import { formatBytes } from "@/lib/composer-attachments";
 
@@ -153,38 +161,41 @@ function FileContentDetails({ blobRef, revision, blobViewerHref, unsaved }: {
   };
   const Copy = copied ? CopiedIcon : CopyIcon;
   return (
-    <div className="grid gap-1">
-      <div className="px-2 pt-1 pb-1.5">
-        <p className="text-sm font-medium">Content</p>
-        <p className="text-xs text-muted-foreground">
-          Stored by its content: the same bytes always have this hash.
-          {revision !== undefined && ` Loaded at workspace revision ${revision}.`}
-        </p>
-      </div>
-      <div className="flex items-start gap-2 rounded-md px-2 py-1.5">
-        <code className="min-w-0 flex-1 font-mono text-xs break-all">{blobRef}</code>
-        <button
-          type="button"
-          onClick={copy}
-          aria-label={copied ? "Copied" : "Copy content hash"}
-          className="cursor-action shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <Copy className="size-3.5" />
-        </button>
-      </div>
+    <MetaDetails>
+      <MetaDetailsHeading
+        title="Content"
+        description={<>Stored by its content: the same bytes always have this hash.{revision !== undefined && ` Loaded at workspace revision ${revision}.`}</>}
+      />
+      <MetaDetailsList>
+        <MetaDetailsRow
+          primary={blobRef}
+          mono
+          inset={false}
+          end={(
+            <button
+              type="button"
+              onClick={copy}
+              aria-label={copied ? "Copied" : "Copy content hash"}
+              className="cursor-action rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <Copy className="size-3.5" />
+            </button>
+          )}
+        />
+      </MetaDetailsList>
       {blobViewerHref && (
-        <a
-          href={blobViewerHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="Open in blob viewer (new tab)"
-          title={unsaved ? "Open saved version in blob viewer (new tab)" : "Open in blob viewer (new tab)"}
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
-        >
-          <NewTabIcon className="size-4 text-muted-foreground" />
-          {unsaved ? "Open saved version in blob viewer" : "Open in blob viewer"}
-        </a>
+        <MetaDetailsFooter>
+          <MetaDetailsAction
+            icon={NewTabIcon}
+            href={blobViewerHref}
+            external
+            label="Open in blob viewer (new tab)"
+            title={unsaved ? "Open saved version in blob viewer (new tab)" : "Open in blob viewer (new tab)"}
+          >
+            {unsaved ? "Open saved version in blob viewer" : "Open in blob viewer"}
+          </MetaDetailsAction>
+        </MetaDetailsFooter>
       )}
-    </div>
+    </MetaDetails>
   );
 }

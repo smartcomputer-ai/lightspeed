@@ -20,7 +20,8 @@ import {
   WorkspaceIcon,
 } from "@/icons";
 import { ActivityDot } from "@/components/activity-dot";
-import { StatusDot } from "@/components/bot/status";
+import { StatusDot, type StatusTone } from "@/components/bot/status";
+import { MetaDetails, MetaDetailsHeading, MetaDetailsList, MetaDetailsRow } from "@/components/meta-details";
 import { DetailHeader } from "@/components/detail-header";
 import { ListPaneBody, ListPaneHeader, ListRow, ListRowLine } from "@/components/list-pane";
 import { MetaToolbar, metaItemsFor, type MetaItem, type MetaPlace } from "@/components/meta-toolbar";
@@ -36,23 +37,14 @@ import { cn } from "@/lib/utils";
 /// strip under the header, at widths you choose.
 
 /// A details popover's body, shaped like the session resource chips'.
-function Details({ title, detail, rows }: { title: string; detail: string; rows: Array<{ primary: string; secondary?: string; tone?: string }> }) {
+function Details({ title, detail, rows }: { title: string; detail: string; rows: Array<{ primary: string; secondary?: string; tone?: StatusTone; muted?: boolean }> }) {
   return (
-    <div className="grid gap-0.5">
-      <div className="px-2 pt-1 pb-1.5">
-        <p className="text-sm font-medium">{title}</p>
-        <p className="text-xs text-muted-foreground">{detail}</p>
-      </div>
-      {rows.map((row) => (
-        <div key={row.primary} className="flex items-start gap-2 rounded-md px-2 py-1.5">
-          <span className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", row.tone ?? "bg-transparent")} aria-hidden />
-          <div className="min-w-0">
-            <p className="truncate text-sm">{row.primary}</p>
-            {row.secondary && <p className="text-xs text-muted-foreground">{row.secondary}</p>}
-          </div>
-        </div>
-      ))}
-    </div>
+    <MetaDetails>
+      <MetaDetailsHeading title={title} description={detail} />
+      <MetaDetailsList label={title}>
+        {rows.map((row) => <MetaDetailsRow key={row.primary} {...row} />)}
+      </MetaDetailsList>
+    </MetaDetails>
   );
 }
 
@@ -68,7 +60,7 @@ function busySession(act: (what: string) => void): MetaItem[] {
       key: "environment", label: "Environment build-box: failed", icon: EnvironmentIcon, text: "build-box", tone: "danger",
       tooltip: "Environment build-box failed to start", priority: 8,
       details: <Details title="Environment" detail="Commands, jobs, and machine files run here."
-        rows={[{ primary: "build-box", secondary: "Failed · edit access", tone: "bg-danger" }, { primary: "scratch", secondary: "Paused · wakes on use", tone: "bg-muted-foreground/50" }]} />,
+        rows={[{ primary: "build-box", secondary: "Failed · edit access", tone: "attention" }, { primary: "scratch", secondary: "Paused · wakes on use", tone: "idle" }]} />,
     },
     {
       key: "bot", label: "Run by Release planner", icon: BotIcon, text: "via Release planner",
@@ -79,13 +71,13 @@ function busySession(act: (what: string) => void): MetaItem[] {
       key: "agents", label: "3 sub-agents", icon: SubAgentIcon, value: 3, text: "3 sub-agents",
       tooltip: "3 sub-agents delegated by this session", priority: 6,
       details: <Details title="Sub-agents" detail="Sessions this one delegated work to."
-        rows={[{ primary: "Bisect the flake", secondary: "Working", tone: "bg-success" }, { primary: "Read CI logs", secondary: "Closed" }, { primary: "Draft the fix", secondary: "Idle" }]} />,
+        rows={[{ primary: "Bisect the flake", secondary: "Working", tone: "live" }, { primary: "Read CI logs", secondary: "Closed", tone: "closed", muted: true }, { primary: "Draft the fix", secondary: "Idle", tone: "idle" }]} />,
     },
     {
       key: "mcp", label: "MCP server GitHub: needs authentication", icon: ToolsIcon, text: "GitHub", tone: "warning",
       tooltip: "GitHub needs authentication", priority: 5, places: PAGE,
       details: <Details title="MCP servers" detail="Remote tools from the universe catalog."
-        rows={[{ primary: "GitHub", secondary: "12 tools · Needs authentication", tone: "bg-warning" }]} />,
+        rows={[{ primary: "GitHub", secondary: "12 tools · Needs authentication", tone: "waiting" }]} />,
     },
     {
       key: "workspaces", label: "2 workspaces", icon: WorkspaceIcon, value: 2, text: "2 workspaces", priority: 4, places: PAGE,
@@ -132,7 +124,7 @@ function botItems(act: (what: string) => void): MetaItem[] {
     { key: "webhook", label: "Webhook trigger", icon: WebhookIcon, text: "Webhook", priority: 4, places: PAGE },
     {
       key: "channel", label: "Telegram channel", icon: ChannelIcon, text: "Telegram", tone: "success", tooltip: "Connected to Telegram", priority: 3,
-      details: <Details title="Channels" detail="Where this bot hears and answers." rows={[{ primary: "Telegram", secondary: "@release_planner_bot · connected", tone: "bg-success" }]} />,
+      details: <Details title="Channels" detail="Where this bot hears and answers." rows={[{ primary: "Telegram", secondary: "@release_planner_bot · connected", tone: "ready" }]} />,
     },
     { key: "shared", label: "Shared", icon: SharedIcon, text: "Shared", priority: 2, align: "end" },
   ];

@@ -75,6 +75,7 @@ import {
   Minimize2,
   Monitor,
   Moon,
+  ListTree,
   Network,
   PackageOpen,
   Palette,
@@ -177,6 +178,7 @@ export const lucide = {
     // What a session can use.
     ToolsIcon: Wrench,
     SubAgentIcon: Network,
+    ParentAgentIcon: ListTree,
     CodeModeIcon: Code2,
     WebIcon: Globe2,
     TimerIcon: Clock3,

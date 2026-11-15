@@ -468,6 +468,7 @@ export function ListRow({
   indicator,
   title,
   titleHint,
+  muted = false,
   marks,
   badges,
   meta,
@@ -490,6 +491,8 @@ export function ListRow({
   title: ReactNode;
   /** Tooltip on the title, e.g. the full id behind a display name. */
   titleHint?: string;
+  /** Its title drawn in its second line's colour: something closed or done, so live rows lead. */
+  muted?: boolean;
   /** The entity's meta items, drawn compact. They take at most half the line and give way by priority, so the title keeps its room; inside the row link they only explain themselves, and show their status colors only while the row is hovered, focused or selected. */
   marks?: MetaItem[];
   badges?: ReactNode;
@@ -596,9 +599,16 @@ export function ListRow({
       {lead && <span className="flex shrink-0 items-center">{lead}</span>}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-center gap-2">
-          {/* Slightly dimmer at rest; full strength on hover, focus or selection. */}
+          {/* Slightly dimmer at rest; full strength on hover, focus or selection.
+              Muted, it takes the second line's colours instead. */}
           <span
-            className="min-w-0 flex-1 truncate font-(--list-title-font-weight) text-(--item-foreground-rest) group-data-highlighted/row:font-(--list-title-font-weight-selected) transition-[color,font-weight] duration-(--list-transition-duration) group-hover/row:text-foreground group-focus-visible/row:text-foreground group-data-highlighted/row:text-foreground"
+            className={cn(
+              "min-w-0 flex-1 truncate font-(--list-title-font-weight) group-data-highlighted/row:font-(--list-title-font-weight-selected) transition-[color,font-weight] duration-(--list-transition-duration)",
+              muted
+                ? "text-(--list-second-line-rest) group-hover/row:text-muted-foreground group-focus-visible/row:text-muted-foreground group-data-highlighted/row:text-muted-foreground"
+                : "text-(--item-foreground-rest) group-hover/row:text-foreground group-focus-visible/row:text-foreground group-data-highlighted/row:text-foreground",
+            )}
+            data-muted={muted || undefined}
             title={titleHint}
           >
             {title}

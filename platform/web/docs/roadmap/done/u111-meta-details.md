@@ -1,6 +1,6 @@
 # U111: Meta Details
 
-Status: [todo]
+Status: [done]
 
 Meta toolbar items open a popover on click when they carry `details`. The popover itself is shared: `MetaItemView` in `src/components/meta-toolbar.tsx` wraps every item's `details` in the same `PopoverContent` (surface, notch, width, padding, open and close). What goes inside it is not shared. Each caller builds its own content, and the copies only look alike because their classes were copied by hand:
 
