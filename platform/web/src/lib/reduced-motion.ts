@@ -11,6 +11,11 @@ function subscribe(onChange: () => void) {
   return () => query?.removeEventListener("change", onChange);
 }
 
+/// The same, read once (outside React, e.g. when a timer is set).
+export function prefersReducedMotion(): boolean {
+  return window.matchMedia?.(QUERY).matches ?? false;
+}
+
 export function useReducedMotion(): boolean {
   return useSyncExternalStore(
     subscribe,

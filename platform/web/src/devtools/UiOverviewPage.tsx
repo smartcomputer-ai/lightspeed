@@ -805,12 +805,13 @@ function BadgesSection() {
       </Specimen>
       <Specimen
         title="To-do"
-        note="components/todo: a warning box for unfinished work; the production build fails while one is in the app and names each to-do"
+        note="components/todo: a box for unfinished work, left out of production builds; a critical one fails the production build, which names each"
         className="grid gap-3 sm:grid-cols-2"
       >
         <Todo />
         <Todo description="Choose which notifications reach you, and how." />
         <Todo title="Not built yet" description="A custom title replaces To Do." />
+        <Todo critical description="Work the app cannot ship without: the production build fails while it is in." />
       </Specimen>
       <Specimen title="Info box on a dialog" note="the same notes on the dialog surface (--surface-dialog), as the welcome dialog's Demo Mode info">
         <div className="grid w-full gap-3 rounded-(--surface-dialog-radius) bg-(--surface-dialog) surface-filter-dialog p-6 text-sm text-popover-foreground shadow-(--surface-dialog-shadow) inset-ring-(length:--surface-dialog-border-width) inset-ring-(color:--surface-dialog-border) sm:grid-cols-2">

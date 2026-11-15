@@ -81,7 +81,7 @@ function WelcomeArt() {
   }, []);
   return (
     <div ref={band} aria-hidden className="relative h-80 overflow-hidden bg-black">
-      {center && <Starscape center={center} fade={{ start: 40, end: 420 }} className="absolute inset-0" />}
+      {center && <Starscape center={center} fade={{ start: 40, end: 420 }} reducedMotion="slow" className="absolute inset-0" />}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_95%_at_50%_calc(50%+1.5rem),transparent_0%,rgb(0_0_0/0.65)_80%,black_100%)]" />
       {/* The site's stage, its width setting the scale; moved so the logo sits a little below the middle. */}
       <div className="absolute top-[calc(50%-var(--stage)*1.222+1.5rem)] left-1/2 h-[calc(var(--stage)*1.403)] w-(--stage) -translate-x-[74.36%] [--stage:10.75rem]">

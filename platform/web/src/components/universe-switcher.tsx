@@ -1,6 +1,7 @@
 import { UNIVERSE_HANDLE_MAX_LENGTH, universeHandleFromName, universeHandleSchema } from "@lightspeed-ai/platform-shared";
 import { useRef, useState, type FormEvent, type RefObject } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useDialogWarp } from "@/lib/dialog-warp";
 import { useNavigate } from "react-router-dom";
 import { AddIcon, SelectedIcon, SwitcherIcon } from "@/icons";
 import { UniverseIcon } from "@/components/universe-icon";
@@ -212,29 +213,37 @@ export function NewUniverseDialog({
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
   const [handleEdited, setHandleEdited] = useState(false);
+  const dialogWarp = useDialogWarp(open);
 
   const create = useMutation({
     mutationFn: (input: { name: string; handle: string }) =>
       api<Universe>("POST", "/api/v1/universes", input),
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: ["universes"] });
-      onOpenChange(false);
-      setName("");
-      setHandle("");
-      setHandleEdited(false);
-      navigate(universeHome(created));
+      // Once the warp has played out: close, and open the new universe.
+      dialogWarp.afterWarp(() => {
+        onOpenChange(false);
+        setName("");
+        setHandle("");
+        setHandleEdited(false);
+        navigate(universeHome(created));
+      });
     },
+    // Called off: the dialog comes back with the error.
+    onError: () => dialogWarp.cancel(),
   });
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!universeHandleSchema.safeParse(handle.trim()).success) return;
+    // Creating sends the dialog off to warp meanwhile.
+    dialogWarp.start();
     create.mutate({ name: name.trim(), handle: handle.trim() });
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent starscape warp={dialogWarp.warp}>
         <DialogHeader>
           <DialogTitle>New universe</DialogTitle>
           <DialogDescription>

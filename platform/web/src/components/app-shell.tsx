@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { isMobileDetailRoute } from "@/lib/shell-navigation";
 import { WelcomeDialog } from "@/components/onboarding/welcome-dialog";
 import { PageNebula } from "@/components/starscape/page-nebula";
+import { useDialogStarscapeWarmth } from "@/components/starscape/use-dialog-starscape-warmth";
 import type { SessionUser } from "@/auth";
 import { rememberUniverse, useUniverses } from "@/lib/universes";
 
@@ -158,6 +159,8 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
   const permissions = useActionPermissions(active?.id);
   const location = useLocation();
   const mode = shellMode(location.pathname);
+  // Creating dialogs open on a starscape drawn ahead, after the page has loaded.
+  useDialogStarscapeWarmth();
 
   useEffect(() => {
     if (active) {

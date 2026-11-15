@@ -62,7 +62,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DIALOG_WARP_MS,
+  dialogWarpMs,
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -1107,7 +1107,7 @@ function NewSessionDialog({
       const nextSearch = new URLSearchParams(search);
       navigate(`${path}?${nextSearch}`);
       nextSearch.delete("new");
-      const remaining = Math.max(0, DIALOG_WARP_MS - (performance.now() - warpStarted.current));
+      const remaining = Math.max(0, dialogWarpMs() - (performance.now() - warpStarted.current));
       window.setTimeout(
         () => navigate(`${path}${nextSearch.size ? `?${nextSearch}` : ""}`, { replace: true }),
         remaining,

@@ -2,53 +2,19 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { cn } from "@/lib/utils";
 import { useReducedMotion } from "@/lib/reduced-motion";
 import { Starscape as StarscapeRenderer, type StarscapeConfig, type StarscapeFade } from "./lib/starscape.js";
+import { SITE_CONFIG, starscapeWindow } from "./geometry";
+import {
+  claimDialogStarscape,
+  dialogStarscapeRunning,
+  onDialogStarscapeChange,
+  releaseDialogStarscape,
+  runDialogStarscape,
+  windowKey,
+} from "./prewarm";
 
-/// The frame the Lightspeed site renders its hero starscape into, in frame
-/// units. The component shows a window onto a frame of this shape, so a
-/// small element shows the same sky the site does, not a squeezed copy.
-export const SITE_FRAME = { width: 887, height: 1252 } as const;
+// Where every starscape is sized from, kept for the modules that import them from here.
+export { SITE_CONFIG, SITE_FRAME, starscapeWindow } from "./geometry";
 
-/// The site's settings on top of the renderer defaults: 30 frames a second
-/// and a fresh seed per page load.
-export const SITE_CONFIG: Partial<StarscapeConfig> = { fps: 30 };
-
-/// What a host of `width` by `height` CSS px with its vanishing point at
-/// (`cx`, `cy`) needs drawn: the canvas rectangle in CSS px (the host, cut
-/// down to the fade's outer radius) and the viewport onto the site's frame
-/// in device px, or null when nothing is visible.
-export function starscapeWindow({ width, height, cx, cy, fade, scale, ratio, config }: {
-  width: number;
-  height: number;
-  cx: number;
-  cy: number;
-  fade?: StarscapeFade;
-  scale: number;
-  ratio: number;
-  config: Pick<StarscapeConfig, "centerX" | "centerY">;
-}) {
-  const left = Math.max(0, Math.floor(fade ? cx - fade.end : 0));
-  const top = Math.max(0, Math.floor(fade ? cy - fade.end : 0));
-  const right = Math.min(width, Math.ceil(fade ? cx + fade.end : width));
-  const bottom = Math.min(height, Math.ceil(fade ? cy + fade.end : height));
-  if (right <= left || bottom <= top) return null;
-  const frameWidth = SITE_FRAME.width * scale * ratio;
-  const frameHeight = SITE_FRAME.height * scale * ratio;
-  return {
-    left,
-    top,
-    width: right - left,
-    height: bottom - top,
-    viewport: {
-      frameWidth,
-      frameHeight,
-      // Place the frame's vanishing point on (cx, cy).
-      x: frameWidth * config.centerX - (cx - left) * ratio,
-      y: frameHeight * config.centerY - (cy - top) * ratio,
-      width: (right - left) * ratio,
-      height: (bottom - top) * ratio,
-    },
-  };
-}
 
 export interface StarscapeProps {
   className?: string;
@@ -71,11 +37,19 @@ export interface StarscapeProps {
   /// they sit directly on whatever is behind the host.
   transparentBackground?: boolean;
   /// Animate the warp. Off, a single frame is drawn. (With reduced motion
-  /// requested there is no starscape at all.)
+  /// requested it is off, unless `reducedMotion` is "slow".)
   animate?: boolean;
+  /// With reduced motion requested: hold still on one frame (the default),
+  /// or keep moving at an eighth of its speed (for a moment that is all starscape, such
+  /// as the welcome). There is no warp either way.
+  reducedMotion?: "still" | "slow";
   /// Go to warp speed: the stars rush past faster with longer, brighter
   /// trails, ramping up over WARP_RAMP_MS (and back down when it ends).
   warp?: boolean;
+  /// The large starscape behind a creating dialog (see prewarm.ts): it
+  /// takes the ready-drawn one when there is one, so it opens without a
+  /// stall, and every other starscape holds still while it runs.
+  dialog?: boolean;
 }
 
 /// How long the starscape takes to reach warp speed.
@@ -91,10 +65,23 @@ type WarpKey = keyof typeof WARP_CONFIG;
 /// positioned (e.g. `absolute inset-0`). It renders only the visible part
 /// of the host, at 1x or 2x depending on the screen's pixel density, and
 /// pauses while off screen or in a hidden tab.
-/// With reduced motion requested, nothing at all: not even a still sky.
+/// With reduced motion requested, a still sky (one frame, no animation and
+/// no warp), or a slow one (see `reducedMotion`).
 export function Starscape(props: StarscapeProps) {
-  return useReducedMotion() ? null : <StarscapeCanvas {...props} />;
+  const reduced = useReducedMotion();
+  const slow = reduced && props.reducedMotion === "slow";
+  return (
+    <StarscapeCanvas
+      {...props}
+      animate={(!reduced || slow) && (props.animate ?? true)}
+      warp={!reduced && (props.warp ?? false)}
+      speed={slow ? 0.125 : 1}
+    />
+  );
 }
+
+/// The sky's settings that set its pace, scaled for a slower sky.
+const PACE_KEYS = ["flowSpeed", "streakSpeed", "twinkleSpeed"] as const;
 
 function StarscapeCanvas({
   className,
@@ -106,7 +93,9 @@ function StarscapeCanvas({
   transparentBackground = false,
   animate = true,
   warp = false,
-}: StarscapeProps) {
+  dialog = false,
+  speed = 1,
+}: StarscapeProps & { speed?: number }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Math.random rather than crypto, so seeded test runs draw the same sky.
@@ -120,15 +109,29 @@ function StarscapeCanvas({
 
   useEffect(() => {
     const host = hostRef.current;
-    const canvas = canvasRef.current;
+    const ownCanvas = canvasRef.current;
     // No 2D canvas (jsdom): leave the layer empty.
-    if (!host || !canvas || typeof CanvasRenderingContext2D === "undefined") return;
+    if (!host || !ownCanvas || typeof CanvasRenderingContext2D === "undefined") return;
 
-    const starscape = new StarscapeRenderer(
+    // A dialog's starscape takes the ready-drawn one in place of its own
+    // canvas, its frame already there; and the others hold still meanwhile.
+    const ready = dialog ? claimDialogStarscape() : null;
+    if (ready) ownCanvas.replaceWith(ready.canvas);
+    const canvas = ready?.canvas ?? ownCanvas;
+    const stopRunning = dialog ? runDialogStarscape() : null;
+    // Its frame is on the ready-drawn canvas already: the first layout need
+    // not draw it again when the window is the size it was drawn at.
+    let drawnAhead = ready !== null && ready.key === windowKey();
+    const starscape = ready?.renderer ?? new StarscapeRenderer(
       canvas,
       { ...SITE_CONFIG, seed, ...(JSON.parse(configKey) as Partial<StarscapeConfig>) },
       { alpha: true, transparentBackground },
     );
+    // A slower sky: its pace scaled (not the ready-drawn one's, which is
+    // the dialog's and keeps its own).
+    if (speed !== 1 && !ready) {
+      starscape.update(Object.fromEntries(PACE_KEYS.map((key) => [key, starscape.config[key] * speed])));
+    }
     renderer.current = starscape;
     cruise.current = Object.fromEntries(
       Object.keys(WARP_CONFIG).map((key) => [key, starscape.config[key as WarpKey]]),
@@ -167,12 +170,14 @@ function StarscapeCanvas({
               end: fade.end * ratio,
               inner: fade.inner && { start: fade.inner.start * ratio, end: fade.inner.end * ratio },
             }
-          : null)
-        .render();
+          : null);
+      if (drawnAhead) drawnAhead = false;
+      else starscape.render();
       return true;
     };
 
-    const moving = () => animate && visible && !document.hidden && !canvas.hidden;
+    // A dialog's starscape runs alone: the others hold their frame meanwhile.
+    const moving = () => animate && visible && !document.hidden && !canvas.hidden && (dialog || !dialogStarscapeRunning());
     const tick = (now: number) => {
       animationFrame = 0;
       if (!moving()) return;
@@ -211,6 +216,7 @@ function StarscapeCanvas({
     const density = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
     density.addEventListener("change", relayout);
     document.addEventListener("visibilitychange", sync);
+    const unsubscribe = dialog ? null : onDialogStarscapeChange(sync);
     relayout();
 
     return () => {
@@ -219,8 +225,17 @@ function StarscapeCanvas({
       intersectionObserver.disconnect();
       density.removeEventListener("change", relayout);
       document.removeEventListener("visibilitychange", sync);
+      unsubscribe?.();
+      stopRunning?.();
+      if (ready) {
+        // Back at cruise (a warp may have been under way), and back in the
+        // keeping of the ready-drawn one.
+        if (cruise.current) starscape.update(cruise.current);
+        ready.canvas.replaceWith(ownCanvas);
+        releaseDialogStarscape(ready);
+      }
     };
-  }, [anchor, center?.x, center?.y, fade?.start, fade?.end, fade?.inner?.start, fade?.inner?.end, scale, transparentBackground, animate, seed, configKey]);
+  }, [anchor, center?.x, center?.y, fade?.start, fade?.end, fade?.inner?.start, fade?.inner?.end, scale, transparentBackground, animate, seed, configKey, dialog, speed]);
 
   // Ramp the live settings into warp (easing out, so the rush starts at
   // once) or back down; the running animation picks them up.

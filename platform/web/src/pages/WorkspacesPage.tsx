@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/select";
 import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
+import { useDialogWarp } from "@/lib/dialog-warp";
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { appHref, blobHref } from "@/lib/blob-view";
@@ -681,19 +682,27 @@ function NewWorkspaceDialog({
   const [idTouched, setIdTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const dialogWarp = useDialogWarp(open);
   const create = useMutation({
     mutationFn: (input: unknown) =>
       api<WorkspaceRow>("POST", `/api/v1/universes/${universeId}/workspaces`, input),
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: ["workspaces", universeId] });
-      onOpenChange(false);
-      setDisplayName("");
-      setWorkspaceId("");
-      setIdTouched(false);
-      setError(null);
-      navigate(`/u/${handle}/workspaces/${created.workspaceId}`);
+      // Once the warp has played out: close, and open the new workspace.
+      dialogWarp.afterWarp(() => {
+        onOpenChange(false);
+        setDisplayName("");
+        setWorkspaceId("");
+        setIdTouched(false);
+        setError(null);
+        navigate(`/u/${handle}/workspaces/${created.workspaceId}`);
+      });
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      // Called off: the dialog comes back with the error.
+      dialogWarp.cancel();
+      setError(err.message);
+    },
   });
 
   const submit = (event: FormEvent) => {
@@ -711,12 +720,14 @@ function NewWorkspaceDialog({
       setError(issue ? `${issue.path.join(".")}: ${issue.message}` : "invalid input");
       return;
     }
+    // Creating sends the dialog off to warp meanwhile.
+    dialogWarp.start();
     create.mutate(parsed.data);
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent starscape warp={dialogWarp.warp}>
         <DialogHeader>
           <DialogTitle>New workspace</DialogTitle>
           <DialogDescription>
